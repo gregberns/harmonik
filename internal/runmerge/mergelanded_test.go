@@ -1,21 +1,5 @@
 package runmerge_test
 
-// mergelanded_hk3kw4a_test.go — a successful merge must be observable.
-//
-// The defect (hk-3kw4a): RunBranchToTarget emitted nothing at all when the
-// merge worked. The terminal outcome_emitted{approved} payload is byte-identical
-// whether the target branch advanced or the run short-circuited as no-change, so
-// the event stream could not answer "did this run's work land". The cost was
-// already paid: an assessor looked for a merge event, found none, checked git by
-// hand, read the wrong branch, and filed a P1 blocker against a run that had
-// merged correctly.
-//
-// This test drives a real merge — real git repo, real bare origin, real push —
-// through the production entry point and asserts the emitted event names the
-// target branch and the commit the target now points at.
-//
-// Bead: hk-3kw4a.
-
 import (
 	"context"
 	"encoding/json"
@@ -33,16 +17,12 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// landedEvent is one event captured by landedEmitter.
 type landedEvent struct {
 	runID     core.RunID
 	eventType core.EventType
 	payload   []byte
 }
 
-// landedEmitter records every event the merge path emits. Unlike
-// discardingEmitter (fixture_test.go) this test asserts on the event stream
-// itself, which is the whole point of the bead.
 type landedEmitter struct {
 	mu     sync.Mutex
 	events []landedEvent
@@ -62,7 +42,6 @@ func (e *landedEmitter) EmitWithRunID(_ context.Context, runID core.RunID, event
 	return nil
 }
 
-// ofType returns every captured event of the given type.
 func (e *landedEmitter) ofType(t core.EventType) []landedEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -75,9 +54,6 @@ func (e *landedEmitter) ofType(t core.EventType) []landedEvent {
 	return out
 }
 
-// types returns the type of every event captured, in emission order and with
-// duplicates kept, for a diagnostic that tells the reader what the stream DID
-// contain.
 func (e *landedEmitter) types() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -88,7 +64,6 @@ func (e *landedEmitter) types() []string {
 	return out
 }
 
-// landedGit runs a git command in dir and fails the test on error.
 func landedGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -100,9 +75,6 @@ func landedGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// landedSetupRepo builds a project repo with a bare origin on "main" and a run
-// branch one commit ahead, so RunBranchToTarget can do a real fast-forward and a
-// real push. Returns the project dir, the origin dir and the run id.
 func landedSetupRepo(t *testing.T) (projectDir, originDir string, runID core.RunID) {
 	t.Helper()
 
@@ -159,7 +131,6 @@ func TestRunBranchToTarget_SuccessfulMergeEmitsWorkspaceMergeStatusMerged(t *tes
 			out.Reason, out.NoChange)
 	}
 
-	// Ground truth from git: where the target actually landed.
 	wantCommit := landedGit(t, projectDir, "rev-parse", "refs/heads/main")
 	if originTip := landedGit(t, originDir, "rev-parse", "refs/heads/main"); originTip != wantCommit {
 		t.Fatalf("precondition: origin main %s != local main %s; the push did not publish", originTip, wantCommit)
@@ -185,8 +156,6 @@ func TestRunBranchToTarget_SuccessfulMergeEmitsWorkspaceMergeStatusMerged(t *tes
 		t.Errorf("emitted payload fails its own Valid() (event-model.md §8.5.3): %s", ev.payload)
 	}
 
-	// Did it land, onto which branch, at which commit — the three questions the
-	// event exists to answer.
 	if pl.Status != core.WorkspaceMergeStatusMerged {
 		t.Errorf("status = %q, want %q", pl.Status, core.WorkspaceMergeStatusMerged)
 	}
@@ -200,7 +169,6 @@ func TestRunBranchToTarget_SuccessfulMergeEmitsWorkspaceMergeStatusMerged(t *tes
 		t.Errorf("merge_commit_hash = %q, want %q (the tip refs/heads/main actually points at)", *pl.MergeCommitHash, wantCommit)
 	}
 
-	// Correlation fields.
 	wantSource := workspace.TaskBranchName(runID.String())
 	if pl.SourceBranch != wantSource {
 		t.Errorf("source_branch = %q, want %q", pl.SourceBranch, wantSource)
@@ -208,12 +176,10 @@ func TestRunBranchToTarget_SuccessfulMergeEmitsWorkspaceMergeStatusMerged(t *tes
 	if pl.RunID != runID {
 		t.Errorf("payload run_id = %s, want %s", pl.RunID, runID)
 	}
-	// workspace_id UUID == run_id UUID per workspace-model.md §4.1 WM-004.
 	if uuid.UUID(pl.WorkspaceID) != uuid.UUID(runID) {
 		t.Errorf("workspace_id = %s, want the run_id UUID %s (WM-004 derivation)", pl.WorkspaceID, runID)
 	}
 
-	// §8.9(h) requires millisecond resolution on changed_at.
 	if _, err := time.Parse(time.RFC3339, pl.ChangedAt); err != nil {
 		t.Errorf("changed_at %q is not RFC 3339: %v", pl.ChangedAt, err)
 	}
@@ -230,7 +196,6 @@ func TestRunBranchToTarget_NoChangeEmitsNoMergeStatus(t *testing.T) {
 	t.Parallel()
 
 	projectDir, _, runID := landedSetupRepo(t)
-	// Reset the run branch back onto main: same tip, so the agent made no commits.
 	landedGit(t, projectDir, "update-ref",
 		"refs/heads/"+workspace.TaskBranchName(runID.String()),
 		landedGit(t, projectDir, "rev-parse", "refs/heads/main"))

@@ -1,27 +1,5 @@
 package daemon
 
-// restartbackoff.go — persistent boot-record backoff for the daemon startup path.
-//
-// On 2026-05-30 the daemon was started 10 times in a day (last five within ~14
-// minutes), each boot auto-pulling `br ready` and dispatching immediately. This
-// file adds a per-project persistent boot record so that rapid successive starts
-// incur an exponentially-growing startup delay, capping the crash-and-re-pull
-// multiplier.
-//
-// Record file: <projectDir>/.harmonik/cognition/restart-record.json
-//
-// Algorithm (applyBootBackoff):
-//
-//	n = number of boot times in the record that fall within defaultRestartBackoffWindow
-//	delay = base × 2^(n−1), capped at defaultRestartBackoffCap (0 when n == 0)
-//	record current boot, write state, sleep delay (ctx-interruptible)
-//
-// All I/O errors are non-fatal: the function logs and skips the delay rather
-// than refusing to start. The cognition/ directory is created on demand.
-//
-// Spec ref: docs/flywheel/2026-05-30-lifecycle-feasibility-and-gaps.md §"Recommended beads".
-// Bead ref: hk-7t9g1.
-
 import (
 	"context"
 	"encoding/json"
@@ -36,15 +14,10 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// defaultRestartBackoffBase is the initial startup delay applied on the second
-// rapid daemon boot (n == 1 prior boot in window).
 const defaultRestartBackoffBase = 30 * time.Second
 
-// defaultRestartBackoffCap is the maximum startup delay imposed by boot-record backoff.
 const defaultRestartBackoffCap = 10 * time.Minute
 
-// defaultRestartBackoffWindow is the sliding window within which boot times are
-// counted. Boots older than this are pruned from the record and not considered.
 const defaultRestartBackoffWindow = 1 * time.Hour
 
 type resolvedRestartBackoffConfig struct {
@@ -71,39 +44,15 @@ func resolveRestartBackoffConfig(raw projectconfig.DaemonRestartBackoffConfig) r
 	return cfg
 }
 
-// restartRecordPath returns the absolute path of the persistent boot-record
-// file for the given project directory.
 func restartRecordPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "cognition", "restart-record.json")
 }
 
-// restartRecord is the on-disk schema for the persistent boot-record file.
-// N-1 readers MUST tolerate unknown fields (json.Unmarshal ignores extras).
 type restartRecord struct {
 	SchemaVersion int     `json:"schema_version"`
 	BootTimesUnix []int64 `json:"boot_times_unix_sec"`
 }
 
-// applyBootBackoff records the current daemon boot in the persistent
-// boot-record file and returns the computed exponential backoff delay. The
-// delay is 0 on the first rapid boot within the window; it grows as base ×
-// 2^(n−1), capped at the configured cap, where n is the number of prior boots
-// recorded within the configured window.
-//
-// This function does NOT sleep — it only records the boot and computes the
-// delay. Callers MUST sleep the returned delay themselves via
-// sleepBootBackoff, and MUST do so only after the daemon's liveness surface
-// (the socket bind) is already up, so the supervisor's health-window sees a
-// live daemon rather than declaring it unhealthy mid-sleep (hk-uzvt9: a
-// pre-bind sleep raced the 30s supervisor health-window and caused
-// false-revert-to-last-good under rapid restart).
-//
-// All read/write errors are non-fatal: the function prints a warning to stderr
-// and returns 0 so the daemon continues to start without a delay.
-//
-// The cognition/ directory under projectDir is created on demand.
-//
-// Bead ref: hk-7t9g1, hk-uzvt9.
 func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconfig.DaemonRestartBackoffConfig) time.Duration {
 	if projectDir == "" {
 		return 0
@@ -113,11 +62,9 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 	path := restartRecordPath(projectDir)
 	now := time.Now()
 
-	// Read existing record. A missing file is fine (first boot).
 	rec, readErr := readRestartRecord(path)
 	if readErr != nil && !os.IsNotExist(readErr) {
 		fmt.Fprintf(os.Stderr, "daemon: restart-backoff: read %q: %v (skipping backoff)\n", path, readErr)
-		// Record the current boot even on read failure, best-effort.
 		if writeErr := writeRestartRecord(ctx, path, restartRecord{
 			SchemaVersion: 1,
 			BootTimesUnix: []int64{now.Unix()},
@@ -127,7 +74,6 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 		return 0
 	}
 
-	// Prune boot times outside the sliding window.
 	windowStart := now.Add(-cfg.Window)
 	recent := make([]int64, 0, len(rec.BootTimesUnix)+1)
 	for _, t := range rec.BootTimesUnix {
@@ -136,16 +82,13 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 		}
 	}
 
-	// Compute delay from the count of prior boots in the window.
 	n := len(recent) // boots before this one
 	delay := computeRestartBackoffDelay(n, cfg.Base, cfg.Cap)
 
-	// Append this boot and persist.
 	rec.SchemaVersion = 1
 	rec.BootTimesUnix = append(recent, now.Unix())
 	if writeErr := writeRestartRecord(ctx, path, rec); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: restart-backoff: write %q: %v\n", path, writeErr)
-		// Non-fatal: proceed even if we can't persist.
 	}
 
 	if delay > 0 {
@@ -157,11 +100,6 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 	return delay
 }
 
-// sleepBootBackoff blocks for delay, cancellable early via ctx. It is a no-op
-// when delay is 0. Callers MUST invoke this only after the daemon's socket is
-// already bound (hk-uzvt9) — the backoff throttles dispatch, not liveness, so
-// it must never block the supervisor's health-window from observing a live
-// socket.
 func sleepBootBackoff(ctx context.Context, delay time.Duration) {
 	if delay <= 0 {
 		return
@@ -172,14 +110,10 @@ func sleepBootBackoff(ctx context.Context, delay time.Duration) {
 	}
 }
 
-// computeRestartBackoffDelay returns base × 2^(n−1), capped at cap.
-// Returns 0 when n <= 0 (no prior rapid boots — first boot or window has cleared).
 func computeRestartBackoffDelay(n int, base, cap time.Duration) time.Duration {
 	if n <= 0 {
 		return 0
 	}
-	// Guard against int overflow in the exponent: beyond n=30 the cap is always
-	// reached regardless, so clamp n before the float computation.
 	if n > 30 {
 		n = 30
 	}
@@ -190,8 +124,6 @@ func computeRestartBackoffDelay(n int, base, cap time.Duration) time.Duration {
 	return delay
 }
 
-// readRestartRecord reads and parses the boot-record file at path.
-// Returns (zero, *os.PathError) when path does not exist.
 func readRestartRecord(path string) (restartRecord, error) {
 	//nolint:gosec // G304: path derived from projectDir (operator-controlled daemon arg)
 	data, err := os.ReadFile(path)
@@ -205,11 +137,6 @@ func readRestartRecord(path string) (restartRecord, error) {
 	return rec, nil
 }
 
-// writeRestartRecord writes rec atomically (temp+rename+fsync) to path.
-// The directory is created on demand.
-//
-// ctx reaches the cleanup log line only. It does not abort the write: the boot
-// record must land whole or not at all, and it is already best-effort.
 func writeRestartRecord(ctx context.Context, path string, rec restartRecord) error {
 	dir := filepath.Dir(path)
 	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {

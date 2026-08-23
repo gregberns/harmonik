@@ -1,20 +1,5 @@
 package daemon_test
 
-// t4_exploratory_test.go — T4 bead-state edge cases (exploratory testing wave).
-//
-// Scope (per EXPLORATORY_TESTING_PLAN.md T4 row):
-//   - Empty queue: daemon started with zero ready beads — should idle, not crash.
-//   - Bead claimed externally between Ready and ClaimBead — race; loop should handle gracefully.
-//   - ReopenBead path: handler exits non-zero — bead should be reopen-able, then dispatchable again.
-//   - Bead deleted from DB while in flight — what happens at CloseBead?
-//   - Two simultaneous work loops against the same beads.db — does ClaimBead detect conflict?
-//
-// All tests use the exported test seam (daemon.ExportedRunWorkLoop) so that no
-// real `br` binary or Claude API is required. Findings from behaviour observed
-// here are recorded in test/exploratory/findings-T4.md.
-//
-// Helper prefix: t4Fixture (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"errors"
@@ -30,12 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T4 fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t4FixtureSetup creates a minimal project directory tree and git repo for T4
-// tests. Returns the project dir.
 func t4FixtureSetup(t *testing.T) string {
 	t.Helper()
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -43,8 +22,6 @@ func t4FixtureSetup(t *testing.T) string {
 	return projectDir
 }
 
-// t4FixtureDeps constructs ExportedTestRuntime for T4 tests with a
-// configurable ledger and handler.
 func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handlerBinary string, handlerArgs []string) daemon.TestRuntimeParams {
 	t.Helper()
 	return daemon.TestRuntimeParams{
@@ -58,11 +35,6 @@ func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handle
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// t4StubLedger — configurable stub for T4 edge cases
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t4StubLedger is a thread-safe stub bead ledger with configurable fault injection.
 type t4StubLedger struct {
 	mu sync.Mutex
 
@@ -108,10 +80,6 @@ func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 }
 
 func (s *t4StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	// workflow:single is load-bearing; see stubBeadLedger.labels. An unlabelled
-	// bead selects the reviewed graph, whose commit gate cannot pass in a fixture
-	// repo that holds one README, so every run here reopened its bead and the
-	// scenarios below read that retry loop as their own subject breaking.
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
@@ -174,10 +142,6 @@ func (s *t4StubLedger) getReopenedIDs() []core.BeadID {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S1: Empty queue — daemon idles without crashing
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestT4_EmptyQueue confirms the work loop idles cleanly when no beads are
 // ready. It must not panic, must not error, and must return nil when the
 // context is cancelled.
@@ -195,9 +159,6 @@ func TestT4_EmptyQueue(t *testing.T) {
 
 	deps := daemon.ExportedTestRuntime(t4FixtureDeps(t, projectDir, ledger, "/bin/sh", []string{"-c", "exit 0"}))
 
-	// Run the loop for a short period — should poll, find nothing, sleep, repeat.
-	// The budget is an outer bound only: the loop is stopped by the explicit
-	// cancel below, never by this context expiring.
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -206,10 +167,8 @@ func TestT4_EmptyQueue(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Let it poll a few times (loop sleep is 2s).
 	time.Sleep(250 * time.Millisecond)
 
-	// Verify the loop is still alive — not panicked, not exited early.
 	select {
 	case err := <-done:
 		if err != nil {
@@ -221,7 +180,6 @@ func TestT4_EmptyQueue(t *testing.T) {
 		t.Log("T4-S1: loop still alive after 250ms with empty queue — correct")
 	}
 
-	// Cancel and wait for clean return.
 	cancel()
 	if err := awaitLoopTeardownErr(t, done, "T4-S1 work loop"); err != nil {
 		t.Errorf("T4-S1: work loop returned non-nil error on ctx cancel: %v", err)
@@ -229,17 +187,12 @@ func TestT4_EmptyQueue(t *testing.T) {
 		t.Log("T4-S1: PASS — loop exited cleanly on cancel with empty queue")
 	}
 
-	// Confirm Ready was called at least once.
 	if count := ledger.getReadyCallCount(); count == 0 {
 		t.Error("T4-S1: FINDING: Ready was never called — loop did not poll with empty queue")
 	} else {
 		t.Logf("T4-S1: Ready called %d time(s) before cancel", count)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S2: Bead claimed externally between Ready and ClaimBead
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4_ClaimConflict simulates the race where another process claims the bead
 // between the work loop's Ready poll and its ClaimBead call. The stub returns an
@@ -255,13 +208,9 @@ func TestT4_ClaimConflict(t *testing.T) {
 
 	projectDir := t4FixtureSetup(t)
 
-	// The first ClaimBead call fails (simulates external claim). Subsequent
-	// calls succeed (simulates the bead being different next round).
 	const beadID = core.BeadID("t4-claim-conflict-001")
 
 	ledger := &t4StubLedger{}
-	// Seed the bead for the first Ready call; it will be returned each time
-	// we add it back manually. We use a custom approach: overload claimErr.
 	ledger.ready = []core.BeadID{beadID}
 	ledger.claimErr = errors.New("t4: simulated external claim conflict")
 
@@ -285,11 +234,8 @@ func TestT4_ClaimConflict(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait long enough for the loop to attempt the claim and back off.
-	// Poll interval is 2s; give it 3s to show claim was attempted + backed off.
 	time.Sleep(300 * time.Millisecond)
 
-	// After 300ms: claim should have been attempted and failed.
 	claimAttempts := ledger.getClaimCallCount()
 	if claimAttempts == 0 {
 		t.Log("T4-S2: claim not yet attempted at 300ms — may still be in Ready poll")
@@ -297,7 +243,6 @@ func TestT4_ClaimConflict(t *testing.T) {
 		t.Logf("T4-S2: claim attempted %d time(s) at 300ms", claimAttempts)
 	}
 
-	// No bead should be closed or reopened — the claim failed before dispatch.
 	if len(ledger.getClosedIDs()) > 0 {
 		t.Errorf("T4-S2: FINDING: bead was closed despite ClaimBead failure: %v", ledger.getClosedIDs())
 	}
@@ -305,7 +250,6 @@ func TestT4_ClaimConflict(t *testing.T) {
 		t.Logf("T4-S2: ReopenBead called after ClaimBead failure: %v — investigating intent", ledger.getReopenedIDs())
 	}
 
-	// run_started must NOT be emitted if claim failed.
 	eventTypes := collector.eventTypes()
 	for _, et := range eventTypes {
 		if et == string(core.EventTypeRunStarted) {
@@ -321,10 +265,6 @@ func TestT4_ClaimConflict(t *testing.T) {
 		t.Log("T4-S2: PASS — loop exited cleanly after claim conflict + ctx cancel")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S3: ReopenBead path — handler exits non-zero, bead reopened, then dispatched again
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4_ReopenThenRedispatch confirms that after a non-zero handler exit the
 // bead is reopened (ReopenBead called), and when the same bead appears in the
@@ -342,30 +282,15 @@ func TestT4_ReopenThenRedispatch(t *testing.T) {
 
 	const beadID = core.BeadID("t4-reopen-redispatch-001")
 
-	// Seed two iterations: first fails (exit 1), second succeeds (exit 0).
-	// The second iteration simulates the operator "re-reading" the bead after reopen.
-	// We inject the bead a second time into the ready queue after the first failure
-	// via the t4RequeueLedger wrapper.
-
-	// requeue-on-reopen ledger
 	requeueLedger := &t4RequeueLedger{
 		inner: &t4StubLedger{
 			ready: []core.BeadID{beadID},
 		},
 	}
 
-	// Handler: first call exits 1, second call exits 0.
-	// We use a temp file to track invocation count.
 	handlerDir := t.TempDir()
 	handlerScript := handlerDir + "/handler.sh"
 	counterFile := handlerDir + "/counter"
-	// Iteration 2 COMMITS before it exits 0. The commit has to come from the
-	// handler and not from a worktree factory: the graph node reads the worktree
-	// HEAD just before the launch and keeps it as the node baseline, so a factory
-	// commit is already in the baseline and the node's no-advance guard refuses
-	// the run. git is called by absolute path because the child environment
-	// carries no PATH, and stdout goes to stderr because the handler contract
-	// reads the child's stdout as an NDJSON stream.
 	gitPath, gitErr := exec.LookPath("git")
 	if gitErr != nil {
 		t.Fatalf("T4-S3: git not found on PATH: %v", gitErr)
@@ -400,12 +325,6 @@ exit 0
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// This scenario runs the work loop through TWO full iterations (iter-1 fails
-	// exit 1 → reopen; iter-2 exits 0 → empty-commit merge-to-main → close). Each
-	// iteration pays the stopHookGrace (~3s) window plus worktree-create + merge
-	// overhead, so the close arrives at ~8s. One generous budget bounds the whole
-	// test — it still breaks out of the poll the instant the bead closes
-	// (hk-st77j).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -414,7 +333,6 @@ exit 0
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until bead is closed (the happy path closes at ~8s).
 	for len(requeueLedger.getClosedIDs()) == 0 {
 		select {
 		case <-ctx.Done():
@@ -427,7 +345,6 @@ exit 0
 	}
 done:
 
-	// Verify ReopenBead was called first.
 	reopened := requeueLedger.getReopenedIDs()
 	if len(reopened) == 0 {
 		t.Error("T4-S3: FINDING: ReopenBead was never called after non-zero handler exit")
@@ -435,7 +352,6 @@ done:
 		t.Logf("T4-S3: ReopenBead called for: %v", reopened)
 	}
 
-	// Verify run_failed event emitted.
 	events := collector.eventTypes()
 	foundFailed := false
 	for _, et := range events {
@@ -448,7 +364,6 @@ done:
 		t.Errorf("T4-S3: FINDING: run_failed event not emitted after non-zero exit; events: %v", events)
 	}
 
-	// Verify run_completed (success) emitted for the second dispatch.
 	foundCompleted := false
 	for _, et := range events {
 		if et == string(core.EventTypeRunCompleted) {
@@ -467,10 +382,6 @@ done:
 		t.Errorf("T4-S3: loop returned error after reopen+redispatch: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S4: Bead deleted from DB while in flight — CloseBead error handling
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4_CloseBeadError confirms the work loop continues processing after a run
 // fails. The loop must not crash, must not hang, and must attempt to process the
@@ -530,9 +441,6 @@ func TestT4_CloseBeadError(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Two sequential dispatches, each paying runloop.StopHookGrace, put a
-	// 6-second floor under this test. Its budget was 7 seconds and the margin was
-	// never real (hk-scenario-budgets-structural-2z9dx).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -541,12 +449,6 @@ func TestT4_CloseBeadError(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for both beads to reach CloseBead AND for both runs to emit a terminal.
-	// Two separate waits are needed and neither alone is enough. A claim is taken
-	// at the START of a run, so the claim count says nothing about outcomes. The
-	// close count says both runs reached the ladder this test is about -- but the
-	// terminal event is emitted AFTER CloseBead returns, so a close count of 2 can
-	// still be one terminal short, and asserting then reads a half-finished loop.
 	terminals := func() int {
 		n := 0
 		for _, et := range collector.eventTypes() {
@@ -582,8 +484,6 @@ doneS4:
 		}
 	}
 
-	// The split-brain property (hk-wfbxf, EM-052 step 6). A run whose bead close
-	// failed must not report a completed run.
 	if completedCount != 0 {
 		t.Errorf("T4-S4: FINDING: run_completed emitted %d time(s) despite CloseBead failing; the bead is not closed and the event log says otherwise (hk-wfbxf, EM-052 step 6); events=%v", completedCount, events)
 	}
@@ -591,15 +491,10 @@ doneS4:
 		t.Errorf("T4-S4: FINDING: expected a run_failed terminal for each of the 2 beads, got %d; events=%v", failedCount, events)
 	}
 
-	// Nothing was closed: CloseBead returned closeErr on both attempts.
 	if ids := ledger.getClosedIDs(); len(ids) != 0 {
 		t.Errorf("T4-S4: expected no closed IDs since closeErr injected; got: %v", ids)
 	}
 
-	// A HARD close error must not reopen the bead on the ORDINARY close ladder
-	// (hk-c1ah6 / hk-hypbi). Reopening would re-dispatch work whose ledger state
-	// nobody can trust. AttentionClose is the documented exception and this fixture
-	// does not set it.
 	if opened := ledger.getReopenedIDs(); len(opened) != 0 {
 		t.Errorf("T4-S4: FINDING: hard CloseBead error reopened %v; a bead whose close failed must be left alone for operator triage (hk-c1ah6/hk-hypbi)", opened)
 	}
@@ -611,10 +506,6 @@ doneS4:
 		t.Log("T4-S4: PASS — loop exited cleanly despite CloseBead errors")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S5: Two concurrent work loops against the same bead queue
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4_ConcurrentLoops checks whether two work loops running against the
 // same beadLedger (stub) cause double-dispatch of the same bead. In production
@@ -636,12 +527,8 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 
 	projectDir := t4FixtureSetup(t)
 
-	// Single bead in the queue. Both loops will see it on their first Ready call.
 	const beadID = core.BeadID("t4-concurrent-001")
 
-	// We need a shared ledger so both loops see the same queue state.
-	// Use t4StubLedger which drains one bead per Ready call.
-	// First Ready call returns [beadID]; second returns [].
 	sharedLedger := &t4StubLedger{
 		ready: []core.BeadID{beadID},
 	}
@@ -676,7 +563,6 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 	go func() { done1 <- daemon.ExportedRunWorkLoop(ctx, deps1) }()
 	go func() { done2 <- daemon.ExportedRunWorkLoop(ctx, deps2) }()
 
-	// Wait for at least one close to be recorded, bounded by the context.
 	for len(sharedLedger.getClosedIDs()) == 0 {
 		select {
 		case <-ctx.Done():
@@ -690,7 +576,6 @@ doneS5:
 	closedIDs := sharedLedger.getClosedIDs()
 	t.Logf("T4-S5: CloseBead called %d time(s) total; IDs: %v", len(closedIDs), closedIDs)
 
-	// Count how many times the same bead was closed.
 	dupCount := 0
 	for _, id := range closedIDs {
 		if id == beadID {
@@ -706,7 +591,6 @@ doneS5:
 		t.Log("T4-S5: bead was not closed in observation window")
 	}
 
-	// Check claim counts.
 	claimCount := sharedLedger.getClaimCallCount()
 	t.Logf("T4-S5: ClaimBead called %d time(s)", claimCount)
 	if claimCount > 1 {
@@ -722,10 +606,6 @@ doneS5:
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T4-S6: CloseBead error ordering — run_completed emitted before or after CloseBead?
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4_EventOrderingOnCloseError checks the event ordering when CloseBead
 // returns an error. In workloop.go (steps 9 & 10), run_completed is emitted
@@ -743,7 +623,6 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 
 	const beadID = core.BeadID("t4-event-order-001")
 
-	// Intercept close to record whether run_completed was already emitted.
 	type orderRecorder struct {
 		t4StubLedger
 		eventCollector       *stubEventCollector
@@ -773,11 +652,6 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Real buildClaudeLaunchSpec + emptyCommitWorktreeFactory run; the handler
-	// exits 0 (HEAD already advanced by the factory's --allow-empty commit),
-	// stopHookGrace (~3s) fires, the run-branch merges to main, then CloseBead
-	// is called, and the budget covers git worktree creation plus that grace
-	// window (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -810,11 +684,6 @@ doneS6:
 	<-done
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper types for T4-S3 (requeue-on-reopen) and T4-S6 (order recorder)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t4RequeueLedger wraps t4StubLedger and re-queues a bead to ready after ReopenBead.
 type t4RequeueLedger struct {
 	inner *t4StubLedger
 }
@@ -838,7 +707,6 @@ func (r *t4RequeueLedger) CloseBead(ctx context.Context, dir string, cfg brcli.T
 func (r *t4RequeueLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, reason string) error {
 	err := r.inner.ReopenBead(ctx, dir, cfg, runID, tid, id, reason)
 	if err == nil {
-		// Re-queue the bead so it can be dispatched again.
 		r.inner.mu.Lock()
 		r.inner.ready = append(r.inner.ready, id)
 		r.inner.mu.Unlock()
@@ -849,7 +717,6 @@ func (r *t4RequeueLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.
 func (r *t4RequeueLedger) getClosedIDs() []core.BeadID   { return r.inner.getClosedIDs() }
 func (r *t4RequeueLedger) getReopenedIDs() []core.BeadID { return r.inner.getReopenedIDs() }
 
-// t4OrderLedger intercepts CloseBead to check event ordering.
 type t4OrderLedger struct {
 	inner                *t4StubLedger
 	collector            *stubEventCollector
@@ -871,7 +738,6 @@ func (o *t4OrderLedger) ClaimBead(ctx context.Context, dir string, cfg brcli.Tim
 }
 
 func (o *t4OrderLedger) CloseBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, _ bool) error {
-	// Check whether run_completed has already been emitted at close time.
 	events := o.collector.eventTypes()
 	hasCompleted := false
 	for _, et := range events {
@@ -896,10 +762,6 @@ func (o *t4OrderLedger) closeCallCount() int {
 	defer o.mu.Unlock()
 	return o.callCount
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// writeTestFile helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 func writeTestFile(t *testing.T, path, content string, mode uint32) error {
 	t.Helper()

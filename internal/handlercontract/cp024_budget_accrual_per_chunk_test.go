@@ -1,33 +1,5 @@
 package handlercontract_test
 
-// cp024_budget_accrual_per_chunk_test.go — CP-024 conformance sensor.
-//
-// Invariant (specs/control-points.md §4.5.CP-024):
-//
-//	Every agent-output chunk MUST emit a budget_accrual event within the same
-//	handler tick that produces the chunk (bounded by the handler's
-//	chunk-emission cadence per [handler-contract.md §4.2]).
-//
-// This sensor verifies:
-//
-//  1. For each agent_output_chunk in the progress stream, exactly one
-//     budget_accrual event is emitted to the bus.
-//  2. Each budget_accrual event is emitted immediately after its corresponding
-//     agent_output_chunk (adjacent in the bus receive order).
-//  3. The budget_accrual payload carries the chunk_index from the chunk,
-//     cost_basis = "output_bytes", and cost_units = float64(bytes_emitted).
-//  4. No budget_accrual events are emitted for non-chunk message types.
-//
-// Helper prefix: cp024Fixture (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-a8bg.23).
-//
-// Spec refs:
-//   - specs/control-points.md §4.5.CP-024 (per-chunk accrual MUST)
-//   - specs/event-model.md §8.4.2 (budget_accrual payload)
-//   - specs/handler-contract.md §4.2.HC-007 (progress-stream message types)
-//
-// Bead: hk-a8bg.23.
-
 import (
 	"context"
 	"encoding/json"
@@ -39,18 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// cp024FixtureRunID is the stable RunID used in chunk progress messages.
 const cp024FixtureRunID = "01960084-0000-7000-8000-000000000024"
 
-// cp024FixtureSessionID is the stable handler-assigned session ID in chunks.
 const cp024FixtureSessionID = "cp024-handler-session-01"
 
-// cp024FixtureOrderedEmitter records events in emission order, capturing both
-// type and payload bytes for budget_accrual inspection.
 type cp024FixtureOrderedEmitter struct {
 	events []cp024FixtureEvent
 }
@@ -69,8 +33,6 @@ func (r *cp024FixtureOrderedEmitter) EmitWithRunID(ctx context.Context, _ core.R
 	return r.Emit(ctx, eventType, payload)
 }
 
-// cp024FixtureChunkLine encodes one agent_output_chunk NDJSON line with the
-// given chunk_index and bytes_emitted values.
 func cp024FixtureChunkLine(t *testing.T, chunkIndex, bytesEmitted int) string {
 	t.Helper()
 	m := map[string]interface{}{
@@ -87,7 +49,6 @@ func cp024FixtureChunkLine(t *testing.T, chunkIndex, bytesEmitted int) string {
 	return string(b) + "\n"
 }
 
-// cp024FixtureWaitDone waits for the watcher to finish with a short deadline.
 func cp024FixtureWaitDone(t *testing.T, w *handlercontract.Watcher) {
 	t.Helper()
 	select {
@@ -96,10 +57,6 @@ func cp024FixtureWaitDone(t *testing.T, w *handlercontract.Watcher) {
 		t.Fatal("cp024FixtureWaitDone: watcher did not finish within 3s")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CP-024 sensor tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCP024_BudgetAccrualEmittedPerChunk is the primary CP-024 acceptance sensor.
 //
@@ -132,7 +89,6 @@ func TestCP024_BudgetAccrualEmittedPerChunk(t *testing.T) {
 		t.Errorf("CP-024: dead-letter has %d event(s), want 0: %v", len(dl.Events()), dl.Events())
 	}
 
-	// Expect 2 events per chunk: agent_output_chunk then budget_accrual.
 	wantTotal := nChunks * 2
 	if len(bus.events) != wantTotal {
 		t.Fatalf("CP-024: event count = %d, want %d (2 per chunk); types = %v",
@@ -182,7 +138,6 @@ func TestCP024_BudgetAccrualPayloadFields(t *testing.T) {
 		t.Errorf("CP-024 payload: dead-letter has events: %v", dl.Events())
 	}
 
-	// Two events: chunk then budget_accrual.
 	if len(bus.events) < 2 {
 		t.Fatalf("CP-024 payload: event count = %d, want >= 2", len(bus.events))
 	}
@@ -270,8 +225,6 @@ func TestCP024_BudgetAccrualInterleavedWithOtherTypes(t *testing.T) {
 	})
 	cp024FixtureWaitDone(t, w)
 
-	// Expected order: agent_ready, agent_output_chunk, budget_accrual,
-	// agent_heartbeat, agent_output_chunk, budget_accrual, agent_started.
 	wantTypes := []string{
 		"agent_ready",
 		handlercontract.ProgressMsgTypeAgentOutputChunk,
@@ -294,11 +247,6 @@ func TestCP024_BudgetAccrualInterleavedWithOtherTypes(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// cp024FixtureEventTypes returns just the event type strings from a slice of events.
 func cp024FixtureEventTypes(events []cp024FixtureEvent) []string {
 	types := make([]string, len(events))
 	for i, ev := range events {

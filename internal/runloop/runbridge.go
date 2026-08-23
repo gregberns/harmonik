@@ -1,13 +1,3 @@
-// runbridge.go — the RT7 beadRunOne composition root for the pure Run reactor
-// (internal/runexec; RSM-007, RSM-031..035). runBridge owns the per-run Run
-// machine + runShell pair and the shell-side event synthesis: beadRunOne feeds
-// it shell-classified events (provisioning failures, the dispatch-terminal
-// classes, the frozen-commit watchdog outcome) and the machine drives the
-// reopen/close terminal spine through the effector hooks wired here.
-//
-// Spec: specs/run-state-machine.md §12 Amendment A1. Design:
-// .kerf/works/2026-07-14-run-state-machine/04-design/rt7-single-mode-failure-mapping.md.
-
 package runloop
 
 import (
@@ -46,23 +36,6 @@ type RunBridge struct {
 	draining bool
 }
 
-// runBridgeConfig maps a workflow mode onto its RunConfig divergence parameters
-// (RSM-020): single has no merge retry and composes its transient from the
-// latched path label; DOT retries the merge step (1 + maxMergeStepRetries=2)
-// with its success transient.
-//
-// DOT INHERITED the 3-attempt merge budget from the retired review-loop mode
-// (hk-f9xzs), deliberately rather than by omission. The reasons the review-loop
-// had it apply verbatim to DOT: the retryable reasons runmerge.IsRetryableReason
-// classifies — rebase_conflict, non_ff_merge, merge_fmt_failed — are artifacts of
-// CONCURRENT merge-to-main, not properties of a workflow shape. They get MORE
-// likely as concurrency rises, not less, and DOT runs under the same
-// --max-concurrent as review-loop did. Letting the budget lapse to 1 when
-// review-loop was deleted would have made the surviving default mode strictly
-// less robust at the merge step than the mode it replaced — a regression
-// introduced by a deletion, which is the failure this port exists to avoid.
-//
-// single keeps its single attempt (A1 §3), unchanged and out of scope here.
 func runBridgeConfig(mode core.WorkflowMode) runexec.RunConfig {
 	cfg := runexec.RunConfig{
 		Mode:             string(mode),
@@ -99,8 +72,6 @@ func NewRunBridge(env RunEnv, rp RunPorts, handles SharedHandles, runID core.Run
 			emitRunTerminal(c, success, summary, b.draining)
 		},
 		CreateWorktree: func(context.Context) []runexec.Event {
-			// The worktree is provisioned imperatively in beadRunOne (shared
-			// across all modes); by the time the machine starts it exists.
 			return []runexec.Event{{Kind: runexec.EvProvisioned}}
 		},
 		Emit: b.emit,
@@ -117,9 +88,6 @@ func (b *RunBridge) Success() bool { return b.m.State().Success }
 // caller-classified terminal path.
 func (b *RunBridge) SetRejectReason(reason string) { b.rejectReason = reason }
 
-// reopenBead is the ActReopenBead hook. RSM-022: a terminal reopen must not
-// silently no-op under a cancelled per-run ctx (stale-watcher abort, hk-e3fy)
-// — fall back to Background.
 func (b *RunBridge) reopenBead(c context.Context, reason string) {
 	rctx := c
 	if rctx.Err() != nil {
@@ -135,10 +103,6 @@ func (b *RunBridge) reopenBead(c context.Context, reason string) {
 	}
 }
 
-// emit is the ActEmit hook. run_started and the escaped-worktree event are
-// emitted imperatively in beadRunOne (the former pre-mode-switch for all
-// modes, the latter with its full dirty-file payload at the guard), so both
-// are no-ops here; outcome_emitted resolves the RSM-034 rejected reason.
 func (b *RunBridge) emit(c context.Context, typ core.EventType, detail string) {
 	if typ != core.EventTypeOutcomeEmitted {
 		return
@@ -244,8 +208,6 @@ func (b *RunBridge) WireSpine(a SpineArgs) {
 	b.sh.eff.CloseBead = b.closeHook(a)
 }
 
-// gateHook runs the scenario gate (hk-i2ie5). REMOTE: routed via RunRunner so
-// the gate runs on the worker (nil ⇒ local). SkipGate (DOT) records a pass.
 func (b *RunBridge) gateHook(a SpineArgs) func(context.Context) []runexec.Event {
 	return func(c context.Context) []runexec.Event {
 		if a.SkipGate {
@@ -259,12 +221,6 @@ func (b *RunBridge) gateHook(a SpineArgs) func(context.Context) []runexec.Event 
 	}
 }
 
-// mergeHook runs the DD1 code-sync (remote-substrate B8, first attempt only)
-// then the §4.12.EM-052 merge; the staged result feeds the machine (RSM-033
-// rows 5–8). It owns the per-attempt shell policy: the trailer amend before
-// each attempt (hk-dyim; per-retry re-amend RF :3899), the retry-progress log
-// line, and the Retryable / CarveOut classification the machine's
-// merge-retry budget consumes (RSM-019).
 func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 	attempt := 0
 	lastReason := ""
@@ -280,18 +236,12 @@ func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 				return
 			}
 		} else {
-			// §4.12 merge-step retry (hk-f9xzs): log progress with the prior
-			// attempt's failure reason, then re-amend the trailers (the prior
-			// inner rebase may have rewritten HEAD).
 			fmt.Fprintf(os.Stderr, "daemon: workloop: merge-step retry %d/%d (bead %s): %s\n",
 				attempt-1, b.m.State().MergeAttempt+1, b.beadID, lastReason)
 		}
 		if a.AmendTrailers != nil {
 			a.AmendTrailers(c, attempt-1)
 		}
-		// hk-lgykq: land on the per-bead integration branch (MergeTarget =
-		// resolved baseBranch), not the daemon-wide default; fall back to
-		// env.TargetBranch when resolveBranching left MergeTarget empty.
 		mergeInto := a.MergeTarget
 		if mergeInto == "" {
 			mergeInto = b.env.TargetBranch
@@ -303,7 +253,6 @@ func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 		case mergeRes.Success:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeSuccess})
 		default:
-			// EM-053: non-FF or push failure → merge-failure classification.
 			b.rejectReason = mergeRes.Reason
 			lastReason = mergeRes.Reason
 			ev := runexec.Event{
@@ -321,25 +270,14 @@ func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 	}
 }
 
-// drainMergeHook is the RSM-021 shutdown-drain merge effector: it merges the
-// committed run branch under a cancellation-free context (the per-run ctx IS
-// cancelled on this path — the pre-RT9 block used context.Background()) and
-// feeds the staged result; a failure is logged and routed to the machine's
-// drain requeue-reopen row.
 func (b *RunBridge) drainMergeHook(a SpineArgs) func(context.Context, string) []runexec.Event {
 	return func(c context.Context, _ string) []runexec.Event {
-		// A graceful drain can start before its parent context is cancelled.
-		// Detach every release operation now, so a later cancellation cannot
-		// interrupt the required synchronize-and-merge result.
 		mctx := context.WithoutCancel(c)
 		if syncReason := a.PreMergeSync(mctx); syncReason != "" {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: sync failed for bead %s: %s; reopening for re-dispatch\n",
 				b.beadID, syncReason)
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal, MergeReason: syncReason}}
 		}
-		// hk-lgykq: shutdown-drain merge also lands on the per-bead integration
-		// branch (MergeTarget = resolved baseBranch); fall back to the
-		// daemon-wide target when MergeTarget is empty.
 		mergeInto := a.MergeTarget
 		if mergeInto == "" {
 			mergeInto = b.env.TargetBranch
@@ -358,28 +296,15 @@ func (b *RunBridge) drainMergeHook(a SpineArgs) func(context.Context, string) []
 	}
 }
 
-// closeHook performs the RSM-020 close-ladder bead close and classifies the
-// return (hk-hypbi: transient BrUnavailable after a successful merge is a
-// success; a hard error carries its shell-composed summary, row 12). The
-// needs-attention flag rides the ActCloseBead action (the budget-exhausted
-// ladder, hk-c1ah6). Drain closes run under a cancellation-free context and
-// compose the drain close-error label (RSM-021 effector policy).
 func (b *RunBridge) closeHook(a SpineArgs) func(context.Context, string, bool) []runexec.Event {
 	return func(c context.Context, _ string, needsAttention bool) []runexec.Event {
 		cctx := c
-		// RSM-021 drain policy only: the pre-RT9 drain block closed under a
-		// background context. Non-drain closes keep the caller ctx untouched.
 		if b.draining {
 			cctx = context.WithoutCancel(c)
 		}
 		if closeErr := b.rp.Ledger.CloseBead(cctx, b.runID, a.TransitionTID, b.beadID, needsAttention); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", b.beadID, closeErr)
 			if b.draining {
-				// RSM-021: every shutdown-drain close failure, including a
-				// transient ledger failure, takes the reopen → run_failed
-				// ladder. The ordinary close ladder may retain an in-progress
-				// bead after BrUnavailable, but that would leave drain without
-				// its one terminal result.
 				b.reopenBead(cctx, "context_cancelled: daemon shutdown, requeue pending")
 				return []runexec.Event{{
 					Kind: runexec.EvCloseResult, Close: runexec.CloseError,

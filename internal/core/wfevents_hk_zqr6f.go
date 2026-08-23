@@ -1,14 +1,5 @@
 package core
 
-// wfevents_hk_zqr6f.go — event-bus payload for the skills_resolved event type.
-//
-// Emitted at workflow-ingest time when a node's skills_ref attribute resolves
-// to a skill_sets[] entry in the run's policy YAML per control-points.md §4.13
-// CP-057. One event per node that carries a non-empty skills_ref.
-//
-// Spec ref: specs/control-points.md §4.13 CP-057.
-// Bead ref: hk-zqr6f.
-
 // SkillsResolvedPayload is the typed event payload for the skills_resolved event.
 //
 // Tags: mechanism

@@ -1,33 +1,5 @@
 package daemon
 
-// bootreconcile_unreadable_registry_test.go — what the boot reconcile is allowed
-// to write off when it cannot read the run registry.
-//
-// reconcileInFlightRuns builds one set — the beads that a run on disk says an
-// agent is still working — and hands it to reconcileOrphanedRunsOnResume, whose
-// only use for it is to EXCLUDE those beads. Everything not in the set is read
-// as wreckage: a run_failed event is emitted against it and its bead is reset so
-// the queue can dispatch it again.
-//
-// Reading the registry is all-or-nothing. runpkg.ScanRegistry refuses the whole
-// scan over one torn file rather than returning the records it could parse, so
-// the error leaves an EMPTY set — which is byte-for-byte what "no run survived
-// the restart" looks like. The reconcile then reports a working agent's run
-// failed and puts its bead back on the queue, and a second agent is dispatched
-// onto a bead and a branch that are already in hand.
-//
-// The sweep next door was taught to stand down on this. The reconcile runs
-// immediately after it, inside the same runOrphanSweepAndAdopt call, so the
-// sweep's gate never reached here.
-//
-// The two tests hold one claim between them: a boot that cannot prove a run is
-// dead writes nothing off, and a boot that can still recovers what died. The
-// second is what stops the first passing for a reconcile that has gone inert.
-//
-// Helper prefix: badBootRegistry. The unparseable record is the one from
-// orphansweep_unreadable_registry_test.go, because it is the same file shape
-// failing the same scan.
-
 import (
 	"encoding/json"
 	"os"
@@ -44,9 +16,6 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
-// The two runs every drive of this fixture carries. Both emitted run_started and
-// neither emitted a terminal event, which is the one shape a surviving run and a
-// crashed run share.
 var (
 	badBootRegistryLiveRun    = core.RunID(uuid.MustParse("0f0e0d0c-0b0a-4908-8706-05040302ee01"))
 	badBootRegistryCrashedRun = core.RunID(uuid.MustParse("0f0e0d0c-0b0a-4908-8706-05040302ee02"))
@@ -57,31 +26,20 @@ const (
 	badBootRegistryCrashedBead = core.BeadID("hk-daemon-died-under-it")
 )
 
-// badBootRegistryOutcome is one drive of the boot reconcile over the fixture.
 type badBootRegistryOutcome struct {
 	ledger     *noWriterLedger
 	failedRuns map[core.RunID]struct{}
 }
 
-// beadReset reports whether the reconcile put beadID back on the queue.
 func (o badBootRegistryOutcome) beadReset(beadID core.BeadID) bool {
 	return o.ledger.wasReset(beadID)
 }
 
-// markedFailed reports whether a run_failed was emitted against runID.
 func (o badBootRegistryOutcome) markedFailed(runID core.RunID) bool {
 	_, failed := o.failedRuns[runID]
 	return failed
 }
 
-// badBootRegistryReconcile builds a project holding one live run and one crashed
-// run, optionally drops an unparseable record beside them, and drives the boot
-// reconcile over it.
-//
-// Only the live run has a registry record, because that is the whole difference
-// between the two: the crashed run's daemon died before it could write one, or
-// the record went with the crash. In the durable event log the two are the same
-// — run_started, then nothing.
 func badBootRegistryReconcile(t *testing.T, withTornRecord bool) badBootRegistryOutcome {
 	t.Helper()
 
@@ -101,8 +59,6 @@ func badBootRegistryReconcile(t *testing.T, withTornRecord bool) badBootRegistry
 		if writeErr := os.WriteFile(tornPath, []byte(`{"schema_version":`), 0o600); writeErr != nil {
 			t.Fatalf("badBootRegistry: write the torn record: %v", writeErr)
 		}
-		// Harness check, not decoration. If the scan still succeeds, this drive
-		// measures the ordinary path and every assertion below is free.
 		if _, scanErr := runpkg.ScanRegistry(projectDir); scanErr == nil {
 			t.Fatalf("badBootRegistry: the registry at %s still reads cleanly with %s in it.\n"+
 				"This test is about what the reconcile does when the scan FAILS, and here it did not.",
@@ -110,9 +66,6 @@ func badBootRegistryReconcile(t *testing.T, withTornRecord bool) badBootRegistry
 		}
 	}
 
-	// One log, written to and then read from, exactly as the daemon has it: the
-	// reconcile scans this path for orphans and emits its terminal events onto
-	// the same bus.
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	writer, openErr := eventbus.OpenJSONLWriter(eventsPath)
 	if openErr != nil {
@@ -154,8 +107,6 @@ func badBootRegistryReconcile(t *testing.T, withTornRecord bool) badBootRegistry
 	}
 }
 
-// badBootRegistryFailedRuns reads the event log and returns the run ids that a
-// run_failed was emitted against.
 func badBootRegistryFailedRuns(t *testing.T, eventsPath string) map[core.RunID]struct{} {
 	t.Helper()
 	raw, readErr := os.ReadFile(eventsPath) //nolint:gosec // G304: the path comes from t.TempDir
@@ -218,8 +169,6 @@ func TestBootReconcile_AnUnreadableRunRegistryWritesOffNothing(t *testing.T) {
 			"run was written off.", badBootRegistryLiveRun)
 	}
 
-	// The crashed run is spared too, and that is the trade rather than a miss:
-	// with the registry unreadable, nothing separates it from the live one.
 	if out.beadReset(badBootRegistryCrashedBead) || out.markedFailed(badBootRegistryCrashedRun) {
 		t.Errorf("the boot reconcile acted on the crashed run (bead reset: %v, marked failed: %v) "+
 			"while it could not read the registry.\n"+

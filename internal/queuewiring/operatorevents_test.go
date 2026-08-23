@@ -1,24 +1,5 @@
 package queuewiring_test
 
-// queue_operatoreventconsumer_7urls_test.go — unit + integration tests for
-// QueueOperatorEventConsumer (hk-7urls).
-//
-// Helper prefix: queueOpDrainFixture
-//
-// Coverage:
-//   - TestQueueOpDrain_ActiveToPausedByDrain_OnPausing     — pause_status=pausing → paused-by-drain
-//   - TestQueueOpDrain_ActiveToPausedByDrain_OnPaused      — pause_status=paused  → paused-by-drain
-//   - TestQueueOpDrain_NoOpWhenAlreadyPausedByDrain        — idempotent on duplicate pause event
-//   - TestQueueOpDrain_NoOpWhenNilQueue                    — no queue loaded → no-op
-//   - TestQueueOpDrain_PausedByDrainToActive_OnResuming    — operator_resuming → active
-//   - TestQueueOpDrain_ResumeNoOpWhenActive                — already active → no-op on resume
-//   - TestQueueOpDrain_PausedByFailureNotResumedByDrain    — paused-by-failure unaffected by operator_resuming
-//   - TestQueueOpDrain_QueuePausedEventEmitted             — queue_paused{operator_drain} emitted on pause
-//   - TestQueueOpDrain_PauseSurvivesReload                 — integration: persisted paused-by-drain survives Load
-//
-// Spec ref: specs/queue-model.md §8.5 QM-054, §8.6 QM-055.
-// Bead ref: hk-7urls.
-
 import (
 	"context"
 	"encoding/json"
@@ -34,12 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// queueOpDrainFixtureSealedBus returns a sealed in-memory EventBus for tests
-// that do not need to subscribe additional consumers before Seal.
 func queueOpDrainFixtureSealedBus(t *testing.T) eventbus.EventBus {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -49,9 +24,6 @@ func queueOpDrainFixtureSealedBus(t *testing.T) eventbus.EventBus {
 	return bus
 }
 
-// queueOpDrainFixtureConsumer constructs a QueueOperatorEventConsumer with the
-// given store and an in-memory bus. The bus is NOT yet sealed so the caller can
-// subscribe the consumer before sealing.
 func queueOpDrainFixtureConsumer(
 	t *testing.T,
 	qs *queuewiring.QueueStore,
@@ -64,7 +36,6 @@ func queueOpDrainFixtureConsumer(
 	})
 }
 
-// queueOpDrainFixtureActiveQueue builds a minimal *queue.Queue with status active.
 func queueOpDrainFixtureActiveQueue(t *testing.T) *queue.Queue {
 	t.Helper()
 	queueID, err := uuid.NewV7()
@@ -172,8 +143,6 @@ func TestQueueOpDrain_PersistFailureKeepsQueueActive(t *testing.T) {
 	}
 }
 
-// queueOpDrainFixtureSynthEvent builds a minimal core.Event with the given
-// type and JSON payload.
 func queueOpDrainFixtureSynthEvent(t *testing.T, evtType string, payload interface{}) core.Event {
 	t.Helper()
 	evID, err := uuid.NewV7()
@@ -194,7 +163,6 @@ func queueOpDrainFixtureSynthEvent(t *testing.T, evtType string, payload interfa
 	}
 }
 
-// queueOpDrainFixturePauseEvent returns a synthetic operator_pause_status event.
 func queueOpDrainFixturePauseEvent(t *testing.T, status core.OperatorPauseStatusValue) core.Event {
 	t.Helper()
 	payload := core.OperatorPauseStatusPayload{
@@ -204,7 +172,6 @@ func queueOpDrainFixturePauseEvent(t *testing.T, status core.OperatorPauseStatus
 	return queueOpDrainFixtureSynthEvent(t, string(core.EventTypeOperatorPauseStatus), payload)
 }
 
-// queueOpDrainFixtureResumingEvent returns a synthetic operator_resuming event.
 func queueOpDrainFixtureResumingEvent(t *testing.T) core.Event {
 	t.Helper()
 	payload := core.OperatorResumingPayload{
@@ -212,10 +179,6 @@ func queueOpDrainFixtureResumingEvent(t *testing.T) core.Event {
 	}
 	return queueOpDrainFixtureSynthEvent(t, string(core.EventTypeOperatorResuming), payload)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// State-transition unit tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueOpDrain_ActiveToPausedByDrain_OnPausing verifies that an
 // operator_pause_status{status:pausing} event transitions an active queue to
@@ -301,7 +264,6 @@ func TestQueueOpDrain_NoOpWhenNilQueue(t *testing.T) {
 	bus := queueOpDrainFixtureSealedBus(t)
 	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
-	// qs has no queue loaded
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
@@ -400,7 +362,6 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
-	// Capture queue_paused events via a synchronous subscriber.
 	var capturedPayloads []core.QueuePausedPayload
 	sub := core.Subscription{
 		ConsumerID:    "test-capture-queue-paused",
@@ -451,10 +412,6 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Integration test: persisted pause survives Load (QM-055)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestQueueOpDrain_PauseSurvivesReload verifies the QM-055 requirement: a queue
 // written as paused-by-drain through queue.Persist loads back with that status
 // when read through queue.Load.
@@ -466,7 +423,6 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 func TestQueueOpDrain_PauseSurvivesReload(t *testing.T) {
 	t.Parallel()
 
-	// Set up a temporary project directory.
 	projectDir := t.TempDir()
 	harmonikDir := projectDir + "/.harmonik"
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -474,7 +430,6 @@ func TestQueueOpDrain_PauseSurvivesReload(t *testing.T) {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
-	// Build and persist a paused-by-drain queue.
 	q := &queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       "qopd-persist-test",
@@ -494,7 +449,6 @@ func TestQueueOpDrain_PauseSurvivesReload(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	// Reload and assert status is preserved.
 	loaded, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)

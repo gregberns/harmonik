@@ -83,7 +83,6 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 	//nolint:gosec // G304: pidfilePath derived from projectDir, an operator-controlled parameter; not user input
 	fd, err := os.OpenFile(pidfilePath, os.O_RDONLY, 0)
 	if err != nil {
-		// Let the caller distinguish os.IsNotExist from other errors.
 		return 0, 0, fmt.Errorf("lifecycle: ProbePidfileLock: open %q: %w", pidfilePath, err)
 	}
 	defer func() {
@@ -92,76 +91,35 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 		}
 	}()
 
-	// Step 2: attempt exclusive non-blocking flock.
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
-			// Another daemon holds the lock: caller must exit 5.
 			return PidfileLockStatusHeld, 0, ErrPidfileLocked
 		}
-		// Unexpected flock errno (ENOLCK, EBADF, ENOTSUP, …).
 		return 0, 0, fmt.Errorf("%w: %w", ErrPidfileLockError, err)
 	}
 
-	// Step 3: flock succeeded — release it immediately by closing fd via defer.
-	// Read the recorded PID before closing.
 	pid, _, _, err := ReadPidfile(projectDir)
 	if err != nil {
-		// Unparseable or empty pidfile → treat as stale per PL-024.
 		return PidfileLockStatusStale, 0, nil
 	}
 
-	// Step 4: probe kill(pid, 0).
 	killErr := syscall.Kill(pid, 0)
 	switch {
 	case killErr == nil:
-		// Process exists and is signallable — continue to step 4a.
 	case errors.Is(killErr, syscall.EPERM):
-		// EPERM means the process EXISTS but belongs to another uid, so we may
-		// not signal it. That is the opposite of "gone", and it must continue to
-		// step 4a like a successful probe. Reading permission-denied as "process
-		// is gone" — which this branch used to do, despite step 4a's comment
-		// claiming otherwise — would let a second daemon declare a live owner's
-		// pidfile stale and take it over, producing two daemons on one project.
 	case errors.Is(killErr, syscall.ESRCH):
-		// PID is dead: stale pidfile left by a crashed daemon.
 		return PidfileLockStatusStale, pid, nil
 	default:
-		// Other kill error (e.g., EINVAL for pid <= 0): treat as stale.
 		return PidfileLockStatusStale, pid, nil
 	}
 
-	// Step 4a: kill(pid, 0) succeeded, or reported EPERM — either way the
-	// process exists.
-	// The flock was acquirable but the PID is alive. Attempt optional
-	// platform-specific corroboration to distinguish two sub-cases:
-	//
-	//   a) PID was recycled after an OS reboot and now belongs to a non-harmonik
-	//      process: corroboration returns a cmdline with no "harmonik" substring.
-	//      Since the flock is not held and the process is unrelated, the pidfile
-	//      is stale → return PidfileLockStatusStale.
-	//
-	//   b) PID belongs to a harmonik process that somehow lost its flock (e.g.
-	//      force-closed fd without cleanup): corroboration returns a cmdline
-	//      containing "harmonik". This is the ambiguous case — we cannot safely
-	//      take over the pidfile without risking two daemons → return
-	//      PidfileLockStatusAmbiguous.
-	//
-	// When corroboration is unavailable (darwin stub, unreadable /proc entry),
-	// ok=false and we fall through to the conservative Ambiguous path.
-	//
-	// Spec ref: process-lifecycle.md §4.1 PL-002a — "corroboration distinguishes
-	// recycled-PID (non-harmonik cmdline ⇒ Stale) from a live harmonik daemon
-	// that lost its flock (harmonik cmdline ⇒ Ambiguous)."
 	cmdline, ok := probePidCmdline(pid)
 	if ok && cmdline != "" {
 		if strings.Contains(cmdline, "harmonik") {
-			// A harmonik process holds this PID but not the flock: ambiguous.
 			return PidfileLockStatusAmbiguous, pid, ErrPidfileAmbiguous
 		}
-		// Non-harmonik process: recycled PID, unrelated to the recorded daemon.
 		return PidfileLockStatusStale, pid, nil
 	}
 
-	// Corroboration inconclusive or unavailable: per PL-002a, refuse startup.
 	return PidfileLockStatusAmbiguous, pid, ErrPidfileAmbiguous
 }

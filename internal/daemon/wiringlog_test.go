@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// The audit must be DERIVED from the live bootState, not recited from a
-// constant. The version this replaced was a hand-maintained []wiringEntry that
-// printed identical text no matter what had been wired — so it could not detect
-// the silent drop it existed to catch. These tests pin the property that makes
-// it a real drop detector: the same field reads differently depending on
-// whether it actually holds a value.
-//
-// Bead ref: hk-4mupj.
-
 func auditByField(t *testing.T, bs *bootState) map[string]wiringState {
 	t.Helper()
 	out := map[string]wiringState{}
@@ -42,8 +33,6 @@ func TestWiringAudit_ReflectsWhatIsActuallyWired(t *testing.T) {
 		t.Error("handlerPauseCtrl reported ABSENT while holding a value; a hand-maintained table would have printed the same either way")
 	}
 
-	// A field left nil in the second case must still read ABSENT: the audit
-	// distinguishes per field, not per bootState.
 	if wired["sharedRunRegistry"].constructed {
 		t.Error("sharedRunRegistry reported constructed while nil; per-field state is what makes this a drop detector")
 	}
@@ -82,8 +71,6 @@ func TestLogCompositionRoot_GatedAndDerived(t *testing.T) {
 	bs.logCompositionRoot(ctx, &on)
 	out := on.String()
 
-	// The header doubles as the "daemon reached startBackgroundLoops" beacon
-	// that the subsystem-partition tests key on; keep it stable.
 	if !strings.Contains(out, "composition-root wiring audit") {
 		t.Errorf("audit header missing from %q; boot-progress tests key on this line", out)
 	}

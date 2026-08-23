@@ -1,27 +1,5 @@
 package main
 
-// smoke_logic_test.go — pure-logic + RPC-construction tests for the
-// `harmonik smoke` subcommand (smoke.go).
-//
-// Covered here:
-//   - runSmoke arg-parse error surface (--help→0, unknown arg→1, bad --timeout→1)
-//   - smokeReadTargetBranch (branching.yaml lands_on parse + fallbacks)
-//   - smokeWatchSignals: the subscribe-request construction (asserted via the
-//     fake daemon), the daemon-down exit code, the run_failed short-circuit, and
-//     the full 5-signal happy path driven by streamed NDJSON events
-//   - smokeCheckCommitOnBranch (git-log classifier, found/not-found)
-//   - smokePrintResults (result-table formatting)
-//
-// SKIPPED (process spawn / live daemon, not pure logic):
-//   - smokeCreateBead — shells out to `br create`; requires the br binary + a
-//     real bead ledger. The create/submit/cleanup arc is the live-run path.
-//   - smokeSubmitBead / smokeCleanupBead — re-exec the harmonik binary / `br`.
-//   - runSmoke past arg-parse — it calls smokeCreateBead + the daemon; only the
-//     early flag-validation returns are unit-reachable.
-//
-// No t.Parallel(): several helpers here share the fake-daemon toolkit whose
-// fixtures and (elsewhere) process-stream capture are not parallel-safe.
-
 import (
 	"bytes"
 	"context"
@@ -33,8 +11,6 @@ import (
 	"testing"
 	"time"
 )
-
-// --- runSmoke arg parsing --------------------------------------------------
 
 // TestRunSmoke_HelpReturnsZero verifies --help prints usage and returns 0.
 func TestRunSmoke_HelpReturnsZero(t *testing.T) {
@@ -76,8 +52,6 @@ func TestRunSmoke_InvalidTimeoutReturnsOne(t *testing.T) {
 	}
 }
 
-// --- smokeReadTargetBranch -------------------------------------------------
-
 // TestSmokeReadTargetBranch covers the branching.yaml lands_on parse and all
 // three fallback-to-main paths.
 func TestSmokeReadTargetBranch(t *testing.T) {
@@ -117,8 +91,6 @@ func smokeWriteBranchYAML(t *testing.T, harmonikDir, content string) {
 	}
 }
 
-// --- smokeWatchSignals: subscribe request + daemon-down + state machine -----
-
 // TestSmokeWatchSignals_DaemonDownReturns17 pins the contract (hk-d4y2p): a
 // MISSING daemon socket returns exit 17 ("daemon not running"), NOT the generic
 // exit 1. Root cause of the former bug: the socket-missing branch checked
@@ -146,8 +118,6 @@ func TestSmokeWatchSignals_DaemonDownReturns17(t *testing.T) {
 // that smokeWatchSignals sends a well-formed subscribe request: op=subscribe,
 // heartbeat_seconds=60, and the five event types it watches.
 func TestSmokeWatchSignals_ConstructsSubscribeRequest(t *testing.T) {
-	// Stream nothing: the fake closes the connection right after capturing the
-	// request, so smokeWatchSignals falls through to the clean-close (exit 2).
 	d := startFakeDaemon(t, streamEvents())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -202,8 +172,6 @@ func TestSmokeWatchSignals_AllSignalsPass(t *testing.T) {
 		{"type": "bead_closed", "payload": map[string]any{"run_id": "R1", "bead_id": bead}},
 	}
 	d := startFakeDaemon(t, streamEvents(events...))
-	// Make the fake's project dir a git repo with a matching commit so Signal 3
-	// (commit on target branch) passes.
 	initGitRepoWithBeadCommit(t, d.Dir, "main", bead)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -266,8 +234,6 @@ func TestSmokeWatchSignals_RunFailedReturnsOne(t *testing.T) {
 	}
 }
 
-// --- smokeCheckCommitOnBranch (git-log classifier) -------------------------
-
 // TestSmokeCheckCommitOnBranch exercises the git-log grep classifier against a
 // real temp git repo. This DOES shell out to git, but git is a hard dependency
 // of the project and the behaviour is deterministic; the value is covering the
@@ -296,8 +262,6 @@ func TestSmokeCheckCommitOnBranch(t *testing.T) {
 	})
 }
 
-// initGitRepoWithBeadCommit initialises a git repo at dir on branch `branch`
-// with a single commit whose message references beadID.
 func initGitRepoWithBeadCommit(t *testing.T, dir, branch, beadID string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -317,8 +281,6 @@ func initGitRepoWithBeadCommit(t *testing.T, dir, branch, beadID string) {
 	run("commit", "-q", "-m", "smoke("+beadID+"): 5-signal verification")
 	run("branch", "-M", branch)
 }
-
-// --- smokePrintResults formatting ------------------------------------------
 
 // TestSmokePrintResults_AllPass verifies every row renders PASS with its detail.
 func TestSmokePrintResults_AllPass(t *testing.T) {

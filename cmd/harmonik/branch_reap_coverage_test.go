@@ -1,14 +1,5 @@
 package main
 
-// branch_reap_coverage_test.go — behavior tests for the pure-logic slices of
-// `harmonik gc branches`: the flag/arg validation exit-code truth table (paths
-// that return before lifecycle.ReapBranches shells out to git) and the
-// `harmonik gc <verb>` dispatcher. Both entry points take explicit io.Writer
-// sinks, so no os.Stdout capture is needed.
-//
-// The actual reap pass (lifecycle.ReapBranches) requires a live git repo with
-// run/* branches and is NOT exercised here — see the report for the reason.
-
 import (
 	"bytes"
 	"strings"

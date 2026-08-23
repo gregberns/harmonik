@@ -1,17 +1,5 @@
 package lifecycle
 
-// startup_intentrecovery_test.go — LoadQueueAtStartup resolves the durable
-// replace intents a crash left behind, before it reads any queue file.
-//
-// The unit-level behaviour of the sweep belongs to internal/queue. What this
-// file defends is the wiring: that startup calls it at all, that it calls it
-// before this pass reads a queue file, and that a queue wedged by a leftover
-// intent accepts writes again once the daemon is up.
-//
-// "Before this pass" is the honest bound and not "before anything reads a queue
-// file". The daemon's boot reconcile reads every queue file earlier still. See
-// the note on queue.RecoverReplaceIntents.
-
 import (
 	"bytes"
 	"context"
@@ -216,9 +204,6 @@ func TestLoadQueueAtStartupRefusesInvalidCompletionReceiptRoot(t *testing.T) {
 	}
 }
 
-// emptyBeadLedger answers every cross-check with "nothing here". The queues in
-// this file hold no dispatched or in-flight items, so no answer it gives can
-// change the outcome under test.
 type emptyBeadLedger struct{}
 
 func (emptyBeadLedger) ShowBead(context.Context, core.BeadID) (core.BeadRecord, error) {
@@ -229,9 +214,6 @@ func (emptyBeadLedger) ListInFlightBeads(context.Context) ([]core.BeadRecord, er
 	return nil, nil
 }
 
-// crashedReplaceFixture seeds a project whose queue committed a replacement and
-// then died before the intent was removed — the state the QueueStore normally
-// cleans up after WriteReplacement returns.
 func crashedReplaceFixture(t *testing.T) (projectDir, intentPath string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -294,9 +276,6 @@ func TestLoadQueueAtStartup_RollsForwardBeforeItLoads(t *testing.T) {
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	canonicalPath := filepath.Join(queuesDir, "main.json")
 
-	// Rewind the committed fixture to the state where the candidate was durable
-	// but the rename had not happened: canonical back to prior, candidate temp
-	// present, intent untouched.
 	committed, err := os.ReadFile(canonicalPath) //nolint:gosec // G304: path is t.TempDir-derived
 	if err != nil {
 		t.Fatal(err)
@@ -387,8 +366,6 @@ func TestLoadQueueAtStartup_ResolvesAReplaceIntentLeftByACrash(t *testing.T) {
 		t.Fatalf("startup left the replace intent on disk: %v", statErr)
 	}
 
-	// Positive evidence that the sweep resolved rather than merely deleted: the
-	// queue startup loaded is the committed candidate, not the prior state.
 	if len(loaded) != 1 {
 		t.Fatalf("want one loaded queue, got %d", len(loaded))
 	}
@@ -402,8 +379,6 @@ func TestLoadQueueAtStartup_UnwedgesTheQueueForLaterWrites(t *testing.T) {
 
 	projectDir, _ := crashedReplaceFixture(t)
 
-	// Prove the wedge first. A different transaction for the same queue is
-	// refused while the leftover intent is on disk.
 	nextPlan := func(transactionID string) queue.ReplacementPlan {
 		prior, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "queues", "main.json")) //nolint:gosec // G304: path is t.TempDir-derived
 		if err != nil {

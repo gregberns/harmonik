@@ -103,8 +103,6 @@ func garbageCollectCompletionReceipts(
 	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("completion receipt root is not a real directory")
 	}
-	// This also completes durability for an unlink whose prior post-unlink sync
-	// failed. Every later pass reaches this boundary before it trusts absence.
 	if err := syncDirectory(root, ops); err != nil {
 		return nil, err
 	}

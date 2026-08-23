@@ -197,13 +197,6 @@ type QueueHandler interface {
 	HandleQueueCancel(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 }
 
-// noopRequestHandler is a minimal RequestHandler that rejects every request
-// with a clear error. It is used where the real claim-next / emit-outcome
-// wiring is deferred to a follow-up bead. Hook-relay envelopes never reach
-// RequestHandler (they are dispatched via HookRelayHandler), so this stub has
-// no impact on the hook-relay path.
-//
-// Spec ref: EARLY_ROADMAP row #5.
 type noopRequestHandler struct{}
 
 func (n *noopRequestHandler) EmitOutcome(_ context.Context, _ OutcomeRequest) (json.RawMessage, error) {
@@ -214,53 +207,22 @@ func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMes
 	return nil, errors.New("daemon: RequestHandler not wired yet")
 }
 
-// errLiveDaemon is returned by removeStaleSocket when a dial to the socket
-// path succeeds, indicating another daemon process is actively listening.
-// RunSocketListener surfaces this as a startup error so the caller can exit
-// with the appropriate exit code.
 var errLiveDaemon = errors.New("daemon: live daemon already listening on socket")
 
-// removeStaleSocket checks whether the socket file at sockPath is stale (i.e.
-// no process is listening) and removes it so the caller can rebind.
-//
-// Decision logic:
-//   - If no file exists at sockPath: nothing to do (return nil).
-//   - If a dial to sockPath succeeds: a live daemon is using the socket.
-//     Return errLiveDaemon so the caller can abort startup with exit code 6.
-//   - If the dial returns ECONNREFUSED, timeout, or any other connection error:
-//     the socket file is stale. Remove it and return nil.
-//
-// The dial timeout is 100 ms — sufficient for a local Unix socket handshake
-// on any supported platform.
-//
-// WHY THE PROBE IGNORES CANCELLATION. Every dial error is read as "the socket
-// is stale", and the next step DELETES the file. If the caller's context could
-// cancel the dial, a daemon shutting down while another daemon holds the socket
-// would fail the probe for the wrong reason and delete the live daemon's socket.
-// That turns the PL-003 exclusivity guard into the thing it exists to prevent.
-// So the probe runs on context.WithoutCancel: it keeps the caller's values and
-// its own 100 ms deadline, and only a real dial failure can mark the file stale.
-//
-// Spec ref: specs/process-lifecycle.md §4.1 PL-003 (socket exclusivity, Gap-2).
 func removeStaleSocket(ctx context.Context, sockPath string) error {
-	// Fast path: no file at all, nothing to remove.
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
 		return nil
 	}
 
-	// Probe: attempt a connection with a short timeout.
 	probeCtx, probeCancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
 	defer probeCancel()
 	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
 	if err == nil {
-		// Dial succeeded → a live daemon owns this socket.
 		if closeErr := conn.Close(); closeErr != nil {
 			slog.WarnContext(ctx, "daemon: stale-socket probe: close probe conn", "err", closeErr)
 		}
 		return errLiveDaemon
 	}
-	// Any dial error (ECONNREFUSED, context deadline, no-such-file, etc.)
-	// indicates the socket is stale. Remove and proceed.
 	if removeErr := os.Remove(sockPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		return fmt.Errorf("daemon: removeStaleSocket: remove %q: %w", sockPath, removeErr)
 	}
@@ -375,8 +337,6 @@ type SocketHandlers struct {
 	SessionStart SessionStartAcknowledgementHandler
 }
 
-// firstQueueHandler returns the first variadic QueueHandler, or nil. Bridges the
-// back-compat variadic wrappers onto SocketHandlers.Queue.
 func firstQueueHandler(qh []QueueHandler) QueueHandler {
 	if len(qh) > 0 {
 		return qh[0]
@@ -408,11 +368,6 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	if err != nil {
 		return fmt.Errorf("daemon: Serve: listen unix %q: %w", sockPath, err)
 	}
-	// ln is closed from two paths — the Serve-return defer and the ctx-cancel
-	// goroutine below (which unblocks Accept). sync.Once collapses that
-	// deliberate double-close to a single Close so a genuine close error is
-	// surfaced once, without the "use of closed network connection" noise a
-	// second Close would log on every clean shutdown.
 	var closeListenerOnce sync.Once
 	closeListener := func() {
 		closeListenerOnce.Do(func() {
@@ -423,18 +378,15 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	}
 	defer closeListener()
 
-	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
 		return fmt.Errorf("daemon: Serve: chmod 0600 %q: %w", sockPath, err)
 	}
 
-	// Close the listener when ctx is cancelled so Accept unblocks.
 	go func() {
 		<-ctx.Done()
 		closeListener()
 	}()
 
-	// Build the router ONCE, before the Accept loop (never per-connection).
 	router := buildSocketRouter(&socketDispatch{
 		h: hs.Request, qh: hs.Queue, recoverh: hs.Recovery, oh: hs.Operator, ch: hs.Comms,
 		crewh: hs.Crew, sleepWakeh: hs.SleepWake, stateh: hs.State, dashh: hs.Dashboard,
@@ -444,8 +396,6 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			// ctx cancellation causes ln.Close(), which makes Accept return an
-			// error. Treat any Accept error after ctx cancellation as clean exit.
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -455,23 +405,6 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	}
 }
 
-// handleSocketConn reads one JSON message from conn and dispatches it. The
-// giant switch was carved into the pure socketrouter.Router (op→Result lookup)
-// plus the daemon-side socketDispatch adapter methods; two response-shape-
-// breaking ops stay as daemon pre-branches:
-//   - a non-empty "type" field → hook-relay envelope (handleHookRelayEnvelope);
-//     response is a hookRelayAckMsg written as NDJSON (+ '\n').
-//   - op == "subscribe" → a long-running NDJSON stream (handleSubscribe) that
-//     writes no SocketResponse on success.
-//
-// Every other op routes through router.Dispatch → resultToResponse →
-// writeSocketResponse (no trailing newline). router is built once per listener
-// body (buildSocketRouter), never per-connection.
-//
-// CHB-027: if the relay sent zero complete lines (abrupt EOF before the '\n'
-// terminator), the raw decode fails and the connection is dropped after a
-// best-effort bad_envelope ack — the relay will have exited already, so the
-// write is best-effort.
 func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, sub SubscribeHandler, router *socketrouter.Router) {
 	defer func() {
 		if closeErr := conn.Close(); closeErr != nil {
@@ -499,11 +432,6 @@ func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, s
 	writeSocketResponse(conn, resultToResponse(res, req.Op))
 }
 
-// decodeRawMap reads one JSON message from conn into a raw map to detect the
-// message format (type vs op). On decode failure it writes a bad_envelope ack
-// via the hook-relay writer (NDJSON + '\n', preserving the pre-carve behavior;
-// the initial raw-decode failure uses the hook-relay writer even for what would
-// have been an op request — wire-F3) and returns the error.
 func decodeRawMap(conn net.Conn) (map[string]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&raw); err != nil {
@@ -516,9 +444,6 @@ func decodeRawMap(conn net.Conn) (map[string]json.RawMessage, error) {
 	return raw, nil
 }
 
-// handleHookRelayEnvelope is daemon pre-branch #1: re-marshal the raw map,
-// unmarshal into hookRelayEnvelope, nil-guard hr, and dispatch. Every ack is
-// written as NDJSON (+ '\n') via writeHookRelayAck.
 func handleHookRelayEnvelope(conn net.Conn, hr HookRelayHandler, raw map[string]json.RawMessage) {
 	reEncoded, encErr := json.Marshal(raw)
 	if encErr != nil {
@@ -538,10 +463,6 @@ func handleHookRelayEnvelope(conn net.Conn, hr HookRelayHandler, raw map[string]
 	writeHookRelayAck(conn, ack)
 }
 
-// decodeSocketRequest re-encodes the raw map (byte-identical reEncoded bytes)
-// and unmarshals it into a SocketRequest. On failure it writes a SocketResponse
-// error envelope (no trailing newline) and returns ok=false. On success it
-// returns the parsed request plus the reEncoded bytes for downstream Dispatch.
 func decodeSocketRequest(conn net.Conn, raw map[string]json.RawMessage) (SocketRequest, json.RawMessage, bool) {
 	reEncoded, encErr := json.Marshal(raw)
 	if encErr != nil {
@@ -559,16 +480,6 @@ func decodeSocketRequest(conn net.Conn, raw map[string]json.RawMessage) (SocketR
 	return req, reEncoded, true
 }
 
-// handleSubscribe is daemon pre-branch #2: the long-running subscribe op. It
-// streams NDJSON events on conn until the client disconnects or ctx is
-// cancelled; on success no SocketResponse is written (the connection IS the
-// stream, and conn is closed by handleSocketConn's defer). The three error
-// sub-paths (nil handler, bad decode, invalid uuid) fall through to
-// writeSocketResponse. uuid.Parse validation stays daemon-side (off the router's
-// $gostd-only edge).
-//
-// Spec ref: operator-nfr.md §4.9 ON-055 (subscribe is read-only observation).
-// Bead ref: hk-6ynv4, hk-a5sil.
 func handleSubscribe(ctx context.Context, conn net.Conn, sub SubscribeHandler, reEncoded json.RawMessage) {
 	if sub == nil {
 		writeSocketResponse(conn, SocketResponse{Ok: false, Error: "daemon: SubscribeHandler not registered"})
@@ -579,9 +490,6 @@ func handleSubscribe(ctx context.Context, conn net.Conn, sub SubscribeHandler, r
 		writeSocketResponse(conn, SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)})
 		return
 	}
-	// Validate since_event_id format when provided. Must be a parseable UUID
-	// (expected UUIDv7). Replay is implemented in HandleSubscribe per hk-a5sil;
-	// only format validation lives here.
 	if subReq.SinceEventID != "" {
 		if _, parseErr := uuid.Parse(subReq.SinceEventID); parseErr != nil {
 			writeSocketResponse(conn, SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: since_event_id %q is not a valid UUID: %v", subReq.SinceEventID, parseErr)})
@@ -591,13 +499,6 @@ func handleSubscribe(ctx context.Context, conn net.Conn, sub SubscribeHandler, r
 	sub.HandleSubscribe(ctx, conn, subReq) // suppress SocketResponse write; conn is closed by defer
 }
 
-// handleQueueOp dispatches a single queue operation to qh and converts the
-// result to a SocketResponse. If qh is nil, returns an error response.
-//
-// The fn closure calls the appropriate QueueHandler method; the closure
-// receives the handler so callers do not repeat the nil check.
-//
-// Spec ref: specs/queue-model.md §6.11a QM-029b (error codes in ErrorCode field).
 func handleQueueOp(_ context.Context, qh QueueHandler, fn func(QueueHandler) (json.RawMessage, *queue.RPCError)) SocketResponse {
 	if qh == nil {
 		return SocketResponse{
@@ -617,8 +518,6 @@ func handleQueueOp(_ context.Context, qh QueueHandler, fn func(QueueHandler) (js
 	return SocketResponse{Ok: true, Result: result}
 }
 
-// writeHookRelayAck serialises ack as NDJSON and writes it to conn.
-// Write errors are silently discarded (connection is about to close).
 func writeHookRelayAck(conn net.Conn, ack hookRelayAckMsg) {
 	data, err := json.Marshal(ack)
 	if err != nil {
@@ -627,13 +526,9 @@ func writeHookRelayAck(conn net.Conn, ack hookRelayAckMsg) {
 	_, _ = conn.Write(append(data, '\n')) //nolint:errcheck // write error unactionable; connection closing
 }
 
-// writeSocketResponse encodes resp as JSON and writes it to conn.
-// Write errors are silently discarded (the connection is about to close).
 func writeSocketResponse(conn net.Conn, resp SocketResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
-		// Marshal of SocketResponse with only string/json.RawMessage fields
-		// should never fail; log nothing, connection closes.
 		return
 	}
 	_, _ = conn.Write(data) //nolint:errcheck // write error unactionable; connection closing

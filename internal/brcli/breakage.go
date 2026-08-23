@@ -66,9 +66,6 @@ package brcli
 // Spec ref: specs/beads-integration.md §4.8 BI-025, BI-026.
 var ErrBrBreakageForked = errBrBreakageForked{}
 
-// errBrBreakageForked is the concrete type backing ErrBrBreakageForked.
-// It is unexported so that callers can only match via errors.Is; they cannot
-// construct it.
 type errBrBreakageForked struct{}
 
 func (errBrBreakageForked) Error() string {

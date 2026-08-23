@@ -11,11 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// resolve_keeper_required_test.go — operator-required-config change: harmonik imposes
-// NO built-in keeper defaults at runtime. ResolveKeeperConfig aggregates EVERY unset
-// required value into a single *KeeperConfigMissingError (refuse to start), and the
-// `keeper config --example` template + `harmonik init` config round-trip cleanly.
-
 // TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing: an empty config + no flags
 // returns the aggregated missing-value error naming MANY required keys AND the
 // `keeper config --example` fix.
@@ -29,7 +24,6 @@ func TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing(t *testing.T) {
 	if !errors.As(err, &kme) {
 		t.Fatalf("expected *KeeperConfigMissingError, got %T: %v", err, err)
 	}
-	// Several specific keys must be present in the aggregated list.
 	for _, want := range []string{
 		"keeper.context_thresholds.warn_abs_tokens",
 		"keeper.context_thresholds.act_abs_tokens",
@@ -49,7 +43,6 @@ func TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing(t *testing.T) {
 			t.Errorf("missing list does not contain required key %q; got %v", want, kme.Missing)
 		}
 	}
-	// The message must name the one-command fix and the project dir.
 	msg := err.Error()
 	if !strings.Contains(msg, "keeper config --example") {
 		t.Errorf("error message must point at 'harmonik keeper config --example'; got: %s", msg)
@@ -60,7 +53,6 @@ func TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing(t *testing.T) {
 	if !strings.Contains(msg, "refusing to start") {
 		t.Errorf("error message must say it is refusing to start; got: %s", msg)
 	}
-	// It must be MANY keys (aggregated, not first-only).
 	if len(kme.Missing) < 10 {
 		t.Errorf("expected the full set of missing keys aggregated, got only %d: %v", len(kme.Missing), kme.Missing)
 	}
@@ -107,8 +99,6 @@ func TestResolveKeeperConfig_AllViaConfig_ResolvesClean(t *testing.T) {
 // supplying them via FLAGS (with config for the rest) resolves cleanly — a flag is an
 // operator-set value, so it is NOT "missing".
 func TestResolveKeeperConfig_AllViaFlags_CountsAsOperatorSet(t *testing.T) {
-	// Start from a complete config, then UNSET every flag-backed key in config and
-	// supply it via a flag instead. The non-flag-backed keys stay config-supplied.
 	cfg := completeTestKeeperConfig()
 	cfg.WarnAbsTokens, cfg.Present.WarnAbsTokens = 0, false
 	cfg.ActAbsTokens, cfg.Present.ActAbsTokens = 0, false
@@ -179,7 +169,6 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 		t.Fatalf("example output is not a keeper: block:\n%s", example)
 	}
 
-	// Write schema_version + the example block to a real config.yaml.
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
 	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
@@ -190,13 +179,11 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	// Parse it the way `harmonik keeper` does.
 	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig on the --example output FAILED: %v\nconfig:\n%s", err, content)
 	}
 
-	// Resolve it — MUST be zero missing-value errors (the round-trip proof).
 	_, rerr := ResolveKeeperConfig(KeeperFlags{}, projCfg.Keeper, projectDir)
 	if rerr != nil {
 		var kme *KeeperConfigMissingError
@@ -235,9 +222,7 @@ func TestRunKeeperConfigExample_AdvertisesWarnMessageOverrides(t *testing.T) {
 // The newly-required keys (operator_turn_lookback, post_answer_grace) stand in
 // for any required key a binary upgrade may add (hk-74iyd).
 func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
-	// ── Part 1: old config → refuse-to-start with aggregated error ──
 	oldCfg := completeTestKeeperConfig()
-	// Simulate the operator's deployed config before hk-74iyd added these keys.
 	oldCfg.OperatorTurnLookback = 0
 	oldCfg.Present.OperatorTurnLookback = false
 	oldCfg.PostAnswerGrace = 0
@@ -252,7 +237,6 @@ func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
 	if !errors.As(err, &kme) {
 		t.Fatalf("expected *KeeperConfigMissingError (aggregated), got %T: %v", err, err)
 	}
-	// ONE error must include ALL missing keys — not just the first.
 	for _, want := range []string{
 		"keeper.cadence.operator_turn_lookback",
 		"keeper.cadence.post_answer_grace",
@@ -279,9 +263,6 @@ func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
 		t.Errorf("error must point at 'keeper config --example'; got: %s", msg)
 	}
 
-	// ── Part 2: example-merge → clean start ──
-	// The fix the error message instructs: run `keeper config --example` and
-	// replace the keeper: block in config.yaml.
 	var exOut, exErr strings.Builder
 	if code := runKeeperConfigTo([]string{"--example"}, &exOut, &exErr); code != 0 {
 		t.Fatalf("keeper config --example exited %d; stderr=%s", code, exErr.String())
@@ -311,8 +292,6 @@ func TestKeeperConfigExampleAndInitTemplateAreShared(t *testing.T) {
 	if !strings.Contains(example, "keeper:") || !strings.Contains(example, "warn_abs_tokens") {
 		t.Fatalf("shared example block looks malformed:\n%s", example)
 	}
-	// init appends keeperConfigExampleYAML() to configYAMLContent; assert the constant
-	// is non-trivial and ends with a newline so concatenation is valid YAML.
 	if !strings.HasSuffix(example, "\n") {
 		t.Errorf("shared example block must end with a newline for safe concatenation")
 	}

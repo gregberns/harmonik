@@ -1,20 +1,5 @@
 package runlaunch
 
-// deadlines_test.go — hk-96d7w (LOCAL slice of hk-5z1f0):
-// the agent_ready timeout is now a configurable knob with a separate, longer
-// default for REMOTE (SSH worker) dispatch — Config.RemoteAgentReadyTimeout /
-// --remote-agent-ready-timeout, resolved per-dispatch by
-// EffectiveAgentReadyTimeout. In-package (package runlaunch) because it pins
-// the compiled-in default constants directly.
-//
-// Relocated from internal/daemon/agentreadyremote_hk96d7w_test.go by P2 unit
-// E5 RT19b, which moved the HC-056 deadline family out of internal/daemon.
-//
-// This is a pure-function unit test of the resolver only — no daemon spawn,
-// no worker, no network. It does not depend on a live remote worker
-// (gb-mbp); the remote canary that motivated the longer default is tracked
-// separately at hk-5z1f0.
-
 import (
 	"testing"
 	"time"

@@ -10,12 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// Tests for the LaunchSpec record per specs/handler-contract.md §6.1 HC-006.
-//
-// Helper prefix: launchspecFixture (bead hk-8i31.74; distinct from other
-// handlercontract helper prefixes).
-
-// launchspecFixtureValid returns a fully-populated, valid LaunchSpec for tests.
 func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196e100-0000-7000-8000-000000000001"))
@@ -24,7 +18,6 @@ func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 		t.Fatalf("NewWorkflowID: %v", err)
 	}
 	beadID := "hk-8i31.74"
-	// snapshot_token is String|None per HC-006: encode the SnapshotToken as JSON.
 	tokEncoded, err := handlercontract.MarshalSnapshotToken(core.SnapshotToken{
 		GitHeadHash:         "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		BeadsAuditEntryID:   "audit-001",
@@ -51,8 +44,6 @@ func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 	}
 }
 
-// launchspecFixtureReviewLoop returns a valid LaunchSpec for a review-loop
-// dispatch in the implementer-resume phase (all four new HC-006 fields set).
 func launchspecFixtureReviewLoop(t *testing.T) handlercontract.LaunchSpec {
 	t.Helper()
 	spec := launchspecFixtureValid(t)
@@ -67,10 +58,6 @@ func launchspecFixtureReviewLoop(t *testing.T) handlercontract.LaunchSpec {
 	return spec
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Field set: verify fields are present and accessible
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestLaunchSpec_RequiredFields verifies that all required fields declared in §6.1
 // are present and accessible on the LaunchSpec struct.
 func TestLaunchSpec_RequiredFields(t *testing.T) {
@@ -78,7 +65,6 @@ func TestLaunchSpec_RequiredFields(t *testing.T) {
 
 	spec := launchspecFixtureValid(t)
 
-	// Required fields: must be non-zero.
 	if spec.RunID == (core.RunID{}) {
 		t.Error("HC-006: RunID is zero; want non-zero")
 	}
@@ -116,7 +102,6 @@ func TestLaunchSpec_RequiredFields(t *testing.T) {
 		t.Errorf("HC-006: SchemaVersion = %d; want positive", spec.SchemaVersion)
 	}
 
-	// Optional fields (present in fixture): must be non-nil.
 	if spec.BeadID == nil {
 		t.Error("HC-006: BeadID is nil in fixture; want non-nil (test setup error)")
 	}
@@ -124,10 +109,6 @@ func TestLaunchSpec_RequiredFields(t *testing.T) {
 		t.Error("HC-006: SnapshotToken is nil in fixture; want non-nil (test setup error)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Valid() contract
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestLaunchSpec_ValidHappyPath verifies that a fully-populated spec passes Valid().
 func TestLaunchSpec_ValidHappyPath(t *testing.T) {
@@ -273,10 +254,6 @@ func TestLaunchSpec_ValidZeroSchemaVersion(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// JSON round-trip
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestLaunchSpec_JSONRoundTrip verifies that a valid LaunchSpec can be
 // marshalled to JSON and unmarshalled back with all fields intact.
 func TestLaunchSpec_JSONRoundTrip(t *testing.T) {
@@ -297,7 +274,6 @@ func TestLaunchSpec_JSONRoundTrip(t *testing.T) {
 		t.Errorf("HC-006: decoded LaunchSpec.Valid() = %v; want nil", err)
 	}
 
-	// Spot-check key fields survive the round-trip.
 	if decoded.RunID != original.RunID {
 		t.Errorf("HC-006: RunID mismatch after round-trip: got %v, want %v", decoded.RunID, original.RunID)
 	}
@@ -324,7 +300,6 @@ func TestLaunchSpec_JSONOptionalFieldsOmitted(t *testing.T) {
 		t.Fatalf("HC-006: json.Marshal: %v", err)
 	}
 
-	// Verify that "bead_id" and "snapshot_token" keys are absent.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("HC-006: json.Unmarshal to raw map: %v", err)
@@ -343,7 +318,6 @@ func TestLaunchSpec_JSONRequiredFieldsPresent(t *testing.T) {
 	t.Parallel()
 
 	spec := launchspecFixtureValid(t)
-	// Clear optional fields to get a minimal required-field JSON.
 	spec.BeadID = nil
 	spec.SnapshotToken = nil
 
@@ -369,10 +343,6 @@ func TestLaunchSpec_JSONRequiredFieldsPresent(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Schema version
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestLaunchSpec_SchemaVersionConstant verifies that LaunchSpecSchemaVersion
 // is positive and matches the SchemaVersion of a freshly-constructed spec.
@@ -401,17 +371,11 @@ func TestLaunchSpec_ProvisioningTimeoutDefaultIs60(t *testing.T) {
 		t.Logf("HC-006: note: fixture ProvisioningTimeout = %d (spec default is 60)", spec.ProvisioningTimeout)
 	}
 
-	// Any positive value is valid per Valid().
 	spec.ProvisioningTimeout = 60
 	if err := spec.Valid(); err != nil {
 		t.Errorf("HC-006: Valid() with ProvisioningTimeout=60: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Review-loop optional fields (HC-006): WorkflowMode, Phase, IterationCount,
-// ClaudeSessionID presence / absence rules.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestLaunchSpec_ReviewLoopFieldsAllPresent verifies that a review-loop
 // LaunchSpec with all four optional fields set passes Valid().
@@ -430,7 +394,6 @@ func TestLaunchSpec_ReviewLoopAllOptionalFieldsAbsent(t *testing.T) {
 	t.Parallel()
 
 	spec := launchspecFixtureValid(t)
-	// WorkflowMode, Phase, IterationCount, ClaudeSessionID all nil by default.
 	if spec.WorkflowMode != nil || spec.Phase != nil || spec.IterationCount != nil || spec.ClaudeSessionID != nil {
 		t.Fatal("HC-006: base fixture must have no review-loop fields set (test setup error)")
 	}
@@ -509,7 +472,6 @@ func TestLaunchSpec_ClaudeSessionIDForbiddenForImplementerInitial(t *testing.T) 
 	spec := launchspecFixtureReviewLoop(t)
 	phase := handlercontract.ReviewLoopPhaseImplementerInitial
 	spec.Phase = &phase
-	// ClaudeSessionID still set — should be rejected.
 	if err := spec.Valid(); err == nil {
 		t.Error("HC-006: Valid() with Phase=implementer-initial and ClaudeSessionID set = nil; want error")
 	}
@@ -523,7 +485,6 @@ func TestLaunchSpec_ClaudeSessionIDForbiddenForReviewer(t *testing.T) {
 	spec := launchspecFixtureReviewLoop(t)
 	phase := handlercontract.ReviewLoopPhaseReviewer
 	spec.Phase = &phase
-	// ClaudeSessionID still set — should be rejected.
 	if err := spec.Valid(); err == nil {
 		t.Error("HC-006: Valid() with Phase=reviewer and ClaudeSessionID set = nil; want error")
 	}
@@ -566,7 +527,6 @@ func TestLaunchSpec_WorkflowModeOptionalPresence(t *testing.T) {
 	spec := launchspecFixtureValid(t)
 	mode := "review-loop"
 	spec.WorkflowMode = &mode
-	// No Phase/IterationCount — WorkflowMode alone is fine.
 	if err := spec.Valid(); err != nil {
 		t.Errorf("HC-006: Valid() with WorkflowMode set but no Phase/IterationCount = %v; want nil", err)
 	}
@@ -628,10 +588,6 @@ func TestLaunchSpec_ReviewLoopFieldsOmittedWhenAbsent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RC-015 / HC-006: SnapshotToken is String|None (wire format)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC006_SnapshotTokenIsJSONStringInWireFormat verifies that the
 // snapshot_token field serialises as a JSON string value (not a JSON object)
 // in the marshalled LaunchSpec — matching the String|None declaration in
@@ -660,8 +616,6 @@ func TestHC006_SnapshotTokenIsJSONStringInWireFormat(t *testing.T) {
 		t.Fatal("HC-006: snapshot_token absent from marshalled LaunchSpec; want present (fixture includes it)")
 	}
 
-	// The wire value MUST be a JSON string, not a JSON object.
-	// A JSON string starts with '"'; a JSON object starts with '{'.
 	if len(rawTok) == 0 || rawTok[0] != '"' {
 		t.Errorf("HC-006: snapshot_token wire value = %s; want a JSON string (starting with '\"'); "+
 			"field must be String|None per HC-006, not an embedded object", rawTok)
@@ -730,7 +684,6 @@ func TestHC006_ParseSnapshotTokenRejectsInvalidJSON(t *testing.T) {
 func TestHC006_ParseSnapshotTokenRejectsIncompleteToken(t *testing.T) {
 	t.Parallel()
 
-	// Only git_head_hash present — missing beads_audit_entry_id and captured_at_timestamp.
 	incomplete := `{"git_head_hash":"deadbeef"}`
 	_, err := handlercontract.ParseSnapshotToken(incomplete)
 	if err == nil {

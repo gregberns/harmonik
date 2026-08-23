@@ -10,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/dispatch"
 )
 
-// dispatchReplayFactReader joins the durable facts for one exact intent.
-// Implementations must return conflict facts when a source cannot prove an
-// identity. They must not infer ownership from process names or event history.
 type dispatchReplayFactReader interface {
 	ReadDispatchReplayFacts(context.Context, dispatch.Intent) (dispatch.ReplayFacts, error)
 }
@@ -22,9 +19,6 @@ type dispatchReplayStep struct {
 	Action dispatch.ReplayAction
 }
 
-// planDispatchReplay reads and decides every intent before startup performs a
-// replay effect. This prevents an earlier intent from changing durable state
-// before a later corrupt intent has failed the pass closed.
 func planDispatchReplay(
 	ctx context.Context,
 	intents []dispatch.Intent,

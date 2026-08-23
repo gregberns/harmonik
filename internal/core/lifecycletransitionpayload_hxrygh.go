@@ -1,15 +1,5 @@
 package core
 
-// lifecycletransitionpayload_hxrygh.go — event-bus payload type for the
-// lifecycle_transition event (event-model.md §8.3.14; handler-contract.md §4.13).
-//
-// Emitted by the watcher goroutine on every LifecycleState machine transition
-// per HC-064..HC-067. Class O (ordinary — reconstructible from the per-session
-// transition-history ring in the daemon's in-memory state per HC-067).
-//
-// Spec ref: event-model.md §8.3.14; handler-contract.md §4.13 HC-064..HC-067.
-// Bead ref: hk-xrygh.
-
 // LifecycleTransitionPayload is the typed event payload for the
 // lifecycle_transition event (event-model.md §8.3.14).
 //

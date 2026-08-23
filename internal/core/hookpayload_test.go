@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// hookPayloadFixture returns a fully-populated HookPayload with all fields set
-// to valid non-zero values, suitable for structural and round-trip tests
-// (hk-a8bg.63).
 func hookPayloadFixture(t *testing.T) HookPayload {
 	t.Helper()
 

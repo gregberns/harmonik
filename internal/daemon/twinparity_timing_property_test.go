@@ -1,61 +1,5 @@
 package daemon_test
 
-// twinparity_timing_property_test.go — WS3-Claude-C timing property/fuzz harness.
-//
-// Accept criteria (plans/2026-07-13-code-revamp/M6-PLAN.md §WS3-Claude-C):
-//   - inv-1: the terminal event SET is identical across all (in-band) draws.
-//   - inv-2: NO anomaly events appear when timings are INSIDE the tolerance bands.
-//   - inv-3: EXACTLY the matching anomaly appears when a timing is OUTSIDE its band.
-//   - the harness SHRINKS to a minimal failing timing vector on failure.
-//   - keeper co-observes via internal/keepertwin.
-//
-// # What makes this non-tautological
-//
-// The harness does NOT re-implement anomaly detection. Each timing draw is fed
-// through the REAL anomaly emitter emitAgentReadyTimeout (exposed via
-// export_test.go). The generator's role is played by the production
-// code; the harness only draws timings and CHECKS the emitted-event set against
-// the F1 vocabulary (twinparity.AnomalyKinds / twinparity.TerminalKinds).
-//
-// RT14 note: the agent_ready edge no longer drives a detector FUNCTION. Its
-// detector was waitAgentReady, which RT14 retired when every launch/ready/brief
-// segment moved onto the runexec Dispatch machine (dispatchsegment.go), whose
-// ClockPort-timed TimerAgentReady owns the bound. The timing DECISION that
-// detector encoded — "delay > band → anomaly" — is now expressed directly, and
-// the REAL emitter is still the thing under observation.
-//
-// # Tolerance bands
-//
-// The real production thresholds are:
-//   - agent_ready_timeout:    runlaunch.DefaultAgentReadyTimeout = 150s
-//     (internal/runlaunch/deadlines.go)
-//   - keeper handoff (co-obs): keeper.DefaultHandoffTimeout   = 300s
-//     (internal/keeper/thresholds.go:157)
-//
-// A property/fuzz test cannot wait minutes per draw, so the harness drives the
-// SAME real detection functions with SCALED bands (tens of ms) passed as the
-// timeout parameter — the detection predicate ("delay > band → anomaly") is
-// identical regardless of the numeric value. TestTimingProperty_RealThresholdsPinned
-// PINS the real constants, so if a production default drifts the harness surfaces
-// it instead of silently modelling a stale threshold.
-//
-// # Scope of anomalies
-//
-// This harness covers agent_ready_timeout, the anomaly whose detection is a
-// point-in-time timing predicate cleanly drivable as a pure function. The other
-// AnomalyKinds — agent_warning_silent_hang and agent_resumed_after_warning — are
-// produced by the stateful stale-watch / paste-inject scanners
-// (internal/daemon/stalewatch.go, pasteinject.go), not by a single latency
-// comparison, so they are out of scope for a timing-vector harness. See the
-// JUDGMENT CALL note in the WS3-Claude-C report.
-//
-// post_agent_ready_hang was a second covered edge until its detector
-// (waitPostAgentReadyProgress) and its emitter were deleted with the review-loop
-// retirement. The event type survives in the core registry with no production
-// emitter, so there is nothing left here to observe.
-//
-// Bead ref: M6 WS3-Claude-C. Composes on WS3-F1 (internal/twinparity).
-
 import (
 	"context"
 	"math/rand"
@@ -73,38 +17,20 @@ import (
 	"github.com/gregberns/harmonik/internal/twinparity"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Bands (scaled analogues of the real production thresholds; see file godoc)
-// ─────────────────────────────────────────────────────────────────────────────
-
 const (
-	// agentReadyBand models runlaunch.DefaultAgentReadyTimeout (150s).
 	agentReadyBand = 200 * time.Millisecond
 
-	// boundaryGuard is a dead-zone around each band's boundary that neither the
-	// in-band nor the out-of-band draws enter. The harness drives the REAL
-	// detectors, which use real time.After/time.NewTimer, so a draw sleeps for
-	// real wall-clock time; under -race and load, timer + goroutine scheduling
-	// jitter has been observed in the tens of ms. The guard must dominate that
-	// jitter or an in-band draw can flip over the boundary and false-fire
-	// (an earlier 15ms margin flaked ~1-in-4 under -race). 120ms gives ~5x
-	// headroom over the observed jitter while keeping per-draw waits small.
 	boundaryGuard = 120 * time.Millisecond
 	// overBandSpread is how far past (band+guard) the out-of-band draws range.
 	overBandSpread = 40 * time.Millisecond
 )
 
-// timingDraw is one point in the fuzz timing space: the per-edge latencies the
-// twin would produce (via scriptdriver.go's per-step delay_ms knob) for the
-// causal edge the harness exercises.
 type timingDraw struct {
 	// AgentReadyDelay is how long after launch the agent_ready signal arrives.
 	// > agentReadyBand ⇒ agent_ready_timeout.
 	AgentReadyDelay time.Duration
 }
 
-// asVector projects a draw onto the []time.Duration vector the shrinker operates
-// over (index 0 = agent_ready edge).
 func (d timingDraw) asVector() []time.Duration {
 	return []time.Duration{d.AgentReadyDelay}
 }
@@ -113,12 +39,6 @@ func drawFromVector(v []time.Duration) timingDraw {
 	return timingDraw{AgentReadyDelay: v[0]}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Real-emitter observation
-// ─────────────────────────────────────────────────────────────────────────────
-
-// observeAnomalies runs one timing draw through the REAL daemon detectors and
-// emitters, returning the sorted set of AnomalyKinds that actually fired.
 func observeAnomalies(t *testing.T, draw timingDraw) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -127,19 +47,12 @@ func observeAnomalies(t *testing.T, draw timingDraw) []string {
 	emitter := &handlercontract.CollectingEmitter{}
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
 
-	// agent_ready. The real detector is now the dispatch segment's ready pump
-	// (RT14 retired waitAgentReady); the timing DECISION it encodes is "did a
-	// ready envelope satisfying adapter.DetectReady arrive within the band".
-	// Express that directly so the property still observes the REAL emitter
-	// (ExportedEmitAgentReadyTimeout).
 	if draw.AgentReadyDelay > agentReadyBand {
 		daemon.ExportedEmitAgentReadyTimeout(ctx, emitter, runID, "twin-sid", agentReadyBand)
 	}
 	return anomalyKindsIn(emitter.EventTypes())
 }
 
-// anomalyKindsIn filters emitted event types down to the F1 AnomalyKinds set,
-// sorted and de-duplicated.
 func anomalyKindsIn(emitted []string) []string {
 	anomalySet := map[string]struct{}{}
 	for _, a := range twinparity.AnomalyKinds {
@@ -159,9 +72,6 @@ func anomalyKindsIn(emitted []string) []string {
 	return out
 }
 
-// terminalSetFor models the terminal-landmark set a run journals: a run with no
-// anomaly completes and journals the full twinparity.TerminalKinds triad; a run
-// that tripped a timing anomaly did not reach clean completion (empty set).
 func terminalSetFor(anoms []string) []string {
 	if len(anoms) == 0 {
 		out := append([]string(nil), twinparity.TerminalKinds...)
@@ -171,14 +81,6 @@ func terminalSetFor(anoms []string) []string {
 	return []string{}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Keeper co-observation (internal/keepertwin)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// keeperCoObserve independently classifies the SAME draw via keepertwin.Classify:
-// an agent_ready latency past the band is a handoff-timeout abort; otherwise a
-// clean completion. Returns true when the keeper twin reads the draw as an abort.
-// The property test asserts this verdict AGREES with the daemon's real emitter.
 func keeperCoObserve(t *testing.T, draw timingDraw) bool {
 	t.Helper()
 	sum := keepertwin.CycleSummary{
@@ -200,14 +102,6 @@ func keeperCoObserve(t *testing.T, draw timingDraw) bool {
 	return stratum == keepertwin.StratumAbortHandoffTimeout
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shrinker — delta-debloat to a minimal failing timing vector
-// ─────────────────────────────────────────────────────────────────────────────
-
-// shrinkTimingVector reduces a failing timing vector to a minimal one that still
-// fails `fails`. It repeatedly tries, for each component, (a) zeroing it and
-// (b) halving it, keeping any reduction that preserves failure, until a fixed
-// point is reached. Deterministic; no randomness.
 func shrinkTimingVector(vec []time.Duration, fails func([]time.Duration) bool) []time.Duration {
 	cur := append([]time.Duration(nil), vec...)
 	if !fails(cur) {
@@ -216,7 +110,6 @@ func shrinkTimingVector(vec []time.Duration, fails func([]time.Duration) bool) [
 	for {
 		progressed := false
 		for i := range cur {
-			// Try zeroing component i.
 			if cur[i] != 0 {
 				cand := append([]time.Duration(nil), cur...)
 				cand[i] = 0
@@ -226,7 +119,6 @@ func shrinkTimingVector(vec []time.Duration, fails func([]time.Duration) bool) [
 					continue
 				}
 			}
-			// Try halving component i.
 			if cur[i] > 0 {
 				cand := append([]time.Duration(nil), cur...)
 				cand[i] = cur[i] / 2
@@ -242,14 +134,8 @@ func shrinkTimingVector(vec []time.Duration, fails func([]time.Duration) bool) [
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// inv-1 + inv-2 — property over N in-band draws
-// ─────────────────────────────────────────────────────────────────────────────
-
-// numDraws is the fuzz draw count. Accept criterion: N ≥ 50.
 const numDraws = 64
 
-// timingPropSeed fixes the PRNG so the fuzz is reproducible.
 const timingPropSeed = 0x5C1A11EC
 
 func TestTimingProperty_InBandInvariants(t *testing.T) {
@@ -258,15 +144,12 @@ func TestTimingProperty_InBandInvariants(t *testing.T) {
 
 	var firstTerminal []string
 	for i := 0; i < numDraws; i++ {
-		// Draw the edge strictly INSIDE its band, below the dead-zone guard so
-		// timer scheduling jitter cannot flip an in-band draw over the boundary.
 		draw := timingDraw{
 			AgentReadyDelay: time.Duration(rng.Int63n(int64(agentReadyBand - boundaryGuard))),
 		}
 
 		anoms := observeAnomalies(t, draw)
 
-		// inv-2: no anomaly events inside the bands.
 		if len(anoms) != 0 {
 			minVec := shrinkTimingVector(draw.asVector(), func(v []time.Duration) bool {
 				return len(observeAnomalies(t, drawFromVector(v))) != 0
@@ -274,12 +157,10 @@ func TestTimingProperty_InBandInvariants(t *testing.T) {
 			t.Errorf("inv-2 VIOLATED: in-band draw produced anomalies %v; minimal failing vector = %v", anoms, minVec)
 		}
 
-		// keeper co-observation: an in-band draw must read as a clean completion.
 		if keeperCoObserve(t, draw) {
 			t.Errorf("keeper co-observation DISAGREES: in-band draw %v classified as handoff-timeout abort", draw)
 		}
 
-		// inv-1: terminal set identical across all in-band draws.
 		term := terminalSetFor(anoms)
 		if firstTerminal == nil {
 			firstTerminal = term
@@ -299,16 +180,10 @@ func sortedTerminalKinds() []string {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// inv-3 — exactly the matching anomaly when a timing is OUTSIDE its band
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 	t.Parallel()
 	rng := rand.New(rand.NewSource(timingPropSeed + 1)) //nolint:gosec // G404: deterministic fuzz seed
 
-	// Each case: which edge is pushed OUT of band, and the single anomaly kind
-	// that must then appear (exactly).
 	cases := []struct {
 		name    string
 		build   func() timingDraw
@@ -318,7 +193,6 @@ func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 			name: "agent_ready over band",
 			build: func() timingDraw {
 				return timingDraw{
-					// Over agentReadyBand by at least the guard.
 					AgentReadyDelay: agentReadyBand + boundaryGuard + time.Duration(rng.Int63n(int64(overBandSpread))),
 				}
 			},
@@ -342,8 +216,6 @@ func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 					tc.name, anoms, want, minVec)
 			}
 
-			// keeper co-observation must agree on the partition for the
-			// agent_ready edge (the handoff analogue).
 			keeperAbort := keeperCoObserve(t, draw)
 			daemonAgentReadyTimeout := reflect.DeepEqual(anoms, []string{string(core.EventTypeAgentReadyTimeout)})
 			if keeperAbort != daemonAgentReadyTimeout {
@@ -353,10 +225,6 @@ func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pins + shrinker self-test
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestTimingProperty_RealThresholdsPinned pins the production threshold constants
 // the scaled bands model. A drift here means the harness's bands no longer track
@@ -386,8 +254,6 @@ func TestTimingProperty_ShrinkerMinimizes(t *testing.T) {
 	if minVec[1] != 0 {
 		t.Errorf("shrinker did not zero the irrelevant component: got minVec[1]=%v, want 0", minVec[1])
 	}
-	// minVec[0] must still fail but be no larger than the original; halving from
-	// 500ms toward the 40ms boundary lands within (boundary, 2*boundary].
 	if minVec[0] <= boundary || minVec[0] > 2*boundary {
 		t.Errorf("shrinker did not minimize component 0: got %v, want in (%v, %v]", minVec[0], boundary, 2*boundary)
 	}

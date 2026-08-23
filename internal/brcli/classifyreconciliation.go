@@ -68,37 +68,24 @@ func BrErrReconciliationCategory(err error) ReconciliationCategory {
 		return ""
 	}
 
-	// BrOK is the success sentinel: a successful br invocation carries no
-	// reconciliation category.  It is not in the §8 routing table by design.
 	if errors.Is(err, BrOK) {
 		return ""
 	}
 
-	// Check each BrError sentinel via errors.Is so wrapped errors resolve.
 	for _, e := range brErrRoutingTable {
 		if errors.Is(err, e.brErr) {
 			return e.cat
 		}
 	}
 
-	// err is non-nil but does not wrap any recognized BrError value.
-	// Escalate to Cat 6a (integrity violation, LLM-triageable) as the safest
-	// default: an unrecognized error type at this call site indicates an
-	// unexpected caller state rather than a Beads-side divergence.
 	return RecCat6a
 }
 
-// brErrRoutingEntry pairs a BrError sentinel with its reconciliation category.
 type brErrRoutingEntry struct {
 	brErr BrError
 	cat   ReconciliationCategory
 }
 
-// brErrRoutingTable is the machine-readable form of specs/beads-integration.md
-// §8 Table, enumerating all six non-OK BrError values.  BrOK is excluded: a
-// successful invocation carries no reconciliation category.
-//
-// Order follows the §8 table row order for auditability.
 var brErrRoutingTable = [...]brErrRoutingEntry{
 	{BrNotFound, RecCat3},
 	{BrConflict, RecCat3a},

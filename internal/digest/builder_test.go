@@ -67,7 +67,6 @@ func TestBuildDefaultLimitsActiveRuns(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write a queue.json with 12 dispatched items.
 	writeQueueJSON(t, dir, 12)
 
 	d, err := Build(context.Background(), BuildInput{
@@ -88,8 +87,6 @@ func TestBuildDefaultLimitsActiveRuns(t *testing.T) {
 	if d.Queue.ActiveRunCount != 12 {
 		t.Errorf("ActiveRunCount: got %d, want 12", d.Queue.ActiveRunCount)
 	}
-	// DC-005: the omission count MUST flow into the top-level TruncationReport
-	// so the operator can tell how many runs were hidden.
 	if d.Truncated == nil {
 		t.Fatal("expected Truncated to be set when active runs are capped")
 	}
@@ -378,7 +375,6 @@ func TestBuildPendingDecisionsUnacknowledged(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write a decision_required event with an "old" event_id.
 	decisionEventID := "01900000-0000-7000-8000-000000000001"
 	watermarkEventID := "01900000-0000-7000-8000-000000000099"
 	writeDecisionEvents(t, dir, []testDecisionEvent{
@@ -392,7 +388,6 @@ func TestBuildPendingDecisionsUnacknowledged(t *testing.T) {
 		},
 	})
 
-	// Parse watermarkEventID as an EventID for SinceEventID.
 	watermarkUUID, err := uuid.Parse(watermarkEventID)
 	if err != nil {
 		t.Fatalf("parse watermark uuid: %v", err)
@@ -409,12 +404,10 @@ func TestBuildPendingDecisionsUnacknowledged(t *testing.T) {
 		t.Fatalf("Build failed: %v", err)
 	}
 
-	// RecentEvents should be empty (decision is before the watermark).
 	if len(d.RecentEvents) != 0 {
 		t.Errorf("expected no recent events (all before watermark); got %d", len(d.RecentEvents))
 	}
 
-	// PendingDecisions MUST surface the unacknowledged decision regardless.
 	if len(d.PendingDecisions) != 1 {
 		t.Fatalf("expected 1 pending decision (EV-044); got %d", len(d.PendingDecisions))
 	}
@@ -476,7 +469,6 @@ func TestBuildPendingDecisionsMixed(t *testing.T) {
 	dir := makeMinimalProject(t)
 
 	writeDecisionEvents(t, dir, []testDecisionEvent{
-		// Unacknowledged
 		{
 			eventID:     "01900000-0000-7000-8000-000000000001",
 			evType:      "decision_required",
@@ -518,8 +510,6 @@ func TestBuildPendingDecisionsMixed(t *testing.T) {
 	}
 }
 
-// --- helpers ---
-
 func makeMinimalProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -530,7 +520,6 @@ func makeMinimalProject(t *testing.T) string {
 	return dir
 }
 
-// writeQueueJSON writes a queue.json with n dispatched items into dir.
 func writeQueueJSON(t *testing.T, dir string, n int) {
 	t.Helper()
 	harmonikDir := filepath.Join(dir, ".harmonik")
@@ -592,9 +581,6 @@ func writeQueueJSON(t *testing.T, dir string, n int) {
 	}
 }
 
-// testDecisionEvent describes one event line to write into events.jsonl.
-// For decision_required: fill ackToken, subjectKind, subjectID, reason.
-// For decision_acknowledged: fill ackToken only.
 type testDecisionEvent struct {
 	eventID     string
 	evType      string
@@ -604,7 +590,6 @@ type testDecisionEvent struct {
 	reason      string
 }
 
-// writeDecisionEvents writes the given events to .harmonik/events/events.jsonl.
 func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 	t.Helper()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
@@ -658,7 +643,6 @@ func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 	}
 }
 
-// writeNotesJSONL writes n unresolved notes into .harmonik/cognition/notes.jsonl.
 func writeNotesJSONL(t *testing.T, dir string, n int) {
 	t.Helper()
 	notesDir := filepath.Join(dir, ".harmonik", "cognition")
@@ -688,9 +672,6 @@ func writeNotesJSONL(t *testing.T, dir string, n int) {
 	}
 }
 
-// makeFakeBr writes a shell script that acts as a fake `br` binary. When invoked
-// with `list --status closed --json` it prints issuesJSON; otherwise it exits 1.
-// Returns the path to the script.
 func makeFakeBr(t *testing.T, dir, issuesJSON string) string {
 	t.Helper()
 	script := "#!/bin/sh\n" +
@@ -713,7 +694,6 @@ func TestBuildHasUndeployedTail_NoPhase2Classes(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// No sentinel config — all defaults (no Phase-2 classes).
 	d, err := Build(context.Background(), BuildInput{
 		ProjectDir: dir,
 		Limits:     DefaultLimits(),
@@ -733,7 +713,6 @@ func TestBuildHasUndeployedTail_Phase2ClassesNoClosedBeads(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write sentinel config with a Phase-2 class.
 	cfgDir := filepath.Join(dir, ".harmonik")
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
 sentinel:
@@ -743,7 +722,6 @@ sentinel:
 		t.Fatal(err)
 	}
 
-	// Fake br returns no closed beads.
 	fakeBr := makeFakeBr(t, dir, `{"issues":[]}`)
 
 	d, err := Build(context.Background(), BuildInput{
@@ -766,7 +744,6 @@ func TestBuildHasUndeployedTail_ClosedBeadMatchesPhase2Class(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write sentinel config with a Phase-2 class.
 	cfgDir := filepath.Join(dir, ".harmonik")
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
 sentinel:
@@ -776,7 +753,6 @@ sentinel:
 		t.Fatal(err)
 	}
 
-	// Fake br returns one closed bead labelled "deploy-class".
 	fakeBr := makeFakeBr(t, dir,
 		`{"issues":[{"id":"hk-abc","title":"deploy thing","labels":["deploy-class"]}]}`)
 
@@ -800,7 +776,6 @@ func TestBuildHasUndeployedTail_ClosedBeadNoMatchingLabel(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write sentinel config with a Phase-2 class.
 	cfgDir := filepath.Join(dir, ".harmonik")
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
 sentinel:
@@ -810,7 +785,6 @@ sentinel:
 		t.Fatal(err)
 	}
 
-	// Fake br returns a closed bead with a DIFFERENT label (not deploy-class).
 	fakeBr := makeFakeBr(t, dir,
 		`{"issues":[{"id":"hk-xyz","title":"other thing","labels":["bug","priority-1"]}]}`)
 
@@ -878,7 +852,6 @@ func TestBuildPendingDecisions_FromAcksDirOnly(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Write a pending ack-state file (no corresponding events.jsonl entry).
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
 	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -931,7 +904,6 @@ func TestBuildPendingDecisions_AcksDirDedup(t *testing.T) {
 
 	tok := "tok-dedup-test"
 
-	// Write the same ack_token to events.jsonl.
 	writeDecisionEvents(t, dir, []testDecisionEvent{
 		{
 			eventID:     "01900000-0000-7000-8000-000000000001",
@@ -943,7 +915,6 @@ func TestBuildPendingDecisions_AcksDirDedup(t *testing.T) {
 		},
 	})
 
-	// Write a pending ack-state file with the same ack_token.
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
 	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1021,9 +992,6 @@ func TestBuildPendingDecisions_AcksDirAcknowledgedSkipped(t *testing.T) {
 func TestBrReady_InvokesCorrectFlagOrder(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// A fake br that only succeeds when invoked as "ready --limit 0 --json"
-	// (in that exact order), and fails loudly (exit 2, mirroring real br's
-	// behaviour) for any other argument shape — reproducing the historical bug.
 	script := `#!/bin/sh
 if [ "$1" = "ready" ] && [ "$2" = "--limit" ] && [ "$3" = "0" ] && [ "$4" = "--json" ]; then
   echo '[{"id":"hk-x","title":"t","priority":1,"status":"open"}]'
@@ -1182,7 +1150,6 @@ func TestBuildCommsWho_OfflineOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventID := uuid.Must(uuid.NewV7()).String()
-	// last_seen far in the past — well past the 10-minute stale cutoff.
 	line := `{"event_id":"` + eventID + `","type":"agent_presence","payload":{"agent":"ghost","status":"online","last_seen":"2020-01-01T00:00:00Z"}}`
 	if err := os.WriteFile(filepath.Join(eventsDir, "events.jsonl"), []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)

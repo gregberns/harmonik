@@ -153,7 +153,6 @@ func TestWorkspaceStateMarshalText(t *testing.T) {
 func TestWorkspaceStateRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all seven values.
 	type wrapper struct {
 		State WorkspaceState `json:"state"`
 	}
@@ -191,7 +190,6 @@ func TestWorkspaceStateRoundTrip(t *testing.T) {
 func TestWorkspaceStateUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all seven declared values.
 	var s WorkspaceState
 	err := s.UnmarshalText([]byte("made_up"))
 	if err == nil {

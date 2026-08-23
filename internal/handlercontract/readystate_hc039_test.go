@@ -7,13 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// readyStateFixture — per-bead helper prefix for test helpers in this file
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.46).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-039 — AgentReadyMsg type field
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestReadyState_AgentReadyMsgTypeField verifies that Type matches
 // ProgressMsgTypeAgentReady per §4.9.HC-039.
 func TestReadyState_AgentReadyMsgTypeField(t *testing.T) {
@@ -30,10 +23,6 @@ func TestReadyState_AgentReadyMsgTypeField(t *testing.T) {
 			msg.Type, handlercontract.ProgressMsgTypeAgentReady)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-039 — AgentReadyMsg JSON round-trip
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestReadyState_AgentReadyMsgRoundTripEmptyCapabilities verifies round-trip
 // when capabilities is empty (handler declares no optional capabilities).
@@ -95,10 +84,6 @@ func TestReadyState_AgentReadyMsgRoundTripWithCapabilities(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-039 — AgentReadyMsg wire field names
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestReadyState_AgentReadyMsgWireFieldNames verifies that the JSON
 // serialization uses the spec-mandated wire field names per §4.9.HC-039.
 func TestReadyState_AgentReadyMsgWireFieldNames(t *testing.T) {
@@ -153,7 +138,6 @@ func TestReadyState_AgentReadyMsgCapabilitiesIsSliceNotNull(t *testing.T) {
 	if !ok {
 		t.Fatal("capabilities key missing from JSON")
 	}
-	// An empty Go slice marshals as "[]" (JSON array), not "null".
 	if capRaw == nil {
 		t.Error("capabilities marshalled as null; want JSON array (even when empty)")
 	}

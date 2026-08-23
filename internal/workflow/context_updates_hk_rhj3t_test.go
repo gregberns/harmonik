@@ -33,8 +33,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow"
 )
 
-// ── fixtures ────────────────────────────────────────────────────────────────
-
 func TestContextUpdateEventsHaveRuntimeContracts(t *testing.T) {
 	workflowID, err := core.NewWorkflowID("test-workflow")
 	if err != nil {
@@ -81,15 +79,11 @@ func contextUpdatesFixtureRun(t *testing.T) *core.Run {
 	}
 }
 
-// capturedEvent holds a single event received by the test consumer.
 type capturedEvent struct {
 	EventType core.EventType
 	Payload   []byte
 }
 
-// captureBus sets up a synchronous consumer on an in-memory bus that appends
-// all received events to the returned slice. The slice is safe to read after
-// the test function returns; bus.Seal() is called before returning.
 func captureBus(t *testing.T) (eventbus.EventBus, *[]capturedEvent, *sync.Mutex) {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -119,8 +113,6 @@ func captureBus(t *testing.T) (eventbus.EventBus, *[]capturedEvent, *sync.Mutex)
 	return bus, &captured, &mu
 }
 
-// ── sensors ─────────────────────────────────────────────────────────────────
-
 // TestValidateAndApplyContextUpdates_RegisteredKeyApplied verifies that a key
 // present in registeredKeys is written into run.Context and a context_updated
 // event is emitted containing that key in the diff.
@@ -140,12 +132,10 @@ func TestValidateAndApplyContextUpdates_RegisteredKeyApplied(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// run.Context must contain the registered key.
 	if run.Context["pr_url"] != "https://github.com/example/pr/1" {
 		t.Errorf("run.Context[pr_url] = %v, want https://github.com/example/pr/1", run.Context["pr_url"])
 	}
 
-	// Exactly one event: context_updated.
 	mu.Lock()
 	evts := *captured
 	mu.Unlock()
@@ -193,12 +183,10 @@ func TestValidateAndApplyContextUpdates_UnregisteredKeyDropped(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// run.Context must NOT contain the unregistered key.
 	if _, ok := run.Context["secret_token"]; ok {
 		t.Error("unregistered key was written to run.Context; want it dropped")
 	}
 
-	// Exactly one event: context_update_unregistered_key.
 	mu.Lock()
 	evts := *captured
 	mu.Unlock()
@@ -293,7 +281,6 @@ func TestValidateAndApplyContextUpdates_MixedKeys(t *testing.T) {
 	evts := *captured
 	mu.Unlock()
 
-	// 2 unregistered-key warnings + 1 context_updated.
 	if len(evts) != 3 {
 		t.Fatalf("emitted %d events, want 3 (2 unregistered + 1 updated)", len(evts))
 	}
@@ -338,7 +325,6 @@ func TestValidateAndApplyContextUpdates_AllUnregistered(t *testing.T) {
 	evts := *captured
 	mu.Unlock()
 
-	// Only the unregistered-key warning; no context_updated.
 	if len(evts) != 1 {
 		t.Fatalf("emitted %d events, want 1", len(evts))
 	}

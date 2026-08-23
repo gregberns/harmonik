@@ -1,28 +1,5 @@
 package sentinel
 
-// trip_ev043b.go — sentinel trip emission and clearing (hk-dcvj).
-//
-// When the movement governor trips (ActivationActive), the caller MUST call
-// EmitTrip to write ONE decision_required exception. The exception is surfaced
-// in every harmonik digest via EV-044 (internal/digest/builder.go buildPendingDecisions),
-// structurally blocking the all-clear until real movement resumes.
-//
-// Clearing fires only on real movement: the caller MUST call ClearTrip when
-// the governor returns ActivationDormant (score >= high threshold). Bare
-// self-ack is prevented because the governor can only return dormant when
-// terminal-progress events (bead_closed, run_completed, HEAD-advance) appear
-// in the window — not on the captain's say-so alone.
-//
-// Idempotency: EmitTrip scans .harmonik/decision_acks/ for an existing
-// pending sentinel exception and returns it without writing again.
-//
-// Ack-state files use the same format as EV-043a
-// (internal/daemon/decision_block_ev043a.go) so LoadDecisionAckState restores
-// the sentinel block on daemon restart.
-//
-// Spec ref: docs/flywheel-self-reinforcing-design.md §2, §5.
-// Bead ref: hk-dcvj. Epic: hk-0oca (codename:flywheel).
-
 import (
 	"context"
 	"encoding/json"
@@ -37,25 +14,14 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// sentinelSubjectKind is the ack subject_kind for sentinel exceptions.
-// Uses "queue" (one of the two kinds in decisionAckSubjectKind) because the
-// sentinel watches the whole system, not a specific bead.
 const sentinelSubjectKind = "queue"
 
-// sentinelSubjectID is the reserved subject_id for sentinel exceptions.
-// Must not collide with operator-assigned queue names.
 const sentinelSubjectID = "sentinel"
 
-// sentinelAckSchemaVersion matches decisionAckSchemaVersion in
-// internal/daemon/decision_block_ev043a.go (currently 1).
 const sentinelAckSchemaVersion = 1
 
-// sentinelSourceSubsystem is the source_subsystem field written into events.jsonl.
 const sentinelSourceSubsystem = "sentinel"
 
-// sentinelAckRecord is the on-disk shape for a sentinel ack-state file.
-// It mirrors daemon.decisionAckRecord to keep the format compatible with
-// LoadDecisionAckState without creating a cross-package import.
 type sentinelAckRecord struct {
 	SchemaVersion int    `json:"schema_version"`
 	AckToken      string `json:"ack_token"`
@@ -98,7 +64,6 @@ type TripInput struct {
 func EmitTrip(_ context.Context, in TripInput) (string, error) {
 	acksDir := decisionAcksDirPath(in.ProjectDir)
 
-	// Idempotency: return the existing ack_token if one is already pending.
 	if existing, err := findPendingSentinelAck(acksDir); err != nil {
 		return "", fmt.Errorf("sentinel.EmitTrip: check existing: %w", err)
 	} else if existing != "" {
@@ -109,7 +74,6 @@ func EmitTrip(_ context.Context, in TripInput) (string, error) {
 	reason := buildTripReason(in.ReadyBeadIDs, in.HasUndeployedTail)
 	emittedAt := in.Now.UTC().Format(time.RFC3339)
 
-	// Write ack-state file FIRST — it is the durability anchor per EV-043a.
 	rec := sentinelAckRecord{
 		SchemaVersion: sentinelAckSchemaVersion,
 		AckToken:      ackToken,
@@ -123,9 +87,6 @@ func EmitTrip(_ context.Context, in TripInput) (string, error) {
 		return "", fmt.Errorf("sentinel.EmitTrip: write ack file: %w", err)
 	}
 
-	// Append decision_required event to events.jsonl (EV-044 surface).
-	// Non-fatal on failure: the ack file is the durability anchor; the JSONL
-	// event is the observational record (decision_block_ev043a.go comment).
 	eventsPath := eventsJSONLPath(in.ProjectDir)
 	if err := appendDecisionRequired(eventsPath, ackToken, reason, in.Now); err != nil {
 		fmt.Fprintf(os.Stderr, "sentinel: EmitTrip: append event (non-fatal): %v\n", err)
@@ -320,22 +281,14 @@ func IsTripAcknowledged(projectDir, ackToken string) (bool, error) {
 	return rec.Status == "acknowledged", nil
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-// decisionAcksDirPath returns .harmonik/decision_acks/ for a project dir.
 func decisionAcksDirPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "decision_acks")
 }
 
-// eventsJSONLPath returns .harmonik/events/events.jsonl for a project dir.
 func eventsJSONLPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 }
 
-// findPendingSentinelAck scans acksDir for a file with subject_kind=sentinelSubjectKind,
-// subject_id=sentinelSubjectID, and status=pending. Returns the ack_token, or "".
 func findPendingSentinelAck(acksDir string) (string, error) {
 	entries, err := os.ReadDir(acksDir)
 	if err != nil {
@@ -366,7 +319,6 @@ func findPendingSentinelAck(acksDir string) (string, error) {
 	return "", nil
 }
 
-// writeSentinelAckFile atomically writes the ack-state file at acksDir/<ackToken>.
 func writeSentinelAckFile(acksDir, ackToken string, rec sentinelAckRecord) error {
 	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", acksDir, err)
@@ -379,7 +331,6 @@ func writeSentinelAckFile(acksDir, ackToken string, rec sentinelAckRecord) error
 	return os.WriteFile(path, data, 0o600)
 }
 
-// appendDecisionRequired appends a decision_required event line to eventsPath.
 func appendDecisionRequired(eventsPath, ackToken, reason string, now time.Time) error {
 	payload := map[string]interface{}{
 		"subject":          map[string]interface{}{"kind": sentinelSubjectKind, "id": sentinelSubjectID},
@@ -391,8 +342,6 @@ func appendDecisionRequired(eventsPath, ackToken, reason string, now time.Time) 
 	return appendEventLine(eventsPath, "decision_required", now, payload)
 }
 
-// appendDecisionAcknowledged appends a decision_acknowledged event line to eventsPath.
-// ackMethod distinguishes auto-clears ("governor_movement") from operator clears ("operator").
 func appendDecisionAcknowledged(eventsPath, ackToken, ackMethod string, now time.Time) error {
 	payload := map[string]interface{}{
 		"ack_token":  ackToken,
@@ -403,9 +352,6 @@ func appendDecisionAcknowledged(eventsPath, ackToken, ackMethod string, now time
 	return appendEventLine(eventsPath, "decision_acknowledged", now, payload)
 }
 
-// appendLegitimateHaltAck appends a decision_acknowledged event for a captain
-// legitimate-halt clear. Includes halt_reason and readjudicate=true so the
-// adversary can re-adjudicate on the next pass (spec §2.2 clause 2).
 func appendLegitimateHaltAck(eventsPath, ackToken, haltReason string, now time.Time) error {
 	payload := map[string]interface{}{
 		"ack_token":    ackToken,
@@ -418,7 +364,6 @@ func appendLegitimateHaltAck(eventsPath, ackToken, haltReason string, now time.T
 	return appendEventLine(eventsPath, "decision_acknowledged", now, payload)
 }
 
-// appendEventLine marshals one core.Event and appends it to eventsPath.
 func appendEventLine(eventsPath string, evType core.EventType, now time.Time, payload interface{}) error {
 	eventUUID, err := uuid.NewV7()
 	if err != nil {
@@ -456,7 +401,6 @@ func appendEventLine(eventsPath string, evType core.EventType, now time.Time, pa
 	return closeErr
 }
 
-// buildTripReason constructs the human-readable reason string for a sentinel trip.
 func buildTripReason(readyBeadIDs []string, hasUndeployedTail bool) string {
 	parts := []string{"sentinel: sustained low movement detected"}
 	if len(readyBeadIDs) > 0 {

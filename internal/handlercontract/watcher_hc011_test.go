@@ -14,22 +14,10 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// watcher — per-bead helper prefix for test helpers in this file.
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.12)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// watcherFixtureSessionID returns a stable test session ID.
 func watcherFixtureSessionID(_ *testing.T) core.SessionID {
 	return core.SessionID("test-session-hk-8i31.12")
 }
 
-// watcherFixturePublisher is a minimal EventEmitter that collects emitted events.
-//
-// It satisfies handlercontract.EventEmitter: the single Emit method matches
-// EventBus.Emit's signature exactly (hk-8i31.82 substitution).
 type watcherFixturePublisher struct {
 	mu         sync.Mutex
 	eventTypes []string
@@ -59,10 +47,6 @@ func (p *watcherFixturePublisher) EventTypes() []string {
 	return out
 }
 
-// watcherFixtureDeadLetter is a minimal WatcherDeadLetterSink that collects spilled events.
-//
-// Append stores eventType strings; payload is ignored in tests (content is
-// covered by the publisher fixture and the production payload-builder tests).
 type watcherFixtureDeadLetter struct {
 	mu         sync.Mutex
 	eventTypes []string
@@ -83,9 +67,6 @@ func (d *watcherFixtureDeadLetter) Events() []string {
 	return out
 }
 
-// watcherFixtureSpawn creates and starts a watcher using the provided NDJSON
-// bytes as the progress stream.  Returns the watcher and its publisher.  Tests
-// that need to inspect the dead-letter sink build the config themselves.
 func watcherFixtureSpawn(
 	t *testing.T,
 	ndjson string,
@@ -101,7 +82,6 @@ func watcherFixtureSpawn(
 	return w, pub
 }
 
-// watcherFixtureWait waits for the watcher to complete with a deadline.
 func watcherFixtureWait(t *testing.T, w *handlercontract.Watcher) {
 	t.Helper()
 	select {
@@ -111,7 +91,6 @@ func watcherFixtureWait(t *testing.T, w *handlercontract.Watcher) {
 	}
 }
 
-// watcherFixtureLine encodes a map as a single NDJSON line (object + newline).
 func watcherFixtureLine(t *testing.T, fields map[string]string) string {
 	t.Helper()
 	b, err := json.Marshal(fields)
@@ -120,10 +99,6 @@ func watcherFixtureLine(t *testing.T, fields map[string]string) string {
 	}
 	return string(b) + "\n"
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — One watcher per session: constant and type assertions
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWatcher_WatcherPublishBufSizeValue verifies that WatcherPublishBufSize
 // equals 8 as specified by specs/handler-contract.md §4.3.HC-011a.
@@ -180,10 +155,6 @@ func TestWatcher_SubReasonsDistinct(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — SpawnWatcher basic lifecycle
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF verifies that SpawnWatcher
 // returns immediately (before the goroutine reads EOF) — i.e., the goroutine is
 // started asynchronously per HC-011.
@@ -193,11 +164,7 @@ func TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF(t *testing.T) {
 	pub := &watcherFixturePublisher{}
 	dl := &watcherFixtureDeadLetter{}
 
-	// Block until the test says so; simulates a handler that hasn't closed yet.
 	pr, pw := io.Pipe()
-	// Safety net for the t.Fatal path below. The happy path closes explicitly,
-	// so this is usually a second Close; io.PipeWriter tolerates that and any
-	// non-nil result would mean the pipe contract itself changed.
 	defer func() {
 		if cerr := pw.Close(); cerr != nil {
 			t.Errorf("deferred pipe close: %v", cerr)
@@ -211,20 +178,16 @@ func TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF(t *testing.T) {
 		DeadLetter:     dl,
 	})
 
-	// The watcher handle must be non-nil immediately.
 	if w == nil {
 		t.Fatal("SpawnWatcher returned nil")
 	}
 
-	// Done must NOT be closed yet (stream is still open).
 	select {
 	case <-w.Done():
 		t.Error("watcher Done channel closed before stream EOF — goroutine did not start async")
 	default:
-		// Correct: goroutine running, not yet done.
 	}
 
-	// Close the stream; the watcher should finish shortly.
 	if err := pw.Close(); err != nil {
 		t.Fatalf("close progress stream: %v", err)
 	}
@@ -285,18 +248,10 @@ func TestWatcher_ContextCancel_DoneClosedAndErrCanceled(t *testing.T) {
 	cancel()
 	watcherFixtureWait(t, w)
 
-	// Allow either: Err() is nil (if the goroutine saw EOF-before-cancel) or an
-	// error wrapping ErrCanceled — which of the two is a scheduler race. The key
-	// requirement is that Done is closed; anything OUTSIDE that pair is a defect,
-	// so assert the pair rather than discarding Err() entirely.
 	if err := w.Err(); err != nil && !errors.Is(err, handlercontract.ErrCanceled) {
 		t.Errorf("Watcher.Err() = %v; want nil or an error wrapping ErrCanceled", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — Progress-stream messages published to bus
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWatcher_ValidMessages_PublishedToPublisher verifies that well-formed
 // NDJSON lines with known message types are translated into core.Events and
@@ -329,7 +284,6 @@ func TestWatcher_ValidMessages_PublishedToPublisher(t *testing.T) {
 func TestWatcher_UnknownMessageType_IgnoredNotError(t *testing.T) {
 	t.Parallel()
 
-	// One unknown type, then a known type.
 	lines := watcherFixtureLine(t, map[string]string{"type": "future_unknown_type_v99"}) +
 		watcherFixtureLine(t, map[string]string{"type": "agent_heartbeat"})
 
@@ -365,10 +319,6 @@ func TestWatcher_BlankLines_Skipped(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007a — Line too long → agent_failed with ndjson_line_too_long
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWatcher_LineTooLong_EmitsAgentFailed verifies that a progress-stream line
 // exceeding NDJSONMaxLineLenBytes causes the watcher to emit agent_failed with
 // sub_reason ndjson_line_too_long and exit with a non-nil Err wrapping
@@ -376,8 +326,6 @@ func TestWatcher_BlankLines_Skipped(t *testing.T) {
 func TestWatcher_LineTooLong_EmitsAgentFailed(t *testing.T) {
 	t.Parallel()
 
-	// Build a line that exceeds the 1 MiB cap.  Use a JSON object so it looks
-	// valid structurally, but the raw byte count > NDJSONMaxLineLenBytes.
 	oversized := `{"type":"agent_output_chunk","data":"` +
 		strings.Repeat("x", handlercontract.NDJSONMaxLineLenBytes) +
 		`"}` + "\n"
@@ -392,7 +340,6 @@ func TestWatcher_LineTooLong_EmitsAgentFailed(t *testing.T) {
 		t.Errorf("Err() = %v, want wrapping ErrProtocolMismatch", w.Err())
 	}
 
-	// Agent_failed with sub_reason ndjson_line_too_long must have been published.
 	types := pub.EventTypes()
 	found := false
 	for _, tp := range types {
@@ -406,17 +353,12 @@ func TestWatcher_LineTooLong_EmitsAgentFailed(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007b — Malformed JSON → agent_failed with malformed_progress_message
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWatcher_MalformedJSON_EmitsAgentFailed verifies that a syntactically
 // invalid JSON object causes the watcher to emit agent_failed with sub_reason
 // malformed_progress_message and close the session per HC-007b.
 func TestWatcher_MalformedJSON_EmitsAgentFailed(t *testing.T) {
 	t.Parallel()
 
-	// Syntactically invalid JSON followed by nothing.
 	ndjson := "{not valid json}\n"
 
 	w, pub := watcherFixtureSpawn(t, ndjson)
@@ -442,10 +384,6 @@ func TestWatcher_MalformedJSON_EmitsAgentFailed(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-027 — Dead-letter routing on publish failure
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWatcher_PublishError_RoutesToDeadLetter verifies that when the publisher
 // returns an error the event is routed to the dead-letter sink per HC-027.
 func TestWatcher_PublishError_RoutesToDeadLetter(t *testing.T) {
@@ -470,10 +408,6 @@ func TestWatcher_PublishError_RoutesToDeadLetter(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011a — LastReadEventAt updated on each Read
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWatcher_LastReadEventAt_ZeroBeforeStart verifies that a freshly spawned
 // watcher (before any Read) has zero LastReadEventAt.
 //
@@ -487,7 +421,6 @@ func TestWatcher_LastReadEventAt_AdvancesAfterRead(t *testing.T) {
 	w, _ := watcherFixtureSpawn(t, ndjson)
 	watcherFixtureWait(t, w)
 
-	// After the goroutine finishes reading, LastReadEventAt must be non-zero.
 	ts := w.LastReadEventAt()
 	if ts.IsZero() {
 		t.Error("LastReadEventAt is zero after goroutine read at least one line; want non-zero timestamp")
@@ -517,10 +450,6 @@ func TestWatcher_LastReadEventAt_IsRecent(t *testing.T) {
 		t.Errorf("LastReadEventAt %v is far after test end %v; want recent timestamp", ts, after)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — N sessions = N watchers (stateless across sessions)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWatcher_MultipleWatchers_NoSharedState verifies that spawning two
 // watchers for different sessions does not cause cross-session event leakage.
@@ -563,10 +492,6 @@ func TestWatcher_MultipleWatchers_NoSharedState(t *testing.T) {
 		t.Errorf("session B event count = %d, want 2; types = %v", len(typesB), typesB)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — SpawnWatcher panics on missing required config fields
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWatcher_SpawnWatcher_PanicsOnNilStream verifies that SpawnWatcher panics
 // when ProgressStream is nil — a daemon defect.
@@ -644,22 +569,8 @@ func TestWatcher_SpawnWatcher_PanicsOnEmptySessionID(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — EventPublisher interface satisfiable without handler import
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Compile-time check: watcherFixturePublisher satisfies EventEmitter.
-// This file imports no execution-shape package (internal/handler), proving the
-// interface is satisfiable from daemon-side code only (hk-8i31.82).
 var _ handlercontract.EventEmitter = (*watcherFixturePublisher)(nil)
 
-// Compile-time check: watcherFixtureDeadLetter satisfies WatcherDeadLetterSink.
 var _ handlercontract.WatcherDeadLetterSink = (*watcherFixtureDeadLetter)(nil)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Imports needed by the tests above
-// ─────────────────────────────────────────────────────────────────────────────
-
-// io.Pipe is used directly in TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF
-// and TestWatcher_ContextCancel_DoneClosedAndErrCanceled above.
 var _ = io.Pipe // prevent "imported and not used" if test compiler optimises the above

@@ -1,14 +1,5 @@
 package daemon
 
-// statedisk.go — disk-only StateSnapshot builder for daemon-down fallback.
-//
-// BuildDiskSnapshot assembles a best-effort StateSnapshot from disk when the
-// daemon is not running.  Per SS-001a / SS-006 a daemon-down snapshot MUST
-// set read_quality.unsure = true and MUST NOT emit activity_label INACTIVE.
-//
-// Spec ref: specs/system-state.md §4.1 SS-001a, §4.6 SS-006.
-// Bead ref: hk-gv04 (P2-a: harmonik state aggregator command).
-
 import (
 	"context"
 	"fmt"
@@ -42,31 +33,22 @@ func BuildDiskSnapshot(ctx context.Context, projectDir string) StateSnapshot {
 		},
 	}
 
-	// Queues from disk.
 	snap.Queues = diskQueues(ctx, projectDir)
 
-	// Sessions from crew registry + keeper gauges.
 	var sessErr error
 	snap.Sessions, sessErr = diskSessions(ctx, projectDir, now)
 	if sessErr != nil {
 		snap.ReadQuality.Reasons = append(snap.ReadQuality.Reasons, "session gather error: "+sessErr.Error())
 	}
 
-	// Work axes from the drain detector (disk-only path: no br-ready, best-effort).
-	// We can call GatherDrainFacts with a nil-wired DrainDetector since we have
-	// no RunRegistry / QueueStore in daemon-down mode.  Build a minimal facts
-	// bundle from the disk-queue data and the worktrees scan.
 	snap.WorkAxes = diskWorkAxes(projectDir)
 	if snap.WorkAxes != nil && snap.WorkAxes.Unsure {
 		snap.ReadQuality.Reasons = append(snap.ReadQuality.Reasons, snap.WorkAxes.UnsureReasons...)
 	}
 
-	// Runs from live worktrees directory (disk only — no RunRegistry).
 	snap.Runs = diskRuns(projectDir)
 
-	// Activity label fold (disk-based).
 	snap.ActivityLabel = RollUpLabel(snap.Runs, snap.Queues, snap.WorkAxes, snap.Sessions, projectDir)
-	// Per SS-001a / SS-006: daemon-down MUST NOT emit INACTIVE.
 	if snap.ActivityLabel == ActivityInactive {
 		snap.ActivityLabel = ActivityWaiting
 	}
@@ -74,7 +56,6 @@ func BuildDiskSnapshot(ctx context.Context, projectDir string) StateSnapshot {
 	return snap
 }
 
-// diskQueues loads queue state from disk (.harmonik/queues/*.json).
 func diskQueues(ctx context.Context, projectDir string) []StateQueue {
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -97,8 +78,6 @@ func diskQueues(ctx context.Context, projectDir string) []StateQueue {
 				eligibleCount += len(queue.EligibleItems(g))
 			}
 		}
-		// In disk mode we don't have RunRegistry, so ActiveCount is 0.
-		// EffectiveWorkerCap defaults to 1 (global cap unknown).
 		effectiveCap := queue.DefaultWorkers(q.Workers, 1)
 		eligible := q.Status == queue.QueueStatusActive && eligibleCount > 0
 
@@ -125,7 +104,6 @@ func diskQueues(ctx context.Context, projectDir string) []StateQueue {
 	return result
 }
 
-// diskSessions reads crew registry entries and keeper gauge files.
 func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]StateSession, error) {
 	crewRecords, err := crew.List(projectDir)
 	if err != nil {
@@ -133,7 +111,6 @@ func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]Stat
 	}
 
 	ph := lifecycle.ComputeProjectHash(projectDir)
-	// Reuse LiveStateBuilder for cognition building (disk path: no runs/queues).
 	lb := &LiveStateBuilder{projectDir: projectDir, projectHash: ph}
 
 	sleepSIDs := scanSleepMarkerSIDs(projectDir)
@@ -170,7 +147,6 @@ func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]Stat
 		sessions = append(sessions, sess)
 	}
 
-	// Captain (if not in crew registry).
 	if !hasCaptainRecord(crewRecords) {
 		if _, _, err := keeper.ReadCtxFile(projectDir, captainAgentName); err == nil {
 			alive := tmuxHasSession(ctx, lifecycle.TmuxSessionName(ph, captainAgentName))
@@ -195,7 +171,6 @@ func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]Stat
 	return sessions, nil
 }
 
-// diskRuns derives in-flight runs from the live-worktrees directory (disk only).
 func diskRuns(projectDir string) []StateRun {
 	wtDir := filepath.Join(projectDir, ".harmonik", "worktrees")
 	paths := listWorktreePaths(wtDir)
@@ -210,7 +185,6 @@ func diskRuns(projectDir string) []StateRun {
 	return runs
 }
 
-// listWorktreePaths returns a sorted slice of paths under .harmonik/worktrees.
 func listWorktreePaths(dir string) []string {
 	names := readDirNames(dir)
 	if len(names) == 0 {
@@ -224,14 +198,10 @@ func listWorktreePaths(dir string) []string {
 	return paths
 }
 
-// diskWorkAxes builds a minimal FleetFacts from disk (no br-ready — that
-// requires a running br process).  Only the queue-based and worktree-based
-// axes are populated; br-ready requires the br binary.
 func diskWorkAxes(projectDir string) *FleetFacts {
 	facts := &FleetFacts{GatheredAt: time.Now()}
 	facts.markUnsure("disk-only: br ready axis unavailable without daemon")
 
-	// Failed archives scan (defense #3).
 	archives, err := diskFailedArchives(projectDir)
 	if err != nil {
 		facts.markUnsure("failed-archive scan error: " + err.Error())
@@ -239,7 +209,6 @@ func diskWorkAxes(projectDir string) *FleetFacts {
 		facts.Queued.FailedArchives = archives
 	}
 
-	// Live worktrees (defense #4).
 	wtDir := filepath.Join(projectDir, ".harmonik", "worktrees")
 	paths := listWorktreePaths(wtDir)
 	facts.Runs.LiveWorktrees = len(paths)
@@ -248,9 +217,6 @@ func diskWorkAxes(projectDir string) *FleetFacts {
 	return facts
 }
 
-// diskFailedArchives lists the failed-queue archives on disk. The layout is
-// owned by internal/queue (the package that writes them); this reader MUST NOT
-// re-glob by hand. See internal/queue/failedarchivelayout.go for why.
 func diskFailedArchives(projectDir string) ([]string, error) {
 	matches, err := queue.ListFailedArchives(projectDir)
 	if err != nil {
@@ -259,9 +225,6 @@ func diskFailedArchives(projectDir string) ([]string, error) {
 	return matches, nil
 }
 
-// liveSessionID returns the agent's current session ID from its session-id file.
-// A missing or unreadable file means the agent has no live session ID, so the
-// result is the empty string in both cases.
 func liveSessionID(projectDir, agent string) string {
 	sid, _, err := keeper.ReadSessionIDFile(projectDir, agent)
 	if err != nil {

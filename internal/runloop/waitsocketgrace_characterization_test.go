@@ -1,31 +1,5 @@
 package runloop
 
-// waitsocketgrace_characterization_test.go — characterization of the WAIT step
-// of the shared launch → dispatch → wait → probe → teardown sequence.
-//
-// WaitWithSocketGrace is the single "wait for the agent to finish" primitive:
-// workloop.go, reviewloop.go, dot_cascade_core.go and dot_gate.go all call it.
-// Before this file it had no behavioural tests at all (only the two
-// parseOutcomePayload unit tests in waitsocketgrace_test.go), so a Phase-3
-// decomposition could have silently changed any of the branches below.
-//
-// These tests pin OBSERVABLE behaviour only — what the wait does to the session
-// (kill/reap), which store queries it issues and in what order, and what it
-// returns on each branch. They deliberately do NOT pin the signature or the
-// internal helper structure: a refactor that keeps these effects and returns
-// the same classification should keep them green.
-//
-// Behaviour under test (specs/claude-hook-bridge.md §4.7 CHB-020, §4.10 CHB-025):
-//   Branch 1/2 — an outcome already in the store is returned WITHOUT paying the
-//                Stop-hook grace window.
-//   Branch 3   — no outcome within the grace window ⇒ nil outcome, but ExitInfo
-//                is still fully populated.
-//   The reap   — sess.Wait always runs and its exit metadata always reaches the
-//                caller, on every branch.
-//   Cancel     — a cancelled context kills the session before the reap, and the
-//                post-kill watcher drain is BOUNDED by the injected ClockPort
-//                (hk-4c7kw), not unbounded.
-
 import (
 	"context"
 	"encoding/json"
@@ -42,12 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ── fakes ────────────────────────────────────────────────────────────────────
-
-// charSession is a handler.Session that records the kill/reap sequence and
-// returns a caller-supplied exit outcome. Only Kill, Wait and Outcome are
-// exercised by WaitWithSocketGrace; the remaining methods are contract filler
-// and fail the test if the wait step ever reaches for them.
 type charSession struct {
 	t *testing.T
 
@@ -119,8 +87,6 @@ func (s *charSession) Machine() *hclifecycle.Machine {
 	return nil
 }
 
-// charHookStore is a HookStore that records which query the wait step issued,
-// in order, plus the deadline it attached to the slow-path wait.
 type charHookStore struct {
 	mu sync.Mutex
 
@@ -167,8 +133,6 @@ func rawJSON(t *testing.T, s string) *json.RawMessage {
 	r := json.RawMessage(s)
 	return &r
 }
-
-// ── the branches ─────────────────────────────────────────────────────────────
 
 // TestWaitWithSocketGrace_StoredOutcomeSkipsGraceWindow pins the CHB-020
 // branch-1/2 fast path: when the Stop hook has ALREADY delivered its outcome,
@@ -403,8 +367,6 @@ func TestWaitWithSocketGrace_NilClockIsBackstopped(t *testing.T) {
 	}
 }
 
-// ── the exec path: a real watcher ────────────────────────────────────────────
-
 type charDeadLetter struct{}
 
 func (charDeadLetter) Append(core.EventType, []byte, string) error { return nil }
@@ -416,9 +378,6 @@ func (charEmitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []
 	return nil
 }
 
-// spawnCharWatcher spawns a real Watcher over a caller-controlled pipe. Closing
-// the write end drives the watcher to EOF and closes its Done channel; leaving
-// it open models a watcher still draining a grandchild-held stream.
 func spawnCharWatcher(t *testing.T) (*handlercontract.Watcher, *io.PipeWriter) {
 	t.Helper()
 	pr, pw := io.Pipe()
@@ -484,8 +443,6 @@ func TestWaitWithSocketGrace_ExecCancelledDrainIsClockBounded(t *testing.T) {
 		_, _ = WaitWithSocketGrace(ctx, clock, store, watcher, sess, "run-1", "claude-1")
 	}()
 
-	// Advance virtual time in small steps, yielding so the wait can arm its
-	// bound before the next advance crosses it.
 	deadline := time.After(10 * time.Second) // harness-fault guard, not the product bound
 	for {
 		select {

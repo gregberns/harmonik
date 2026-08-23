@@ -1,28 +1,5 @@
 package daemon_test
 
-// rundriverfixture_test.go — the shared project/worktree/run-id fixtures used by
-// the run-driver scenario tests.
-//
-// These helpers were written for the review-loop driver tests (reviewloop_test.go,
-// reviewloop_cycle_complete_hk7om2q24_test.go) and kept their rlFixture / rlcFixture
-// names. The driver was retired (EM-015d) and its tests deleted with it, but the
-// fixtures outlived it: the DOT scenario tests
-// (scenario_commit_gate_cap_hki8g59_test.go, scenario_subworkflow_dispatch_hkx9l_test.go)
-// build their project dirs and worktrees through exactly these functions. They live
-// here now so the deletion of the driver tests does not take them down.
-//
-// The file carried //go:build scenario while every consumer was scenario-tagged:
-// without the tag it compiled into the untagged build with no users, where the
-// `unused` linter reported all five helpers as dead — a false positive that reads
-// exactly like real garbage and would invite a future sweep to delete live
-// fixtures. The tag is GONE now because the untagged
-// dot_cascade_gatebackedge_test.go uses the same helpers, so every one of them
-// has a consumer in both builds. Do not re-add the tag without first checking
-// whether an untagged test still calls in here.
-//
-// Names are unchanged on purpose — a rename would touch every call site for no
-// behavioural reason.
-
 import (
 	"context"
 	"os"
@@ -36,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// rlFixtureProjectDir creates the minimal project directory tree for run-driver
-// tests: .harmonik/events/, .harmonik/beads-intents/.
 func rlFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -52,7 +27,6 @@ func rlFixtureProjectDir(t *testing.T) string {
 	return dir
 }
 
-// rlFixtureGitRepo initialises a git repository with one initial commit in dir.
 func rlFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -76,9 +50,6 @@ func rlFixtureGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "Initial commit")
 }
 
-// rlFixtureWorktree creates a detached git worktree, creates .harmonik/ inside
-// it, and registers a cleanup. Returns the worktree path and the parent commit
-// SHA (project HEAD at creation time).
 func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string) {
 	t.Helper()
 
@@ -105,9 +76,6 @@ func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA strin
 	}
 
 	t.Cleanup(func() {
-		// context.Background(), not t.Context(): the test context is already
-		// cancelled by the time cleanup runs, so a context-bound command would be
-		// killed before it removed anything.
 		rmCmd := exec.CommandContext(context.Background(), "git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		if err := rmCmd.Run(); err != nil {
@@ -118,7 +86,6 @@ func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA strin
 	return wtPath, parentSHA
 }
 
-// rlFixtureRunID generates a fresh test RunID using UUIDv7.
 func rlFixtureRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -128,8 +95,6 @@ func rlFixtureRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// rlcFixtureSetup creates a fresh project dir, git repo, and worktree for one
-// test case. Returns wtPath and parentSHA. Cleanup is registered on t.
 func rlcFixtureSetup(t *testing.T) (projectDir, wtPath, parentSHA string) {
 	t.Helper()
 	projectDir = rlFixtureProjectDir(t)

@@ -1,20 +1,5 @@
 package daemon_test
 
-// budget_landing_verdict_helpers_test.go — four daemon helpers that no test
-// reached.
-//
-// A mutation sweep broke each of the four functions below and the whole suite
-// stayed green. Green meant nothing for them. Each test here was
-// watched to go RED under the exact mutation from that sweep, and also under
-// the laziest wrong version of the same function that a weak test still lets
-// pass.
-//
-// The four claims:
-//   - reviewBudgetForDiff  — a bigger diff buys the reviewer more wait, up to a cap.
-//   - sumNumstatLines      — an empty or binary-only diff is zero lines, not a failure.
-//   - resolveLandsOn       — an explicit landing branch wins over the spec default.
-//   - gateVerdictExistsVia — the presence check answers for the filesystem the run is on.
-
 import (
 	"context"
 	"os"
@@ -27,8 +12,6 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// The knob values the production caller uses, restated here so a change to the
-// production defaults cannot silently change what these tests claim.
 const (
 	budgetBase     = 10 * time.Minute
 	budgetPerKLine = 10 * time.Minute
@@ -61,7 +44,6 @@ func TestReviewerBudget_ABiggerDiffBuysTheReviewerMoreWait(t *testing.T) {
 		})
 	}
 
-	// Positive evidence that the scaling is monotone, not one lucky constant.
 	small := daemon.ExportedReviewBudgetForDiff(200, budgetBase, budgetPerKLine, budgetCeiling)
 	large := daemon.ExportedReviewBudgetForDiff(4000, budgetBase, budgetPerKLine, budgetCeiling)
 	if small <= budgetBase || large <= small {
@@ -94,8 +76,6 @@ func TestReviewerBudget_AnUnknownDiffFallsBackToTheBaseWait(t *testing.T) {
 		}
 	}
 
-	// The ceiling still wins when it is tighter than the base — a per-node
-	// override can set a ceiling below the base wait.
 	tight := 5 * time.Minute
 	if got := daemon.ExportedReviewBudgetForDiff(-1, budgetBase, budgetPerKLine, tight); got != tight {
 		t.Errorf("unknown diff under a %v ceiling = %v, want the ceiling", tight, got)
@@ -196,9 +176,6 @@ func TestLandingTarget_AnAbsentTargetBranchFallsBackToMain(t *testing.T) {
 	}
 }
 
-// stubRemoteRunner is a CommandRunner that is not the local runner, so the
-// presence check must route through it. It records every argv and answers each
-// command with a fixed exit status.
 type stubRemoteRunner struct {
 	inner   tmuxPkg.RecordingRunner
 	succeed bool
@@ -216,8 +193,6 @@ func (r *stubRemoteRunner) Command(ctx context.Context, name string, args ...str
 
 var _ tmuxPkg.CommandRunner = (*stubRemoteRunner)(nil)
 
-// writeVerdictFile writes a gate-verdict file of the given contents and returns
-// its path.
 func writeVerdictFile(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "gate-verdict.json")
@@ -266,7 +241,6 @@ func TestGateVerdictPresence_AnEmptyOrMissingVerdictReadsAsAbsent(t *testing.T) 
 func TestGateVerdictPresence_ARemoteRunAsksTheWorkerNotTheDaemonBox(t *testing.T) {
 	t.Parallel()
 
-	// Path exists on the worker only. Nothing is written on this box.
 	const workerPath = "/harmonik/worker/only/gate-verdict.json"
 	runner := &stubRemoteRunner{succeed: true}
 

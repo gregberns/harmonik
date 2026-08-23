@@ -83,8 +83,6 @@ func (o *WaitOwner) WaitAndReap() error {
 		o.result = o.cmd.Wait()
 		close(o.done)
 	})
-	// sync.Once.Do returns only after f has completed, and establishes the
-	// happens-before edge that makes o.result safe to read here.
 	return o.result
 }
 

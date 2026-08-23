@@ -1,24 +1,5 @@
 package main
 
-// asset_skew.go — supervisor-side VERSION-SKEW DETECTION for the asset-sync update
-// path (plans/2026-06-20-doc-instruction-audit/10-asset-sync.md §"Daemon-safety" +
-// §"Trigger model"). This is the DETECTION + decision layer; the notify + supervisor
-// wiring lives in cmd/harmonik/supervise/assetskew.go.
-//
-// The problem: `init` writes the embedded assets into a project ONCE. After a newer
-// harmonik is `go install`ed, the project's instruction files are frozen at the
-// version that ran init. The supervisor is the natural home to NOTICE this: it boots
-// alongside the daemon and can compare the RUNNING binary's embedded asset bundle
-// against what the project last installed (.harmonik/assets.lock), then nudge the
-// captain to run `harmonik sync-assets`.
-//
-// SAFETY: this layer NEVER writes project files. It computes two comparable digests
-// (binary-manifest vs. project-lock) and, on skew, the COUNT of files that would
-// change. Notify-not-clobber. The optional auto-apply gate is config-driven and
-// deferred to the supervisor wiring; see SkewResult.AutoApplyCandidates.
-//
-// Bead ref: hk-yqx9 (supervisor version-skew detection + notify).
-
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,10 +11,6 @@ import (
 	supervisecmd "github.com/gregberns/harmonik/cmd/harmonik/supervise"
 )
 
-// init installs the supervisor's skew-check and auto-apply hooks. The supervisor
-// (supervisecmd) is imported BY main and cannot import main back, so we bridge the
-// detection + apply logic (which needs the embedded manifest, reconcile planner, and
-// daemon-lull gate, all in main) via these registrations.
 func init() {
 	supervisecmd.SkewCheckHook = func(projectDir string) (supervisecmd.AssetSkewVerdict, error) {
 		res, err := CheckAssetSkew(
@@ -57,12 +34,8 @@ func init() {
 		}, nil
 	}
 
-	// AutoApplyGateHook wraps daemonDispatchGate so the supervisecmd package can
-	// check for an active dispatch without importing package main.
 	supervisecmd.AutoApplyGateHook = daemonDispatchGate
 
-	// AutoApplyHook applies only the safe (Managed + FastForward) reconcile items,
-	// re-stamps the lock, and returns the count of files written.
 	supervisecmd.AutoApplyHook = func(projectDir string) (int, error) {
 		m, err := BuildManifest()
 		if err != nil {
@@ -79,8 +52,6 @@ func init() {
 
 		fullPlan := Reconcile(m, lock, disk)
 
-		// Filter to Managed + FastForward ONLY — conflicts and non-managed changes
-		// are surfaced via notify, never applied here.
 		var filtered []ReconcileItem
 		for _, item := range fullPlan {
 			if item.Class == Managed && item.Action == ActionFastForward {
@@ -256,14 +227,10 @@ func CheckAssetSkew(
 	}
 	res.Skewed = res.BinaryDigest != res.LockDigest
 
-	// No skew → nothing more to compute. (A never-synced project with NO shipped
-	// assets would also land here with Skewed=false, which is correct.)
 	if !res.Skewed {
 		return res, nil
 	}
 
-	// Compute the precise change set via the real reconcile planner when disk hashes
-	// are available; otherwise fall back to a manifest-vs-lock over-estimate.
 	var disk map[string]string
 	if diskHashes != nil {
 		disk, err = diskHashes(m)
@@ -277,7 +244,6 @@ func CheckAssetSkew(
 		for _, it := range plan {
 			switch it.Action {
 			case ActionSkip, ActionLeave:
-				// No project change.
 			case ActionConflict:
 				res.ChangedCount++
 				res.ConflictCount++
@@ -291,9 +257,6 @@ func CheckAssetSkew(
 		return res, nil
 	}
 
-	// Disk-hash unavailable: over-estimate from manifest vs lock. Every manifest path
-	// whose lock sha differs (or is absent) is counted as a change; FastForward /
-	// conflict cannot be distinguished here so none are flagged auto-apply-safe.
 	for _, f := range m.Files {
 		le, ok := lock.Files[f.Path]
 		if !ok || le.Sha256 != f.Sha256 {

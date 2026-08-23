@@ -6,10 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// b3f93VerdictEventValid returns a fully-populated VerdictEvent using
-// VerdictResumeHere (no context, no checkpoint_ref required) with all
-// required fields set to valid values. Tests mutate individual fields to
-// probe Valid().
 func b3f93VerdictEventValid(t *testing.T) VerdictEvent {
 	t.Helper()
 	return VerdictEvent{
@@ -28,8 +24,6 @@ func b3f93VerdictEventValid(t *testing.T) VerdictEvent {
 	}
 }
 
-// b3f93VerdictEventResumeWithContext returns a valid VerdictEvent with
-// Verdict=VerdictResumeWithContext and a non-empty Context.
 func b3f93VerdictEventResumeWithContext(t *testing.T) VerdictEvent {
 	t.Helper()
 	e := b3f93VerdictEventValid(t)
@@ -39,8 +33,6 @@ func b3f93VerdictEventResumeWithContext(t *testing.T) VerdictEvent {
 	return e
 }
 
-// b3f93VerdictEventResetToCheckpoint returns a valid VerdictEvent with
-// Verdict=VerdictResetToCheckpoint and a non-nil CheckpointRef.
 func b3f93VerdictEventResetToCheckpoint(t *testing.T) VerdictEvent {
 	t.Helper()
 	e := b3f93VerdictEventValid(t)
@@ -49,8 +41,6 @@ func b3f93VerdictEventResetToCheckpoint(t *testing.T) VerdictEvent {
 	e.CheckpointRef = &tid
 	return e
 }
-
-// --- AllValid tests ---
 
 func TestVerdictEventValid_ResumeHere(t *testing.T) {
 	t.Parallel()
@@ -100,8 +90,6 @@ func TestVerdictEventValid_AllOtherVerdicts(t *testing.T) {
 	}
 }
 
-// --- Verdict field ---
-
 func TestVerdictEventValid_EmptyVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -121,8 +109,6 @@ func TestVerdictEventValid_UnknownVerdict(t *testing.T) {
 		t.Error("Valid() = true with unknown Verdict, want false")
 	}
 }
-
-// --- UUID fields ---
 
 func TestVerdictEventValid_ZeroInvestigatorRunID(t *testing.T) {
 	t.Parallel()
@@ -144,12 +130,9 @@ func TestVerdictEventValid_ZeroTargetRunID(t *testing.T) {
 	}
 }
 
-// --- RC-022a: context non-empty iff verdict=resume-with-context ---
-
 func TestVerdictEventValid_ResumeWithContextMissingContext(t *testing.T) {
 	t.Parallel()
 
-	// verdict=resume-with-context but Context is nil — must be rejected.
 	e := b3f93VerdictEventResumeWithContext(t)
 	e.Context = nil
 	if e.Valid() {
@@ -160,7 +143,6 @@ func TestVerdictEventValid_ResumeWithContextMissingContext(t *testing.T) {
 func TestVerdictEventValid_ResumeWithContextEmptyContext(t *testing.T) {
 	t.Parallel()
 
-	// verdict=resume-with-context but Context is empty string — must be rejected.
 	e := b3f93VerdictEventResumeWithContext(t)
 	empty := ""
 	e.Context = &empty
@@ -172,7 +154,6 @@ func TestVerdictEventValid_ResumeWithContextEmptyContext(t *testing.T) {
 func TestVerdictEventValid_NonResumeWithContext_ContextPresent(t *testing.T) {
 	t.Parallel()
 
-	// verdict=resume-here but Context is set — must be rejected (RC-022a: MUST be empty otherwise).
 	e := b3f93VerdictEventValid(t)
 	ctx := "unexpected context"
 	e.Context = &ctx
@@ -198,7 +179,6 @@ func TestVerdictEventValid_OtherVerdicts_ContextMustBeAbsent(t *testing.T) {
 			e := b3f93VerdictEventValid(t)
 			e.Verdict = v
 			if v == VerdictResetToCheckpoint {
-				// also set required checkpoint_ref to avoid that failure
 				tid := TransitionID(uuid.Must(uuid.NewV7()))
 				e.CheckpointRef = &tid
 			}
@@ -209,8 +189,6 @@ func TestVerdictEventValid_OtherVerdicts_ContextMustBeAbsent(t *testing.T) {
 		})
 	}
 }
-
-// --- checkpoint_ref non-nil iff verdict=reset-to-checkpoint ---
 
 func TestVerdictEventValid_ResetToCheckpointMissingRef(t *testing.T) {
 	t.Parallel()
@@ -225,7 +203,6 @@ func TestVerdictEventValid_ResetToCheckpointMissingRef(t *testing.T) {
 func TestVerdictEventValid_NonResetToCheckpoint_CheckpointRefPresent(t *testing.T) {
 	t.Parallel()
 
-	// verdict=resume-here but CheckpointRef is non-nil — must be rejected.
 	e := b3f93VerdictEventValid(t)
 	tid := TransitionID(uuid.Must(uuid.NewV7()))
 	e.CheckpointRef = &tid
@@ -258,8 +235,6 @@ func TestVerdictEventValid_OtherVerdicts_CheckpointRefMustBeAbsent(t *testing.T)
 	}
 }
 
-// --- SchemaVersion ---
-
 func TestVerdictEventValid_ZeroSchemaVersion(t *testing.T) {
 	t.Parallel()
 
@@ -279,8 +254,6 @@ func TestVerdictEventValid_NegativeSchemaVersion(t *testing.T) {
 		t.Error("Valid() = true with negative SchemaVersion, want false")
 	}
 }
-
-// --- SnapshotToken delegation (hk-b3f.106) ---
 
 // TestVerdictEventValid_EmptySnapshotToken verifies that VerdictEvent.Valid()
 // returns false when SnapshotToken has any of its three required fields empty.
@@ -332,8 +305,6 @@ func TestVerdictEventValid_EmptySnapshotToken(t *testing.T) {
 		})
 	}
 }
-
-// --- EvidenceRef is optional ---
 
 func TestVerdictEventValid_EvidenceRefNil(t *testing.T) {
 	t.Parallel()

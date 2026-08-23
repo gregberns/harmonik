@@ -87,7 +87,6 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out, errOut io.Writer
 		}
 
 	case len(positional) > 0:
-		// Positional argument: treat as a queue-file path.
 		var loaded bool
 		queueDoc, loaded = loadQueueDocFromFile("dry-run", positional[0], queueName, diag)
 		if !loaded {
@@ -99,9 +98,6 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return exitTransportError
 	}
 
-	// Embed the queue document in a socket request envelope.
-	// The server's HandlerAdapter.HandleQueueDryRun unmarshals the params
-	// (the entire SocketRequest JSON) into a QueueDryRunRequest.
 	payload, marshalErr := encodeEnvelope("queue-dry-run", queueDoc)
 	if marshalErr != nil {
 		diag.printf("harmonik queue dry-run: cannot marshal request: %v\n", marshalErr)

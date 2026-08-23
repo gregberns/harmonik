@@ -16,34 +16,16 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// scheduleFileName is the durable store file under .harmonik/.
 const scheduleFileName = "schedules.json"
 
-// scheduleLockName is the sidecar advisory-lock file under .harmonik/. The lock
-// is taken on this file (not on schedules.json itself) so the lock identity is
-// stable across the atomic temp-then-rename writes of schedules.json (a rename
-// changes the target's inode; flock on the renamed-away inode would protect
-// nothing). Mirrors the sidecar-lockfile pattern in
-// internal/workspace/claudetrust_wm040b.go (hk-bfvby).
 const scheduleLockName = "schedules.json.lock"
 
-// scheduleLockTimeout bounds how long a mutation waits to acquire the
-// cross-process write lock before failing. A schedule mutation is a tiny
-// read-modify-write over a small JSON file, so real contention is brief
-// (sub-millisecond); the timeout exists only to convert a pathological stuck
-// holder into a prompt error rather than an indefinite hang.
 const scheduleLockTimeout = 10 * time.Second
 
-// scheduleLockRetryInterval is the poll interval for the bounded
-// LOCK_EX|LOCK_NB acquire loop.
 const scheduleLockRetryInterval = 25 * time.Millisecond
 
-// wakeBufSize is the buffer depth for the wake channel. Buffer of 1 ensures a
-// non-blocking send never blocks and coalesces rapid bursts into a single
-// wakeup (mirrors QueueStore.submitWakeCBufSize / hk-24xn1).
 const wakeBufSize = 1
 
-// fileDoc is the on-disk JSON envelope for the schedule store.
 type fileDoc struct {
 	SchemaVersion int            `json:"schema_version"`
 	Jobs          []ScheduledJob `json:"jobs"`
@@ -109,8 +91,6 @@ func NewStore(projectDir string) *Store {
 // daemon shares the in-memory store) wakes the loop immediately.
 func (s *Store) WakeCh() <-chan struct{} { return s.wakeC }
 
-// signalWake performs a non-blocking coalescing send on the wake channel.
-// Caller must NOT hold the lock (matches QueueStore.SetQueue ordering).
 func (s *Store) signalWake() {
 	select {
 	case s.wakeC <- struct{}{}:
@@ -160,8 +140,6 @@ func (s *Store) ReloadIfChanged() (bool, error) {
 	return true, nil
 }
 
-// loadFromDisk replaces the in-memory map with the file's contents and records
-// the file modtime. Absent file → empty store (not an error).
 func (s *Store) loadFromDisk() error {
 	jobs, mod, err := s.readFileLocked()
 	if err != nil {
@@ -174,11 +152,6 @@ func (s *Store) loadFromDisk() error {
 	return nil
 }
 
-// readFileLocked reads and parses schedules.json into a fresh id-keyed map plus
-// the file's modtime. It performs no in-memory locking — callers hold the flock
-// (during a mutation) or accept the read may race a concurrent writer's atomic
-// rename (which only ever yields a whole old or whole new file, never a torn
-// one). Absent file → empty map + zero modtime (not an error).
 func (s *Store) readFileLocked() (map[string]*ScheduledJob, time.Time, error) {
 	path := s.filePath()
 	//nolint:gosec // G304: path derived from projectDir/.harmonik/schedules.json
@@ -229,24 +202,6 @@ func (s *Store) List() []ScheduledJob {
 	return out
 }
 
-// mutate runs fn as a cross-process-safe read-modify-write:
-//
-//  1. acquire the advisory flock (LOCK_EX) on the sidecar lockfile (cross-process
-//     serialisation),
-//  2. reload the jobs map FROM DISK so fn sees current committed state (not a
-//     stale in-memory snapshot) — this is what eliminates the lost-update window,
-//  3. apply fn(jobs) (the single mutation),
-//  4. atomically persist the result and record the new modtime,
-//  5. swap the fresh map into memory under mu,
-//  6. release the flock,
-//  7. signal the wake channel (outside all locks).
-//
-// fn returns (changed, value, err): when changed is false no write happens (fn
-// observed a no-op, e.g. id absent or flag already in the wanted state) and the
-// returned value is propagated to the caller unchanged. The flock is held for the
-// whole RMW; mu is taken only for the brief map-read in fn-support and the final
-// swap, always AFTER the flock — so the acquisition order is flock→mu and there
-// is no deadlock.
 func (s *Store) mutate(fn func(jobs map[string]*ScheduledJob) (changed bool, value any, err error)) (any, error) {
 	lockFd, release, err := s.acquireFileLock()
 	if err != nil {
@@ -255,8 +210,6 @@ func (s *Store) mutate(fn func(jobs map[string]*ScheduledJob) (changed bool, val
 	defer release()
 	_ = lockFd
 
-	// Re-read current disk state under the flock so this mutation applies on top
-	// of any write another process committed since our last load.
 	jobs, _, err := s.readFileLocked()
 	if err != nil {
 		return nil, err
@@ -267,8 +220,6 @@ func (s *Store) mutate(fn func(jobs map[string]*ScheduledJob) (changed bool, val
 		return value, err
 	}
 	if !changed {
-		// No-op: still adopt the freshly-read disk state in memory so subsequent
-		// reads reflect any out-of-process changes, but do not rewrite the file.
 		mod := s.statModtime()
 		s.mu.Lock()
 		s.jobs = jobs
@@ -400,9 +351,6 @@ func (s *Store) RequestRunNow(id string) (bool, error) {
 	return mutationBool(v)
 }
 
-// sleepSuspendedFileName is the sidecar file under .harmonik/ that records
-// which job IDs were disabled by SuspendAllForSleep so that RestoreFromSleep
-// can re-enable exactly those jobs — no more, no less.
 const sleepSuspendedFileName = "sleep-suspended-jobs.json"
 
 // SuspendAllForSleep atomically disables all currently-enabled jobs under the
@@ -472,12 +420,10 @@ func (s *Store) RestoreFromSleep() ([]string, error) {
 	return restored, nil
 }
 
-// suspendedSetPath returns the path of the sleep-suspended-jobs sidecar file.
 func (s *Store) suspendedSetPath() string {
 	return filepath.Join(s.projectDir, ".harmonik", sleepSuspendedFileName)
 }
 
-// writeSuspendedSet persists the given job ID slice to the suspended-set file.
 func (s *Store) writeSuspendedSet(ids []string) error {
 	data, err := json.Marshal(ids)
 	if err != nil {
@@ -495,8 +441,6 @@ func (s *Store) writeSuspendedSet(ids []string) error {
 	return nil
 }
 
-// readSuspendedSet reads and parses the suspended-set file. Returns nil (not
-// an error) when the file is absent (no prior sleep or already restored).
 func (s *Store) readSuspendedSet() ([]string, error) {
 	path := s.suspendedSetPath()
 	//nolint:gosec // G304: path derived from projectDir/.harmonik
@@ -544,18 +488,14 @@ func mutationBool(v any) (bool, error) {
 	return changed, nil
 }
 
-// filePath returns the absolute path of the durable store file.
 func (s *Store) filePath() string {
 	return filepath.Join(s.projectDir, ".harmonik", scheduleFileName)
 }
 
-// lockPath returns the absolute path of the sidecar advisory-lock file.
 func (s *Store) lockPath() string {
 	return filepath.Join(s.projectDir, ".harmonik", scheduleLockName)
 }
 
-// statModtime returns the current modtime of schedules.json, or the zero time if
-// it cannot be stat'd (absent file).
 func (s *Store) statModtime() time.Time {
 	if info, err := os.Stat(s.filePath()); err == nil {
 		return info.ModTime()
@@ -563,12 +503,6 @@ func (s *Store) statModtime() time.Time {
 	return time.Time{}
 }
 
-// acquireFileLock opens (creating if needed) the sidecar lockfile and takes a
-// bounded advisory exclusive flock on it, returning the open fd and a release
-// closure that unlocks and closes it. The sidecar lockfile lives in .harmonik/,
-// which acquireFileLock ensures exists. Mirrors the bounded LOCK_EX|LOCK_NB
-// idiom in internal/workspace/claudetrust_wm040b.go (hk-bfvby) so a stuck holder
-// surfaces as a prompt error rather than an indefinite hang.
 func (s *Store) acquireFileLock() (*os.File, func(), error) {
 	dir := filepath.Join(s.projectDir, ".harmonik")
 	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
@@ -595,11 +529,6 @@ func (s *Store) acquireFileLock() (*os.File, func(), error) {
 	return fd, release, nil
 }
 
-// acquireExclusiveBounded acquires an advisory exclusive flock on fd, retrying
-// the non-blocking LOCK_EX|LOCK_NB attempt every scheduleLockRetryInterval until
-// it succeeds or timeout elapses. On timeout it returns an error so the caller
-// fails fast rather than blocking indefinitely behind an unfair flock waiter.
-// Mirrors internal/workspace/claudetrust_wm040b.go.acquireExclusiveBounded.
 func acquireExclusiveBounded(fd int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -617,10 +546,6 @@ func acquireExclusiveBounded(fd int, timeout time.Duration) error {
 	}
 }
 
-// persistJobs writes the given jobs map to .harmonik/schedules.json atomically
-// (write-temp → fsync → rename → fsync parent dir), mirroring queue.Persist, and
-// returns the just-written modtime. The caller MUST hold the advisory flock (see
-// mutate) so no other process writes the file concurrently.
 func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error) {
 	jobs := make([]ScheduledJob, 0, len(jobsMap))
 	for _, j := range jobsMap {
@@ -664,8 +589,6 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 		return time.Time{}, fmt.Errorf("schedule: persist: rename %q → %q: %w", tmpPath, target, err)
 	}
 
-	// Record the just-written modtime so ReloadIfChanged does not re-read our own
-	// write (the daemon's MarkFired/ClearForceNext go through this path).
 	mod := s.statModtime()
 
 	// fsync parent dir so the rename is durable.

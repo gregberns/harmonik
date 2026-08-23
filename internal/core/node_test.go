@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// b3f73NodeValid returns a fully-populated Node with all required fields set to
-// valid values. Tests mutate individual fields to probe Valid().
-// Bead prefix: b3f73 (per implementer-protocol.md helper-prefix discipline).
 func b3f73NodeValid(t *testing.T) Node {
 	t.Helper()
 	handlerRef := HandlerRef("handlers/my-handler")
@@ -28,7 +25,6 @@ func b3f73NodeValid(t *testing.T) Node {
 	}
 }
 
-// b3f73NodeNonAgentic returns a valid non-agentic Node with no HandlerRef.
 func b3f73NodeNonAgentic(t *testing.T) Node {
 	t.Helper()
 	n := b3f73NodeValid(t)
@@ -37,7 +33,6 @@ func b3f73NodeNonAgentic(t *testing.T) Node {
 	return n
 }
 
-// b3f73NodeSubWorkflow returns a valid sub-workflow Node with SubWorkflowRef set.
 func b3f73NodeSubWorkflow(t *testing.T) Node {
 	t.Helper()
 	ref := SubWorkflowRef("workflows/sub-wf-001")
@@ -219,7 +214,6 @@ func TestNodeValid_AllIdempotencyClasses(t *testing.T) {
 			t.Parallel()
 			n := b3f73NodeValid(t)
 			n.IdempotencyClass = tc.class
-			// EM-011: Axes.Idempotency MUST match IdempotencyClass.
 			n.Axes.Idempotency = tc.axis
 			if !n.Valid() {
 				t.Errorf("Valid() = false for idempotency_class=%q, want true", tc.class)
@@ -284,7 +278,6 @@ func TestNodeValid_GateWithSubWorkflowRef(t *testing.T) {
 func TestNodeValid_RequiredSkillsNil(t *testing.T) {
 	t.Parallel()
 
-	// nil RequiredSkills is valid — spec says List<String>, empty list allowed.
 	n := b3f73NodeValid(t)
 	n.RequiredSkills = nil
 	if !n.Valid() {
@@ -305,7 +298,6 @@ func TestNodeValid_RequiredSkillsNonEmpty(t *testing.T) {
 func TestNodeValid_OptionalRefsNil(t *testing.T) {
 	t.Parallel()
 
-	// All optional refs nil — fully valid for non-agentic node.
 	n := b3f73NodeNonAgentic(t)
 	n.PolicyRef = nil
 	n.GateRef = nil
@@ -362,7 +354,6 @@ func TestNodeTimeoutJSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	// Decode into a generic map so we can inspect the raw Timeout value.
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("json.Unmarshal into map: %v", err)
@@ -372,7 +363,6 @@ func TestNodeTimeoutJSONRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("Timeout field absent from JSON output")
 	}
-	// json.Number / float64 — both are numeric. json.Unmarshal into any gives float64.
 	got, ok := rawTimeout.(float64)
 	if !ok {
 		t.Fatalf("Timeout JSON value type = %T, want float64 (integer seconds)", rawTimeout)
@@ -381,7 +371,6 @@ func TestNodeTimeoutJSONRoundTrip(t *testing.T) {
 		t.Errorf("Timeout JSON value = %v, want %v (integer seconds per §6.1)", got, secs)
 	}
 
-	// Round-trip: unmarshal back and verify the value is preserved.
 	var n2 Node
 	if err := json.Unmarshal(data, &n2); err != nil {
 		t.Fatalf("json.Unmarshal back to Node: %v", err)
@@ -420,9 +409,6 @@ func TestNodeTimeoutNilJSON(t *testing.T) {
 	}
 }
 
-// axisTagsNodeFixtureMatchedPairs returns the set of (IdempotencyClass, AxisIdempotency)
-// pairs that satisfy EM-011's cross-field constraint.
-// Helper prefix: axisTagsNodeFixture (bead hk-b3f.11).
 func axisTagsNodeFixtureMatchedPairs() []struct {
 	class IdempotencyClass
 	axis  AxisIdempotency
@@ -437,8 +423,6 @@ func axisTagsNodeFixtureMatchedPairs() []struct {
 	}
 }
 
-// axisTagsNodeFixtureMismatchedPairs returns (IdempotencyClass, AxisIdempotency)
-// pairs that MUST fail EM-011's cross-field constraint.
 func axisTagsNodeFixtureMismatchedPairs() []struct {
 	class IdempotencyClass
 	axis  AxisIdempotency
@@ -447,7 +431,6 @@ func axisTagsNodeFixtureMismatchedPairs() []struct {
 		class IdempotencyClass
 		axis  AxisIdempotency
 	}{
-		// idempotent class vs non-idempotent axis
 		{IdempotencyClassIdempotent, AxisIdempotencyNonIdempotent},
 		// idempotent class vs recoverable-non-idempotent axis
 		{IdempotencyClassIdempotent, AxisIdempotencyRecoverableNonIdempotent},

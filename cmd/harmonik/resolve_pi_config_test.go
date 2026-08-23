@@ -1,21 +1,5 @@
 package main
 
-// resolve_pi_config_test.go — unit tests for ResolvePiConfig (hk-v7q5u, PI-051/PI-052;
-// api_key_file validation added by hk-xmfoi, PI-040/PI-050).
-//
-// Verifies:
-//   - all required fields present → returns cfg unchanged.
-//   - all three required fields missing → PiConfigMissingError with all three keys.
-//   - each required field missing individually → missing key in error.
-//   - model shape validation: valid shapes pass, invalid chars fail (PI-052).
-//   - model length limit: ≤128 chars passes, >128 fails.
-//   - fallback present with all fields → accepted.
-//   - fallback present with partial fields → missing error on the absent ones.
-//   - fallback absent (HasFallback=false) → no fallback validation run.
-//   - missing error message names yaml paths + 'harmonik pi config --example'.
-//
-// Spec refs: PI-051, PI-052. Bead ref: hk-v7q5u.
-
 import (
 	"errors"
 	"os"
@@ -26,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// fullPiCfg is a valid PiHarnessConfig with all required fields set.
 func fullPiCfg() projectconfig.PiHarnessConfig {
 	return projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
@@ -139,8 +122,6 @@ func TestResolvePiConfig_MissingErrorMessage_NamesPathsAndExample(t *testing.T) 
 	}
 }
 
-// Model shape tests (PI-052, HC-055a: ^[A-Za-z0-9._:/-]+$, ≤128 chars).
-
 func TestResolvePiConfig_ModelShape_ValidVariants(t *testing.T) {
 	t.Parallel()
 	validModels := []string{
@@ -203,8 +184,6 @@ func TestResolvePiConfig_ModelShape_TooLong(t *testing.T) {
 	}
 }
 
-// Fallback tests.
-
 func TestResolvePiConfig_Fallback_AllFields_OK(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
@@ -223,7 +202,6 @@ func TestResolvePiConfig_Fallback_PartialFields_AggregatesMissing(t *testing.T) 
 	t.Parallel()
 	cfg := fullPiCfg()
 	cfg.HasFallback = true
-	// Leave fallback.provider and fallback.api_key_env empty.
 	cfg.Fallback = projectconfig.PiFallbackConfig{
 		Model: "anthropic/claude-haiku-4-5-20251001",
 	}
@@ -251,7 +229,6 @@ func TestResolvePiConfig_Fallback_Absent_NoValidation(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
 	cfg.HasFallback = false
-	// Fallback fields left empty — should not cause an error since HasFallback=false.
 	if _, err := ResolvePiConfig(cfg, "/proj"); err != nil {
 		t.Fatalf("HasFallback=false with empty fallback fields: unexpected error: %v", err)
 	}
@@ -275,8 +252,6 @@ func TestResolvePiConfig_Fallback_ModelShape_Invalid(t *testing.T) {
 		t.Errorf("expected field harnesses.pi.fallback.model; got %q", pe.Field)
 	}
 }
-
-// ── api_key_file tests (PI-040/PI-050, hk-xmfoi) ──────────────────────────────
 
 // TestResolvePiConfig_APIKeyFile_Unset_OK verifies that an absent (empty) api_key_file
 // is accepted without error — the field is optional.
@@ -364,7 +339,6 @@ func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// Write a real key file under home so the validation passes.
 	keyFile := filepath.Join(home, ".harmonik-test-xmfoi-expand.key")
 	if err := os.WriteFile(keyFile, []byte("sk-or-tilde-test"), 0o600); err != nil {
 		t.Fatalf("setup: write key file: %v", err)
@@ -381,16 +355,11 @@ func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// base_url validation tests (hk-z13jz)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestResolvePiConfig_BaseURL_Absent_OK verifies absent base_url passes validation
 // (the normal cloud-provider case).
 func TestResolvePiConfig_BaseURL_Absent_OK(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
-	// BaseURL not set — must resolve without error.
 	_, err := ResolvePiConfig(cfg, "/proj")
 	if err != nil {
 		t.Errorf("absent base_url: unexpected error: %v", err)
@@ -490,10 +459,6 @@ func TestResolvePiConfig_API_PassesThrough(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Named-profile tests (pi-provider-switch C2)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestResolvePiConfig_ProfileMap_Valid verifies a two-profile map (cloud openrouter
 // + ornith with base_url and api) resolves without error and both profiles are present.
 func TestResolvePiConfig_ProfileMap_Valid(t *testing.T) {
@@ -541,7 +506,6 @@ func TestResolvePiConfig_Profile_OrnithShape(t *testing.T) {
 			Model:     "deepseek/deepseek-r1",
 			APIKeyEnv: "ORNITH_API_KEY",
 			BaseURL:   "http://dgx.local:8551/v1",
-			// API intentionally absent — must remain "" (defaulted at launch)
 		},
 	}
 	got, err := ResolvePiConfig(cfg, "/proj")
@@ -581,16 +545,13 @@ func TestResolvePiConfig_Profile_InvalidShape(t *testing.T) {
 // the top-level block also has a missing key, both appear in the same error.
 func TestResolvePiConfig_Profile_MissingRequiredKey_Aggregates(t *testing.T) {
 	t.Parallel()
-	// Top-level missing provider + profile missing api_key_env → both in one error.
 	cfg := projectconfig.PiHarnessConfig{
-		// Provider intentionally absent
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
 		Profiles: map[string]projectconfig.PiProfileConfig{
 			"myprofile": {
 				Provider: "openrouter",
 				Model:    "openrouter/qwen/qwen3-coder",
-				// APIKeyEnv intentionally absent
 			},
 		},
 	}
@@ -638,7 +599,6 @@ func TestResolvePiConfig_Profile_APIKeyFile_Expanded(t *testing.T) {
 		t.Errorf("APIKeyFile = %q; want %q", got.Profiles["withkey"].APIKeyFile, keyFile)
 	}
 
-	// Unreadable file → fail loud.
 	cfg2 := fullPiCfg()
 	cfg2.Profiles = map[string]projectconfig.PiProfileConfig{
 		"badkey": {

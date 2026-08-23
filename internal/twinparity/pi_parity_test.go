@@ -35,10 +35,6 @@ import (
 	"time"
 )
 
-// piSampleNDJSON / piSampleEvents locate the committed pi reference capture.
-// ndjson is the raw pi wire stream (== the twin's deterministic output);
-// events.jsonl is the durable reference event log with the daemon-projected
-// terminal triad.
 func piSampleNDJSON(t *testing.T) string {
 	t.Helper()
 	return filepath.Join("..", "..", "testdata", "twin-parity", "pi", "happy-path-sample", "ndjson")
@@ -49,11 +45,6 @@ func piSampleEvents(t *testing.T) string {
 	return filepath.Join("..", "..", "testdata", "twin-parity", "pi", "happy-path-sample", "events.jsonl")
 }
 
-// piWireSpine is the pi-native wire spine both the twin capture and a real pi
-// NDJSON stream carry, in order: the session header (id-capture landmark,
-// PI-012) → the terminal agent_end (Teardown landmark, PI-014). These pi-native
-// kinds are pin-points the daemon parser keys on; message_start/message_end are
-// interior usage events, not spine landmarks.
 var piWireSpine = []string{
 	"session",
 	"agent_end",
@@ -81,22 +72,14 @@ func TestPiParityGate(t *testing.T) {
 		t.Fatalf("empty stream(s): twin=%d durable=%d events", len(twin.Events), len(durable.Events))
 	}
 
-	// (1) pi-native wire spine: the twin NDJSON and the reference capture agree on
-	// session → agent_end as an ordered subsequence.
 	t.Run("pi-wire-spine", func(t *testing.T) {
 		AssertStreamEquivalent(t, twin, reference, EquivOptions{Kinds: piWireSpine})
 	})
 
-	// (2) Durable terminal triad: the durable reference is spine-complete on the
-	// full TerminalKinds (outcome_emitted → bead_closed → run_completed). This
-	// pins the daemon-projected terminal outcome the pi wire stream cannot carry.
 	t.Run("durable-terminal-triad", func(t *testing.T) {
 		AssertStreamEquivalent(t, durable, durable, EquivOptions{})
 	})
 
-	// (3) Hook/causal timing within tolerance over the durable reference's causal
-	// edges (ready→outcome, outcome→bead-close, bead-close→run-complete). Bites if
-	// the reference drifts to drop a causal endpoint.
 	t.Run("durable-timing-within-tolerance", func(t *testing.T) {
 		AssertTimingWithinTolerance(t, durable, durable, DefaultTimingEdges, time.Second)
 	})
@@ -116,9 +99,6 @@ func TestPiParityGateBitesOnDrift(t *testing.T) {
 		t.Fatalf("LoadStream(pi durable events): %v", err)
 	}
 
-	// Drift A — dropped terminal event: a twin whose NDJSON is missing agent_end
-	// entirely (e.g. a hung pi that never fired the Teardown landmark). The wire
-	// spine must diverge because agent_end is absent from the twin.
 	t.Run("dropped-agent-end-drift", func(t *testing.T) {
 		driftTwin, err := LoadStreamLines([]string{
 			`{"type":"session","version":3,"id":"00000000-0000-4000-8000-0000000000a1","cwd":"/twin/pi/happy-path"}`,
@@ -139,9 +119,6 @@ func TestPiParityGateBitesOnDrift(t *testing.T) {
 		}
 	})
 
-	// Drift B — missing session header: a twin whose NDJSON never emitted the
-	// session line (no id-capture landmark). locateSpine must flag the vacuous
-	// TWIN because session is the first spine kind and absent.
 	t.Run("missing-session-drift", func(t *testing.T) {
 		driftTwin, err := LoadStreamLines([]string{
 			`{"type":"agent_end","messages":[{"role":"assistant","usage":{"input_tokens":42,"output_tokens":17}}]}`,
@@ -161,10 +138,6 @@ func TestPiParityGateBitesOnDrift(t *testing.T) {
 		}
 	})
 
-	// Drift C — terminal-outcome flip on the DURABLE projection: a run whose
-	// outcome_emitted reports "failure" where the reference reports "success". The
-	// gate must diverge on the outcome_status field (a whitelisted stable field),
-	// proving field-level bite, not just structural bite.
 	t.Run("durable-terminal-outcome-drift", func(t *testing.T) {
 		driftRun, err := LoadStreamLines([]string{
 			`{"event_type":"outcome_emitted","outcome_status":"failure","node_id":"implement"}`,

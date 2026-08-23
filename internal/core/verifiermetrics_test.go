@@ -2,7 +2,6 @@ package core
 
 import "testing"
 
-// verifiermetricsFixture returns a populated VerifierMetrics map for use in tests.
 func verifiermetricsFixture() VerifierMetrics {
 	return VerifierMetrics{
 		"score":    0.95,

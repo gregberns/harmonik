@@ -1,22 +1,5 @@
 package pi_test
 
-// stdoutlog_test.go — what the persisted copy of Pi's NDJSON stdout must
-// promise (hk-k4jrh).
-//
-// Two claims, and they pull against each other on purpose:
-//
-//  1. The file grows with the length of the model's turn, not with its square.
-//     Tee'd verbatim it grew with the square, because every message_update line
-//     repeats the whole assistant message so far. One 8.5-minute run wrote
-//     197,243,057 bytes for 45,063 characters of output, and below 10 GiB free
-//     the daemon pauses dispatch without saying so.
-//  2. A person reading the file can still recover what the model said and what
-//     tools it called. Shrinking the file by losing the failure reason would be
-//     the worse defect — reading the failure reason out of that file is what
-//     this project needed the day the bug was found.
-//
-// Bead: hk-k4jrh.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -29,20 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stream fixture — a Pi `--mode json` turn, shaped like the real thing
-// ─────────────────────────────────────────────────────────────────────────────
-
-// piStreamFixture builds the NDJSON a Pi turn emits while the model thinks its
-// way through deltaCount deltas.
-//
-// The shape is copied from a real capture (run 01a0061c on 2026-08-15): each
-// message_update carries the new text in assistantMessageEvent.delta AND the
-// whole message so far in BOTH assistantMessageEvent.partial and the top-level
-// "message". That double repetition is the defect; the fixture reproduces it so
-// a test measuring growth is measuring the real curve.
-//
-// Returns the stream and the full reasoning text the deltas add up to.
 func piStreamFixture(t *testing.T, deltaCount int) (stream []byte, reasoningText string) {
 	t.Helper()
 
@@ -120,16 +89,11 @@ func piStreamFixture(t *testing.T, deltaCount int) (stream []byte, reasoningText
 	return out.Bytes(), reasoning.String()
 }
 
-// piPersist runs a stream through the writer and returns what lands on disk.
 func piPersist(t *testing.T, stream []byte) []byte {
 	t.Helper()
 
 	var sink bytes.Buffer
 	w := pi.NewStdoutLogWriter(&sink)
-	// Written in small chunks on purpose: io.TeeReader hands over whatever the
-	// read returned, which never lines up with NDJSON line boundaries. A writer
-	// that only worked on whole lines would pass a one-shot test and corrupt
-	// every real capture.
 	const chunk = 97
 	for off := 0; off < len(stream); off += chunk {
 		end := min(off+chunk, len(stream))
@@ -149,10 +113,6 @@ func piPersist(t *testing.T, stream []byte) []byte {
 	return sink.Bytes()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Claim 1 — the file grows with the turn, not with its square
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStdoutLogWriter_ThePersistedLogGrowsWithTheModelsOutputNotItsSquare is the
 // test that hk-k4jrh was written for.
 //
@@ -170,9 +130,6 @@ func TestStdoutLogWriter_ThePersistedLogGrowsWithTheModelsOutputNotItsSquare(t *
 	small, _ := piStreamFixture(t, deltas)
 	large, _ := piStreamFixture(t, 2*deltas)
 
-	// Positive evidence that the fixture is the real curve: the RAW stream, which
-	// is what a verbatim tee persists, must grow super-linearly. Doubling the
-	// deltas roughly quadruples it.
 	rawRatio := float64(len(large)) / float64(len(small))
 	if rawRatio < 3.0 {
 		t.Fatalf("the raw stream grew by %.2fx when the model's output doubled, want >= 3x.\n"+
@@ -193,17 +150,12 @@ func TestStdoutLogWriter_ThePersistedLogGrowsWithTheModelsOutputNotItsSquare(t *
 			logRatio, deltas, smallLog, 2*deltas, largeLog)
 	}
 
-	// And the saving is real, not a rounding difference.
 	if largeLog*10 > len(large) {
 		t.Errorf("the persisted log is %d bytes for a %d-byte stream — less than a 10x saving.\n"+
 			"The accumulated message snapshots are the whole cost; dropping them shrank the measured "+
 			"run by 237x. A saving this small means they are still being written.", largeLog, len(large))
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Claim 2 — the log still answers "what did the model say, and what did it do?"
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestStdoutLogWriter_APostMortemCanStillReadTheReasoningAndTheToolCalls holds
 // the shrink to the thing it is allowed to cost.
@@ -294,10 +246,6 @@ func TestStdoutLogWriter_APostMortemCanStillReadTheReasoningAndTheToolCalls(t *t
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Everything that is not a message_update is evidence too
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStdoutLogWriter_EverythingThatIsNotAMessageUpdatePassesThroughByteForByte
 // pins the blast radius of the rewrite.
 //
@@ -355,10 +303,6 @@ func TestStdoutLogWriter_ATurnThatEndsWithoutANewlineStillLandsOnDisk(t *testing
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The rewrite is allowed to reorder keys. It is not allowed to change bytes.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStdoutLogWriter_ARewrittenLineCarriesTheModelsCharactersUnchanged is the
 // difference between a log you can grep and a log you cannot.
 //
@@ -377,10 +321,6 @@ func TestStdoutLogWriter_ARewrittenLineCarriesTheModelsCharactersUnchanged(t *te
 
 	const delta = `select { case v := <-ch: if a < b && c > d { emit("<tag>&amp;") } }`
 
-	// Written out as raw bytes rather than built with json.Marshal, because
-	// json.Marshal escapes these three characters on the way IN as well. A fixture
-	// built that way would hand the writer a line that is already escaped and prove
-	// nothing about what the writer does.
 	line := `{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,` +
 		`"delta":` + piRawJSONString(t, delta) + `,"partial":{"role":"assistant"}},"message":{"role":"assistant"}}`
 	if !strings.Contains(line, "<-ch") {
@@ -489,13 +429,6 @@ func piSortedKeys(m map[string]json.RawMessage) []string {
 	return keys
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Close and Write do not run on the same goroutine
-// ─────────────────────────────────────────────────────────────────────────────
-
-// piLockedSink is a sink that can be written from two goroutines without racing
-// on its own state, so a race the detector reports is the WRITER's and not the
-// fixture's.
 type piLockedSink struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -547,7 +480,6 @@ func TestStdoutLogWriter_CloseIsSafeWhileTheWatcherIsStillDraining(t *testing.T)
 		}
 	}()
 
-	// The defer's Close, concurrent with the drain, exactly as the daemon does it.
 	if err := w.Close(); err != nil {
 		t.Errorf("close during the drain: %v", err)
 	}
@@ -562,8 +494,6 @@ func TestStdoutLogWriter_CloseIsSafeWhileTheWatcherIsStillDraining(t *testing.T)
 	}
 }
 
-// piRawJSONString quotes s as a JSON string WITHOUT escaping `<`, `>` or `&`,
-// which is what Pi itself emits.
 func piRawJSONString(t *testing.T, s string) string {
 	t.Helper()
 	var b bytes.Buffer

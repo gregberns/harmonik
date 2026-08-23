@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// gatePayloadFixture returns a fully-populated GatePayload for the
-// approval-gate subtype with all fields set to valid non-zero values,
-// suitable for structural and round-trip tests (hk-a8bg.60).
 func gatePayloadFixture(t *testing.T) GatePayload {
 	t.Helper()
 
@@ -353,7 +350,6 @@ func TestGatePayloadJSONFieldNames(t *testing.T) {
 			t.Errorf("JSON output missing key %q", key)
 		}
 	}
-	// verification_ref is omitempty and absent from approval-gate fixture.
 	if _, ok := m["verification_ref"]; ok {
 		t.Error("JSON output contains unexpected key \"verification_ref\" for approval-gate fixture")
 	}

@@ -6,17 +6,10 @@ import (
 	"time"
 )
 
-// A paused queue still owns the runs it dispatched before the pause. These
-// cases pin what the completion decision does on such a queue: it records the
-// outcome, it closes the group, and it does NOT start the successor.
-//
-// Bead ref: hk-nw6on.
-
 const pausedCompletionQueueID = "0197c454-0000-7000-8000-000000000009"
 
 var pausedCompletionStamp = time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 
-// pausedCompletionInput completes the only item of group 0.
 func pausedCompletionInput(outcome GroupCompletionOutcome) GroupCompletionInput {
 	return GroupCompletionInput{
 		ExpectedQueueID: pausedCompletionQueueID,
@@ -26,9 +19,6 @@ func pausedCompletionInput(outcome GroupCompletionOutcome) GroupCompletionInput 
 	}
 }
 
-// pausedCompletionQueue builds an active queue whose group 0 holds the supplied
-// item statuses, followed by successorCount pending groups of one item each.
-// The caller pauses it through the real transition rather than by assignment.
 func pausedCompletionQueue(successorCount int, statuses ...ItemStatus) Queue {
 	items := make([]Item, len(statuses))
 	for i, status := range statuses {

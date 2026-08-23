@@ -1,46 +1,5 @@
 package handlercontract_test
 
-// redaction_hc028_test.go — fixture and sensors for HC-028..HC-034 (secrets
-// pipeline) and HC-INV-003 (no secret value crosses the event-bus boundary).
-//
-// Spec refs: specs/handler-contract.md §4.7.HC-028 through §4.7.HC-034,
-// §10.2.HC-028..HC-034; bead hk-8i31.81.
-//
-// Helper prefix: redactionFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-//
-// What this file provides:
-//
-//   1. redactionFixtureSecretNamedPayload — a struct whose field names match
-//      the HC-031 common-prefix regex. Used by middleware and startup-check
-//      tests when those implementations land (hk-8i31.37, hk-8i31.38,
-//      hk-8i31.40).
-//
-//   2. redactionFixtureSecretValuePayload — a struct with benign field names
-//      carrying values that match the HC-032 per-handler value patterns (e.g.,
-//      sk-ant-api03-... Anthropic key shape). Used by per-handler-pattern tests
-//      (hk-8i31.39).
-//
-//   3. redactionFixtureSafePayload — a struct with no secret-named fields and
-//      no secret-shaped values. Used as a negative / control case in both
-//      middleware and startup-check tests.
-//
-//   4. redactionFixtureSchemaViolation — a struct whose field name matches
-//      HC-031's regex, representing the negative-case input to HC-033 (compile-
-//      time schema check must reject a registered event type whose payload
-//      schema declares such a field).
-//
-//   5. redactionFixturePerHandlerPatterns — the set of value-regex patterns a
-//      handler subsystem declares in its envelope per HC-032. Used by
-//      per-handler-pattern registration tests (hk-8i31.39).
-//
-//   6. Static sensors asserting HC-031's regex coverage and HC-034's "no
-//      literal secret value in test payloads" policy.
-//
-// None of these tests wire up the actual middleware or compile-time checker;
-// the fixture types and sensor assertions are load-bearing for the downstream
-// beads that implement those mechanisms.
-
 import (
 	"reflect"
 	"regexp"
@@ -49,45 +8,10 @@ import (
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 regex constant
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureCommonPrefixRegex is the normative case-insensitive regex
-// from §4.7.HC-031. Field names matching this regex MUST be replaced with
-// "<redacted>" before emission.
-//
-// Spec: `(secret|token|password|api[_-]?key|auth)`
 const redactionFixtureCommonPrefixRegex = `(?i)(secret|token|password|api[_-]?key|auth)`
 
-// redactionFixtureRedactedSentinel is the literal replacement value required
-// by HC-031 and HC-032. Field values that match a redaction rule MUST be
-// replaced with exactly this string before emission.
 const redactionFixtureRedactedSentinel = "<redacted>"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: secret-named payload (HC-031 positive cases)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureSecretNamedPayload carries fields whose NAMES match the
-// HC-031 common-prefix regex. The middleware (hk-8i31.38) MUST replace every
-// non-empty string value in these fields with "<redacted>" before the event
-// reaches any consumer or is written to disk.
-//
-// Field names are chosen to cover all five branches of the HC-031 regex:
-//   - "secret"   (direct match)
-//   - "token"    (direct match)
-//   - "password" (direct match)
-//   - "api_key"  (api + underscore + key)
-//   - "auth"     (direct match)
-//
-// An additional "api-key" variant (hyphen form) covers the `api[_-]?key`
-// alternation branch. "apikey" (no separator) covers the `api[_-]?key`
-// optional-separator branch.
-//
-// HC-031 note: the match is on FIELD NAME, not value. A payload struct that
-// names a field "secret" is a producer-side bug; the middleware provides
-// defence-in-depth, not a primary control.
 type redactionFixtureSecretNamedPayload struct {
 	Secret   string `json:"secret"`
 	Token    string `json:"token"`
@@ -100,9 +24,6 @@ type redactionFixtureSecretNamedPayload struct {
 	WorkerID string `json:"worker_id"`
 }
 
-// redactionFixtureSecretNamedFieldNames is the canonical list of field NAMES
-// from redactionFixtureSecretNamedPayload that must match HC-031's regex.
-// Used by TestRedaction_HC031_CommonPrefixRegexCoversFixtureFields.
 var redactionFixtureSecretNamedFieldNames = []string{
 	"secret",
 	"token",
@@ -113,10 +34,6 @@ var redactionFixtureSecretNamedFieldNames = []string{
 	"auth",
 }
 
-// redactionFixtureSafeFieldNames is the canonical list of field NAMES that MUST
-// NOT match HC-031's regex. It spans the control field on
-// redactionFixtureSecretNamedPayload and every field of
-// redactionFixtureSafePayload.
 var redactionFixtureSafeFieldNames = []string{
 	"node_id",
 	"run_id",
@@ -126,20 +43,6 @@ var redactionFixtureSafeFieldNames = []string{
 	"worker_id",
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: secret-valued payload (HC-032 positive cases)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureSecretValuePayload carries fields with BENIGN names but
-// values that match per-handler value-shaped patterns declared by HC-032.
-//
-// The concrete example in §4.7.HC-032 is Anthropic API keys matching
-// "sk-ant-*". The fixture uses representative values drawn from known provider
-// key shapes. Values MUST be syntactically valid prefixes for the patterns but
-// MUST NOT be real secrets (see HC-034 note below).
-//
-// HC-034 compliance: the values here are structural stubs (prefix + repeated
-// 'x') that match the pattern shape but are not extractable credentials.
 type redactionFixtureSecretValuePayload struct {
 	// ProviderKey carries an Anthropic-shaped API key stub (sk-ant-api03-...).
 	// The per-handler pattern for the Claude handler MUST match this value.
@@ -154,23 +57,9 @@ type redactionFixtureSecretValuePayload struct {
 	SafeValue string `json:"safe_value"`
 }
 
-// redactionFixtureAnthropicKeyStub is a structural key stub whose value matches
-// the Anthropic API key shape (sk-ant-api03- prefix) declared in HC-032.
-// It is NOT a real key; the body is 93 'x' characters to match the regex shape
-// without being an extractable credential.
-//
-// HC-034: body MUST contain only 'x' padding — verified by
-// TestRedaction_HC034_FixtureStubsContainNoRealSecrets.
 const redactionFixtureAnthropicKeyStub = "sk-ant-api03-" +
 	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: safe payload (negative / control case)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureSafePayload carries fields with names and values that MUST
-// NOT match any redaction rule. Used as a control in middleware tests to verify
-// the middleware does not over-redact legitimate payloads.
 type redactionFixtureSafePayload struct {
 	NodeID    string `json:"node_id"`
 	RunID     string `json:"run_id"`
@@ -179,18 +68,6 @@ type redactionFixtureSafePayload struct {
 	AgentType string `json:"agent_type"`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: HC-033 schema-violation type (negative case for startup check)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureSchemaViolation is a payload type whose field name matches
-// the HC-031 regex. Per HC-033, registering an event type whose payload schema
-// contains such a field MUST be a startup-time error.
-//
-// This struct is the negative-case input to
-// TestRedaction_HC033_StartupCheckRejectsSecretFieldInSchema (below). It is
-// deliberately NOT registered via core.RegisterEventType; attempting to register
-// it is the action under test.
 type redactionFixtureSchemaViolation struct {
 	// "password" matches HC-031; any registered event type with this field MUST
 	// be rejected at startup by the schema checker (hk-8i31.40).
@@ -201,18 +78,6 @@ type redactionFixtureSchemaViolation struct {
 	NodeID string `json:"node_id"`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: per-handler redaction patterns (HC-032)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixturePerHandlerPatterns is the slice of value-regex patterns a
-// handler subsystem contributes to the redaction registry at daemon init per
-// HC-032. Each entry is a compiled regex matching the handler's provider-secret
-// value shape.
-//
-// These patterns are consumed by per-handler-pattern registration tests
-// (hk-8i31.39). The regex strings are normative; the compiled forms are
-// compiled once at test init.
 var redactionFixturePerHandlerPatterns = []struct {
 	// Name is a human-readable label for the pattern (used in test sub-test names).
 	Name string
@@ -229,12 +94,6 @@ var redactionFixturePerHandlerPatterns = []struct {
 	},
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-031 regex covers all fixture field names
-// ─────────────────────────────────────────────────────────────────────────────
-
-// redactionFixtureJSONFieldNames returns the `json` tag names of every field of
-// the struct type typ, in declaration order.
 func redactionFixtureJSONFieldNames(t *testing.T, typ reflect.Type) []string {
 	t.Helper()
 	if typ.Kind() != reflect.Struct {
@@ -371,10 +230,6 @@ func TestRedaction_HC031_RedactedSentinelShape(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-032 per-handler patterns compile and match stubs
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRedaction_HC032_PerHandlerPatternsCompile verifies that every pattern in
 // redactionFixturePerHandlerPatterns is a valid Go regex. A syntax error here
 // means the handler spec declares an uncompilable pattern, which would prevent
@@ -474,10 +329,6 @@ func TestRedaction_HC032_AnthropicPatternDoesNotMatchSafeValue(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-033 compile-time schema check (startup-check negative case)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRedaction_HC033_SchemaViolationFixtureFieldMatchesRegex asserts that the
 // "password" field in redactionFixtureSchemaViolation matches the HC-031 regex.
 //
@@ -492,7 +343,6 @@ func TestRedaction_HC033_SchemaViolationFixtureFieldMatchesRegex(t *testing.T) {
 
 	re := regexp.MustCompile(redactionFixtureCommonPrefixRegex)
 
-	// "password" is the violation field in redactionFixtureSchemaViolation.
 	const violationField = "password"
 	if !re.MatchString(violationField) {
 		t.Errorf(
@@ -502,7 +352,6 @@ func TestRedaction_HC033_SchemaViolationFixtureFieldMatchesRegex(t *testing.T) {
 		)
 	}
 
-	// "node_id" is the safe field in the same struct; it MUST NOT match.
 	const safeField = "node_id"
 	if re.MatchString(safeField) {
 		t.Errorf(
@@ -512,10 +361,6 @@ func TestRedaction_HC033_SchemaViolationFixtureFieldMatchesRegex(t *testing.T) {
 		)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-034 no literal secret in fixture stubs
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRedaction_HC034_FixtureStubsContainNoRealSecrets asserts that the
 // redactionFixtureAnthropicKeyStub constant does NOT contain any non-'x'

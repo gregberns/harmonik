@@ -26,9 +26,6 @@ type groupCompletionEffects struct {
 	OwnershipReleased    bool
 }
 
-// decideGroupCompletionEffects maps durable facts to effects that remain at
-// the daemon edge. QueueStore transactions already install or release their
-// exact queue owner, so this policy never authorizes a second raw store write.
 func decideGroupCompletionEffects(in groupCompletionDurability) (groupCompletionEffects, error) {
 	if err := validateGroupCompletionDurability(in); err != nil {
 		return groupCompletionEffects{}, err
@@ -42,11 +39,6 @@ func decideGroupCompletionEffects(in groupCompletionDurability) (groupCompletion
 	}
 	out.LogFailure = in.Outcome != queue.OutcomeCommittedDurable || in.ObservationError || in.CleanupError || in.MarkerError
 	switch in.Disposition {
-	// successor-held commits the same transaction as successor-activated and it
-	// wakes the loop for the same reason: the item and its group changed on
-	// disk, and the eager refill and the dispatch loop must both look again.
-	// The successor group did not start, but that is the queue's pause talking,
-	// not a reason to withhold the effects of the write that DID land.
 	case queue.GroupCompletionDispositionIntermediate,
 		queue.GroupCompletionDispositionSuccessorActivated,
 		queue.GroupCompletionDispositionSuccessorHeld:

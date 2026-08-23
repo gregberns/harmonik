@@ -62,7 +62,6 @@ func ReadJSONLForDivergenceEvidence(data []byte) ([]JSONLReadResult, error) {
 		return nil, nil
 	}
 
-	// Split data into lines while preserving whether the final line ends in '\n'.
 	lines, finalHasNewline := splitJSONLLines(data)
 	if len(lines) == 0 {
 		return nil, nil
@@ -74,21 +73,14 @@ func ReadJSONLForDivergenceEvidence(data []byte) ([]JSONLReadResult, error) {
 		lineNum := i + 1
 		isLast := i == len(lines)-1
 
-		// line has no trailing newline (bufio.Scanner strips it).
 		if len(line) == 0 {
-			// Skip blank lines.
 			continue
 		}
 
-		// Attempt to parse as JSON.
 		if !json.Valid(line) {
 			if isLast && !finalHasNewline {
-				// Torn tail: unparseable final line without a terminating newline.
-				// Per EM-031: silently discard, NOT a Cat 6b signal.
 				break
 			}
-			// Mid-file corruption, or a terminated (newline-closed) bad tail line.
-			// Per EM-031: IS a Cat 6b signal.
 			return nil, fmt.Errorf("%w: line %d", ErrJSONLMidFileCorruption, lineNum)
 		}
 
@@ -103,10 +95,6 @@ func ReadJSONLForDivergenceEvidence(data []byte) ([]JSONLReadResult, error) {
 	return results, nil
 }
 
-// splitJSONLLines splits JSONL data into individual lines (without trailing
-// newlines, as bufio.Scanner strips them). The second return value reports
-// whether the last byte of data is '\n' (i.e., the final line is properly
-// terminated). Each returned line is a copy of the scanner token.
 func splitJSONLLines(data []byte) (lines [][]byte, finalHasNewline bool) {
 	finalHasNewline = len(data) > 0 && data[len(data)-1] == '\n'
 
@@ -117,10 +105,7 @@ func splitJSONLLines(data []byte) (lines [][]byte, finalHasNewline bool) {
 		copy(cp, tok)
 		lines = append(lines, cp)
 	}
-	// scanner.Err() is always nil for in-memory byte-slice readers; checked
-	// for errcheck compliance.
 	if err := scanner.Err(); err != nil {
-		// Unreachable for bytes.NewReader; treat as a programming error.
 		lines = nil
 	}
 	return lines, finalHasNewline

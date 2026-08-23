@@ -53,12 +53,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Scenario helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-// gitWinsSensorMakeClosedBead returns a BeadRecord with CoarseStatus=closed
-// for the given bead ID.  This is the "Beads says closed" side of Scenario A.
 func gitWinsSensorMakeClosedBead(t *testing.T, id BeadID) BeadRecord {
 	t.Helper()
 	return BeadRecord{
@@ -72,16 +66,12 @@ func gitWinsSensorMakeClosedBead(t *testing.T, id BeadID) BeadRecord {
 	}
 }
 
-// gitWinsSensorMakeCheckpointWithMissingCommit returns a Checkpoint whose
-// CommitHash represents a SHA that is absent from git's object database.
-// This is the "JSONL-referenced-but-missing-from-git" side of Scenario B.
 func gitWinsSensorMakeCheckpointWithMissingCommit(t *testing.T, id BeadID) Checkpoint {
 	t.Helper()
 	beadID := id
 	runID := RunID(uuid.Must(uuid.NewV7()))
 	transitionID := TransitionID(uuid.Must(uuid.NewV7()))
 	return Checkpoint{
-		// A plausible-looking but deliberately absent commit SHA.
 		CommitHash:           "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		RunID:                runID,
 		StateID:              StateID(uuid.Must(uuid.NewV7())),
@@ -92,17 +82,12 @@ func gitWinsSensorMakeCheckpointWithMissingCommit(t *testing.T, id BeadID) Check
 	}
 }
 
-// gitWinsSensorScenarioADivergence captures the synthetic Scenario A state:
-// a bead that Beads reports as closed but for which no matching git merge commit
-// exists.  The MergeCommitFound field mirrors the absent-from-git outcome.
 type gitWinsSensorScenarioADivergence struct {
 	Bead             BeadRecord
 	BeadID           BeadID
 	MergeCommitFound bool // false = divergence present; git has no matching commit
 }
 
-// gitWinsSensorBuildScenarioA constructs the Scenario A divergence state.
-// MergeCommitFound=false models the "git says no merge commit" side.
 func gitWinsSensorBuildScenarioA(t *testing.T) gitWinsSensorScenarioADivergence {
 	t.Helper()
 	id := BeadID("sensor-bead-gitwins-b3f65-scenA")
@@ -114,15 +99,11 @@ func gitWinsSensorBuildScenarioA(t *testing.T) gitWinsSensorScenarioADivergence 
 	}
 }
 
-// gitWinsSensorScenarioBDivergence captures the synthetic Scenario B state:
-// a JSONL transition event that references a checkpoint commit absent from git.
 type gitWinsSensorScenarioBDivergence struct {
 	Checkpoint        Checkpoint
 	CommitExistsInGit bool // false = divergence present; git does not have this SHA
 }
 
-// gitWinsSensorBuildScenarioB constructs the Scenario B divergence state.
-// CommitExistsInGit=false models the "JSONL references a SHA not in git" outcome.
 func gitWinsSensorBuildScenarioB(t *testing.T) gitWinsSensorScenarioBDivergence {
 	t.Helper()
 	id := BeadID("sensor-bead-gitwins-b3f65-scenB")
@@ -133,12 +114,6 @@ func gitWinsSensorBuildScenarioB(t *testing.T) gitWinsSensorScenarioBDivergence 
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Spec-text readers
-// ──────────────────────────────────────────────────────────────────────────────
-
-// gitWinsSensorEmInv005Content reads specs/execution-model.md and returns the
-// paragraph containing EM-INV-005.  Fails the test if the anchor is absent.
 func gitWinsSensorEmInv005Content(t *testing.T) string {
 	t.Helper()
 
@@ -146,7 +121,6 @@ func gitWinsSensorEmInv005Content(t *testing.T) string {
 	if !ok {
 		t.Fatal("gitWinsSensorEmInv005Content: runtime.Caller failed")
 	}
-	// Walk up: internal/core/<file> → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "execution-model.md")
 
@@ -163,15 +137,12 @@ func gitWinsSensorEmInv005Content(t *testing.T) string {
 		t.Fatalf("EM-INV-005 anchor not found in %s; invariant may have been removed or renamed", specPath)
 	}
 	para := content[idx:]
-	// Clip at the next section header so we don't bleed into unrelated content.
 	if end := strings.Index(para, "\n####"); end > 0 {
 		para = para[:end]
 	}
 	return para
 }
 
-// gitWinsSensorBi022Content reads specs/beads-integration.md and returns the
-// paragraph containing BI-022.  Fails the test if the anchor is absent.
 func gitWinsSensorBi022Content(t *testing.T) string {
 	t.Helper()
 
@@ -201,9 +172,6 @@ func gitWinsSensorBi022Content(t *testing.T) string {
 	return para
 }
 
-// gitWinsSensorRcCat3Content reads specs/reconciliation/spec.md and returns the
-// paragraph containing Cat 3 store-disagreement detection rule.  Fails the test
-// if the anchor is absent.
 func gitWinsSensorRcCat3Content(t *testing.T) string {
 	t.Helper()
 
@@ -221,7 +189,6 @@ func gitWinsSensorRcCat3Content(t *testing.T) string {
 	}
 	content := string(raw)
 
-	// The Cat 3 section header in reconciliation/spec.md §8.4.
 	const anchor = "Cat 3 — Store disagreement"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
@@ -233,10 +200,6 @@ func gitWinsSensorRcCat3Content(t *testing.T) string {
 	}
 	return para
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Spec-invariant phrase tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestGitWinsB3F65_EmInv005PhrasesCat3AndNoSilentReconcile verifies that
 // execution-model.md §5 EM-INV-005 encodes the mandatory phrases for the
@@ -307,12 +270,10 @@ func TestGitWinsB3F65_EmInv005CoversJSONLArm(t *testing.T) {
 		hint   string
 	}{
 		{
-			// The primary (Beads-closed) arm.
 			phrase: "Beads reports a bead as `closed`",
 			hint:   "EM-INV-005 primary arm: Beads-closed-no-merge-commit must be named explicitly",
 		},
 		{
-			// The secondary (JSONL-references-missing-commit) arm.
 			phrase: "JSONL",
 			hint:   "EM-INV-005 must cover the JSONL-references-missing-commit arm so detectors cannot silently accept JSONL as authoritative",
 		},
@@ -378,7 +339,6 @@ func TestGitWinsB3F65_RcCat3IsInvestigatorDispatched(t *testing.T) {
 
 	para := gitWinsSensorRcCat3Content(t)
 
-	// Cat 3 MUST declare an investigator workflow (NOT an auto-resolver).
 	if !strings.Contains(para, "investigator") {
 		t.Errorf(
 			"reconciliation/spec.md Cat 3 section does not mention 'investigator'; "+
@@ -388,10 +348,6 @@ func TestGitWinsB3F65_RcCat3IsInvestigatorDispatched(t *testing.T) {
 		)
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Scenario A — Beads-closed / no-merge-commit (structural assertions)
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestGitWinsB3F65_ScenarioA_BeadsClosedNoMergeCommitIsDivergence constructs
 // the Scenario A divergence state and asserts that:
@@ -415,29 +371,19 @@ func TestGitWinsB3F65_ScenarioA_BeadsClosedNoMergeCommitIsDivergence(t *testing.
 
 	scen := gitWinsSensorBuildScenarioA(t)
 
-	// Step 1: bead record is structurally valid.
 	if !scen.Bead.Valid() {
 		t.Fatal("ScenarioA: BeadRecord.Valid() = false; fixture must be structurally valid")
 	}
 
-	// Step 2: Beads side says closed.
 	if scen.Bead.Status != CoarseStatusClosed {
 		t.Errorf("ScenarioA: Bead.Status = %q, want %q (Beads-closed arm of EM-INV-005)",
 			scen.Bead.Status, CoarseStatusClosed)
 	}
 
-	// Step 3: git has no matching merge commit — divergence is present.
 	if scen.MergeCommitFound {
 		t.Error("ScenarioA: MergeCommitFound = true; fixture must model the absent-merge-commit divergence arm")
 	}
 
-	// Step 4: preconditions for Cat 3 routing are met.
-	// A subsystem observing (Status=closed AND NOT MergeCommitFound) MUST route to
-	// Cat 3 per EM-INV-005 / BI-022; it MUST NOT silently correct Beads.
-	//
-	// We assert that the scenario ID is non-empty (carrier is valid) and that the
-	// BeadID matches between the bead record and the scenario, confirming the
-	// scenario fixture was constructed correctly.
 	if scen.BeadID == "" {
 		t.Error("ScenarioA: BeadID is empty; cannot identify the divergent bead")
 	}
@@ -477,10 +423,6 @@ func TestGitWinsB3F65_ScenarioA_BeadIDPropagatesAcrossCheckpoint(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Scenario B — JSONL references missing checkpoint commit (structural assertions)
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestGitWinsB3F65_ScenarioB_JSONLMissingCommitIsDivergence constructs the
 // Scenario B divergence state and asserts that:
 //
@@ -498,22 +440,18 @@ func TestGitWinsB3F65_ScenarioB_JSONLMissingCommitIsDivergence(t *testing.T) {
 
 	scen := gitWinsSensorBuildScenarioB(t)
 
-	// Step 1: Checkpoint is structurally valid.
 	if !scen.Checkpoint.Valid() {
 		t.Fatal("ScenarioB: Checkpoint.Valid() = false; fixture must be structurally valid")
 	}
 
-	// Step 2: CommitHash is present (this is the SHA a JSONL event would reference).
 	if scen.Checkpoint.CommitHash == "" {
 		t.Error("ScenarioB: CommitHash is empty; JSONL divergence requires a non-empty SHA reference")
 	}
 
-	// Step 3: git does not have this commit — divergence is present.
 	if scen.CommitExistsInGit {
 		t.Error("ScenarioB: CommitExistsInGit = true; fixture must model the absent-SHA divergence arm")
 	}
 
-	// Step 4: BeadID in the checkpoint is non-nil and non-empty.
 	if scen.Checkpoint.BeadID == nil {
 		t.Fatal("ScenarioB: Checkpoint.BeadID is nil; want non-nil for traceability")
 	}
@@ -566,7 +504,6 @@ func TestGitWinsB3F65_ScenarioB_JSONLMustNotOverrideGit(t *testing.T) {
 		para = para[:end]
 	}
 
-	// BI-023 must forbid JSONL overriding git or Beads.
 	const forbiddenPhrase = "MUST NOT"
 	if !strings.Contains(para, forbiddenPhrase) {
 		t.Errorf(
@@ -576,7 +513,6 @@ func TestGitWinsB3F65_ScenarioB_JSONLMustNotOverrideGit(t *testing.T) {
 		)
 	}
 
-	// BI-023 must specifically mention the write prohibition.
 	const writePhrase = "write"
 	if !strings.Contains(strings.ToLower(para), strings.ToLower(writePhrase)) {
 		t.Errorf(
@@ -586,7 +522,3 @@ func TestGitWinsB3F65_ScenarioB_JSONLMustNotOverrideGit(t *testing.T) {
 		)
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Forward-doc marker for the Cat 3 classifier
-// ──────────────────────────────────────────────────────────────────────────────

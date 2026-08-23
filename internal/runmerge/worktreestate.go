@@ -1,11 +1,5 @@
 package runmerge
 
-// worktreestate.go — worktree hygiene around the merge: pre-rebase churn
-// discard / residual-delta capture / untracked cleanup, and the post-merge
-// scoped working-tree refresh.
-//
-// Carved out of internal/daemon/workloop.go by P2 unit E5 RT13 (pure move).
-
 import (
 	"context"
 	"fmt"
@@ -18,11 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// mergedCommitPaths returns the repo-relative paths the merged commit changed
-// between mainTip and runTip — the exact set EM-054's refresh is responsible
-// for, and the same set the BL-MRG-004/005 bead-ledger reconciliation checks.
-//
-// Bead: hk-7qmpp.
 func mergedCommitPaths(ctx context.Context, projectDir, mainTip, runTip string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
 	cmd.Dir = projectDir
@@ -39,23 +28,6 @@ func mergedCommitPaths(ctx context.Context, projectDir, mainTip, runTip string) 
 	return paths, nil
 }
 
-// refreshMergedPaths re-syncs index + working tree for exactly the merged
-// commit's own paths, and names any uncommitted local edits it overwrites.
-//
-// A merged path may itself carry an uncommitted local edit. The merged commit
-// is authoritative for its own paths, so the refresh proceeds — but it MUST NOT
-// be silent: the edits are written to a recovery patch first ("park it before
-// you delete it") and the paths are named in a
-// working_tree_local_edits_overwritten event.
-//
-// Local edits are detected against mainTip, NOT against HEAD: the ref has
-// already advanced (Phase A), so every merged path reads as modified relative
-// to HEAD whether or not anyone touched it. Diffing against the pre-merge tip
-// separates a real local edit from that phantom staleness.
-//
-// All steps are best-effort / non-fatal — the merge is already durable.
-//
-// Spec ref: specs/execution-model.md §4.12 EM-054. Bead: hk-7qmpp, hk-4goy3.
 func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, mainTip string, paths []string) {
 	overwritten := locallyEditedPaths(ctx, projectDir, mainTip, paths)
 	if len(overwritten) > 0 {
@@ -65,9 +37,6 @@ func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID
 		emitWorkingTreeLocalEditsOverwritten(ctx, bus, runID, beadID, projectDir, overwritten, patchPath)
 	}
 
-	// `git restore --source=HEAD --staged --worktree` re-syncs index AND working
-	// tree for the given pathspec, and correctly REMOVES paths the merged commit
-	// deleted. Pathspecs arrive on stdin so a large merge cannot overflow ARG_MAX.
 	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=-")
 	restoreCmd.Dir = projectDir
 	restoreCmd.Stdin = strings.NewReader(strings.Join(paths, "\n") + "\n")
@@ -78,22 +47,12 @@ func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID
 	}
 }
 
-// locallyEditedPaths returns the subset of paths whose working-tree content
-// deviates from mainTip — i.e. genuine uncommitted local edits, as opposed to
-// the phantom staleness every merged path shows against the already-advanced
-// HEAD. Returns nil on error: the refresh must not be blocked by a failed
-// diagnostic.
-//
-// Bead: hk-7qmpp.
 func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths []string) []string {
 	args := append([]string{"diff", "--name-only", mainTip, "--"}, paths...)
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; args are a git SHA and repo-relative paths from git itself
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {
-		// Fail open by contract — but say so. This is the only signal that the
-		// local-edits diagnostic ran and produced nothing because it FAILED,
-		// rather than because there were genuinely no local edits to report.
 		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: WARNING: local-edits diagnostic failed against %s: %v\n", mainTip, err)
 		return nil
 	}
@@ -106,17 +65,8 @@ func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths [
 	return edited
 }
 
-// writeRecoveryPatch saves the about-to-be-overwritten local edits as a patch
-// under .harmonik/recovery/ and returns its path, or "" if it could not be
-// written. Untracked and outside the merged paths, so neither the refresh nor a
-// future one can eat it.
-//
-// Bead: hk-7qmpp.
 func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID, mainTip string, paths []string) string {
 	dir := filepath.Join(projectDir, ".harmonik", "recovery")
-	// 0o700, deliberately TIGHTER than core.HarmonikDirMode: this directory holds
-	// rescued uncommitted work, so it is owner-only by intent. The constant's own
-	// doc sanctions this — it is the default for the .harmonik tree, not a ceiling.
 	if err := os.MkdirAll(dir, 0o700); err != nil { //dirmode:allow tighter on purpose: .harmonik/recovery/ holds rescued uncommitted work, 0o700 (never widen to core.HarmonikDirMode)
 		return ""
 	}
@@ -174,9 +124,6 @@ func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID
 // Beads: hk-3yz2d (ledger), hk-aiw63 (generalized to .claude/settings.json and
 // the full IsHarmonikChurn allowlist).
 func DiscardDirtyChurn(ctx context.Context, wtPath string) {
-	// Enumerate ALL dirty paths in the worktree once, then discard only those
-	// the churn allowlist recognizes. Untracked files (status "??") are not
-	// git-checkout-restorable and are excluded by tracked-status filtering below.
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusCmd.Dir = wtPath
 	statusOut, statusErr := statusCmd.Output()
@@ -189,14 +136,11 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 		if len(line) < 4 {
 			continue
 		}
-		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — skip (cannot be
-		// `git checkout`-restored).
 		xy := line[:2]
 		if xy == "??" {
 			continue
 		}
 		path := line[3:]
-		// Handle rename "old -> new": restore the destination path.
 		if idx := strings.Index(path, " -> "); idx >= 0 {
 			path = path[idx+4:]
 		}
@@ -209,9 +153,6 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 		return
 	}
 
-	// Restore each churn path to its committed version. Use one checkout per
-	// path so a failure on one (e.g. a path that is staged-only) does not block
-	// the others; mirrors hk-i1n7j's best-effort/non-fatal style.
 	for _, path := range churnPaths {
 		//nolint:gosec // G204: fixed git binary; path is parsed from git status, accepted only by IsHarmonikChurn, and follows `--`.
 		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", path)
@@ -270,11 +211,6 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 // Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
 // fix (hk-cmry defect #3).
 func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
-	// Enumerate dirty paths once. We commit only if a non-churn change survives
-	// churn cleanup. Untracked files ("??") ARE counted now: an untracked file
-	// surviving DiscardDirtyChurn is the bead's authored work (a new source
-	// file), and `git add -A` will stage it. Gitignored paths never appear in
-	// `git status --porcelain`, so they are excluded here and by `git add -A`.
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusCmd.Dir = wtPath
 	statusOut, statusErr := statusCmd.Output()
@@ -287,10 +223,7 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		if len(line) < 4 {
 			continue
 		}
-		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — a NEW authored
-		// file that must be captured, NOT skipped (hk-cmry defect #3).
 		path := line[3:]
-		// Handle rename "old -> new": classify on the destination path.
 		if idx := strings.Index(path, " -> "); idx >= 0 {
 			path = path[idx+4:]
 		}
@@ -305,24 +238,6 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return // no genuine residual delta — do not create an empty commit
 	}
 
-	// Stage all residual work — tracked modifications/deletions AND untracked
-	// NEW files. `git add -A` HONORS .gitignore (so daemon/runtime/build junk
-	// stays excluded), and DiscardDirtyChurn already restored the churn
-	// allowlist, so -A captures exactly the bead's genuine residual iteration
-	// delta, including any newly authored source files that would otherwise be
-	// silently dropped (hk-cmry defect #3).
-	//
-	// Hardening (hk-igq3): use explicit pathspec EXCLUSIONS for .claude/ and
-	// .harmonik/ so that neither is ever swept into a commit even when a
-	// legitimate non-churn change is present in the same worktree.
-	// .claude/ is only partially gitignored (worktrees/ + scheduled_tasks.lock),
-	// so a blanket -A could stage and push credential-adjacent files to origin.
-	// .harmonik/ contains daemon runtime state (review.json, run-context, etc.)
-	// that MUST NOT land on the merge target; gitignore covers it but the
-	// explicit exclusion is belt-and-suspenders (GH #7, hk-znou: review.json
-	// committed via -A caused add/add rebase conflicts on concurrent runs).
-	// The :(exclude) pathspec magic is honored by git ≥ 2.0 and matches the
-	// directory and all descendants.
 	addCmd := exec.CommandContext(ctx, "git", "add", "-A", "--",
 		".",
 		":(exclude).claude",
@@ -334,9 +249,6 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return
 	}
 
-	// Subject ≤72 chars with CC type + runID for traceability.
-	// Trivial: true bypasses the Reviewed-By/Review-Verdict trailer requirement
-	// for this machine-generated commit (commit-msg gate; build-practices.md).
 	commitMsg := fmt.Sprintf(
 		"chore: residual iteration delta [%s]\n\nTrivial: true",
 		runID.String(),
@@ -390,10 +302,6 @@ func IsHarmonikChurn(path string) bool {
 		return true
 	case path == ".beads/issues.jsonl":
 		return true
-	// hk-77q8e: AGENT_COMMS.md was the v0 file-outbox comms channel (retired by
-	// hk-8sm4f — use `harmonik comms send/recv` instead). The exemption is kept
-	// for the live-transition period: any session still tailing the old file must
-	// not cause a false implementer_escape on in-flight beads.
 	case path == "AGENT_COMMS.md":
 		return true
 	}

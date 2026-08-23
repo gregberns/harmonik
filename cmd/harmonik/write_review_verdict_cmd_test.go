@@ -1,9 +1,5 @@
 package main
 
-// write_review_verdict_cmd_test.go — behavior tests for the
-// `harmonik write-review-verdict` subcommand (hk-9w79a) and shared
-// output-silencing helper for the verdict/gate command cluster.
-
 import (
 	"encoding/json"
 	"os"
@@ -13,11 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// vgSilenceStd redirects os.Stdout and os.Stderr to /dev/null for the duration
-// of the test, restoring them on cleanup. The verdict/gate run* functions print
-// usage banners and diagnostics straight to the process streams; silencing keeps
-// the test log readable. NOTE: it mutates process globals, so callers must NOT
-// use t.Parallel().
 func vgSilenceStd(t *testing.T) {
 	t.Helper()
 	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
@@ -32,7 +23,6 @@ func vgSilenceStd(t *testing.T) {
 	})
 }
 
-// readReviewJSON reads and decodes ${projectDir}/.harmonik/review.json.
 func readReviewJSON(t *testing.T, projectDir string) workspace.ReviewVerdict {
 	t.Helper()
 	raw, err := os.ReadFile(workspace.ReviewVerdictPath(projectDir))
@@ -84,8 +74,6 @@ func TestWriteReviewVerdict_FlagsParsedTrimmedAndCompacted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Equals-form flags, with surrounding whitespace and an empty element that
-	// must be dropped.
 	code := runWriteReviewVerdictSubcommand([]string{
 		"--verdict=REQUEST_CHANGES",
 		"--flags= missing-tests , , spec-drift ",

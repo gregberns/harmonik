@@ -145,22 +145,6 @@ func Transition(ws *Workspace, next core.WorkspaceState) error {
 
 	from := ws.State
 
-	// §7.1 transition table: allowed (from → to) pairs.
-	//
-	// Legend (from §7.1):
-	//   (initial)              → created              : orchestrator issues create
-	//   created                → ready                : git worktree add + sessions_dir succeed
-	//   ready                  → leased               : first session sidecar + lease-lock fsynced
-	//   leased                 → merge-pending        : merge node dispatched
-	//   merge-pending          → merged               : merge succeeds
-	//   merge-pending          → conflict-resolving   : merge conflicts detected
-	//   conflict-resolving     → merge-pending        : implementer resolves
-	//   conflict-resolving     → discarded            : re-dispatch exhausted OR all-mechanical
-	//   leased                 → discarded            : run reaches terminal failure
-	//
-	// The zero value ("") of WorkspaceState models the "initial" origin per §7.1
-	// (the Workspace record does not exist before create; this path covers the
-	// first assignment into a freshly allocated Workspace).
 	allowed := false
 	switch from {
 	case "": // initial (zero-value WorkspaceState before first assignment)
@@ -185,7 +169,6 @@ func Transition(ws *Workspace, next core.WorkspaceState) error {
 			next == core.WorkspaceStateDiscarded)
 
 	case core.WorkspaceStateMerged, core.WorkspaceStateDiscarded:
-		// Terminal states are absorbing; no further transitions are permitted.
 		allowed = false
 	}
 
@@ -195,7 +178,6 @@ func Transition(ws *Workspace, next core.WorkspaceState) error {
 
 	ws.State = next
 
-	// WM-037a: terminal states MUST carry interrupt_state = none.
 	if next == core.WorkspaceStateMerged || next == core.WorkspaceStateDiscarded {
 		ws.InterruptState = core.InterruptStateNone
 	}

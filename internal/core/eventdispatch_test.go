@@ -10,14 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// dispatchFixturePayloadGamma is a test-only payload type for dispatch tests.
 type dispatchFixturePayloadGamma struct {
 	Value string `json:"value"`
 	Count int    `json:"count"`
 }
 
-// dispatchFixtureBuildEvent returns a valid Event with the given type and raw
-// payload JSON. Fatals the test on UUID generation failure.
 func dispatchFixtureBuildEvent(t *testing.T, typeName EventType, payloadJSON []byte) Event {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -34,8 +31,6 @@ func dispatchFixtureBuildEvent(t *testing.T, typeName EventType, payloadJSON []b
 	}
 }
 
-// dispatchFixtureRegisterGamma registers the dispatchFixturePayloadGamma
-// constructor under the given typeName. Fatals the test on error.
 func dispatchFixtureRegisterGamma(t *testing.T, typeName EventType) {
 	t.Helper()
 	if err := RegisterEventType(typeName, func() EventPayload { return &dispatchFixturePayloadGamma{} }); err != nil {
@@ -83,8 +78,6 @@ func TestDispatch(t *testing.T) {
 		if !errors.Is(err, ErrSkipUnknown) {
 			t.Errorf("DispatchObservational: got %v, want errors.Is(ErrSkipUnknown)", err)
 		}
-		// ErrSkipUnknown MUST NOT wrap ErrUnknownEventType — observational callers
-		// should not need to inspect further.
 		if errors.Is(err, ErrUnknownEventType) {
 			t.Errorf("DispatchObservational: ErrSkipUnknown should not wrap ErrUnknownEventType")
 		}
@@ -146,7 +139,6 @@ func TestDispatch(t *testing.T) {
 			t.Fatal("DispatchSynchronous: expected structured error, got nil")
 		}
 
-		// Must be *DispatchUnknownEventError.
 		var dispErr *DispatchUnknownEventError
 		if !errors.As(err, &dispErr) {
 			t.Fatalf("DispatchSynchronous: got %T: %v, want *DispatchUnknownEventError", err, err)
@@ -158,7 +150,6 @@ func TestDispatch(t *testing.T) {
 			t.Errorf("DispatchUnknownEventError.EventID: got %v, want %v", dispErr.EventID, ev.EventID)
 		}
 
-		// Must also satisfy errors.Is(ErrUnknownEventType) via Unwrap.
 		if !errors.Is(err, ErrUnknownEventType) {
 			t.Errorf("DispatchSynchronous: error must wrap ErrUnknownEventType via Unwrap")
 		}
@@ -186,9 +177,6 @@ func TestDispatch(t *testing.T) {
 		}
 	})
 
-	// DeterministicLookup asserts EV-033's "deterministic map lookup" guarantee:
-	// repeated calls for the same registered type always produce a payload of the
-	// same Go type.
 	t.Run("DeterministicLookup_SameTypeAcrossIterations", func(t *testing.T) {
 		t.Cleanup(eventRegistryReset)
 

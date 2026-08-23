@@ -1,16 +1,5 @@
 package claude
 
-// harness.go — Harness: handlercontract.Harness impl for Claude Code (C1/T2, hk-3kyh3).
-//
-// Harness wraps the existing BuildLaunchSpec path.  It satisfies the
-// Harness interface without changing any dispatch behavior (no behavior change rule
-// for C1).  T3 (hk-hj9ld) will route the registry + launchSpecBuilder lookup
-// through this struct; T12 (hk-xhawy) will route the full cascade through it.
-//
-// Spec: specs/harness-contract.md §2; specs/handler-contract.md §4.10 HC-045a
-// (claude-code agent type governed by claude-hook-bridge spec).
-// See also: handlercontract/harness.go.
-
 import (
 	"context"
 	"io"
@@ -30,7 +19,6 @@ func NewHarness() *Harness {
 	return &Harness{}
 }
 
-// Compile-time assertion: *Harness satisfies handlercontract.Harness.
 var _ handlercontract.Harness = (*Harness)(nil)
 
 // AgentType returns core.AgentTypeClaudeCode — the registry key for this harness.

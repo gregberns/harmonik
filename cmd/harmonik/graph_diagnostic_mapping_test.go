@@ -1,15 +1,5 @@
 package main
 
-// graph_diagnostic_mapping_test.go — coverage for the error→diagnostic mapping
-// behind `harmonik graph validate`.
-//
-// validateDot is what decides whether a workflow is reported as startable. Its
-// parse-error branch classifies the error by TYPE, and the classification was
-// converted from a bare type switch to errors.As so a wrapped parse error is
-// still recognised. A regression there degrades a precise per-line
-// em038_not_parseable list into one opaque blob, or — worse for the operator —
-// reports a specific wrapped failure as if it were an unknown one.
-
 import (
 	"errors"
 	"fmt"
@@ -60,7 +50,6 @@ func TestDiagnosticDetail_PrefixesTheSourceLine(t *testing.T) {
 // single joined blob. That is the difference between the operator seeing three
 // line numbers and seeing one run-on string.
 func TestValidateDot_ParseErrorsBecomeOneDiagnosticEach(t *testing.T) {
-	// Three distinct strict violations on three different lines.
 	src := "digraph W {\n  a -> ;\n  -> b;\n  c - d;\n}\n"
 
 	diags := validateDot(src)
@@ -75,16 +64,12 @@ func TestValidateDot_ParseErrorsBecomeOneDiagnosticEach(t *testing.T) {
 			t.Error("diagnostic has an empty detail")
 		}
 	}
-	// A joined multi-error would surface as ONE diagnostic containing "; ",
-	// which is exactly the shape the per-error fan-out exists to avoid.
 	if len(diags) == 1 && strings.Contains(diags[0].Detail, "; dot:") {
 		t.Errorf("multi-error was joined into one diagnostic instead of fanned out: %q", diags[0].Detail)
 	}
 }
 
 func TestValidateDot_WellFormedGraphHasNoParseDiagnostic(t *testing.T) {
-	// The graph must carry a graph-level workflow_id: WG-055 makes it required,
-	// and a fixture missing it is not the well-formed input this test names.
 	src := "digraph W {\n  workflow_id=\"well-formed-graph\";\n  start -> done;\n}\n"
 	for _, d := range validateDot(src) {
 		if d.Code == "em038_not_parseable" {

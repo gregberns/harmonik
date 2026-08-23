@@ -18,17 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// The reservation is the one write that decides whether a dispatch happened.
-// These tests pin the four things that write must guarantee:
-//
-//  1. status and RunID reach disk together — there is no window where an item
-//     is dispatched with no run to find;
-//  2. a failed write abandons the dispatch and leaves the item pending;
-//  3. a bead already in flight from another queue is refused;
-//  4. an item at the attempt bound leaves pending, so dispatch cannot live-lock.
-
-// reservationFixture builds a project directory holding one active queue with
-// one pending item, and returns the store that owns it.
 func reservationFixture(t *testing.T, queueName string, beadID core.BeadID) (string, *queuewiring.QueueStore, *queue.Queue) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -83,8 +72,6 @@ func newReservationTransitionID(t *testing.T) core.TransitionID {
 	return core.TransitionID(id)
 }
 
-// loadPersistedItem reads the queue back off disk. Reading the file rather than
-// the in-memory store is the point: the claim under test is about durability.
 func loadPersistedItem(t *testing.T, projectDir, queueName string) queue.Item {
 	t.Helper()
 	//nolint:gosec // the path is built from t.TempDir(); the test wrote this file itself
@@ -141,7 +128,6 @@ func TestReserveQueueItem_WriteFailureAbandonsDispatch(t *testing.T) {
 	const beadID = core.BeadID("hk-reserve-2")
 	projectDir, store, _ := reservationFixture(t, queueName, beadID)
 
-	// Make the queues directory unwritable so the atomic-write sequence fails.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.Chmod(queuesDir, 0o500); err != nil { //nolint:gosec // the test needs a readable but non-writable directory
 		t.Fatalf("chmod queues dir: %v", err)
@@ -163,8 +149,6 @@ func TestReserveQueueItem_WriteFailureAbandonsDispatch(t *testing.T) {
 	if got.Err == nil {
 		t.Error("write failure carries no error; the operator message would say nothing useful")
 	}
-	// The in-memory item must not have been advanced either — a dispatch that
-	// did not reach disk did not happen.
 	live := store.QueueByName(queueName)
 	if live == nil {
 		t.Fatal("queue vanished from the store")
@@ -178,8 +162,6 @@ func TestReserveQueueItem_WriteFailureAbandonsDispatch(t *testing.T) {
 	}
 }
 
-// siblingQueue builds a second active queue holding one item for beadID at
-// status. It is what makes a cross-queue collision reachable from a unit test.
 func siblingQueue(name string, beadID core.BeadID, status queue.ItemStatus, runID *string) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
@@ -207,7 +189,6 @@ func TestReserveQueueItem_RefusesBeadInFlightFromAnotherQueue(t *testing.T) {
 	const beadID = core.BeadID("hk-reserve-3")
 	projectDir, store, _ := reservationFixture(t, queueName, beadID)
 
-	// A second active queue already holds the same bead dispatched.
 	otherRunID := newReservationRunID(t).String()
 	store.SetQueueByName("beta", siblingQueue("beta", beadID, queue.ItemStatusDispatched, &otherRunID))
 
@@ -228,9 +209,6 @@ func TestReserveQueueItem_RefusesBeadInFlightFromAnotherQueue(t *testing.T) {
 			got.Collision.Disposition, crossQueueSiblingRunning)
 	}
 
-	// Nothing was written. The queue file is the whole record of that: the
-	// reservation was refused by its precondition, so no transaction reached
-	// disk at all.
 	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", queueName+".json")); !os.IsNotExist(err) {
 		item := loadPersistedItem(t, projectDir, queueName)
 		t.Errorf("a queue file was written with item status %q / reason %q; a per-tick refusal must write nothing",
@@ -289,8 +267,6 @@ func TestReserveQueueItem_RunningSiblingOutranksAFinishedOne(t *testing.T) {
 	store.SetQueueByName("done", siblingQueue("done", beadID, queue.ItemStatusCompleted, nil))
 	store.SetQueueByName("busy", siblingQueue("busy", beadID, queue.ItemStatusDispatched, &runID))
 
-	// Run it several times: the guard walks a map, so a "first match wins" rule
-	// would pass or fail with Go's map iteration order rather than deterministically.
 	for attempt := range 20 {
 		got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 			QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
@@ -518,8 +494,6 @@ func TestActiveQueueItem_RefusesBeadMismatch(t *testing.T) {
 	}
 }
 
-// recordingEmitter captures the payload of every emitted event, which
-// CollectingEmitter does not — and the payload is the thing under test here.
 type recordingEmitter struct {
 	types    []core.EventType
 	payloads [][]byte
@@ -572,8 +546,6 @@ func TestReportQueueWriteError_EmitsBothEventsQM001Requires(t *testing.T) {
 	if !infra.Valid() {
 		t.Error("infrastructure_unavailable payload is not valid per event-model.md §8.7.15")
 	}
-	// The detail must name the queue and the underlying cause, or an operator
-	// reading the event learns only that something failed somewhere.
 	if !strings.Contains(infra.DetailString, "main") {
 		t.Errorf("detail_string %q does not name the queue", infra.DetailString)
 	}
@@ -608,7 +580,6 @@ func TestReportQueueWriteError_ReportsOncePerQueue(t *testing.T) {
 		t.Errorf("emitted %d events for five failures on one queue; want 2 (reported once)", len(emitter.types))
 	}
 
-	// A different queue is a different failure and reports on its own.
 	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(deps), "other", failure)
 	if len(emitter.types) != 4 {
 		t.Errorf("emitted %d events after a second queue failed; want 4", len(emitter.types))
@@ -648,8 +619,6 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 		t.Fatalf("first verdict = %q; want %q", first.Verdict, reservationWriteFailed)
 	}
 
-	// Repairing the directory must not un-quarantine the queue: QM-001 says the
-	// daemon refuses further mutations, and recovery is an operator restart.
 	if err := os.Chmod(queuesDir, 0o700); err != nil { //nolint:gosec // restoring write access to prove the quarantine is sticky
 		t.Fatalf("chmod queues dir: %v", err)
 	}
@@ -665,21 +634,6 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-nsion — resolving a cross-queue collision
-// ─────────────────────────────────────────────────────────────────────────────
-
-// The three dispositions of a collision are three different writes, and the
-// bound between the first two and the third is the whole safety argument: a
-// refusal that never lapses is a stall, and a stall reads as a slow daemon
-// rather than as an error.
-//
-// These tests drive resolveCrossQueueCollision directly rather than through the
-// work loop. The refusal arms a five-minute cooldown, so a loop-driven test of
-// the bound would have to run for an hour of real time to reach it, and a test
-// that cannot reach the branch it names proves nothing.
-
-// collisionKey is the per-item key the collision counter uses.
 func collisionKey(beadID core.BeadID) queuePreClaimAttemptKey {
 	return queuePreClaimAttemptKey{queueID: "queue-id", groupIndex: 0, itemIdx: 0, beadID: beadID}
 }
@@ -724,8 +678,6 @@ func TestRecordCrossQueueCollision_ReportsOncePerCollision(t *testing.T) {
 		}
 	}
 
-	// A CHANGE of disposition is a new fact and is reported again: the sibling
-	// finished, and what happens to this item is now different.
 	states[key] = crossQueueCollisionState{consecutive: 1, reported: crossQueueSiblingRunning}
 	outcome, report := recordCrossQueueCollision(states, key, crossQueueSiblingFinished)
 	if outcome != crossQueueAdvanceCompleted {
@@ -747,12 +699,9 @@ func TestRecordCrossQueueCollision_IsPerItemAndConsecutive(t *testing.T) {
 	for range maxCrossQueueCollisions - 1 {
 		recordCrossQueueCollision(states, key, crossQueueSiblingRunning)
 	}
-	// A different item is untouched by the first item's budget.
 	if outcome, _ := recordCrossQueueCollision(states, other, crossQueueSiblingRunning); outcome != crossQueueRefuseTick {
 		t.Errorf("a second item's first collision = %q; want %q — the budget is per item", outcome, crossQueueRefuseTick)
 	}
-	// Progress deletes the entry, which is what the work loop does on a
-	// successful reservation.
 	delete(states, key)
 	if outcome, _ := recordCrossQueueCollision(states, key, crossQueueSiblingRunning); outcome != crossQueueRefuseTick {
 		t.Errorf("after progress the item's next collision = %q; want %q — the budget must not carry over",
@@ -760,8 +709,6 @@ func TestRecordCrossQueueCollision_IsPerItemAndConsecutive(t *testing.T) {
 	}
 }
 
-// collisionPorts wires resolveCrossQueueCollision against a real store on disk,
-// so every assertion below reads what an operator would read.
 func collisionPorts(projectDir string, store *queuewiring.QueueStore, emitter *intentDurabilityEmitter) (ports crossQueueCollisionPorts, tickRefusals map[core.BeadID]bool, refusedUntil map[core.BeadID]time.Time) {
 	tickRefusals = map[core.BeadID]bool{}
 	refusedUntil = map[core.BeadID]time.Time{}
@@ -776,7 +723,6 @@ func collisionPorts(projectDir string, store *queuewiring.QueueStore, emitter *i
 	}, tickRefusals, refusedUntil
 }
 
-// collisionQueueName is the losing queue every collision-resolution test uses.
 const collisionQueueName = "alpha"
 
 func collisionSite(beadID core.BeadID, queueID string) crossQueueCollisionSite {
@@ -835,8 +781,6 @@ func TestResolveCrossQueueCollision_FinishedSiblingCompletesTheItem(t *testing.T
 	const queueName = "alpha"
 	const beadID = core.BeadID("hk-nsion-finished")
 	projectDir, store, q := reservationFixture(t, queueName, beadID)
-	// A second pending item keeps the group off all-terminal, so this test reads
-	// the item write rather than the queue-completion machinery.
 	q.Groups[0].Items = append(q.Groups[0].Items, queue.Item{BeadID: "hk-nsion-filler", Status: queue.ItemStatusPending})
 	store.SetQueueByName(queueName, q)
 

@@ -1,18 +1,5 @@
 package main
 
-// subscribe_unknown_type_test.go — `subscribe --types <typo>` must refuse, not
-// go quiet.
-//
-// The bug these tests pin: an unknown event type in --types was accepted. The
-// daemon built a filter map from it, matched no event, and held the connection
-// open. Heartbeats kept arriving on cadence, carrying the live active-run list,
-// so the stream looked healthy. It delivered nothing for as long as it ran.
-// The canonical monitor pattern is exactly this command with an explicit
-// --types list, so one typo turned the project's main observation surface into
-// silence that reads as health.
-//
-// Bead ref: hk-subscribe-accepts-unknown-type-rd07b.
-
 import (
 	"os"
 	"path/filepath"
@@ -50,12 +37,9 @@ func TestSubscribeRefusesUnknownTypeBeforeDial(t *testing.T) {
 	if !strings.Contains(stderr, "--types") {
 		t.Errorf("stderr does not name the offending flag; got %q", stderr)
 	}
-	// A refusal that does not say how to find the real names is only half an
-	// error message.
 	if !strings.Contains(stderr, "--list-types") {
 		t.Errorf("stderr does not name the remedy; got %q", stderr)
 	}
-	// Nothing may have been left behind: the refusal happens before the dial.
 	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !os.IsNotExist(err) {
 		t.Errorf("subscribe touched the project directory before refusing the filter: %v", err)
 	}

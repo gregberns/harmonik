@@ -14,8 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// readCtxFor reads and parses <projectDir>/.harmonik/keeper/<agent>.ctx and
-// returns the parsed gauge plus the file mod-time.
 func readCtxFor(t *testing.T, projectDir, agent string) (keeper.CtxFile, time.Time) {
 	t.Helper()
 	path := filepath.Join(projectDir, ".harmonik", "keeper", agent+".ctx")
@@ -35,9 +33,6 @@ func readCtxFor(t *testing.T, projectDir, agent string) (keeper.CtxFile, time.Ti
 	return cf, st.ModTime()
 }
 
-// writeStaleCtx writes a .ctx whose mod-time is set old enough to be past the
-// HeartbeatThreshold (and Staleness) immediately, exercising the heartbeat /
-// stale branches on the first tick.
 func writeStaleCtx(t *testing.T, projectDir, agent string, cf keeper.CtxFile, age time.Duration) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -95,8 +90,6 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 	t.Parallel()
 
 	const (
-		// seedAge sits above HeartbeatThreshold, so the heartbeat is due on the
-		// first tick, and below Staleness, so the boot-time check stays silent.
 		seedAge            = 3 * time.Second
 		heartbeatThreshold = 2500 * time.Millisecond
 		staleness          = 5 * time.Second
@@ -109,7 +102,6 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 
 	projectDir := t.TempDir()
 	agent := "test-agent"
-	// Latch a real UUIDv4 so the heartbeat stamps it back into the gauge.
 	managedSID := "11111111-2222-4333-8444-555555555555"
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
@@ -119,8 +111,6 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 		t.Fatalf("WriteManagedSessionID: %v", err)
 	}
 
-	// Seed a gauge that is already past the heartbeat threshold (but not yet
-	// stale) so the heartbeat fires on the first tick.
 	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 		Pct:       50.0,
 		Tokens:    100_000,
@@ -156,10 +146,6 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 		t.Fatalf("expected 0 no_gauge:stale events on a live pane, got %d", got)
 	}
 	cf, modTime := readCtxFor(t, projectDir, agent)
-	// An OCCURRENCE assertion, not a rate: did the heartbeat write at all? The
-	// old form asked whether the gauge was younger than Staleness by the real
-	// clock, measured from outside the watcher after the run had ended. That
-	// reads the test harness's own scheduling delay, not the product.
 	if !modTime.After(seededModTime) {
 		t.Fatalf("gauge was not refreshed: mod-time %v is still the seeded %v", modTime, seededModTime)
 	}
@@ -247,8 +233,6 @@ func joinLines(ls []string) string {
 	return out
 }
 
-// writeTranscriptTokens writes a minimal transcript JSONL with a single
-// usage-bearing assistant turn reporting the given token count.
 func writeTranscriptTokens(t *testing.T, dir, sid string, tokens int64) {
 	t.Helper()
 	line := fmt.Sprintf(
@@ -271,16 +255,12 @@ func TestDeriveContextTokens_TailWindow_LargeFile(t *testing.T) {
 	dir := t.TempDir()
 	sid := "bbbbbbbb-1234-4567-89ab-bbbbbbbbbbbb"
 
-	// Build a file > 512 KB with old usage at the top and fresh usage at the tail.
 	var sb strings.Builder
-	// Old usage (should be outside the tail window after padding).
 	sb.WriteString(`{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n")
-	// Padding: ~600 KB of non-usage lines to exceed the 512 KB tail window.
 	pad := `{"type":"user","message":{"content":"` + strings.Repeat("x", 200) + `"}}` + "\n"
 	for i := 0; i < 3000; i++ {
 		sb.WriteString(pad) // 3000 × ~215 B ≈ 645 KB
 	}
-	// Fresh usage near EOF — must be returned by the tail scan.
 	sb.WriteString(`{"type":"assistant","message":{"usage":{"input_tokens":77777,"output_tokens":222}}}` + "\n")
 
 	path := filepath.Join(dir, sid+".jsonl")
@@ -319,10 +299,8 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 		t.Fatalf("WriteManagedSessionID: %v", err)
 	}
 
-	// First transcript: tokens = 12345.
 	writeTranscriptTokens(t, transcriptDir, managedSID, 12345)
 
-	// Seed a gauge aged past HeartbeatThreshold so the heartbeat fires immediately.
 	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 		Pct:       50.0,
 		Tokens:    0,
@@ -354,7 +332,6 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 		done <- w.Run(ctx)
 	}()
 
-	// Wait for the first heartbeat to fire and cache tokens=12345.
 	time.Sleep(60 * time.Millisecond)
 
 	cf1, _ := readCtxFor(t, projectDir, agent)
@@ -362,19 +339,13 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 		t.Fatalf("first heartbeat: tokens = %d, want 12345", cf1.Tokens)
 	}
 
-	// Replace transcript with a DIFFERENT token count (99999).
-	// Within the cache TTL the watcher must NOT re-scan and must carry 12345.
 	writeTranscriptTokens(t, transcriptDir, managedSID, 99999)
 
-	// Re-age the gauge so a second heartbeat fires (while cache is still valid).
 	writeStaleCtx(t, projectDir, agent, cf1, 20*time.Millisecond)
 
 	time.Sleep(60 * time.Millisecond)
 
 	cf2, _ := readCtxFor(t, projectDir, agent)
-	// Cache hit → 12345 is reused even though the transcript now has 99999.
-	// Carry-forward alone would also yield 12345 (from cf1.Tokens), but the
-	// cache is the only path that avoids re-scanning the transcript file.
 	if cf2.Tokens != 12345 {
 		t.Fatalf("second heartbeat (cache): tokens = %d, want 12345 (cache must suppress re-scan)", cf2.Tokens)
 	}
@@ -402,23 +373,9 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 	t.Parallel()
 
-	// ── sub-test: budget exceeded → gauge goes stale → no_gauge:stale fires ──
 	t.Run("budget_exceeded_emits_stale", func(t *testing.T) {
 		t.Parallel()
 
-		// The whole sequence is a fixed tick number:
-		//
-		//	boot     age 3s  — below Staleness, so the boot-time check is silent
-		//	tick 1   age 4s  — heartbeat due, derive miss 1, gauge written
-		//	tick 3   age 3s  — heartbeat due, derive miss 2, gauge written
-		//	tick 4   age 4s  — heartbeat due, miss 3 busts the budget of 2,
-		//	                   so no write and the mod-time now stops moving
-		//	tick 5   age 5s  — the frozen gauge reaches Staleness → no_gauge:stale
-		//
-		// The real clock enters only as a term that SUBTRACTS from the age (a
-		// written file lands at wall-clock time while virtual time runs ahead),
-		// so a slow box can only DELAY the tick-5 crossing this test wants.
-		// Eleven spare ticks is eleven virtual seconds of room for that.
 		const (
 			seedAge            = 3 * time.Second
 			heartbeatThreshold = 2500 * time.Millisecond
@@ -431,8 +388,6 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 		projectDir := t.TempDir()
 		agent := "test-agent"
 
-		// Seed an initial gauge aged past HeartbeatThreshold so the heartbeat
-		// fires on the very first tick.
 		writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 			Pct:       50.0,
 			Tokens:    180_000,
@@ -459,7 +414,6 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 			IdleQuiesce:  1 * time.Millisecond,
 			IsPaneIdleFn: func(context.Context, string) bool { return false }, // pane alive
 
-			// No transcript on disk → derive always returns false.
 			TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
 		}
 
@@ -470,14 +424,9 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 		}
 	})
 
-	// ── sub-test: budget NOT exceeded → gauge stays fresh (existing behaviour) ──
 	t.Run("within_budget_keeps_gauge_fresh", func(t *testing.T) {
 		t.Parallel()
 
-		// Same arithmetic as TestHeartbeat_KeepsLiveGaugeFresh: the boot check
-		// is silent at 3s, the heartbeat writes from tick 1, and from tick 5 the
-		// carry-forward write is the only thing keeping the gauge out of the
-		// stale branch. With that write removed the gauge goes stale on tick 2.
 		const (
 			seedAge            = 3 * time.Second
 			heartbeatThreshold = 2500 * time.Millisecond
@@ -530,9 +479,6 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 		if got := noGaugeStaleCount(em); got != 0 {
 			t.Fatalf("expected 0 no_gauge:stale while within miss budget on a live pane, got %d", got)
 		}
-		// An OCCURRENCE assertion, not a rate. The old form measured the gauge
-		// age with the real clock from outside the watcher after the run had
-		// ended, which reads the harness's scheduling delay, not the product.
 		_, modTime := readCtxFor(t, projectDir, agent)
 		if !modTime.After(seededModTime) {
 			t.Fatalf("gauge was not refreshed: mod-time %v is still the seeded %v", modTime, seededModTime)
@@ -562,9 +508,7 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	// .managed is empty (cleared by ClearSettle-timeout), mirroring the K1 scenario.
 
-	// Seed an aged gauge with the old SID so the heartbeat fires immediately.
 	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 		Pct:       50.0,
 		Tokens:    180_000,
@@ -589,7 +533,6 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		IdleQuiesce:  1 * time.Millisecond,
 		IsPaneIdleFn: func(context.Context, string) bool { return false }, // pane alive
 
-		// No transcript → derive always fails for both SIDs.
 		TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
 	}
 
@@ -602,7 +545,6 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		runWatcherFor(ctx, cfg, em, 2*time.Second)
 	}()
 
-	// Phase 1: let the budget exhaust — gauge goes stale.
 	time.Sleep(300 * time.Millisecond)
 	if noGaugeStaleCount(em) == 0 {
 		cancel()
@@ -610,8 +552,6 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		t.Fatalf("phase 1: expected ≥1 no_gauge:stale after budget exceeded, got 0")
 	}
 
-	// Phase 2: write new SID to .sid channel — heartbeat must detect the SID
-	// change, reset its miss count, and resume carry-forward writes.
 	sidWriteTime := time.Now()
 	sidPath := filepath.Join(keeperDir, agent+".sid")
 	if err := os.WriteFile(sidPath, []byte(newSID+"\n"), 0o600); err != nil {
@@ -619,7 +559,6 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		<-done
 		t.Fatalf("write .sid: %v", err)
 	}
-	// Re-age the gauge so the heartbeat threshold fires immediately on the next tick.
 	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 		Pct:       50.0,
 		Tokens:    180_000,
@@ -627,13 +566,10 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		Ts:        time.Now().UTC().Format(time.RFC3339),
 	}, 60*time.Millisecond)
 
-	// Allow time for one heartbeat tick (PollInterval=5ms, HeartbeatThreshold=30ms).
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	// After the SID change the heartbeat must have written at least one carry-forward:
-	// the gauge mod-time must be AFTER the moment the new SID was written.
 	_, modTime := readCtxFor(t, projectDir, agent)
 	if !modTime.After(sidWriteTime) {
 		t.Fatalf("phase 2: gauge not refreshed after SID change: mod-time %v is not after sidWriteTime %v — heartbeat miss-count was not reset on SID change", modTime, sidWriteTime)
@@ -724,9 +660,6 @@ func TestHeartbeat_CrossingPassDoesNotCallItsOwnFreshGaugeStale(t *testing.T) {
 				t.Fatalf("WriteManagedSessionID: %v", err)
 			}
 
-			// Seed a gauge that is already past HeartbeatThreshold but still
-			// comfortably inside the Staleness window, so the boot-time check is
-			// silent and the FIRST TICK is the crossing pass.
 			writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
 				Pct:       50.0,
 				Tokens:    100_000,
@@ -759,9 +692,6 @@ func TestHeartbeat_CrossingPassDoesNotCallItsOwnFreshGaugeStale(t *testing.T) {
 			}
 
 			_, modTime := readCtxFor(t, projectDir, agent)
-			// An OCCURRENCE assertion, not a rate: did the heartbeat write at all?
-			// Deliberately not "the gauge is younger than Staleness", which is the
-			// wall-clock shape this whole sweep exists to remove.
 			if refreshed := modTime.After(seededModTime); refreshed != tc.wantRefreshed {
 				t.Errorf("gauge refreshed = %v, want %v (seeded mod-time %v, now %v)",
 					refreshed, tc.wantRefreshed, seededModTime, modTime)

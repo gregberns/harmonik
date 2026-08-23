@@ -1,20 +1,5 @@
 package daemon
 
-// tmuxsubstrate_w4c_test.go — Wave-4 §c regression tests for the tmux substrate:
-//
-//  1. SpawnCrewSession / SpawnRunSession shell-quote each argv element before
-//     joining (a bare strings.Join reintroduced the hk-rpr6 argv shattering:
-//     tmux hands the joined string to `sh -c`, which re-word-splits on
-//     whitespace, so a multi-word seed prompt shattered into many argv tokens).
-//  2. shellJoinArgv output re-tokenizes under a real `sh -c` to exactly the
-//     original argv (spaces, quotes, metacharacters survive intact).
-//  3. KillAllWindows kills each window via the adapter it was spawned through:
-//     remote (worker-hosted) windows are killed over the remote adapter, not
-//     the local one (previously the local adapter was used for all handles,
-//     leaking every remote window on the worker's tmux server).
-//
-// Helper prefix: w4cFixture (per implementer-protocol.md §Helper-prefix).
-
 import (
 	"context"
 	"os/exec"
@@ -26,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// w4cFixtureAdapter — recording tmux.Adapter + sessionCreator double
-// ─────────────────────────────────────────────────────────────────────────────
 
 type w4cFixtureAdapter struct {
 	mu sync.Mutex
@@ -95,8 +76,6 @@ func (a *w4cFixtureAdapter) killedCopy() []tmux.WindowHandle {
 	return out
 }
 
-// w4cFixtureSubstrate builds a *tmuxSubstrate over the fake adapter with a
-// project hash (required by crew/run session naming).
 func w4cFixtureSubstrate(t *testing.T, adapter tmux.Adapter) *tmuxSubstrate {
 	t.Helper()
 	sub, ok := NewTmuxSubstrate(adapter, "w4c-session",
@@ -107,18 +86,12 @@ func w4cFixtureSubstrate(t *testing.T, adapter tmux.Adapter) *tmuxSubstrate {
 	return sub
 }
 
-// w4cFixtureArgv is a spawn argv with multi-word elements (the hk-rpr6 shape:
-// a seed prompt with spaces plus an element with a single quote).
 var w4cFixtureArgv = []string{
 	"/usr/local/bin/claude",
 	"--append-system-prompt",
 	"You are a crew agent. Work the queue.",
 	"--flag-with-'quote'",
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Argv quoting: SpawnCrewSession / SpawnRunSession
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSpawnCrewSession_ArgvWithSpacesQuoted verifies that SpawnCrewSession
 // shell-quotes each argv element before joining (hk-rpr6 regression: a bare
@@ -172,15 +145,9 @@ func TestSpawnRunSession_ArgvWithSpacesQuoted(t *testing.T) {
 	w4cFixtureAssertShellRetokenizes(t, got, w4cFixtureArgv)
 }
 
-// w4cFixtureAssertShellRetokenizes runs the quoted command string through a
-// real `sh -c` (with the binary swapped for printf) and asserts the shell
-// re-tokenizes it back to exactly the original argv — the end-to-end property
-// the quoting exists to guarantee.
 func w4cFixtureAssertShellRetokenizes(t *testing.T, quotedCommand string, argv []string) {
 	t.Helper()
 
-	// Replace the leading quoted binary with printf so each token prints on
-	// its own line. The first element is always quoted as '<argv[0]>'.
 	quotedBin := "'" + strings.ReplaceAll(argv[0], "'", `'\''`) + "'"
 	if !strings.HasPrefix(quotedCommand, quotedBin) {
 		t.Fatalf("quoted command %q does not start with quoted binary %q", quotedCommand, quotedBin)
@@ -203,10 +170,6 @@ func w4cFixtureAssertShellRetokenizes(t *testing.T, quotedCommand string, argv [
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KillAllWindows: remote windows killed via the remote adapter
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestKillAllWindows_RemoteWindowKilledViaRemoteAdapter verifies that a window
 // spawned through a remote (worker-hosted) adapter is killed through that SAME
 // adapter by KillAllWindows — not through the local adapter, which would leak
@@ -220,7 +183,6 @@ func TestKillAllWindows_RemoteWindowKilledViaRemoteAdapter(t *testing.T) {
 
 	ctx := context.Background()
 
-	// One local window via the public SpawnWindow path.
 	if _, err := sub.SpawnWindow(ctx, handler.SubstrateSpawn{
 		WindowName: "local-win",
 		Argv:       []string{"/bin/sh", "-c", "exit 0"},
@@ -228,8 +190,6 @@ func TestKillAllWindows_RemoteWindowKilledViaRemoteAdapter(t *testing.T) {
 		t.Fatalf("SpawnWindow(local): %v", err)
 	}
 
-	// One remote window via spawnWindowVia with the remote adapter (the path
-	// perRunSubstrate.spawnWindowRemote takes).
 	if _, err := sub.spawnWindowVia(ctx, handler.SubstrateSpawn{
 		WindowName: "remote-win",
 		Argv:       []string{"/bin/sh", "-c", "exit 0"},

@@ -508,24 +508,6 @@ type WatcherConfig struct {
 	// without waiting 30 real seconds. Refs: hk-div6c.
 	DeriveCacheTTL time.Duration
 
-	// ── Gauge-independent live-pane recovery (hk-75mr) ───────────────────────
-	// The respawn path (RespawnCmd) only fires when the pane has gone IDLE (the
-	// agent exited). It cannot recover an agent that is hung MID-TURN: the pane
-	// stays alive, the gauge goes stale, and a /clear inject cannot reach a hung
-	// turn. LiveRecover is the gauge-INDEPENDENT last resort for exactly that
-	// case — a gated ForceRestart. Every gate is fail-closed; the action runs
-	// ONLY when ALL hold (see maybeLivePaneRecover):
-	//   - LiveRecoverFn is wired AND TmuxTarget is non-empty;
-	//   - the gauge has been stale for at least LiveRecoverGrace (>> RespawnGrace,
-	//     so the much-shorter idle-respawn path always wins for an exited agent);
-	//   - the pane is ALIVE (IsPaneAliveFn — a non-shell command);
-	//   - NO human operator is actively attached (OperatorAttachedFn, the hk-0t5s
-	//     keystroke-recency discriminator) — never force-restart under an operator;
-	//   - the agent is NOT blocked on an open decision (hitl-decisions K6);
-	//   - the LiveRecoverCooldown since the last attempt has elapsed;
-	//   - the bound .sid identity is a valid UUIDv4 (ReadSidFn + isPrimarySID);
-	//     an absent/invalid .sid fails CLOSED (no recovery).
-
 	// LiveRecoverFn, when non-empty, is the gated ForceRestart last-resort action
 	// (NOT a /clear inject). When nil the live-pane recovery path is disabled
 	// (fail-closed: no action wired → no recovery). The closure itself MUST also
@@ -607,8 +589,6 @@ type WatcherConfig struct {
 	// applyDefaults still fills this from DefaultNoGaugeBackoff so config entries
 	// do not hard-error; the resolved value is a no-op. Refs: hk-4gtu, hk-sol6, hk-1q7bt.
 	NoGaugeBackoff time.Duration
-
-	// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──────────
 
 	// HardCeilingRestartFn, when non-nil, enables the SID-independent hard-ceiling
 	// backstop. When any watched pane's token count meets or exceeds
@@ -710,7 +690,6 @@ type WarnMessageTexts struct {
 	CrewDeferText      string
 }
 
-// applyDefaults fills in zero-valued duration / pct fields.
 func (c *WatcherConfig) applyDefaults() {
 	if c.Clock == nil {
 		c.Clock = substrate.SystemClock{}
@@ -718,8 +697,6 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.PollInterval <= 0 {
 		c.PollInterval = DefaultPollInterval
 	}
-	// Warn-band defaults are sourced from thresholds.go (the single source of
-	// truth shared with CyclerConfig.applyDefaults). Refs: hk-bpkv.
 	if c.WarnPct <= 0 {
 		c.WarnPct = defaultWarnPct
 	}
@@ -750,25 +727,15 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.Staleness <= 0 {
 		c.Staleness = DefaultStaleness
 	}
-	// HeartbeatThreshold defaults to half of Staleness: refresh well before the
-	// stale branch (≈60 s at the 120 s default) so a live agent's gauge never
-	// reaches Staleness. Refs: hk-81wk.
 	if c.HeartbeatThreshold <= 0 {
 		c.HeartbeatThreshold = c.Staleness / 2
 	}
-	// HeartbeatMaxMisses defaults to the package constant. Tests may set a
-	// smaller value to exercise the miss-budget path quickly. Refs: hk-lal8.
 	if c.HeartbeatMaxMisses <= 0 {
 		c.HeartbeatMaxMisses = DefaultMaxHeartbeatMisses
 	}
-	// DeriveCacheTTL defaults to DefaultDeriveCacheTTL (30 s). Tests set a
-	// smaller value to exercise cache expiry without long wall-clock delays.
-	// Refs: hk-div6c.
 	if c.DeriveCacheTTL <= 0 {
 		c.DeriveCacheTTL = DefaultDeriveCacheTTL
 	}
-	// ReapDecisionsCadence defaults to DefaultReapDecisionsCadence (90s). Tests
-	// set a small positive value to exercise the cadence gate quickly. Refs: hk-jrftk.
 	if c.ReapDecisionsCadence <= 0 {
 		c.ReapDecisionsCadence = DefaultReapDecisionsCadence
 	}
@@ -790,10 +757,6 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.SelfHintInjectFn == nil {
 		c.SelfHintInjectFn = InjectText
 	}
-	// Live-pane recovery defaults (hk-75mr). LiveRecoverGrace (5m) is MUCH larger
-	// than RespawnGrace (20s) so an EXITED agent is always handled by the
-	// idle-respawn path long before live recovery considers force-restarting a
-	// (possibly briefly) stale-but-alive pane — the anti-premature-reap invariant.
 	if c.LiveRecoverGrace <= 0 {
 		c.LiveRecoverGrace = DefaultLiveRecoverGrace
 	}
@@ -824,75 +787,33 @@ func (c *WatcherConfig) applyDefaults() {
 		ttl := c.HoldTTL
 		c.HeldCheckFn = func(projectDir, agent string) bool { return IsHeld(projectDir, agent, ttl) }
 	}
-	// WarnCooldown: default to warnCooldown (30s) when not explicitly set.
-	// Tests that need multi-crossing behaviour must set WarnCooldown to a small
-	// positive value (e.g. 1ms) rather than 0, since 0 is the zero-value sentinel
-	// that triggers this default. The state machine treats 0 as "no cooldown" after
-	// applyDefaults runs — but applyDefaults replaces 0 with 30s, so 0 is never
-	// seen at runtime unless explicitly forced by passing a *negative* duration
-	// (which applyDefaults clamps to 0 to disable the gate). Refs: hk-sol6.
 	if c.WarnCooldown < 0 {
 		c.WarnCooldown = 0 // negative sentinel → disable cooldown
 	} else if c.WarnCooldown == 0 {
 		c.WarnCooldown = DefaultWarnCooldown // zero sentinel → use production default
 	}
-	// NoGaugeBackoff: filled for backward config compat; no longer consumed by the
-	// watcher loop (hk-1q7bt replaced the backoff+re-emit with transition-only).
 	if c.NoGaugeBackoff <= 0 {
 		c.NoGaugeBackoff = DefaultNoGaugeBackoff
 	}
-	// Hard-ceiling threshold (hk-n6kn): fill from DefaultHardCeilingTokens
-	// (280 000, byte-identical to the prior bare const) when zero so the live
-	// gate and the emitted event report the EFFECTIVE configured value.
 	if c.HardCeilingTokens <= 0 {
 		c.HardCeilingTokens = DefaultHardCeilingTokens
 	}
-	// HardCeilingMode zero value IS HardCeilingModeAlarm (operator-chosen
-	// default), so no normalization is required here — the zero value is
-	// already alarm-safe. Refs: hk-n6kn.
-	// Hard-ceiling backstop cooldown (hk-34ac). Default: 5 minutes.
 	if c.HardCeilingCooldown <= 0 {
 		c.HardCeilingCooldown = DefaultHardCeilingCooldown
 	}
-	// Blind-keeper alarm threshold (hk-34ac). Default: 5 minutes.
-	// Tests set this to a small value to exercise the alarm without sleeping.
 	if c.BlindKeeperThreshold <= 0 {
 		c.BlindKeeperThreshold = DefaultBlindKeeperThreshold
 	}
-	// Auto-enable on-demand restart UX for the captain agent. The captain uses
-	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
-	// so the warn injection must instruct it accordingly. The band is unchanged.
-	// Refs: hk-xjlq, ON-059.
 	if !c.OnDemandRestart && c.AgentName == "captain" {
 		c.OnDemandRestart = true
 	}
-	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
-	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
-	// and a project dir is known — K6's exemption must consult the open-decision
-	// set even when the K5 reaper is disabled.
-	// Refs: hk-061 (K5), hk-50f (K6).
 	if c.EventsJSONLPath == "" && c.ProjectDir != "" {
 		c.EventsJSONLPath = filepath.Join(c.ProjectDir, ".harmonik", core.EventsJSONLPath)
 	}
 }
 
-// belowWarnThreshold reports whether the gauge reading is below the warn
-// threshold. Uses the absolute-token gate ONLY when both Tokens and WindowSize
-// are present; otherwise falls back to Pct vs WarnPct. This is byte-for-byte the
-// cycler's CyclerConfig.belowWarnThreshold gate (cycle.go) — the two MUST agree,
-// or warn and cycle decide on different bases (the F45 Tokens-vs-Pct split-brain:
-// the watcher previously fabricated a FallbackWindowSize for the pct-ceil cap when
-// WindowSize==0, so on a large-window session reporting tokens-but-no-window it
-// fired warn at ~140k tokens — far below the configured warn_pct, recording
-// pct < warn_pct in the event log). With the window unknown the pct comparison is
-// the only trustworthy signal, matching the cycler. Refs: hk-jgzg (F45), hk-bpkv.
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		// pct<WarnPct is a NECESSARY condition: even if tokens exceed the abs gate,
-		// we must not warn below the configured warn_pct. On a 1M-context (Opus)
-		// session the abs gate resolves to min(200k,700k)=200k = ~20% of the
-		// window, so without the pct guard, warn fires at pct=20 instead of 80.
-		// Refs: hk-lbo9w. Byte-identical logic with CyclerConfig.belowWarnThreshold.
 		return cf.Pct < c.WarnPct || cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
@@ -905,23 +826,6 @@ func (c *WatcherConfig) belowActThreshold(cf *CtxFile) bool {
 	return cf.Pct < c.ActPct
 }
 
-// actionableWarnEligible reports whether the ACTIONABLE self-service restart
-// handshake warn form should be selected for this agent at this tick, per the
-// hk-vs4u gate. ALL of the following must hold:
-//   - SelfServiceEnabled (self_service.enabled);
-//   - the agent is the captain, OR it is a crew AND SelfServiceCrewsEnabled
-//     (crews_enabled, which DEFAULTS TRUE — operator decision: crews self-restart);
-//   - the bound SID is a primary lowercase UUIDv4 (IsPrimarySID) — we only instruct
-//     a self-restart when the keeper can trust the identity it will act on;
-//   - the pane is CrispIdle (the Stop hook fired after the last gauge update) — we
-//     instruct a clean-stop procedure only at a clean stop.
-//
-// The ReadCtxFile-succeeds clause from the spec is implicit: this is called from
-// the fresh-gauge path where ctxFile is already a successfully-read gauge.
-//
-// When this returns false the lighter finish-the-turn advisory is selected, which
-// the watcher ALWAYS injects once gaugeQuiesced even when NOT CrispIdle — so a busy
-// (non-CrispIdle) session still gets exactly one warn. Refs: hk-vs4u.
 func (c *WatcherConfig) actionableWarnEligible(sessionID string, crispIdle bool) bool {
 	if !c.SelfServiceEnabled {
 		return false
@@ -936,24 +840,6 @@ func (c *WatcherConfig) actionableWarnEligible(sessionID string, crispIdle bool)
 	return crispIdle
 }
 
-// selectWarnText returns the warn text to inject for this tick. When the agent is
-// actionable-eligible (actionableWarnEligible) it returns the ACTIONABLE
-// self-service restart handshake text (live tokens + band interpolated). A custom
-// ActionableWarnText config override is honored ONLY when it still carries the
-// verbatim restart-now command token; otherwise the compiled ActionableWarnText is
-// used so the required handshake command can never be silently dropped (the bead's
-// "custom override CANNOT drop the required command token" invariant).
-//
-// When NOT eligible it returns the lighter finish-the-turn advisory: DefaultWarnText
-// when configured, else the compiled wrapUpWarningText. Refs: hk-vs4u.
-//
-// operatorAttached is the operator-attached guard (hk-1ryc): when a human operator
-// is actively attached to the pane the ACTIONABLE restart instruction is NOT
-// injected — issuing the self-restart handshake command mid-keystroke would race
-// the operator's own input. The lighter finish-the-turn advisory is selected
-// instead so the warn is still delivered (no warn is ever lost) without ever
-// instructing a self-restart over an operator's in-flight turn. This mirrors the
-// Cycler's act-path guard (cycle.go Gate-7) for the warn-path actionable text.
 func (c *WatcherConfig) selectWarnText(cf *CtxFile, crispIdle, operatorAttached bool) string {
 	if !operatorAttached && c.actionableWarnEligible(cf.SessionID, crispIdle) {
 		compiled := ActionableWarnText(c.AgentName, cf.Tokens, c.WarnAbsTokens, c.actEffectiveTokens())
@@ -968,37 +854,20 @@ func (c *WatcherConfig) selectWarnText(cf *CtxFile, crispIdle, operatorAttached 
 	return wrapUpWarningText
 }
 
-// actEffectiveTokens returns the act-band token figure used in the actionable warn
-// text. The watcher does not carry the act threshold directly (it lives on the
-// Cycler), so it is derived from the warn threshold plus the compiled warn→act gap
-// when unavailable — a display-only figure; the real act gate is the Cycler's.
 func (c *WatcherConfig) actEffectiveTokens() int64 {
 	return c.WarnAbsTokens + (defaultActAbsTokens - defaultWarnAbsTokens)
 }
 
-// containsRestartNowCmd reports whether s carries the verbatim restart-now command
-// stem ("harmonik keeper restart-now"). Used to validate a custom ActionableWarnText
-// override before honoring it — an override that drops the command falls back to the
-// compiled text so the required self-restart handshake is never lost. Refs: hk-vs4u.
 func containsRestartNowCmd(s string) bool {
 	return strings.Contains(s, "harmonik keeper restart-now")
 }
 
-// leaderDeferSlotTokens are the SK-026 slots 1–3 fixed anchors (defer-A, defer-B,
-// good-stopping-point self-test) that a valid leader-defer override MUST retain.
-// Slot 4 (the restart-now command) is validated by containsRestartNowCmd. Presence
-// is normative; the prose around each anchor is tunable (SK-033). Refs: T3.
 var leaderDeferSlotTokens = []string{
 	deferOperatorExchangeToken,
 	deferInflightUnitToken,
 	goodStoppingPointToken,
 }
 
-// leaderDeferHasAllSlots reports whether s carries ALL FOUR SK-026 structural
-// slots. It extends the containsRestartNowCmd approach to the full K2 template
-// (SK-033): slots 1–3 are the fixed anchors, slot 4 reuses containsRestartNowCmd.
-// An override that omits any slot is structurally incomplete and MUST fall back to
-// the compiled default rather than ship an incomplete nudge. Refs: T3, SK-033.
 func leaderDeferHasAllSlots(s string) bool {
 	for _, tok := range leaderDeferSlotTokens {
 		if !strings.Contains(s, tok) {
@@ -1008,16 +877,6 @@ func leaderDeferHasAllSlots(s string) bool {
 	return containsRestartNowCmd(s)
 }
 
-// selectLeaderDeferText returns the K2 leader defer nudge body to deliver: the
-// operator override (LeaderDeferText) when it is non-empty AND structurally
-// complete (all four SK-026 slots per leaderDeferHasAllSlots), otherwise the
-// compiled default (LeaderDeferBody). This mirrors selectWarnText's
-// actionable-override fallback — a structurally incomplete override never ships an
-// incomplete nudge (SK-033). nonce fills the compiled default's restart-now slot
-// (SK-030, carry-for-audit); agent is the config's AgentName. Refs: T3.
-//
-// The K1 delivery decision (comms vs terminal fallback) that CONSUMES this body is
-// T7 (SK-024); T3 provides the validated body only.
 func (c *WatcherConfig) selectLeaderDeferText(nonce string) string {
 	if c.LeaderDeferText != "" && leaderDeferHasAllSlots(c.LeaderDeferText) {
 		return c.LeaderDeferText
@@ -1025,8 +884,6 @@ func (c *WatcherConfig) selectLeaderDeferText(nonce string) string {
 	return LeaderDeferBody(c.AgentName, nonce)
 }
 
-// keeperConfigPath returns the .harmonik/config.yaml path for the watcher's
-// project, or "" when ProjectDir is unset.
 func (w *Watcher) keeperConfigPath() string {
 	if w.cfg.ProjectDir == "" {
 		return ""
@@ -1034,19 +891,6 @@ func (w *Watcher) keeperConfigPath() string {
 	return filepath.Join(w.cfg.ProjectDir, ".harmonik", "config.yaml")
 }
 
-// maybeReloadWarnMessages implements the SK-034 mtime-gated per-tick re-read of
-// keeper.warn_messages. It stats config.yaml and, ONLY when the mtime advances,
-// re-parses the warn-text overrides via ReloadWarnMessagesFn and applies them to
-// the live config so the next tick's nudge body reflects the edit — no keeper
-// bounce. The re-read is STRICTLY scoped: only the four warn-text fields are
-// applied; thresholds/bands/self_service are never touched and stay startup-bound.
-//
-// The mtime cache advances on every successful stat regardless of parse outcome,
-// so each distinct file version is re-parsed at most once (stat-gated) and a
-// persistently-bad edit does not re-parse every tick. A rejected edit (e.g. an
-// unknown key → ErrUnknownConfigKey) keeps the last-good texts and is logged —
-// never silently absorbed, never a crash. A missing/unstattable config or a nil
-// ReloadWarnMessagesFn is a no-op (texts stay startup-bound). Refs: SK-034, T4.
 func (w *Watcher) maybeReloadWarnMessages(ctx context.Context) {
 	if w.cfg.ReloadWarnMessagesFn == nil {
 		return
@@ -1076,10 +920,6 @@ func (w *Watcher) maybeReloadWarnMessages(ctx context.Context) {
 	w.cfg.CrewDeferText = texts.CrewDeferText
 }
 
-// seedConfigMtime records the current config.yaml mtime so the warn_messages
-// live-reload only fires on edits made AFTER the watcher starts (SK-034
-// stat-gated). A missing/unstattable config leaves the cache zero; the first real
-// stat in the poll loop then advances it. Refs: T4.
 func (w *Watcher) seedConfigMtime() {
 	if w.cfg.ReloadWarnMessagesFn == nil {
 		return
@@ -1168,83 +1008,38 @@ func NewWatcher(cfg WatcherConfig, emitter Emitter) *Watcher {
 // ctx.Err()) or on a fatal internal error. Run is intended to be called once.
 func (w *Watcher) Run(ctx context.Context) error {
 	var (
-		// warnArmed is true when pct was below warnPct on the previous tick;
-		// when armed, an upward crossing arms the injection.
 		warnArmed = true
 
-		// warnFired tracks whether we've emitted the warn event for the current
-		// crossing. Reset to false when pct drops below warnPct again.
 		warnFired = false
 
-		// pendingInject is true when a warn was emitted but the inject has not
-		// yet been delivered (pane was not quiesced on the crossing tick).
-		// Cleared when the inject succeeds or when pct resets below warnPct.
 		pendingInject = false
 
-		// settleWarnFired and pendingSettleInject form the second-band latch.
-		// The latch resets only after the gauge falls below that band.
 		settleWarnFired     = false
 		pendingSettleInject = false
 
-		// lastModTime is the mod-time of the gauge file on the previous tick.
-		// Used for idle-gate (quiescence detection).
 		lastModTime time.Time
 
-		// gaugeStaleSince is the time when the gauge first became stale/absent
-		// in the current stale streak. Zero when the gauge is fresh. Used by the
-		// respawn path to enforce RespawnGrace. (Refs: hk-3w2)
 		gaugeStaleSince time.Time
 
-		// lastRespawnAt is the time of the most recent respawn attempt. Used to
-		// enforce RespawnCooldown. Zero when no respawn has occurred. (Refs: hk-3w2)
 		lastRespawnAt time.Time
 
-		// lastLiveRecoverAt is the time of the most recent live-pane recovery
-		// attempt. Used to enforce LiveRecoverCooldown. Zero when no recovery has
-		// occurred this session. (Refs: hk-75mr)
 		lastLiveRecoverAt time.Time
 
-		// lastWarnFiredAt is the wall time of the most recent warn-threshold
-		// firing. Used by the dip-rise cooldown to suppress a re-fire within
-		// warnCooldown of the previous one. Refs: hk-sol6.
 		lastWarnFiredAt time.Time
 
-		// hintSentThisSession is latched true after the one-time [KEEPER HINT]
-		// injection fires on the first warn crossing of a session. Reset to false
-		// when a cycle completes (warnArmed reset path). Refs: hk-lsk5.
 		hintSentThisSession = false
 
-		// pendingHint is true when the one-time self-hint crossing has occurred
-		// but the [KEEPER HINT] inject has not yet landed. Delivery is deferred
-		// to the sleep-gated block below (hk-bzol4) so a parked session is not
-		// woken by its own keeper — mirrors pendingInject's deferral. It follows
-		// hintSentThisSession's lifecycle (armed on the crossing while the latch
-		// is unset; cleared on delivery or on the dip-reset that clears the latch),
-		// NOT pendingInject's — so a pending hint survives a transient gauge blip.
 		pendingHint = false
 
-		// hardCeilingLastAt is the time of the most recent hard-ceiling restart
-		// attempt. Used to enforce HardCeilingCooldown. Zero when no hard-ceiling
-		// restart has occurred this session. (Refs: hk-34ac)
 		hardCeilingLastAt time.Time
 
-		// lastReapAt is the time of the most recent maybeReapOrphanedDecisions run.
-		// The cadence gate skips the O(events.jsonl) scan until ReapDecisionsCadence
-		// has elapsed. Zero value means the reaper has not run yet this session
-		// (zero → fires on the first tick). Refs: hk-jrftk.
 		lastReapAt time.Time
 	)
 
-	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
-	// Uses the transition gate so a subsequent ticker tick with the same reason
-	// is a no-op. Refs: hk-1q7bt.
 	if absent, reason := w.gaugeUnavailable(ctx); absent {
 		w.maybeEmitNoGauge(ctx, reason)
 	}
 
-	// Seed the warn_messages live-reload mtime (SK-034) so ONLY edits made after
-	// the watcher starts trigger a re-parse — startup already loaded the current
-	// texts. A missing config leaves the cache zero; the first poll stat advances it.
 	w.seedConfigMtime()
 
 	ticker := w.cfg.Clock.NewTicker(w.cfg.PollInterval)
@@ -1255,64 +1050,27 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C():
-			// TEST-ONLY lockstep hook (hk-3dn16): signal that a poll tick was
-			// received, BEFORE any processing, so a FakeClock-driving test can
-			// advance virtual time deterministically. Nil in production.
 			if w.cfg.OnPollTickFn != nil {
 				w.cfg.OnPollTickFn()
 			}
 
-			// ── warn_messages live-reload (SK-034, T4) ───────────────────────
-			// mtime-gated per-tick re-read of keeper.warn_messages ONLY: a wording
-			// edit takes effect on the next tick with no keeper bounce, while
-			// thresholds/bands/self_service stay startup-bound. An unknown key on a
-			// live edit is rejected (ErrUnknownConfigKey) and the last-good text is
-			// kept. Runs before InCycle suppression so edits are never missed.
 			w.maybeReloadWarnMessages(ctx)
 
-			// ── InCycle suppression (SK-017 / D11) ───────────────────────────
-			// While the restart cycle is in flight (the reactor is off-Idle),
-			// ALL non-cycle tick processing is parked: no warn state machine,
-			// no precompact detection, no heartbeat, reaper, or hard-ceiling —
-			// only the cycle-detection poll + timer-fire drive the reactor
-			// forward. Today the cycle shell drives that loop SYNCHRONOUSLY
-			// inside MaybeRun/RunForPrecompact/RunForIdle below (this goroutine
-			// blocks there, reproducing the pre-rebuild freeze exactly), so
-			// this guard cannot observe an off-Idle reactor; it makes the
-			// parked-processing contract explicit and keeps it holding if the
-			// reactor is ever driven asynchronously. Relaxing InCycle is a
-			// later, separately-measured change (deferred; SK §11).
 			if w.cfg.Cycler != nil && w.cfg.Cycler.InCycle() {
 				continue
 			}
 
-			// ── hitl-decisions orphan reaper (K5, hk-061) ────────────────────
-			// Runs BEFORE the gauge-read branches below (which may `continue` past
-			// the rest of the loop body when the gauge is absent/stale/foreign),
-			// but gated to ReapDecisionsCadence (default 90s) rather than every
-			// tick: the O(events.jsonl) scan does not need 5s latency (orphan
-			// latency bound = Offline-cutoff + one reap interval, well within
-			// SPEC §5 / N9). The keeper tick is the SOLE emitter of
-			// decision_withdrawn(orphaned). Refs: hk-jrftk.
 			w.maybeReapOrphanedDecisions(ctx, &lastReapAt)
 
-			// ── dashboard staleness pre-nag (hk-xg6rw, DESIGN §4 rec. B) ─────
-			// Runs unconditionally each tick (like the reaper above), independent
-			// of gauge state — a wedged/foreign-session captain still needs the
-			// nudge before the daemon-side forcing gate trips.
 			w.maybeNagDashboardStale(ctx, w.cfg.Clock.Now())
 
 			ctxFile, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 
-			// ── gauge absent ────────────────────────────────────────────────
 			if errors.Is(err, os.ErrNotExist) {
 				w.maybeEmitNoGauge(ctx, "absent")
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
-				// An absent gauge is a no_gauge condition, not a foreign one:
-				// break any continuous foreign_session blind episode so the
-				// 5-min blind clock restarts on the next foreign streak (hk-34ac).
 				w.blindSince = time.Time{}
 				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
@@ -1323,15 +1081,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 			if err != nil {
-				// parse / stat error: treat as absent, log and continue
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
 				w.maybeEmitNoGauge(ctx, "absent")
-				// Mirror the absent branch: re-arm the warn state machine so the
-				// next upward crossing fires a fresh warn (was omitted here).
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
-				// Break any continuous foreign_session blind episode (see above).
 				w.blindSince = time.Time{}
 				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
@@ -1342,44 +1096,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 
-			// ── keeper-side heartbeat (hk-81wk) ──────────────────────────────
-			// The gauge's only other writer is keeper-statusline.sh, which fires
-			// on UI repaint and SKIPS the write on NA/absent pct (after /clear, or
-			// when a session stops repainting). On a LIVE agent the gauge can then
-			// age into the stale branch below and `continue` past BOTH triggers.
-			// Once the gauge is aging while the pane is still alive, re-write .ctx
-			// with a fresh ts (transcript-derived tokens when available) so a live
-			// agent's gauge NEVER goes stale. No-op when the pane is idle so the
-			// respawn path stays intact.
 			refreshed := w.maybeHeartbeat(ctx, ctxFile, w.cfg.Clock.Since(modTime))
 
-			// ── gauge stale ──────────────────────────────────────────────────
-			// `refreshed` is load-bearing, not a tidy-up. modTime was read at the
-			// top of this pass, BEFORE maybeHeartbeat ran, and maybeHeartbeat may
-			// have replaced the gauge since. Without this guard the crossing pass
-			// — the one where the age first reaches Staleness — refreshes a live
-			// agent's gauge and then declares that same, just-written gauge stale:
-			// a false no_gauge:stale, and a `continue` past session_id binding, the
-			// warn ladder, idle-quiesce and cycle triggering. That directly
-			// contradicts the invariant stated above ("so a live agent's gauge
-			// NEVER goes stale"). Refs hk-oduuc.
-			//
-			// modTime itself is deliberately NOT re-read, and the reason is about
-			// MEANING rather than timing. The only other consumer of modTime in
-			// this loop is the idle-quiesce gate below, whose subject is whether
-			// the AGENT has touched the gauge — the statusline repainting is agent
-			// activity. The keeper's own heartbeat write is not, so the pre-write
-			// value is the input that gate actually wants. Re-reading here would
-			// also make the ordinary 60s heartbeat pass and the crossing pass
-			// disagree, when the whole point of this guard is to make them behave
-			// alike.
 			if !refreshed && w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
 				w.maybeEmitNoGauge(ctx, "stale")
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
-				// A stale gauge is a no_gauge condition, not a foreign one:
-				// break any continuous foreign_session blind episode (hk-34ac).
 				w.blindSince = time.Time{}
 				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
@@ -1390,45 +1113,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 
-			// ── session_id binding ────────────────────────────────────────────
-			// Identity is sourced from the single-writer <agent>.sid channel
-			// (hk-8prq), which ReadCtxFile folds into ctxFile.SessionID whenever it
-			// is present and well-formed. The daemon never writes .sid, so a real
-			// session's SessionID here is already the authoritative interactive id.
-			// The old keeper rebind surface was removed with hk-3391; identity logic
-			// now uses a single cheap guard:
-			//   - foreign session: .managed is bound and the live id differs (two
-			//     concurrent same-agent sessions, last-writer on the shared .sid) —
-			//     treat as absent so warn/cycle logic stays consistent.
-			// Stale-binding recovery is handled by the cycler's re-arm on
-			// clear→resume (it clears .managed), not by an in-watcher auto-clear.
-			// (Refs: hk-3391, hk-8prq; supersedes hk-igt/hk-mejt/hk-mzdm/hk-lap/hk-0tvm heuristics.)
 			if managedSID, managedErr := w.cfg.ReadManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName); managedErr != nil {
 				slog.WarnContext(ctx, "keeper: read managed session_id", "err", managedErr)
-				// Fall through on read error to avoid silent monitoring gaps.
 			} else if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
-				// Potential foreign session or same-agent post-external-/clear.
-				// Re-read the authoritative .sid channel before rejecting: if the live
-				// .sid is a valid UUIDv4 and matches the gauge's session_id, this is
-				// the SAME agent with a new session after an external /clear — adopt it
-				// by rewriting .managed. Reject as truly foreign only when the gauge's
-				// session_id does NOT match the authoritative .sid (two concurrent
-				// sessions writing to shared .ctx). Refs: hk-1tn2.
 				liveSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName)
 				if sidErr == nil && isPrimarySID(liveSID) && liveSID == ctxFile.SessionID {
-					// Same agent, new session after external /clear — adopt.
 					slog.InfoContext(ctx, "keeper: re-resolving .managed after external /clear; adopting new session_id",
 						"agent", w.cfg.AgentName, "old_sid", managedSID, "new_sid", liveSID)
 					if adoptErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, liveSID); adoptErr != nil {
 						slog.WarnContext(ctx, "keeper: adopt managed session_id", "agent", w.cfg.AgentName, "err", adoptErr)
-						// Non-fatal: fall through and keep monitoring with the new id.
 					}
-					// Fall through to fresh-gauge handling below.
 				} else {
-					// True foreign session — treat as absent.
-					// Log and emit only on transition to foreign_session; suppress
-					// the per-tick slog.Warn flood for continuously-foreign gauges.
-					// Refs: hk-1q7bt.
 					if w.maybeEmitNoGauge(ctx, "foreign_session") {
 						slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
 							"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
@@ -1437,12 +1132,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 					warnFired = false
 					pendingInject = false
 
-					// ── Backstop 1: blind-keeper alarm (hk-34ac) ─────────────────
-					// Track continuous foreign_session episodes. Arm blindSince on
-					// the first foreign tick of each episode; fire session_keeper_blind
-					// once after 5 minutes of continuous blindness. Latch so we emit
-					// only once per episode (blindAlarmFired). The latch and timer are
-					// reset on the next successful (non-foreign) tick (below).
 					if w.blindSince.IsZero() {
 						w.blindSince = w.cfg.Clock.Now()
 					}
@@ -1455,37 +1144,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 						w.blindAlarmFired = true
 					}
 
-					// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-z8d0) ──
-					// Even when the SID is foreign, the ctxFile IS readable (we just
-					// parsed it above). This is the ONE place the keeper can act on
-					// context overflow while blind: the normal act/force cycle cannot
-					// run (the cycler keys on a fresh, SID-matched gauge), so a
-					// mis-bound keeper would otherwise silently allow overflow.
-					//
-					// Mode gating (HardCeilingMode, default alarm) — fixes hk-746u, the
-					// dormant-failsafe bug where the emit lived INSIDE the
-					// `HardCeilingRestartFn != nil` guard, so alarm mode (and a nil fn)
-					// emitted nothing:
-					//   - off     → no-op (no emit, no restart).
-					//   - alarm   → emit session_keeper_hard_ceiling ONLY. The emit MUST
-					//               fire even when HardCeilingRestartFn is nil.
-					//   - restart → emit + call HardCeilingRestartFn, cooldown-gated. If
-					//               the fn is nil (not wired) it degrades to alarm
-					//               (emit only) — never panics.
-					// Skip entirely if token count is not available (zero — older .ctx
-					// or unreadable field) or below the ceiling.
-					//
-					// NOTE (hk-9waz): the hard-ceiling restart deliberately OVERRIDES an
-					// operator HOLD — true overflow protection beats a hold. No HeldCheckFn
-					// gate here, by design.
 					if w.cfg.HardCeilingMode != HardCeilingModeOff &&
 						ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens {
 						wantRestart := w.cfg.HardCeilingMode == HardCeilingModeRestart &&
 							w.cfg.HardCeilingRestartFn != nil
 						if wantRestart {
-							// Restart mode with a wired fn: cooldown-gate the whole
-							// emit+restart so we do not thrash. Outside the cooldown the
-							// emit is suppressed too (the prior tick already alarmed).
 							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
 								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
@@ -1497,9 +1160,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
 							}
 						} else {
-							// Alarm mode, OR restart mode degraded to alarm (fn nil): emit
-							// only, cooldown-gated so we alarm at most once per cooldown
-							// window rather than every tick the pane sits above ceiling.
 							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
 								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): alarm only",
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens,
@@ -1514,29 +1174,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
-			// Gauge is fresh (and belongs to the managed session): reset no_gauge
-			// tracking so the next absence/stale/foreign fires a fresh transition
-			// event. Also clear respawn staleness tracking. Refs: hk-1q7bt.
 			w.lastNoGaugeReason = ""
 			gaugeStaleSince = time.Time{}
 
-			// ── Backstop 1 reset (hk-34ac) ───────────────────────────────────────
-			// Gauge is readable and SID-matched: clear the blind episode so the
-			// next foreign_session streak starts a fresh 5-minute clock.
 			w.blindSince = time.Time{}
 			w.blindAlarmFired = false
 
-			// ── idle-gate ────────────────────────────────────────────────────
-			// The pane is considered idle when the gauge file's mod-time has not
-			// changed since the previous tick for at least IdleQuiesce.
 			gaugeQuiesced := !modTime.IsZero() && !lastModTime.IsZero() &&
 				modTime.Equal(lastModTime) &&
 				w.cfg.Clock.Since(modTime) >= w.cfg.IdleQuiesce
 			lastModTime = modTime
 
-			// ── Phase-2 gate predicates ──────────────────────────────────────
-			// CrispIdle: Stop hook fired after the last gauge update.
-			// HoldingDispatch: orchestrator has in-flight queue work.
 			crispIdle := CrispIdle(w.cfg.ProjectDir, w.cfg.AgentName)
 			holdingDispatch := HoldingDispatch(w.cfg.ProjectDir, w.cfg.AgentName)
 			slog.DebugContext(ctx, "keeper: gate predicates",
@@ -1545,67 +1193,33 @@ func (w *Watcher) Run(ctx context.Context) error {
 				"holding_dispatch", holdingDispatch,
 			)
 
-			// ── Phase-2 cycle dispatch ────────────────────────────────────────
-			// Cycler.MaybeRun handles all internal gating (act_pct, CrispIdle,
-			// HoldingDispatch, anti-loop). We pass the full ctxFile so the cycler
-			// can read pct and session_id directly.
 			if w.cfg.Cycler != nil && !w.cfg.WarnOnly {
 				if cycleErr := w.cfg.Cycler.MaybeRun(ctx, ctxFile); cycleErr != nil {
 					slog.WarnContext(ctx, "keeper: cycle error", "agent", w.cfg.AgentName, "err", cycleErr)
 				}
 			}
 
-			// ── PreCompact backstop ───────────────────────────────────────────
-			// If keeper-precompact-hook.sh blocked a native compaction it writes a
-			// .precompact marker. Detect it and run the cycle immediately, skipping
-			// the CrispIdle and act_pct gates (the agent is mid-turn when PreCompact
-			// fires). RunForPrecompact always clears the marker so the next PreCompact
-			// fire gets a clean slate (bounded-fallback contract).
 			if w.cfg.Cycler != nil && !w.cfg.WarnOnly && HasPrecompactTrigger(w.cfg.ProjectDir, w.cfg.AgentName) {
 				if pcErr := w.cfg.Cycler.RunForPrecompact(ctx, ctxFile); pcErr != nil {
 					slog.WarnContext(ctx, "keeper: precompact cycle error", "agent", w.cfg.AgentName, "err", pcErr)
 				}
 			}
 
-			// ── idle-large-context restart ────────────────────────────────────
-			// Restart idle crews with large (≥150K) context below the act
-			// threshold to compact context to a small baseline. Gating is
-			// handled internally. (Refs: hk-ee81)
 			if w.cfg.Cycler != nil && !w.cfg.WarnOnly {
 				if idleErr := w.cfg.Cycler.RunForIdle(ctx, ctxFile); idleErr != nil {
 					slog.WarnContext(ctx, "keeper: RunForIdle error", "agent", w.cfg.AgentName, "err", idleErr)
 				}
 			}
 
-			// NOTE: restart-now (captain-initiated) is NO LONGER a watcher-detected
-			// marker path. `harmonik keeper restart-now` now drives the
-			// ack→/clear→agent-brief SYNCHRONOUSLY in its own process
-			// (internal/keeper/restartnow.go) — there is no .restart-now marker for
-			// the watcher to poll, which removes the silent-no-op project-dir
-			// divergence. Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).
-
-			// ── warn state machine ───────────────────────────────────────────
 			if w.cfg.belowWarnThreshold(ctxFile) {
-				// Below threshold: reset so the next upward crossing will warn.
-				// Dip-rise cooldown (hk-sol6): only re-arm warnArmed if the
-				// cooldown period (cfg.WarnCooldown, default 30s) has elapsed
-				// since the last warn fire, preventing a transient dip-then-rise
-				// from counting as a second event. A zero WarnCooldown disables
-				// the gate entirely (used by tests that exercise multi-crossing).
 				if lastWarnFiredAt.IsZero() || w.cfg.WarnCooldown == 0 || w.cfg.Clock.Since(lastWarnFiredAt) >= w.cfg.WarnCooldown {
 					warnArmed = true
 					warnFired = false
 					pendingInject = false
 					settleWarnFired = false
 					pendingSettleInject = false
-					// Reset hint latch on genuine session reset (gauge dropped below
-					// warn and cooldown elapsed — new effective session start). Also
-					// cancel any undelivered pending hint from the prior crossing.
 					hintSentThisSession = false
 					pendingHint = false
-					// TEST-ONLY observability: signal the re-arm so tests can
-					// deterministically wait for the dip to be observed instead
-					// of racing a fixed sleep. Nil in production. Refs: hk-me8ru.
 					if w.cfg.OnWarnRearmFn != nil {
 						w.cfg.OnWarnRearmFn()
 					}
@@ -1623,17 +1237,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
-			// At or above the warn threshold.
 			if warnArmed && !warnFired {
-				// Upward crossing detected — emit the warn event immediately.
-				// Inject delivery is deferred until the pane is quiesced; see
-				// the pendingInject block below. We must NOT latch warnFired
-				// before the inject lands or the retry path is permanently
-				// cut off (BUG-1: hk-g4ei7).
 				w.emitWarn(ctx, ctxFile)
-				// Backstop B (hk-ehm8s): operator-visible out-of-pane notification
-				// at the crossing. Subject to the same warnArmed/warnFired gate as
-				// emitWarn — fires exactly once per upward crossing, never every tick.
 				if w.cfg.OperatorWarnFn != nil {
 					w.cfg.OperatorWarnFn(ctx, ctxFile.SessionID, ctxFile.Tokens, w.cfg.WarnAbsTokens, w.cfg.actEffectiveTokens())
 				}
@@ -1644,28 +1249,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 					pendingInject = true
 				}
 
-				// ── one-time self-hint injection (hk-lsk5) ───────────────────
-				// On the FIRST warn crossing of the session, ARM the hint so the
-				// agent is nudged to wrap up. Only once per session —
-				// hintSentThisSession latches after delivery. Actual tmux delivery
-				// is DEFERRED to the sleep-gated block below (hk-bzol4): injecting
-				// here fired with no SleepingCheckFn guard and woke a parked
-				// session. pendingHint carries the intent to the gated delivery.
 				if !hintSentThisSession && w.cfg.TmuxTarget != "" {
 					pendingHint = true
 				}
 			}
 
-			// ── one-time self-hint delivery (hk-lsk5; sleep-gated hk-bzol4) ──
-			// Delivers on the crossing tick itself when the session is awake
-			// (pendingHint was just armed above), or retries on a later tick once
-			// a parked session wakes. Sleep-gated so the keeper never wakes a
-			// parked session with its own hint — closing the M3 gap where the hint
-			// bypassed the SleepingCheckFn guard that the warn advisory below
-			// already honors (watcher.go SleepingCheckFn contract). The hint is a
-			// lightweight nudge, so — unlike the warn advisory — it is NOT
-			// gauge-quiesce-gated, preserving its prior immediate-delivery timing;
-			// only the sleep suppression is added.
 			if pendingHint && w.cfg.TmuxTarget != "" {
 				if w.cfg.SleepingCheckFn(w.cfg.ProjectDir, ctxFile.SessionID) {
 					slog.DebugContext(ctx, "keeper: self-hint suppressed — session is sleeping",
@@ -1678,23 +1266,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
-			// Attempt inject delivery — on the crossing tick or any subsequent tick
-			// once the pane has quiesced. Retries on each tick until success so a
-			// non-quiesced crossing tick never permanently suppresses injection.
 			if pendingInject && gaugeQuiesced {
-				// Sleep gate (M3 / hk-l3gs): do not inject into a parked session.
-				// warnFired and pendingInject remain true so delivery retries on the
-				// next tick once the session wakes (M1 failsafe clears the marker).
 				if w.cfg.SleepingCheckFn(w.cfg.ProjectDir, ctxFile.SessionID) {
 					slog.DebugContext(ctx, "keeper: inject suppressed — session is sleeping",
 						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
 					continue
 				}
-				// T7 (SK-024 / SK-INV-006): a LEADER warn tick routes through the K1
-				// delivery decision — a presence-Online leader gets a comms nudge (no
-				// pane write, no --wake); a Stale/Offline leader gets the terminal
-				// fallback below. Crew and any InjectFn-set (test) path fall through to
-				// the unchanged pane block.
 				if handled, cleared := w.maybeDeliverLeaderWarn(ctx, ctxFile, crispIdle); handled {
 					if cleared {
 						pendingInject = false
@@ -1703,21 +1280,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 				inject := w.cfg.InjectFn
 				if inject == nil {
-					// hk-vs4u: select the ACTIONABLE self-service restart handshake
-					// text vs the lighter finish-the-turn advisory. The actionable
-					// form fires ONLY when ALL of: self_service.enabled AND
-					// (captain OR crew-with-crews-enabled) AND a primary (UUIDv4) SID
-					// AND CrispIdle. Otherwise the lighter advisory is used — and the
-					// lighter advisory ALWAYS injects once gaugeQuiesced (this block),
-					// even when NOT CrispIdle, so no session ever loses its warn.
-					//
-					// hk-1ryc operator-attached guard: when a human operator is
-					// actively attached to the pane, suppress the ACTIONABLE restart
-					// instruction (it would race the operator's keystrokes mid-turn)
-					// and fall back to the lighter advisory. The warn is still
-					// delivered; only the self-restart command is withheld until the
-					// operator detaches. Checked here (not at the crossing tick) so the
-					// live attach state is sampled at delivery time.
 					operatorAttached := w.cfg.TmuxTarget != "" && w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget)
 					text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
 					inject = func(ctx context.Context, target string) error {
@@ -1754,23 +1316,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
-// maybeReapOrphanedDecisions runs one hitl-decisions orphan-reap pass (K5,
-// hk-061) when the reaper is enabled (cfg.ReapDecisions) AND the reap cadence
-// (cfg.ReapDecisionsCadence, default 90s) has elapsed since the last run.
-//
-// It emits decision_withdrawn(orphaned, by=keeper) for every open decision whose
-// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
-// never merely Stale — N9), via cfg.ReapDecisionsFn or the canonical
-// presence.ReapOrphanedDecisions.
-//
-// It is a no-op when ReapDecisions is false or the cadence has not elapsed.
-// The emitter is cfg.DecisionEmitter when set, else the watcher's primary
-// emitter (the standalone keeper's FileEmitter). A reap error or a per-decision
-// emit failure is logged and swallowed — the next cadence window retries (the
-// pass is idempotent: the open set is re-read fresh each call, N3).
-//
-// lastReapAt is updated on every attempt (success or error) so the cadence gate
-// bounds the O(events.jsonl) scan frequency regardless of error. Refs: hk-jrftk.
 func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *time.Time) {
 	if !w.cfg.ReapDecisions {
 		return
@@ -1798,8 +1343,6 @@ func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *ti
 	}
 }
 
-// gaugeUnavailable returns (true, reason) when the gauge file is absent or
-// stale. Used at boot for the initial no_gauge check.
 func (w *Watcher) gaugeUnavailable(ctx context.Context) (unavailable bool, reason string) {
 	_, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1815,18 +1358,8 @@ func (w *Watcher) gaugeUnavailable(ctx context.Context) (unavailable bool, reaso
 	return false, ""
 }
 
-// warnCooldown is the minimum duration between warn-threshold firings in the
-// same direction (dip-rise cooldown). Prevents a transient dip below the
-// threshold immediately followed by a rise from counting as a second event.
-// Refs: hk-sol6.
-// Alias of the exported DefaultWarnCooldown (thresholds.go single source). hk-gwz6.
 const warnCooldown = DefaultWarnCooldown
 
-// keeperHintText renders the one-time self-hint injected on the first
-// warn-threshold crossing per session. The live token count from the gauge is
-// interpolated so the message reflects the actual context size. When tokens is
-// zero (pct-only gauge), falls back to the static ~190K approximation.
-// Refs: hk-lsk5.
 func keeperHintText(tokens int64) string {
 	approxK := int64(190)
 	if tokens > 0 {
@@ -1835,19 +1368,6 @@ func keeperHintText(tokens int64) string {
 	return fmt.Sprintf("[KEEPER HINT] Context is at ~%dK tokens. Consider wrapping up the current task and preparing a handoff soon.", approxK)
 }
 
-// maybeEmitNoGauge emits session_keeper_no_gauge and logs only when the
-// no-gauge reason transitions from the last emitted reason
-// (log-once-per-(agent,reason)-transition). The event fires on:
-//   - first call from the initial "" state to any non-empty reason (gauge went absent);
-//   - any subsequent call where reason differs from w.lastNoGaugeReason (e.g.
-//     "absent" → "stale", or any reason → "foreign_session").
-//
-// No event fires when reason equals w.lastNoGaugeReason: continuous absence does
-// not re-emit on every poll tick — the event is a TRANSITION signal, not a
-// persistent-state alarm. The caller resets w.lastNoGaugeReason to "" on
-// fresh-gauge recovery so the next absence starts a fresh transition.
-//
-// Returns true when an event was emitted. Refs: hk-1q7bt.
 func (w *Watcher) maybeEmitNoGauge(ctx context.Context, reason string) bool {
 	if w.lastNoGaugeReason == reason {
 		return false
@@ -1857,9 +1377,6 @@ func (w *Watcher) maybeEmitNoGauge(ctx context.Context, reason string) bool {
 	return true
 }
 
-// emitNoGauge emits the session_keeper_no_gauge event.
-// When SuppressNoGauge is set the call is a no-op (F21: dogfood/test sessions
-// without a real gauge writer otherwise produce x66+ events per session).
 func (w *Watcher) emitNoGauge(ctx context.Context, reason string) {
 	if w.cfg.SuppressNoGauge {
 		return
@@ -1878,7 +1395,6 @@ func (w *Watcher) emitNoGauge(ctx context.Context, reason string) {
 	}
 }
 
-// emitWarn emits the session_keeper_warn event.
 func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 	payload := core.SessionKeeperWarnPayload{
 		AgentName: w.cfg.AgentName,
@@ -1898,26 +1414,13 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 		"agent", w.cfg.AgentName, "pct", cf.Pct, "warn_pct", w.cfg.WarnPct)
 }
 
-// maybeRespawn fires the respawn command if all gates pass:
-//   - RespawnCmd is non-empty
-//   - TmuxTarget is non-empty
-//   - staleSince has been set for at least RespawnGrace
-//   - cooldown since last attempt has elapsed
-//   - the tmux pane is idle (agent has exited)
-//   - the agent is NOT blocked on an open decision (hitl-decisions K6 exemption)
-//
-// On success it updates *lastRespawnAt and emits session_keeper_respawn_attempted.
-// Refs: hk-3w2; hk-50f (K6 exemption).
 func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRespawnAt *time.Time) {
-	// WarnOnly mode: never respawn — warn events only. Refs: hk-yfcc.
 	if w.cfg.WarnOnly {
 		return
 	}
 	if w.cfg.RespawnCmd == "" || w.cfg.TmuxTarget == "" {
 		return
 	}
-	// Operator HOLD (D5/hk-9waz): suspend respawn while a fresh session-scoped hold
-	// is active. Auto-reverts (session-id key + timer backstop).
 	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
 		return
 	}
@@ -1931,16 +1434,6 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 		return
 	}
 
-	// ── hitl-decisions K6 exemption (SPEC §4/§5) ─────────────────────────────
-	// The 120s-silent-hang reaper (this respawn path) is about to kill/respawn
-	// the watched agent as "hung". But an agent that is the blocked_agent of an
-	// OPEN decision — and is legitimately WAITING (a fresh §4 heartbeat keeps it
-	// Online) — is BLOCKED, not hung. Skip the reap: it is the complement of K5
-	// (K6 protects the LIVE blocked agent; K5 reaps the DECISION once the agent
-	// is genuinely gone). The fresh-heartbeat qualifier (presence Online) is what
-	// prevents over-shielding a truly-dead agent — a Stale/Offline blocked agent
-	// is NOT exempted here (its decision is K5's to reap). Read-only: consults the
-	// projection, emits nothing.
 	if w.blockedOnOpenDecision(ctx) {
 		slog.InfoContext(ctx, "keeper: agent blocked on an open decision — exempt from 120s reaper",
 			"agent", w.cfg.AgentName)
@@ -1966,47 +1459,13 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 	w.emitRespawnAttempted(ctx, outcome, errMsg)
 }
 
-// maybeLivePaneRecover is the gauge-INDEPENDENT last-resort recovery (hk-75mr).
-// It fires a GATED ForceRestart (LiveRecoverFn) for an agent that is hung
-// MID-TURN: the gauge has gone stale but the tmux pane is still ALIVE, so the
-// idle-respawn path (maybeRespawn) never engages and a /clear inject cannot
-// reach a hung turn. It is called from the same stale/absent branches as
-// maybeRespawn; the two are mutually exclusive via the pane alive-vs-idle check.
-//
-// EVERY gate is fail-closed — recovery fires ONLY when ALL hold:
-//   - LiveRecoverFn is wired AND TmuxTarget is non-empty (else no-op);
-//   - staleSince ≥ LiveRecoverGrace (>> RespawnGrace — anti-premature-reap);
-//   - LiveRecoverCooldown since the last attempt has elapsed;
-//   - the pane is ALIVE (IsPaneAliveFn) — a hung agent, not an exited one;
-//   - NO human operator is actively attached (OperatorAttachedFn, hk-0t5s) —
-//     never force-restart a pane a human is driving;
-//   - the agent is NOT blocked on an open decision (hitl-decisions K6) — a
-//     blocked agent is waiting, not hung;
-//   - the bound .sid identity is a valid UUIDv4 (ReadSidFn + isPrimarySID) — an
-//     absent or malformed channel fails CLOSED (we will not force-restart an
-//     agent whose identity we cannot trust).
-//
-// Interaction with the heartbeat (hk-81wk): the keeper-side heartbeat is the
-// FIRST line of defense — it re-writes .ctx on a live pane so a transient
-// repaint gap never trips the stale branch. Live-pane recovery therefore fires
-// ONLY when the gauge has gone stale DESPITE the heartbeat (heartbeat disabled,
-// or its WriteCtxFile failing) while the pane is still alive — a true last
-// resort. LiveRecoverGrace (5m) is set far past the heartbeat threshold (~60s)
-// so the heartbeat gets many chances to recover the gauge before recovery acts.
-//
-// On a successful gate pass it sets *lastRecoverAt and emits
-// session_keeper_live_pane_recover. Refs: hk-75mr; hk-8prq (identity); hk-0t5s
-// (operator discriminator); hk-50f (K6 exemption); hk-81wk (heartbeat).
 func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time, lastRecoverAt *time.Time) {
-	// WarnOnly mode: never force-restart — warn events only. Refs: hk-yfcc.
 	if w.cfg.WarnOnly {
 		return
 	}
 	if w.cfg.LiveRecoverFn == nil || w.cfg.TmuxTarget == "" {
 		return
 	}
-	// Operator HOLD (D5/hk-9waz): suspend live-pane recovery while a fresh
-	// session-scoped hold is active. Auto-reverts (session-id key + timer backstop).
 	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
 		return
 	}
@@ -2016,10 +1475,6 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 	if !lastRecoverAt.IsZero() && w.cfg.Clock.Since(*lastRecoverAt) < w.cfg.LiveRecoverCooldown {
 		return
 	}
-	// Pane must be ALIVE (non-shell). An idle pane is the maybeRespawn path's job.
-	// If the configured TmuxTarget is mangled (stale session name, wrong format —
-	// the B3 watch-restall class), re-resolve from projectDir+agentName before
-	// giving up. Refs: hk-9cqtm.
 	effectiveTarget := w.cfg.TmuxTarget
 	if !w.cfg.IsPaneAliveFn(ctx, effectiveTarget) {
 		resolved := w.cfg.ResolveTmuxTargetFn(w.cfg.ProjectDir, w.cfg.AgentName)
@@ -2030,21 +1485,16 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 			"agent", w.cfg.AgentName, "old_target", w.cfg.TmuxTarget, "new_target", resolved)
 		effectiveTarget = resolved
 	}
-	// Never force-restart a pane a human operator is actively driving (hk-0t5s).
 	if w.cfg.OperatorAttachedFn(effectiveTarget) {
 		slog.InfoContext(ctx, "keeper: live-pane recovery suppressed — operator actively attached",
 			"agent", w.cfg.AgentName)
 		return
 	}
-	// A blocked-on-decision agent is waiting, not hung (hitl-decisions K6).
 	if w.blockedOnOpenDecision(ctx) {
 		slog.InfoContext(ctx, "keeper: live-pane recovery suppressed — agent blocked on an open decision",
 			"agent", w.cfg.AgentName)
 		return
 	}
-	// Bound identity MUST be a valid UUIDv4 from the single-writer .sid channel.
-	// Fail CLOSED on an absent/malformed channel — we will not force-restart an
-	// agent whose identity we cannot trust (hk-8prq).
 	boundSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName)
 	if sidErr != nil || !isPrimarySID(boundSID) {
 		slog.WarnContext(ctx, "keeper: live-pane recovery suppressed — bound .sid identity absent or not a valid UUIDv4 (fail-closed)",
@@ -2070,7 +1520,6 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 	w.emitLivePaneRecover(ctx, boundSID, staleSeconds, outcome, errMsg)
 }
 
-// emitLivePaneRecover emits the session_keeper_live_pane_recover event.
 func (w *Watcher) emitLivePaneRecover(ctx context.Context, sessionID string, staleSeconds int64, outcome, errMsg string) {
 	payload := core.SessionKeeperLivePaneRecoverPayload{
 		AgentName:    w.cfg.AgentName,
@@ -2089,34 +1538,6 @@ func (w *Watcher) emitLivePaneRecover(ctx context.Context, sessionID string, sta
 	}
 }
 
-// blockedOnOpenDecision reports whether the watched agent (w.cfg.AgentName) is
-// the blocked_agent of an OPEN hitl-decisions decision AND is legitimately
-// waiting per SPEC §4 (a fresh heartbeat — presence Online). This is the K6
-// exemption predicate: when true, the 120s-silent-hang reaper (maybeRespawn)
-// treats the agent as BLOCKED, not HUNG, and skips the kill/respawn.
-//
-// It is READ-ONLY — it consults the K3 open-decision projection
-// (presence.OpenDecisions) and the presence registry (presence.ComputeRegistry)
-// over the durable events.jsonl and emits NOTHING. K6 protects the live agent;
-// K5 (the reaper) is the SOLE emitter of decision_withdrawn(orphaned) once the
-// agent is genuinely gone.
-//
-// The fresh-heartbeat qualifier is the exact complement of K5's "truly gone"
-// predicate (presence StateOffline): K6 exempts ONLY when the blocked agent is
-// presence-Online (a fresh §4 subscribe-stream heartbeat). A Stale or Offline
-// blocked agent is NOT exempted — it is not indefinitely shielded; its open
-// decision is K5's to reap. This is the no-over-exemption guarantee:
-//   - an agent absent from every open decision → not exempt (reaped normally);
-//   - an agent named in an open decision but presence-Stale/Offline → not exempt
-//     (K5 reaps the decision; the agent is not shielded);
-//   - an agent named in an open decision with a fresh (Online) heartbeat → EXEMPT.
-//
-// Returns false (fail-open — i.e. NOT exempt, the agent is reaped normally) when
-// EventsJSONLPath is unset, so a misconfigured keeper never silently shields a
-// hung agent.
-//
-// Refs: hk-50f (component K6); SPEC §4 (keeper-alive via heartbeat), §5 (keeper
-// seam K6).
 func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
 	if w.cfg.EventsJSONLPath == "" {
 		return false
@@ -2125,7 +1546,6 @@ func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
 	if len(open) == 0 {
 		return false
 	}
-	// Is this agent the blocked_agent of any open decision?
 	blocked := false
 	for _, dec := range open {
 		if dec.BlockedAgent == w.cfg.AgentName {
@@ -2136,11 +1556,6 @@ func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
 	if !blocked {
 		return false
 	}
-	// Fresh-heartbeat qualifier (SPEC §4): exempt ONLY when the agent's presence
-	// is Online. A merely-Stale or Offline blocked agent is NOT exempted — it is
-	// K5's job to reap the decision, not K6's to shield a dead agent. An agent
-	// with no presence record at all is likewise not exempt (no evidence it is
-	// alive and waiting).
 	rec, known := presence.ComputeRegistry(w.cfg.EventsJSONLPath)[w.cfg.AgentName]
 	if !known {
 		return false
@@ -2148,7 +1563,6 @@ func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
 	return presence.GetState(rec) == presence.StateOnline
 }
 
-// emitBlind emits the session_keeper_blind event (hk-34ac, Backstop 1).
 func (w *Watcher) emitBlind(ctx context.Context, managedSID, liveSID string, blindSeconds int64) {
 	payload := core.SessionKeeperBlindPayload{
 		AgentName:    w.cfg.AgentName,
@@ -2166,7 +1580,6 @@ func (w *Watcher) emitBlind(ctx context.Context, managedSID, liveSID string, bli
 	}
 }
 
-// emitHardCeiling emits the session_keeper_hard_ceiling event (hk-34ac, Backstop 2).
 func (w *Watcher) emitHardCeiling(ctx context.Context, tokens int64) {
 	payload := core.SessionKeeperHardCeilingPayload{
 		AgentName:   w.cfg.AgentName,
@@ -2183,7 +1596,6 @@ func (w *Watcher) emitHardCeiling(ctx context.Context, tokens int64) {
 	}
 }
 
-// emitRespawnAttempted emits the session_keeper_respawn_attempted event.
 func (w *Watcher) emitRespawnAttempted(ctx context.Context, outcome, errMsg string) {
 	payload := core.SessionKeeperRespawnAttemptedPayload{
 		AgentName: w.cfg.AgentName,

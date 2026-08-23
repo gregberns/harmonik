@@ -2,37 +2,6 @@
 
 package daemon_test
 
-// e2e_real_claude_capture_test.go — WS3-Claude-A real-session capture harness.
-//
-// This test drives the SAME real-Claude happy path as the single-mode smoke
-// (e2e_real_claude_single_test.go) and, on success, writes a twin-parity capture
-// dir under HARMONIK_WIRE_CAPTURE_DIR:
-//
-//	<dir>/<scn>/wire.ndjson   — the raw tee'd NDJSON progress stream (via the
-//	                            watcher's WireTap seam). NOTE: capturing wire.ndjson
-//	                            requires the daemon to honor HARMONIK_WIRE_CAPTURE_DIR
-//	                            and point SpawnWatcherConfig.WireTap at this file —
-//	                            that daemon wiring is a SEPARATE follow-up (the seam
-//	                            landed here; the daemon opt-in has not). Until then
-//	                            this harness captures the DURABLE events.jsonl only
-//	                            and leaves a wire.ndjson placeholder note.
-//	<dir>/<scn>/events.jsonl  — the durable event log, copied on run_completed.
-//	<dir>/<scn>/meta.yaml     — scn/agent/date/sha + the §5 carve-out excludes block.
-//
-// # Build tag / skip guards
-//
-// Shares the //go:build e2e_real_claude tag and rcsmFixtureCheckPreconditions
-// skip guards (claude/tmux/git/br/ntm binaries + ANTHROPIC_API_KEY or
-// CLAUDE_CODE_OAUTH_TOKEN). On a box with no auth this test SKIPS cleanly.
-//
-// # Credfence
-//
-// The Makefile target runs this under `env -u ANTHROPIC_API_KEY
-// -u ANTHROPIC_AUTH_TOKEN` (subscription-billing path, codename:credfence,
-// scripts/scratch-daemon.sh:237-240) — never an API key (D2).
-//
-// Bead: WS3-Claude-A (twin-parity real-Claude capture harness).
-
 import (
 	"context"
 	"fmt"
@@ -46,9 +15,6 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// captureClaudeEnvDir is the env var naming the output directory for captured
-// twin-parity fixtures. When unset, the test still runs the real-Claude path
-// but writes the capture to t.TempDir() (self-check only, not committed).
 const captureClaudeEnvDir = "HARMONIK_WIRE_CAPTURE_DIR"
 
 // TestCaptureClaudeFixtures runs the real-Claude happy path and, on success,
@@ -102,13 +68,10 @@ func TestCaptureClaudeFixtures(t *testing.T) {
 
 	rcsmAssertRunCompleted(t, events)
 
-	// ── Copy the durable events.jsonl into the capture dir ────────────────────
 	if err := captureCopyFile(jsonlPath, filepath.Join(captureDir, "events.jsonl")); err != nil {
 		t.Fatalf("capture: copy events.jsonl: %v", err)
 	}
 
-	// ── wire.ndjson: written by the daemon WireTap sink when wired; leave a
-	// clear placeholder until the daemon honors HARMONIK_WIRE_CAPTURE_DIR. ─────
 	wirePath := filepath.Join(captureDir, "wire.ndjson")
 	if _, err := os.Stat(wirePath); os.IsNotExist(err) {
 		note := "# wire.ndjson not produced: daemon WireTap opt-in for " +
@@ -119,7 +82,6 @@ func TestCaptureClaudeFixtures(t *testing.T) {
 		}
 	}
 
-	// ── meta.yaml ─────────────────────────────────────────────────────────────
 	if err := os.WriteFile(filepath.Join(captureDir, "meta.yaml"), captureMetaYAML(scn), 0o644); err != nil { //nolint:gosec // G306: committed fixture file must be world-readable
 		t.Fatalf("capture: write meta.yaml: %v", err)
 	}
@@ -127,7 +89,6 @@ func TestCaptureClaudeFixtures(t *testing.T) {
 	t.Logf("capture: wrote twin-parity fixture dir %s (%d events)", captureDir, len(events))
 }
 
-// captureCopyFile copies src to dst (small fixture files).
 func captureCopyFile(src, dst string) error {
 	//nolint:gosec // G304: src is the daemon-written events.jsonl under t.TempDir(); not user input
 	data, err := os.ReadFile(src)
@@ -137,8 +98,6 @@ func captureCopyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0o644) //nolint:gosec // G306: committed fixture file must be world-readable
 }
 
-// captureMetaYAML renders the meta.yaml for a real capture. hand_authored:false
-// distinguishes it from the committed happy-path-sample.
 func captureMetaYAML(scn string) []byte {
 	sha := os.Getenv("HARMONIK_CAPTURE_COMMIT_SHA")
 	if sha == "" {

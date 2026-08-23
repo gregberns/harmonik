@@ -1,26 +1,5 @@
 package daemon
 
-// dot_gate.go — Daemon-side gate evaluator seam for DOT workflow gate nodes (hk-karlz).
-//
-// Implements the three-part seam described in hk-karlz:
-//  1. Resolve gate_ref → Gate ControlPoint via the daemon's cpRegistry.
-//  2. For mechanism-tagged gates: evaluate the PolicyExpression against the run
-//     context using PolicyExprEvaluator; bool result → GateAction per spec §6.4
-//     (true → allow, false → deny).
-//  3. For cognition-tagged gates: dispatch a fresh Claude subprocess, write a
-//     gate-task.md brief, watch for .harmonik/gate-verdict.json, and read the
-//     verdict (analogous to the reviewer path in dispatchDotAgenticNode).
-//
-// Constructs a handler.GateEvalFunc and calls handler.DispatchGateNode, feeding
-// the outcome into DecideNextNode in driveDotWorkflow like any other node.
-//
-// Spec refs:
-//   - specs/control-points.md §4.2 (Gate), §4.7.CP-034b (cost ceiling),
-//     §6.4 (expression environment), §7.2 (cognition dispatch path).
-//   - specs/execution-model.md §7.5 (DOT dispatch table).
-//
-// Bead: hk-karlz.
-
 import (
 	"context"
 	"encoding/json"
@@ -44,35 +23,14 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// The mechanism gate evaluation environment (GateExprEnv), the bool→GateAction
-// mapping (MechanismDecision), the gate-verdict.json parse (ParseGateVerdict),
-// and the pre-eval structural-failure Outcome (GateEvalFailureOutcome) are the
-// pure DECISION predicates — they live in internal/policy (M5 slice 2 sub-slice
-// C). This file is the daemon shell that threads every effect in.
-
-// gateVerdictRelPath is the worktree-relative path where a cognition gate
-// evaluator writes its verdict. Analogous to .harmonik/review.json for reviewers.
 const gateVerdictRelPath = ".harmonik/gate-verdict.json"
 
-// gateTaskRelPath is the worktree-relative path of the brief file written for
-// cognition gate evaluators. Analogous to .harmonik/review-target.md for reviewers.
 const gateTaskRelPath = ".harmonik/gate-task.md"
 
-// gateFileTimeout is the maximum time to wait for gate-verdict.json to appear.
-// Override in tests via the var below.
 var gateFileTimeout = 10 * time.Minute
 
-// gateFilePollInterval is how often to poll for gate-verdict.json.
 var gateFilePollInterval = 2 * time.Second
 
-// dispatchDotGateNode resolves a gate node's ControlPoint, constructs a
-// GateEvalFunc, and calls handler.DispatchGateNode. Returns the cascade-ready
-// Outcome.
-//
-// When cpRegistry is nil (no registry loaded in daemon), returns a structural
-// eval-failure Outcome (status=FAIL) with nil Go error so the cascade routes it.
-// Infrastructure errors (unable to launch subprocess, etc.) are returned as Go
-// errors.
 func dispatchDotGateNode(
 	ctx context.Context,
 	env runloop.RunEnv,
@@ -87,27 +45,19 @@ func dispatchDotGateNode(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
-	// beadRecord carries the tier-1 harness:<agent-type> LABEL. hk-01vs0 needs it
-	// to compute (quietly) the harness the cognition gate WOULD inherit, so a
-	// reviewer-class gate never lands on a SessionIDCaptured harness.
 	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
 	baseBranch string,
 	runner ltmux.CommandRunner,
-	// remote-substrate: worker-launch params threaded the same way as
-	// dispatchDotAgenticNode (dot_cascade.go) — all empty for a LOCAL run,
-	// byte-identical to the pre-hk-9fe2 box-A-only path (NFR7).
 	workerBinaryPath string,
 	workerSessionName string,
 	workerSessionCwd string,
 ) (core.Outcome, error) {
 	gateRef := core.GateRef(node.GateRef)
 
-	// Step 1: resolve gate_ref → ControlPoint via the GatePort (RSM-010).
 	cp, ok, registryLoaded := ports.Gate.LookupGate(gateRef)
-	// No registry → structural failure; no ControlPoint can be resolved.
 	if !registryLoaded {
 		return policy.GateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil
 	}
@@ -118,7 +68,6 @@ func dispatchDotGateNode(
 		return policy.GateEvalFailureOutcome(fmt.Sprintf("gate_ref %q resolves to kind=%s, expected Gate", gateRef, cp.Kind)), nil
 	}
 
-	// Step 2: construct GateEvalFunc based on evaluator ModeTag.
 	var evalFn handler.GateEvalFunc
 	switch cp.Evaluator.Mode {
 	case core.ModeTagMechanism:
@@ -133,8 +82,6 @@ func dispatchDotGateNode(
 		return policy.GateEvalFailureOutcome(fmt.Sprintf("gate_ref %q has unknown evaluator mode %q", gateRef, cp.Evaluator.Mode)), nil
 	}
 
-	// Step 3: call handler.DispatchGateNode. It invokes evalFn, maps the result
-	// to an Outcome, and emits gate_decision_recorded on success.
 	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, ports.Emitter)
 	if err != nil {
 		return core.Outcome{}, fmt.Errorf("dot: gate node %q: DispatchGateNode: %w", node.ID, err)
@@ -142,16 +89,6 @@ func dispatchDotGateNode(
 	return result.Outcome, nil
 }
 
-// buildMechanismGateEval builds a GateEvalFunc for a mechanism-tagged Gate.
-//
-// Per specs/control-points.md §6.4 table:
-//   - Gate mechanism expressions return Bool.
-//   - true  → GateActionAllow
-//   - false → GateActionDeny
-//
-// The expression is compiled and evaluated against policy.GateExprEnv with a
-// harmonik-level cost ceiling (PolicyExprEvaluator, CP-034b).
-// DecisionActor is "mechanism" per GateDecisionPayload §3.
 func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 	policyEval := core.NewPolicyExprEvaluator(core.DefaultPolicyExprEvaluatorConfig())
 	exprText := string(*cp.Evaluator.Expression)
@@ -191,18 +128,6 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 	}
 }
 
-// buildCognitionGateEval builds a GateEvalFunc for a cognition-tagged Gate.
-//
-// The returned GateEvalFunc, when called, dispatches a fresh Claude subprocess
-// analogous to the reviewer path:
-//  1. Write gate-task.md with gate context and decision instructions.
-//  2. Launch Claude with ReviewLoopPhaseReviewer (fresh session, no resume).
-//  3. Deliver the gate-evaluator kick-off message via paste inject.
-//  4. Watch for gate-verdict.json; send /quit when it appears.
-//  5. Wait for session to exit.
-//  6. Read and parse gate-verdict.json into a GateDecisionPayload.
-//
-// DecisionActor is the DelegationPath.Role per GateDecisionPayload §3.
 func buildCognitionGateEval(
 	env runloop.RunEnv,
 	ports runloop.RunPorts,
@@ -236,8 +161,6 @@ func buildCognitionGateEval(
 	}, nil
 }
 
-// executeCognitionGate performs the actual cognition gate dispatch: write brief,
-// launch subprocess, wait, read verdict. Called from the GateEvalFunc closure.
 func executeCognitionGate(
 	ctx context.Context,
 	env runloop.RunEnv,
@@ -265,33 +188,18 @@ func executeCognitionGate(
 	workerSessionName string,
 	workerSessionCwd string,
 ) (*core.GateDecisionPayload, error) {
-	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
-	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
-	// which would assemble every port for one read (RT18: the clock default it
-	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := ports.Emitter
-	// Remove any stale verdict from a prior attempt. Routed through runner so a
-	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
-	// not box A's (hk-9fe2).
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
 	if rmErr := workspace.RemoveFileVia(ctx, runner, verdictPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-		// A stale verdict that survives makes the gate read a prior attempt's
-		// answer. The gate still runs, so log it instead of failing the run.
 		fmt.Fprintf(os.Stderr,
 			"daemon: cognition gate: remove stale verdict %q: %v (the gate may read the prior attempt)\n",
 			verdictPath, rmErr)
 	}
 
-	// Write the gate-task.md brief. Routed through runner so a REMOTE run
-	// (runner != nil) writes the brief onto the WORKER's filesystem — a
-	// box-A-local write would leave the worker's gate evaluator with no brief
-	// to read (hk-9fe2).
 	if err := writeCognitionGateTask(ctx, runner, wtPath, cp, dp, run, string(beadID), beadTitle, beadDescription, node.ID); err != nil {
 		return nil, fmt.Errorf("cognition gate %q: write gate-task.md: %w", gateRef, err)
 	}
 
-	// Build launch spec. Use ReviewLoopPhaseReviewer for a fresh session with
-	// no resume, mirroring how the reviewer is launched.
 	rc := shared.LaunchCtx{
 		RunID:         runID,
 		BeadID:        string(beadID),
@@ -321,42 +229,6 @@ func executeCognitionGate(
 		BaseBranch:        baseBranch,
 	}
 
-	// hk-01vs0: the cognition gate is REVIEWER-CLASS — it launches with
-	// ReviewLoopPhaseReviewer, is briefed with .harmonik/gate-task.md, and must
-	// write .harmonik/gate-verdict.json. It therefore must never run on a
-	// SessionIDCaptured harness (codex, pi), for exactly the two reasons
-	// reviewerharness_hkiv748.go documents for reviewers:
-	//   - codexlaunchspec.go emits ONLY an IMPLEMENTER seed prompt and never reads
-	//     rc.phase, so a codex "gate evaluator" is told to implement the bead and
-	//     never learns gate-task.md exists, let alone writes a verdict;
-	//   - codex never emits agent_ready, but the waitAgentReady below blocks on it,
-	//     so the gate dies at "cognition gate %q: agent_ready_timeout".
-	//
-	// Before this fix the gate took the pre-built launch-spec builder UNCONDITIONALLY. That
-	// builder is routedLaunchSpecBuilder(reg, beadRecord, …) (workloop.go), whose
-	// tier-1 leg returns a per-bead `harness:codex` LABEL immediately
-	// (harnessresolve.go) — so a single labelled bead, not just a global codex
-	// default, routed the gate onto codex. This is the third site of the
-	// "reviewer silently inherits a harness that cannot review" class; hk-pkxju
-	// closed dot_cascade.go and left this one out of scope.
-	//
-	// Reuse of dotReviewerInheritedHarnessOverride (the DOT-cascade adapter) rather
-	// than raw reviewerDefaultHarness: the correction needs the harness the gate
-	// WOULD have inherited, which is the same quiet tier-1/tier-2/tier-4 walk the adapter
-	// already performs; calling reviewerDefaultHarness directly would mean
-	// duplicating that walk here. Both pin arguments are deliberately empty:
-	//   - reviewer_harness= is an attribute of an IMPLEMENTER node naming its
-	//     reviewer; no implementer node feeds a gate node, so it never applies.
-	//   - node.Harness is read ONLY by dispatchDotAgenticNode (dot_cascade.go). The
-	//     gate path has never consulted it, so there is no operator pin to protect
-	//     here — passing it would merely re-open the inherit hole for any gate node
-	//     that happens to carry harness=. Teaching gate nodes to honour a harness=
-	//     pin is a separate feature, not this fix.
-	// Non-empty return ⇒ pin via pinnedHarnessLaunchSpecBuilder, NOT
-	// routedLaunchSpecBuilder: the latter re-runs resolveHarness and would let the
-	// tier-1 `harness:codex` bead label override the correction (the hk-2jxqg
-	// footgun). Empty return ⇒ the pre-built launch-spec builder stands untouched, so an
-	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
 	specBuilder := ports.LaunchBuilder
 	gateInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(
 		handles.HarnessRegistry,
@@ -388,15 +260,6 @@ func executeCognitionGate(
 		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
-	// remote-substrate (hk-9fe2): thread the run's runner (SSHRunner for remote,
-	// nil for local) into the per-run substrate so a REMOTE cognition-gate node
-	// spawns on the WORKER, mirroring dispatchDotAgenticNode (dot_cascade.go).
-	// LATENT: the default workflow.dot uses a tool-command commit_gate, not a
-	// cognition gate, so no live remote run exercises this path today.
-	// hk-qxvc2: the cognition-gate node runs a claude (SessionIDMinted) evaluator;
-	// route it onto the tmux/claude substrate, never the codexdriver app-server
-	// substrate. runner (SSHRunner/remote) is preserved so a remote gate still
-	// spawns on the worker (hk-9fe2).
 	gateHarnessIsClaude := true
 	if handles.HarnessRegistry != nil {
 		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
@@ -408,8 +271,6 @@ func executeCognitionGate(
 		gateBaseSubstrate = handles.ReviewerSubstrate
 	}
 
-	// The launch itself is the ONE path in agentlaunch.go. This site keeps only
-	// what to launch (above) and what the exit means (below).
 	launch := runAgentLaunch(ctx, agentLaunchInput{
 		Env:     env,
 		Ports:   ports,
@@ -433,17 +294,12 @@ func executeCognitionGate(
 		ProbeResume:     false,
 		HeartbeatViaTap: true,
 		Deliver: func(dctx context.Context, dc agentDeliverCtx) {
-			// Deliver the gate-evaluator kick-off message and watch for the
-			// verdict file.
 			briefDelivered := pasteInjectCognitionGate(dctx, ports.Clock, dc.PasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
 			if qs, ok := dc.PasteTarget.(quitSender); ok {
 				go pasteInjectQuitOnGateFile(ctx, ports.Clock, runner, qs, dc.Session, wtPath, briefDelivered)
 			}
 		},
 	})
-	// Stops the heartbeat then tears the session down, in that order — the
-	// inversion the two separate defers here used to produce is gone. Deferred so
-	// the heartbeat covers the verdict read below.
 	defer launch.Cleanup()
 
 	switch launch.Fail {
@@ -454,30 +310,12 @@ func executeCognitionGate(
 	case agentLaunchReadyTimeout:
 		return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
 	case agentLaunchOK:
-		// Fall through: the session has exited and been torn down.
 	}
 
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("cognition gate %q: context cancelled", gateRef)
 	}
 
-	// What the evaluator REPORTED decides the gate, not only whether a verdict
-	// file appeared (hk-sb8jy). This function switched on launch.Fail alone and
-	// never read launch.SocketOutcome or launch.Watcher, so an evaluator that
-	// wrote an allow verdict and then signalled FAILURE_SIGNAL, exited non-zero
-	// with nothing reported, or left its progress-stream watcher in error was
-	// still believed, and the workflow proceeded past the gate.
-	//
-	// It runs BEFORE the verdict read so a crashed evaluator is reported as a
-	// crash rather than as a missing file. A gate that cannot be trusted fails
-	// closed: the returned error fails the run, which is the safe direction for a
-	// gate in a way it is not for an implementer.
-	//
-	// There is no budget-kill exemption here, and none is needed. The reviewer
-	// path needs one because pasteInjectQuitOnReviewFile kills on an elapsed
-	// budget and records it in a marker file. pasteInjectQuitOnGateFile writes no
-	// marker, and its only deadline kill fires when no verdict has appeared — in
-	// which case the read below fails anyway.
 	var gateWatcherErr error
 	if launch.Watcher != nil {
 		gateWatcherErr = launch.Watcher.Err()
@@ -486,7 +324,6 @@ func executeCognitionGate(
 		return nil, fmt.Errorf("cognition gate %q: %s", gateRef, reason)
 	}
 
-	// Read and parse the gate verdict via runner for remote runs (hk-hd2w6).
 	decision, readErr := readGateVerdictVia(ctx, runner, verdictPath)
 	if readErr != nil {
 		return nil, fmt.Errorf("cognition gate %q: read verdict: %w", gateRef, readErr)
@@ -500,9 +337,6 @@ func executeCognitionGate(
 	}, nil
 }
 
-// writeCognitionGateTask writes the gate-task.md brief for a cognition gate
-// evaluator subprocess. The brief includes the gate's identity, the delegation
-// path role, the run context, and clear instructions for writing gate-verdict.json.
 func writeCognitionGateTask(
 	ctx context.Context,
 	runner ltmux.CommandRunner,
@@ -519,8 +353,6 @@ func writeCognitionGateTask(
 
 	ctxJSON, ctxErr := json.MarshalIndent(run.Context, "", "  ")
 	if ctxErr != nil {
-		// Non-fatal: the brief renders an empty Run Context block. Log so the
-		// silent omission is diagnosable rather than swallowed.
 		fmt.Fprintf(os.Stderr, "daemon: dot: gate: marshal run context for node %q: %v\n", nodeID, ctxErr)
 	}
 
@@ -590,10 +422,6 @@ Write the JSON file now, then exit with /quit.
 	return workspace.WriteFileVia(ctx, runner, taskPath, []byte(content), 0o644)
 }
 
-// readGateVerdict reads gate-verdict.json off the local filesystem and parses it
-// via policy.ParseGateVerdict (the pure validation predicate — M5 slice 2
-// sub-slice C). Factored so both this local path and readGateVerdictVia (remote)
-// share byte-identical validation (NFR7).
 func readGateVerdict(verdictPath string) (core.GateAction, error) {
 	data, err := os.ReadFile(verdictPath)
 	if err != nil {
@@ -602,13 +430,6 @@ func readGateVerdict(verdictPath string) (core.GateAction, error) {
 	return policy.ParseGateVerdict(data)
 }
 
-// readGateVerdictVia is like readGateVerdict but routes the file read through
-// runner for remote runs (hk-hd2w6). When runner is nil or local-FS, delegates
-// to readGateVerdict (NFR7: byte-identical local path). When runner is non-local
-// (e.g. SSHRunner), reads the worker-side gate-verdict.json via cat and applies
-// identical parsing via policy.ParseGateVerdict.
-//
-// Bead: hk-hd2w6.
 func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdictPath string) (core.GateAction, error) {
 	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		return readGateVerdict(verdictPath)
@@ -620,13 +441,6 @@ func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdict
 	return policy.ParseGateVerdict(out)
 }
 
-// gateVerdictExistsVia reports whether the gate-verdict.json file exists and is
-// non-empty. Routes the stat check through runner on remote runs so the check
-// lands on the worker's filesystem (hk-hd2w6). NFR7: nil/local runner falls back
-// to os.Stat on box A. Both paths guard against an empty/truncated file
-// (local: info.Size() > 0; remote: test -s which is POSIX "exists and non-empty").
-//
-// Bead: hk-hd2w6.
 func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path string) bool {
 	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		info, err := os.Stat(path)
@@ -635,9 +449,6 @@ func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path 
 	return runner.Command(ctx, "test", "-s", path).Run() == nil
 }
 
-// pasteInjectCognitionGate delivers the gate-evaluator kick-off message.
-// Analogous to pasteInjectReviewer for the reviewer path.
-// Returns a channel closed once the kick-off paste has been written.
 func pasteInjectCognitionGate(
 	ctx context.Context,
 	clk substrate.ClockPort,
@@ -671,7 +482,6 @@ func pasteInjectCognitionGate(
 			return
 		}
 
-		// Dismiss welcome splash before paste (mirrors reviewer path).
 		if es, ok := inj.(enterSender); ok {
 			if err := es.SendEnterToLastPane(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "daemon: pasteinject: cognition-gate SendEnterToLastPane: %v\n", err)
@@ -685,7 +495,6 @@ func pasteInjectCognitionGate(
 			" Evaluate the gate and write your decision to " + gateVerdictRelPath +
 			" as JSON: {\"schema_version\":1,\"decision\":\"allow|deny|escalate-to-human\",\"reason\":\"...\"}." +
 			" The decision field MUST be exactly one of: allow, deny, escalate-to-human." +
-			// hk-ppw: explicit read-only constraint — gate evaluator MUST NOT run git state-changing commands.
 			" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
 			" git push, git rebase, or any other state-mutating git command. You are on a reviewer" +
 			" worktree; mutating git state can corrupt the implementer's task branch." +
@@ -708,15 +517,6 @@ func pasteInjectCognitionGate(
 	return ch
 }
 
-// pasteInjectQuitOnGateFile watches for gate-verdict.json to appear, then
-// sends /quit to terminate the gate evaluator session. Analogous to
-// pasteInjectQuitOnReviewFile for the reviewer path.
-//
-// clk is the determinism port for the whole watchdog (P2 E5 RT19c). The verdict
-// deadline and the poll ticker are read from the SAME clock so a FakeClock can
-// drive the 10-minute gateFileTimeout branch instantly; mixing a fake deadline
-// with a real ticker (or vice versa) would leave the loop unable to terminate.
-// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
 func pasteInjectQuitOnGateFile(
 	ctx context.Context,
 	clk substrate.ClockPort,

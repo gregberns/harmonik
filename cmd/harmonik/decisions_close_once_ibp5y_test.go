@@ -1,25 +1,5 @@
 package main
 
-// decisions_close_once_ibp5y_test.go — `harmonik decisions wait` used to register
-// TWO independent closers for one connection, and neither of them was joined.
-//
-// The ctx comes from signal.NotifyContext, whose stop() cancels on EVERY return
-// and not only on SIGINT, so both closers ran on every normal exit. The loser
-// got "use of closed network connection" and PRINTED it. Two defects followed:
-//
-//   - A SUCCESSFUL wait could print a connection error. This is the surface a
-//     blocked agent watches for its answer, so a spurious connection error there
-//     reads as "the wait failed" at the exact moment the decision was answered.
-//   - The unjoined goroutine wrote to os.Stderr after the function that started
-//     it had returned. Under -race, with a test harness swapping os.Stderr, that
-//     is a hard failure — which is how the merge decision surfaced it.
-//
-// Bead ref: hk-ibp5y.
-//
-// The first test below pins the user-visible half and holds for any close
-// arrangement. The second pins the mechanism: ONE owner closes, and the close is
-// SYNCHRONOUS, so nothing the wait starts can outlive it.
-
 import (
 	"context"
 	"errors"
@@ -31,15 +11,8 @@ import (
 	"time"
 )
 
-// ibpDecisionID is the decision under test — a UUIDv7-shaped id, matching the
-// canonical ids used across the other decisions tests.
 const ibpDecisionID = "01965b00-0000-7000-8000-00000000d0d1"
 
-// ibpDaemonHoldingStream starts a fake daemon that accepts the subscribe request
-// and then HOLDS the connection open for the rest of the test, the way a live
-// daemon holds a blocked agent's stream. A handler that returned immediately
-// would close the connection from the server side and hide which client-side
-// closer ran.
 func ibpDaemonHoldingStream(t *testing.T) *fakeDaemon {
 	t.Helper()
 	held := make(chan struct{})
@@ -47,9 +20,6 @@ func ibpDaemonHoldingStream(t *testing.T) *fakeDaemon {
 	return startFakeDaemon(t, func(_ net.Conn, _ []byte) { <-held })
 }
 
-// ibpWriteResolved writes a durable events.jsonl under dir containing one
-// decision_resolved for ibpDecisionID, so the wait's step-2 re-project finds a
-// terminal already logged and returns without blocking.
 func ibpWriteResolved(t *testing.T, dir, chosenOption string) {
 	t.Helper()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
@@ -82,9 +52,6 @@ func TestDecisionsWait_SuccessfulWaitPrintsNoConnectionError(t *testing.T) {
 	if strings.TrimSpace(stdout) != "ship" {
 		t.Errorf("decisions wait printed stdout %q, want the chosen option %q", stdout, "ship")
 	}
-	// The assertion this file exists for. Kept as an emptiness check rather than
-	// a match on the old wording: any stderr output on a successful wait is the
-	// defect, whatever it happens to say.
 	if stderr != "" {
 		t.Errorf("a SUCCESSFUL decisions wait printed to stderr, which reads as a failed wait to the agent watching it: %q", stderr)
 	}
@@ -112,8 +79,6 @@ func TestDecisionsArmSubscribe_CloseIsSynchronousAndIdempotent(t *testing.T) {
 	stdout, stderr := captureStd(t, func() {
 		closeConn()
 
-		// Already closed, with no waiting and no retry: a Read that reports the
-		// connection still open would mean the close was merely scheduled.
 		if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil && !errors.Is(err, net.ErrClosed) {
 			t.Errorf("SetReadDeadline after closeConn returned %v, want a closed connection", err)
 		}
@@ -122,7 +87,6 @@ func TestDecisionsArmSubscribe_CloseIsSynchronousAndIdempotent(t *testing.T) {
 			t.Errorf("read after closeConn returned %v, want net.ErrClosed — the close was not complete when closeConn returned", err)
 		}
 
-		// A caller that closes early and also defers must not panic or double-close.
 		closeConn()
 	})
 
@@ -148,7 +112,6 @@ func TestDecisionsArmSubscribe_SignalClosesAndCloseConnStillJoins(t *testing.T) 
 	stdout, stderr := captureStd(t, func() {
 		cancel() // the signal path
 
-		// A blocked reader unblocks because the goroutine closed the connection.
 		done := make(chan error, 1)
 		go func() {
 			buf := make([]byte, 1)

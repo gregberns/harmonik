@@ -6,9 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// budgetExhaustedPayloadFixture returns a fully-populated BudgetExhaustedPayload
-// with all required fields set to valid values. Tests mutate individual fields
-// to probe Valid().
 func budgetExhaustedPayloadFixture(t *testing.T) BudgetExhaustedPayload {
 	t.Helper()
 	return BudgetExhaustedPayload{
@@ -19,8 +16,6 @@ func budgetExhaustedPayloadFixture(t *testing.T) BudgetExhaustedPayload {
 	}
 }
 
-// --- AllValid ---
-
 func TestBudgetExhaustedPayloadValid_AllValid(t *testing.T) {
 	t.Parallel()
 
@@ -29,8 +24,6 @@ func TestBudgetExhaustedPayloadValid_AllValid(t *testing.T) {
 		t.Error("Valid() = false for fully-populated payload, want true")
 	}
 }
-
-// --- RunID ---
 
 func TestBudgetExhaustedPayloadValid_ZeroRunID(t *testing.T) {
 	t.Parallel()
@@ -42,8 +35,6 @@ func TestBudgetExhaustedPayloadValid_ZeroRunID(t *testing.T) {
 	}
 }
 
-// --- WorkflowID ---
-
 func TestBudgetExhaustedPayloadValid_ZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
@@ -54,12 +45,9 @@ func TestBudgetExhaustedPayloadValid_ZeroWorkflowID(t *testing.T) {
 	}
 }
 
-// --- BudgetSeconds ---
-
 func TestBudgetExhaustedPayloadValid_ZeroBudgetSeconds(t *testing.T) {
 	t.Parallel()
 
-	// Zero is allowed (non-negative).
 	p := budgetExhaustedPayloadFixture(t)
 	p.BudgetSeconds = 0
 	if !p.Valid() {
@@ -77,12 +65,9 @@ func TestBudgetExhaustedPayloadValid_NegativeBudgetSeconds(t *testing.T) {
 	}
 }
 
-// --- ElapsedSeconds ---
-
 func TestBudgetExhaustedPayloadValid_ZeroElapsedSeconds(t *testing.T) {
 	t.Parallel()
 
-	// Zero is allowed (non-negative).
 	p := budgetExhaustedPayloadFixture(t)
 	p.ElapsedSeconds = 0
 	if !p.Valid() {
@@ -100,13 +85,9 @@ func TestBudgetExhaustedPayloadValid_NegativeElapsedSeconds(t *testing.T) {
 	}
 }
 
-// --- ElapsedSeconds may exceed BudgetSeconds ---
-
 func TestBudgetExhaustedPayloadValid_ElapsedExceedsBudget(t *testing.T) {
 	t.Parallel()
 
-	// elapsed > budget is the normal exhaustion case; Valid() does not
-	// enforce a budget <= elapsed ordering constraint.
 	p := budgetExhaustedPayloadFixture(t)
 	p.BudgetSeconds = 100
 	p.ElapsedSeconds = 200

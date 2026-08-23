@@ -7,9 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// subwfEnteredFixture returns a fully-populated SubWorkflowEnteredPayload with
-// all required fields set to valid non-zero values.
-// Used as the base for structural tests (hk-b3f.48).
 func subwfEnteredFixture(t *testing.T) SubWorkflowEnteredPayload {
 	t.Helper()
 	return SubWorkflowEnteredPayload{
@@ -142,7 +139,6 @@ func TestSubWorkflowEnteredPayload_CorrelationFields(t *testing.T) {
 
 	p := subwfEnteredFixture(t)
 
-	// EM-036: "Both events correlate via run_id and the parent namespaced node_id"
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		t.Error("RunID is zero: run_id correlation field cannot be the zero UUID (EM-036)")
 	}

@@ -10,13 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// project_hash_cmd_test.go — unit tests for `harmonik project-hash` (PL-031).
-//
-// Spec ref: specs/process-lifecycle.md §4.2 PL-031.
-// Bead ref: hk-dmw.
-
-// captureProjectHash calls runProjectHashSubcommand and captures its stdout.
-// It redirects os.Stdout to a pipe so the function's fmt.Println is captured.
 func captureProjectHashOutput(t *testing.T, args []string) (stdout string, exitCode int) {
 	t.Helper()
 	old := os.Stdout
@@ -44,7 +37,6 @@ func captureProjectHashOutput(t *testing.T, args []string) (stdout string, exitC
 }
 
 func TestRunProjectHashSubcommand_DefaultDir(t *testing.T) {
-	// Default (no --project): uses current working directory.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
@@ -87,7 +79,6 @@ func TestRunProjectHashSubcommand_ExplicitDir(t *testing.T) {
 }
 
 func TestRunProjectHashSubcommand_ExplicitDirEquals(t *testing.T) {
-	// --project=DIR form (equals-separated).
 	dir := t.TempDir()
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -106,7 +97,6 @@ func TestRunProjectHashSubcommand_ExplicitDirEquals(t *testing.T) {
 }
 
 func TestRunProjectHashSubcommand_NonexistentDir(t *testing.T) {
-	// Error path: nonexistent directory → exit non-zero, no stdout.
 	out, code := captureProjectHashOutput(t, []string{"--project", "/nonexistent-harmonik-test-dir-12345"})
 	if code == 0 {
 		t.Fatal("exit code = 0, want non-zero for nonexistent directory")
@@ -117,7 +107,6 @@ func TestRunProjectHashSubcommand_NonexistentDir(t *testing.T) {
 }
 
 func TestRunProjectHashSubcommand_OutputFormat(t *testing.T) {
-	// Output must be exactly 12 lowercase hex chars + newline.
 	dir := t.TempDir()
 	out, code := captureProjectHashOutput(t, []string{"--project", dir})
 	if code != 0 {
@@ -138,7 +127,6 @@ func TestRunProjectHashSubcommand_OutputFormat(t *testing.T) {
 }
 
 func TestRunProjectHashSubcommand_HelpExitsZero(t *testing.T) {
-	// --help exits 0. Capture stdout to suppress output in test log.
 	old := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {

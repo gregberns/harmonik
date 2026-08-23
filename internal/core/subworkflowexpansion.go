@@ -114,8 +114,6 @@ func (e SubWorkflowExpansion) Valid() bool {
 	return e.Pin.Valid()
 }
 
-// b3f43nodeIDInExpandedNodes reports whether id appears as the NodeID of any
-// node in nodes.
 func b3f43nodeIDInExpandedNodes(id NodeID, nodes []Node) bool {
 	for i := range nodes {
 		if nodes[i].NodeID == id {

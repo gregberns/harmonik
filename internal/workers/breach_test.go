@@ -8,16 +8,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// base is a fixed wall-clock anchor; all sample times are offsets from it so the
-// machine's dwell math is exact and deterministic.
 var base = time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 
 func at(seconds int) time.Time { return base.Add(time.Duration(seconds) * time.Second) }
 
-// --- sample builders: each isolates ONE signal so a test exercises it alone. ---
-
-// cpuRep builds a sample with the given load5/ncpu ratio (ncpu=8), all other
-// signals well OK (plenty of free memory, no swap).
 func cpuRep(ratio float64) WorkerReportPayload {
 	const ncpu = 8
 	return WorkerReportPayload{
@@ -29,7 +23,6 @@ func cpuRep(ratio float64) WorkerReportPayload {
 	}
 }
 
-// memRep builds a sample with the given free fraction, cpu/swap OK.
 func memRep(freeFrac float64) WorkerReportPayload {
 	const total = 16000
 	return WorkerReportPayload{
@@ -41,7 +34,6 @@ func memRep(freeFrac float64) WorkerReportPayload {
 	}
 }
 
-// swapRep builds a sample with the given swap MB, cpu/memory OK.
 func swapRep(swapMB int64) WorkerReportPayload {
 	return WorkerReportPayload{
 		NCPU:       8,
@@ -52,8 +44,6 @@ func swapRep(swapMB int64) WorkerReportPayload {
 	}
 }
 
-// feed drives a sequence of (sample, timeSeconds) through the detector and
-// returns every event produced, in order.
 func feed(d *breachDetector, steps []struct {
 	rep WorkerReportPayload
 	t   int
@@ -65,10 +55,6 @@ func feed(d *breachDetector, steps []struct {
 	}
 	return all
 }
-
-// ---------------------------------------------------------------------------
-// PB1 — JSON round-trip + registration.
-// ---------------------------------------------------------------------------
 
 func TestResourceBreachPayload_JSONRoundTrip(t *testing.T) {
 	want := ResourceBreachPayload{
@@ -86,7 +72,6 @@ func TestResourceBreachPayload_JSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	// Field names are the JSON-tag contract PB3/operators rely on.
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("unmarshal to map: %v", err)
@@ -110,8 +95,6 @@ func TestResourceBreach_EventTypeRegistered(t *testing.T) {
 		t.Fatalf("EventTypeResourceBreach = %q, want resource_breach", core.EventTypeResourceBreach)
 	}
 	ev := core.Event{Type: core.EventTypeResourceBreach}
-	// A registered type decodes; an unregistered one errors. Encode a payload and
-	// confirm DecodePayload yields the right concrete type.
 	p := ResourceBreachPayload{WorkerName: "w", Kind: "breach", Signal: "swap"}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -127,11 +110,6 @@ func TestResourceBreach_EventTypeRegistered(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// PB2 — the state machine.
-// ---------------------------------------------------------------------------
-
-// dwell consts mirror the defaults so the tests read clearly.
 const (
 	bdwell = 20 // DefaultBreachDwell seconds
 	cdwell = 15 // DefaultClearDwell seconds
@@ -139,7 +117,6 @@ const (
 
 func TestObserve_SubDwellSpike_NoEvent(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// Over enter at t=0, back under enter at t=10 (< 20s breach dwell).
 	evs := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -192,7 +169,6 @@ func TestObserve_SustainedBreach_OneEvent(t *testing.T) {
 
 func TestObserve_HysteresisBand_NoReFireNoClear(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// Drive to BREACHED, then oscillate strictly inside (exit, enter) = (0.70, 0.85).
 	evs := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -233,8 +209,6 @@ func TestObserve_SustainedClear_OneEvent_WithEpisodeLength(t *testing.T) {
 	if clearEvent.Threshold != DefaultCPUExit {
 		t.Errorf("clear threshold = %v, want %v", clearEvent.Threshold, DefaultCPUExit)
 	}
-	// Episode = StartedAt (t=0, the breach onset reported in StartedAt) → clear-fire
-	// (t=115) = 115s. BreachedForSeconds is kept self-consistent with StartedAt.
 	if clearEvent.BreachedForSeconds != 115 {
 		t.Errorf("BreachedForSeconds = %d, want 115", clearEvent.BreachedForSeconds)
 	}
@@ -261,7 +235,6 @@ func TestObserve_ClearingInterrupted_StaysBreached(t *testing.T) {
 	if len(evs) != 1 || evs[0].Kind != "breach" {
 		t.Fatalf("interrupted clearing must yield only the breach, got %d: %+v", len(evs), evs)
 	}
-	// Confirm a fresh sustained clear from here still works (episode start preserved).
 	more := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -279,8 +252,6 @@ func TestObserve_ClearingInterrupted_StaysBreached(t *testing.T) {
 
 func TestObserve_ArmingDropsUnderEnter_Disarms(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// Over enter, then drop under enter (still above exit, in band) before dwell —
-	// ARMING must disarm silently because the value is no longer over enter.
 	evs := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -296,7 +267,6 @@ func TestObserve_ArmingDropsUnderEnter_Disarms(t *testing.T) {
 
 func TestObserve_SignalsIndependent_SwapBreachedCPUOK(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// Swap breaches; cpu/memory stay OK throughout. Only a swap breach should fire.
 	evs := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -317,7 +287,6 @@ func TestObserve_SignalsIndependent_SwapBreachedCPUOK(t *testing.T) {
 
 func TestObserve_MemorySignal_LowFreeFractionBreaches(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// Free fraction 0.05 < 0.08 enter → breach; memory is the inverted-direction signal.
 	evs := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -331,7 +300,6 @@ func TestObserve_MemorySignal_LowFreeFractionBreaches(t *testing.T) {
 	if evs[0].Threshold != DefaultMemEnter {
 		t.Errorf("threshold = %v, want %v", evs[0].Threshold, DefaultMemEnter)
 	}
-	// Now recover: free fraction 0.20 > 0.15 exit, sustained.
 	more := feed(d, []struct {
 		rep WorkerReportPayload
 		t   int
@@ -346,7 +314,6 @@ func TestObserve_MemorySignal_LowFreeFractionBreaches(t *testing.T) {
 
 func TestObserve_MultipleSignalsSameSample(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// A sample that is simultaneously over enter on cpu AND swap.
 	hot := WorkerReportPayload{
 		NCPU: 8, Load5: 0.95 * 8, // cpu 0.95 over
 		MemTotalMB: 16000, MemFreeMB: 8000, // mem OK
@@ -362,7 +329,6 @@ func TestObserve_MultipleSignalsSameSample(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("want cpu + swap breach in same maturing sample, got %d: %+v", len(evs), evs)
 	}
-	// Stable order: cpu before swap.
 	if evs[0].Signal != "cpu" || evs[1].Signal != "swap" {
 		t.Errorf("signal order = %q,%q want cpu,swap", evs[0].Signal, evs[1].Signal)
 	}
@@ -381,14 +347,12 @@ func TestReset_MidBreach_EmitsClear(t *testing.T) {
 	if len(evs) != 1 || evs[0].Kind != "clear" || evs[0].Signal != "cpu" {
 		t.Fatalf("Reset mid-breach must emit one cpu clear, got %+v", evs)
 	}
-	// Episode = StartedAt (t=0) → reset (t=60) = 60s, self-consistent with StartedAt.
 	if evs[0].BreachedForSeconds != 60 {
 		t.Errorf("BreachedForSeconds = %d, want 60", evs[0].BreachedForSeconds)
 	}
 	if evs[0].StartedAt != at(0).Format(time.RFC3339) {
 		t.Errorf("StartedAt = %q, want %q", evs[0].StartedAt, at(0).Format(time.RFC3339))
 	}
-	// After reset the machine is OK: a fresh under-exit sample produces nothing.
 	post := d.Observe(cpuRep(0.10), at(70))
 	if len(post) != 0 {
 		t.Fatalf("post-reset OK machine must be quiet, got %+v", post)
@@ -422,8 +386,6 @@ func TestReset_DuringClearing_EmitsClear(t *testing.T) {
 
 func TestObserve_GuardsNoPanicNoFalseFire(t *testing.T) {
 	d := NewBreachDetector("w", BreachConfig{})
-	// NCPU<=0 and MemTotalMB<=0: cpu and memory signals must be inert; swap still
-	// reads normally. Drive a "would-be hot" cpu/mem sample with the guards tripped.
 	bad := WorkerReportPayload{
 		NCPU:       0,  // cpu guard
 		Load5:      99, // would be enormous if divided
@@ -445,7 +407,6 @@ func TestObserve_GuardsNoPanicNoFalseFire(t *testing.T) {
 }
 
 func TestObserve_CustomConfigOverridesDefaults(t *testing.T) {
-	// A tighter swap config: enter 100, exit 20, breach dwell 5s.
 	d := NewBreachDetector("w", BreachConfig{
 		BreachDwell: 5 * time.Second,
 		SwapEnter:   100,

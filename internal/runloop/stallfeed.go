@@ -1,36 +1,11 @@
 package runloop
 
-// stallfeed.go — the delivery seam between the daemon's stall detector and the
-// per-run dispatch machine.
-//
-// internal/runexec stepDispatchWorking turns EvNoChangeTimeout and
-// EvHeartbeatStale into ActKillAgent. The vocabulary comment says the frozen
-// commit watchdog is SHELL-FED rather than reactor-timed, and this is the feed
-// it names: the detector runs once for the whole daemon, on its own goroutine,
-// and needs to reach ONE run's machine.
-//
-// The feed is a registry of per-run channels rather than a callback, because
-// the machine is single-goroutine-owned. A callback would step it from the
-// detector's goroutine while the run's own shell may still be stepping it. A
-// channel hands the event to the run's watch goroutine, which is the only
-// writer that machine ever has.
-//
-// Post never blocks. A run whose watch has already ended, or whose buffer is
-// full because it has been told to die once already, must not hold up the scan
-// that serves every other run.
-//
-// Bead: hk-hsp9e.
-
 import (
 	"sync"
 
 	"github.com/gregberns/harmonik/internal/runexec"
 )
 
-// stallFeedDepth is the per-run buffer. Two is the number of stall signatures
-// that can fire for one run in a single detector pass (a run can be both silent
-// and over its age ceiling), so a full buffer means the run has already been
-// told everything a kill needs.
 const stallFeedDepth = 2
 
 // StallFeed routes stall events from the daemon's detector to the dispatch

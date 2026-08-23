@@ -29,15 +29,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── fixtures ────────────────────────────────────────────────────────────────
-
-// gateDenyContFixtureRunID returns a fresh non-nil RunID backed by a UUIDv7.
 func gateDenyContFixtureRunID(t *testing.T) RunID {
 	t.Helper()
 	return RunID(uuid.Must(uuid.NewV7()))
 }
 
-// gateDenyContFixtureEdge returns a minimal valid Edge usable as a DeniedEdge.
 func gateDenyContFixtureEdge(t *testing.T) Edge {
 	t.Helper()
 	return Edge{
@@ -48,7 +44,6 @@ func gateDenyContFixtureEdge(t *testing.T) Edge {
 	}
 }
 
-// gateDenyContFixtureRecord returns a fully-populated, valid GatePendingRecord.
 func gateDenyContFixtureRecord(t *testing.T) GatePendingRecord {
 	t.Helper()
 	return GatePendingRecord{
@@ -61,8 +56,6 @@ func gateDenyContFixtureRecord(t *testing.T) GatePendingRecord {
 		EnteredAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 }
-
-// ── GatePendingRecord validity sensors ──────────────────────────────────────
 
 // TestGatePendingEM042a_ValidRecordAccepted verifies that a fully-populated
 // GatePendingRecord reports Valid() == true.
@@ -158,8 +151,6 @@ func TestGatePendingEM042a_EmptyEnteredAtRejected(t *testing.T) {
 		t.Error("EM-042a: GatePendingRecord with empty EnteredAt reported Valid()=true, want false")
 	}
 }
-
-// ── GateResolutionSignal sensors ─────────────────────────────────────────────
 
 // TestGateResolutionSignalEM042a_ThreeValuesValid verifies that all three
 // declared GateResolutionSignal constants report Valid() == true.
@@ -268,16 +259,12 @@ func TestGateResolutionSignalEM042a_UnmarshalTextRejectsUnknown(t *testing.T) {
 func TestGateResolutionSignalEM042a_TimeoutSignalImpliesStructuralFailure(t *testing.T) {
 	t.Parallel()
 
-	// The timeout signal is semantically distinct: it is the only signal that,
-	// when the gate still denies after re-evaluation, MUST escalate to a
-	// structural failure per §8.2.
 	if GateResolutionSignalTimeout == GateResolutionSignalContextChange {
 		t.Error("EM-042a: timeout and context-change signals must be distinct constants")
 	}
 	if GateResolutionSignalTimeout == GateResolutionSignalOperatorOverride {
 		t.Error("EM-042a: timeout and operator-override signals must be distinct constants")
 	}
-	// Verify the timeout signal is the normative string value declared by the spec.
 	if string(GateResolutionSignalTimeout) != "timeout" {
 		t.Errorf("EM-042a: GateResolutionSignalTimeout = %q, want %q",
 			GateResolutionSignalTimeout, "timeout")

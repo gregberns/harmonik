@@ -1,26 +1,5 @@
 package daemon
 
-// runplan_precedence_test.go — the ten run-plan decisions, written as tables.
-//
-// Each decision in workloop_runplan.go is a precedence walk, and a precedence
-// walk has a fixed set of shapes: the tier is absent, the tier holds exactly one
-// valid input, the tier holds exactly one INVALID input, or the tier holds more
-// than one input. The last two are where the walks disagree with each other —
-// some report a conflict and continue, one refuses the bead, and one is
-// deliberately silent because a second resolver reports the same conflict later.
-// A table per decision is the only way to see that a walk covers all four
-// shapes, and to see which ones emit.
-//
-// Every case asserts the EXACT event sequence, not just the resolved value.
-// Adding an event to a refusal path is as much a behaviour change as changing
-// what the path decides: operator tooling reads the stream.
-//
-// These are IN-PACKAGE (white-box) tests. resolveRunPlan is unexported and the
-// point of the seam is that it stays that way — a test seam that exported the
-// plan would let a caller resolve it twice.
-//
-// Helper prefix: runplan (implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"encoding/json"
@@ -40,13 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// runplanBus captures every emitted event so a case can assert the exact
-// sequence. resolveRunPlan runs on one goroutine, but the mutex costs nothing
-// and keeps the fake safe if that ever stops being true.
 type runplanBus struct {
 	mu      sync.Mutex
 	types   []core.EventType
@@ -65,7 +37,6 @@ func (b *runplanBus) EmitWithRunID(ctx context.Context, _ core.RunID, eventType 
 	return b.Emit(ctx, eventType, payload)
 }
 
-// seen returns the emitted event types in order.
 func (b *runplanBus) seen() []core.EventType {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -74,7 +45,6 @@ func (b *runplanBus) seen() []core.EventType {
 	return out
 }
 
-// firstPayload returns the payload of the first event of type want, or nil.
 func (b *runplanBus) firstPayload(want core.EventType) []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -86,7 +56,6 @@ func (b *runplanBus) firstPayload(want core.EventType) []byte {
 	return nil
 }
 
-// runplanHandle is a RunHandlePort that records the one write the plan makes.
 type runplanHandle struct {
 	provider    string
 	providerSet bool
@@ -103,14 +72,10 @@ func (h *runplanHandle) Aborted() bool                   { return false }
 func (h *runplanHandle) SetCapturedAgentOutput()         {}
 func (h *runplanHandle) CapturedAgentOutput() bool       { return false }
 
-// runplanRegistry hands out the one handle.
 type runplanRegistry struct{ h *runplanHandle }
 
 func (r runplanRegistry) Get(core.RunID) (runloop.RunHandlePort, bool) { return r.h, true }
 
-// runplanRepo initialises a git repository with one commit on main and returns
-// its path plus the commit SHA. Decisions 8 and 9 fork `git rev-parse`, so
-// every case needs a real repository — there is no fake for a branch tip.
 func runplanRepo(t *testing.T) (dir, headSHA string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -138,8 +103,6 @@ func runplanRepo(t *testing.T) (dir, headSHA string) {
 	return dir, run("rev-parse", "HEAD")
 }
 
-// runplanSideBranch creates the branch named runplanSideBranchName at HEAD and
-// returns its SHA. The cases that need a second branch all need the same one.
 func runplanSideBranch(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "branch", runplanSideBranchName)
@@ -156,11 +119,8 @@ func runplanSideBranch(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// runplanSideBranchName is the non-default branch the branching cases resolve
-// against.
 const runplanSideBranchName = "side"
 
-// runplanWriteFile writes rel under dir, creating parent directories.
 func runplanWriteFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, rel)
@@ -172,13 +132,10 @@ func runplanWriteFile(t *testing.T, dir, rel, content string) {
 	}
 }
 
-// runplanBeadBody wraps yaml in the ## Branching section shape BI-009b defines.
 func runplanBeadBody(yaml string) string {
 	return "Some description.\n\n## Branching\n\n```yaml\n" + yaml + "\n```\n"
 }
 
-// runplanEnv builds the minimum RunEnv a plan needs: a project dir that is a
-// git repository, a target branch, a run id, and the bead.
 func runplanEnv(projectDir string, bead core.BeadRecord) runloop.RunEnv {
 	return runloop.RunEnv{
 		ProjectDir:   projectDir,
@@ -188,7 +145,6 @@ func runplanEnv(projectDir string, bead core.BeadRecord) runloop.RunEnv {
 	}
 }
 
-// runplanResolve resolves the plan and returns it with the bus that watched it.
 func runplanResolve(t *testing.T, env runloop.RunEnv) (runPlan, *runplanBus, *runplanHandle) {
 	t.Helper()
 	bus := &runplanBus{}
@@ -201,7 +157,6 @@ func runplanResolve(t *testing.T, env runloop.RunEnv) (runPlan, *runplanBus, *ru
 	return plan, bus, handle
 }
 
-// runplanWantEvents fails when got is not exactly want, in order.
 func runplanWantEvents(t *testing.T, got, want []core.EventType) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -214,7 +169,6 @@ func runplanWantEvents(t *testing.T, got, want []core.EventType) {
 	}
 }
 
-// runplanBead builds a bead record with labels and an optional body.
 func runplanBead(labels []string, body string) core.BeadRecord {
 	return core.BeadRecord{
 		BeadID:      core.BeadID("hk-runplan-probe"),
@@ -225,10 +179,6 @@ func runplanBead(labels []string, body string) core.BeadRecord {
 		Description: body,
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision 1 — workflow mode (EM-012a)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 	t.Parallel()
@@ -316,10 +266,6 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision 2 — workflow ref (EM-012a)
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestRunPlan_WorkflowRefPrecedence(t *testing.T) {
 	t.Parallel()
 	repo, _ := runplanRepo(t)
@@ -352,17 +298,10 @@ func TestRunPlan_WorkflowRefPrecedence(t *testing.T) {
 			if plan.WorkflowRef != tc.wantRef {
 				t.Errorf("WorkflowRef = %q; want %q", plan.WorkflowRef, tc.wantRef)
 			}
-			// The ref walk reports NOTHING, in every shape — including the
-			// more-than-one case, where every other walk emits a conflict. That
-			// silence is the behaviour, so assert it.
 			runplanWantEvents(t, bus.seen(), nil)
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision 3 — harness agent type
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestRunPlan_HarnessAgentTypePrecedence(t *testing.T) {
 	t.Parallel()
@@ -408,9 +347,6 @@ func TestRunPlan_HarnessAgentTypePrecedence(t *testing.T) {
 			if plan.AgentType != tc.wantType {
 				t.Errorf("AgentType = %q; want %q", plan.AgentType, tc.wantType)
 			}
-			// The harness walk is QUIET on purpose: the launch path resolves the
-			// same tuple and emits harness_selected and any conflict there.
-			// Emitting here would double every one of them.
 			for _, got := range bus.seen() {
 				if got == core.EventTypeHarnessSelected {
 					t.Errorf("plan emitted %s; the quiet walk must emit nothing — the launch path owns that event", got)
@@ -420,12 +356,7 @@ func TestRunPlan_HarnessAgentTypePrecedence(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision 4 — model and effort (EM-012b)
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestRunPlan_ModelAndEffortPrecedence(t *testing.T) {
-	// NOT parallel: the tier-2.5 cases set process environment variables.
 	repo, _ := runplanRepo(t)
 
 	for _, tc := range []struct {
@@ -546,12 +477,6 @@ func TestRunPlan_ModelDefaultFollowsTheResolvedHarness(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision 5 — Pi provider profile
-// ─────────────────────────────────────────────────────────────────────────────
-
-// runplanPiConfig is a project config with one named Pi profile and a
-// harness-global provider default.
 func runplanPiConfig() projectconfig.ProjectConfig {
 	return projectconfig.ProjectConfig{
 		Harnesses: projectconfig.HarnessesConfig{
@@ -657,7 +582,6 @@ func TestRunPlan_PiProfilePrecedence(t *testing.T) {
 				t.Fatalf("Verdict = %q; want %q (refusal %+v)", plan.Verdict, tc.wantVerdict, plan.Refusal)
 			}
 			if tc.wantVerdict != runPlanReady {
-				// A refusal names the profile and carries the typed error.
 				var unknown *PiProfileUnknownError
 				if !errors.As(plan.Refusal.Err, &unknown) {
 					t.Fatalf("Refusal.Err = %v; want a *PiProfileUnknownError", plan.Refusal.Err)
@@ -665,7 +589,6 @@ func TestRunPlan_PiProfilePrecedence(t *testing.T) {
 				if !strings.Contains(plan.Refusal.ReopenReason, "absent") {
 					t.Errorf("ReopenReason = %q; want it to name the unknown profile", plan.Refusal.ReopenReason)
 				}
-				// A refusal must not stamp a provider on the run handle.
 				if handle.providerSet {
 					t.Errorf("SetResolvedProvider was called on a refused run")
 				}
@@ -699,10 +622,6 @@ func TestRunPlan_PiProfilePrecedence(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Decisions 6 and 7 — active repo and effective protect-branches
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestRunPlan_ActiveRepoAndProtectBranches(t *testing.T) {
 	t.Parallel()
@@ -746,7 +665,6 @@ func TestRunPlan_ActiveRepoAndProtectBranches(t *testing.T) {
 		repo, _ := runplanRepo(t)
 		other, _ := runplanRepo(t)
 		env := runplanEnv(repo, runplanBead(nil, runplanBeadBody("target_repo: "+other)))
-		// AllowedRepos deliberately left empty: an empty safelist allows nothing.
 
 		plan, bus, _ := runplanResolve(t, env)
 
@@ -760,7 +678,6 @@ func TestRunPlan_ActiveRepoAndProtectBranches(t *testing.T) {
 		if !strings.Contains(plan.Refusal.ReopenReason, other) {
 			t.Errorf("ReopenReason = %q; want it to name the refused repo %q", plan.Refusal.ReopenReason, other)
 		}
-		// A refusal adds nothing to the stream.
 		runplanWantEvents(t, bus.seen(), nil)
 	})
 
@@ -780,17 +697,11 @@ func TestRunPlan_ActiveRepoAndProtectBranches(t *testing.T) {
 		if plan.ActiveRepo != other {
 			t.Errorf("ActiveRepo = %q; want %q", plan.ActiveRepo, other)
 		}
-		// The daemon's protect list names harmonik's branches and says nothing
-		// about the target repo's.
 		if plan.MergeProtectBranches != nil {
 			t.Errorf("MergeProtectBranches = %v; want nil on a cross-repo run", plan.MergeProtectBranches)
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Decisions 8, 9 and 10 — parent commit, lands_on, merge target
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestRunPlan_BranchingPrecedence(t *testing.T) {
 	t.Parallel()
@@ -953,7 +864,6 @@ func TestRunPlan_BranchingPrecedence(t *testing.T) {
 	t.Run("a malformed ## Branching section is treated as absent, not fatal", func(t *testing.T) {
 		t.Parallel()
 		repo, head := runplanRepo(t)
-		// Section present, fenced block absent — a BI-009b parse error.
 		body := "Some description.\n\n## Branching\n\nstart_from: side\n"
 		plan, _, _ := runplanResolve(t, runplanEnv(repo, runplanBead(nil, body)))
 
@@ -1050,11 +960,6 @@ func TestRunPlan_BranchingPrecedence(t *testing.T) {
 		}
 	})
 
-	// The two branching answers now come from ONE resolution. Before the plan
-	// they came from two, and the second one's failure was survivable: lands_on
-	// stayed empty and the protect check was skipped. With one resolution there
-	// is no window in which the two can disagree, so a bead whose lands_on is
-	// protected can no longer slip past the gate by racing a config write.
 	t.Run("one resolution answers both questions from the same config", func(t *testing.T) {
 		t.Parallel()
 		repo, _ := runplanRepo(t)
@@ -1078,10 +983,6 @@ func TestRunPlan_BranchingPrecedence(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Placement intent
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunPlan_CarriesPlacementIntentWithoutPlacing pins the boundary: the plan
 // reports where the operator asked the run to go and does not act on it.
 // Selecting and reserving a worker happen together inside one mutex-held
@@ -1094,8 +995,6 @@ func TestRunPlan_CarriesPlacementIntentWithoutPlacing(t *testing.T) {
 	env.ItemLocalOnly = true
 	env.ItemWorkerTarget = "box-b"
 
-	// Handles carries NO worker registry. If the plan tried to select a worker
-	// it would have to reach through a nil one.
 	plan, _, _ := runplanResolve(t, env)
 
 	if plan.Verdict != runPlanReady {
@@ -1108,10 +1007,6 @@ func TestRunPlan_CarriesPlacementIntentWithoutPlacing(t *testing.T) {
 		t.Errorf("WorkerTarget = %q; want \"box-b\"", plan.WorkerTarget)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Refusal reports
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunPlan_RefusalReportsAreExact pins the two strings every refusal owes an
 // operator: the stderr line and the reopen reason. The wording is what the
@@ -1168,9 +1063,6 @@ func TestRunPlan_RefusalReportsAreExact(t *testing.T) {
 
 		plan, _, _ := runplanResolve(t, env)
 
-		// This refusal keeps the wrapper that names resolveParentCommit. The
-		// operator's reopen reason has carried that word since before the plan,
-		// so the collapse must not quietly rename it.
 		gotErr := plan.Refusal.Err.Error()
 		wantPrefix := "daemon: resolveParentCommit for bead " + beadID + ": daemon: start_from ref \"no-such-ref\" not found"
 		if !strings.HasPrefix(gotErr, wantPrefix) {

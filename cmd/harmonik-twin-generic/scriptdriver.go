@@ -71,31 +71,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// twinScriptFixture — per-bead helper prefix for test helpers in this file.
-// (Actual test helpers are in scriptdriver_test.go; the prefix is declared here
-// as a godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
-
-// ────────────────────────────────────────────────────────────────────────────
-// Schema types (de-facto contract; see package godoc for normative reference)
-// ────────────────────────────────────────────────────────────────────────────
-
-// heartbeatMode is the enum controlling how heartbeats are driven.
-//
-// Values: wall_clock (real-time T/2 timer) or scripted (relative timestamps
-// from the script).  The default is wall_clock per §4.8.HC-036a.
-//
-// Cite: specs/handler-contract.md §4.6.HC-026a (carve-out), §4.8.HC-036a (schema).
 type heartbeatMode string
 
 const (
-	// heartbeatModeWallClock uses the real-time T/2 wall-clock timer for
-	// heartbeat emission (HC-026a default; used by real handlers and resilience
-	// tests per §10.2 HC-026 obligations).
 	heartbeatModeWallClock heartbeatMode = "wall_clock"
 
-	// heartbeatModeScripted drives heartbeats from relative_timestamp_ms values
-	// declared in the script.  MUST be declared on the script (HC-026a
-	// scripted-mode carve-out).  Limited to the canonical twin binary.
 	heartbeatModeScripted heartbeatMode = "scripted"
 )
 
@@ -145,10 +125,6 @@ type ScriptFile struct {
 	Messages []ScriptMessage `yaml:"messages"`
 }
 
-// loadScriptFile reads and parses the YAML script file at path.
-//
-// Returns an error if the file cannot be read, the YAML is malformed, or
-// heartbeat_mode is an unrecognised value.
 func loadScriptFile(path string) (*ScriptFile, error) {
 	//nolint:gosec // G304: path is operator-supplied via --script-path flag; provenance is the scenario harness
 	raw, err := os.ReadFile(path)
@@ -159,7 +135,6 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 	if err := yaml.Unmarshal(raw, &sf); err != nil {
 		return nil, fmt.Errorf("loadScriptFile: parse %q: %w", path, err)
 	}
-	// Apply default: absent or empty heartbeat_mode means wall_clock.
 	if sf.HeartbeatMode == "" {
 		sf.HeartbeatMode = heartbeatModeWallClock
 	}
@@ -167,10 +142,6 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 		return nil, fmt.Errorf("loadScriptFile: %q: unknown heartbeat_mode %q (want %q or %q)",
 			path, sf.HeartbeatMode, heartbeatModeWallClock, heartbeatModeScripted)
 	}
-	// Validate each message: type is required and MUST be non-empty per HC-036a.
-	// The watcher validates message types on receipt; the driver rejects scripts
-	// with missing or empty type fields at load time so failures are fast and
-	// clear (spec: §4.8.HC-036a; test obligation: §10.2 HC-035..HC-038).
 	for i, msg := range sf.Messages {
 		if msg.Type == "" {
 			return nil, fmt.Errorf("loadScriptFile: %q: message %d has missing or empty type field (HC-036a)", path, i)
@@ -179,26 +150,10 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 	return &sf, nil
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Script-driver loop
-// ────────────────────────────────────────────────────────────────────────────
-
-// runScript drives the wireEmitter through the ordered message list in sf.
-//
-// For each ScriptMessage:
-//   - If sf.HeartbeatMode is "scripted" and RelativeTimestampMs > 0, the
-//     driver waits that many milliseconds (or until ctx is cancelled) before
-//     emitting.  This implements the HC-026a scripted-mode carve-out.
-//   - If sf.HeartbeatMode is "wall_clock", relative timestamps are ignored
-//     and messages are emitted immediately in declaration order.
-//
-// runScript returns the first emit error encountered, or ctx.Err() if the
-// context is cancelled before the stream completes.
 func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile) error {
 	scripted := sf.HeartbeatMode == heartbeatModeScripted
 
 	for i, msg := range sf.Messages {
-		// Respect relative delay in scripted mode only.
 		if scripted && msg.RelativeTimestampMs > 0 {
 			delay := time.Duration(msg.RelativeTimestampMs) * time.Millisecond
 			select {
@@ -207,7 +162,6 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile) error {
 				return ctx.Err()
 			}
 		} else {
-			// In wall_clock mode (or zero delay) still honour cancellation.
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -222,14 +176,7 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile) error {
 	return nil
 }
 
-// emitScriptMessage serialises one ScriptMessage as a NDJSON-framed JSON object.
-//
-// The emitted object always contains "type"; all fields from Payload are merged
-// in alongside it.  The "type" key in Payload is silently overwritten by msg.Type
-// to prevent scripts from spoofing the type field.
 func emitScriptMessage(e *wireEmitter, msg ScriptMessage) error {
-	// Build the output map: start with the declared payload, then set "type"
-	// last so that a script cannot override it from the payload map.
 	out := make(map[string]any, len(msg.Payload)+1)
 	for k, v := range msg.Payload {
 		out[k] = v

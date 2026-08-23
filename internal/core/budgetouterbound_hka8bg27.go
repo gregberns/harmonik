@@ -1,19 +1,5 @@
 package core
 
-// budgetouterbound_hka8bg27.go — CP-027: Reconciliation wall-clock budget is an outer bound.
-//
-// Implements the composition rule from specs/control-points.md §4.5.CP-027:
-//
-//	When a reconciliation wall-clock Budget is active for a run, inner
-//	per-role or per-state Budgets MUST NOT extend the effective wall-clock
-//	beyond the outer bound. On any conflict between an inner Budget limit
-//	and the outer wall-clock Budget remaining, the outer Budget wins
-//	(a dispatch admissible under the inner Budget but not the outer's
-//	remaining allowance is DENIED with failure class budget_exhausted per
-//	[execution-model.md §8.5]).
-//
-// Refs: hk-a8bg.27
-
 import (
 	"fmt"
 

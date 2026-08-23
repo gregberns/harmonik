@@ -143,44 +143,25 @@ func TeardownFixture(ctx context.Context, params TeardownParams) (TeardownResult
 		}
 	}
 
-	// Sub-step (a): terminate still-live handler subprocesses per HC-018.
-	// Each HandlerCancel is called independently; errors accumulate without
-	// halting the remaining cancel calls.
 	for i, cancel := range params.HandlerCancels {
 		if cancel != nil {
 			accumulate(fmt.Sprintf("(a) handler-cancel[%d]", i), cancel(ctx))
 		}
 	}
 
-	// Sub-step (b): release the per-scenario worktree lease per WM-013b.
-	// workspace.ReleaseLeaseLock treats ENOENT as success (idempotent release:
-	// a second release call against an already-released workspace succeeds).
 	if params.WorkspacePath != "" {
 		lockPath := workspace.LeaseLockPath(params.WorkspacePath)
 		accumulate("(b) lease-release", workspace.ReleaseLeaseLock(lockPath))
 	}
 
-	// Sub-step (c): fsync then close the event-log file.
-	// ENOENT is not an error — the daemon may not have created the file (scenario
-	// failed before the daemon started writing events) or a prior teardown pass
-	// already handled it. Both cases are idempotent by absence.
 	if params.EventLogPath != "" {
 		accumulate("(c) event-log-fsync-close", fsyncCloseEventLog(params.EventLogPath))
 	}
 
-	// Sub-step (d): stop the per-scenario daemon via the daemon stop RPC per
-	// PL-003a. In the in-process harness, StopDaemon wraps the CancelOnQueueExit
-	// cancel function from DriveOrchestration. ctx is forwarded to bound the
-	// graceful drain per [operator-nfr.md §4.7].
 	if params.StopDaemon != nil {
 		accumulate("(d) stop-daemon", params.StopDaemon(ctx))
 	}
 
-	// Sub-step (e): record the workspace_snapshot_path per SH-015a.
-	// This is a recording obligation (pure path formula), NOT a termination
-	// action. The worktree files and refs are unmodified by sub-steps (a)-(d);
-	// any merge-back to integration occurred during orchestration (WM-019),
-	// BEFORE teardown.
 	result := TeardownResult{
 		WorkspaceSnapshotPath: WorkspaceSnapshotPath(params.ScenarioName),
 	}
@@ -191,14 +172,6 @@ func TeardownFixture(ctx context.Context, params TeardownParams) (TeardownResult
 	return result, &TeardownError{Errs: errs}
 }
 
-// fsyncCloseEventLog opens the event-log file at path, calls Sync to flush
-// pending writes to durable storage, then closes the file descriptor.
-//
-// ENOENT is treated as a no-op (idempotent: the file was not created because
-// the scenario failed before the daemon started, or it was handled by a prior
-// teardown pass).
-//
-// Spec ref: specs/scenario-harness.md §4.4 SH-015(c).
 func fsyncCloseEventLog(path string) error {
 	//nolint:gosec // G304: path is derived from fixture root + known relative constants, not user input
 	f, err := os.OpenFile(path, os.O_RDONLY, 0)

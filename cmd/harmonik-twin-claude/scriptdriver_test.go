@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// Test helpers use the per-bead prefix declared in implementer-protocol.md:
-// twinScriptFixture (this bead: hk-ahvq.48.3).
-
-// twinScriptFixtureWriteFile writes content to script.yaml under t.TempDir()
-// and returns the absolute path.
 func twinScriptFixtureWriteFile(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -34,15 +29,12 @@ func twinScriptFixtureString(t *testing.T, m map[string]any, field string) strin
 	return value
 }
 
-// twinScriptFixtureDecodeAll splits buf into NDJSON lines and decodes all into
-// a []map[string]any.  It calls t.Fatalf on any JSON error.
 func twinScriptFixtureDecodeAll(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	raw := buf.String()
 	if raw == "" {
 		return nil
 	}
-	// Split on newline; last element is "" due to trailing \n.
 	parts := bytes.Split(bytes.TrimRight([]byte(raw), "\n"), []byte("\n"))
 	out := make([]map[string]any, 0, len(parts))
 	for i, part := range parts {
@@ -58,16 +50,11 @@ func twinScriptFixtureDecodeAll(t *testing.T, buf *bytes.Buffer) []map[string]an
 	return out
 }
 
-// twinScriptFixtureEmitter returns a wireEmitter writing to a fresh bytes.Buffer.
 func twinScriptFixtureEmitter(t *testing.T) (*wireEmitter, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	return newWireEmitter(&buf), &buf
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// heartbeatMode.Valid
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestHeartbeatModeValid verifies that Valid() accepts the two declared
 // constants and rejects unknown values.
@@ -89,10 +76,6 @@ func TestHeartbeatModeValid(t *testing.T) {
 		})
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// loadScriptFile
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestLoadScriptFileDefaults verifies that absent heartbeat_mode defaults to
 // "wall_clock" and an empty messages list is valid.
@@ -152,7 +135,6 @@ messages:
 // the §10.2 HC-036a obligation "rejection of missing or empty type in any
 // ScriptMessage".
 func TestLoadScriptFileMissingMessageType(t *testing.T) {
-	// A message with no type key at all (YAML omission → empty string in Go).
 	content := `
 messages:
   - payload:
@@ -294,10 +276,6 @@ messages:
 	}
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// emitScriptMessage
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestEmitScriptMessageTypeField verifies that "type" is always present and
 // equals the ScriptMessage.Type, even when Payload also contains a "type" key
 // (the driver must overwrite the payload's type).
@@ -352,10 +330,6 @@ func TestEmitScriptMessageNoPayload(t *testing.T) {
 	}
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// runScript — wall_clock mode
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestRunScriptWallClockIgnoresTimestamps verifies that wall_clock mode emits
 // all messages in order without honouring relative_timestamp_ms delays.
 func TestRunScriptWallClockIgnoresTimestamps(t *testing.T) {
@@ -378,7 +352,6 @@ func TestRunScriptWallClockIgnoresTimestamps(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 
-	// Must complete in well under 1 second — the 10s delay must not have fired.
 	if elapsed > time.Second {
 		t.Errorf("wall_clock mode took %v; expected < 1s (timestamp delays must be ignored)", elapsed)
 	}
@@ -407,10 +380,6 @@ func TestRunScriptEmptyMessages(t *testing.T) {
 		t.Errorf("expected empty buffer for empty message list, got %d bytes", buf.Len())
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// runScript — scripted mode
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestRunScriptScriptedModeZeroDelay verifies that zero-delay scripted messages
 // are emitted immediately (no measurable wall-clock delay).
@@ -548,7 +517,6 @@ func TestRunScriptDelayMsContextCancellation(t *testing.T) {
 func TestRunScriptContextCancellation(t *testing.T) {
 	e, _ := twinScriptFixtureEmitter(t)
 
-	// Use a 10-second scripted delay; cancel the context after 50ms.
 	sf := &ScriptFile{
 		HeartbeatMode: heartbeatModeScripted,
 		Messages: []ScriptMessage{
@@ -566,7 +534,6 @@ func TestRunScriptContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatal("runScript: expected error on context cancellation, got nil")
 	}
-	// Must return well before the 10s scripted delay elapses.
 	if elapsed > time.Second {
 		t.Errorf("runScript cancelled after %v; expected < 1s", elapsed)
 	}
@@ -577,8 +544,6 @@ func TestRunScriptContextCancellation(t *testing.T) {
 func TestRunScriptWallClockContextCancellation(t *testing.T) {
 	e, _ := twinScriptFixtureEmitter(t)
 
-	// Many messages; cancel after the first one is emitted by using a context
-	// that's already cancelled.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
@@ -595,10 +560,6 @@ func TestRunScriptWallClockContextCancellation(t *testing.T) {
 		t.Fatal("runScript: expected error on pre-cancelled context, got nil")
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// signal_interrupt step (hk-qawak)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestSignalInterruptEmitsAgentFailed verifies that the signal_interrupt step
 // emits agent_failed with the configured error_category and reason fields, and
@@ -649,7 +610,6 @@ func TestSignalInterruptMissingErrorCategory(t *testing.T) {
 		Type: signalInterruptStep,
 		Payload: map[string]any{
 			"reason": "sigint_simulation",
-			// error_category intentionally absent
 		},
 	}
 
@@ -676,7 +636,6 @@ func TestSignalInterruptMissingReason(t *testing.T) {
 		Type: signalInterruptStep,
 		Payload: map[string]any{
 			"error_category": "structural",
-			// reason intentionally absent
 		},
 	}
 

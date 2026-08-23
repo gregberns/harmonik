@@ -77,7 +77,6 @@ func LookupWorkspace(repoRoot, runID string, cfg WorktreeRootConfig) (WorkspaceR
 	case err == nil:
 		existsOnDisk = true
 	case os.IsNotExist(err):
-		// Not on disk — ExistsOnDisk stays false; not an error.
 	default:
 		return WorkspaceRef{}, fmt.Errorf("workspace: LookupWorkspace: Stat %q: %w", path, err)
 	}

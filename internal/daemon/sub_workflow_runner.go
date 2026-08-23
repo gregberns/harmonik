@@ -35,11 +35,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// newDotSubWorkflowRunner constructs a dotSubWorkflowRunner from the current
-// driveDotWorkflow call context. The parentGraph is the loaded dot.Graph for
-// the enclosing workflow; its Name (or version, or a stable placeholder) is
-// used as the "parent vertex" in the sub-workflow reference graph acyclicity
-// check (SW-003).
 func newDotSubWorkflowRunner(
 	env runloop.RunEnv,
 	ports runloop.RunPorts,
@@ -95,9 +90,6 @@ func newDotSubWorkflowRunner(
 	}
 }
 
-// parentGraphName returns a stable name for a dot.Graph for use as the parent
-// vertex in the acyclicity reference graph. Prefers graph.Name, falls back to
-// graph.Version, and finally uses a constant placeholder.
 func parentGraphName(g *dot.Graph) string {
 	if g == nil {
 		return "__root__"
@@ -111,10 +103,6 @@ func parentGraphName(g *dot.Graph) string {
 	return "__root__"
 }
 
-// dotSubWorkflowRunner is the concrete handler.SubWorkflowRunner for the DOT
-// cascade dispatch loop. It captures all per-dispatch context from the enclosing
-// driveDotWorkflow call so the Run method can dispatch expanded sub-workflow
-// nodes using the same infrastructure as the parent cascade.
 type dotSubWorkflowRunner struct {
 	env             runloop.RunEnv
 	ports           runloop.RunPorts
@@ -180,7 +168,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		}, nil
 	}
 
-	// ── Step 1: Three-tier graph resolution (SW-004) ──────────────────────────
 	subGraph, _, resolveErr := resolveSubWorkflowGraph(
 		string(spec.SubWorkflowRef),
 		r.env.ProjectDir,
@@ -194,12 +181,7 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		}, nil
 	}
 
-	// ── Step 2: Acyclicity check (SW-003 / EM-034b) ───────────────────────────
-	// Build the reference graph from the parent workflow's sub-workflow refs
-	// plus those in the resolved child graph. HasCycle() detects direct and
-	// transitive cycles (A→A, A→B→A, etc.).
 	if cycleErr := checkSubWorkflowAcyclicity(r.parentWorkflowName, string(spec.SubWorkflowRef), r.parentGraph, subGraph); cycleErr != nil {
-		// SW-003: NO sub_workflow_entered event; fail closed with structural.
 		fc := core.FailureClassStructural
 		return core.Outcome{
 			Status:       core.OutcomeStatusFail,
@@ -208,7 +190,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		}, nil
 	}
 
-	// ── Step 3: SW-010 — reject review-loop sub-workflows ─────────────────────
 	if strings.EqualFold(subGraph.WorkflowClass, "review-loop") {
 		fc := core.FailureClassStructural
 		return core.Outcome{
@@ -218,9 +199,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		}, nil
 	}
 
-	// ── Step 4: Build expansion pin and expand graph (SW-001/SW-002) ──────────
-	// The parsed artifact carries the selected sub-workflow's durable identity.
-	// Do not derive a second identifier from its filesystem path.
 	resolvedWorkflowID := subGraph.WorkflowID
 	pin := core.SubWorkflowExpansionPin{
 		SubWorkflowRef:     spec.SubWorkflowRef,
@@ -238,15 +216,9 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 
 	expansion, expandErr := workflow.ExpandSubWorkflowGraph(spec.ParentNodeID, pin, subGraph)
 	if expandErr != nil {
-		// ExpandSubWorkflowGraph returns *ErrSubWorkflowExpand for structural
-		// failures; treat as infrastructure error → returned error triggers run_failed.
 		return core.Outcome{}, fmt.Errorf("sub-workflow node %q: expand: %w", spec.ParentNodeID, expandErr)
 	}
 
-	// ── Step 5: Build the SubWorkflowNodeRunner closure ───────────────────────
-	// Index sub-graph nodes by their NAMESPACED ID so the runner can look up
-	// the original dot.Node (with HandlerRef, ToolCommand, etc.) by the
-	// namespaced ID that DispatchSubWorkflow passes.
 	namespacedNodes := make(map[core.NodeID]*dot.Node, len(subGraph.Nodes))
 	for _, n := range subGraph.Nodes {
 		ns := core.NamespaceNodeID(spec.ParentNodeID, core.NodeID(n.ID))
@@ -254,8 +226,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		namespacedNodes[ns] = &nCopy
 	}
 
-	// subRunner is a nested dotSubWorkflowRunner for dispatching sub-workflow
-	// nodes found inside the child graph (recursive expansion).
 	subRunner := &dotSubWorkflowRunner{
 		env:                r.env,
 		ports:              r.ports,
@@ -297,9 +267,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		return dispatchSubWorkflowExpandedNode(ctx, r, subRunner, nodeID, n)
 	}
 
-	// ── Step 6: Dispatch the expanded sub-workflow (SW-005/SW-006) ────────────
-	// DispatchSubWorkflow emits sub_workflow_entered, walks the expanded graph
-	// via nodeRunner, emits sub_workflow_exited, and returns the terminal Outcome.
 	outcome, dispatchErr := workflow.DispatchSubWorkflow(ctx, r.run, expansion, subGraph, r.cycles, nodeRunner, r.ports.Emitter)
 	if dispatchErr != nil {
 		return core.Outcome{}, fmt.Errorf("sub-workflow node %q: dispatch: %w", spec.ParentNodeID, dispatchErr)
@@ -307,16 +274,6 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	return outcome, nil
 }
 
-// dispatchSubWorkflowExpandedNode dispatches a single expanded node within a
-// sub-workflow using the same infrastructure as the parent DOT cascade.
-//
-// Node types:
-//   - non-agentic (shell tool): calls dispatchDotToolNode.
-//   - non-agentic (other): synthesizes SUCCESS.
-//   - agentic: calls dispatchDotAgenticNode.
-//   - gate: calls dispatchDotGateNode.
-//   - sub-workflow: calls subRunner.Run recursively.
-//   - unknown: structural FAIL Outcome.
 func dispatchSubWorkflowExpandedNode(
 	ctx context.Context,
 	r *dotSubWorkflowRunner,
@@ -329,7 +286,6 @@ func dispatchSubWorkflowExpandedNode(
 		if n.ToolCommand != "" && n.HandlerRef == "shell" {
 			return dispatchDotToolNode(ctx, r.ports.Emitter, r.runID, r.runner, r.env.ProjectDir, r.wtPath, n, r.env.HandlerEnv)
 		}
-		// Non-shell non-agentic: synthesize SUCCESS.
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 
 	case core.NodeTypeAgentic:
@@ -374,7 +330,6 @@ func dispatchSubWorkflowExpandedNode(
 		)
 
 	case core.NodeTypeSubWorkflow:
-		// Recursive sub-workflow: construct a nested spec and dispatch.
 		subSpec := handler.SubWorkflowRunSpec{
 			Run:                r.run,
 			ParentNodeID:       nodeID,
@@ -393,14 +348,7 @@ func dispatchSubWorkflowExpandedNode(
 	}
 }
 
-// resolveSubWorkflowGraph implements the three-tier resolution order (SW-004):
-//  1. Explicit ref: look for <projectDir>/<subWorkflowRef> (and .dot variant).
-//  2. Project-default graph: <projectDir>/workflow.dot.
-//  3. Error: structural fail.
-//
-// Returns the loaded *dot.Graph and the resolved absolute path.
 func resolveSubWorkflowGraph(subWorkflowRef, projectDir string) (*dot.Graph, string, error) {
-	// Tier 1: explicit ref — try the ref as a path relative to projectDir.
 	tier1Candidates := subWorkflowRefPaths(subWorkflowRef, projectDir)
 	for _, candidate := range tier1Candidates {
 		g, err := workflow.LoadDotWorkflow(candidate)
@@ -409,7 +357,6 @@ func resolveSubWorkflowGraph(subWorkflowRef, projectDir string) (*dot.Graph, str
 		}
 	}
 
-	// Tier 2: project-default workflow.dot.
 	if subWorkflowRef != "workflow.dot" { // avoid double-trying the same file
 		defaultPath := filepath.Join(projectDir, "workflow.dot")
 		g, err := workflow.LoadDotWorkflow(defaultPath)
@@ -418,13 +365,9 @@ func resolveSubWorkflowGraph(subWorkflowRef, projectDir string) (*dot.Graph, str
 		}
 	}
 
-	// Tier 3: structural error.
 	return nil, "", fmt.Errorf("sub-workflow %q: no registered artifact found (SW-004 tier 3: structural)", subWorkflowRef)
 }
 
-// subWorkflowRefPaths returns the ordered list of filesystem paths to probe for
-// a given sub_workflow_ref. It tries the ref as-is (absolute or project-relative)
-// and, if it lacks a .dot extension, also tries with .dot appended.
 func subWorkflowRefPaths(ref, projectDir string) []string {
 	var candidates []string
 	if filepath.IsAbs(ref) {
@@ -442,17 +385,9 @@ func subWorkflowRefPaths(ref, projectDir string) []string {
 	return candidates
 }
 
-// checkSubWorkflowAcyclicity builds the sub-workflow reference graph for the
-// parent→child edge (and all direct sub-workflow refs in both graphs) and
-// reports whether a cycle exists per EM-034b / SW-003.
-//
-// This is a best-effort runtime check: it adds the direct sub-workflow edges
-// from the parent and child graphs. A cycle in deeper nesting is caught when
-// those sub-workflows are dispatched recursively.
 func checkSubWorkflowAcyclicity(parentWorkflowName, childWorkflowName string, parentGraph, childGraph *dot.Graph) error {
 	refGraph := core.NewSubWorkflowRefGraph()
 
-	// Add all sub-workflow edges from the parent graph.
 	if parentGraph != nil {
 		for _, n := range parentGraph.Nodes {
 			if n.Type == core.NodeTypeSubWorkflow && n.SubWorkflowRef != "" {
@@ -461,7 +396,6 @@ func checkSubWorkflowAcyclicity(parentWorkflowName, childWorkflowName string, pa
 		}
 	}
 
-	// Add all sub-workflow edges from the child graph (one level deep).
 	if childGraph != nil {
 		for _, n := range childGraph.Nodes {
 			if n.Type == core.NodeTypeSubWorkflow && n.SubWorkflowRef != "" {
@@ -470,7 +404,6 @@ func checkSubWorkflowAcyclicity(parentWorkflowName, childWorkflowName string, pa
 		}
 	}
 
-	// The critical edge: parent references child.
 	refGraph.AddEdge(parentWorkflowName, childWorkflowName)
 
 	if refGraph.HasCycle() {

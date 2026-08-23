@@ -1,26 +1,5 @@
 package daemon_test
 
-// mergetomain_stripruncontext_hk4je_test.go — integration test asserting that
-// .harmonik/run-context/** never appears in git ls-tree main after a run merges.
-//
-// Test assertion (hk-4je):
-//   (q)  After a run that force-committed a context.json (CHB-023) is merged to
-//        main, `git ls-tree --name-only -r main` does NOT contain any path under
-//        .harmonik/run-context/.
-//
-// The factory force-adds a context.json to the run-branch (mirroring what
-// sessioncontext_chb023.go does at runtime) so the stripping logic in
-// mergeRunBranchToMain (stripRunContextFromMerge) has real work to do.
-//
-// Helper prefix: stripRunCtx (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-4je).
-//
-// Spec refs:
-//   - specs/claude-hook-bridge.md §4.6.CHB-023
-//   - specs/execution-model.md §4.12.EM-052
-//
-// Bead: hk-4je.
-
 import (
 	"context"
 	"fmt"
@@ -35,15 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// stripRunCtxWorktreeFactory wraps productionWorktreeFactory and force-commits
-// a .harmonik/run-context/<runID>/context.json into the run-branch, mirroring
-// the CHB-023 persistClaudeSessionID path. The daemon makes that commit itself,
-// so the fixture may make it before the agent launches.
-//
-// The AGENT's own commit does not belong here. The graph node reads the worktree
-// HEAD before the launch and requires HEAD to move past it, so a fixture that
-// commits the agent's work up front fails the node. The fake handler commits it
-// instead — see stripRunCtxCommittingHandlerArgs.
 func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	t.Helper()
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
@@ -52,7 +22,6 @@ func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectD
 			return "", nil, err
 		}
 
-		// Force-add context.json, mirroring CHB-023 persistClaudeSessionID.
 		ctxDir := filepath.Join(wtPath, ".harmonik", "run-context", runID)
 		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 		if mkErr := os.MkdirAll(ctxDir, 0o755); mkErr != nil {
@@ -65,7 +34,6 @@ func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectD
 			cleanup()
 			return "", nil, fmt.Errorf("stripRunCtxWorktreeFactory: WriteFile context.json: %w", writeErr)
 		}
-		// git add -f: .harmonik/ is in .gitignore, so -f is required.
 		relCtxPath := filepath.Join(".harmonik", "run-context", runID, "context.json")
 		addCtxCmd := exec.CommandContext(ctx, "git", "add", "-f", relCtxPath)
 		addCtxCmd.Dir = wtPath
@@ -88,15 +56,6 @@ func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectD
 	}
 }
 
-// stripRunCtxCommittingHandlerArgs returns the `/bin/sh -c` argument pair for a
-// fake agent that commits work_hk4je.txt during its run and exits 0. The commit
-// must land while the agent runs so the node's HEAD-advance guard is satisfied
-// by the AGENT's work, which is what a real implementer produces.
-//
-// git is called by absolute path because handler.Launch replaces the child
-// environment with LaunchSpec.Env, which carries no PATH. The script sends its
-// own stdout to stderr, because the handler contract reads the child's stdout
-// as an NDJSON event stream.
 func stripRunCtxCommittingHandlerArgs(t *testing.T) []string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
@@ -123,7 +82,6 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 	projectDir := mergeToMainFixtureProjectDir(t)
 	mergeToMainFixtureGitRepo(t, projectDir)
 
-	// Create a bare remote (origin) so git push succeeds.
 	originDir := t.TempDir()
 	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
 	if out, err := initBareCmd.CombinedOutput(); err != nil {
@@ -171,7 +129,6 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 	}
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── Assertion (q1): bead closed (not reopened). ───────────────────────────
 	if got := ledger.getClosedCount(); got < 1 {
 		t.Errorf("CloseBead call count = %d; want ≥ 1 (bead should be closed)", got)
 	}
@@ -179,7 +136,6 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 		t.Errorf("ReopenBead called %d times; want 0 (reason: %s)", got, ledger.getReopenReason())
 	}
 
-	// ── Assertion (q2): .harmonik/run-context/** absent from main. ───────────
 	lsTreeCmd := exec.CommandContext(context.Background(), "git", "ls-tree", "--name-only", "-r", "main")
 	lsTreeCmd.Dir = projectDir
 	out, err := lsTreeCmd.Output()

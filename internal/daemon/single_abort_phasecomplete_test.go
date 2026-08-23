@@ -1,15 +1,5 @@
 package daemon_test
 
-// single_abort_phasecomplete_test.go — a legacy single input selects no-review
-// DOT, and an aborted implementer node must still report its phase.
-//
-// implementer_phase_complete exists to close the diagnostic gap between
-// run_started and the run's terminal, so a silent implementer failure leaves a
-// structured record instead of nothing. The legacy input below is retained to
-// prove run planning selects the no-review graph before execution.
-//
-// Bead: hk-aekon.
-
 import (
 	"os"
 	"path/filepath"
@@ -22,15 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// singleFixtureAborter watches for the implementer to start, then cancels its
-// context.
-//
-// latch selects which of the two cancellations it models, and they are the two
-// the run path must tell apart. With the latch it is the StaleWatcher reaper
-// reaping ONE run, which is that run's terminal. Without it, it is the daemon
-// stopping and taking every live run's context down with it, which is a drain
-// and not a failure. The cancelled context looks identical from the run's side;
-// the latch is the only thing that distinguishes them.
 type singleFixtureAborter struct {
 	marker   string
 	registry *daemon.RunRegistry
@@ -51,8 +32,6 @@ func newSingleFixtureAborter(t *testing.T, registry *daemon.RunRegistry, latch b
 	}
 }
 
-// handlerScript is an implementer that announces it is running and then hangs,
-// so the abort lands while the agent is live rather than racing its exit.
 func (a *singleFixtureAborter) handlerScript(t *testing.T) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "single-fixture-hang.sh",
@@ -78,10 +57,6 @@ func (a *singleFixtureAborter) start() {
 				if a.latch {
 					daemon.ExportedMarkRunAborted(h)
 				}
-				// Guard both directions. A latch that silently failed to take
-				// would make the abort test assert nothing; a latch set when the
-				// fixture asked for a shutdown would make the drain test assert
-				// the opposite of what it claims.
 				if daemon.ExportedRunHandleIsAborted(h) != a.latch {
 					return // the test's own guard reports it
 				}
@@ -117,8 +92,6 @@ func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testi
 	if !aborter.fired.Load() {
 		t.Fatal("the fixture never aborted a run, so this test asserts nothing — fix the fixture before trusting the result")
 	}
-	// The graph must report its cancellation. Without this check the event below
-	// could come from an ordinary completed node.
 	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "context cancelled during node") {
 		t.Fatalf("run_failed summary = %q; want the DOT cancellation reason; events=%v", summary, res.Bus.eventTypes())
 	}
@@ -191,8 +164,6 @@ func TestLegacySingleInput_NoReviewDOTNormalRunReportsImplementerPhase(t *testin
 	}
 }
 
-// singleFixtureHasEvent reports whether the run emitted at least one event of
-// this type.
 func singleFixtureHasEvent(res dotFixtureResult, want core.EventType) bool {
 	for _, ev := range res.Bus.allEvents() {
 		if ev.EventType == string(want) {

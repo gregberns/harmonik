@@ -8,12 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// outcomeDelivery — per-bead helper prefix for test helpers in this file.
-// crashClassFixture — per-bead helper prefix for ClassifyCrash test helpers (hk-8i31.28).
-
-// outcomeDeliveryRoundTrip is a helper that encodes msg to JSON and decodes it
-// back into a new OutcomeEmittedMsg, returning the round-tripped value or
-// calling t.Fatalf on any error.
 func outcomeDeliveryRoundTrip(t *testing.T, msg handlercontract.OutcomeEmittedMsg) handlercontract.OutcomeEmittedMsg {
 	t.Helper()
 	b, err := json.Marshal(msg)
@@ -27,12 +21,7 @@ func outcomeDeliveryRoundTrip(t *testing.T, msg handlercontract.OutcomeEmittedMs
 	return out
 }
 
-// outcomeDeliveryPtr returns a pointer to s (helper to build *string fields).
 func outcomeDeliveryPtr(s string) *string { return &s }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OutcomeDeliveryState constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestOutcomeDeliveryStateValues(t *testing.T) {
 	t.Parallel()
@@ -65,10 +54,6 @@ func TestOutcomeDeliveryStateValues(t *testing.T) {
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ClassifyExit
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestClassifyExit(t *testing.T) {
 	t.Parallel()
@@ -146,17 +131,11 @@ func TestClassifyExit(t *testing.T) {
 func TestClassifyExitReturnsErrStructural(t *testing.T) {
 	t.Parallel()
 
-	// The returned error must wrap ErrStructural directly for narrowest-first
-	// dispatch (HC-020).
 	err := handlercontract.ClassifyExit(1, handlercontract.OutcomeNotYetDelivered)
 	if !errors.Is(err, handlercontract.ErrStructural) {
 		t.Errorf("ClassifyExit crash: errors.Is(err, ErrStructural) = false, want true")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OutcomeEmittedMsg JSON round-trip
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestOutcomeEmittedMsgRoundTrip(t *testing.T) {
 	t.Parallel()
@@ -233,7 +212,6 @@ func TestOutcomeEmittedMsgRoundTrip(t *testing.T) {
 			SessionID:     "s",
 			NodeID:        "n",
 			OutcomeStatus: "SUCCESS",
-			// OutcomeKind intentionally left empty
 		}
 		b, err := json.Marshal(msg)
 		if err != nil {
@@ -293,10 +271,6 @@ func TestOutcomeEmittedMsgRoundTrip(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// JSON field names match event-model.md §8.1.8 wire names
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestOutcomeEmittedMsgWireFieldNames(t *testing.T) {
 	t.Parallel()
 
@@ -331,10 +305,6 @@ func TestOutcomeEmittedMsgWireFieldNames(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ClassifyCrash — HC-024 typed-class mapping (hk-8i31.28)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCrashClassFixture_CrashWithoutOutcomeSubReasonValue asserts that the
 // pinned constant equals the literal string expected by the spec and by the
@@ -376,7 +346,6 @@ func TestCrashClassFixture_ClassifyCrashPayloadTable(t *testing.T) {
 		wantReason    string // expected Reason when wantNonZero
 		wantSubReason string // expected SubReason when wantNonZero
 	}{
-		// Clean shutdown after outcome — no agent_failed needed.
 		{
 			name:        "clean_exit_after_outcome_delivered_is_zero",
 			exitCode:    0,
@@ -434,7 +403,6 @@ func TestCrashClassFixture_ClassifyCrashPayloadTable(t *testing.T) {
 			got := handlercontract.ClassifyCrash(tc.exitCode, tc.state)
 
 			if !tc.wantNonZero {
-				// Expect zero payload — no agent_failed emission.
 				if got.ErrorCategory != "" {
 					t.Errorf("ClassifyCrash(%d, %v).ErrorCategory = %q, want empty (no agent_failed needed)",
 						tc.exitCode, tc.state, got.ErrorCategory)
@@ -448,7 +416,6 @@ func TestCrashClassFixture_ClassifyCrashPayloadTable(t *testing.T) {
 				return
 			}
 
-			// Expect non-zero payload — agent_failed must be emitted.
 			if got.ErrorCategory != tc.wantCategory {
 				t.Errorf("ClassifyCrash(%d, %v).ErrorCategory = %q, want %q",
 					tc.exitCode, tc.state, got.ErrorCategory, tc.wantCategory)
@@ -497,8 +464,6 @@ func TestCrashClassFixture_ClassifyCrashCategoryMatchesClassOfClassifyExit(t *te
 			crashPayload := handlercontract.ClassifyCrash(sc.exitCode, sc.state)
 
 			wantCategory := handlercontract.Class(classifyErr)
-			// When ClassifyExit returns nil, Class returns ""; ClassifyCrash
-			// returns zero payload with ErrorCategory == "".  Both agree.
 			if crashPayload.ErrorCategory != wantCategory {
 				t.Errorf(
 					"ClassifyCrash(%d, %v).ErrorCategory = %q; Class(ClassifyExit(%d, %v)) = %q; they must agree (HC-024 + §4.5)",
@@ -544,7 +509,6 @@ func TestCrashClassFixture_ClassifyCrashWrapsErrStructural(t *testing.T) {
 					"crash without outcome MUST map to ErrStructural per HC-024 + §8.2",
 					sc.exitCode, sc.state)
 			}
-			// Confirm ClassifyCrash agrees on the class string.
 			payload := handlercontract.ClassifyCrash(sc.exitCode, sc.state)
 			if payload.ErrorCategory != "structural" {
 				t.Errorf("ClassifyCrash(%d, %v).ErrorCategory = %q, want structural", sc.exitCode, sc.state, payload.ErrorCategory)

@@ -2,61 +2,6 @@
 
 package daemon_test
 
-// scenario_concurrent_multiqueue_hkumemp_test.go — concurrent multi-queue
-// dispatch scenario (hk-umemp).
-//
-// # What is tested
-//
-// TestScenario_ConcurrentMultiQueue_N2_HappyPath boots the full daemon.Start
-// composition root with two active named queues ("alpha" and "beta"), each
-// holding distinct beads plus a shared "dup" bead that appears in both queues.
-// MaxConcurrent=2 with Workers=1 per queue exercises all four scenario
-// correctness properties concurrently:
-//
-//  (a) Both queue-unique beads (alphaA, betaB) dispatch, complete, and close
-//      in br — confirming normal concurrent dispatch across two named queues.
-//
-//  (b) QM-062 two-level cap is honored: at no point do more than
-//      MaxConcurrent=2 runs appear in-flight simultaneously (tracked by
-//      counting run_started minus run_completed/run_failed events in order).
-//
-//  (c) The dup bead dispatches exactly once: the "winner" queue dispatches it
-//      and closes it in br, and no run starts for the loser copy (hk-a11re
-//      guard). The loser's ITEM must not be driven terminal-with-failure and its
-//      queue must not park: losing another queue's race is a per-tick refusal
-//      per queue-model.md §9.8 QM-067, not a durable failure (hk-nsion).
-//
-//
-// TestScenario_ConcurrentMultiQueue_N2_MidRunKill exercises the G1 cause-side:
-// it starts the same two-queue setup but cancels the daemon context while runs
-// are in-flight via a blocking twin wrapper (sleep 3600). After daemon exit:
-//
-//  - At least one run_started event appears (a bead was actually dispatched).
-//  - run_completed is absent (no run finished before the kill).
-//  - The dispatched bead is NOT closed in br (still open or in_progress).
-//
-// This confirms the root cause of the stuck-queue state that
-// TestScenario_RestartRecovery_QM002bDeadlock (hk-ivzsl) exercises from the
-// recovery side: a live mid-run kill leaves a bead in ItemStatusDispatched in
-// the queue file, which the next daemon startup must reconcile via QM-002b
-// Class A'.
-//
-// # Helper prefix
-//
-// Helpers in this file use the prefix "cmq" (concurrent-multi-queue).
-// Per implementer-protocol.md §Helper-prefix discipline.
-//
-// # Spec refs
-//
-//   - specs/queue-model.md §9.3 QM-062 (two-level capacity cap)
-//   - specs/queue-model.md §9.7 QM-066 (per-queue worker count)
-//   - specs/queue-model.md §9.8 QM-067 (cross-queue round-robin)
-//   - specs/queue-model.md §6.3 QM-022 (no double dispatch from any source)
-//   - specs/queue-model.md §3.2b QM-002b Class A' (dispatched+closed reconciliation)
-//
-// Bead: hk-umemp.
-// Refs: hk-77q8e, hk-a11re, hk-tigaf.5, QM-062, QM-067.
-
 import (
 	"bufio"
 	"context"
@@ -77,14 +22,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// cmq fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// cmqEvalSymlinks resolves all symlinks in path so that br — which rejects
-// paths containing symlinks outside the beads directory — receives a canonical
-// path. On macOS, t.TempDir() returns /var/folders/... which is a symlink to
-// /private/var/folders/..., triggering br's symlink guard.
 func cmqEvalSymlinks(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -92,8 +29,6 @@ func cmqEvalSymlinks(t *testing.T, path string) string {
 	return resolved
 }
 
-// cmqProjectDir creates the minimal project directory for the scenario.
-// Returns the project dir and the JSONL events log path.
 func cmqProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = cmqEvalSymlinks(t, t.TempDir())
@@ -112,9 +47,6 @@ func cmqProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// cmqGitRepo initialises a git repository with one commit in dir, and wires a
-// bare-repo "origin" remote so that mergeRunBranchToMain's git-push step
-// succeeds (avoiding push_failed run_failed events when the twin makes commits).
 func cmqGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -132,9 +64,6 @@ func cmqGitRepo(t *testing.T, dir string) {
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
 
-	// Add a bare-repo origin so mergeRunBranchToMain's push step succeeds.
-	// Without a remote the push fails with "fatal: 'origin' does not appear to
-	// be a git repository" and the run is reopened as push_failed (run_failed).
 	raw := t.TempDir()
 	originDir, err := filepath.EvalSymlinks(raw)
 	require.NoError(t, err, "cmqGitRepo: EvalSymlinks originDir")
@@ -145,8 +74,6 @@ func cmqGitRepo(t *testing.T, dir string) {
 	run("push", "origin", "main")
 }
 
-// cmqBrPath returns the path to the real `br` binary, skipping the test when
-// br is not on PATH.
 func cmqBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -156,8 +83,6 @@ func cmqBrPath(t *testing.T) string {
 	return brPath
 }
 
-// cmqBrWrapperScript writes a /bin/sh wrapper that invokes realBrPath with
-// --db <dbPath> prepended to all args. Returns the wrapper path.
 func cmqBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := cmqEvalSymlinks(t, t.TempDir())
@@ -168,12 +93,6 @@ func cmqBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// cmqInitBrWithBeads initialises a beads workspace and creates three beads:
-//   - dupBeadID: appears in both queues (cross-queue dedup target, hk-a11re)
-//   - alphaAID: unique to the "alpha" queue
-//   - betaBID: unique to the "beta" queue
-//
-// Returns (dupBeadID, alphaAID, betaBID).
 func cmqInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper string) (dupBeadID, alphaAID, betaBID string) {
 	t.Helper()
 	//nolint:gosec // G204: br args are test-internal literals; not user input
@@ -199,12 +118,6 @@ func cmqInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper string) 
 	return dupBeadID, alphaAID, betaBID
 }
 
-// cmqBuildActiveWaveQueue builds an active wave queue with Workers=1 holding
-// the given beads as pending items (group 0, active).
-//
-// Workers=1 means at most 1 in-flight run for this queue at any time (QM-066).
-// Combined with MaxConcurrent=2, two queues each at Workers=1 fill the global
-// ceiling exactly.
 func cmqBuildActiveWaveQueue(name, queueID string, beadIDs ...core.BeadID) *queue.Queue {
 	items := make([]queue.Item, len(beadIDs))
 	for i, id := range beadIDs {
@@ -232,32 +145,6 @@ func cmqBuildActiveWaveQueue(name, queueID string, beadIDs ...core.BeadID) *queu
 	}
 }
 
-// cmqTwinWrapperScript writes a /bin/sh wrapper that is phase-aware so these
-// review-loop runs complete (hk-4f5ua).
-//
-// Phase detection is by the presence of .harmonik/review-target.md, which the
-// daemon writes ONLY into the reviewer's isolated worktree:
-//
-//   - Implementer phase (review-target.md absent): invoke the twin with
-//     --scenario commit-on-cue-startup-delay, which git-commits a timestamped
-//     sentinel. The commit must be the twin's OWN: dot checks HEAD advance per
-//     node, and the pre-commit that emptyCommitWorktreeFactory lands before the
-//     handler starts does not count for that check.
-//   - Reviewer phase (review-target.md present): write an APPROVE verdict to
-//     $PWD/.harmonik/review.json so the review cycle terminates with success →
-//     run_completed + bead closed. The reviewer must NOT commit.
-//
-// History, because this scenario has been mis-set twice. Before hk-81n9r these
-// runs were single-mode (no reviewer); hk-81n9r made them review-loop, so the
-// reviewer phase ran single-happy-path too, wrote no verdict, and tripped
-// "verdict absent at iteration 1". Then the review-loop retirement (EM-015d)
-// moved them to dot while leaving the implementer on single-happy-path — which
-// does not advance HEAD per node, so every implementer node failed with
-// "exited without advancing HEAD", the queue paused at fail_count=2, and the
-// reviewer never ran at all. That regression hid inside a pass/fail comparison
-// because this test was already red at base for an unrelated third-bead
-// timeout: it went from 2-of-3 beads completing to 0-of-3 while staying "still
-// failing". Compare completion counts here, not pass/fail.
 func cmqTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -276,9 +163,6 @@ exec "` + twinPath + `" --scenario commit-on-cue-startup-delay --worktree-path "
 	return path
 }
 
-// cmqBlockingTwinWrapperScript writes a /bin/sh wrapper that blocks
-// indefinitely (sleep 3600). Used by the mid-run-kill sub-test to guarantee
-// that runs are in-flight when the daemon context is cancelled.
 func cmqBlockingTwinWrapperScript(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -289,9 +173,6 @@ func cmqBlockingTwinWrapperScript(t *testing.T) string {
 	return path
 }
 
-// cmqMaxConcurrentRuns scans the JSONL at jsonlPath and returns the maximum
-// number of runs that were concurrently in-flight at any point. It increments
-// the counter on run_started and decrements on run_completed or run_failed.
 func cmqMaxConcurrentRuns(t *testing.T, jsonlPath string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -334,7 +215,6 @@ func cmqMaxConcurrentRuns(t *testing.T, jsonlPath string) int {
 	return maxSeen
 }
 
-// cmqEventCount returns the number of JSONL events matching eventType.
 func cmqEventCount(t *testing.T, jsonlPath, eventType string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -369,15 +249,12 @@ func cmqEventCount(t *testing.T, jsonlPath, eventType string) int {
 	return count
 }
 
-// cmqItemState holds the observable fields of a queue item for assertions.
 type cmqItemState struct {
 	BeadID            string
 	Status            string
 	LastFailureReason string
 }
 
-// cmqLoadQueueItems reads .harmonik/queues/<name>.json and returns the items
-// in group 0. Returns nil when the file is absent (queue completed and unlinked).
 func cmqLoadQueueItems(t *testing.T, projectDir, queueName string) []cmqItemState {
 	t.Helper()
 	queuePath := filepath.Join(projectDir, ".harmonik", "queues", queueName+".json")
@@ -412,10 +289,6 @@ func cmqLoadQueueItems(t *testing.T, projectDir, queueName string) []cmqItemStat
 	return items
 }
 
-// cmqLoadQueueStatus reads one queue's own status off disk. It is separate from
-// cmqLoadQueueItems because the queue status is the half of a durable failure
-// that costs an operator the most: one failed item parks the whole queue, and
-// every unrelated item behind it stops.
 func cmqLoadQueueStatus(t *testing.T, projectDir, queueName string) string {
 	t.Helper()
 	queuePath := filepath.Join(projectDir, ".harmonik", "queues", queueName+".json")
@@ -432,8 +305,6 @@ func cmqLoadQueueStatus(t *testing.T, projectDir, queueName string) string {
 	return q.Status
 }
 
-// cmqPollBeadClosed polls `br show <id>` every 10 ms for up to budget.
-// Returns true if the bead reaches "closed" status within budget.
 func cmqPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -455,8 +326,6 @@ func cmqPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Durat
 	return false
 }
 
-// cmqPollRunStartedCount polls the JSONL log until at least wantCount
-// run_started events appear, up to budget. Returns the count found.
 func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budget time.Duration) int {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -468,10 +337,6 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 	}
 	return cmqEventCount(t, jsonlPath, string(core.EventTypeRunStarted))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_ConcurrentMultiQueue_N2_HappyPath
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_ConcurrentMultiQueue_N2_HappyPath is the full concurrent
 // multi-queue happy-path scenario.
@@ -505,32 +370,21 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 // Bead: hk-umemp.
 func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Locate the twin binary; skip when absent.
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
 		t.Skip("cmq: harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
 	}
 
-	// Locate br binary.
 	realBrPath := cmqBrPath(t)
 
-	// Create project directory with git repo and br DB.
 	projectDir, jsonlPath := cmqProjectDir(t)
 	cmqGitRepo(t, projectDir)
 
-	// Initialise br DB and create three beads.
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := cmqBrWrapperScript(t, realBrPath, dbPath)
 	dupBeadID, alphaAID, betaBID := cmqInitBrWithBeads(t, realBrPath, projectDir, brWrapper)
 	t.Logf("cmq: dupBead=%s alphaA=%s betaB=%s", dupBeadID, alphaAID, betaBID)
 
-	// Pre-seed both named queues on disk so LoadQueueAtStartup enumerates them.
-	//
-	// Queue "alpha": [dupBead (item 0), alphaA (item 1)]
-	// Queue "beta":  [dupBead (item 0), betaB  (item 1)]
-	//
-	// dupBead at index 0 in alpha ensures alpha dispatches it before beta can
-	// claim a slot, so beta meets the cross-queue collision.
 	ctx := t.Context()
 	qAlpha := cmqBuildActiveWaveQueue("alpha", "00000000-0000-7a00-8000-aa1000000001",
 		core.BeadID(dupBeadID), core.BeadID(alphaAID))
@@ -539,17 +393,13 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	require.NoError(t, queue.Persist(ctx, projectDir, qAlpha), "cmq: persist alpha queue")
 	require.NoError(t, queue.Persist(ctx, projectDir, qBeta), "cmq: persist beta queue")
 
-	// Build the twin wrapper script (ignores Claude-specific flags).
 	twinWrapper := cmqTwinWrapperScript(t, twinPath)
 
-	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
-	// does not contend with the running harmonik daemon on ~/.claude.json.lock.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("cmq: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -558,15 +408,9 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		}
 	})
 
-	// Wire daemon.Config with production composition root.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
-	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
-	// (it is phase-aware and writes an APPROVE verdict when review-target.md
-	// appears). Without this, dot resolution falls through to the embedded
-	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
-	// fixture worktree that is not a Go module.
 	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	cfg := daemon.Config{
@@ -584,16 +428,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
-	// Launch daemon.StartForTesting with:
-	//  - emptyCommitWorktreeFactory: satisfies the no-commit guard (hk-mmh8f)
-	//    by pre-committing an --allow-empty commit in the worktree BEFORE the
-	//    handler binary starts, without requiring the handler to run git.
-	//  - WithMergeQueue: the merge exclusion domain (mergeq) serialises the full
-	//    rebase → update-ref → push sequence across all concurrent bead goroutines
-	//    so concurrent merges from dupBead and betaB do not race on
-	//    refs/heads/main. The injected queue is Started here (with a t.Cleanup
-	//    cancel) because runWorkLoop only starts a queue it created itself — an
-	//    injected queue keeps the injector's lifecycle (RSM-015).
 	mergeQ := mergeq.New(nil)
 	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
 	mergeQ.Start(mergeQCtx)
@@ -606,17 +440,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		)
 	}()
 
-	// ── Phase 1: wait for all expected terminal events ────────────────────────
-	//
-	// Expected runs:
-	//   1. dupBead dispatched by alpha → run_completed
-	//   2. betaB dispatched by beta   → run_completed
-	//   3. alphaA dispatched by alpha after dupBead completes → run_completed
-	//
-	// beta's copy of dupBead is stopped BEFORE dispatch (no run starts).
-	// So 3 run_started + 3 terminal events total.
-	//
-	// Budget: AgentReadyTimeout(5s) × 3 runs + merge overhead + headroom = 60s.
 	const terminalBudget = 60 * time.Second
 	const wantTerminalCount = 3
 
@@ -631,7 +454,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		}
 	})
 
-	// Cancel the daemon; all runs are terminal.
 	loopCancel()
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {
 		if err := <-startDone; err != nil {
@@ -639,9 +461,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		}
 	})
 
-	// ── Assertion (a): alphaA and betaB closed in br ──────────────────────────
-	//
-	// Also assert dupBead closed (won by alpha queue).
 	if !cmqPollBeadClosed(t, brWrapper, dupBeadID, 2*time.Second) {
 		t.Errorf("cmq (a): dupBead %s not closed within 2s after terminal events", dupBeadID)
 	}
@@ -652,10 +471,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		t.Errorf("cmq (a): betaB %s not closed within 2s after terminal events", betaBID)
 	}
 
-	// ── Assertion (b): QM-062 two-level cap honored ───────────────────────────
-	//
-	// Max concurrent in-flight runs (tracked from run_started/run_completed
-	// events in order) must not exceed MaxConcurrent=2.
 	maxConcurrent := cmqMaxConcurrentRuns(t, jsonlPath)
 	if maxConcurrent > cfg.MaxConcurrent {
 		t.Errorf("cmq (b): QM-062 violated: max concurrent runs = %d, want ≤ %d",
@@ -663,35 +478,11 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	}
 	t.Logf("cmq (b): max concurrent runs = %d (cap = %d)", maxConcurrent, cfg.MaxConcurrent)
 
-	// ── Assertion (c): the loser is stopped, not punished (hk-a11re, hk-nsion) ─
-	//
-	// Two things are claimed here and they are separate.
-	//
-	// DETECTION: the bead dispatches exactly once. Beta never starts a run for
-	// dupBead, so run_started stays at three. That is the hk-a11re property and
-	// it holds however beta found out — the ledger pre-claim re-read (BI-013c)
-	// and the reservation guard both stop it, and which one wins the race is not
-	// something this test can pin or needs to.
-	//
-	// DISPOSITION: beta's item must NOT be driven terminal-with-failure, and
-	// beta's queue must NOT park. queue-model.md §9.8 QM-067 names this exact
-	// case as a per-tick refusal and forbids making it durable, because a failed
-	// item takes its group to complete-with-failures and stops every unrelated
-	// item behind it — and `queue recover` refuses the queue while the shared
-	// bead is not open, so the operator cannot undo it while the race lasts.
-	//
-	// This test therefore asserts what must NOT have happened, plus the item's
-	// small set of acceptable resting states. It deliberately does not demand one
-	// exact status: pending (refused, cooldown still running), deferred-for-
-	// ledger-dep (the ledger detector got there first) and completed (the guard
-	// saw alpha finish) are all correct outcomes of a run this short, and pinning
-	// one would pin the race rather than the rule.
 	alphaItems := cmqLoadQueueItems(t, projectDir, "alpha")
 	betaItems := cmqLoadQueueItems(t, projectDir, "beta")
 	t.Logf("cmq (c): alpha items = %+v", alphaItems)
 	t.Logf("cmq (c): beta  items = %+v", betaItems)
 
-	// Detection: no second run for dupBead, whichever detector stopped it.
 	nStarted := cmqEventCount(t, jsonlPath, string(core.EventTypeRunStarted))
 	if nStarted > wantTerminalCount {
 		t.Errorf("cmq (c): %d run_started events; want ≤ %d (dupBead must not start in beta)",
@@ -726,7 +517,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		}
 	}
 
-	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
 	scenariotest.AssertEventCausality(t, jsonlPath,
 		"run_started",
 		[]string{"run_completed", "run_failed", "run_cancelled"},
@@ -741,10 +531,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	t.Logf("cmq HappyPath PASS: dupBead=%s (alpha) alphaA=%s betaB=%s maxConcurrent=%d",
 		dupBeadID, alphaAID, betaBID, maxConcurrent)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_ConcurrentMultiQueue_N2_MidRunKill
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_ConcurrentMultiQueue_N2_MidRunKill exercises the G1 cause-side:
 // it cancels the daemon while beads are in-flight via a blocking twin wrapper
@@ -772,14 +558,11 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 // Bead: hk-umemp.
 func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Locate br binary.
 	realBrPath := cmqBrPath(t)
 
-	// Create project directory with git repo and br DB.
 	projectDir, jsonlPath := cmqProjectDir(t)
 	cmqGitRepo(t, projectDir)
 
-	// Initialise br DB and create two beads (no dup bead needed for this sub-test).
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := cmqBrWrapperScript(t, realBrPath, dbPath)
 
@@ -803,23 +586,19 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	betaBID := createBead("mkl beta-B bead")
 	t.Logf("cmq MidRunKill: alphaA=%s betaB=%s", alphaAID, betaBID)
 
-	// Pre-seed one bead per queue.
 	ctx := t.Context()
 	qAlpha := cmqBuildActiveWaveQueue("alpha", "00000000-0000-7b00-8000-cc3000000003", core.BeadID(alphaAID))
 	qBeta := cmqBuildActiveWaveQueue("beta", "00000000-0000-7b00-8000-dd4000000004", core.BeadID(betaBID))
 	require.NoError(t, queue.Persist(ctx, projectDir, qAlpha), "cmq MidRunKill: persist alpha queue")
 	require.NoError(t, queue.Persist(ctx, projectDir, qBeta), "cmq MidRunKill: persist beta queue")
 
-	// Use a blocking twin wrapper so runs are guaranteed in-flight when we cancel.
 	blockingWrapper := cmqBlockingTwinWrapperScript(t)
 
-	// Redirect EnsureWorktreeTrust to a test-local config.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("cmq MidRunKill: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -831,11 +610,6 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
-	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
-	// (it is phase-aware and writes an APPROVE verdict when review-target.md
-	// appears). Without this, dot resolution falls through to the embedded
-	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
-	// fixture worktree that is not a Go module.
 	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	cfg := daemon.Config{
@@ -853,18 +627,11 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
-	// Launch daemon.Start in a goroutine.
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// ── Phase 1: wait for at least one run_started ────────────────────────────
-	//
-	// The blocking twin never emits agent_ready, so the daemon sits in
-	// waitAgentReady (up to AgentReadyTimeout). We only need run_started —
-	// that fires as soon as the subprocess is launched. Budget: 30 s to
-	// allow for worktree creation + process spawn on a busy CI machine.
 	const dispatchBudget = 30 * time.Second
 	nStarted := cmqPollRunStartedCount(t, jsonlPath, 1, dispatchBudget)
 	if nStarted == 0 {
@@ -872,20 +639,14 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	}
 	t.Logf("cmq MidRunKill: observed %d run_started event(s) — cancelling daemon mid-run", nStarted)
 
-	// ── Phase 2: cancel daemon while runs are in-flight ───────────────────────
 	loopCancel()
 
-	// ── Phase 3: wait for daemon to exit ─────────────────────────────────────
-	//
-	// Budget: 15 s — the daemon must kill the blocking subprocess and drain
-	// in-flight goroutines. On exit it calls drainCancelledQueue.
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 15*time.Second, func() {
 		if err := <-startDone; err != nil {
 			t.Errorf("cmq MidRunKill: daemon.Start returned error after cancel: %v", err)
 		}
 	})
 
-	// ── Assertion: run_started present, run_completed absent ─────────────────
 	nStartedFinal := cmqEventCount(t, jsonlPath, string(core.EventTypeRunStarted))
 	nCompleted := cmqEventCount(t, jsonlPath, string(core.EventTypeRunCompleted))
 	if nStartedFinal == 0 {
@@ -896,10 +657,6 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	}
 	t.Logf("cmq MidRunKill: run_started=%d run_completed=%d (expected: >=1 / 0)", nStartedFinal, nCompleted)
 
-	// ── Assertion: dispatched beads NOT closed in br ──────────────────────────
-	//
-	// The blocking twin never exits 0, so CloseBead is never called.
-	// Both beads should remain open (or in_progress if ClaimBead was called).
 	checkNotClosed := func(beadID, label string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")

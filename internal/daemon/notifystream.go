@@ -37,20 +37,17 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// notifyRunStarted is the minimal subset of the run_started payload we decode.
 type notifyRunStarted struct {
 	RunID  string `json:"run_id"`
 	BeadID string `json:"bead_id"`
 }
 
-// notifyMergeStatus is the minimal subset of the workspace_merge_status payload.
 type notifyMergeStatus struct {
 	RunID           string  `json:"run_id"`
 	Status          string  `json:"status"`
 	MergeCommitHash *string `json:"merge_commit_hash,omitempty"`
 }
 
-// notifyRunCompleted is the minimal subset of run_completed / run_failed payloads.
 type notifyRunCompleted struct {
 	RunID   string `json:"run_id"`
 	Success bool   `json:"success"`

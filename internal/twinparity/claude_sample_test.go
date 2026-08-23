@@ -28,7 +28,5 @@ func TestClaudeHappyPathSampleSelfEquivalent(t *testing.T) {
 		t.Fatalf("sample stream is empty; expected the durable terminal triad")
 	}
 
-	// Self-equivalence with default options (spine = TerminalKinds). A failure
-	// here means the sample is missing a durable-spine kind or drifted from F1.
 	twinparity.AssertStreamEquivalent(t, sample, sample, twinparity.EquivOptions{})
 }

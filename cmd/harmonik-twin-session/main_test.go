@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// newTestState builds a twinState with a deterministic seed session_id and an
-// isolated HANDOFF path under t.TempDir() — no exec, no tmux, no real scripts.
 func newTestState(t *testing.T) (state *twinState, handoffPath string) {
 	t.Helper()
 	handoff := filepath.Join(t.TempDir(), "HANDOFF-twin.md")
@@ -25,7 +23,6 @@ func newTestState(t *testing.T) (state *twinState, handoffPath string) {
 	}, handoff
 }
 
-// readHandoff returns the trimmed contents of the handoff file, or "" if absent.
 func readHandoff(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -100,21 +97,16 @@ func TestHandleLine_HandoffAcrossScrubbedCycles_hk4tjyj(t *testing.T) {
 		t.Fatalf("seed body: %v", err)
 	}
 
-	// Cycle 1: the crew appends the nonce to its handoff.
 	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce1)
 	if got := readHandoff(t, handoff); !contains(got, body) || !contains(got, nonce1) {
 		t.Fatalf("cycle 1 did not leave body+nonce.\ngot: %q", got)
 	}
 
-	// The production keeper scrubs the stale marker and preserves the rest
-	// (internal/keeper defaultScrubHandoffNonces). Model that by removing only
-	// the marker line, which is what the real scrub does.
 	scrubbed := strings.ReplaceAll(readHandoff(t, handoff), nonce1+"\n", "")
 	if err := os.WriteFile(handoff, []byte(scrubbed), 0o600); err != nil {
 		t.Fatalf("scrub: %v", err)
 	}
 
-	// Cycle 2: a NEW nonce is appended to the SURVIVING body.
 	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce2)
 	got := readHandoff(t, handoff)
 	if !contains(got, body) {
@@ -143,10 +135,6 @@ func TestHandleLine_MultiLineHandoffWritesNonce(t *testing.T) {
 	st, handoff := newTestState(t)
 	const nonce = "<!-- KEEPER:cyc-20260612T010203-000001 -->"
 
-	// The exact lines a line-by-line stdin reader sees when keeper.InjectText
-	// pastes the production directive (cycle.go fmt.Sprintf). Line 1 carries the
-	// trigger (no nonce), line 2 is the blank "\n\n" gap, line 3 carries the
-	// nonce (no trigger).
 	lines := []string{
 		"/session-handoff " + handoff,
 		"",
@@ -183,8 +171,6 @@ func TestHandleLine_MultiLineHandoffIdempotent(t *testing.T) {
 	if !contains(readHandoff(t, handoff), nonce) {
 		t.Fatalf("first multi-line delivery did not land the nonce")
 	}
-	// Corrupt the file, redeliver the SAME directive; idempotency means the twin
-	// recognizes the already-seen nonce and does NOT rewrite.
 	if err := os.WriteFile(handoff, []byte("CORRUPTED"), 0o600); err != nil {
 		t.Fatalf("seed corruption: %v", err)
 	}
@@ -204,15 +190,12 @@ func TestHandleLine_ClearDisarmsPendingHandoff(t *testing.T) {
 	st.tokens = 900_000 // so /clear actually fires
 	const nonce = "<!-- KEEPER:cyc-stale -->"
 
-	// Arm with a nonce-less trigger, then /clear before any nonce arrives.
 	if st.handleLine("/session-handoff " + handoff) {
 		t.Fatalf("nonce-less trigger should not report a change")
 	}
 	if !st.handleLine("/clear") {
 		t.Fatalf("/clear should report a state change")
 	}
-	// A stray nonce-shaped line AFTER the /clear must NOT write a handoff: the
-	// scan was disarmed.
 	st.handleLine("IMPORTANT: include exactly this line verbatim: " + nonce)
 	if got := readHandoff(t, handoff); got != "" {
 		t.Fatalf("stale post-/clear line wrote a handoff: %q", got)
@@ -231,7 +214,6 @@ func TestHandleLine_HandoffWithoutNonceIsNoop(t *testing.T) {
 
 func TestHandleLine_ClearRotatesToValidUUIDv4(t *testing.T) {
 	st, _ := newTestState(t)
-	// Drive tokens up so the reset is observable.
 	st.tokens = 950_000
 	seed := st.sessionID
 
@@ -245,7 +227,6 @@ func TestHandleLine_ClearRotatesToValidUUIDv4(t *testing.T) {
 	if !isValidUUIDv4(st.sessionID) {
 		t.Fatalf("rotated session_id %q is not a valid UUIDv4", st.sessionID)
 	}
-	// Version nibble at index 14 MUST be '4', never '7' (keeper rejects v7).
 	if st.sessionID[14] != '4' {
 		t.Fatalf("session_id version nibble = %q, want '4' (got %q)", string(st.sessionID[14]), st.sessionID)
 	}
@@ -275,8 +256,6 @@ func TestHandleLine_DuplicateHandoffIsIdempotent(t *testing.T) {
 	st.handleLine(line)
 	first := readHandoff(t, handoff)
 
-	// Corrupt the file, then re-deliver the SAME line; idempotency means the
-	// twin recognizes the nonce as already-seen and does NOT rewrite it.
 	if err := os.WriteFile(handoff, []byte("CORRUPTED"), 0o600); err != nil {
 		t.Fatalf("seed corruption: %v", err)
 	}
@@ -297,8 +276,6 @@ func TestHandleLine_DuplicateClearDoesNotDoubleRotate(t *testing.T) {
 	}
 	afterFirst := st.sessionID
 
-	// A redelivered /clear for the SAME (already-cleared) session must be a
-	// no-op — no second rotation (the injector's retry Enters can double-deliver).
 	if st.handleLine("/clear") {
 		t.Fatalf("duplicate /clear should be a no-op (no double rotation)")
 	}
@@ -328,7 +305,6 @@ func TestBuildStatusJSON_WindowZeroOmitsContextWindowSize(t *testing.T) {
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		t.Fatalf("unmarshal: %v\njson: %s", err, raw)
 	}
-	// Top-level context_window_size MUST be absent (the [1m] quirk).
 	if _, ok := generic["context_window_size"]; ok {
 		t.Fatalf("window==0 must OMIT top-level context_window_size; json: %s", raw)
 	}
@@ -339,7 +315,6 @@ func TestBuildStatusJSON_WindowZeroOmitsContextWindowSize(t *testing.T) {
 	if _, ok := cw["context_window_size"]; ok {
 		t.Fatalf("window==0 must OMIT nested context_window.context_window_size; json: %s", raw)
 	}
-	// The fields the script reads must still be present.
 	if _, ok := cw["used_percentage"]; !ok {
 		t.Fatalf("missing .context_window.used_percentage; json: %s", raw)
 	}
@@ -362,7 +337,6 @@ func TestBuildStatusJSON_WindowSetPresentAndCorrect(t *testing.T) {
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		t.Fatalf("unmarshal: %v\njson: %s", err, raw)
 	}
-	// Top-level path (script tries .context_window_size first).
 	top, ok := generic["context_window_size"].(float64)
 	if !ok || int64(top) != 1_000_000 {
 		t.Fatalf(".context_window_size missing/wrong; json: %s", raw)
@@ -371,12 +345,10 @@ func TestBuildStatusJSON_WindowSetPresentAndCorrect(t *testing.T) {
 	if !ok {
 		t.Fatalf(".context_window missing/wrong; json: %s", raw)
 	}
-	// Nested fallback path (.context_window.context_window_size).
 	nested, ok := cw["context_window_size"].(float64)
 	if !ok || int64(nested) != 1_000_000 {
 		t.Fatalf(".context_window.context_window_size missing/wrong; json: %s", raw)
 	}
-	// used_percentage derived from tokens/window: 300000/1000000 = 30.
 	if pct, ok := cw["used_percentage"].(float64); !ok || pct != 30.0 {
 		t.Fatalf("used_percentage = %v, want 30.0; json: %s", cw["used_percentage"], raw)
 	}
@@ -422,8 +394,6 @@ func TestBuildStatusJSON_EmitNA(t *testing.T) {
 	if err := json.Unmarshal(top["context_window"], &cw); err != nil {
 		t.Fatalf("unmarshal context_window: %v\njson: %s", err, raw)
 	}
-	// used_percentage must be the JSON string "NA" — NOT a number. A numeric
-	// value would defeat the script's skip guard.
 	var pct any
 	if err := json.Unmarshal(cw["used_percentage"], &pct); err != nil {
 		t.Fatalf("unmarshal used_percentage: %v\njson: %s", err, raw)
@@ -431,7 +401,6 @@ func TestBuildStatusJSON_EmitNA(t *testing.T) {
 	if s, ok := pct.(string); !ok || s != "NA" {
 		t.Fatalf("emit-na used_percentage = %#v; want string \"NA\"; json: %s", pct, raw)
 	}
-	// session_id / model still present (faithful full statusLine shape).
 	if string(top["session_id"]) != `"sid-na"` {
 		t.Fatalf("missing/wrong session_id; json: %s", raw)
 	}
@@ -445,7 +414,6 @@ func TestBuildStatusJSON_EmitNA(t *testing.T) {
 // suppresses only at/after the instant.
 func TestStatuslineSuppressed(t *testing.T) {
 	base := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
-	// Zero deadline (flag unset / 0): never suppressed.
 	if statuslineSuppressed(time.Time{}, base) {
 		t.Fatal("zero deadline must never suppress")
 	}
@@ -503,10 +471,6 @@ func TestNewUUIDv4_IsV4AndUnique(t *testing.T) {
 	}
 }
 
-// --- test-local helpers (no production dependency) ---
-
-// isValidUUIDv4 checks the canonical 8-4-4-4-12 layout, version nibble '4' at
-// index 14, and RFC-4122 variant (8/9/a/b) at index 19.
 func isValidUUIDv4(s string) bool {
 	if len(s) != 36 {
 		return false

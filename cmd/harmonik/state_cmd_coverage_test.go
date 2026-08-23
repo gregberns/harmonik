@@ -1,11 +1,5 @@
 package main
 
-// state_cmd_coverage_test.go — behavior tests for the `harmonik state` pure
-// logic: project-root discovery, project-dir resolution, single-row writing,
-// the human summary renderer, and the disk-fallback / --help / --json paths of
-// the top-level subcommand. No live daemon is required — every path exercised
-// here reads disk or a supplied fixture snapshot.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -19,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// captureStateStdout redirects os.Stdout around fn and returns what was written.
 func captureStateStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -43,14 +36,12 @@ func captureStateStdout(t *testing.T, fn func()) string {
 	return string(buf)
 }
 
-// errWriter always fails, to drive writeStateRow's error branch.
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, errors.New("boom") }
 
 func TestFindProjectRoot(t *testing.T) {
 	base := t.TempDir()
-	// base/proj/.harmonik exists; base/proj/sub/deep is a descendant.
 	proj := filepath.Join(base, "proj")
 	deep := filepath.Join(proj, "sub", "deep")
 	if err := os.MkdirAll(filepath.Join(proj, ".harmonik"), 0o750); err != nil {
@@ -121,9 +112,6 @@ func TestWriteStateRow_Error(t *testing.T) {
 	}
 }
 
-// fixtureSnapshot builds a fully-populated snapshot to exercise every branch of
-// printStateHuman (daemon up, unsure read-quality, runs, queues, all three
-// session states).
 func fixtureSnapshot() daemon.StateSnapshot {
 	return daemon.StateSnapshot{
 		SchemaVersion: 1,
@@ -176,7 +164,6 @@ func TestPrintStateHuman_RendersAllSections(t *testing.T) {
 }
 
 func TestPrintStateHuman_DaemonDownMinimal(t *testing.T) {
-	// Down daemon, ok read-quality, no runs/queues/sessions: the compact path.
 	snap := daemon.StateSnapshot{
 		Daemon:        daemon.StateDaemon{Up: false},
 		ActivityLabel: daemon.ActivityInactive,

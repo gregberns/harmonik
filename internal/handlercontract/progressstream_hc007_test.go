@@ -6,13 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// progressStreamFixture — per-bead helper prefix for test helpers in this file
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.7).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007 — 12 required message types
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestProgressStream_MessageTypeValues verifies that each of the 12
 // required progress-stream message type constants has the exact string value
 // mandated by specs/handler-contract.md §4.2.HC-007.
@@ -115,10 +108,6 @@ func TestProgressStream_MessageTypesDistinct(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007a — NDJSON max line length
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestProgressStream_NDJSONMaxLineLenBytesValue verifies that
 // NDJSONMaxLineLenBytes equals 1 MiB (1 048 576 bytes) as required by
 // specs/handler-contract.md §4.2.HC-007a.
@@ -142,10 +131,6 @@ func TestProgressStream_NDJSONMaxLineLenBytesPositive(t *testing.T) {
 		t.Errorf("NDJSONMaxLineLenBytes = %d; must be > 0", handlercontract.NDJSONMaxLineLenBytes)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007b — sub-reason string constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestProgressStream_NDJSONLineTooLongSubReasonValue verifies the literal value
 // against the string mandated by specs/handler-contract.md §4.2.HC-007a and §8.7.
@@ -204,10 +189,6 @@ func TestProgressStream_SubReasonsDistinct(t *testing.T) {
 		seen[c.val] = c.name
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-007 — OutcomeEmittedMsg type field matches ProgressMsgTypeOutcomeEmitted
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestProgressStream_OutcomeEmittedMsgTypeFieldMatchesConstant verifies that the
 // "type" value expected in OutcomeEmittedMsg.Type matches ProgressMsgTypeOutcomeEmitted.

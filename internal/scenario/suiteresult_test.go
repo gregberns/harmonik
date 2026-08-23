@@ -9,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// mustParseSuiteID constructs a core.SuiteID from a UUID string, failing the test on error.
 func mustParseSuiteID(t *testing.T, s string) core.SuiteID {
 	t.Helper()
 
@@ -21,14 +20,10 @@ func mustParseSuiteID(t *testing.T, s string) core.SuiteID {
 	return id
 }
 
-// suiteResultFixtureStartedAt is a stable non-zero timestamp used by suite fixtures.
 var suiteResultFixtureStartedAt = time.Date(2026, 5, 7, 9, 0, 0, 0, time.UTC)
 
-// suiteResultFixtureCompletedAt is a stable non-zero timestamp after suiteResultFixtureStartedAt.
 var suiteResultFixtureCompletedAt = time.Date(2026, 5, 7, 9, 1, 0, 0, time.UTC)
 
-// suiteResultFixtureValid returns a canonical valid SuiteResult with
-// SuiteVerdict=pass and all required fields populated.
 func suiteResultFixtureValid(t *testing.T) SuiteResult {
 	t.Helper()
 	return SuiteResult{
@@ -42,8 +37,6 @@ func suiteResultFixtureValid(t *testing.T) SuiteResult {
 	}
 }
 
-// suiteResultFixtureEmpty returns a valid SuiteResult with an empty Results
-// list (cadence filter matched zero scenarios — suite_verdict=pass, vacuously).
 func suiteResultFixtureEmpty(t *testing.T) SuiteResult {
 	t.Helper()
 	return SuiteResult{
@@ -300,7 +293,6 @@ func TestSuiteResultValid(t *testing.T) {
 			build: func(t *testing.T) SuiteResult {
 				t.Helper()
 				r := suiteResultFixtureValid(t)
-				// Results contains one passing scenario (from fixture), verdict is wrong.
 				r.SuiteVerdict = SuiteVerdictFail
 				return r
 			},
@@ -344,7 +336,6 @@ func TestSuiteResultValid(t *testing.T) {
 func TestSuiteResultJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Use timestamps that round-trip cleanly through RFC 3339.
 	started := time.Date(2026, 5, 7, 8, 0, 0, 0, time.UTC)
 	completed := time.Date(2026, 5, 7, 8, 5, 0, 0, time.UTC)
 
@@ -368,7 +359,6 @@ func TestSuiteResultJSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal error: %v", err)
 	}
 
-	// time.Time comparison: use Equal to handle monotonic clock differences.
 	if !input.StartedAt.Equal(got.StartedAt) {
 		t.Errorf("StartedAt round-trip mismatch: in=%v out=%v", input.StartedAt, got.StartedAt)
 	}
@@ -376,7 +366,6 @@ func TestSuiteResultJSONRoundTrip(t *testing.T) {
 		t.Errorf("CompletedAt round-trip mismatch: in=%v out=%v", input.CompletedAt, got.CompletedAt)
 	}
 
-	// Zero out time fields before DeepEqual.
 	inputCopy := input
 	gotCopy := got
 	inputCopy.StartedAt = time.Time{}

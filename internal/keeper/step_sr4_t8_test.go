@@ -1,15 +1,5 @@
 package keeper
 
-// step_sr4_t8_test.go — T8 acceptance: SR4 (SK-014 / SK-INV-002, "/clear MUST
-// NOT be injected before model-done") asserted over the PURE reactor, plus the
-// model_done_timeout fail-open path (SR9: proceed degraded, never silence).
-//
-// SR4 is structural in the reactor: injectClearAction is the only
-// ActInjectClear constructor and refuses until CycleState.ModelDoneSource is
-// recorded by stepEnterClearing (the single AwaitModelDone → Clearing edge).
-// These tests drive Step sequences and assert the action ordering the
-// structure guarantees.
-
 import (
 	"encoding/json"
 	"testing"
@@ -18,7 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// containsKind reports whether any action in the batch has the given kind.
 func containsKind(actions []Action, kind ActionKind) bool {
 	for _, a := range actions {
 		if a.Kind == kind {
@@ -43,7 +32,6 @@ func TestStep_SR4_NoInjectClearBeforeModelDone(t *testing.T) {
 	var preModelDone [][]Action
 	preModelDone = append(preModelDone,
 		m.Step(gaugeTickAt(at, "cyc-sr4-001")),
-		// Detection noise while awaiting the handoff.
 		m.Step(Event{Kind: EvHandoffFreshSeen, CycleID: "cyc-sr4-001", Mtime: at, At: at}),
 		m.Step(Event{Kind: EvSessionChanged, CycleID: "cyc-sr4-001", PrevSID: "sess-1", NewSID: "sess-2", At: at}),
 		m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-001", At: at.Add(time.Second)}),
@@ -51,7 +39,6 @@ func TestStep_SR4_NoInjectClearBeforeModelDone(t *testing.T) {
 	if st := m.State(); st.Phase != PhaseAwaitModelDone {
 		t.Fatalf("phase = %v; want AwaitModelDone", st.Phase)
 	}
-	// Every non-model-done event in AwaitModelDone: none may yield /clear.
 	preModelDone = append(preModelDone,
 		m.Step(gaugeTickAt(at.Add(2*time.Second), "")),
 		m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-001", At: at.Add(2 * time.Second)}),
@@ -69,7 +56,6 @@ func TestStep_SR4_NoInjectClearBeforeModelDone(t *testing.T) {
 		t.Fatalf("phase after noise = %v; want AwaitModelDone (nothing else may advance it)", st.Phase)
 	}
 
-	// The ModelDone batch itself: model_done is emitted BEFORE InjectClear.
 	batch := m.Step(Event{Kind: EvModelDone, CycleID: "cyc-sr4-001", SessionID: "sess-1", Source: "idle_marker", At: at.Add(3 * time.Second)})
 	modelDoneIdx, clearIdx := -1, -1
 	for i, a := range batch {
@@ -116,7 +102,6 @@ func TestStep_ModelDoneTimeout_FailOpenDegraded(t *testing.T) {
 
 	m.Step(gaugeTickAt(at, "cyc-sr4-003"))
 	confirm := m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-003", At: at.Add(time.Second)})
-	// The model-done bound is armed on entry to AwaitModelDone.
 	armed := false
 	for _, a := range confirm {
 		if a.Kind == ActArmTimer && a.Timer == TimerModelDone && a.D == cfg.ModelDoneTimeout {
@@ -148,7 +133,6 @@ func TestStep_ModelDoneTimeout_FailOpenDegraded(t *testing.T) {
 		t.Fatalf("state = %v/%q; want Clearing/timeout", st.Phase, st.ModelDoneSource)
 	}
 
-	// SR9 continuation: the degraded cycle still reaches its terminal.
 	m.Step(Event{Kind: EvSessionChanged, CycleID: "cyc-sr4-003", PrevSID: "sess-1", NewSID: "sess-2", At: at.Add(2 * time.Second)})
 	if st := m.State(); st.Phase != PhaseIdle || st.LastTerminal != "complete" {
 		t.Fatalf("terminal = %v/%v; want Idle/complete", st.Phase, st.LastTerminal)

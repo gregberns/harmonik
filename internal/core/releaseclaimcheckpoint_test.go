@@ -32,10 +32,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// --- fake store ---
-
-// rc31bStore is an in-memory ReleaseClaimStore. It records the order of every
-// call so an ordering test can read it back.
 type rc31bStore struct {
 	// commits is the ordered history. Each entry maps a tree path to its bytes.
 	commits []map[string][]byte
@@ -59,7 +55,6 @@ func newRC31bStore() *rc31bStore {
 	return &rc31bStore{}
 }
 
-// head returns the tree of the newest commit, or an empty tree.
 func (s *rc31bStore) head() map[string][]byte {
 	if len(s.commits) == 0 {
 		return map[string][]byte{}
@@ -67,8 +62,6 @@ func (s *rc31bStore) head() map[string][]byte {
 	return s.commits[len(s.commits)-1]
 }
 
-// treeAt resolves a commitish to a tree. It accepts ReleaseClaimHeadRef and any
-// SHA this store has handed out.
 func (s *rc31bStore) treeAt(commitish string) (map[string][]byte, bool) {
 	if commitish == ReleaseClaimHeadRef {
 		return s.head(), true
@@ -111,9 +104,6 @@ func (s *rc31bStore) CommitTransitionRecord(_ context.Context, relPath string, d
 	for k, v := range s.head() {
 		next[k] = v
 	}
-	// Model git's real guarantee: a path already in history is never replaced.
-	// If the writer ever tries, the test sees it here rather than silently
-	// accepting a rewritten claim.
 	if _, exists := next[relPath]; exists {
 		return "", fmt.Errorf("rc31bStore: refused to replace committed path %s", relPath)
 	}
@@ -129,9 +119,6 @@ func (s *rc31bStore) CommitTransitionRecord(_ context.Context, relPath string, d
 
 var _ ReleaseClaimStore = (*rc31bStore)(nil)
 
-// --- fixtures ---
-
-// rc31bRequest builds a release-claim checkpoint request carrying claim.
 func rc31bRequest(t *testing.T, claim ReleaseClaim) ReleaseClaimCheckpointRequest {
 	t.Helper()
 	tr := b3f77ValidTransition(t)
@@ -140,8 +127,6 @@ func rc31bRequest(t *testing.T, claim ReleaseClaim) ReleaseClaimCheckpointReques
 	bead := BeadID("hk-t5a01")
 	return ReleaseClaimCheckpointRequest{Transition: tr, BeadID: &bead}
 }
-
-// --- Acceptance 1: the claim is durable before any release step ---
 
 // TestReleaseAfterClaim_ClaimIsDurableBeforeRelease is the ordering sensor.
 // EM-031b: "A release operation MUST NOT begin until this checkpoint is
@@ -168,7 +153,6 @@ func TestReleaseAfterClaim_ClaimIsDurableBeforeRelease(t *testing.T) {
 		t.Fatalf("ReleaseAfterClaim: %v", err)
 	}
 
-	// The commit must already have happened when the release step ran.
 	sawCommit := false
 	for _, c := range seenCallsAtRelease {
 		if strings.HasPrefix(c, "commit ") {
@@ -178,7 +162,6 @@ func TestReleaseAfterClaim_ClaimIsDurableBeforeRelease(t *testing.T) {
 	if !sawCommit {
 		t.Fatalf("release step ran before the claim commit; calls were %v", seenCallsAtRelease)
 	}
-	// And the claim must be readable from that commit, not merely written.
 	if readbackErr != nil {
 		t.Fatalf("claim was not readable from %s during the release step: %v", cp.CommitHash, readbackErr)
 	}
@@ -289,8 +272,6 @@ func TestReleaseAfterClaim_KeepsTheCheckpointWhenReleaseFails(t *testing.T) {
 	}
 }
 
-// --- Acceptance 2 and 3: local omits the endpoint, remote keeps every field ---
-
 // TestWriteReleaseClaimCheckpoint_LocalClaimOmitsEndpointOnDisk proves the
 // omission survives the write, not just the marshal.
 func TestWriteReleaseClaimCheckpoint_LocalClaimOmitsEndpointOnDisk(t *testing.T) {
@@ -361,8 +342,6 @@ func TestWriteReleaseClaimCheckpoint_RemoteClaimRetainsEveryEndpointField(t *tes
 	}
 }
 
-// --- Acceptance 4: a later transition cannot rewrite the claim ---
-
 // TestWriteReleaseClaimCheckpoint_RefusesToRewriteAnExistingClaim proves the
 // enforced immutability guard. A second write under the same transition id is
 // refused, and the first claim's bytes are untouched.
@@ -377,7 +356,6 @@ func TestWriteReleaseClaimCheckpoint_RefusesToRewriteAnExistingClaim(t *testing.
 		t.Fatalf("first WriteReleaseClaimCheckpoint: %v", err)
 	}
 
-	// A second attempt under the SAME transition id with a DIFFERENT target.
 	rewrite := req
 	changed := *req.Transition.ReleaseClaim
 	changed.MergeTargetRef = "refs/heads/somewhere-else"
@@ -422,7 +400,6 @@ func TestWriteReleaseClaimCheckpoint_LaterTransitionCannotRewriteAPriorClaim(t *
 		t.Fatalf("first WriteReleaseClaimCheckpoint: %v", err)
 	}
 
-	// A later transition in the SAME run: new transition id, new claim.
 	second := first
 	second.Transition.TransitionID = TransitionID(uuid.Must(uuid.NewV7()))
 	second.Transition.ToState.StateID = StateID(uuid.Must(uuid.NewV7()))
@@ -438,7 +415,6 @@ func TestWriteReleaseClaimCheckpoint_LaterTransitionCannotRewriteAPriorClaim(t *
 		t.Fatal("the later transition reused the earlier record path; immutability is not structural")
 	}
 
-	// The earlier claim is unchanged when read from the LATER head.
 	earlier, err := ReadReleaseClaim(
 		context.Background(), store, secondCP.CommitHash, first.Transition.RunID, first.Transition.TransitionID)
 	if err != nil {
@@ -452,8 +428,6 @@ func TestWriteReleaseClaimCheckpoint_LaterTransitionCannotRewriteAPriorClaim(t *
 		t.Error("the later transition's merge target leaked into the earlier claim")
 	}
 }
-
-// --- writer rejections ---
 
 // TestWriteReleaseClaimCheckpoint_RejectsAnIncompleteClaimWithoutWriting proves
 // a partial claim never becomes durable. The commit is immutable, so a bad claim
@@ -560,8 +534,6 @@ func TestWriteReleaseClaimCheckpoint_ChecksTheRecordPathBeforeCommitting(t *test
 		}
 	}
 }
-
-// --- checkpoint shape and commit message ---
 
 // TestWriteReleaseClaimCheckpoint_CheckpointFields proves the returned
 // checkpoint names the run, state, transition and record path EM-016 and EM-018
@@ -675,8 +647,6 @@ func TestWriteReleaseClaimCheckpoint_OmitsBeadTrailerWhenTheRunHasNoBead(t *test
 	}
 }
 
-// --- reader failure modes ---
-
 // TestReadReleaseClaim_AbsentRecord proves a missing record reports absence
 // rather than an empty claim. EM-031b routes absence to reconciliation.
 func TestReadReleaseClaim_AbsentRecord(t *testing.T) {
@@ -758,7 +728,6 @@ func TestReadReleaseClaim_InconsistentRecord(t *testing.T) {
 		t.Fatalf("MarshalTransitionRecord: %v", err)
 	}
 
-	// Store the record at a path belonging to a DIFFERENT transition.
 	otherTID := TransitionID(uuid.Must(uuid.NewV7()))
 	relPath := TransitionRecordPath(tr.RunID, otherTID)
 	if _, err := store.CommitTransitionRecord(context.Background(), relPath, data, "misplaced"); err != nil {

@@ -1,18 +1,5 @@
 package hooksystem_test
 
-// verdictpersist_cp040_test.go — requirement-traceable tests for CP-040 Hook
-// verdict persistence (specs/control-points.md §4.8 CP-040).
-//
-// Coverage:
-//  1. PersistHookVerdict writes the JSON verdict to the canonical path.
-//  2. PersistHookVerdict emits hook_verdict_persisted with correct fields.
-//  3. PersistHookVerdict rejects an invalid HookVerdictRecord (defence-in-depth).
-//  4. PersistHookVerdict propagates a WriteAndCommit error.
-//  5. PersistHookVerdict propagates an event-bus emit error.
-//  6. The canonical verdict path follows .harmonik/hooks/<run_id>/<invocation_id>.json.
-//
-// All test-local identifiers use the cp040Persist prefix.
-
 import (
 	"context"
 	"encoding/json"
@@ -27,12 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// ---------------------------------------------------------------------------
-// Test-local stub implementations
-// ---------------------------------------------------------------------------
-
-// cp040PersistFileWriter is a stub VerdictFileWriter that records what was
-// written and returns a predetermined commit SHA.
 type cp040PersistFileWriter struct {
 	writtenPath     string
 	writtenContents []byte
@@ -49,7 +30,6 @@ func (w *cp040PersistFileWriter) WriteAndCommit(_ context.Context, relPath strin
 	return w.returnSHA, nil
 }
 
-// cp040PersistBus is a stub EventBus that records emitted events.
 type cp040PersistBus struct {
 	events  []cp040PersistEvent
 	emitErr error
@@ -82,12 +62,7 @@ func (b *cp040PersistBus) ReplayFrom(_ string, _ core.EventID) error            
 func (b *cp040PersistBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
 func (b *cp040PersistBus) Drain(_ context.Context) error                         { return nil }
 
-// Confirm cp040PersistBus satisfies the EventBus interface at compile time.
 var _ eventbus.EventBus = (*cp040PersistBus)(nil)
-
-// ---------------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------------
 
 func cp040PersistRunID() core.RunID {
 	return core.RunID(uuid.MustParse("019e7309-1648-7412-9e67-000000000041"))
@@ -122,10 +97,6 @@ func cp040PersistVerdictFixture(t *testing.T) core.HookVerdictRecord {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// (1) PersistHookVerdict writes the JSON verdict to the canonical path.
-// ---------------------------------------------------------------------------
-
 // TestPersistHookVerdict_WritesVerdictToCanonicalPath verifies that
 // PersistHookVerdict calls WriteAndCommit with the canonical path
 // .harmonik/hooks/<run_id>/<invocation_id>.json and with valid JSON content
@@ -143,13 +114,11 @@ func TestPersistHookVerdict_WritesVerdictToCanonicalPath(t *testing.T) {
 		t.Fatalf("PersistHookVerdict: unexpected error: %v", err)
 	}
 
-	// Verify the path shape: .harmonik/hooks/<run_id>/<invocation_id>.json
 	wantPath := core.HookVerdictFilePath(runID, verdict.InvocationID)
 	if writer.writtenPath != wantPath {
 		t.Errorf("written path = %q, want %q", writer.writtenPath, wantPath)
 	}
 
-	// Verify the written content is valid JSON that round-trips to the verdict.
 	var decoded core.HookVerdictRecord
 	if err := json.Unmarshal(writer.writtenContents, &decoded); err != nil {
 		t.Fatalf("written contents are not valid JSON: %v", err)
@@ -164,10 +133,6 @@ func TestPersistHookVerdict_WritesVerdictToCanonicalPath(t *testing.T) {
 		t.Errorf("decoded InputEnvelopeHash = %q, want %q", decoded.InputEnvelopeHash, verdict.InputEnvelopeHash)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// (2) PersistHookVerdict emits hook_verdict_persisted with correct fields.
-// ---------------------------------------------------------------------------
 
 // TestPersistHookVerdict_EmitsHookVerdictPersistedEvent verifies that
 // PersistHookVerdict emits exactly one hook_verdict_persisted event after
@@ -187,7 +152,6 @@ func TestPersistHookVerdict_EmitsHookVerdictPersistedEvent(t *testing.T) {
 		t.Fatalf("PersistHookVerdict: unexpected error: %v", err)
 	}
 
-	// Exactly one event must be emitted.
 	if len(bus.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(bus.events))
 	}
@@ -200,7 +164,6 @@ func TestPersistHookVerdict_EmitsHookVerdictPersistedEvent(t *testing.T) {
 		t.Errorf("event RunID = %v, want %v", ev.RunID, runID)
 	}
 
-	// Decode and verify payload fields.
 	var payload core.HookVerdictPersistedPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		t.Fatalf("unmarshal event payload: %v", err)
@@ -223,10 +186,6 @@ func TestPersistHookVerdict_EmitsHookVerdictPersistedEvent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// (3) PersistHookVerdict rejects an invalid HookVerdictRecord.
-// ---------------------------------------------------------------------------
-
 // TestPersistHookVerdict_RejectsInvalidVerdict verifies that PersistHookVerdict
 // returns an error when the verdict is not Valid() (defence-in-depth guard
 // per CP-040 §6.1.6).
@@ -234,7 +193,6 @@ func TestPersistHookVerdict_RejectsInvalidVerdict(t *testing.T) {
 	t.Parallel()
 
 	runID := cp040PersistRunID()
-	// Invalid: HookName is empty.
 	invalid := core.HookVerdictRecord{
 		HookName:          "", // required
 		InvocationID:      cp040PersistInvocationID(),
@@ -251,7 +209,6 @@ func TestPersistHookVerdict_RejectsInvalidVerdict(t *testing.T) {
 		t.Fatal("expected error for invalid HookVerdictRecord, got nil")
 	}
 
-	// No write and no event should have been attempted.
 	if writer.writtenPath != "" {
 		t.Errorf("WriteAndCommit was called despite invalid verdict (path=%q)", writer.writtenPath)
 	}
@@ -259,10 +216,6 @@ func TestPersistHookVerdict_RejectsInvalidVerdict(t *testing.T) {
 		t.Errorf("event emitted despite invalid verdict (count=%d)", len(bus.events))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// (4) PersistHookVerdict propagates a WriteAndCommit error.
-// ---------------------------------------------------------------------------
 
 // TestPersistHookVerdict_PropagatesWriteError verifies that when
 // WriteAndCommit returns an error, PersistHookVerdict returns an error
@@ -285,15 +238,10 @@ func TestPersistHookVerdict_PropagatesWriteError(t *testing.T) {
 		t.Errorf("error does not wrap writeErr: got %v", err)
 	}
 
-	// Event MUST NOT be emitted when the write failed.
 	if len(bus.events) != 0 {
 		t.Errorf("hook_verdict_persisted emitted despite write failure (count=%d)", len(bus.events))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// (5) PersistHookVerdict propagates an event-bus emit error.
-// ---------------------------------------------------------------------------
 
 // TestPersistHookVerdict_PropagatesEmitError verifies that when the event bus
 // returns an error, PersistHookVerdict returns that error. The write succeeded
@@ -316,15 +264,10 @@ func TestPersistHookVerdict_PropagatesEmitError(t *testing.T) {
 		t.Errorf("error does not wrap emitErr: got %v", err)
 	}
 
-	// The write DID happen (file is on branch); only the event failed.
 	if writer.writtenPath == "" {
 		t.Error("WriteAndCommit was not called despite valid verdict and no write error")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// (6) The canonical verdict path follows .harmonik/hooks/<run_id>/<invocation_id>.json
-// ---------------------------------------------------------------------------
 
 // TestHookVerdictFilePath_CP040Shape verifies that HookVerdictFilePath produces
 // the canonical path shape required by specs/control-points.md §4.8.CP-040:

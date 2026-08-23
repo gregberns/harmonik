@@ -1,57 +1,5 @@
 package daemon_test
 
-// scenario_happypath_n1_test.go — N=1 happy-path scenario test (hk-jf2tb).
-//
-// TestScenario_HappyPath_N1 exercises the full daemon stack from daemon.Start
-// through a real harmonik-twin-claude subprocess running the "single-happy-path"
-// canned scenario.  It asserts the expected event sequence in the JSONL log and
-// verifies that the bead reaches "closed" status.
-//
-// # Production composition root
-//
-// daemon.Start is used directly (production composition root per bead hk-jf2tb).
-// No test-only seams below daemon.Start are used.
-//
-// # Twin binary invocation
-//
-// harmonik-twin-claude requires specific flags (--scenario, --socket-path) but
-// daemon.Start's buildClaudeLaunchSpec appends Claude-specific flags
-// (--session-id etc.) that the twin does not recognise. A thin wrapper script
-// is written to t.TempDir() that invokes the twin with only the flags it
-// understands (--scenario single-happy-path), ignoring all other args supplied
-// by the daemon. This is the idiomatic pattern for twin-via-daemon tests:
-// the wrapper acts as the adaptation layer between the production composition
-// root and the scenario-controlled twin.
-//
-// # tmux
-//
-// No tmux is used in this test (Substrate is nil / production exec path).
-// AssertNoOrphanTmuxWindows is called with a nil adapter so the assertion is
-// a no-op in non-tmux environments per the scenariotest contract.
-//
-// # Expected event sequence (JSONL, subsequence check)
-//
-//   run_started → handler_capabilities → session_log_location →
-//   skills_provisioned → launch_initiated → agent_ready →
-//   agent_heartbeat → run_completed
-//
-// The daemon emits handler_capabilities / session_log_location / skills_provisioned
-// / launch_initiated from buildClaudeLaunchSpec PreExecMessages (step 3) BEFORE
-// the subprocess starts. The twin then additionally emits these events on stdout
-// when driven by the single-happy-path scenario; both sets appear in the JSONL.
-// AssertEventSequence performs a subsequence check so duplicates do not cause
-// failures (earlier occurrence is matched first).
-//
-// Helper prefix: scenarioN1 (bead hk-jf2tb; per implementer-protocol.md
-// §Helper-prefix discipline).
-//
-// Spec refs:
-//   - specs/scenario-harness.md §4 (assertion vocabulary)
-//   - specs/handler-contract.md §4.6 CHB-018 (event ordering)
-//   - specs/event-model.md §8.1, §8.3
-//
-// Bead: hk-jf2tb.
-
 import (
 	"bufio"
 	"context"
@@ -68,8 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 )
 
-// testLogWriter adapts *testing.T to io.Writer so daemon log output is
-// captured in the test log and visible with -v.
 type testLogWriter struct {
 	t *testing.T
 }
@@ -79,20 +25,10 @@ func (w testLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Compile-time: ensure testLogWriter satisfies io.Writer.
 var _ interface{ Write([]byte) (int, error) } = testLogWriter{}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// scenarioN1 fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// scenarioN1ProjectDir creates the minimal project directory for the scenario
-// test: .harmonik/events/, .harmonik/beads-intents/. Returns the project dir
-// and the JSONL events log path.
 func scenarioN1ProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
-	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
 	raw := t.TempDir()
 	resolved, resolveErr := filepath.EvalSymlinks(raw)
 	if resolveErr != nil {
@@ -112,7 +48,6 @@ func scenarioN1ProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// scenarioN1GitRepo initialises a bare git repository with one commit in dir.
 func scenarioN1GitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -134,10 +69,6 @@ func scenarioN1GitRepo(t *testing.T, dir string) {
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
 
-	// Create a bare clone as "origin" so that mergeRunBranchToMain's
-	// `git push origin main` step succeeds now that the committing
-	// commit-on-cue twin produces a real worktree commit (hk-4f5ua). Without
-	// an origin remote the push fails and the run is reopened (run_failed).
 	bareDir := dir + "-bare"
 	//nolint:gosec // G204: git args are test-internal literals; not user input
 	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--bare", dir, bareDir)
@@ -147,8 +78,6 @@ func scenarioN1GitRepo(t *testing.T, dir string) {
 	run("remote", "add", "origin", bareDir)
 }
 
-// scenarioN1BrPath returns the path to the real `br` binary, skipping the test
-// when br is not on PATH.
 func scenarioN1BrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -158,8 +87,6 @@ func scenarioN1BrPath(t *testing.T) string {
 	return brPath
 }
 
-// scenarioN1BrWrapperScript writes a /bin/sh wrapper that invokes realBrPath
-// with --db <dbPath> prepended to all args. Returns the wrapper path.
 func scenarioN1BrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -172,8 +99,6 @@ func scenarioN1BrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// scenarioN1InitBr initialises a beads workspace in projectDir, creates one
-// ready bead, and returns its ID.
 func scenarioN1InitBr(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sn1")
@@ -195,28 +120,10 @@ func scenarioN1InitBr(t *testing.T, realBrPath, projectDir, brWrapper string) st
 	return id
 }
 
-// scenarioN1TwinWrapperScript writes a /bin/sh wrapper script that invokes the
-// twin binary with --scenario commit-on-cue-startup-delay, ignoring all other
-// args passed by daemon.Start's buildClaudeLaunchSpec (e.g. --session-id).
-//
-// commit-on-cue-startup-delay (not single-happy-path) is used so the implementer
-// actually makes a git commit: single-happy-path emits the happy-path NDJSON but
-// never commits, so the no-commit guard (hk-mmh8f) fires and reopens the bead
-// instead of closing it (hk-4f5ua).
-//
-// This test's daemon.Config sets no HandlerEnv, so the child inherits no
-// environment; the wrapper re-exports the test process's PATH so the twin's
-// internal `git commit` can find git. --worktree-path "$PWD" targets the
-// worktree daemon.Start set as cmd.Dir.
-//
-// The wrapper is the adaptation layer between the production composition root
-// (which appends Claude-specific flags) and the twin binary (which only
-// understands its own flags).
 func scenarioN1TwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-wrapper.sh")
-	// Ignore all args; export PATH then invoke the committing scenario.
 	content := "#!/bin/sh\nexport PATH=" + os.Getenv("PATH") + "\nexec " + twinPath +
 		" --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
@@ -226,8 +133,6 @@ func scenarioN1TwinWrapperScript(t *testing.T, twinPath string) string {
 	return path
 }
 
-// scenarioN1PollBeadClosed polls `br show <id>` every 10 ms for up to budget.
-// Returns true if the bead reaches "closed" status.
 func scenarioN1PollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -249,8 +154,6 @@ func scenarioN1PollBeadClosed(t *testing.T, brWrapper, beadID string, budget tim
 	return false
 }
 
-// scenarioN1PollRunTerminal polls the JSONL log for a run_completed or
-// run_failed event for up to budget. Returns true when found.
 func scenarioN1PollRunTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -280,10 +183,6 @@ func scenarioN1PollRunTerminal(t *testing.T, jsonlPath string, budget time.Durat
 	return false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_HappyPath_N1
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestScenario_HappyPath_N1 is the N=1 happy-path scenario test.
 //
 // Setup:
@@ -301,49 +200,30 @@ func scenarioN1PollRunTerminal(t *testing.T, jsonlPath string, budget time.Durat
 // Bead: hk-jf2tb.
 func TestScenario_HappyPath_N1(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
-	// EnsureWorktreeTrust from the running harmonik daemon's ~/.claude.json.lock.
-	// Parallelism would race on the process-wide env var across concurrent scenario tests.
 
-	// Locate the twin binary; skip when absent.
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
 		t.Skip("harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
 	}
 
-	// Locate br binary.
 	realBrPath := scenarioN1BrPath(t)
 
-	// Create project directory with git repo.
 	projectDir, jsonlPath := scenarioN1ProjectDir(t)
 	scenarioN1GitRepo(t, projectDir)
 
-	// Initialise br DB and seed one ready bead.
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := scenarioN1BrWrapperScript(t, realBrPath, dbPath)
 	beadID := scenarioN1InitBr(t, realBrPath, projectDir, brWrapper)
 	t.Logf("scenarioN1: seeded bead ID = %s", beadID)
 
-	// Build the twin wrapper script (ignores Claude-specific flags).
 	twinWrapper := scenarioN1TwinWrapperScript(t, twinPath)
 
-	// Redirect EnsureWorktreeTrust to a test-local ~/.claude.json so the test
-	// does not contend with a running harmonik daemon on ~/.claude.json.lock.
-	// The HARMONIK_CLAUDE_CONFIG_PATH env var is honoured by workspace.EnsureWorktreeTrust
-	// (workspace/claudetrust_wm040b.go defaultClaudeGlobalConfigPath).
-	//
-	// Note: t.Setenv cannot be used with t.Parallel(), so we use os.Setenv with
-	// a manual cleanup registration.  Each test gets a unique t.TempDir() path so
-	// parallel invocations do not race on the env var value.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("scenarioN1: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
 	t.Cleanup(func() {
-		// hk-1o0cc: RESTORE the prior value (the TestMain package-wide temp default)
-		// rather than blindly unsetting, so the package-wide ~/.claude.json isolation
-		// stays in effect for tests that run after this one (esp. the parallel phase).
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
 		} else {
@@ -351,7 +231,6 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		}
 	})
 
-	// Wire daemon.Config — production composition root.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
@@ -374,18 +253,11 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// Launch daemon.Start in a goroutine.
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Poll until a terminal JSONL event (run_completed or run_failed) appears.
-	//
-	// Budget = AgentReadyTimeout (5 s) + socketGrace (3 s) + CloseBead budget (5 s) + headroom.
-	// We poll for the JSONL terminal event BEFORE cancelling the daemon context so
-	// that CloseBead is not interrupted mid-retry (which would produce run_failed
-	// instead of run_completed and leave the bead in_progress).
 	const terminalPollBudget = 20 * time.Second
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, terminalPollBudget, func() {
 		for {
@@ -396,37 +268,19 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		}
 	})
 
-	// Stop the work loop now that the run has reached a terminal JSONL event.
 	loopCancel()
 
-	// Wait for daemon.Start to return (up to 5 s).
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 5*time.Second, func() {
 		if err := <-startDone; err != nil {
 			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
 	})
 
-	// ── Assertion 1: bead closed ─────────────────────────────────────────────
-
 	closed := scenarioN1PollBeadClosed(t, brWrapper, beadID, 2*time.Second)
 	if !closed {
 		t.Errorf("ScenarioN1: bead %s not closed within %s after terminal event", beadID, terminalPollBudget)
 	}
 
-	// ── Assertion 2: expected event sequence ─────────────────────────────────
-	//
-	// AssertEventSequence performs a subsequence check over the JSONL:
-	// each required event must appear after all preceding required events.
-	// Duplicate events (e.g. handler_capabilities emitted by the daemon
-	// pre-exec AND by the twin) do not cause failures — the first occurrence
-	// is matched.
-
-	// Subsequence check. agent_heartbeat is placed before agent_ready because the
-	// commit-on-cue-startup-delay scenario does not script post-ready heartbeats;
-	// the only heartbeat is the daemon's timer-driven one emitted shortly after
-	// launch (during the startup delay, before agent_ready). The lifecycle order
-	// run_started → pre-exec messages → agent_ready → run_completed is unchanged,
-	// and the assertion still requires a heartbeat to be emitted (hk-4f5ua).
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeHandlerCapabilities)},
@@ -438,19 +292,10 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		{Type: string(core.EventTypeRunCompleted)},
 	})
 
-	// ── Assertion 3: br status == closed ─────────────────────────────────────
-
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "closed")
-
-	// ── Assertion 4: no orphan tmux windows ──────────────────────────────────
-	// nil adapter → skipped in non-tmux test environments per scenariotest contract.
 
 	scenariotest.AssertNoOrphanTmuxWindows(t, nil)
 
-	// ── Assertion 5: causality invariants (hk-xegej) ─────────────────────────
-	// run_started must be followed by a terminal run event within 60 s.
-	// implementer_commit (when present) must be followed by reviewer_launched or
-	// run_completed within 30 s; passes vacuously when implementer_commit is absent.
 	scenariotest.AssertEventCausality(t, jsonlPath,
 		"run_started",
 		[]string{"run_completed", "run_failed", "run_cancelled"},

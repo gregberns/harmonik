@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// eventPatternFixtureTypes returns an EventPattern in explicit mode with the given types.
 func eventPatternFixtureTypes(types ...EventType) EventPattern {
 	m := make(map[EventType]struct{}, len(types))
 	for _, t := range types {
@@ -14,7 +13,6 @@ func eventPatternFixtureTypes(types ...EventType) EventPattern {
 	return EventPattern{Wildcard: false, Types: m}
 }
 
-// eventPatternFixtureWildcard returns an EventPattern in wildcard mode.
 func eventPatternFixtureWildcard() EventPattern {
 	return EventPattern{Wildcard: true, Types: map[EventType]struct{}{}}
 }
@@ -28,19 +26,16 @@ func TestEventPatternValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			// Wildcard=true with empty types: valid per §6.1 invariant.
 			name:    "wildcard true empty types",
 			pattern: eventPatternFixtureWildcard(),
 			wantErr: false,
 		},
 		{
-			// Wildcard=false with non-empty types: valid per §6.1 invariant.
 			name:    "wildcard false non-empty types",
 			pattern: eventPatternFixtureTypes(EventTypeRunStarted, EventTypeRunCompleted),
 			wantErr: false,
 		},
 		{
-			// Wildcard=true with non-empty types: invalid per §6.1 "empty when wildcard=true".
 			name: "wildcard true non-empty types",
 			pattern: EventPattern{
 				Wildcard: true,
@@ -49,13 +44,11 @@ func TestEventPatternValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// Wildcard=false with empty types: invalid — explicit mode requires at least one type.
 			name:    "wildcard false empty types",
 			pattern: EventPattern{Wildcard: false, Types: map[EventType]struct{}{}},
 			wantErr: true,
 		},
 		{
-			// Wildcard=false with nil types map is equivalent to empty — invalid.
 			name:    "wildcard false nil types",
 			pattern: EventPattern{Wildcard: false, Types: nil},
 			wantErr: true,

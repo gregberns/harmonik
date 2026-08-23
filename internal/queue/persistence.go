@@ -18,38 +18,21 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// persistCounter makes concurrent in-process Persist calls for the same queue
-// mint distinct temp filenames. Keyed only on PID, two goroutines racing to
-// persist the same queue would derive an identical tmpPath and the second
-// O_EXCL create would fail with ErrPersistFailed. The per-write counter (plus a
-// random suffix as a belt-and-suspenders guard against PID reuse across
-// processes) makes each temp name unique. Bead ref: W4 mega-review §c.
 var persistCounter atomic.Uint64
 
-// uniqueTmpSuffix returns a per-write-unique suffix for an atomic-write temp
-// file: PID + a monotonically-increasing in-process counter + a short random
-// token. The counter guarantees uniqueness among concurrent goroutines in this
-// process; the random token guards against collisions across processes that
-// happen to reuse a PID.
 func uniqueTmpSuffix() string {
 	n := persistCounter.Add(1)
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand failure is unexpected; the PID+counter alone still
-		// guarantees in-process uniqueness, so fall back to those.
 		return fmt.Sprintf("%d-%d", os.Getpid(), n)
 	}
 	return fmt.Sprintf("%d-%d-%s", os.Getpid(), n, hex.EncodeToString(b[:]))
 }
 
-// queueFileName is the legacy singleton filename, kept for migration and docs.
 const queueFileName = "queue.json"
 
-// queuesSubDir is the subdirectory under .harmonik where per-queue files live.
-// Spec ref: specs/queue-model.md §2.9.
 const queuesSubDir = "queues"
 
-// maxQueueFileBytes is the 1 MiB persistence size bound per QM-004.
 const maxQueueFileBytes = 1 << 20 // 1 MiB = 1048576 bytes
 
 // ErrCorrupt is returned by Load when the per-queue file exists but cannot
@@ -70,26 +53,18 @@ var ErrPersistFailed = fmt.Errorf("queue: atomic write to queue file failed")
 // exceeds the 1 MiB size bound per QM-004.
 var ErrTooLarge = fmt.Errorf("queue: queue file would exceed 1 MiB size bound (QM-004)")
 
-// queuePath returns the canonical per-queue path under projectDir.
-// name MUST be normalised (non-empty, valid per QM-002/2.1).
-//
-// Spec ref: specs/queue-model.md §2.9 — ".harmonik/queues/<name>.json".
 func queuePath(projectDir, name string) string {
 	return queuesDir(projectDir) + "/" + name + ".json"
 }
 
-// queuesDir returns the .harmonik/queues directory under projectDir.
 func queuesDir(projectDir string) string {
 	return projectDir + "/.harmonik/" + queuesSubDir
 }
 
-// legacyQueuePath returns the pre-NQ-A2 singleton path .harmonik/queue.json.
-// Used only by MigrateFromLegacy.
 func legacyQueuePath(projectDir string) string {
 	return projectDir + "/.harmonik/" + queueFileName
 }
 
-// harmonikDir returns the .harmonik directory path under projectDir.
 func harmonikDir(projectDir string) string {
 	return projectDir + "/.harmonik"
 }
@@ -126,14 +101,11 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 		return fmt.Errorf("%w: marshal: %w", ErrPersistFailed, err)
 	}
 
-	// QM-004: enforce 1 MiB size bound before touching disk.
 	if len(data) > maxQueueFileBytes {
 		return ErrTooLarge
 	}
 
 	qDir := queuesDir(projectDir)
-	// Ensure .harmonik/queues/ exists. MkdirAll is idempotent; the mode comes
-	// from core.HarmonikDirMode so it cannot diverge from the CLI-side creators.
 	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("%w: mkdir queues: %w", ErrPersistFailed, err)
 	}
@@ -154,7 +126,6 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 		return fmt.Errorf("%w: write temp %q: %w", ErrPersistFailed, tmpPath, errors.Join(writeErr, rmErr))
 	}
 
-	// Step 3: rename temp → target (atomic within same filesystem).
 	if renameErr := os.Rename(tmpPath, target); renameErr != nil {
 		rmErr := os.Remove(tmpPath)
 		return fmt.Errorf("%w: rename %q → %q: %w", ErrPersistFailed, tmpPath, target, errors.Join(renameErr, rmErr))
@@ -201,8 +172,6 @@ func Load(_ context.Context, projectDir, name string) (*Queue, error) {
 
 	q, err := UnmarshalQueue(data)
 	if err != nil {
-		// File is present but unparseable: return ErrCorrupt per QM-002.
-		// Wrap so callers can inspect via errors.Is.
 		return nil, fmt.Errorf("%w: %w", ErrCorrupt, err)
 	}
 	return &q, nil
@@ -265,9 +234,6 @@ func CompleteAndUnlinkResult(ctx context.Context, projectDir string, q *Queue) T
 	return completeAndUnlinkResult(ctx, projectDir, q, Unlink)
 }
 
-// completeAndUnlinkResult makes the durable-write boundary observable before
-// cleanup. Production uses Unlink. The internal test reads the canonical file
-// at that boundary.
 func completeAndUnlinkResult(
 	ctx context.Context,
 	projectDir string,
@@ -288,7 +254,6 @@ func completeAndUnlinkResult(
 		return TerminalResult{CommitErr: err}
 	}
 
-	// Step 2: unlink the per-queue file and fsync parent dir (QM-053 step 3 / QM-003).
 	name := NormaliseQueueName(q.Name)
 	if err := unlink(ctx, projectDir, name); err != nil {
 		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)}
@@ -313,19 +278,15 @@ func completeAndUnlinkResult(
 func ArchiveFailedQueue(_ context.Context, projectDir, name string, t time.Time) (string, error) {
 	src := queuePath(projectDir, name)
 	ts := t.UTC().Format("20060102150405")
-	// Build the archive name from FailedArchiveInfix so the writer and every
-	// reader share one definition of the layout (see failedarchivelayout.go).
 	dst := src + FailedArchiveInfix + ts
 
 	if err := os.Rename(src, dst); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// Already gone — treat as success.
 			return "", nil
 		}
 		return "", fmt.Errorf("queue: ArchiveFailedQueue: rename %q → %q: %w", src, dst, err)
 	}
 
-	// fsync parent directory so the rename is durable.
 	qDir := queuesDir(projectDir)
 	//nolint:gosec // G304: qDir is the daemon-internal .harmonik/queues directory
 	dir, err := os.Open(qDir)
@@ -361,7 +322,6 @@ func Unlink(_ context.Context, projectDir, name string) error {
 	//nolint:gosec // G304: qDir is the daemon-internal .harmonik/queues directory
 	dir, err := os.Open(qDir)
 	if err != nil {
-		// queues/ dir may not exist if queue was never persisted; treat as success.
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -416,9 +376,6 @@ func MigrateFromLegacy(_ context.Context, projectDir string) error {
 	})
 }
 
-// migrateFromLegacyOps is deliberately local to legacy migration. It permits
-// independent deterministic syscall cuts without widening the persistence API
-// or installing package-global mutable hooks.
 type migrateFromLegacyOps struct {
 	readFile   func(string) ([]byte, error)
 	stat       func(string) (os.FileInfo, error)
@@ -514,14 +471,10 @@ func migrateFromLegacy(projectDir string, ops migrateFromLegacyOps) error {
 		return fmt.Errorf("queue: MigrateFromLegacy: stat main queue: %w", statErr)
 	}
 
-	// A pre-existing equivalent destination may be the partial result of a
-	// previous rename whose queues-directory sync failed. Always complete this
-	// sync before legacy removal.
 	if err := syncDirectory(qDir); err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: sync queues dir: %w", err)
 	}
 
-	// Remove legacy file and fsync .harmonik/ so the deletion is durable.
 	if err := ops.remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("queue: MigrateFromLegacy: remove legacy file: %w", err)
 	}
@@ -556,7 +509,6 @@ func EnumerateQueueNames(projectDir string) ([]string, error) {
 			continue
 		}
 		name := e.Name()
-		// Accept only plain <name>.json entries; skip tmp/failed/cancelled archives.
 		if !strings.HasSuffix(name, ".json") {
 			continue
 		}
@@ -571,11 +523,6 @@ func EnumerateQueueNames(projectDir string) ([]string, error) {
 	return names, nil
 }
 
-// writeTempAndClose writes data to f, fsyncs it so the bytes are durable
-// before any rename, and closes it. Every step's error is retained and joined:
-// a failed Close after a successful Write can still mean the data never
-// reached the disk, so it must not be dropped in favour of the earlier error.
-// f is always closed, including on the write and sync failure paths.
 func writeTempAndClose(f *os.File, data []byte) error {
 	if _, writeErr := f.Write(data); writeErr != nil {
 		return errors.Join(writeErr, f.Close())
@@ -586,7 +533,6 @@ func writeTempAndClose(f *os.File, data []byte) error {
 	return f.Close()
 }
 
-// fsyncDir opens dir and calls Sync on it. Returns an error if open or sync fails.
 func fsyncDir(dir string) error {
 	//nolint:gosec // G304: caller-verified daemon-internal path
 	d, err := os.Open(dir)

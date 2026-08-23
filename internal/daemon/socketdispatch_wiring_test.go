@@ -1,23 +1,11 @@
 package daemon
 
-// T4 — wiring-completeness guard (MANDATORY, package daemon).
-//
-// Asserts buildSocketRouter(&socketDispatch{}).Ops() equals the frozen 29-op set
-// (every op except subscribe, which is a daemon pre-branch). A dropped Register
-// would route a live op to the neutral Unknown path → "daemon: unknown op %q"
-// instead of its "… not registered" envelope (wire-F7). Plus a static assertion
-// that subscribe + hook-relay are the two daemon pre-branches, so the total
-// handled surface is provably the full 26 ops + the hook-relay envelope.
-
 import (
 	"reflect"
 	"sort"
 	"testing"
 )
 
-// frozenRoutableOps is the exact set of ops routed through socketrouter.Dispatch.
-// subscribe is deliberately absent (daemon pre-branch). Freeze this list; a
-// diff here is a wire-surface change and must be intentional.
 var frozenRoutableOps = []string{
 	"claim-next",
 	"comms-presence",
@@ -78,7 +66,6 @@ func TestSocketSurface_TwoPreBranches(t *testing.T) {
 			routable, daemonPreBranchOps, totalProtocolOps)
 	}
 
-	// subscribe MUST NOT be routable (it is a response-shape-breaking pre-branch).
 	for _, op := range buildSocketRouter(&socketDispatch{}).Ops() {
 		if op == "subscribe" {
 			t.Fatal("subscribe must be a daemon pre-branch, not a router route")

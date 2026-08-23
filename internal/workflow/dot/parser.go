@@ -64,8 +64,6 @@ func Parse(src, filename string) (*Graph, error) {
 	return buildGraph(raw)
 }
 
-// ── token types ───────────────────────────────────────────────────────────────
-
 type tokenKind int
 
 const (
@@ -87,15 +85,11 @@ type token struct {
 	line  int // 1-based
 }
 
-// scanError is the internal scanner error type.
 type scanError struct {
 	line int
 	msg  string
 }
 
-// ── tokenizer ─────────────────────────────────────────────────────────────────
-
-// tokenize converts src into a flat token slice with 1-based line numbers.
 func tokenize(src string) ([]token, *scanError) {
 	var tokens []token
 	i, line := 0, 1
@@ -114,7 +108,6 @@ func tokenize(src string) ([]token, *scanError) {
 			continue
 		}
 
-		// Comments.
 		if ch == '/' && i+1 < n {
 			switch src[i+1] {
 			case '/':
@@ -139,14 +132,12 @@ func tokenize(src string) ([]token, *scanError) {
 			}
 		}
 
-		// Arrow.
 		if ch == '-' && i+1 < n && src[i+1] == '>' {
 			tokens = append(tokens, token{kind: tokArrow, value: "->", line: line})
 			i += 2
 			continue
 		}
 
-		// Single-character symbols.
 		switch ch {
 		case '[':
 			tokens = append(tokens, token{kind: tokLBrack, value: "[", line: line})
@@ -178,7 +169,6 @@ func tokenize(src string) ([]token, *scanError) {
 			continue
 		}
 
-		// Double-quoted string.
 		if ch == '"' {
 			startLine := line
 			i++
@@ -216,7 +206,6 @@ func tokenize(src string) ([]token, *scanError) {
 			return nil, &scanError{line: startLine, msg: "unterminated string literal"}
 		}
 
-		// Unquoted identifier.
 		if isIDStartChar(rune(ch)) || unicode.IsDigit(rune(ch)) {
 			start := i
 			startLine := line
@@ -243,8 +232,6 @@ func isIDChar(r rune) bool {
 		r == '_' || r == '-' || r == '.' || r == '/' || r == ':' || r == '@'
 }
 
-// ── intermediate raw document ─────────────────────────────────────────────────
-
 type rawAttrPair struct {
 	key  string
 	val  string
@@ -270,8 +257,6 @@ type rawDoc struct {
 	nodes      []*rawNode
 	edges      []*rawEdge
 }
-
-// ── recursive-descent parser ──────────────────────────────────────────────────
 
 type dotParser struct {
 	tokens   []token
@@ -316,9 +301,6 @@ func (p *dotParser) expectIdent(what string) (token, error) {
 	return t, nil
 }
 
-// expectKind consumes the next token and reports a ParseError unless it is of
-// kind k. The token itself is not returned: every caller matches a fixed
-// punctuation symbol whose value it already knows.
 func (p *dotParser) expectKind(k tokenKind, sym string) error {
 	t, ok := p.consume()
 	if !ok {
@@ -336,14 +318,11 @@ func (p *dotParser) consumeOptSemi() {
 	}
 }
 
-// parse is the top-level entry point: parse a full digraph.
 func (p *dotParser) parse() (*rawDoc, error) {
-	// Consume optional "strict".
 	if t, ok := p.peek(); ok && t.kind == tokIdent && t.value == "strict" {
 		_, _ = p.consume()
 	}
 
-	// Expect "digraph".
 	kw, err := p.expectIdent("keyword \"digraph\"")
 	if err != nil {
 		return nil, err
@@ -352,7 +331,6 @@ func (p *dotParser) parse() (*rawDoc, error) {
 		return nil, &ParseError{Line: kw.line, Message: fmt.Sprintf("expected \"digraph\", got %q", kw.value)}
 	}
 
-	// Optional graph name: anything that isn't "{".
 	name := ""
 	if t, ok := p.peek(); ok && t.kind != tokLBrace {
 		if t.kind == tokIdent || t.kind == tokString {
@@ -372,7 +350,6 @@ func (p *dotParser) parse() (*rawDoc, error) {
 	return doc, nil
 }
 
-// parseBody parses the content inside the outer braces.
 func (p *dotParser) parseBody(doc *rawDoc) error {
 	for {
 		t, ok := p.peek()
@@ -388,7 +365,6 @@ func (p *dotParser) parseBody(doc *rawDoc) error {
 			continue
 		}
 
-		// "graph [ ... ]" attribute block (DOT convention for graph-level attrs).
 		if t.kind == tokIdent && t.value == "graph" {
 			_, _ = p.consume()
 			if pk, ok2 := p.peek(); ok2 && pk.kind == tokLBrack {
@@ -400,7 +376,6 @@ func (p *dotParser) parseBody(doc *rawDoc) error {
 				p.consumeOptSemi()
 				continue
 			}
-			// "graph" used as a node/edge ID (unusual but valid DOT).
 			if err := p.parseStmt(doc, "graph", t.line); err != nil {
 				return err
 			}
@@ -408,17 +383,11 @@ func (p *dotParser) parseBody(doc *rawDoc) error {
 			continue
 		}
 
-		// Node/edge statement.
 		if t.kind != tokIdent && t.kind != tokString {
 			return &ParseError{Line: t.line, Message: fmt.Sprintf("unexpected token %q in digraph body", t.value)}
 		}
 		_, _ = p.consume()
 
-		// Bare graph-level attribute: id = value ; (no brackets, no arrow).
-		// This is the DOT idiom for writing graph attrs directly in the body:
-		//   schema_version="1";
-		//   start_node="foo";
-		// Detect by peeking for '='.
 		if pk, ok2 := p.peek(); ok2 && pk.kind == tokEq {
 			_, _ = p.consume() // consume '='
 			valTok, valErr := p.expectIdent("graph attribute value")
@@ -441,9 +410,7 @@ func (p *dotParser) parseBody(doc *rawDoc) error {
 	}
 }
 
-// parseStmt handles one node or edge statement given the already-consumed LHS id.
 func (p *dotParser) parseStmt(doc *rawDoc, id string, idLine int) error {
-	// Edge: id -> target [attrs]
 	if pk, ok := p.peek(); ok && pk.kind == tokArrow {
 		_, _ = p.consume()
 		toTok, err := p.expectIdent("edge target node ID")
@@ -460,7 +427,6 @@ func (p *dotParser) parseStmt(doc *rawDoc, id string, idLine int) error {
 		doc.edges = append(doc.edges, &rawEdge{from: id, to: toTok.value, line: idLine, attrs: attrs})
 		return nil
 	}
-	// Node: id [attrs]
 	var attrs []rawAttrPair
 	if pk, ok := p.peek(); ok && pk.kind == tokLBrack {
 		var err error
@@ -473,7 +439,6 @@ func (p *dotParser) parseStmt(doc *rawDoc, id string, idLine int) error {
 	return nil
 }
 
-// parseAttrList parses a [ key=value; ... ] attribute list.
 func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 	if err := p.expectKind(tokLBrack, "["); err != nil {
 		return nil, err
@@ -507,28 +472,16 @@ func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 	}
 }
 
-// ── WG-031 attribute classification ──────────────────────────────────────────
-
-// nodeModelRegex is the shape constraint for per-node model= attributes (WG-042 §I.5).
-// Mirrors the HC-055a constraint in daemon/modelpreference.go.
 var nodeModelRegex = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
 
-// workflowIDTemplatePattern permits a complete template token to survive the
-// parse boundary. The loader substitutes and validates it before dispatch.
 var workflowIDTemplatePattern = regexp.MustCompile(`^__[A-Z][A-Z0-9_]*__$`)
 
-// nodeModelMaxLen is the maximum length for a per-node model= value (WG-042 §I.5).
 const nodeModelMaxLen = 128
 
-// validNodeEffortLevels is the closed enum for per-node effort= attributes (WG-042 §I.5).
-// Mirrors the HC-055a enum in daemon/modelpreference.go.
 var validNodeEffortLevels = map[string]bool{
 	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
 }
 
-// ── graph builder (rawDoc → *Graph) ──────────────────────────────────────────
-
-// buildGraph converts a rawDoc into a typed *Graph, applying WG-031 policy.
 func buildGraph(doc *rawDoc) (*Graph, error) {
 	g := &Graph{
 		Name:         doc.name,
@@ -538,7 +491,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 	var warnings []ParseWarning
 	workflowIDSeen := false
 
-	// Graph-level attributes.
 	for _, pair := range doc.graphAttrs {
 		switch pair.key {
 		case "schema_version":
@@ -546,10 +498,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		case "version":
 			g.Version = pair.val
 		case "start_node", "start_node_id":
-			// Accept both DOT attribute name ("start_node") and the Go-field name
-			// spelling ("start_node_id").  The spec glossary distinguishes DOT attr
-			// ("start_node") from parsed record field ("start_node_id"); both are
-			// used in existing fixtures.
 			if g.StartNodeID == "" {
 				g.StartNodeID = pair.val
 			}
@@ -567,8 +515,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 			}
 			workflowIDSeen = true
 			if workflowIDTemplatePattern.MatchString(pair.val) {
-				// Keep the typed template value until the substitution pass. The
-				// loader validates the final value with core.NewWorkflowID.
 				g.WorkflowID = core.WorkflowID(pair.val)
 				continue
 			}
@@ -584,10 +530,8 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		case "workflow_class":
 			g.WorkflowClass = pair.val
 		case "goal":
-			// WG-044: graph-level goal string; threaded into agentic briefs via ExtraContext.
 			g.Goal = pair.val
 		case "no_progress_guard":
-			// hk-nvd3: validate and store; valid values: "", "strict", "off", "capped:N" (N >= 1).
 			if err := validateNoProgressGuard(pair.val); err != nil {
 				strictErrs = append(strictErrs, &ParseError{
 					Line:    pair.line,
@@ -597,7 +541,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 				g.NoProgressGuard = pair.val
 			}
 		default:
-			// Non-reserved graph-level attribute: permissive per WG-031/032.
 			g.UnknownAttrs[pair.key] = pair.val
 			warnings = append(warnings, ParseWarning{
 				Line:    pair.line,
@@ -612,7 +555,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		})
 	}
 
-	// Nodes.
 	for _, rn := range doc.nodes {
 		node, nodeErrs, nodeWarns := buildNode(rn)
 		strictErrs = append(strictErrs, nodeErrs...)
@@ -620,7 +562,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		g.Nodes = append(g.Nodes, node)
 	}
 
-	// Edges.
 	for _, re := range doc.edges {
 		edge, edgeErrs, edgeWarns := buildEdge(re)
 		strictErrs = append(strictErrs, edgeErrs...)
@@ -636,7 +577,6 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 	return g, nil
 }
 
-// buildNode converts a rawNode to a typed *Node applying WG-031 node-level policy.
 func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 	node := &Node{
 		ID:           rn.id,
@@ -651,10 +591,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 		case "type":
 			node.RawType = pair.val
 			nt := core.NodeType(pair.val)
-			// WG-001 specifies a CLOSED FOUR-MEMBER enum: {agentic, non-agentic, gate, sub-workflow}.
-			// control-point was removed from the v1.0 vocabulary (see §16.2 and WG-001).
-			// core.NodeType.Valid() still accepts control-point (pre-Phase-3 code); we
-			// enforce the spec's 4-type enum here at the parser layer.
 			if !isValidWG001NodeType(nt) {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -682,12 +618,8 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 		case "role":
 			node.Role = pair.val
 		case "prompt":
-			// Agentic-only per WG-040 §I.3. Retained on all node types;
-			// a v1 WARNING is emitted post-loop for non-agentic/gate nodes.
 			node.Prompt = pair.val
 		case "model":
-			// Agentic-only per WG-042 §I.5. Shape-validated here; reserved-out-of-position
-			// strict error for non-agentic nodes is emitted post-loop.
 			if pair.val == "" || !nodeModelRegex.MatchString(pair.val) || len(pair.val) > nodeModelMaxLen {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -699,8 +631,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.Model = pair.val
 			}
 		case "effort":
-			// Agentic-only per WG-042 §I.5. Enum-validated here; reserved-out-of-position
-			// strict error for non-agentic nodes is emitted post-loop.
 			if !validNodeEffortLevels[pair.val] {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -712,8 +642,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.Effort = pair.val
 			}
 		case "non_committing":
-			// Agentic-only per WG-041 §I.4. Accepted as "true" or "false" (boolean);
-			// retained on reviewer/non-agentic/gate nodes with a v1 WARNING (WG-031).
 			switch pair.val {
 			case "true":
 				node.NonCommitting = true
@@ -728,10 +656,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				})
 			}
 		case "auto_status":
-			// Agentic-only per WG-053. Accepted as "true" or "false" (boolean);
-			// retained on reviewer/non-agentic/gate nodes with a v1 WARNING (WG-031).
-			// Any non-boolean value (policy name/mode) is rejected — reserved for a
-			// future step. Sibling to non_committing.
 			switch pair.val {
 			case "true":
 				node.AutoStatus = true
@@ -761,7 +685,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 		case "tool_command":
 			node.ToolCommand = pair.val
 		case "timeout":
-			// WG-024: timeout must be a positive integer when specified.
 			n, err := strconv.Atoi(pair.val)
 			if err != nil || n <= 0 {
 				errs = append(errs, &ParseError{
@@ -774,10 +697,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.Timeout = pair.val
 			}
 		case "harness":
-			// Per-node harness override (codex-harness C4/T5, hk-u67of). Supplies
-			// the tier-3 (node) default for resolveHarness. Value MUST satisfy
-			// core.AgentType.Valid() (AR-025); invalid → strict error so node-tier
-			// selection never produces a malformed AgentType.
 			if !core.AgentType(pair.val).Valid() {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -789,8 +708,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.Harness = pair.val
 			}
 		case "agent_runtime":
-			// Alias spelling for the per-node harness override (codex-harness
-			// C4/T5, hk-u67of). Same validity contract as harness=.
 			if !core.AgentType(pair.val).Valid() {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -802,9 +719,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.AgentRuntime = pair.val
 			}
 		case "reviewer_harness":
-			// Per-node reviewer harness override (codex-harness C4/T5, hk-u67of;
-			// consumed by C5/T14 hk-iv748). Independent of the implementer harness.
-			// Value MUST satisfy core.AgentType.Valid() (AR-025); invalid → strict error.
 			if !core.AgentType(pair.val).Valid() {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
@@ -816,7 +730,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				node.ReviewerHarness = pair.val
 			}
 		case "policy_ref":
-			// Reserved-and-rejected per CP-056 / WG-031.
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
@@ -824,7 +737,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 					rn.id),
 			})
 		case "schema_version":
-			// Per WG-033: schema_version is graph-level only; on a node it is a strict error.
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
@@ -839,7 +751,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 					rn.id),
 			})
 		case "goal":
-			// WG-044: goal is graph-level only; on a node it is a reserved-out-of-position strict error.
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
@@ -847,7 +758,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 					rn.id),
 			})
 		default:
-			// Non-reserved node attribute: permissive per WG-031/032.
 			node.UnknownAttrs[pair.key] = pair.val
 			warns = append(warns, ParseWarning{
 				Line:    pair.line,
@@ -855,9 +765,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			})
 		}
 	}
-	// Post-loop: prompt= is agentic-only. Emit a v1 WARNING when it appears
-	// on a non-agentic / gate node (WG-040 §I.3, WG-031 permissive-retain).
-	// Only warn when node.Type is resolved (no type parse error) and is not agentic.
 	if node.Prompt != "" && node.Type != "" && node.Type != core.NodeTypeAgentic {
 		warns = append(warns, ParseWarning{
 			Line: node.Line,
@@ -866,10 +773,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				rn.id, node.RawType),
 		})
 	}
-	// Post-loop: non_committing= is agentic-only. Emit a v1 WARNING when it
-	// appears on a reviewer-class, non-agentic, or gate node (WG-041 §I.4,
-	// WG-031 permissive-retain). Only warn when node.Type is resolved and is
-	// not agentic. The value is retained in the AST and ignored at dispatch.
 	if node.NonCommitting && node.Type != "" && node.Type != core.NodeTypeAgentic {
 		warns = append(warns, ParseWarning{
 			Line: node.Line,
@@ -878,10 +781,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				rn.id, node.RawType),
 		})
 	}
-	// Post-loop: auto_status= is agentic-only. Emit a v1 WARNING when it
-	// appears on a reviewer-class, non-agentic, or gate node (WG-053,
-	// WG-031 permissive-retain). Only warn when node.Type is resolved and is
-	// not agentic. The value is retained in the AST and ignored at dispatch.
 	if node.AutoStatus && node.Type != "" && node.Type != core.NodeTypeAgentic {
 		warns = append(warns, ParseWarning{
 			Line: node.Line,
@@ -890,9 +789,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				rn.id, node.RawType),
 		})
 	}
-	// Post-loop: model= and effort= are agentic-only per WG-042 §I.5.
-	// Emit reserved-out-of-position STRICT errors when they appear on
-	// non-agentic/gate/sub-workflow nodes. Only check when node.Type is resolved.
 	if node.Type != "" && node.Type != core.NodeTypeAgentic {
 		if node.Model != "" {
 			errs = append(errs, &ParseError{
@@ -913,10 +809,6 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			node.Effort = ""
 		}
 	}
-	// Post-loop: harness= and agent_runtime= are alias spellings of the same
-	// per-node harness override (codex-harness C4/T5, hk-u67of). When both are
-	// present with DIFFERENT values the node-tier harness is ambiguous → strict
-	// error. When both are present with the SAME value it is accepted (no-op).
 	if node.Harness != "" && node.AgentRuntime != "" && node.Harness != node.AgentRuntime {
 		errs = append(errs, &ParseError{
 			Line: node.Line,
@@ -925,23 +817,12 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				rn.id, node.Harness, node.AgentRuntime),
 		})
 	}
-	// hk-ozbio: resolve the alias AT THE PARSE BOUNDARY. The two spellings are
-	// asserted equivalent above, but every consumer reads only Node.Harness
-	// (internal/daemon/dot_cascade.go), so a node written with agent_runtime=
-	// alone parsed clean and dispatched UNPINNED — a tier-1 harness:<x> bead
-	// label then decided a reviewer node's harness, which is exactly the hole
-	// pinnedHarnessLaunchSpecBuilder exists to close. Normalising here means no
-	// consumer has to know the second spelling exists. AgentRuntime is left
-	// populated so the parsed AST still reports the source spelling; parameter
-	// substitution (internal/workflow/params_graph.go) walks both fields, and
-	// since they now hold the same string they stay in agreement.
 	if node.Harness == "" && node.AgentRuntime != "" {
 		node.Harness = node.AgentRuntime
 	}
 	return node, errs, warns
 }
 
-// buildEdge converts a rawEdge to a typed *Edge applying WG-031 edge-level policy.
 func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 	edge := &Edge{
 		FromNodeID:   re.from,
@@ -976,11 +857,8 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 		case "ordering_key":
 			edge.OrderingKey = pair.val
 		case "traversal_cap":
-			// Reserved per EM-043; not directly a Graph field but retained for
-			// round-trip and validator layer consumption.
 			edge.UnknownAttrs[pair.key] = pair.val
 		case "schema_version":
-			// Strict error: schema_version on an edge per WG-033.
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
@@ -988,7 +866,6 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 					re.from, re.to),
 			})
 		case "goal":
-			// WG-044: goal is graph-level only; on an edge it is a reserved-out-of-position strict error.
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
@@ -996,7 +873,6 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 					re.from, re.to),
 			})
 		default:
-			// Non-reserved edge attribute: permissive per WG-031/032.
 			edge.UnknownAttrs[pair.key] = pair.val
 			warns = append(warns, ParseWarning{
 				Line:    pair.line,
@@ -1007,10 +883,6 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 	return edge, errs, warns
 }
 
-// ── edge-condition mini-language (WG-013..WG-015) ────────────────────────────
-
-// lhsWhitelist is the allowed LHS values per WG-014.
-// context.<key> is handled separately via HasPrefix check.
 var lhsWhitelist = map[string]bool{
 	lhsOutcomeStatus:         true,
 	lhsOutcomePreferredLabel: true,
@@ -1018,7 +890,6 @@ var lhsWhitelist = map[string]bool{
 	lhsOutcomeKind:           true,
 }
 
-// closedStatusValues is the OutcomeStatus closed enum per EM-005.
 var closedStatusValues = map[string]bool{
 	"SUCCESS":         true,
 	"FAIL":            true,
@@ -1026,7 +897,6 @@ var closedStatusValues = map[string]bool{
 	"PARTIAL_SUCCESS": true,
 }
 
-// closedFailureClassValues is the FailureClass closed enum per §7 WG-017.
 var closedFailureClassValues = map[string]bool{
 	"transient":        true,
 	"structural":       true,
@@ -1036,7 +906,6 @@ var closedFailureClassValues = map[string]bool{
 	"compilation_loop": true,
 }
 
-// closedKindValues is the OutcomeKind closed enum per EM-005a.
 var closedKindValues = map[string]bool{
 	"default":                true,
 	"handler_outcome":        true,
@@ -1044,16 +913,12 @@ var closedKindValues = map[string]bool{
 	"reconciliation_verdict": true,
 }
 
-// parseCondition parses an edge condition per the §6 WG-013 grammar.
-// Returns (*Condition, nil) on success or (nil, *ParseError) on any violation
-// (strict per WG-025).
 func parseCondition(raw string, line int) (*Condition, *ParseError) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
 
-	// Split on "&&" to get individual equality clauses.
 	parts := strings.Split(raw, "&&")
 	cond := &Condition{}
 	for _, part := range parts {
@@ -1073,11 +938,9 @@ func parseCondition(raw string, line int) (*Condition, *ParseError) {
 	return cond, nil
 }
 
-// parseEquality parses a single "lhs op rhs" equality per WG-013.
 func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) {
 	s = strings.TrimSpace(s)
 
-	// Find the operator. Check != before == so that "!=" is not split as "!" + "=".
 	var op string
 	var opIdx int
 	if i := strings.Index(s, "!="); i >= 0 {
@@ -1096,7 +959,6 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 	lhs := strings.TrimSpace(s[:opIdx])
 	rhs := strings.TrimSpace(s[opIdx+len(op):])
 
-	// Validate LHS against WG-014 whitelist.
 	if !lhsWhitelist[lhs] && !strings.HasPrefix(lhs, lhsContextPrefix) {
 		return Equality{}, &ParseError{
 			Line: line,
@@ -1107,7 +969,6 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 		}
 	}
 
-	// Validate / normalise RHS per WG-015.
 	normRHS, rhsErr := validateRHS(rhs, lhs, line, fullCond)
 	if rhsErr != nil {
 		return Equality{}, rhsErr
@@ -1116,23 +977,16 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 	return Equality{LHS: lhs, Op: op, RHS: normRHS}, nil
 }
 
-// validateRHS validates and normalises the RHS literal per WG-015.
-// Single-quoted strings are stripped of their quotes; integers and enum
-// members are returned verbatim.
 func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseError) {
-	// Single-quoted string literal.
 	if strings.HasPrefix(rhs, "'") && strings.HasSuffix(rhs, "'") && len(rhs) >= 2 {
 		return rhs[1 : len(rhs)-1], nil
 	}
-	// Double-quoted string (already unescaped by tokenizer).
 	if strings.HasPrefix(rhs, "\"") && strings.HasSuffix(rhs, "\"") && len(rhs) >= 2 {
 		return rhs[1 : len(rhs)-1], nil
 	}
-	// Non-negative integer.
 	if isNonNegInt(rhs) {
 		return rhs, nil
 	}
-	// Closed-enum identifier: validate membership per WG-015.
 	switch lhs {
 	case lhsOutcomeStatus:
 		if !closedStatusValues[rhs] {
@@ -1163,7 +1017,6 @@ func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseErro
 			}
 		}
 	default:
-		// outcome.preferred_label and context.<key>: any bare identifier is valid.
 	}
 	return rhs, nil
 }
@@ -1180,8 +1033,6 @@ func isNonNegInt(s string) bool {
 	return true
 }
 
-// isValidWG001NodeType reports whether nt is one of the four WG-001 node type
-// members: {agentic, non-agentic, gate, sub-workflow}.
 func isValidWG001NodeType(nt core.NodeType) bool {
 	switch nt {
 	case core.NodeTypeAgentic, core.NodeTypeNonAgentic, core.NodeTypeGate, core.NodeTypeSubWorkflow:
@@ -1191,9 +1042,6 @@ func isValidWG001NodeType(nt core.NodeType) bool {
 	}
 }
 
-// validateNoProgressGuard returns an error when val is not a valid
-// no_progress_guard value.  Valid values are "", "strict", "off", and
-// "capped:N" where N is a positive integer.  hk-nvd3.
 func validateNoProgressGuard(val string) error {
 	switch val {
 	case "", "strict", "off":
@@ -1209,7 +1057,6 @@ func validateNoProgressGuard(val string) error {
 	return fmt.Errorf("must be one of \"\", \"strict\", \"off\", or \"capped:N\" (N >= 1); got %q", val)
 }
 
-// splitIDs splits a comma-and-space-separated ID list.
 func splitIDs(s string) []string {
 	s = strings.ReplaceAll(s, ",", " ")
 	parts := strings.Fields(s)

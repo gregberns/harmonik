@@ -106,7 +106,6 @@ func ValidateAndApplyContextUpdates(
 		return nil
 	}
 
-	// Build O(1) lookup set from the registered key list.
 	registered := make(map[string]struct{}, len(registeredKeys))
 	for _, k := range registeredKeys {
 		registered[k] = struct{}{}
@@ -116,7 +115,6 @@ func ValidateAndApplyContextUpdates(
 
 	for k, v := range updates {
 		if _, ok := registered[k]; !ok {
-			// Warn-and-drop: emit per HC-062, do not write to run.Context.
 			payload := ContextUpdateUnregisteredKeyPayload{
 				RunID:      run.RunID,
 				NodeID:     nodeID,
@@ -149,9 +147,6 @@ func ValidateAndApplyContextUpdates(
 	return nil
 }
 
-// jsonValueType returns the JSON type name of v: "string", "number", "boolean",
-// "object", "array", or "null". Used in the unregistered-key warning payload
-// so the value itself is never logged.
 func jsonValueType(v any) string {
 	if v == nil {
 		return "null"
@@ -169,7 +164,6 @@ func jsonValueType(v any) string {
 	case map[string]any:
 		return "object"
 	default:
-		// Fallback: marshal to JSON and inspect the first byte.
 		b, err := json.Marshal(v)
 		if err != nil || len(b) == 0 {
 			return "unknown"
@@ -191,7 +185,6 @@ func jsonValueType(v any) string {
 	}
 }
 
-// emitJSON marshals payload to JSON and calls bus.EmitWithRunID.
 func emitJSON(ctx context.Context, bus eventbus.EventBus, runID core.RunID, eventType core.EventType, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {

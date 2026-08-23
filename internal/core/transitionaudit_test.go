@@ -20,8 +20,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// auditDetectFixtureViolation builds a valid AuditViolation with the given kind
-// and a pre-populated CommitSHA, RunID, TransitionID, and Description.
 func auditDetectFixtureViolation(t *testing.T, kind AuditViolationKind) AuditViolation {
 	t.Helper()
 	return AuditViolation{
@@ -33,7 +31,6 @@ func auditDetectFixtureViolation(t *testing.T, kind AuditViolationKind) AuditVio
 	}
 }
 
-// auditDetectFixtureAllKinds returns all five declared AuditViolationKind values.
 func auditDetectFixtureAllKinds() []AuditViolationKind {
 	return []AuditViolationKind{
 		AuditViolationKindNoSiblingFile,
@@ -43,8 +40,6 @@ func auditDetectFixtureAllKinds() []AuditViolationKind {
 		AuditViolationKindRunIDPathMismatch,
 	}
 }
-
-// --- AuditViolationKind.Valid ---
 
 // TestAuditViolationKind_ValidAcceptsDeclared verifies that every declared
 // AuditViolationKind constant is accepted by Valid(). Each constant maps to
@@ -100,8 +95,6 @@ func TestAuditViolationKind_FiveConditions(t *testing.T) {
 		t.Fatalf("expected exactly 5 AuditViolationKind constants (EM-020a conditions a-e), got %d", len(kinds))
 	}
 }
-
-// --- AuditViolationKind.MarshalText / UnmarshalText ---
 
 // TestAuditViolationKind_MarshalTextAcceptsDeclared verifies that every
 // declared kind marshals to its string value without error.
@@ -209,8 +202,6 @@ func TestAuditViolationKind_UnmarshalTextErrorMentionsAllValues(t *testing.T) {
 	}
 }
 
-// --- AuditViolation.Valid ---
-
 // TestAuditViolation_ValidHappyPath verifies that a fully-populated
 // AuditViolation with a declared kind, non-empty CommitSHA, and non-empty
 // Description is accepted by Valid().
@@ -300,7 +291,6 @@ func TestAuditViolation_KindsMapToConditions(t *testing.T) {
 		kind AuditViolationKind
 		want string
 	}{
-		// condition (a): trailer pair with no matching sibling file
 		{AuditViolationKindNoSiblingFile, "no-sibling-file"},
 		// condition (b): orphaned sibling file not matching any trailer pair
 		{AuditViolationKindOrphanSiblingFile, "orphan-sibling-file"},

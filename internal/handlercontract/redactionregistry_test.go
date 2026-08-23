@@ -1,37 +1,5 @@
 package handlercontract_test
 
-// redactionregistry_test.go — sensors for RedactionRegistry + RedactionMiddleware
-// (HC-030, HC-031, HC-032).
-//
-// Spec refs: specs/handler-contract.md §4.7.HC-030, §4.7.HC-031, §4.7.HC-032.
-// Bead ref: hk-8i31.83.
-//
-// Helper prefix: registryFixture (per implementer-protocol.md §Helper-prefix
-// discipline; distinct from redactionFixture used by hk-8i31.81).
-//
-// What this file provides:
-//
-//  1. TestRegistryFixture_MiddlewareAppliesHC031FieldNameRedaction —
-//     RedactionMiddleware redacts secret-named fields (HC-031) even when no
-//     per-handler patterns are registered.
-//
-//  2. TestRegistryFixture_MiddlewareAppliesHC032ValuePatternRedaction —
-//     RedactionMiddleware redacts values matching a registered per-handler
-//     pattern (HC-032).
-//
-//  3. TestRegistryFixture_HC031AndHC032Compose — a payload with both a
-//     secret-named field AND a secret-valued field are both redacted when a
-//     registry with HC-032 patterns is used.
-//
-//  4. TestRegistryFixture_SafeFieldsPassThrough — neither HC-031 nor HC-032
-//     redacts fields whose names and values are safe (no over-redaction).
-//
-//  5. TestRegistryFixture_NilPayloadReturnsNil — RedactionMiddleware returns
-//     nil for a nil input.
-//
-//  6. TestRegistryFixture_MultiSubsystemPatternsCompose — patterns from two
-//     different subsystems are both applied to the same payload.
-
 import (
 	"regexp"
 	"testing"
@@ -39,23 +7,12 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// registryFixtureAnthropicPattern is a compiled version of the canonical
-// Anthropic API key shape from HC-032. Mirrors the pattern declared in
-// redactionFixturePerHandlerPatterns (redaction_hc028_test.go) without
-// importing from that file (test helpers are not importable cross-file).
 var registryFixtureAnthropicPattern = regexp.MustCompile(`^sk-ant-[A-Za-z0-9_\-]{10,}$`)
 
-// registryFixtureGenericSKPattern is the generic sk- prefix pattern.
 var registryFixtureGenericSKPattern = regexp.MustCompile(`^sk-[A-Za-z0-9_\-]{20,}$`)
 
-// registryFixtureAnthropicKeyStub is a structural key stub matching the
-// Anthropic pattern shape. Uses 'x' padding only (HC-034 compliance).
 const registryFixtureAnthropicKeyStub = "sk-ant-" +
 	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 via middleware: field-name redaction applies even with zero patterns
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRegistryFixture_MiddlewareAppliesHC031FieldNameRedaction asserts that
 // RedactionMiddleware applies HC-031 field-name redaction even when the
@@ -69,7 +26,6 @@ func TestRegistryFixture_MiddlewareAppliesHC031FieldNameRedaction(t *testing.T) 
 	t.Parallel()
 
 	reg := handlercontract.NewRedactionRegistry()
-	// No patterns registered — empty registry.
 
 	payload := map[string]any{
 		"token":   "tok-super-secret",
@@ -91,10 +47,6 @@ func TestRegistryFixture_MiddlewareAppliesHC031FieldNameRedaction(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-032: per-handler value-pattern redaction
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRegistryFixture_MiddlewareAppliesHC032ValuePatternRedaction asserts that
 // RedactionMiddleware redacts a payload value that matches a registered
 // per-handler pattern (HC-032), even when the field name is benign.
@@ -107,8 +59,6 @@ func TestRegistryFixture_MiddlewareAppliesHC032ValuePatternRedaction(t *testing.
 	reg.RegisterPattern("claude_handler", []*regexp.Regexp{registryFixtureAnthropicPattern})
 
 	payload := map[string]any{
-		// Field name is benign — HC-031 must NOT redact it.
-		// Value matches the Anthropic key shape — HC-032 MUST redact it.
 		"provider_key": registryFixtureAnthropicKeyStub,
 		"node_id":      "node-abc-123",
 	}
@@ -127,10 +77,6 @@ func TestRegistryFixture_MiddlewareAppliesHC032ValuePatternRedaction(t *testing.
 		t.Errorf(`RedactionMiddleware["node_id"] = %v, want "node-abc-123"`, got["node_id"])
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 + HC-032 compose
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRegistryFixture_HC031AndHC032Compose asserts that both HC-031 and HC-032
 // are applied in the same middleware call.
@@ -173,10 +119,6 @@ func TestRegistryFixture_HC031AndHC032Compose(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// No over-redaction
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRegistryFixture_SafeFieldsPassThrough asserts that RedactionMiddleware
 // does not redact fields whose names and values are safe (no false positives).
 //
@@ -215,10 +157,6 @@ func TestRegistryFixture_SafeFieldsPassThrough(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Nil input
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRegistryFixture_NilPayloadReturnsNil asserts that RedactionMiddleware
 // returns nil for a nil input map (consistent with RedactByFieldName contract).
 //
@@ -233,10 +171,6 @@ func TestRegistryFixture_NilPayloadReturnsNil(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Multi-subsystem composition
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRegistryFixture_MultiSubsystemPatternsCompose asserts that patterns
 // contributed by two different subsystems are both applied to the same
 // payload.
@@ -249,9 +183,6 @@ func TestRegistryFixture_MultiSubsystemPatternsCompose(t *testing.T) {
 	reg.RegisterPattern("subsystem_a", []*regexp.Regexp{registryFixtureAnthropicPattern})
 	reg.RegisterPattern("subsystem_b", []*regexp.Regexp{registryFixtureGenericSKPattern})
 
-	// generic_sk_payload: value matches the generic sk- pattern (subsystem_b).
-	// Note: the Anthropic pattern is more specific; use a value that matches
-	// generic sk- but NOT the Anthropic shape (no "ant" infix).
 	const genericSKStub = "sk-" + "xxxxxxxxxxxxxxxxxxxx" // 20 chars after sk-
 
 	payload := map[string]any{

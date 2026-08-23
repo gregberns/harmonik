@@ -1,15 +1,5 @@
 package handler_test
 
-// nilguard_test.go — nil-argument guard tests for handler.NewHandler.
-//
-// Bead: hk-gql20.16.
-// Helper prefix: nilguardFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// Verifies that NewHandler panics with the expected message when publisher,
-// deadLetter, or registry is nil — all three are required daemon-configuration
-// invariants with no recovery path.
-
 import (
 	"testing"
 
@@ -17,23 +7,18 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// nilguardFixturePub returns a non-nil EventEmitter for use in nil-guard tests.
 func nilguardFixturePub() handlercontract.EventEmitter {
 	return &handlercontract.CollectingEmitter{}
 }
 
-// nilguardFixtureDL returns a non-nil WatcherDeadLetterSink for use in nil-guard tests.
 func nilguardFixtureDL() handlercontract.WatcherDeadLetterSink {
 	return handlercontract.NoopWatcherDeadLetter{}
 }
 
-// nilguardFixtureReg returns a non-nil AdapterRegistry for use in nil-guard tests.
 func nilguardFixtureReg() *handlercontract.AdapterRegistry {
 	return handlercontract.NewAdapterRegistry()
 }
 
-// nilguardFixturePanicMsg runs f and returns the recovered panic value as a
-// string. Returns "" if f does not panic.
 func nilguardFixturePanicMsg(f func()) (msg string) {
 	defer func() {
 		if r := recover(); r != nil {

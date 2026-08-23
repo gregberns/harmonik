@@ -10,23 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ---- hk-63oh.76: Verdict + execution harness (RC-020..RC-027, RC-022a, RC-025a, RC-026a) ----
-//
-// This file contains fixture-level / spec-text harness tests for the verdict vocabulary,
-// schema validation, staleness detection, idempotency, verdict-executed commit trailers,
-// and the Cat 3b retry cap.
-//
-// Judgment call: RC-025a (7-step panic-injection) and RC-026a (durable attempt counter)
-// require integration infrastructure (daemon subprocess plumbing, Cat 3b restart loop)
-// not yet built. Each such test is structured as a specification anchor proving the shape
-// contract and durable-path convention rather than a live panic-injection sequence.
-// Full integration belongs in a future integration harness once the daemon verdict-executor
-// is wired.
-//
-// Helper prefix: rc76Verdict (bead hk-63oh.76).
-
-// ---- RC-020: Verdict vocabulary is the seven-value enum ----
-
 // TestRC020_VerdictVocabularyIsSevenValueEnum verifies that exactly seven Verdict
 // constants are declared and each has a stable string representation matching the
 // spec's ENUM Verdict in schemas.md §6.1.
@@ -139,8 +122,6 @@ func TestRC020_VerdictJSONRoundTrip(t *testing.T) {
 	}
 }
 
-// ---- RC-021: Exactly one verdict event per reconciliation workflow ----
-
 // TestRC021_ExactlyOneVerdictPerWorkflow verifies the structural invariant of RC-021:
 // a reconciliation workflow MUST emit exactly one verdict event. This is proven at the
 // VerdictEvent type level by verifying that a second emission from the same
@@ -156,7 +137,6 @@ func TestRC021_ExactlyOneVerdictPerWorkflow(t *testing.T) {
 
 	investigatorRunID := uuid.Must(uuid.NewV7())
 
-	// First verdict event — valid.
 	first := VerdictEvent{
 		Verdict:           VerdictNoOpAccept,
 		InvestigatorRunID: investigatorRunID,
@@ -172,8 +152,6 @@ func TestRC021_ExactlyOneVerdictPerWorkflow(t *testing.T) {
 		t.Fatal("RC-021: first VerdictEvent.Valid() = false; fixture error")
 	}
 
-	// A second verdict event from the same investigator_run_id would be a violation.
-	// The malformation reason MUST be multiple-verdicts per RC-021.
 	multipleVerdictReason := MalformationReasonMultipleVerdicts
 	if !multipleVerdictReason.Valid() {
 		t.Error("RC-021: MalformationReasonMultipleVerdicts.Valid() = false; enum definition error")
@@ -183,7 +161,6 @@ func TestRC021_ExactlyOneVerdictPerWorkflow(t *testing.T) {
 			string(multipleVerdictReason), "multiple-verdicts")
 	}
 
-	// The MalformedVerdictPayload that would be produced on detection of the second verdict.
 	malformedPayload := MalformedVerdictPayload{
 		InvestigatorRunID:  investigatorRunID,
 		TargetRunID:        first.TargetRunID,
@@ -194,8 +171,6 @@ func TestRC021_ExactlyOneVerdictPerWorkflow(t *testing.T) {
 		t.Error("RC-021: MalformedVerdictPayload for multiple-verdicts is invalid; want valid")
 	}
 }
-
-// ---- RC-022: Verdict commit lands on investigator's task branch ----
 
 // TestRC022_VerdictEventCarriesInvestigatorRunID verifies that VerdictEvent
 // carries the investigator_run_id field, which is required to identify the
@@ -231,8 +206,6 @@ func TestRC022_VerdictEventCarriesInvestigatorRunID(t *testing.T) {
 		t.Errorf("RC-022: InvestigatorRunID = %q, want %q", ev.InvestigatorRunID, investigatorRunID)
 	}
 }
-
-// ---- RC-022a: Verdict emission via outcome envelope ----
 
 // TestRC022a_OutcomeEnvelopeRoutingForReconciliationVerdict verifies that an
 // investigator's verdict is emitted via an Outcome whose Kind is
@@ -309,8 +282,6 @@ func TestRC022a_DefaultOutcomeHasNoPayload(t *testing.T) {
 		t.Error("RC-022a: ordinary Outcome.Payload is non-nil; want nil for OutcomeKindDefault")
 	}
 }
-
-// ---- RC-023: Malformed-verdict handling ----
 
 // TestRC023_AllMalformationReasonsAreDeclared verifies that all six MalformationReason
 // enum values match the spec's ENUM MalformationReason in schemas.md §6.1.
@@ -403,7 +374,6 @@ func TestRC023_MalformedVerdictPayloadValidForEachReason(t *testing.T) {
 func TestRC023_FallbackVerdictOnMalformationIsEscalateToHuman(t *testing.T) {
 	t.Parallel()
 
-	// The fallback verdict on any malformation is always escalate-to-human.
 	fallback := VerdictEscalateToHuman
 
 	if !fallback.Valid() {
@@ -413,8 +383,6 @@ func TestRC023_FallbackVerdictOnMalformationIsEscalateToHuman(t *testing.T) {
 		t.Errorf("RC-023: fallback verdict = %q, want %q", string(fallback), "escalate-to-human")
 	}
 
-	// Verified via the verdict-event structural test: a daemon-synthesized
-	// escalate-to-human VerdictEvent must be valid.
 	tok := SnapshotToken{
 		GitHeadHash:         "deadcafe",
 		BeadsAuditEntryID:   "audit-rc76-023",
@@ -431,8 +399,6 @@ func TestRC023_FallbackVerdictOnMalformationIsEscalateToHuman(t *testing.T) {
 		t.Error("RC-023: synthesized escalate-to-human VerdictEvent.Valid() = false; want true")
 	}
 }
-
-// ---- RC-024: Verdict staleness check precedes execution ----
 
 // TestRC024_StaleVerdictPayloadIsValidForBothReasons verifies that
 // StaleVerdictPayload can be constructed for both StaleDivergenceReason values.
@@ -484,12 +450,10 @@ func TestRC024_StaleVerdictPayloadIsValidForBothReasons(t *testing.T) {
 func TestRC024_StalenessTriggerIsOnlyTargetRunStores(t *testing.T) {
 	t.Parallel()
 
-	// Staleness is triggered by git branch advanced or Beads audit advanced.
 	staleTriggers := []string{
 		"target-run-git-branch-advanced",
 		"target-bead-beads-audit-advanced",
 	}
-	// Staleness is NOT triggered by these.
 	nonStaleTriggers := []string{
 		"sibling-bead-status-changed",
 		"jsonl-event-appended",
@@ -503,7 +467,6 @@ func TestRC024_StalenessTriggerIsOnlyTargetRunStores(t *testing.T) {
 		t.Errorf("RC-024: expected 3 non-staleness triggers documented, got %d", len(nonStaleTriggers))
 	}
 
-	// The two declared StaleDivergenceReason values must correspond to the two triggers.
 	validReasons := []StaleDivergenceReason{
 		StaleDivergenceReasonGitBranchAdvanced,
 		StaleDivergenceReasonBeadsAuditAdvanced,
@@ -514,8 +477,6 @@ func TestRC024_StalenessTriggerIsOnlyTargetRunStores(t *testing.T) {
 		}
 	}
 }
-
-// ---- RC-025: Verdict execution is durable and idempotent ----
 
 // TestRC025_VerdictExecutedPayloadIsValidForAllVerdicts verifies that a
 // VerdictExecutedPayload can be constructed validly for each of the seven
@@ -567,7 +528,6 @@ func TestRC025_VerdictExecutedPayloadIsValidForAllVerdicts(t *testing.T) {
 func TestRC025_VerdictExecutionIdempotencyIsDefinedPerVerdict(t *testing.T) {
 	t.Parallel()
 
-	// Idempotency mechanism per schemas.md §6.2 for each verdict.
 	idempotencyMechanisms := []struct {
 		verdict   Verdict
 		mechanism string
@@ -599,8 +559,6 @@ func TestRC025_VerdictExecutionIdempotencyIsDefinedPerVerdict(t *testing.T) {
 		})
 	}
 }
-
-// ---- RC-025a: Daemon-side verdict-executor 7-step sequence ----
 
 // TestRC025a_VerdictExecutorSevenStepSequenceIsDocumented verifies that the
 // 7-step verdict-executor sequence from RC-025a is expressed as an ordered slice.
@@ -634,10 +592,6 @@ func TestRC025a_VerdictExecutorSevenStepSequenceIsDocumented(t *testing.T) {
 		t.Errorf("RC-025a: expected 7 verdict-executor steps per spec, got %d", len(steps))
 	}
 
-	// Verify ordering invariants.
-	// Step 1 (validate) must precede step 2 (staleness) — no point staleness-checking a bad verdict.
-	// Step 3 (commit verdict) must precede step 5 (commit executed) — they are not atomic.
-	// Step 7 (release lock) is terminal.
 	validateIdx := 0
 	stalenessIdx := 1
 	verdictCommitIdx := 2
@@ -656,14 +610,11 @@ func TestRC025a_VerdictExecutorSevenStepSequenceIsDocumented(t *testing.T) {
 			len(steps)-1, releaseIdx)
 	}
 
-	// A crash between steps 3 and 5 routes the run through Cat 3b on next startup.
 	cat3b := ReconciliationCategoryCat3b
 	if !cat3b.Valid() {
 		t.Error("RC-025a: Cat 3b is not a valid category; panic-recovery route is broken")
 	}
 }
-
-// ---- RC-025: Verdict-executed commit trailer ----
 
 // TestRC025_VerdictExecutedTrailerKeyAndValueMatchSpec verifies that the
 // Harmonik-Verdict-Executed commit trailer uses the exact key string and value
@@ -679,20 +630,16 @@ func TestRC025_VerdictExecutedTrailerKeyAndValueMatchSpec(t *testing.T) {
 	const trailerKey = "Harmonik-Verdict-Executed"
 	const trailerValue = "true"
 
-	// The key is exact per schemas.md §6.4 (case-sensitive per git trailer grammar).
 	if trailerKey == "" {
 		t.Error("RC-025: Harmonik-Verdict-Executed trailer key is empty; spec anchor broken")
 	}
 	if trailerValue != "true" {
 		t.Errorf("RC-025: trailer value = %q, want %q", trailerValue, "true")
 	}
-	// Any other value is malformed per schemas.md §6.4.
 	if trailerValue == "false" || trailerValue == "1" || trailerValue == "TRUE" {
 		t.Errorf("RC-025: non-canonical trailer value %q; only 'true' is valid", trailerValue)
 	}
 }
-
-// ---- RC-026: Verdict-execution discovery on restart (Cat 3b) ----
 
 // TestRC026_Cat3bDetectionSignalIsVerdictCommitWithoutExecutedCommit verifies that
 // the Cat 3b detection signal is the presence of a verdict commit with no subsequent
@@ -707,7 +654,6 @@ func TestRC025_VerdictExecutedTrailerKeyAndValueMatchSpec(t *testing.T) {
 func TestRC026_Cat3bDetectionSignalIsVerdictCommitWithoutExecutedCommit(t *testing.T) {
 	t.Parallel()
 
-	// Cat 3b is the classification for verdict-emitted-but-unexecuted.
 	cat3b := ReconciliationCategoryCat3b
 
 	if !cat3b.Valid() {
@@ -717,8 +663,6 @@ func TestRC026_Cat3bDetectionSignalIsVerdictCommitWithoutExecutedCommit(t *testi
 		t.Errorf("RC-026: Cat 3b string = %q, want %q", string(cat3b), "cat-3b")
 	}
 
-	// Verify Cat 3b's position in the priority order: it is a specialized Cat 3
-	// sub-case that fires before generic Cat 3.
 	cat3bIdx := rc73PriorityFixtureIndexOf(cat3b)
 	cat3Idx := rc73PriorityFixtureIndexOf(ReconciliationCategoryCat3)
 
@@ -735,8 +679,6 @@ func TestRC026_Cat3bDetectionSignalIsVerdictCommitWithoutExecutedCommit(t *testi
 	}
 }
 
-// ---- RC-026a: Cat 3b retry cap ----
-
 // TestRC026a_RetryCounterPathConventionMatchesSpec verifies that the durable
 // attempt counter path convention matches the spec:
 // .harmonik/reconciliation-attempts/<target_run_id>.json
@@ -750,7 +692,6 @@ func TestRC026a_RetryCounterPathConventionMatchesSpec(t *testing.T) {
 
 	targetRunID := uuid.Must(uuid.NewV7()).String()
 
-	// Canonical path per RC-026a.
 	retryCounterPath := ".harmonik/reconciliation-attempts/" + targetRunID + ".json"
 
 	const expectedPrefix = ".harmonik/reconciliation-attempts/"
@@ -776,14 +717,12 @@ func TestRC026a_RetryCounterPathConventionMatchesSpec(t *testing.T) {
 func TestRC026a_RetryCapDefaultIsN5(t *testing.T) {
 	t.Parallel()
 
-	// The default retry cap per RC-026a.
 	const defaultRetryCap = 5
 
 	if defaultRetryCap != 5 {
 		t.Errorf("RC-026a: default retry cap = %d, want 5", defaultRetryCap)
 	}
 
-	// Escalation on cap exceeded routes to Cat 6b.
 	cat6b := ReconciliationCategoryCat6b
 	if !cat6b.Valid() {
 		t.Fatal("RC-026a: Cat 6b is not valid; escalation target enum error")
@@ -814,7 +753,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 
 	counterPath := filepath.Join(attemptsDir, targetRunID+".json")
 
-	// Simulate the atomic temp+rename write pattern (WM-026).
 	tmpPath := counterPath + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":1}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile tmp: %v", err)
@@ -823,17 +761,14 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 		t.Fatalf("RC-026a: Rename tmp→counter: %v", err)
 	}
 
-	// Verify the counter file is present.
 	if _, err := os.Stat(counterPath); err != nil {
 		t.Fatalf("RC-026a: Stat counter: %v", err)
 	}
 
-	// Verify the temp file is gone (rename is atomic on the same fs).
 	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 		t.Error("RC-026a: temp file still exists after rename; atomic write pattern broken")
 	}
 
-	// Increment to attempt 2 using the same atomic pattern.
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":2}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile attempt 2: %v", err)
 	}
@@ -851,8 +786,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 	}
 }
 
-// ---- RC-027: Operator verdict-override ----
-
 // TestRC027_OperatorVerdictOverrideAppliesToInvestigatorCategories verifies that
 // the operator verdict-override surface applies to the three investigator-dispatched
 // categories (Cat 2, Cat 3 generic, Cat 6a) and is documented as opt-in.
@@ -867,7 +800,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 func TestRC027_OperatorVerdictOverrideAppliesToInvestigatorCategories(t *testing.T) {
 	t.Parallel()
 
-	// Categories subject to operator verdict-override (all investigator-dispatched).
 	overrideCategories := []ReconciliationCategory{
 		ReconciliationCategoryCat2,
 		ReconciliationCategoryCat3,
@@ -889,8 +821,6 @@ func TestRC027_OperatorVerdictOverrideAppliesToInvestigatorCategories(t *testing
 		})
 	}
 
-	// The override CLI grammar is tracked via OQ-RC-005 (operator-nfr spec).
-	// The operator-surface verbs per RC-027.
 	verbs := []string{
 		"confirm-verdict",
 		"veto-verdict",

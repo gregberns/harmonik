@@ -1,15 +1,5 @@
 package daemon_test
 
-// operatorpause_ry8q1_test.go — unit tests for OperatorPauseController (hk-ry8q1).
-//
-// Acceptance criteria:
-//   - Pause emits operator_pause_status{pausing} then {paused}; sets IsPaused.
-//   - Resume emits operator_resuming; clears IsPaused.
-//   - Idempotent: second Pause is a no-op (no extra events); second Resume is no-op.
-//   - Concurrent Pause calls serialize: only one wins and emits; others are no-ops.
-//
-// Bead ref: hk-ry8q1.
-
 import (
 	"context"
 	"encoding/json"
@@ -21,16 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// newOpPauseController builds an OperatorPauseController backed by a real
-// sealed in-memory bus. Events are captured via a synchronous bus subscription
-// so the returned stubEventCollector carries full core.Event envelopes,
-// including the EventID stamped by the bus (hk-hggxx: N3 dedupe regression fix).
 func newOpPauseController(t *testing.T) (*daemon.OperatorPauseController, *stubEventCollector) {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
 	col := &stubEventCollector{}
-	// Subscribe the collector BEFORE sealing so every bus emission is captured
-	// with its real EventID. Synchronous class ensures capture before Emit returns.
 	sub := core.Subscription{
 		ConsumerID:    "test-op-pause-collector-hk-hggxx",
 		ConsumerClass: core.ConsumerClassSynchronous,
@@ -55,17 +39,12 @@ func newOpPauseController(t *testing.T) (*daemon.OperatorPauseController, *stubE
 	return daemon.ExportedNewOperatorPauseController(bus), col
 }
 
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_PauseThenResume
-// ---------------------------------------------------------------------------
-
 func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	ctrl, col := newOpPauseController(t)
 
-	// Initially not paused.
 	if ctrl.IsPaused() {
 		t.Fatal("expected not paused before first Pause call")
 	}
@@ -78,7 +57,6 @@ func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 		t.Fatal("expected IsPaused=true after HandleOperatorPause")
 	}
 
-	// Must have emitted pausing + paused.
 	pauseEvents := collectEventsByType(col, string(core.EventTypeOperatorPauseStatus))
 	if len(pauseEvents) != 2 {
 		t.Fatalf("expected 2 operator_pause_status events; got %d", len(pauseEvents))
@@ -86,7 +64,6 @@ func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 	assertPauseStatus(t, pauseEvents[0], core.OperatorPauseStatusValuePausing)
 	assertPauseStatus(t, pauseEvents[1], core.OperatorPauseStatusValuePaused)
 
-	// Resume.
 	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("HandleOperatorResume: %v", err)
 	}
@@ -108,10 +85,6 @@ func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_IdempotentPause
-// ---------------------------------------------------------------------------
-
 func TestOperatorPauseController_IdempotentPause(t *testing.T) {
 	t.Parallel()
 
@@ -122,7 +95,6 @@ func TestOperatorPauseController_IdempotentPause(t *testing.T) {
 		t.Fatalf("first HandleOperatorPause: %v", err)
 	}
 
-	// Second pause: must be a no-op.
 	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("second HandleOperatorPause: %v", err)
 	}
@@ -133,17 +105,12 @@ func TestOperatorPauseController_IdempotentPause(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_IdempotentResume
-// ---------------------------------------------------------------------------
-
 func TestOperatorPauseController_IdempotentResume(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	ctrl, col := newOpPauseController(t)
 
-	// Resume on a non-paused controller: no-op and no event.
 	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("HandleOperatorResume on non-paused: %v", err)
 	}
@@ -153,10 +120,6 @@ func TestOperatorPauseController_IdempotentResume(t *testing.T) {
 		t.Fatalf("resume on non-paused must not emit; got %d events", len(resumeEvents))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_ConcurrentPauseSerializes
-// ---------------------------------------------------------------------------
 
 // TestOperatorPauseController_ConcurrentPauseSerializes verifies that when
 // many goroutines call HandleOperatorPause simultaneously, exactly one wins
@@ -190,16 +153,11 @@ func TestOperatorPauseController_ConcurrentPauseSerializes(t *testing.T) {
 		t.Fatal("expected IsPaused=true after concurrent pause storm")
 	}
 
-	// Exactly 2 operator_pause_status events regardless of how many goroutines ran.
 	pauseEvents := collectEventsByType(col, string(core.EventTypeOperatorPauseStatus))
 	if len(pauseEvents) != 2 {
 		t.Fatalf("concurrent Pause must emit exactly 2 events (pausing+paused); got %d", len(pauseEvents))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_PauseResumeCycle
-// ---------------------------------------------------------------------------
 
 // TestOperatorPauseController_PauseResumeCycle verifies a full pause→resume→pause
 // cycle emits the correct sequence of events.
@@ -209,7 +167,6 @@ func TestOperatorPauseController_PauseResumeCycle(t *testing.T) {
 	ctx := context.Background()
 	ctrl, col := newOpPauseController(t)
 
-	// Cycle 1.
 	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("cycle1 Pause: %v", err)
 	}
@@ -217,7 +174,6 @@ func TestOperatorPauseController_PauseResumeCycle(t *testing.T) {
 		t.Fatalf("cycle1 Resume: %v", err)
 	}
 
-	// Cycle 2.
 	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("cycle2 Pause: %v", err)
 	}
@@ -239,10 +195,6 @@ func TestOperatorPauseController_PauseResumeCycle(t *testing.T) {
 	assertPauseStatus(t, pauseEvents[2], core.OperatorPauseStatusValuePausing)
 	assertPauseStatus(t, pauseEvents[3], core.OperatorPauseStatusValuePaused)
 }
-
-// ---------------------------------------------------------------------------
-// TestOperatorPauseController_DistinctEventIDs (hk-hggxx)
-// ---------------------------------------------------------------------------
 
 // TestOperatorPauseController_DistinctEventIDs verifies that the pausing and
 // paused operator_pause_status events each receive a distinct, non-zero event_id
@@ -285,11 +237,6 @@ func TestOperatorPauseController_DistinctEventIDs(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// collectEventsByType returns all collected events of the given type.
 func collectEventsByType(col *stubEventCollector, evtType string) []stubEmittedEvent {
 	var out []stubEmittedEvent
 	for _, e := range col.allEvents() {
@@ -300,8 +247,6 @@ func collectEventsByType(col *stubEventCollector, evtType string) []stubEmittedE
 	return out
 }
 
-// assertPauseStatus verifies that evt is an operator_pause_status event with
-// the expected status value.
 func assertPauseStatus(t *testing.T, evt stubEmittedEvent, wantStatus core.OperatorPauseStatusValue) {
 	t.Helper()
 	var p core.OperatorPauseStatusPayload

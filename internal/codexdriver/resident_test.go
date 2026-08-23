@@ -1,11 +1,5 @@
 package codexdriver
 
-// White-box tests for the hk-160yb G1b resident-session owner: reconnect across
-// child death via thread/resume, and the G3 BoundedInputQueue wired to
-// ResidentSession.SubmitInput as its production caller. In-package so the test
-// can inspect the swapped-in child (r.cur) and its Outcome. Rides the shared
-// twin re-exec harness (driver_test.go TestMain / runTwin).
-
 import (
 	"context"
 	"errors"
@@ -42,7 +36,6 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Turn 1: fresh spawn → thread/start → ack → child exits.
 	ack1, err := r.SubmitInput(ctx, handler.InputRequest{Payload: []byte("turn one")})
 	if err != nil {
 		t.Fatalf("SubmitInput #1: %v", err)
@@ -54,8 +47,6 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 		t.Fatalf("threadID after #1 = %q, want th_1", got)
 	}
 
-	// Make the death deterministic before the next submit so we exercise the
-	// revive path, not a race.
 	r.mu.Lock()
 	s1 := r.cur
 	r.mu.Unlock()
@@ -63,7 +54,6 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 		t.Fatalf("wait for child #1 death: %v", err)
 	}
 
-	// Turn 2: child is dead → respawn → thread/resume th_1 → ack.
 	ack2, err := r.SubmitInput(ctx, handler.InputRequest{Payload: []byte("turn two")})
 	if err != nil {
 		t.Fatalf("SubmitInput #2 (after death): %v", err)
@@ -82,7 +72,6 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 		t.Fatalf("threadID after #2 = %q, want th_1 (resumed same thread)", got)
 	}
 
-	// Prove #2 re-attached via thread/resume, not a fresh thread/start.
 	if err := s2.Wait(ctx); err != nil {
 		t.Fatalf("wait for child #2 death: %v", err)
 	}
@@ -136,18 +125,12 @@ func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
 	defer cancel()
 	r.Supervise(ctx)
 
-	// The watchdog spawns a first child with no submit.
 	first := waitForChild(t, r, nil, 10*time.Second)
 	if err := first.Wait(ctx); err != nil {
 		t.Fatalf("wait for first child death: %v", err)
 	}
 
-	// After the first child dies, the watchdog proactively brings up a DISTINCT
-	// second child (resuming the thread) — again with no submit. The second child
-	// resumes via thread/resume, so it does NOT re-die, and stabilizes.
 	second := waitForChild(t, r, first, 10*time.Second)
-	// Let the second child complete its (resume) handshake before inspecting it —
-	// the resume marker is written during the handshake.
 	if err := second.awaitReady(ctx); err != nil {
 		t.Fatalf("second child never reached Ready: %v", err)
 	}
@@ -155,7 +138,6 @@ func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
 		t.Fatalf("threadID = %q, want th_1 (retained across proactive revive)", got)
 	}
 
-	// Prove the proactive revive re-attached via thread/resume, not a fresh start.
 	if err := r.Close(ctx); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -164,8 +146,6 @@ func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
 	}
 }
 
-// waitForChild polls r.cur until it is non-nil and (when prev != nil) distinct
-// from prev, or the deadline elapses.
 func waitForChild(t *testing.T, r *ResidentSession, prev *codexSession, within time.Duration) *codexSession {
 	t.Helper()
 	deadline := time.Now().Add(within)

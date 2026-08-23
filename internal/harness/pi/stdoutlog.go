@@ -1,64 +1,5 @@
 package pi
 
-// stdoutlog.go — the persisted form of Pi's NDJSON stdout (hk-k4jrh).
-//
-// The daemon tees the Pi child's stdout into
-// <worktree>/.harmonik/pi-agent/pi-stdout.log so a failed run can be read after
-// the fact (hk-j6wm7). Tee'd verbatim, that file grows with the SQUARE of how
-// much the model says, because every `message_update` line carries the WHOLE
-// accumulated assistant message so far — twice:
-//
-//	{"type":"message_update",
-//	 "assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,
-//	                          "delta":"<the new text>",
-//	                          "partial":{<the whole message so far>}},
-//	 "message":{<the whole message so far>}}
-//
-// Line N therefore repeats everything in lines 1..N-1. One 8.5-minute run on
-// 2026-08-15 wrote 197,243,057 bytes for 45,063 characters of model output.
-// That matters beyond the disk it eats: below 10 GiB free the daemon pauses
-// dispatch and says nothing, so a long run can wedge the fleet well before its
-// own 90-minute ceiling fires.
-//
-// StdoutLogWriter drops those two accumulated snapshots on their way to disk.
-// Nothing is lost that a person reading the log needs:
-//
-//   - `delta` on each *_delta event still carries the new text. Replayed over
-//     the same run above, the deltas reconstruct every completed thinking and
-//     text block CHARACTER FOR CHARACTER against the `content` field that
-//     `thinking_end` / `text_end` carries (6 of 6 blocks, measured).
-//   - `content` on `thinking_end` / `text_end`, `toolCall` on `toolcall_end`,
-//     `args` on `tool_execution_start` and `result` on `tool_execution_end` are
-//     separate fields and are untouched.
-//   - `message_start`, `message_end`, `agent_end` and `turn_end` are not
-//     rewritten at all, so the final assistant message survives in full.
-//
-// The same run shrinks from 197,243,057 bytes to 830,717 — a factor of 237 —
-// and the curve goes from quadratic to linear in the length of the turn. Both
-// figures are the shipped code measured on 2026-08-15 against the retained
-// capture of run 01a0061c-6601-7528-9544-2ed98c23b967, which is kept at
-// .harmonik/worktrees/<run-id>/.harmonik/pi-agent/pi-stdout.log — a failed pi
-// run keeps its worktree, so the file survives to be re-measured. Name the path
-// rather than the run: a reviewer looked for this capture in ~/.harmonik, /tmp
-// and /var/folders, concluded it was gone, and flagged the figures as
-// underivable.
-//
-// WHAT CHANGES ON DISK, EXACTLY. A line that is not a rewritten message_update
-// is copied byte for byte. A rewritten one is decoded and re-encoded, so its
-// keys come back in Go's map order (alphabetical) rather than Pi's emission
-// order — but every surviving VALUE keeps its bytes, including `<`, `>` and `&`,
-// which Go's default encoder would have turned into <, > and &.
-// That escaping is not cosmetic: it hit 122 of the 4,139 delta lines on the run
-// above, and it would leave the file disagreeing with itself, so a person
-// grepping it for the model's own text would find the pass-through lines and
-// miss the rewritten ones.
-//
-// Only the DISK copy changes. The daemon tees, so the bytes the session-id
-// interceptor and the spawn watcher read are the child's original bytes; this
-// writer sits on the tee's sink side and can see none of them.
-//
-// Bead: hk-k4jrh. Capture path: internal/daemon/agentlaunch.go (hk-j6wm7).
-
 import (
 	"bytes"
 	"encoding/json"
@@ -67,19 +8,8 @@ import (
 	"sync"
 )
 
-// piMessageUpdateType is the "type" discriminator of the only Pi NDJSON event
-// that carries an accumulated snapshot of the assistant message.
 const piMessageUpdateType = "message_update"
 
-// The three keys the rewrite navigates by. piAccumulatedSnapshotKey and
-// piTopLevelAccumulationKey are the two the writer REMOVES: both hold the whole
-// assistant message accumulated so far, and on the run measured for hk-k4jrh
-// they held the same value on 4,156 of 4,157 lines (the odd one out differed
-// only in `usage`, which the harness reads from message_start/message_end
-// instead).
-//
-// Dropping one alone still leaves the file quadratic — it only halves the
-// constant — so both go.
 const (
 	piMessageUpdateEventKey   = "assistantMessageEvent"
 	piAccumulatedSnapshotKey  = "partial" // inside assistantMessageEvent
@@ -167,19 +97,7 @@ func (w *StdoutLogWriter) Close() error {
 	return nil
 }
 
-// piStdoutLogLine returns the form of one NDJSON line to persist, including its
-// trailing newline if the input had one.
-//
-// It is total: a line that is not a JSON object, or is a JSON object whose
-// "type" is not message_update, comes back byte for byte. Only a well-formed
-// message_update line is rewritten, and only by removing the two accumulated
-// snapshots. Key order inside a rewritten line is Go's map order (alphabetical),
-// not Pi's emission order; every surviving value keeps its exact bytes.
 func piStdoutLogLine(line []byte) []byte {
-	// Fast path, and the reason this function is cheap on the lines that are not
-	// the problem: only a line that mentions the discriminator at all is worth
-	// decoding. A tool result that quotes the string reaches the decode below and
-	// is returned unchanged there, so this is a filter and not the decision.
 	if !bytes.Contains(line, []byte(`"`+piMessageUpdateType+`"`)) {
 		return line
 	}
@@ -224,15 +142,6 @@ func piStdoutLogLine(line []byte) []byte {
 	return append(rewritten, newline...)
 }
 
-// piEncodeJSONLine encodes v as one line of compact JSON, leaving `<`, `>` and
-// `&` as the model wrote them.
-//
-// json.Marshal cannot do this. It runs with escapeHTML on and no way to turn it
-// off, which rewrites those three characters to <, > and & —
-// inside json.RawMessage values as well, so even a field this code never
-// touches comes back altered. json.Encoder is the only encoder in the standard
-// library that exposes the switch. It appends a newline of its own, which the
-// caller supplies from the original line instead, so it is trimmed here.
 func piEncodeJSONLine(v any) ([]byte, error) {
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)

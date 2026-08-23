@@ -1,18 +1,5 @@
 package core
 
-// budgetdispatchcheck_hka8bg22.go — CP-023: Budget is enforced at dispatch.
-//
-// Implements the pre-dispatch budget gate defined in
-// specs/control-points.md §4.5.CP-023:
-//
-//   The agent runner MUST check the Budget's remaining allowance AT DISPATCH
-//   (pre-exhaustion). If the pending dispatch would exceed the remaining limit,
-//   the runner MUST emit a budget_exhausted event per [event-model.md §8.4]
-//   and DENY the dispatch (the handler is NOT launched). The run's failure
-//   class MUST be budget_exhausted per [execution-model.md §8.5].
-//
-// Refs: hk-a8bg.22
-
 // CheckBudgetAtDispatch evaluates whether a pending dispatch is admissible
 // under the declared budget ceiling per control-points.md §4.5.CP-023.
 //

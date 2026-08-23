@@ -31,12 +31,6 @@ import (
 // real rotation logic.
 var ErrSingleAccountOnly = fmt.Errorf("handler: claude-code account rotation not supported: %w", ErrDeterministic)
 
-// claudeCodeRateLimitedPayload is the minimal shape decoded from an
-// agent_rate_limited progress-stream message to extract retry_after_seconds.
-//
-// The Claude Code headless protocol surfaces HTTP 429 responses as an
-// agent_rate_limited NDJSON line carrying an optional retry_after_seconds
-// field (handler-contract.md §4.6.HC-025).
 type claudeCodeRateLimitedPayload struct {
 	RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
 }
@@ -82,10 +76,6 @@ func Register(reg *handlercontract.AdapterRegistry) error {
 	return reg.Register(handlercontract.AgentTypeClaudeCode, NewClaudeCodeAdapter())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handlercontract.Adapter implementation
-// ─────────────────────────────────────────────────────────────────────────────
-
 // DetectReady reports whether event is the agent_ready signal for a
 // Claude Code session (handler-contract.md §4.9.HC-041).
 //
@@ -98,7 +88,6 @@ func Register(reg *handlercontract.AdapterRegistry) error {
 // CHB-013 / HC-039.  This adapter accepts that provenance value as valid;
 // the Type field alone is the gate here.
 func (ClaudeCodeAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
-	// Explicitly reject launch_initiated — it MUST NOT satisfy ready-state.
 	if event.Type == core.EventType(handlercontract.ProgressMsgTypeLaunchInitiated) {
 		return false
 	}
@@ -120,8 +109,6 @@ func (ClaudeCodeAdapter) DetectRateLimit(event handlercontract.EventEnvelope) (b
 		return false, 0
 	}
 
-	// Decode the optional retry_after_seconds from the payload.
-	// Malformed payload: treat as limited with no explicit retry hint.
 	var pl claudeCodeRateLimitedPayload
 	if err := json.Unmarshal(event.Payload, &pl); err != nil {
 		return true, 0

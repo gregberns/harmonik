@@ -8,8 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// scenarioFileFixtureWorkflowPath returns a minimally valid ScenarioFile using
-// WorkflowPath (DOT file) as the workflow selector.
 func scenarioFileFixtureWorkflowPath(t *testing.T) ScenarioFile {
 	t.Helper()
 	wp := "workflows/basic.dot"
@@ -28,17 +26,8 @@ func scenarioFileFixtureWorkflowPath(t *testing.T) ScenarioFile {
 	}
 }
 
-// scenarioFixtureWorkflowIDText is the logical workflow identity the
-// ScenarioFile fixtures select. core.NewWorkflowID accepts it — see
-// TestScenarioFixtureWorkflowIDIsValidLogicalIdentity. The value must stay
-// valid because ScenarioFile marshals WorkflowID through
-// core.WorkflowID.MarshalText, which rejects text the identity rules do not
-// allow.
 const scenarioFixtureWorkflowIDText = "scenario-fixture-graph"
 
-// newScenarioFixtureWorkflowID returns a pointer to the fixture identity.
-// ScenarioFile.WorkflowID is a pointer because the spec models the field as
-// String|None, so each fixture needs its own addressable copy.
 func newScenarioFixtureWorkflowID() *core.WorkflowID {
 	wid := core.WorkflowID(scenarioFixtureWorkflowIDText)
 	return &wid
@@ -54,8 +43,6 @@ func TestScenarioFixtureWorkflowIDIsValidLogicalIdentity(t *testing.T) {
 	}
 }
 
-// scenarioFileFixtureWorkflowID returns a minimally valid ScenarioFile using
-// WorkflowID as the workflow selector.
 func scenarioFileFixtureWorkflowID(t *testing.T) ScenarioFile {
 	t.Helper()
 	wid := newScenarioFixtureWorkflowID()
@@ -75,8 +62,6 @@ func scenarioFileFixtureWorkflowID(t *testing.T) ScenarioFile {
 	}
 }
 
-// scenarioFileFixtureFull returns a fully-populated valid ScenarioFile covering
-// every optional field.
 func scenarioFileFixtureFull(t *testing.T) ScenarioFile {
 	t.Helper()
 	wp := "workflows/full.dot"
@@ -222,7 +207,6 @@ func TestScenarioFileValid(t *testing.T) {
 		{
 			name: "invalid: name too long (>128 chars total)",
 			input: ScenarioFile{
-				// 129 'a's: regex allows 1 + up to 127 more = 128 max total
 				Name: func() string {
 					b := make([]byte, 129)
 					for i := range b {
@@ -303,7 +287,6 @@ func TestScenarioFileValid(t *testing.T) {
 				Name: "t11", WorkflowPath: makeWP("w.dot"),
 				TimeoutSecs: 30, CadenceTag: CadenceTagSmoke,
 				Matrix: map[string][]string{
-					// 33x32=1056 > 1024
 					"a": func() []string {
 						s := make([]string, 33)
 						for i := range s {
@@ -398,7 +381,6 @@ func TestScenarioFileJSONRoundTrip(t *testing.T) {
 func TestScenarioFileJSONKeys(t *testing.T) {
 	t.Parallel()
 
-	// Verify required keys are always present; optional keys obey omitempty.
 	sf := scenarioFileFixtureWorkflowPath(t)
 	data, err := json.Marshal(sf)
 	if err != nil {
@@ -417,17 +399,14 @@ func TestScenarioFileJSONKeys(t *testing.T) {
 		}
 	}
 
-	// workflow_id is nil — must be absent (omitempty).
 	if _, ok := raw["workflow_id"]; ok {
 		t.Errorf("marshaled JSON contains 'workflow_id' when WorkflowID is nil; got %s", data)
 	}
 
-	// expected_outcome is nil — must be absent (omitempty).
 	if _, ok := raw["expected_outcome"]; ok {
 		t.Errorf("marshaled JSON contains 'expected_outcome' when ExpectedOutcome is nil; got %s", data)
 	}
 
-	// matrix is nil — must be absent (omitempty).
 	if _, ok := raw["matrix"]; ok {
 		t.Errorf("marshaled JSON contains 'matrix' when Matrix is nil; got %s", data)
 	}
@@ -555,7 +534,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 		CadenceTag:   CadenceTagSmoke,
 	}
 
-	// build128 returns a valid 128-char name (all alphanumeric).
 	build128 := func() string {
 		b := make([]byte, 128)
 		for i := range b {
@@ -587,7 +565,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 		})
 	}
 
-	// build129 returns a 129-char name (exceeds 128-char max per SH-005).
 	build129 := func() string {
 		b := make([]byte, 129)
 		for i := range b {

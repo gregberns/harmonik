@@ -1,14 +1,5 @@
 package core
 
-// keeperinteriorevents_prop_test.go — property tests for the §8.20
-// session-keeper interior payload Valid() methods, plus a DecodePayloadStrict
-// coverage test (codename:session-restart-substrate).
-//
-// Naming: TestProp_* per testing.md §Decisions #10. Approach mirrors
-// reconciliationevents_hqwn59_prop_test.go: build a valid payload, flip exactly
-// one required field to its zero/invalid value, assert Valid()==false;
-// all-valid -> true.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -18,10 +9,6 @@ import (
 )
 
 var keeperModelDoneSources = []string{"idle_marker", "transcript_turn", "timeout"}
-
-// ============================================================
-// SessionKeeperHandoffWrittenPayload
-// ============================================================
 
 func TestProp_SessionKeeperHandoffWrittenPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -58,10 +45,6 @@ func TestProp_SessionKeeperHandoffWrittenPayload_EmptyCycleIDRejected(t *testing
 		}
 	})
 }
-
-// ============================================================
-// SessionKeeperModelDonePayload
-// ============================================================
 
 func TestProp_SessionKeeperModelDonePayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -102,10 +85,6 @@ func TestProp_SessionKeeperModelDonePayload_EmptyCycleIDRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// SessionKeeperClearSentPayload
-// ============================================================
-
 func TestProp_SessionKeeperClearSentPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := SessionKeeperClearSentPayload{
@@ -144,10 +123,6 @@ func TestProp_SessionKeeperClearSentPayload_ZeroAttemptRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// SessionKeeperNewSessionUpPayload
-// ============================================================
 
 func TestProp_SessionKeeperNewSessionUpPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -208,19 +183,13 @@ func TestProp_SessionKeeperNewSessionUpPayload_UnchangedSessionIDRejected(t *tes
 	})
 }
 
-// ============================================================
-// DecodePayloadStrict — additive-drift detection (EV-049)
-// ============================================================
-
 // TestDecodePayloadStrict_UnknownFieldRejected asserts that a payload carrying an
 // extra (unmodeled) field decodes cleanly via DecodePayload but is rejected by
 // DecodePayloadStrict, which is the mechanism that surfaces additive writer drift.
 func TestDecodePayloadStrict_UnknownFieldRejected(t *testing.T) {
-	// A well-formed §8.20 payload plus an unmodeled "surprise_field".
 	raw := []byte(`{"agent_name":"a","cycle_id":"cyc-1","attempt":1,"surprise_field":"drift"}`)
 	ev := minimalEvent(t, "session_keeper_clear_sent", raw)
 
-	// Tolerant path: DecodePayload silently ignores the unknown field.
 	got, err := ev.DecodePayload()
 	if err != nil {
 		t.Fatalf("DecodePayload: unexpected error on extra field: %v", err)
@@ -230,7 +199,6 @@ func TestDecodePayloadStrict_UnknownFieldRejected(t *testing.T) {
 		t.Errorf("DecodePayload dropped/altered modeled fields: got %+v, want %+v", got, want)
 	}
 
-	// Strict path: DecodePayloadStrict rejects the unknown field.
 	if _, err := ev.DecodePayloadStrict(); err == nil {
 		t.Error("DecodePayloadStrict: expected error on unknown field, got nil")
 	}
@@ -251,7 +219,6 @@ func TestDecodePayloadStrict_WellFormedAccepted(t *testing.T) {
 	}
 }
 
-// jsonEqual reports whether a and b marshal to identical JSON.
 func jsonEqual(t *testing.T, a, b any) bool {
 	t.Helper()
 	ab, err := json.Marshal(a)

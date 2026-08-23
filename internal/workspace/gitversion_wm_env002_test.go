@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// gitVersionFixtureFakeBinary writes a shell script at dir/git that prints the
-// given version line and exits 0 (or exits 1 if exitCode is non-zero).
-//
-// The fake binary is written into dir; callers MUST prepend dir to PATH via
-// t.Setenv so that exec.CommandContext picks it up.
-//
-// Prefixed gitVersionFixture per implementer-protocol helper-prefix discipline
-// (bead hk-8mwo.2).
 func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode int) {
 	t.Helper()
 
@@ -33,10 +25,6 @@ func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode
 	}
 }
 
-// gitVersionFixturePrependPath prepends dir to PATH for the duration of the test.
-//
-// NOTE: t.Setenv is not compatible with t.Parallel. Tests that call this helper
-// MUST NOT call t.Parallel.
 func gitVersionFixturePrependPath(t *testing.T, dir string) {
 	t.Helper()
 	orig := os.Getenv("PATH")
@@ -168,7 +156,6 @@ func TestParseGitVersion_MalformedInputs(t *testing.T) {
 //
 // NOTE: t.Setenv is not compatible with t.Parallel — this test is sequential.
 func TestWMENV002_DetectGitVersion_BelowMinimumReturnsErrGitVersionTooOld(t *testing.T) {
-	// Versions strictly below 2.34 that must be rejected.
 	oldVersions := []string{
 		"git version 2.33.9",
 		"git version 2.30.0",
@@ -243,7 +230,6 @@ func TestWMENV002_DetectGitVersion_ExecFailureReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("DetectGitVersion: expected error when git exits non-zero; got nil")
 	}
-	// Must NOT be ErrGitVersionTooOld — the failure class is exec, not version.
 	if errors.Is(err, ErrGitVersionTooOld) {
 		t.Errorf("DetectGitVersion: got ErrGitVersionTooOld for exec failure; want a different error")
 	}
@@ -258,13 +244,11 @@ func TestWMENV002_DetectGitVersion_ExecFailureReturnsError(t *testing.T) {
 func TestWMENV002_OrtMergeStrategyRationale(t *testing.T) {
 	t.Parallel()
 
-	// Any version below 2.34 must NOT meet minimum.
 	below := GitVersion{Major: 2, Minor: 33}
 	if below.meetsMinimum() {
 		t.Errorf("GitVersion{2, 33}.meetsMinimum() = true; want false (--strategy=ort is not default below 2.34)")
 	}
 
-	// 2.34 exactly must meet minimum — ort is the default from this version.
 	at := GitVersion{Major: 2, Minor: 34}
 	if !at.meetsMinimum() {
 		t.Errorf("GitVersion{2, 34}.meetsMinimum() = false; want true (ort becomes default at 2.34)")
@@ -281,13 +265,11 @@ func TestWMENV002_OrtMergeStrategyRationale(t *testing.T) {
 func TestWMENV002_ForEachRefTrailersRationale(t *testing.T) {
 	t.Parallel()
 
-	// git 2.33: %(trailers:key=X,valueonly=true) not available — must be rejected.
 	priorToTrailersExpansion := GitVersion{Major: 2, Minor: 33}
 	if priorToTrailersExpansion.meetsMinimum() {
 		t.Errorf("GitVersion{2, 33}: meetsMinimum() = true; want false (trailers format token absent before 2.34)")
 	}
 
-	// git 2.34: expanded trailers token available — must be accepted.
 	atTrailersExpansion := GitVersion{Major: 2, Minor: 34}
 	if !atTrailersExpansion.meetsMinimum() {
 		t.Errorf("GitVersion{2, 34}: meetsMinimum() = false; want true (trailers format token available at 2.34)")
@@ -302,13 +284,11 @@ func TestWMENV002_ForEachRefTrailersRationale(t *testing.T) {
 func TestWMENV002_WorktreeRepairRationale(t *testing.T) {
 	t.Parallel()
 
-	// git 2.30–2.33: worktree repair introduced but not stabilized — must be rejected.
 	introduced := GitVersion{Major: 2, Minor: 30}
 	if introduced.meetsMinimum() {
 		t.Errorf("GitVersion{2, 30}: meetsMinimum() = true; want false (worktree repair not stabilized until 2.34)")
 	}
 
-	// git 2.34: worktree repair stabilized — must be accepted.
 	stabilized := GitVersion{Major: 2, Minor: 34}
 	if !stabilized.meetsMinimum() {
 		t.Errorf("GitVersion{2, 34}: meetsMinimum() = false; want true (worktree repair stabilized at 2.34)")
@@ -324,7 +304,6 @@ func TestWMENV002_ErrGitVersionTooOld_ClassString(t *testing.T) {
 		t.Errorf("Class(ErrGitVersionTooOld) = %q; want %q", got, "GitVersionTooOld")
 	}
 
-	// A wrapped ErrGitVersionTooOld must also classify correctly.
 	wrapped := fmt.Errorf("outer: %w", ErrGitVersionTooOld)
 	if got := Class(wrapped); got != "GitVersionTooOld" {
 		t.Errorf("Class(wrapped ErrGitVersionTooOld) = %q; want %q", got, "GitVersionTooOld")

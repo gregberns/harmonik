@@ -7,11 +7,8 @@ import (
 	"time"
 )
 
-// dailyInterval is the fixed period of a "daily" schedule kind. It is also the
-// default CatchupWindow for daily jobs (D2).
 const dailyInterval = 24 * time.Hour
 
-// parseInterval parses Schedule.Interval for a ScheduleKindEvery schedule.
 func parseInterval(s Schedule) (time.Duration, error) {
 	if s.Interval == "" {
 		return 0, fmt.Errorf("schedule: every kind requires a non-empty interval")
@@ -41,7 +38,6 @@ func ResolveLocation(tz string) (*time.Location, error) {
 	return loc, nil
 }
 
-// parseHHMM parses an "HH:MM" 24-hour wall-clock string into hour and minute.
 func parseHHMM(at string) (hour, minute int, err error) {
 	parts := strings.Split(at, ":")
 	if len(parts) != 2 {
@@ -79,9 +75,6 @@ func parseHHMM(at string) (hour, minute int, err error) {
 // which is the expected behaviour for a fixed-period daily timer.
 func NextFire(s Schedule, ref time.Time) (time.Time, error) {
 	if s.Kind == ScheduleKindEvery {
-		// For display purposes: next fire is ref + interval (conservative estimate
-		// assuming just fired). For accurate next-fire accounting for LastFire, use
-		// JobNextFire.
 		d, err := parseInterval(s)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("schedule: NextFire: %w", err)
@@ -100,12 +93,9 @@ func NextFire(s Schedule, ref time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 
-	// Work in the schedule's local timezone so HH:MM is wall-clock on each day.
 	refLocal := ref.In(loc)
 	candidate := time.Date(refLocal.Year(), refLocal.Month(), refLocal.Day(), hour, minute, 0, 0, loc)
 
-	// If today's fire instant has already passed (or is exactly now), roll to
-	// tomorrow. Compare in UTC to avoid wall-clock ambiguity.
 	if !candidate.After(ref) {
 		candidate = time.Date(refLocal.Year(), refLocal.Month(), refLocal.Day()+1, hour, minute, 0, 0, loc)
 	}
@@ -119,7 +109,6 @@ func NextFire(s Schedule, ref time.Time) (time.Time, error) {
 // A fire exactly at ref counts as the previous fire (inclusive of ref).
 func PrevFire(s Schedule, ref time.Time) (time.Time, error) {
 	if s.Kind == ScheduleKindEvery {
-		// For display purposes: previous fire is ref - interval.
 		d, err := parseInterval(s)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("schedule: PrevFire: %w", err)
@@ -141,16 +130,12 @@ func PrevFire(s Schedule, ref time.Time) (time.Time, error) {
 	refLocal := ref.In(loc)
 	candidate := time.Date(refLocal.Year(), refLocal.Month(), refLocal.Day(), hour, minute, 0, 0, loc)
 
-	// If today's fire instant is still in the future, the previous fire was
-	// yesterday's.
 	if candidate.After(ref) {
 		candidate = time.Date(refLocal.Year(), refLocal.Month(), refLocal.Day()-1, hour, minute, 0, 0, loc)
 	}
 	return candidate.UTC(), nil
 }
 
-// catchupWindow returns the effective catch-up window for a job: the parsed
-// CatchupWindow duration when set, else the schedule's interval (24h for daily).
 func catchupWindow(j ScheduledJob) (time.Duration, error) {
 	if j.CatchupWindow == "" {
 		return dailyInterval, nil
@@ -186,10 +171,6 @@ func JobNextFire(j ScheduledJob, ref time.Time) (time.Time, error) {
 	return NextFire(j.Schedule, ref)
 }
 
-// decideInterval computes the fire decision for a ScheduleKindEvery job.
-// Interval jobs fire as soon as the interval has elapsed since LastFire. There
-// is no "missed boundary" concept: if the daemon was down for multiple intervals,
-// exactly one fire is triggered on restart and the timer resets from that point.
 func decideInterval(j ScheduledJob, nowUTC time.Time) (FireDecision, error) {
 	d, err := parseInterval(j.Schedule)
 	if err != nil {
@@ -225,8 +206,6 @@ type FireDecision struct {
 	FireInstant time.Time
 }
 
-// parseLastFire parses a job's LastFire RFC3339 UTC string. Empty → zero time
-// (job has never fired).
 func parseLastFire(j ScheduledJob) (time.Time, bool, error) {
 	if j.LastFire == "" {
 		return time.Time{}, false, nil
@@ -274,29 +253,17 @@ func Decide(j ScheduledJob, nowUTC time.Time) (FireDecision, error) {
 		return FireDecision{}, err
 	}
 
-	// Nothing is due until now has reached the most-recent scheduled instant.
-	// (prev is always <= now by construction, so "due" means prev is newer than
-	// the last fire we already serviced.)
 	if hadLast && !prev.After(lastFire) {
 		return FireDecision{Fire: false}, nil
 	}
 	if !hadLast {
-		// Never fired: the first due boundary is prev (the most-recent scheduled
-		// instant at/before now). Fire on it. There is no "missed window" concept
-		// for a job that has never run — it simply starts firing at its first
-		// boundary.
 		return FireDecision{Fire: true, FireInstant: prev}, nil
 	}
 
-	// A scheduled instant (prev) is newer than LastFire → a fire is due.
 	if j.Catchup == CatchupOff {
-		// Resume normal forward scheduling: fire now's boundary, no catch-up
-		// bookkeeping.
 		return FireDecision{Fire: true, FireInstant: prev}, nil
 	}
 
-	// Coalesce-within-window: fire one catch-up iff the missed instant is recent
-	// enough; otherwise skip it.
 	window, err := catchupWindow(j)
 	if err != nil {
 		return FireDecision{}, err

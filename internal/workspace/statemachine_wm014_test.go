@@ -7,16 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Tests for the workspace lifecycle state machine per workspace-model.md §4.4
-// WM-014 and the §7.1 transition table.
-//
-// Helper prefix: stateMachineFixture (bead hk-8mwo.24; avoids collision with
-// sibling-bead helpers such as leaseFixture, mergeBackFixture, etc.).
-
-// stateMachineFixtureWorkspace returns a *Workspace initialised to the
-// zero/pre-create state, suitable for threading through Transition calls.
-// The WorkspaceID, RunID, and other required fields are pre-populated with
-// deterministic test values.
 func stateMachineFixtureWorkspace() *Workspace {
 	runID := "0196a1b2-c3d4-7000-8000-000000000014"
 	return &Workspace{
@@ -68,7 +58,6 @@ func TestWM014_HappyPath_FullLifecycle(t *testing.T) {
 		})
 	}
 
-	// Merged is terminal — no further transitions allowed.
 	if !IsTerminal(ws.State) {
 		t.Errorf("WM-014: merged state should be terminal; IsTerminal(%q) = false", ws.State)
 	}
@@ -175,30 +164,25 @@ func TestWM014_ConflictResolvingToDiscarded(t *testing.T) {
 func TestWM014_InvalidTransitions(t *testing.T) {
 	t.Parallel()
 
-	// Each case names a (from, to) pair that §7.1 does NOT permit.
 	cases := []struct {
 		name string
 		from core.WorkspaceState
 		to   core.WorkspaceState
 	}{
-		// Forward skips.
 		{"created → leased (skip ready)", core.WorkspaceStateCreated, core.WorkspaceStateLeased},
 		{"created → merge-pending (skip)", core.WorkspaceStateCreated, core.WorkspaceStateMergePending},
 		{"ready → merge-pending (skip leased)", core.WorkspaceStateReady, core.WorkspaceStateMergePending},
 		{"ready → discarded (not permitted)", core.WorkspaceStateReady, core.WorkspaceStateDiscarded},
 
-		// Backward transitions (not permitted in this state machine).
 		{"leased → ready (backward)", core.WorkspaceStateLeased, core.WorkspaceStateReady},
 		{"leased → created (backward)", core.WorkspaceStateLeased, core.WorkspaceStateCreated},
 		{"merge-pending → leased (backward)", core.WorkspaceStateMergePending, core.WorkspaceStateLeased},
 		{"merged → discarded (terminal absorbing)", core.WorkspaceStateMerged, core.WorkspaceStateDiscarded},
 
-		// Terminal self-transitions.
 		{"merged → merged", core.WorkspaceStateMerged, core.WorkspaceStateMerged},
 		{"discarded → discarded", core.WorkspaceStateDiscarded, core.WorkspaceStateDiscarded},
 		{"discarded → created", core.WorkspaceStateDiscarded, core.WorkspaceStateCreated},
 
-		// conflict-resolving may not jump to merged directly.
 		{"conflict-resolving → merged (must go through merge-pending)", core.WorkspaceStateConflictResolving, core.WorkspaceStateMerged},
 	}
 
@@ -218,7 +202,6 @@ func TestWM014_InvalidTransitions(t *testing.T) {
 				t.Errorf("WM-014[%s]: Transition(%q → %q): error %v; want errors.Is(_, ErrInvalidTransition)",
 					tc.name, tc.from, tc.to, err)
 			}
-			// State must remain unchanged after a rejected transition.
 			if ws.State != tc.from {
 				t.Errorf("WM-014[%s]: ws.State changed from %q to %q on rejected transition",
 					tc.name, tc.from, ws.State)
@@ -296,7 +279,6 @@ func TestWM014_IsTerminal(t *testing.T) {
 			if got != tc.terminal {
 				t.Errorf("IsTerminal(%q) = %v, want %v", tc.state, got, tc.terminal)
 			}
-			// IsInFlight must be the logical complement for valid states.
 			gotInFlight := IsInFlight(tc.state)
 			if gotInFlight == tc.terminal {
 				t.Errorf("IsInFlight(%q) = %v; want opposite of IsTerminal (%v)",

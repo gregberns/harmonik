@@ -1,36 +1,5 @@
 package daemon
 
-// queueonlyposture_test.go — the queue-only run posture.
-//
-// The posture is the `subsystems:` block in scripts/scratch-config-overlay.yaml.
-// scratch-daemon.sh `init` appends that overlay onto the config `harmonik init`
-// generates, so the overlay — not any string in this file — is what a scratch
-// daemon actually boots with. Every test here therefore READS THE TRACKED OVERLAY
-// off disk. Restating the block in Go would make these tests pass while the file
-// the daemon reads said something else, which is the failure mode they exist to
-// prevent.
-//
-// What each test defends:
-//
-//   - PostureParses: the overlay names only subsystems the schema knows. An
-//     unknown name under `subsystems:` is ErrUnknownSubsystem and the daemon
-//     REFUSES TO BOOT, so a name written ahead of its switch (supervisor_watchdog
-//     is the live example) turns the assessment pass into a dead daemon.
-//   - QueueSurfaceStaysOn: socket_listener and subscribe_hub are ON. The queue
-//     handler adapter is built inside daemon.bindSocket, and `scratch-daemon.sh
-//     batch` awaits terminal events over `harmonik subscribe`. Switching either
-//     off does not give "queue only", it removes the queue or the instrument that
-//     reads it.
-//   - NonQueueSubsystemsAreAbsent: the switched-off subsystems are ABSENT at their
-//     CONSTRUCTION SEAMS, not merely inert. This is the claim with teeth: it calls
-//     the real constructors with the real overlay config and requires nil / false.
-//   - OverlayKeysAreStrippable: every top-level key the overlay owns appears in the
-//     strip list inside scripts/scratch-daemon.sh. A key added to the overlay but
-//     missing there lands as a SECOND top-level key of the same name, which is a
-//     duplicate-key YAML error and again a dead daemon.
-//
-// Helper prefix: qpost.
-
 import (
 	"context"
 	"os"
@@ -44,19 +13,12 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// qpostOverlayMarker separates the overlay's explanatory header from the YAML
-// scratch-daemon.sh appends. Only the part after it reaches a generated config.
 const qpostOverlayMarker = "# ---8<--- everything below this marker"
 
-// qpostOverlayPath is the tracked overlay, relative to this package directory.
 const qpostOverlayPath = "../../scripts/scratch-config-overlay.yaml"
 
-// qpostScriptPath is the script that appends the overlay onto a generated config.
 const qpostScriptPath = "../../scripts/scratch-daemon.sh"
 
-// qpostSubsystemsOff is the set of subsystems the queue-only posture switches off.
-// It is the EXPECTATION the overlay is checked against, so an edit to the overlay
-// that changes the posture has to be a deliberate edit here too.
 var qpostSubsystemsOff = []projectconfig.SubsystemName{
 	projectconfig.SubsystemReconciliationScheduler,
 	projectconfig.SubsystemDashboardGate,
@@ -72,15 +34,11 @@ var qpostSubsystemsOff = []projectconfig.SubsystemName{
 	projectconfig.SubsystemSupervisorWatchdog,
 }
 
-// qpostSubsystemsOn is the set the posture leaves ON. Both halves are named so a
-// posture that switched EVERYTHING off — which removes the queue — cannot pass.
 var qpostSubsystemsOn = []projectconfig.SubsystemName{
 	projectconfig.SubsystemSocketListener,
 	projectconfig.SubsystemSubscribeHub,
 }
 
-// qpostOverlayBody returns the ACTIVE section of the tracked overlay — the exact
-// text scratch-daemon.sh appends onto a generated .harmonik/config.yaml.
 func qpostOverlayBody(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(qpostOverlayPath)
@@ -92,16 +50,10 @@ func qpostOverlayBody(t *testing.T) string {
 		t.Fatalf("qpostOverlayBody: %s has no %q marker; scratch-daemon.sh appends nothing without it",
 			qpostOverlayPath, qpostOverlayMarker)
 	}
-	// Cut leaves the remainder of the marker line; drop it.
 	_, body, _ = strings.Cut(body, "\n")
 	return body
 }
 
-// qpostLoadConfig writes the overlay's active section into a real
-// .harmonik/config.yaml and loads it through projectconfig.LoadProjectConfig.
-//
-// The schema_version line mirrors what `harmonik init` writes above the appended
-// section, so the file under test has the same shape as the generated one.
 func qpostLoadConfig(t *testing.T) (projectconfig.ProjectConfig, string) {
 	t.Helper()
 	return subpartLoadConfig(t, "schema_version: 1\nversion: 1\n"+qpostOverlayBody(t))
@@ -126,9 +78,6 @@ func TestQueueOnlyPosture_PostureParses(t *testing.T) {
 		}
 	}
 
-	// The two switches that are not `subsystems:` entries but are part of the same
-	// posture. The ctx-watchdog has its own gate; the ops-monitor has none, and a
-	// stretched interval is the whole mitigation.
 	if pc.Watchdog.Enabled {
 		t.Error("watchdog.enabled is true under the queue-only overlay; the ctx-watchdog schedule must not be registered")
 	}
@@ -178,8 +127,6 @@ func TestQueueOnlyPosture_NonQueueSubsystemsAreAbsent(t *testing.T) {
 	if got := bs.newBranchReapWatcherIfEnabled(); got != nil {
 		t.Error("newBranchReapWatcherIfEnabled returned a watcher under the queue-only overlay; branch_reaper must be absent (it DELETES branches the assessor needs)")
 	}
-	// A worker is CONFIGURED first. RunReportLoop returns immediately with an empty
-	// registry, so without this the switch and an empty registry look the same.
 	bs.cfg.Workers = bootpartWorkerConfig()
 	reg := workers.BuildRegistryWithRunner(ctx, bs.cfg.Workers, nil, nil)
 	if reg == nil {
@@ -207,8 +154,6 @@ func TestQueueOnlyPosture_NonQueueSubsystemsAreAbsent(t *testing.T) {
 		t.Error("newGovernorPort reported the governor enabled under the queue-only overlay; movement_governor must be absent")
 	}
 
-	// The seams that only exist inside bus wiring are asserted through the same
-	// Enabled read wireSpendAndQueueConsumers and wireWatchersAndObservers use.
 	for _, name := range []projectconfig.SubsystemName{
 		projectconfig.SubsystemHandlerPausePolicy,
 		projectconfig.SubsystemDaemonSpendMeter,
@@ -220,9 +165,6 @@ func TestQueueOnlyPosture_NonQueueSubsystemsAreAbsent(t *testing.T) {
 		}
 	}
 
-	// Each partition announces itself. A silent partition cannot be told apart from
-	// a config that never took effect, which is how an operator ends up believing a
-	// subsystem was switched off while it kept running.
 	logged := logBuf.String()
 	for _, name := range []projectconfig.SubsystemName{
 		projectconfig.SubsystemCrewIdleReap,
@@ -238,14 +180,8 @@ func TestQueueOnlyPosture_NonQueueSubsystemsAreAbsent(t *testing.T) {
 	}
 }
 
-// qpostKnownListPattern pulls the accepted subsystem names out of the
-// ErrUnknownSubsystem message, which renders them sorted as "(known: a, b, c)".
-// The set itself is unexported, and reading it through the error the schema
-// already promises to print keeps this guard inside the test file.
 var qpostKnownListPattern = regexp.MustCompile(`\(known: ([^)]+)\)`)
 
-// qpostKnownSubsystems returns every name the schema accepts, read from the hard
-// error a deliberately bogus name provokes.
 func qpostKnownSubsystems(t *testing.T) []string {
 	t.Helper()
 	root := t.TempDir()
@@ -294,12 +230,8 @@ func TestQueueOnlyPosture_CoversEverySwitchableSubsystem(t *testing.T) {
 	}
 }
 
-// qpostStripListPattern finds the top-level keys scratch-daemon.sh strips before
-// it appends the overlay. The script writes them as one alternation, e.g.
-// /^(harnesses|codex|subsystems):[[:space:]]*$/.
 var qpostStripListPattern = regexp.MustCompile(`\^\(([a-z_|]+)\):\[\[:space:\]\]\*\$`)
 
-// qpostTopLevelKeyPattern finds a bare top-level YAML key at column zero.
 var qpostTopLevelKeyPattern = regexp.MustCompile(`(?m)^([a-z_]+):`)
 
 // Every top-level key the overlay owns is stripped from the generated config

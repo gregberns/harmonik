@@ -7,20 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// This file adds the RUN-KEYED replay track — the daemon peer of the
-// session-keeper (agent_name, cycle_id) track in replay.go/checkers.go. It is
-// strictly ADDITIVE (00b R6): the cycle-keyed surface (CycleState, Replay,
-// SR3..SR9) is untouched; this track keys on the envelope-carried run_id and
-// runs its own RunChecker set. Semantics come verbatim from
-// run-state-machine.md §8 (RSM-INV-001) and the liveness-parity-design — the
-// harness reports, it does not invent invariant meaning.
-//
-// The 00b R6 fallback: were internal/replay's cycle-keyed owner to object to a
-// same-package extension, this whole track could move to a sibling package
-// importing replay's registry surface. It lives here because the extension is
-// additive and shares the decode/scan plumbing (collectSorted, decodeEvent,
-// schemaMismatchSkips) with no change to the cycle-keyed code.
-
 // RunChecker is one run-keyed invariant, mirroring Checker but handed a
 // RunState (the per-run_id accumulator) instead of a CycleState. Types reports
 // the event types it observes (empty ⇒ all); Check runs once per matching
@@ -56,28 +42,19 @@ type RunState struct {
 	LastEventID core.EventID
 }
 
-// runTerminalTypes are the events that terminate a run (RSM-INV-001 terminal
-// set). review_loop_cycle_complete carries an outcome and is the review-loop
-// terminal; run_completed/run_failed are the umbrella terminals.
 var runTerminalTypes = map[core.EventType]bool{
 	core.EventTypeReviewLoopCycleComplete: true,
 	core.EventTypeRunCompleted:            true,
 	core.EventTypeRunFailed:               true,
 }
 
-// runFailureClassTypes are the run-lifecycle failure-class events (RSM-INV-001).
-// They resolve a resumed run's liveness obligation without being a "terminal"
-// in the run_completed/run_failed sense — a fail-closed timeout edge
-// (agent_ready_timeout) or a staleness alert (run_stale) discharges silence.
 var runFailureClassTypes = map[core.EventType]bool{
 	core.EventTypeAgentReadyTimeout: true,
 	core.EventTypeRunStale:          true,
 }
 
-// isRunTerminal reports whether t terminates a run.
 func isRunTerminal(t core.EventType) bool { return runTerminalTypes[t] }
 
-// hasFailureClass reports whether the run saw any failure-class event.
 func hasFailureClass(s *RunState) bool {
 	for t := range runFailureClassTypes {
 		if _, ok := s.Seen[t]; ok {
@@ -147,9 +124,6 @@ func CheckRuns(path string, since core.EventID, strict bool, checkers []RunCheck
 	return rep, nil
 }
 
-// runRecordEvent runs CheckRuns' central per-run bookkeeping for one routed
-// event: first-occurrence Seen tracking, the LastEventID watermark, and the
-// first-terminal latch. Mirrors recordEvent for the run track.
 func runRecordEvent(st *RunState, ev core.Event) {
 	et := ev.Type
 	if _, dup := st.Seen[et]; !dup {
@@ -161,7 +135,6 @@ func runRecordEvent(st *RunState, ev core.Event) {
 	}
 }
 
-// runStateFor returns the RunState for rid, creating it on first sight.
 func runStateFor(states map[string]*RunState, rid string) *RunState {
 	st, ok := states[rid]
 	if !ok {
@@ -171,7 +144,6 @@ func runStateFor(states map[string]*RunState, rid string) *RunState {
 	return st
 }
 
-// sortedRunStates returns the states in deterministic run_id order.
 func sortedRunStates(states map[string]*RunState) []*RunState {
 	out := make([]*RunState, 0, len(states))
 	for _, s := range states {
@@ -181,7 +153,6 @@ func sortedRunStates(states map[string]*RunState) []*RunState {
 	return out
 }
 
-// runCheckerMatches reports whether checker c observes an event of type evType.
 func runCheckerMatches(c RunChecker, evType string) bool {
 	ts := c.Types()
 	if len(ts) == 0 {
@@ -195,12 +166,6 @@ func runCheckerMatches(c RunChecker, evType string) bool {
 	return false
 }
 
-// runKey extracts the run_id join key from a decoded payload. Because
-// internal/core exposes no GetRunID accessor (the same constraint cycleKey
-// documents — 00b R6), it falls back to a type switch over the concrete
-// run-lifecycle payloads that carry the key. ok is false for a payload with no
-// run scope. RunID values are UUIDs (rendered via String()) except run_stale,
-// whose run_id is already a string.
 func runKey(p core.EventPayload) (rid string, ok bool) {
 	switch v := p.(type) {
 	case *core.RunStartedPayload:
@@ -230,9 +195,6 @@ func runKey(p core.EventPayload) (rid string, ok bool) {
 	}
 }
 
-// runIDStr renders a typed RunID as its join-key string, reporting ok=false for
-// the zero id (an unjoinable emission, e.g. a pre-fix synthetic ready that
-// carried no run_id — RSM-018 joinability).
 func runIDStr(id core.RunID) (string, bool) {
 	if id == (core.RunID{}) {
 		return "", false
@@ -305,8 +267,6 @@ func (RSM9Checker) Finalize(states []*RunState) []Violation {
 	return out
 }
 
-// rsm9LivenessViolation flags a run that emitted implementer_resumed but reached
-// neither a run-terminal nor a failure-class event (RSM-INV-001 silence).
 func rsm9LivenessViolation(s *RunState) []Violation {
 	_, resumed := s.Seen[core.EventTypeImplementerResumed]
 	if !resumed || s.Terminal != "" || hasFailureClass(s) {
@@ -320,8 +280,6 @@ func rsm9LivenessViolation(s *RunState) []Violation {
 	}}
 }
 
-// rsm9ExclusivityViolation flags a run that emitted both run_completed and
-// run_failed (the two are mutually exclusive at emission time).
 func rsm9ExclusivityViolation(s *RunState) []Violation {
 	_, completed := s.Seen[core.EventTypeRunCompleted]
 	_, failed := s.Seen[core.EventTypeRunFailed]
@@ -336,8 +294,6 @@ func rsm9ExclusivityViolation(s *RunState) []Violation {
 	}}
 }
 
-// Compile-time assertions that the run-keyed checkers satisfy the interfaces
-// CheckRuns relies on.
 var (
 	_ RunChecker   = RSM4Checker{}
 	_ RunChecker   = RSM9Checker{}

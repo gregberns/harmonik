@@ -1,42 +1,5 @@
 package shared
 
-// refstrailer.go — the Refs:<bead> commit-trailer machinery shared by the codex
-// and pi harnesses (codex-harness C2/T9, hk-bpxci; pi PI-030/031, hk-mazln).
-//
-// # Why this is shared and not codex-private
-//
-// harmonik detects that a harness turn produced work by a git commit on the
-// worktree HEAD that carries a "Refs: <bead-id>" trailer
-// (WorktreeHEADHasRefsTrailer below, line-matching "Refs: <id>" exactly). That
-// is a claim about THIS TURN, on THIS worktree HEAD — it is not evidence that
-// the bead's work merged anywhere (hk-1a7yb; see the note where
-// MainHistoryHasRefsTrailer used to be). The claude
-// harness runs as an interactive TUI, so a commit without the trailer is caught
-// by the reviewer/no-commit guard and the bead is re-driven. codex and pi are
-// DIFFERENT: both are one-shot run-to-exit processes — there is no live REPL to
-// re-prod and no second chance inside the same turn. Both therefore need a
-// DETERMINISTIC commit-after-exit fallback: if the harness edited files but did
-// not produce a trailer-carrying commit, the daemon creates/repairs the commit
-// itself so the standard trailer-detection path succeeds.
-//
-// The VERIFY and FALLBACK primitives below are byte-for-byte the same for both
-// harnesses — picommit.go's piRefsOutcome was literally a type alias of the
-// codex enum — so they live here, BELOW both harness implementations. Only the
-// harness-specific wrappers (ensureCodexRefsTrailer / ensurePiRefsTrailer and
-// their fallback commit messages) stay with their harness.
-//
-// LOAD-BEARING (PI-031 / NFR7): every git operation routes through the run's
-// tmux.CommandRunner when non-nil and falls back to bare local exec when nil, so
-// the remote SSH substrate behaves identically to local.
-//
-// Spec: specs/harness-contract.md §2 N2 (CompletionProcessExit);
-// specs/pi-harness.md §3 (PI-030/PI-031). The trailer TEXT has one definition
-// here (RefsTrailerLine), so the instruct, verify and fallback paths cannot
-// drift apart.
-//
-// Origin: internal/daemon/codexcommit.go, split out by
-// plans/2026-07-21-p2-extraction/E1a-codex-harness.md unit E1a-0.
-
 import (
 	"context"
 	"fmt"
@@ -84,9 +47,6 @@ func (o RefsOutcome) String() string {
 	case RefsNoChange:
 		return "no_change"
 	default:
-		// Deliberately still says "codexRefsOutcome": this is observable
-		// diagnostic output and the P2 E1a-0 split is a pure move. Renaming it
-		// is a behaviour change and belongs in a follow-up, not here.
 		return fmt.Sprintf("codexRefsOutcome(%d)", int(o))
 	}
 }
@@ -130,35 +90,6 @@ func WorktreeHEADHasRefsTrailer(ctx context.Context, runner tmux.CommandRunner, 
 	}
 	return false, nil
 }
-
-// The agent-work pathspec — `-- . :(exclude).claude :(exclude).harmonik` —
-// restricts a worktree scan to work the AGENT produced, excluding the daemon's
-// own scaffolding.
-//
-// hk-jcrzn: `.harmonik/` holds files the DAEMON writes into the run worktree —
-// agent-task.md, reviewer-feedback.iter-N.md, commit-gate.log, review.json. In a
-// project whose .gitignore does not cover them (init scaffolds an ENUMERATED
-// .harmonik/.gitignore that omits agent-task.md, and a gitignore inside
-// .harmonik/ cannot un-untrack its own directory), a bare `git status
-// --porcelain` reports `?? .harmonik/` for a run in which the agent did nothing.
-// The fallback then read that as "edited but never committed", staged the
-// daemon's own files, and produced a commit with a changed tree and a valid
-// Refs trailer — which commit_gate passes legitimately, because by every check
-// the gate makes it IS a real commit. An idle implementer looked like a success.
-//
-// `.claude/` is excluded for the reason given at commitResidualDelta (hk-igq3):
-// it is only partially gitignored, so a blanket -A can stage
-// credential-adjacent files and push them to origin.
-//
-// This mirrors the exclusions commitResidualDelta has carried since GH #7 /
-// hk-znou. That hardening was applied to one committer and not to this one;
-// these two helpers were the unhardened twin. The `:(exclude)` pathspec magic is
-// honored by git >= 2.0 and matches the directory and all descendants.
-//
-// The pathspec is written out literally at each call site rather than shared
-// through a slice variable, matching commitResidualDelta: the args stay a fixed
-// literal list, which is both the house idiom and what keeps these calls clear
-// of gosec G204 without a suppression.
 
 // WorktreeDirty reports whether the worktree at wtPath has any uncommitted
 // AGENT changes — staged, unstaged, or untracked — ignoring daemon-owned paths
@@ -244,7 +175,6 @@ func CommitAllWithHarnessRefsTrailer(ctx context.Context, runner tmux.CommandRun
 // When runner is non-nil the git commands are routed through it (remote worker);
 // when nil they fall back to bare local exec (NFR7 — byte-identical for local).
 func AmendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
-	// Read the existing HEAD commit message body.
 	var out []byte
 	var err error
 	if runner != nil {
@@ -260,9 +190,6 @@ func AmendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtP
 	existing := strings.TrimRight(string(out), "\n")
 
 	trailer := RefsTrailerLine(beadID)
-	// Defensive: if the exact trailer line is already present, amend is a no-op
-	// on the message (still re-commit to keep the call deterministic, but avoid
-	// duplicating the trailer).
 	newMsg := existing
 	if !ContainsExactLine(existing, trailer) {
 		newMsg = existing + "\n\n" + trailer
@@ -283,30 +210,6 @@ func AmendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtP
 	}
 	return nil
 }
-
-// MainHistoryHasRefsTrailer is DELETED (hk-1a7yb). It reported whether beadID
-// appeared as an exact "Refs: <id>" line in any commit on the literal branch
-// `main`, and the daemon read that as "a prior run already completed this bead"
-// — the subsumption close on the graph path, and the stale-blocker close on the
-// claim-failure path.
-//
-// Its own doc comment had forbidden that use since hk-f38n: "a match proves a
-// commit NAMES the bead. It does not prove the bead is done ... never use this
-// as a standalone completion test." The comment did not stop it. Bead hk-2hfyt,
-// a P1 fleet-down bug, closed as done because a whole-repo gofumpt run carried
-// the line "Refs: hk-2hfyt"; the fix never landed. The branch was also wrong:
-// this program merges to an integration branch, and `main` held none of its
-// work.
-//
-// The daemon now asks internal/daemon.beadWorkLandedOn, which takes the branch
-// from the run instead of a literal and requires the BI-022 evidence — a
-// `Harmonik-Bead-ID` trailer the daemon itself writes when it lands a task
-// branch, a non-docs diff, the commit still reachable from the branch tip, and
-// no later revert. See internal/daemon/subsumptionevidence.go.
-//
-// Do not restore a mention-only probe here. If a caller needs "did this bead's
-// work merge", it needs that evidence, and one copy of it already exists in
-// lifecycle.GitMergeCommitScanner.
 
 // ContainsExactLine reports whether body contains line as an exact line
 // (line-for-line, CR-tolerant). WorktreeHEADHasRefsTrailer uses the same

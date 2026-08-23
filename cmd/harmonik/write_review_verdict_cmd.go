@@ -1,38 +1,5 @@
 package main
 
-// write_review_verdict_cmd.go — `harmonik write-review-verdict` subcommand.
-//
-// # Purpose (hk-9w79a)
-//
-// The reviewer-phase Claude session (kicked off by pasteInjectReviewer) is
-// instructed to "write .harmonik/review.json" by hand-typing raw JSON via its
-// Write tool. When the free-text Notes field quotes a code snippet containing
-// a backtick, the model sometimes emits an illegal "\`" backslash-escape
-// (backtick needs no JSON escape at all), producing invalid JSON that fails
-// ErrMalformed after the ~1hr verdict-read retry budget is spent — recurring
-// fleet-wide per the gurney log linked from hk-9w79a.
-//
-// This command gives the reviewer a non-hand-rolled path: pass the verdict
-// fields as flags/args and this command does the JSON encoding via
-// encoding/json (internal/workspace.WriteReviewVerdictAtomic), which escapes
-// only what JSON actually requires and can never mis-escape a backtick.
-//
-// # Grammar
-//
-//	harmonik write-review-verdict --verdict=APPROVE|REQUEST_CHANGES|BLOCK \
-//	    --notes="..." [--flags=a,b,c] [--project DIR]
-//
-// notes and flags are read verbatim — no shell quoting hazards beyond normal
-// flag parsing, since the value is JSON-encoded by this process, not typed as
-// JSON text by the caller.
-//
-// # Exit codes
-//
-//	0  — success; .harmonik/review.json written atomically
-//	1  — argument error or write failure
-//
-// Bead ref: hk-9w79a.
-
 import (
 	"fmt"
 	"os"
@@ -65,8 +32,6 @@ EXAMPLES
 `)
 }
 
-// runWriteReviewVerdictSubcommand implements `harmonik write-review-verdict`.
-// subArgs is os.Args[2:] (everything after "write-review-verdict").
 func runWriteReviewVerdictSubcommand(subArgs []string) int {
 	var verdictFlag, notesFlag, flagsFlag, projectDirFlag string
 
@@ -107,7 +72,6 @@ func runWriteReviewVerdictSubcommand(subArgs []string) int {
 
 	switch verdictFlag {
 	case workspace.ReviewVerdictApprove, workspace.ReviewVerdictRequestChanges, workspace.ReviewVerdictBlock:
-		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik write-review-verdict: --verdict must be one of APPROVE, REQUEST_CHANGES, BLOCK (got %q)\n", verdictFlag)
 		return 1

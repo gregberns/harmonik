@@ -6,8 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// outcomeValid returns a fully-populated Outcome with all required fields set
-// to valid values. Tests mutate individual fields to probe Valid().
 func outcomeValid(t *testing.T) Outcome {
 	t.Helper()
 	return Outcome{
@@ -21,8 +19,6 @@ func outcomeValid(t *testing.T) Outcome {
 	}
 }
 
-// outcomeValidPayload returns the smallest valid *VerdictEvent for use in
-// Outcome tests that require a non-nil reconciliation-verdict payload.
 func outcomeValidPayload(t *testing.T) *VerdictEvent {
 	t.Helper()
 	ctx := "investigator context"
@@ -34,8 +30,6 @@ func outcomeValidPayload(t *testing.T) *VerdictEvent {
 		SchemaVersion:     1,
 	}
 }
-
-// --- Valid() tests ---
 
 func TestOutcomeValid_MinimalDefault(t *testing.T) {
 	t.Parallel()
@@ -76,8 +70,6 @@ func TestOutcomeValid_ReconciliationVerdictWithPayload(t *testing.T) {
 		t.Error("Valid() = false for reconciliation_verdict Outcome with payload, want true")
 	}
 }
-
-// --- Status field ---
 
 func TestOutcomeValid_InvalidStatus(t *testing.T) {
 	t.Parallel()
@@ -120,8 +112,6 @@ func TestOutcomeValid_AllStatusValues(t *testing.T) {
 	}
 }
 
-// --- Kind field ---
-
 func TestOutcomeValid_InvalidKind(t *testing.T) {
 	t.Parallel()
 
@@ -142,12 +132,9 @@ func TestOutcomeValid_EmptyKind(t *testing.T) {
 	}
 }
 
-// --- Kind/Payload discriminated-union enforcement ---
-
 func TestOutcomeValid_DefaultKindWithPayload_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// Spec: when Kind=default, Payload MUST be absent (nil).
 	o := outcomeValid(t)
 	o.Kind = OutcomeKindDefault
 	o.Payload = outcomeValidPayload(t)
@@ -159,7 +146,6 @@ func TestOutcomeValid_DefaultKindWithPayload_Rejected(t *testing.T) {
 func TestOutcomeValid_ReconciliationVerdictKindWithoutPayload_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// Spec: when Kind=reconciliation_verdict, Payload MUST be non-nil.
 	o := outcomeValid(t)
 	o.Kind = OutcomeKindReconciliationVerdict
 	o.Payload = nil
@@ -167,8 +153,6 @@ func TestOutcomeValid_ReconciliationVerdictKindWithoutPayload_Rejected(t *testin
 		t.Error("Valid() = true with Kind=reconciliation_verdict and nil Payload, want false (spec §6.1 RC-022a)")
 	}
 }
-
-// --- Optional fields carry no structural constraint ---
 
 func TestOutcomeValid_EmptySuggestedNextIDs(t *testing.T) {
 	t.Parallel()
@@ -220,8 +204,6 @@ func TestOutcomeValid_NilPreferredLabel(t *testing.T) {
 	}
 }
 
-// --- JSON round-trip ---
-
 func TestOutcomeValid_DefaultKindNilPayload(t *testing.T) {
 	t.Parallel()
 
@@ -234,10 +216,6 @@ func TestOutcomeValid_DefaultKindNilPayload(t *testing.T) {
 	}
 }
 
-// --- FailureClass field (EM-005c, HC-058) ---
-
-// outcomeGDPValidPayload returns a minimal valid *GateDecisionPayload for use
-// in Outcome tests requiring a gate_decision payload.
 func outcomeGDPValidPayload(t *testing.T) *GateDecisionPayload {
 	t.Helper()
 	return &GateDecisionPayload{
@@ -247,8 +225,6 @@ func outcomeGDPValidPayload(t *testing.T) *GateDecisionPayload {
 	}
 }
 
-// outcomeGDPValidPayloadDeny returns a minimal valid *GateDecisionPayload with
-// Decision=deny for use in Outcome tests.
 func outcomeGDPValidPayloadDeny(t *testing.T) *GateDecisionPayload {
 	t.Helper()
 	return &GateDecisionPayload{
@@ -258,8 +234,6 @@ func outcomeGDPValidPayloadDeny(t *testing.T) *GateDecisionPayload {
 	}
 }
 
-// outcomeGDPValidPayloadEscalate returns a valid *GateDecisionPayload with
-// Decision=escalate-to-human (ResolutionSignalID required).
 func outcomeGDPValidPayloadEscalate(t *testing.T) *GateDecisionPayload {
 	t.Helper()
 	sig := "pending-human-review"
@@ -274,7 +248,6 @@ func outcomeGDPValidPayloadEscalate(t *testing.T) *GateDecisionPayload {
 func TestOutcomeValid_FailureClassAbsentOnSuccess(t *testing.T) {
 	t.Parallel()
 
-	// FailureClass MUST be absent on non-FAIL outcomes per HC-058.
 	fc := FailureClassTransient
 	o := outcomeValid(t)
 	o.Status = OutcomeStatusSuccess
@@ -311,7 +284,6 @@ func TestOutcomeValid_FailureClassAbsentOnPartialSuccess(t *testing.T) {
 func TestOutcomeValid_FailureClassPresentOnFail(t *testing.T) {
 	t.Parallel()
 
-	// All six valid FailureClass values must be accepted when status=FAIL.
 	classes := []FailureClass{
 		FailureClassTransient,
 		FailureClassStructural,
@@ -336,8 +308,6 @@ func TestOutcomeValid_FailureClassPresentOnFail(t *testing.T) {
 func TestOutcomeValid_NilFailureClassOnFail(t *testing.T) {
 	t.Parallel()
 
-	// nil FailureClass on FAIL is valid at the handler-emission stage
-	// (daemon back-fills per HC-059).
 	o := outcomeValid(t)
 	o.Status = OutcomeStatusFail
 	o.FailureClass = nil
@@ -357,8 +327,6 @@ func TestOutcomeValid_InvalidFailureClassValue(t *testing.T) {
 		t.Error("Valid() = true with invalid FailureClass value, want false")
 	}
 }
-
-// --- gate_decision OutcomeKind (EM-005b) ---
 
 func TestOutcomeValid_GateDecisionKindWithValidPayload(t *testing.T) {
 	t.Parallel()
@@ -415,7 +383,6 @@ func TestOutcomeValid_GateDecisionKindWithNilPayload_Rejected(t *testing.T) {
 func TestOutcomeValid_GateDecisionKindWithWrongPayloadType_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// Payload is *VerdictEvent but kind=gate_decision — wrong type.
 	o := Outcome{
 		Status:  OutcomeStatusSuccess,
 		Kind:    OutcomeKindGateDecision,
@@ -429,7 +396,6 @@ func TestOutcomeValid_GateDecisionKindWithWrongPayloadType_Rejected(t *testing.T
 func TestOutcomeValid_GateDecisionKindWithInvalidPayload_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// GateDecisionPayload with empty PolicyID is invalid.
 	o := Outcome{
 		Status: OutcomeStatusSuccess,
 		Kind:   OutcomeKindGateDecision,
@@ -447,7 +413,6 @@ func TestOutcomeValid_GateDecisionKindWithInvalidPayload_Rejected(t *testing.T) 
 func TestOutcomeValid_DefaultKindWithGDPPayload_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// Kind=default must have nil Payload; non-nil GateDecisionPayload must be rejected.
 	o := Outcome{
 		Status:  OutcomeStatusSuccess,
 		Kind:    OutcomeKindDefault,
@@ -461,7 +426,6 @@ func TestOutcomeValid_DefaultKindWithGDPPayload_Rejected(t *testing.T) {
 func TestOutcomeValid_ReconciliationVerdictKindWithGDPPayload_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// Payload type must match kind; *GateDecisionPayload with reconciliation_verdict is wrong.
 	o := Outcome{
 		Status:  OutcomeStatusSuccess,
 		Kind:    OutcomeKindReconciliationVerdict,
@@ -471,8 +435,6 @@ func TestOutcomeValid_ReconciliationVerdictKindWithGDPPayload_Rejected(t *testin
 		t.Error("Valid() = true with kind=reconciliation_verdict and *GateDecisionPayload payload, want false")
 	}
 }
-
-// --- OutcomeKind gate_decision enum coverage ---
 
 func TestOutcomeKindGateDecisionValid(t *testing.T) {
 	t.Parallel()
@@ -505,8 +467,6 @@ func TestOutcomeKindGateDecisionUnmarshalText(t *testing.T) {
 		t.Errorf("UnmarshalText got %q, want %q", k, OutcomeKindGateDecision)
 	}
 }
-
-// --- GateDecisionPayload.Valid() ---
 
 func TestGateDecisionPayloadValid_Minimal(t *testing.T) {
 	t.Parallel()

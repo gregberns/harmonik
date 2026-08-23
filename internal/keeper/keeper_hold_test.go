@@ -1,26 +1,5 @@
 package keeper_test
 
-// keeper_hold_test.go — unit tests for the operator HOLD switch (hk-9waz / ES6 /
-// codename:keeper-hold). A hold suspends the keeper's destructive ACT/restart
-// cutoff while the operator co-works, and MUST auto-revert: it can never survive a
-// restart (it is keyed by the live .sid session-id, re-minted on every /clear) and
-// it can never survive walk-away/crash (a timer backstop expires a stale marker).
-//
-// THE LOAD-BEARING PROOFS:
-//   - H2 (core auto-revert): a hold under sid-A is gone the instant the .sid flips
-//     to sid-B — the marker is keyed by the OLD sid so it becomes unreachable.
-//   - H8 (adversarial agent-keyed-leak): an AGENT-keyed marker (<agent>.hold, no
-//     sid suffix) is deliberately ignored; IsHeld only honors the sid-keyed one.
-//     This guards against the keying TRAP (agent-name keying would survive a
-//     restart).
-//
-// hk-4rago: RunForPrecompact and RunForIdle now also check the hold probe so a
-// co-working hold prevents cycles on those entry points too (the "rehydration gap"
-// bug where those paths silently dropped in-flight hold directives).
-//
-// Reuses writeSidFile / primarySID / gaugeSID (sessionid_test.go), writeCtxFile /
-// runWatcherFor / RecordingEmitter (watcher_test.go), all package keeper_test.
-
 import (
 	"context"
 	"errors"
@@ -34,17 +13,11 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// holdMarkerPathForTest reconstructs the production hold-marker path
-// (<projectDir>/.harmonik/keeper/<agent>.hold.<sessionID>) for direct inspection.
 func holdMarkerPathForTest(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".hold."+primarySID)
 }
 
-// secondSID is a SECOND valid UUIDv4, distinct from primarySID/gaugeSID, used to
-// simulate the /clear session-id re-mint.
 const secondSID = "44444444-4444-4444-8444-444444444444"
-
-// ── H1: set/read ──────────────────────────────────────────────────────────────
 
 // TestHold_H1_SetReadRoundtrip: SetHold writes .hold.<sid> with a parseable
 // RFC3339 timestamp; IsHeld is true; the returned sid matches the .sid contents.
@@ -74,8 +47,6 @@ func TestHold_H1_SetReadRoundtrip(t *testing.T) {
 	}
 }
 
-// trimSpace is a tiny helper so the test file does not import strings just for one
-// call (keeps the import set minimal / mirrors the other keeper tests' style).
 func trimSpace(b []byte) []byte {
 	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r' || b[len(b)-1] == ' ' || b[len(b)-1] == '\t') {
 		b = b[:len(b)-1]
@@ -85,8 +56,6 @@ func trimSpace(b []byte) []byte {
 	}
 	return b
 }
-
-// ── H2: CORE auto-revert across restart (LOAD-BEARING) ─────────────────────────
 
 // TestHold_H2_AutoRevertAcrossRestart is the load-bearing "a hold never survives a
 // restart" proof. A hold is active under sid-A; then the .sid file is OVERWRITTEN
@@ -107,7 +76,6 @@ func TestHold_H2_AutoRevertAcrossRestart(t *testing.T) {
 		t.Fatal("pre-condition: IsHeld must be true under sid-A")
 	}
 
-	// /clear re-mints the session-id: the SessionStart hook re-writes .sid to sid-B.
 	writeSidFile(t, dir, agent, secondSID) // sid-B
 
 	if keeper.IsHeld(dir, agent, keeper.DefaultHoldTTL) {
@@ -115,8 +83,6 @@ func TestHold_H2_AutoRevertAcrossRestart(t *testing.T) {
 			"the marker must be keyed by the OLD sid and become unreachable after /clear")
 	}
 }
-
-// ── H3: timer expiry ──────────────────────────────────────────────────────────
 
 // TestHold_H3_TimerExpiry: a marker whose timestamp is older than the TTL is
 // EXPIRED — IsHeld returns false even though the sid still matches. This is the
@@ -127,7 +93,6 @@ func TestHold_H3_TimerExpiry(t *testing.T) {
 	agent := "hold-h3-agent"
 	writeSidFile(t, dir, agent, primarySID)
 
-	// Write the marker manually with a stale timestamp (TTL + 1m in the past).
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -142,8 +107,6 @@ func TestHold_H3_TimerExpiry(t *testing.T) {
 		t.Error("IsHeld: want false for a marker older than the TTL (timer backstop)")
 	}
 }
-
-// ── H4: release ───────────────────────────────────────────────────────────────
 
 // TestHold_H4_Release: SetHold then ReleaseHold → IsHeld false and the marker is
 // gone. ReleaseHold on an already-clear agent is idempotent (no error).
@@ -166,13 +129,10 @@ func TestHold_H4_Release(t *testing.T) {
 		t.Error("hold marker still present after ReleaseHold")
 	}
 
-	// Idempotent: releasing again (now clear) is not an error.
 	if err := keeper.ReleaseHold(dir, agent); err != nil {
 		t.Errorf("ReleaseHold on already-clear agent: want nil, got %v", err)
 	}
 }
-
-// ── H5: no trustworthy sid ────────────────────────────────────────────────────
 
 // TestHold_H5_NoTrustworthySid: with NO .sid → SetHold errors, writes no marker,
 // IsHeld false. With a non-UUIDv4 .sid (uppercase, UUIDv7) → SetHold errors too.
@@ -183,11 +143,9 @@ func TestHold_H5_NoTrustworthySid(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		agent := "hold-h5-absent"
-		// No .sid written.
 		if _, err := keeper.SetHold(dir, agent); err == nil {
 			t.Error("SetHold with no .sid: want error, got nil")
 		}
-		// No marker of any kind should have been written.
 		matches, globErr := filepath.Glob(filepath.Join(dir, ".harmonik", "keeper", agent+".hold.*"))
 		if globErr != nil {
 			t.Fatalf("Glob hold markers: %v", globErr)
@@ -204,9 +162,6 @@ func TestHold_H5_NoTrustworthySid(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		agent := "hold-h5-garbage"
-		// ReadSessionIDFile lowercases before validation, so an uppercase UUIDv4
-		// would normalize to a VALID lowercase one — use a genuinely non-UUID value
-		// to exercise the "not a primary UUIDv4" reject path.
 		writeSidFile(t, dir, agent, "not-a-uuid-at-all")
 		if _, err := keeper.SetHold(dir, agent); err == nil {
 			t.Error("SetHold with non-UUID .sid: want error, got nil")
@@ -229,8 +184,6 @@ func TestHold_H5_NoTrustworthySid(t *testing.T) {
 		}
 	})
 }
-
-// ── H6: corrupt marker content ────────────────────────────────────────────────
 
 // TestHold_H6_CorruptMarkerContent: a marker present under the correct sid but with
 // unparseable content fails toward NOT-held (a corrupt marker can never produce an
@@ -255,8 +208,6 @@ func TestHold_H6_CorruptMarkerContent(t *testing.T) {
 	}
 }
 
-// ── H8: ADVERSARIAL agent-keyed-leak (MANDATORY) ───────────────────────────────
-
 // TestHold_H8_AdversarialAgentKeyedLeak guards against the KEYING TRAP. After a
 // session-id flip (H2's scenario), IsHeld must be false. Separately, it proves an
 // AGENT-keyed scheme WOULD have leaked: it constructs an agent-keyed marker
@@ -275,9 +226,6 @@ func TestHold_H8_AdversarialAgentKeyedLeak(t *testing.T) {
 		t.Fatalf("SetHold under sid-A: %v", err)
 	}
 
-	// Also plant an AGENT-KEYED marker (<agent>.hold, no sid) with a FRESH
-	// timestamp — this is the file a buggy agent-name-keyed implementation would
-	// consult. It must be invisible to IsHeld.
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
 	agentKeyed := filepath.Join(keeperDir, agent+".hold")
 	fresh := time.Now().UTC().Format(time.RFC3339)
@@ -285,12 +233,8 @@ func TestHold_H8_AdversarialAgentKeyedLeak(t *testing.T) {
 		t.Fatalf("write agent-keyed marker: %v", err)
 	}
 
-	// Flip the session-id (the /clear re-mint).
 	writeSidFile(t, dir, agent, secondSID) // sid-B
 
-	// Even with a FRESH agent-keyed marker present, the session-id flip must leave
-	// IsHeld false. An agent-keyed implementation would have LEAKED here (returned
-	// true) — proving the trap is avoided.
 	if keeper.IsHeld(dir, agent, keeper.DefaultHoldTTL) {
 		t.Error("KEYING-TRAP REGRESSION: IsHeld honored an agent-keyed (<agent>.hold) marker " +
 			"after a session-id flip — the hold leaked across a restart")
@@ -309,8 +253,6 @@ func TestHold_InvalidAgentName(t *testing.T) {
 		t.Error("SetHold: want error for a traversal agent name")
 	}
 }
-
-// ── Cycler MaybeRun gate (Gate 5c) ─────────────────────────────────────────────
 
 // TestCyclerMaybeRun_DeferredWhenHeld verifies MaybeRun does NOT inject (cycle
 // suppressed) when the hold probe returns true, even with all other gates satisfied;
@@ -332,9 +274,6 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		}
 	}
 
-	// baseCfg builds a CyclerConfig whose gates ALL pass except (optionally) the
-	// hold gate. injectCount records cycle firings; heldCalled records that the HOLD
-	// gate (Gate 5c) was actually consulted.
 	baseCfg := func(projectDir, agent string, injectCount *int) (keeper.CyclerConfig, testCycleOverrides) {
 		return keeper.CyclerConfig{
 				AgentName:  agent,
@@ -397,11 +336,6 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 
-		// Pre-cancelled context so runCycle returns immediately without blocking on
-		// the nonce poll. The control proof is that the HOLD gate was REACHED (Gate
-		// 5c consulted) and did NOT short-circuit — execution flowed past it into
-		// the cycle body. The cancelled ctx means inject may be 0, so we assert on
-		// gate-reached, mirroring the sleep-gate "GateReachedWhenAwake" idiom.
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		if err := cycler.MaybeRun(ctx, cf); err != nil && !errors.Is(err, context.Canceled) {
@@ -413,9 +347,6 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	})
 }
 
-// ── Watcher gates: maybeRespawn / maybeLivePaneRecover ─────────────────────────
-
-// lprHoldRecorder is a thread-safe spy for LiveRecoverFn used by the hold tests.
 type lprHoldRecorder struct {
 	mu    sync.Mutex
 	calls int
@@ -460,7 +391,6 @@ func TestWatcher_RespawnSuppressedWhenHeld(t *testing.T) {
 			InjectFn:     func(_ context.Context, _ string) error { return nil },
 			HeldCheckFn:  func(_, _ string) bool { return held },
 		}
-		// No gauge file → immediately absent/stale; keeper dir must exist.
 		keeperDir := filepath.Join(dir, ".harmonik", "keeper")
 		if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
@@ -519,8 +449,6 @@ func TestWatcher_LivePaneRecoverSuppressedWhenHeld(t *testing.T) {
 	}
 }
 
-// ── Hard-ceiling override (hold does NOT suppress overflow protection) ──────────
-
 // TestWatcher_HardCeilingOverridesHold drives the SID-independent hard-ceiling
 // restart path (restart mode, tokens above the ceiling) WITH HeldCheckFn returning
 // true, and asserts the HardCeilingRestartFn IS still called — proving the operator
@@ -537,7 +465,6 @@ func TestWatcher_HardCeilingOverridesHold(t *testing.T) {
 	cfg.HardCeilingMode = keeper.HardCeilingModeRestart
 	cfg.HardCeilingRestartFn = spy.fn
 	cfg.HardCeilingCooldown = 10 * time.Second
-	// HOLD active — must be IGNORED by the hard-ceiling path.
 	cfg.HeldCheckFn = func(_, _ string) bool { return true }
 
 	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
@@ -549,8 +476,6 @@ func TestWatcher_HardCeilingOverridesHold(t *testing.T) {
 		t.Error("want ≥1 session_keeper_hard_ceiling event while held; got 0")
 	}
 }
-
-// ── WARN still fires under hold ────────────────────────────────────────────────
 
 // TestWatcher_WarnFiresUnderHold: a HOLD suspends only the destructive ACT/restart
 // paths — the WARN path is unaffected. With the gauge above the warn threshold and
@@ -584,8 +509,6 @@ func TestWatcher_WarnFiresUnderHold(t *testing.T) {
 		t.Error("WARN must still fire under a hold; got 0 session_keeper_warn events")
 	}
 }
-
-// ── RunForPrecompact gate 3b: hold suppresses precompact cycle (hk-4rago) ──────
 
 // TestRunForPrecompact_SuppressedWhenHeld verifies that RunForPrecompact emits
 // a "hold_skip" precompact_blocked event and does NOT inject (cycle suppressed)
@@ -651,8 +574,6 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 	t.Run("not_held_proceeds", func(t *testing.T) {
 		t.Parallel()
 		_, actions := run(t, false)
-		// Gate 4 (anti-loop) hasn't fired before, so the cycle proceeds to
-		// cycle_triggered. Verify no hold_skip was emitted.
 		for _, a := range actions {
 			if a == "hold_skip" {
 				t.Errorf("hold_skip emitted while NOT held; want it absent")
@@ -660,8 +581,6 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 		}
 	})
 }
-
-// ── RunForIdle gate 5b: hold suppresses idle restart (hk-4rago) ─────────────────
 
 // TestRunForIdle_SuppressedWhenHeld verifies that RunForIdle does NOT fire the
 // cycle when the hold probe returns true, even with all other gates satisfied.
@@ -707,7 +626,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			deps.Hold = testHoldProbe(func() bool { return held })
 			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		})
-		// Tokens above IdleRestartAbsTokens (150k) but below actThreshold (300k).
 		cf := &keeper.CtxFile{Pct: 80.0, Tokens: 200_000, WindowSize: 400_000, SessionID: "sess-idle"}
 		if err := cycler.RunForIdle(context.Background(), cf); err != nil {
 			t.Fatalf("RunForIdle: unexpected error: %v", err)
@@ -722,8 +640,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		t.Error("control (hold off): RunForIdle did NOT fire; want ≥1 inject")
 	}
 }
-
-// ── Older binary silently ignores the hold marker (version-gated) ────────────
 
 // TestWatcher_OlderBinaryIgnoresHoldMarker is the version-gated assertion: a
 // hold marker on disk has NO effect on a binary that does not check it. The hold
@@ -742,18 +658,14 @@ func TestWatcher_OlderBinaryIgnoresHoldMarker(t *testing.T) {
 	dir := t.TempDir()
 	agent := "older-bin-agent"
 
-	// Write a live .sid so SetHold succeeds, then place a fresh hold on disk.
 	writeSidFile(t, dir, agent, primarySID)
 	if _, err := keeper.SetHold(dir, agent); err != nil {
 		t.Fatalf("SetHold: %v", err)
 	}
-	// Pre-condition: the CURRENT binary would see a hold (proves the marker is there).
 	if !keeper.IsHeld(dir, agent, keeper.DefaultHoldTTL) {
 		t.Fatal("pre-condition: hold must be active on disk for this test to be meaningful")
 	}
 
-	// Simulate an older binary: HeldCheckFn always returns false — it does not know
-	// about the hold gate and never inspects the marker file.
 	sentinel := filepath.Join(dir, "respawned.flag")
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{

@@ -6,8 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// validTraceContext returns a fully-populated TraceContext with all optional
-// fields set to non-zero values, for use as a baseline in rejection tests.
 func validTraceContext(t *testing.T) TraceContext {
 	t.Helper()
 

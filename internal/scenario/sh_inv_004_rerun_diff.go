@@ -124,8 +124,6 @@ func SnapshotFromResult(r ScenarioResult) RerunDiffSnapshot {
 	}
 }
 
-// minimalEventEnvelope is the minimal JSON structure for type-only parsing of
-// JSONL event log records per specs/event-model.md §6.1.
 type minimalEventEnvelope struct {
 	Type string `json:"type"`
 }
@@ -230,9 +228,6 @@ func DiffRerunSnapshots(snapshots []RerunDiffSnapshot) *RerunDiffReport {
 	return report
 }
 
-// rerunFormatAssertionTuples serialises the ordered assertion-tuple list to a
-// canonical string for comparison. Format: "true:event_present|false:exit_code|…".
-// Returns "" for a nil or empty slice.
 func rerunFormatAssertionTuples(tuples []AssertionTuple) string {
 	if len(tuples) == 0 {
 		return ""
@@ -244,9 +239,6 @@ func rerunFormatAssertionTuples(tuples []AssertionTuple) string {
 	return strings.Join(parts, "|")
 }
 
-// rerunFormatEventTypeMultiset serialises the event-type multiset to a
-// canonical sorted string for comparison. Format: "agent_ready=2,outcome=1".
-// Returns "" for a nil or empty map.
 func rerunFormatEventTypeMultiset(m map[core.EventType]int) string {
 	if len(m) == 0 {
 		return ""

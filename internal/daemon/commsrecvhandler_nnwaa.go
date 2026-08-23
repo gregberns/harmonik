@@ -1,45 +1,5 @@
 package daemon
 
-// commsrecvhandler_nnwaa.go — CommsRecvHandler interface and implementation for
-// the comms-recv socket op (agent-comms spec §2.2 C2/C5, bead hk-nnwaa T8).
-//
-// The handler reads agent_message events from the calling agent's durable cursor
-// (CursorStore, T7) forward, filters via the SHARED MatchAgentMessage predicate
-// (N1, R1 — must not duplicate the filter), advances the cursor after delivery,
-// and returns the matched messages in the SocketResponse.
-//
-// # At-least-once delivery (N3)
-//
-// The cursor advances AFTER the scan returns all matched messages. If the daemon
-// crashes between scan and advance, the same events are re-delivered on the next
-// call. Recipients deduplicate on event_id at the application layer.
-//
-// # Durability on daemon restart
-//
-// The cursor is written by CursorStore.Advance with temp+rename+fsync discipline
-// (T7 contract). A daemon restart reads the cursor from disk and resumes from
-// the stored position — no messages are lost.
-//
-// # Decoupled poll/live cursors (hk-8xspi, B1)
-//
-// A plain one-shot `comms recv --agent` poll and a `--follow`/`--wait` live
-// session each own an INDEPENDENT durable cursor (CommsRecvRequest.Live selects
-// which one this call reads/advances). Before this change both paths shared one
-// cursor, so a poller and a follow/wait watcher raced over the same position and
-// one would starve the other (recv-drains-0-under-follow). N3 at-least-once +
-// mandatory dedupe-on-event_id makes the resulting duplicate delivery across the
-// two cursors harmless — see agent-comms spec §5 Q1/Q3.
-//
-// # Shared predicate (R1 / N1)
-//
-// comms-recv uses the same MatchAgentMessage predicate as the live subscribe
-// path (subscriptionStream.offer in subscribe.go) and the JSONL replay path
-// (HandleSubscribe ScanAfter loop in subscribe.go). There is exactly one copy of
-// the addressing logic: agent_message.go:MatchAgentMessage.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.2 C2/C5.
-// Bead ref: hk-nnwaa (T8), hk-8xspi (B1 decoupled cursor).
-
 import (
 	"context"
 	"encoding/json"
@@ -180,29 +140,20 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-recv: agent is required")
 	}
 
-	// hk-8xspi (B1): route to the poll or live cursor store per req.Live. The two
-	// stores are independent — draining one never advances the other.
 	cursorStore := h.pollCursorStore
 	if req.Live {
 		cursorStore = h.liveCursorStore
 	}
 
-	// Serialize the Get→scan→Advance critical section per agent (hk-fww4e).
-	// Two concurrent "comms recv --agent X" calls on separate connections would
-	// otherwise both Get the same cursor, scan the same backlog, and both Advance —
-	// causing bounded duplicate delivery. The per-agent mutex in CursorStore
-	// prevents this without blocking concurrent ops for different agents.
 	agentMu := cursorStore.AgentMu(req.Agent)
 	agentMu.Lock()
 	defer agentMu.Unlock()
 
-	// Read the durable cursor; "" means start of log (deliver all matching events).
 	cursorStr, err := cursorStore.Get(req.Agent)
 	if err != nil {
 		return nil, fmt.Errorf("comms-recv: read cursor for %q: %w", req.Agent, err)
 	}
 
-	// Convert cursor string to EventID for ScanAfter.
 	var sinceID core.EventID
 	if cursorStr != "" {
 		parsed, parseErr := uuid.Parse(cursorStr)
@@ -212,7 +163,6 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		sinceID = core.EventID(parsed)
 	}
 
-	// Scan events.jsonl forward from the cursor, filter, collect.
 	var messages []CommsRecvMessage
 	var lastEventID string
 	var lastScannedID string // last event_id seen regardless of match (for ScanAnchor)
@@ -226,8 +176,6 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		if unmarshalErr := json.Unmarshal(evt.Payload, &p); unmarshalErr != nil {
 			continue
 		}
-		// R1: use the SHARED MatchAgentMessage predicate (agent_message.go).
-		// to=req.Agent means "directed to me OR broadcast *".
 		if !MatchAgentMessage(p, req.Agent, req.From, req.Topic) {
 			continue
 		}
@@ -243,24 +191,17 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		lastEventID = evt.EventID.String()
 	}
 
-	// N3: advance cursor AFTER read so a crash between scan and advance
-	// causes re-delivery rather than loss.
 	if lastEventID != "" {
 		if advErr := cursorStore.Advance(req.Agent, lastEventID); advErr != nil {
 			return nil, fmt.Errorf("comms-recv: advance cursor for %q: %w", req.Agent, advErr)
 		}
 	}
 
-	// Refresh presence for the receiving agent so receive-only agents stay
-	// visible in "comms who" (hk-6vwi3 fix #2). No session_id for recv beats —
-	// comms-recv requests do not carry a session token.
 	h.emitRefreshBeat(ctx, req.Agent, "")
 
 	if messages == nil {
 		messages = []CommsRecvMessage{}
 	}
-	// cursor_after: new cursor position (for --follow anchor).
-	// If we advanced the cursor, use lastEventID; otherwise use the stored cursor.
 	cursorAfter := lastEventID
 	if cursorAfter == "" {
 		cursorAfter = cursorStr

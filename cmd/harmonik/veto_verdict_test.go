@@ -1,8 +1,5 @@
 package main
 
-// veto_verdict_test.go — behavior tests for `harmonik veto-verdict` argument
-// parsing/validation and its success-message dispatch (RC-027, hk-63oh.39).
-
 import (
 	"encoding/json"
 	"testing"

@@ -1,20 +1,11 @@
 package supervisecmd
 
-// Regression tests for resolveAPIKey: supervise start must resolve ANTHROPIC_API_KEY
-// from the Pi-scoped non-committed source and persist it into config.json so the
-// shim can inject it into Pi's env on a fresh boot.
-//
-// Spec ref: specs/credential-isolation.md §4.4 CI-006.
-
 import (
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// unsetenvWithRestore calls os.Unsetenv and registers a t.Cleanup that restores
-// the prior value (or re-unsets if absent), preventing env contamination across
-// tests regardless of execution order.
 func unsetenvWithRestore(t *testing.T, keys ...string) {
 	t.Helper()
 	if len(keys) != 1 {

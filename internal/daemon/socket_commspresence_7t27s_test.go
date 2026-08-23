@@ -1,19 +1,5 @@
 package daemon_test
 
-// socket_commspresence_7t27s_test.go — socket-level tests for the "comms-presence" op
-// (agent-comms spec §2.5 C6, bead hk-7t27s T10).
-//
-// Acceptance criteria verified here:
-//   - comms-presence op routes to CommsPresenceHandler when registered (via *commsSendHandlerImpl).
-//   - A join request (status=online, reason=join) emits an agent_presence event.
-//   - A leave request (status=offline, reason=leave) emits an agent_presence event.
-//   - The response carries the minted event_id (non-empty UUIDv7 string).
-//   - Validation errors (missing agent, invalid status) return Ok=false.
-//   - nil CommsSendHandler → CommsPresenceHandler type-assert fails → Ok=false, "not registered".
-//
-// Spec ref: agent-comms spec §2.5, §4.
-// Bead ref: hk-7t27s.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,12 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
-
-// commsPresenceFixtureBuildBus constructs a sealed in-memory EventBus with a
-// synchronous consumer that captures all agent_presence events into *captured.
 func commsPresenceFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync.Mutex) {
 	t.Helper()
 
@@ -62,8 +42,6 @@ func commsPresenceFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Even
 	return bus, &captured, &mu
 }
 
-// commsPresenceFixtureStartListener starts RunSocketListenerFull with a CommsSendHandler
-// (which also satisfies CommsPresenceHandler). Returns the socket path; cleanup is registered.
 func commsPresenceFixtureStartListener(t *testing.T, bus eventbus.EventBus) string {
 	t.Helper()
 
@@ -85,8 +63,6 @@ func commsPresenceFixtureStartListener(t *testing.T, bus eventbus.EventBus) stri
 	return sockPath
 }
 
-// commsPresenceFixtureSendRequest dials sockPath, sends a comms-presence SocketRequest with
-// the given JSON payload, and returns the SocketResponse.
 func commsPresenceFixtureSendRequest(t *testing.T, sockPath string, payload json.RawMessage) daemon.SocketResponse {
 	t.Helper()
 
@@ -97,10 +73,6 @@ func commsPresenceFixtureSendRequest(t *testing.T, sockPath string, payload json
 		Payload: payload,
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 // TestCommsPresence_JoinHappyPath verifies that a join request emits an online
 // agent_presence event and returns Ok=true with a non-empty event_id.
@@ -117,7 +89,6 @@ func TestCommsPresence_JoinHappyPath(t *testing.T) {
 		t.Fatalf("comms-presence join: Ok=false, error=%q", resp.Error)
 	}
 
-	// Result must contain a non-empty event_id (UUIDv7, 36-char canonical form).
 	var result daemon.CommsPresenceResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		t.Fatalf("comms-presence join: unmarshal result: %v", err)
@@ -166,7 +137,6 @@ func TestCommsPresence_JoinHappyPath(t *testing.T) {
 		t.Error("comms-presence join: payload.last_seen is empty (handler must stamp wall time)")
 	}
 
-	// event_id in the response MUST match the one stamped on the emitted event.
 	if evt.EventID.String() != result.EventID {
 		t.Errorf("comms-presence join: response event_id=%q does not match emitted event_id=%q",
 			result.EventID, evt.EventID.String())
@@ -312,7 +282,6 @@ func TestCommsPresence_NilHandler(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		// ch=nil: neither CommsSendHandler nor CommsPresenceHandler is registered.
 		done <- daemon.RunSocketListenerFull(ctx, sockPath, nil, nil, nil, nil, nil)
 	}()
 	t.Cleanup(func() {

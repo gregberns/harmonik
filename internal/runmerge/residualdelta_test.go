@@ -1,37 +1,5 @@
 package runmerge_test
 
-// mergetomain_residualdelta_hkrljho_test.go — regression test for the
-// review-loop residual-delta merge fix.
-//
-// Bug (hk-rljho class): a review-loop iteration can leave a TRACKED but
-// UNCOMMITTED change in the run worktree — e.g. an iteration deleted a tracked
-// test file and `git rm`'d it, but the daemon's commit-detection had already
-// fired, so the deletion never got a commit of its own. discardDirtyChurn
-// (hk-3yz2d/hk-aiw63) deliberately restores ONLY the isHarmonikChurn allowlist
-// and leaves genuine work untouched (hk-i1n7j: don't silently reset real work).
-// So the real iteration delta survives to the pre-merge `git rebase main`,
-// which aborts with:
-//
-//	rebase_conflict: exit status 1
-//	error: cannot rebase: You have unstaged changes.
-//
-// and the merge-to-main fails even though the bead's work is complete.
-//
-// The fix (commitResidualDelta) PRESERVES hk-i1n7j: it does NOT discard the
-// residual work — it COMMITS the delta onto the run-branch (it IS the bead's
-// own work — a review-loop edit or a newly authored source file that never got
-// committed) so the rebase proceeds with the work intact.
-//
-// hk-cmry defect #3: the staging was switched from `git add -u` (tracked-only)
-// to `git add -A` because -u SILENTLY DROPPED genuinely new (untracked) source
-// files the implementer authored — that is how the daemon dropped a reviewed
-// GREEN and broke main fleet-wide. `git add -A` honors .gitignore, so daemon/
-// runtime/build junk stays excluded while authored new files are captured.
-//
-// Spec ref: specs/execution-model.md §4.12 EM-052 step 2.
-// Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
-// fix (hk-cmry defect #3).
-
 import (
 	"context"
 	"os"
@@ -45,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
-// newResidualRunID mints a v7 run-id for the residual-delta tests.
 func newResidualRunID(t *testing.T) core.RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -67,47 +34,34 @@ func TestCommitResidualDelta_CommitsTrackedDeletionAndAllowsRebase(t *testing.T)
 
 	wtPath := dirtyLedgerSetup(t)
 
-	// Simulate a review-loop iteration that deleted a TRACKED file but whose
-	// deletion never got its own commit. code.txt is the tracked file committed
-	// by dirtyLedgerSetup.
 	dirtyLedgerGit(t, wtPath, "rm", "code.txt")
 
-	// Sanity: the worktree has an uncommitted tracked deletion — exactly the
-	// state that makes `git rebase main` refuse.
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, "code.txt") {
 		t.Fatalf("precondition: expected staged deletion of code.txt; got status:\n%s", status)
 	}
-	// This deletion is NOT churn, so discardDirtyChurn must leave it alone
-	// (hk-i1n7j) — meaning a bare rebase would still fail.
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, "code.txt") {
 		t.Fatalf("discardDirtyChurn must NOT discard the real deletion (hk-i1n7j); got:\n%s", status)
 	}
 
-	// Apply the fix: commit the residual delta onto the run-branch.
 	runID := newResidualRunID(t)
 	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
 
-	// The worktree must now be clean (the delta is committed, not discarded).
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after commitResidualDelta: expected clean worktree; got:\n%s", status)
 	}
 
-	// The residual delta must be COMMITTED (preserved), not lost. The HEAD
-	// commit subject carries the run-scoped message.
 	subject := dirtyLedgerGit(t, wtPath, "log", "-1", "--format=%s")
 	if !strings.Contains(subject, "residual iteration delta") || !strings.Contains(subject, runID.String()) {
 		t.Fatalf("expected a run-scoped residual-delta commit at HEAD; got subject:\n%s", subject)
 	}
 
-	// And the rebase — the step that previously failed — must now succeed.
 	rebaseCmd := exec.CommandContext(t.Context(), "git", "rebase", "main")
 	rebaseCmd.Dir = wtPath
 	if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
 		t.Fatalf("git rebase main after commitResidualDelta: %v\n%s", rebaseErr, out)
 	}
 
-	// The deletion is preserved through the rebase: code.txt must be gone.
 	if files := dirtyLedgerGit(t, wtPath, "ls-files", "code.txt"); files != "" {
 		t.Errorf("code.txt deletion not preserved through rebase; ls-files still lists:\n%s", files)
 	}
@@ -143,37 +97,27 @@ func TestCommitResidualDelta_GitignoredUntrackedNotSwept(t *testing.T) {
 
 	wtPath := dirtyLedgerSetup(t)
 
-	// Commit a .gitignore on the run branch so the worktree treats junk.log as
-	// ignored (mirrors the real repo .gitignore covering daemon/runtime junk).
 	writeFile(t, wtPath+"/.gitignore", "junk.log\n")
 	dirtyLedgerGit(t, wtPath, "add", ".gitignore")
 	dirtyLedgerGit(t, wtPath, "commit", "-m", "add gitignore")
 
-	// Tracked delta: modify the tracked code.txt (a genuine review-loop edit).
 	writeFile(t, wtPath+"/code.txt", "code\nagent work\nreview-loop iteration edit\n")
-	// A gitignored junk file the daemon/build left lying around.
 	writeFile(t, wtPath+"/junk.log", "i am ignored runtime junk\n")
 
-	// Churn cleanup leaves the tracked delta (hk-i1n7j); junk.log is ignored.
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
 
-	// The tracked delta MUST be in the residual commit.
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
 	if !strings.Contains(committed, "code.txt") {
 		t.Errorf("tracked code.txt delta must be in the residual commit; HEAD changed files:\n%s", committed)
 	}
-	// The gitignored junk file MUST NOT be in the residual commit (proves
-	// `git add -A` honors .gitignore — no junk pushed to origin).
 	if strings.Contains(committed, "junk.log") {
 		t.Errorf("gitignored junk.log must NOT be in the residual commit (git add -A honors .gitignore); HEAD changed files:\n%s", committed)
 	}
-	// And it must never be tracked.
 	if files := dirtyLedgerGit(t, wtPath, "ls-files", "junk.log"); files != "" {
 		t.Errorf("gitignored junk.log must NOT be tracked after commit; ls-files lists:\n%s", files)
 	}
-	// The junk remains on disk but git still ignores it (status is clean).
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Errorf("after commit, only ignored junk.log remains on disk; status should be clean, got:\n%s", status)
 	}
@@ -192,20 +136,13 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 
 	wtPath := dirtyLedgerSetup(t)
 
-	// A legitimate new source file the implementer authored (non-churn, should
-	// be captured in the residual commit).
 	writeFile(t, wtPath+"/new_feature.go", "package work\n// authored feature\n")
 
-	// An untracked .claude/ file that is NOT covered by .gitignore — the class
-	// that would be leaked by a blanket `git add -A`.  settings.local.json is a
-	// real example; so are .claude/todos/, .claude/ide/, etc.
 	if err := os.MkdirAll(wtPath+"/.claude", 0o750); err != nil {
 		t.Fatalf("MkdirAll .claude: %v", err)
 	}
 	writeFile(t, wtPath+"/.claude/settings.local.json", `{"localOverride":true}`+"\n")
 
-	// Churn cleanup restores the churn allowlist; the .claude file is churn and
-	// left in place (untracked, not gitignored, but isHarmonikChurn → skip).
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
@@ -213,19 +150,14 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
 
-	// The legitimate new file MUST be in the residual commit (hk-cmry defect #3
-	// regression: don't regress the untracked-capture fix).
 	if !strings.Contains(committed, "new_feature.go") {
 		t.Errorf("hk-igq3: authored new_feature.go must be captured in the residual commit; HEAD changed files:\n%s", committed)
 	}
 
-	// The untracked .claude/settings.local.json MUST NOT be in the commit —
-	// this is the hk-igq3 assertion: :(exclude).claude blocks the sweep.
 	if strings.Contains(committed, ".claude") {
 		t.Errorf("hk-igq3: .claude/ file must NOT be swept into the residual commit (credential-adjacent leak); HEAD changed files:\n%s", committed)
 	}
 
-	// The .claude file must remain untracked on disk (not deleted, not committed).
 	if files := dirtyLedgerGit(t, wtPath, "ls-files", ".claude/settings.local.json"); files != "" {
 		t.Errorf("hk-igq3: .claude/settings.local.json must remain untracked; ls-files shows it as tracked:\n%s", files)
 	}
@@ -250,43 +182,29 @@ func TestCommitResidualDelta_CapturesUntrackedNewFile(t *testing.T) {
 
 	wtPath := dirtyLedgerSetup(t)
 
-	// Tracked modification: the review/iteration edited an existing tracked file
-	// (e.g. the RED test that was added first).
 	writeFile(t, wtPath+"/code.txt", "code\nagent work\nRED test added\n")
-	// NEW authored source file the implementer added but never committed — the
-	// GREEN. This is the file `git add -u` silently drops.
 	writeFile(t, wtPath+"/new_source.go", "package green\n\n// authored GREEN, never committed\n")
 
-	// Churn cleanup leaves BOTH (neither is isHarmonikChurn; new_source.go is a
-	// genuine untracked authored file, not gitignored).
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
 	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
 
-	// The worktree must be clean (both the tracked delta and the new file are
-	// committed, not left dangling).
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after commitResidualDelta: expected clean worktree (new file captured); got:\n%s", status)
 	}
 
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
-	// The tracked modification must be in the residual commit.
 	if !strings.Contains(committed, "code.txt") {
 		t.Errorf("tracked code.txt modification must be in the residual commit; HEAD changed files:\n%s", committed)
 	}
-	// The NEW authored file MUST be in the residual commit — this is the defect
-	// #3 assertion that FAILS on `git add -u` and PASSES on `git add -A`.
 	if !strings.Contains(committed, "new_source.go") {
 		t.Errorf("hk-cmry defect #3: authored NEW file new_source.go was DROPPED from the residual commit (git add -u bug); it must be captured by git add -A. HEAD changed files:\n%s", committed)
 	}
-	// The new file must now be tracked.
 	if files := dirtyLedgerGit(t, wtPath, "ls-files", "new_source.go"); files == "" {
 		t.Errorf("new_source.go must be tracked after commitResidualDelta; ls-files is empty")
 	}
 
-	// And the rebase — the step the residual commit unblocks — must succeed with
-	// the new file preserved through it.
 	rebaseCmd := exec.CommandContext(t.Context(), "git", "rebase", "main")
 	rebaseCmd.Dir = wtPath
 	if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {

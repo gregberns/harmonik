@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// rateLimitFixtureRunID returns a non-nil RunID for AgentRateLimitStatusPayload tests.
 func rateLimitFixtureRunID(t *testing.T) RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -17,7 +16,6 @@ func rateLimitFixtureRunID(t *testing.T) RunID {
 	return RunID(id)
 }
 
-// rateLimitFixtureSource returns a pointer to a valid RateLimitSource for use in tests.
 func rateLimitFixtureSource(s RateLimitSource) *RateLimitSource {
 	return &s
 }
@@ -236,9 +234,6 @@ func TestAgentRateLimitStatusPayloadSourceOmittedWhenNil(t *testing.T) {
 func TestAgentRateLimitStatusPayloadInvalidSourceRejectedOnDecode(t *testing.T) {
 	t.Parallel()
 
-	// Encoding that carries an invalid rate_limit_source value (uppercase)
-	// must be rejected during JSON decode because RateLimitSource.UnmarshalText
-	// rejects it.
 	raw := `{
 		"run_id": "018f4a1d-0000-7000-8000-000000000000",
 		"session_id": "sess-x",

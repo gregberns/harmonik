@@ -25,18 +25,15 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
-		// Write all required entries.
 		content := strings.Join(RequiredGitignoreEntries, "\n") + "\n"
 		if err := os.WriteFile(gitignorePath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile .gitignore: %v", err)
 		}
 
-		// EnsureGitignoreHygiene must succeed without modifying the file.
 		if err := EnsureGitignoreHygiene(t.Context(), repo); err != nil {
 			t.Fatalf("WM-013e: EnsureGitignoreHygiene (idempotent): %v", err)
 		}
 
-		// File content must be unchanged.
 		got := mustReadFile(t, gitignorePath)
 		if string(got) != content {
 			t.Errorf("WM-013e: .gitignore content changed unexpectedly:\ngot:  %q\nwant: %q", got, content)
@@ -49,7 +46,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
-		// Ensure .gitignore does not exist.
 		if err := os.Remove(gitignorePath); err != nil && !os.IsNotExist(err) {
 			t.Fatalf("WM-013e: Remove .gitignore: %v", err)
 		}
@@ -73,7 +69,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
-		// Write a partial .gitignore (only first two entries).
 		partial := strings.Join(RequiredGitignoreEntries[:2], "\n") + "\n"
 		if err := os.WriteFile(gitignorePath, []byte(partial), 0o600); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
@@ -86,14 +81,12 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		got := mustReadFile(t, gitignorePath)
 		content := string(got)
 
-		// All four entries must be present.
 		for _, entry := range RequiredGitignoreEntries {
 			if !gitignoreEntryPresent(content, entry) {
 				t.Errorf("WM-013e: .gitignore missing %q after ensure", entry)
 			}
 		}
 
-		// The original content must still be present (no data loss).
 		for _, entry := range RequiredGitignoreEntries[:2] {
 			if !strings.Contains(content, entry) {
 				t.Errorf("WM-013e: existing entry %q was removed", entry)
@@ -104,7 +97,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 	t.Run("missing-entries-returns-correct-set", func(t *testing.T) {
 		t.Parallel()
 
-		// MissingGitignoreEntries helper reports the correct missing set.
 		cases := []struct {
 			content string
 			want    []string
@@ -141,10 +133,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 	t.Run("required-entries-constant-matches-spec", func(t *testing.T) {
 		t.Parallel()
 
-		// RequiredGitignoreEntries must match the six spec-canonical patterns
-		// per WM-013e (order preserved). The two review-loop entries
-		// (.harmonik/review.json and .harmonik/review.iter-*.json) were added
-		// in T-WM-014 per workspace-model.md §4.3 WM-013e + §4.5.WM-027a.
 		wantEntries := []string{
 			".harmonik/lease.lock",
 			".harmonik/sessions/",
@@ -167,11 +155,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 	t.Run("review-loop-entries-cover-wm027a-artifacts", func(t *testing.T) {
 		t.Parallel()
 
-		// workspace-model.md §4.3 WM-013e (via §4.5.WM-027a) requires that
-		// .harmonik/review.json and .harmonik/review.iter-*.json are excluded
-		// from checkpoint commits: "The reviewer's verdict is workflow-control
-		// state, not work product; it MUST NOT pollute the squash-merge commit
-		// per WM-019."
 		reviewJSON := ".harmonik/review.json"
 		reviewIter := ".harmonik/review.iter-*.json"
 
@@ -192,8 +175,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 			t.Errorf("WM-013e: %q not in RequiredGitignoreEntries; required to cover WM-027a per-iteration archive", reviewIter)
 		}
 
-		// Both entries must be present in a generated .gitignore after
-		// EnsureGitignoreHygiene runs on a repo with no prior .gitignore.
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 		if err := os.Remove(gitignorePath); err != nil && !os.IsNotExist(err) {
@@ -222,7 +203,6 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
-		// Remove .gitignore if it exists.
 		if err := os.Remove(gitignorePath); err != nil && !os.IsNotExist(err) {
 			t.Fatalf("WM-013e: Remove .gitignore: %v", err)
 		}

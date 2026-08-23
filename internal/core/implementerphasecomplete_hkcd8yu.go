@@ -1,21 +1,5 @@
 package core
 
-// implementerphasecomplete_hkcd8yu.go — ImplementerPhaseCompletePayload (hk-cd8yu).
-//
-// Emitted by the daemon's workloop and reviewloop immediately after the
-// implementer session ends, regardless of how it ended (normal exit,
-// noChange-timeout kill, or context cancellation). This closes the
-// diagnostic gap between run_started and reviewer_launched where silent
-// implementer failures previously produced no structured event.
-//
-// The event fires at the point where waitWithSocketGrace returns for the
-// implementer phase.
-//
-// Durability class: F (terminal-state landmark — emitted once per implementer
-// session; loss would hide the exit cause from JSONL-only diagnosis).
-//
-// Bead ref: hk-cd8yu.
-
 import (
 	"github.com/google/uuid"
 )

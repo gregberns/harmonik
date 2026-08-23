@@ -11,16 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Integration tests for workspace persistence CRUD (bead hk-rfda7 step b).
-//
-// These tests compose the individual persistence primitives
-// (WriteLeaseLockAtomic, ReadLeaseLock, WriteLeaseReleasedMarker,
-// ReleaseLeaseLock, SetInterruptStateToNone) into end-to-end lifecycle flows.
-// Individual operation coverage lives in leaselock_wm013a_test.go and
-// leaserelease_wm013b_test.go; the tests here verify that the operations
-// compose correctly across a full Create → Read → Update → Delete cycle.
-
-// rfda7bFixtureMakeLock builds a valid LeaseLockFile for integration tests.
 func rfda7bFixtureMakeLock(t *testing.T, runID string) *core.LeaseLockFile {
 	t.Helper()
 	u := uuid.MustParse(runID)
@@ -50,7 +40,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 	workspaceID := WorkspaceIDFromRunID(runID)
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	// CREATE: git worktree + atomic lease-lock write.
 	if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 		t.Fatalf("Create: CreateWorktree: %v", err)
 	}
@@ -60,7 +49,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 		t.Fatalf("Create: WriteLeaseLockAtomic: %v", err)
 	}
 
-	// READ: round-trip verification — parsed fields must equal written fields.
 	read, err := ReadLeaseLock(leaseLockPath)
 	if err != nil {
 		t.Fatalf("Read: ReadLeaseLock: %v", err)
@@ -81,7 +69,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 		t.Errorf("Read: created_at = %v, want %v", read.CreatedAt, lock.CreatedAt)
 	}
 
-	// LookupWorkspace: ExistsOnDisk must be true while worktree is present.
 	ref, err := LookupWorkspace(repo, runID, NoWorktreeRootOverride())
 	if err != nil {
 		t.Fatalf("Read: LookupWorkspace: %v", err)
@@ -90,7 +77,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 		t.Error("Read: LookupWorkspace ExistsOnDisk = false after create; want true")
 	}
 
-	// DELETE: write marker before unlink (WM-013b ordering invariant), then release.
 	if err := WriteLeaseReleasedMarker(worktreePath, runID, workspaceID, "merged"); err != nil {
 		t.Fatalf("Delete: WriteLeaseReleasedMarker: %v", err)
 	}
@@ -98,7 +84,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 		t.Fatalf("Delete: ReleaseLeaseLock: %v", err)
 	}
 
-	// VERIFY post-delete: lock absent, marker persists, idempotent release succeeds.
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 		t.Error("Delete: lease-lock still present after release; want absent")
 	}
@@ -110,7 +95,6 @@ func TestRFDA7b_PersistenceCRUD_FullLeaseLockLifecycle(t *testing.T) {
 		t.Errorf("Delete: idempotent second release: %v", err)
 	}
 
-	// ReadLeaseLock on absent lock must return (nil, nil) per WM-013a.
 	read2, err := ReadLeaseLock(leaseLockPath)
 	if err != nil {
 		t.Errorf("Delete: ReadLeaseLock after release error = %v; want nil", err)
@@ -129,7 +113,6 @@ func TestRFDA7b_PersistenceCRUD_LookupExistsOnDiskBeforeAndAfterCreate(t *testin
 	repo, sha := tempRepo(t)
 	runID := "0196fb00-0000-7b59-8000-000000000002"
 
-	// Before create: ExistsOnDisk must be false.
 	ref, err := LookupWorkspace(repo, runID, NoWorktreeRootOverride())
 	if err != nil {
 		t.Fatalf("LookupWorkspace before create: %v", err)
@@ -138,7 +121,6 @@ func TestRFDA7b_PersistenceCRUD_LookupExistsOnDiskBeforeAndAfterCreate(t *testin
 		t.Error("ExistsOnDisk = true before CreateWorktree; want false")
 	}
 
-	// After CreateWorktree: ExistsOnDisk must be true.
 	if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
@@ -150,7 +132,6 @@ func TestRFDA7b_PersistenceCRUD_LookupExistsOnDiskBeforeAndAfterCreate(t *testin
 		t.Error("ExistsOnDisk = false after CreateWorktree; want true")
 	}
 
-	// Derived fields must be stable across lookups (deterministic, no index).
 	if ref.WorkspaceID != ref2.WorkspaceID {
 		t.Errorf("WorkspaceID unstable: %q (before) vs %q (after)", ref.WorkspaceID, ref2.WorkspaceID)
 	}
@@ -180,22 +161,18 @@ func TestRFDA7b_PersistenceCRUD_MultipleTerminalPaths(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			// Fabricate a workspace-like directory structure without a real git worktree.
 			harmonikDir := filepath.Join(dir, ".harmonik")
 			if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 				t.Fatalf("MkdirAll harmonikDir: %v", err)
 			}
 
-			// Build a unique workspace ID per reason (varying last digit).
 			workspaceID := "ws-0196fb00-0000-7b59-8000-00000000010" + string(rune('0'+i))
 			runID := "0196fb00-0000-7b59-8000-00000000010" + string(rune('0'+i))
 
-			// Write a lease-lock (simulating the leased state).
 			leaseLockPath := LeaseLockPath(dir)
 			leaseFixtureWriteLockAtomic(t, leaseLockPath,
 				leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
-			// Write marker before unlink.
 			if err := WriteLeaseReleasedMarker(dir, runID, workspaceID, reason); err != nil {
 				t.Fatalf("WriteLeaseReleasedMarker(%s): %v", reason, err)
 			}
@@ -203,7 +180,6 @@ func TestRFDA7b_PersistenceCRUD_MultipleTerminalPaths(t *testing.T) {
 				t.Fatalf("ReleaseLeaseLock(%s): %v", reason, err)
 			}
 
-			// Lock absent, marker present.
 			if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 				t.Errorf("[%s]: lease-lock present after release; want absent", reason)
 			}
@@ -282,19 +258,16 @@ func TestRFDA7b_PersistenceCRUD_InterruptStateIntegration(t *testing.T) {
 				t.Fatalf("SetInterruptStateToNone: %v", err)
 			}
 
-			// Field must be cleared.
 			if ws.InterruptState != core.InterruptStateNone {
 				t.Errorf("interrupt_state = %q after clear; want none", ws.InterruptState)
 			}
 
-			// Marker file must exist.
 			eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 			data := mustReadFile(t, eventsFile)
 			if len(data) == 0 {
 				t.Fatal("events JSONL is empty; want interrupt_state_changed marker")
 			}
 
-			// Marker must record the prior state (integration: field value captured before mutation).
 			content := string(data)
 			priorStr := string(priorInterrupt)
 			if !containsSubstring(content, priorStr) {
@@ -304,8 +277,6 @@ func TestRFDA7b_PersistenceCRUD_InterruptStateIntegration(t *testing.T) {
 	}
 }
 
-// containsSubstring reports whether s contains substr.
-// Used to avoid importing strings package for a single call.
 func containsSubstring(s, substr string) bool {
 	return len(s) >= len(substr) && (substr == "" || func() bool {
 		for i := 0; i <= len(s)-len(substr); i++ {

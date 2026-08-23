@@ -1,22 +1,5 @@
 package daemon
 
-// runplan_hooksocket_test.go — the hook-socket length refusal, and the fact
-// that it now fires before anything is taken.
-//
-// The check is a length comparison against a platform constant and reads
-// nothing but the project dir. It used to run in the tunnel setup, AFTER the
-// run had reserved a worker slot, allocated a tunnel port, and made an ssh
-// round trip to create a directory on the worker. All three were spent on a run
-// that could never carry a hook.
-//
-// These tests pin the move: the refusal reports exactly what it reported
-// before, it stays remote-only, and it stays last, so a bead that would also
-// fail an earlier decision still reports the earlier reason.
-//
-// Helper prefix: hooksock (implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-ta6dg.
-
 import (
 	"context"
 	"os"
@@ -34,12 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// hooksockDeepRepo returns a git repository whose <dir>/.harmonik/daemon.sock
-// path is at or beyond the platform's socket-path limit.
-//
-// The depth is derived from the validator rather than from a hard-coded number,
-// because the limit differs by platform (104 bytes on Darwin, 108 elsewhere)
-// and the temp-dir prefix differs by machine.
 func hooksockDeepRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -59,13 +36,10 @@ func hooksockDeepRepo(t *testing.T) string {
 	return dir
 }
 
-// hooksockPath is the daemon hook socket the reverse tunnel forwards to.
 func hooksockPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "daemon.sock")
 }
 
-// hooksockGitInit makes dir a git repository with one commit on main, so the
-// branching decision — which runs BEFORE the socket check — resolves.
 func hooksockGitInit(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -86,7 +60,6 @@ func hooksockGitInit(t *testing.T, dir string) {
 	run("commit", "-m", "Initial commit")
 }
 
-// hooksockWorker is the pre-selected worker the outer dispatch loop hands in.
 var hooksockWorker = workers.Worker{
 	Name:     "hooksock-worker",
 	Host:     "hooksock.example.com",
@@ -94,7 +67,6 @@ var hooksockWorker = workers.Worker{
 	MaxSlots: 1,
 }
 
-// hooksockResolve resolves a plan with a pre-selected worker.
 func hooksockResolve(t *testing.T, env runloop.RunEnv, worker *workers.Worker) (runPlan, *runplanBus) {
 	t.Helper()
 	bus := &runplanBus{}
@@ -155,8 +127,6 @@ func TestRunPlan_HookSocketTooLongRefusesARemoteRun(t *testing.T) {
 		t.Errorf("TunnelFailure Detail = %q; want %q", tf.Detail, lenErr.Error())
 	}
 
-	// The plan itself emits nothing for this refusal. The event is the
-	// reporter's job, so that it lands between the stderr line and the reopen.
 	runplanWantEvents(t, bus.seen(), nil)
 }
 
@@ -303,7 +273,6 @@ func TestRunPlan_HookSocketRefusalTakesNothing(t *testing.T) {
 		t.Errorf("ReopenBead reason = %q; want it to name the reverse tunnel", calls[0].reason)
 	}
 
-	// The one event this refusal owes, and no other.
 	runplanWantEvents(t, bus.seen(), []core.EventType{core.EventTypeWorkerTunnelFailed})
 
 	if worktreeCreated {

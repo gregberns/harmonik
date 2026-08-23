@@ -2,25 +2,6 @@ package core
 
 import "io/fs"
 
-// harmonikdirmode.go — the single mode used when creating a directory under a
-// project's .harmonik/ state tree.
-//
-// Why this constant exists (and why it is exported from core rather than from
-// the package that owns the daemon file surface): the .harmonik/ tree is created
-// on demand from BOTH sides of the CLI/library boundary — cmd/harmonik creates
-// .harmonik/, .harmonik/events/ and .harmonik/cognition/ before the daemon is
-// up, and a dozen internal/ packages create their own leaves lazily on first
-// write. os.MkdirAll does NOT chmod a directory that already exists: it returns
-// nil and leaves the mode untouched. So if the two sides disagree on the mode,
-// the resulting permissions depend on which process happened to run first —
-// which is a worse outcome than either mode chosen consistently. One constant,
-// used on both sides, removes the ordering dependency.
-//
-// internal/core is the home because it is the module's universal leaf (the
-// depguard component matrix lets essentially every subsystem import it and lets
-// core import nothing back) and because it already owns .harmonik-relative
-// layout constants — see transitionpath.go and jsonlformat_hqwn58.go.
-
 // HarmonikDirMode is the permission mode for directories created under a
 // project's .harmonik/ state tree.
 //

@@ -30,7 +30,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		// Create the worktree (simulating workspace creation).
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
@@ -41,8 +40,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		// Write the lease-lock file (simulating workspace_leased emission ordering
-		// per WM-016: worktree → branch → sessions dir + sidecar → lease lock).
 		leaseLockDir := filepath.Join(worktreePath, ".harmonik")
 		if err := os.MkdirAll(leaseLockDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll leaseLockDir: %v", err)
@@ -52,14 +49,10 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		lockContent := leaseFixtureMakeLockJSON(runID, pid, time.Now())
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 
-		// Verify the lease-lock exists at the canonical path.
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Fatalf("WM-010: lease-lock absent after write: %v", err)
 		}
 
-		// Simulate three agents running sequentially in the SAME worktree.
-		// The lease-lock file (run-scoped) MUST remain stable across all three agents.
-		// Each agent "runs" by writing a session directory, then releasing session control.
 		agentTypes := []string{"planner", "builder", "reviewer"}
 		for i, agentType := range agentTypes {
 			sessionID := leaseFixtureSessionID(i)
@@ -74,15 +67,12 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 				t.Fatalf("WM-010: agent %q: WriteFile sidecar: %v", agentType, err)
 			}
 
-			// After each agent "completes" its node, the lease-lock MUST still exist
-			// (the run has not terminated). The lease is held by the run, not the agent.
 			if _, err := os.Stat(leaseLockPath); err != nil {
 				t.Errorf("WM-010: lease-lock missing after agent %q session; want stable run-scoped lease: %v",
 					agentType, err)
 			}
 		}
 
-		// Confirm exactly one lease-lock file exists (no orphan .tmp-* files).
 		entries, err := os.ReadDir(leaseLockDir)
 		if err != nil {
 			t.Fatalf("WM-010: ReadDir .harmonik: %v", err)
@@ -97,7 +87,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 			t.Errorf("WM-010: want exactly [lease.lock] in .harmonik, got %v", lockFiles)
 		}
 
-		// Release the lease (terminal transition: run complete).
 		if err := os.Remove(leaseLockPath); err != nil {
 			t.Fatalf("WM-010: Remove lease-lock: %v", err)
 		}
@@ -109,8 +98,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 	t.Run("two-runs-occupy-separate-worktrees", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-010 cross-reference: "Parallel nodes across different runs occupy
-		// separate worktrees per WM-002."
 		repo, sha := tempRepo(t)
 
 		runIDs := []string{
@@ -139,7 +126,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 			leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 		}
 
-		// Each run has its own canonical worktree path and its own lease-lock.
 		for _, runID := range runIDs {
 			leaseLockPath := filepath.Join(repo, ".harmonik", "worktrees", runID, ".harmonik", "lease.lock")
 			if _, err := os.Stat(leaseLockPath); err != nil {
@@ -147,7 +133,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 			}
 		}
 
-		// The two lease-locks are at DIFFERENT paths (separate worktrees).
 		path0 := filepath.Join(repo, ".harmonik", "worktrees", runIDs[0], ".harmonik", "lease.lock")
 		path1 := filepath.Join(repo, ".harmonik", "worktrees", runIDs[1], ".harmonik", "lease.lock")
 		if path0 == path1 {
@@ -156,8 +141,6 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 	})
 }
 
-// leaseFixtureSessionID returns a deterministic session ID for the i-th agent
-// in multi-agent sequential tests. Prefixed leaseFixture to avoid sibling-package collisions.
 func leaseFixtureSessionID(i int) string {
 	ids := []string{
 		"sess-0196a1b2-c3d4-7010-0000-000000000001",

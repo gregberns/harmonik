@@ -23,7 +23,6 @@ func RemoteExecArgv(env []string, binary string, args []string) (name string, ar
 	for _, kv := range env {
 		eq := strings.IndexByte(kv, '=')
 		if eq < 0 {
-			// No '=' at all: not a KEY=VAL assignment; skip it.
 			continue
 		}
 		key := kv[:eq]

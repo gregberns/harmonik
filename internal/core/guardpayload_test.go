@@ -82,7 +82,6 @@ func TestGuardPayloadJSONRoundTrip(t *testing.T) {
 
 			switch {
 			case tc.want.AppliesToNode == nil && got.AppliesToNode == nil:
-				// both nil — OK
 			case tc.want.AppliesToNode == nil && got.AppliesToNode != nil:
 				t.Errorf("AppliesToNode: want nil, got %q", *got.AppliesToNode)
 			case tc.want.AppliesToNode != nil && got.AppliesToNode == nil:

@@ -10,11 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// QM-001 says the daemon refuses further mutations to a queue after an I/O
-// error in the atomic-write sequence. The distinction that matters, and that is
-// easy to get wrong, is what counts as an I/O error: a write that was attempted
-// and failed does, a request refused before any I/O does not.
-
 // A failed write shuts the queue, and the refusal is sticky — repairing the
 // filesystem underneath does not reopen it. Recovery is an operator restart.
 func TestTransact_FailedWriteQuarantinesTheQueue(t *testing.T) {
@@ -196,8 +191,6 @@ func TestTransact_PreIORefusalDoesNotQuarantine(t *testing.T) {
 	store := NewQueueStore()
 	store.SetQueueByName("alpha", preconditionQueue(t, "alpha", "hk-refused"))
 
-	// OperationPause with a cancelled candidate status is an invalid pairing:
-	// WriteReplacement refuses it while validating, before touching the disk.
 	refused := store.Transact(context.Background(), TransactionRequest{
 		Snapshot:      store.Snapshot("alpha"),
 		ProjectDir:    projectDir,
@@ -211,7 +204,6 @@ func TestTransact_PreIORefusalDoesNotQuarantine(t *testing.T) {
 		t.Fatalf("outcome = %q; want %q", refused.Outcome, queue.OutcomeRejected)
 	}
 
-	// The queue must still accept a well-formed transaction.
 	got := store.Transact(context.Background(), TransactionRequest{
 		Snapshot:      store.Snapshot("alpha"),
 		ProjectDir:    projectDir,

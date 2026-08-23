@@ -1,23 +1,5 @@
 package daemon
 
-// run_session_collision_test.go — a graph run launches an agent per node into
-// ONE session, so the second node can arrive before the first node's session is
-// gone.
-//
-// The run's session is named after the run, so every node of that run asks tmux
-// for the same name. Each node kills its agent when it ends, and killing the
-// only window in a session destroys the session — but tmux does that on its own
-// schedule, and the next node does not wait for it. `tmux new-session` on a name
-// that still exists answers "duplicate session".
-//
-// Refusing there would fail the node, and the run with it, over a teardown that
-// was already under way. The session that exists belongs to this run and nothing
-// else can hold that name, and the previous node was already told to die, so
-// finishing that teardown and asking again takes nothing that was not going
-// anyway.
-//
-// Helper prefix: sessionCollide.
-
 import (
 	"context"
 	"errors"
@@ -36,21 +18,8 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// sessionCollideRunID is the run every launch below belongs to. Both nodes of a
-// graph run carry the same one, which is why they collide.
-//
-// The version nibble is load-bearing. runpkg.ScanRegistry is the only reader
-// production has for the run registry, and it refuses a record whose basename
-// carries no UUID version. A run id with a zero version makes the record this
-// test writes unreadable by the daemon, so the test would prove nothing.
 const sessionCollideRunID = "0f0e0d0c-0b0a-4908-8706-050403020102"
 
-// sessionCollideAdapter is a tmux server that reports the run's session already
-// exists until something kills it, which is what tmux does while the previous
-// node's session is still being torn down.
-//
-// failWith replaces that behaviour with a different error, so the same fixture
-// can also drive a failure that is NOT a collision.
 type sessionCollideAdapter struct {
 	w4cFixtureAdapter
 	mu       sync.Mutex
@@ -173,7 +142,6 @@ func TestSpawnRunSession_ATmuxFailureThatIsNotACollisionStillFails(t *testing.T)
 	}
 }
 
-// newWindowCopy returns the new-window requests the adapter recorded.
 func (a *w4cFixtureAdapter) newWindowCopy() []tmux.NewWindowIn {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -182,15 +150,7 @@ func (a *w4cFixtureAdapter) newWindowCopy() []tmux.NewWindowIn {
 	return out
 }
 
-// sessionCollideProjectHash keeps this file honest about which project hash the
-// fixture substrate is built with: the session name is derived from it, and a
-// mismatch would make the assertion above compare two names neither of which is
-// production's.
 var _ = core.ProjectHash("abcdef012345")
-
-// ─────────────────────────────────────────────────────────────────────────────
-// One fact, read at both ends
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSetUpRunSession_ARunWithItsOwnCommandRunnerRecordsNothing pins the
 // agreement between the two halves of the decision.
@@ -256,18 +216,6 @@ func TestSetUpRunSession_ARunWithItsOwnCommandRunnerRecordsNothing(t *testing.T)
 func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 	t.Parallel()
 
-	// The registry is observed from the RUNNER, not from the spawn hook the
-	// sibling tests use, and that is forced rather than chosen. A run with a
-	// command runner never reaches tmux at all: its launch takes the local branch
-	// only when it has no runner, and the remote branch needs a worker session
-	// name a local run does not have, so neither fires and no session or window is
-	// ever requested. The spawn hook therefore never runs, and an assertion hung
-	// on it would hold for free in exactly the case under test.
-	//
-	// Every runner call is a point the run reached, so checking the registry on
-	// each one asks "was a record on disk at any moment the run was executing".
-	// The record is written before the cascade and given back by the run scope at
-	// exit, so this is inside its whole lifetime.
 	var mu sync.Mutex
 	var projectDir string
 	var recordSeen bool
@@ -280,9 +228,6 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 				trustCalls++
 			}
 			if projectDir != "" {
-				// The claim is that the run wrote NO record, so both registry tiers
-				// count. A check on the legacy tier alone would pass while the run
-				// wrote a schema-v2 dispatch record.
 				if snapshot, err := runpkg.ScanRegistry(projectDir); err == nil &&
 					len(snapshot.Legacy)+len(snapshot.Dispatch) > 0 {
 					recordSeen = true
@@ -290,23 +235,9 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 			}
 			mu.Unlock()
 
-			// This neutralises both HOME-mutating programs on the launch
-			// path, not just one: EnsureWorktreeTrustVia and
-			// PrepareIsolatedClaudeConfigDirVia, both called from
-			// internal/harness/claude/launchspec.go. Each takes a pure-Go branch
-			// when the runner is nil, but with one set each spawns `python3 -` and
-			// upserts into the REAL ~/.claude.json — the operator's own Claude Code
-			// config, outside any t.TempDir(). Left to run, the trust call also
-			// wedged: the run sat in CombinedOutput for nine minutes and took the
-			// package to its timeout. `true` keeps this test off the operator's
-			// machine state and bounded in time. Both are inside
-			// BuildLaunchSpec and so strictly downstream of the record decision, so
-			// nothing the test asserts is masked. The leak itself is hk-85pqo.
 			if name == "python3" {
 				return exec.CommandContext(ctx, "true")
 			}
-			// Everything else stays real. The run has to get far enough for the
-			// assertions to be about a refusal rather than about an empty run.
 			return exec.CommandContext(ctx, name, args...)
 		},
 	}
@@ -326,11 +257,6 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 	sawTrust, sawRecord := trustCalls > 0, recordSeen
 	mu.Unlock()
 
-	// Those python3 programs are all run from claude.BuildLaunchSpec, inside the
-	// cascade, which is strictly downstream of the record decision on BOTH the
-	// fixed and the unfixed layout. Seeing one is how this test states that the
-	// run got PAST that decision — without it, "no record" could mean the run
-	// ended before anything was decided.
 	if !sawTrust {
 		t.Fatal("the run never reached the launch-spec build, so it never got past the point " +
 			"where the record is decided. The assertion below would hold for free.")
@@ -354,15 +280,12 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 	}
 }
 
-// sessionCollideSetUpResult is what one drive of setUpRunSession left behind.
 type sessionCollideSetUpResult struct {
 	took      bool
 	recorded  bool
 	sessionID string
 }
 
-// sessionCollideSetUp drives the real setUpRunSession over a substrate that can
-// create sessions, and reports what it did.
 func sessionCollideSetUp(t *testing.T, runID core.RunID, hasRunner bool) sessionCollideSetUpResult {
 	t.Helper()
 	env := runloop.RunEnv{ProjectDir: t.TempDir(), QueueItemIndex: -1}

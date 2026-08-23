@@ -1,15 +1,5 @@
 package daemon
 
-// agent_message_test.go — shared table test for MatchAgentMessage (N1).
-//
-// Spec: agent-comms §8 N1 requires that the live offer path and the durable
-// replay path return IDENTICAL verdicts for the same (payload, to, from, topic)
-// inputs. This test drives all cases through:
-//   (a) MatchAgentMessage directly (the shared predicate),
-//   (b) subscriptionStream.offer (live path), and
-//   (c) HandleSubscribe JSONL replay (durable replay path),
-// asserting that all three agree on every row.
-
 import (
 	"bufio"
 	"context"
@@ -126,15 +116,11 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 				t.Fatalf("marshal payload: %v", marshalErr)
 			}
 
-			// (a) Predicate directly.
 			gotPredicate := MatchAgentMessage(tc.payload, tc.to, tc.from, tc.topic)
 			if gotPredicate != tc.want {
 				t.Errorf("MatchAgentMessage: got %v, want %v", gotPredicate, tc.want)
 			}
 
-			// (b) Live path: subscriptionStream.offer.
-			// wildcard=true passes the type filter; only the addressing filter is
-			// under test here.
 			var gotLive bool
 			{
 				evtID, _ := uuid.NewV7()
@@ -159,9 +145,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 				t.Errorf("live path (offer): got %v, want %v", gotLive, tc.want)
 			}
 
-			// (c) Replay path: HandleSubscribe with a JSONL file containing the
-			// test event. cursorID is used as since_event_id so only the test
-			// event is in the replay window.
 			var gotReplay bool
 			{
 				dir := t.TempDir()
@@ -214,9 +197,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 					})
 				}()
 
-				// Read one line from replay. A 500ms deadline is generous for
-				// JSONL replay (in-memory scan) and lets "should not arrive"
-				// cases time out cleanly.
 				rdr := bufio.NewReader(cli)
 				_ = cli.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 				line, _ := rdr.ReadBytes('\n')
@@ -236,7 +216,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 				t.Errorf("replay path: got %v, want %v", gotReplay, tc.want)
 			}
 
-			// Key assertion: both paths must agree (identical verdicts).
 			if gotLive != gotReplay {
 				t.Errorf("path divergence: live=%v replay=%v — paths MUST return identical verdicts for the same input",
 					gotLive, gotReplay)
@@ -252,9 +231,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 func TestMatchAgentMessage_NonAgentMessageBypass(t *testing.T) {
 	t.Parallel()
 
-	// Live path: a run_completed event should pass through even with a
-	// restrictive to-filter, because the addressing block is guarded by
-	// evt.Type == "agent_message".
 	t.Run("live-path-bypass", func(t *testing.T) {
 		t.Parallel()
 		evtID, _ := uuid.NewV7()
@@ -278,8 +254,6 @@ func TestMatchAgentMessage_NonAgentMessageBypass(t *testing.T) {
 		}
 	})
 
-	// Replay path: a run_completed event in JSONL should be delivered even when
-	// to/from/topic filters are set.
 	t.Run("replay-path-bypass", func(t *testing.T) {
 		t.Parallel()
 

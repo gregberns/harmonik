@@ -1,15 +1,5 @@
 package daemon_test
 
-// t6_scale_shape_test.go — T6 exploratory tester: scale and shape stress tests.
-//
-// Scope (T6):
-//   1. 10 ready beads queued at start — does the daemon drain them sequentially? Wall-clock OK?
-//   2. Bead body of 1 MB — does it survive ClaimBead and reach the handler?
-//   3. Bead body of 0 bytes / near-empty.
-//   4. Unicode-heavy bead body (CJK, emoji, RTL text).
-//   5. Large worktree base (mkdir -p <tmpdir>/.lots-of-files/{1..1000}/) — does git worktree add stall?
-//   6. Concurrent br create adding beads while the daemon is running — do new beads appear in the next poll cycle?
-
 import (
 	"bufio"
 	"context"
@@ -26,11 +16,8 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// t6FixtureDir creates the standard fixture layout: git repo + .harmonik dirs + br wrapper + handler.
-// Returns projectDir, jsonlPath, brWrapperPath, handlerPath.
 func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript string) {
 	t.Helper()
-	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
 	raw := t.TempDir()
 	resolved, resolveErr := filepath.EvalSymlinks(raw)
 	if resolveErr != nil {
@@ -38,7 +25,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	}
 	projectDir = resolved
 
-	// Init git repo
 	gitRun := func(args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -58,10 +44,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	gitRun("add", "README")
 	gitRun("commit", "-m", "Initial commit")
 
-	// Create a bare repo as the "origin" remote so the daemon's post-merge
-	// `git push origin main` succeeds. Without an origin the single-mode merge
-	// path returns push_failed (fatal) once the committing smoke handler
-	// produces a real worktree commit (hk-4f5ua). Mirrors smokeFixtureGitRepo.
 	originDir := t.TempDir()
 	gitRunIn := func(dir string, args ...string) {
 		t.Helper()
@@ -86,7 +68,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	}
 	jsonlPath = filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 
-	// br init
 	realBr := smokeFixtureBrPath(t)
 	//nolint:gosec // G204: br args are test-internal literals
 	initCmd := exec.CommandContext(t.Context(), realBr, "init", "--prefix", "t6")
@@ -102,8 +83,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	return projectDir, jsonlPath, brWrapper, handlerScript
 }
 
-// t6SeedBeads creates N beads in projectDir via brWrapper.
-// Returns a slice of bead IDs.
 func t6SeedBeads(t *testing.T, brWrapper string, count int, bodyFn func(i int) string) []string {
 	t.Helper()
 	ids := make([]string, 0, count)
@@ -133,8 +112,6 @@ func t6SeedBeads(t *testing.T, brWrapper string, count int, bodyFn func(i int) s
 	return ids
 }
 
-// t6PollAllClosed polls until all beadIDs are closed (or budget expires).
-// Returns true if all closed within budget, and the elapsed time.
 func t6PollAllClosed(t *testing.T, brWrapper string, beadIDs []string, budget time.Duration) (bool, time.Duration) {
 	t.Helper()
 	start := time.Now()
@@ -165,9 +142,6 @@ func t6PollAllClosed(t *testing.T, brWrapper string, beadIDs []string, budget ti
 	return false, time.Since(start)
 }
 
-// t6BeadStatus returns the current status string of a single bead (e.g. "open",
-// "closed", "in_progress"). Used to assert a bead is NOT closed (the empty-body
-// CHB-028-rejection case), which t6PollAllClosed cannot express.
 func t6BeadStatus(t *testing.T, brWrapper, beadID string) (string, error) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
@@ -187,10 +161,6 @@ func t6BeadStatus(t *testing.T, brWrapper, beadID string) (string, error) {
 	return items[0].Status, nil
 }
 
-// t6PollJSONLContains polls the JSONL event log until it contains the given
-// substring (or budget expires). Returns true if the substring appears in time.
-// Used to wait for an asynchronously-emitted event (e.g. a TaskFileEmpty
-// rejection) that may not have landed by the time an unrelated bead closes.
 func t6PollJSONLContains(t *testing.T, jsonlPath, substr string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -203,9 +173,6 @@ func t6PollJSONLContains(t *testing.T, jsonlPath, substr string, budget time.Dur
 	return false
 }
 
-// t6JSONLContains reports whether any line of the JSONL event log contains the
-// given substring. Used to assert the daemon surfaced a TaskFileEmpty rejection
-// (the empty-body summary lands in a run_failed workloopRunCompletedPayload).
 func t6JSONLContains(t *testing.T, jsonlPath, substr string) bool {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based
@@ -224,26 +191,6 @@ func t6JSONLContains(t *testing.T, jsonlPath, substr string) bool {
 	return false
 }
 
-// t6CountJSONLEvents reads a JSONL file and counts events by their EV-001
-// envelope `type` field.
-//
-// Read this before you change it. An earlier version of this helper did NOT read
-// `type`. It guessed the event type from distinctive payload substrings —
-// "workspace_path" for run_started, the literal "auto-close: exit=0" for
-// run_completed, `"success":false` for run_failed. A comment called the guessing
-// a finding: JSONL was said to hold only the redacted payload bytes, so the type
-// name was said to be unreadable.
-//
-// That is no longer true. busimpl.Emit marshals the COMPLETE envelope, so every
-// line carries "type", "event_id" and "schema_version". The guess outlived the
-// thing it worked around, and then it went quietly wrong: the "auto-close"
-// summary belongs to a workflow driver that no longer runs, so run_completed
-// counted zero on a run where ten beads drained and closed. Count the field the
-// envelope actually has.
-//
-// A line that does not parse, or that carries an empty type, is counted under the
-// empty key. A caller that asserts a real type therefore sees a miscount rather
-// than a silent zero.
 func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 	t.Helper()
 	counts := map[string]int{}
@@ -272,31 +219,6 @@ func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 	return counts
 }
 
-// t6WaitForEventCount polls the JSONL log until eventType has been written want
-// times, or until the budget runs out. It asserts nothing. The caller's own
-// assertion still decides, and still sees the true count.
-//
-// WHY IT IS NEEDED. t6PollAllClosed watches the BEAD LEDGER, and the daemon
-// writes the terminal ledger transition BEFORE it emits run_completed. So the
-// poll can return the instant the last bead reads "closed" while the daemon is
-// still inside the emit for that same bead. A caller that cancels the daemon
-// context there kills the in-flight close. The close then fails in its retry
-// backoff with "context canceled during transient-failure backoff" and emits
-// run_failed. The bead is closed and the work is done. Only the event is lost,
-// and only because the test raced its own teardown.
-//
-// It takes no *testing.T assertion and no t.Helper(), because it never fails the
-// test. On timeout it simply returns and lets the caller decide.
-//
-// This is the flake recorded in hk-oipc9 on 2026-07-31, whose signature is
-// "run_completed=9 run_failed=1" and which that bead calls "load-shaped rather
-// than logic-shaped". Load widens the window, but the window is the test's own:
-// it reads one source, asserts on another, and cancels in between. Seen again
-// once in three runs on 2026-08-07 with all_closed=true.
-//
-// This is a teardown fix, not a weaker assertion, and not a retry. When the
-// events genuinely never arrive, the budget expires and the caller fails on the
-// true count exactly as before. Refs hk-oipc9, hk-od9d4.
 func t6WaitForEventCount(t *testing.T, jsonlPath, eventType string, want int, budget time.Duration) {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
@@ -307,16 +229,10 @@ func t6WaitForEventCount(t *testing.T, jsonlPath, eventType string, want int, bu
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T6-1: 10-bead sequential drain
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestT6_10BeadSequentialDrain(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
-	// Seed 10 beads with varied ASCII bodies
 	beadIDs := t6SeedBeads(t, brWrapper, 10, func(i int) string {
 		return fmt.Sprintf("T6 test bead %d: ASCII body for sequential drain test.", i)
 	})
@@ -341,9 +257,6 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 120*time.Second)
 
-	// Let the last close finish emitting before the cancel below kills it.
-	// See t6WaitForEventCount for what happens without this. Skipped when the
-	// drain already failed, so a broken run does not also pay the full budget.
 	if allClosed {
 		t6WaitForEventCount(t, jsonlPath, string(core.EventTypeRunCompleted), 10, 15*time.Second)
 	}
@@ -378,23 +291,9 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T6-2: Large bead body (at br's 100KB validation ceiling)
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Finding T6-F002 (severity: INFO): br enforces a 100KB max body size
-// validation ("description: exceeds 100KB"). The originally planned 1MB test
-// was blocked by two independent limits: (1) macOS ARG_MAX of 1MB (errno
-// E2BIG when the --body arg alone approaches 1MB), and (2) br's own
-// 100KB validation ceiling. This test uses 100KB (exactly at the ceiling)
-// as the maximum achievable via br create --body.
-
 func TestT6_1MBBeadBody(t *testing.T) {
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
-	// Generate a 100KB body (br's max; 1MB is rejected by br validation).
-	// See Finding T6-F002 in test/exploratory/findings-T6.md.
 	const targetBytes = 100 * 1024 // 102400 bytes — br 100KB ceiling
 	chunk := strings.Repeat("A", 1000)
 	var sb strings.Builder
@@ -426,11 +325,6 @@ func TestT6_1MBBeadBody(t *testing.T) {
 	} else {
 		t.Logf("T6-2: could not parse br show JSON: unmarshal err=%v, items=%d", jsonErr, len(items))
 	}
-	// NOTE (Finding T6-F004): the daemon work loop does NOT read the bead body.
-	// ClaimBead takes only the BeadID; the body stays in Beads-SQLite.
-	// The handler subprocess (when real, not handler.sh) must call `br show`
-	// itself to read the body. This test verifies the body survives in storage,
-	// not that it is forwarded to the handler.
 
 	cfg := daemon.Config{
 		ProjectDir:    projectDir,
@@ -487,7 +381,6 @@ func TestT6_1MBBeadBody(t *testing.T) {
 // the function boundary; that invariant is tested in TestCHB028_WhitespaceBodyRejected.
 // The launch-spec TrimSpace guard ensures it is never reached from the bead path.
 func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// No-body bead (no --body): description is empty, so the daemon's launch-spec
@@ -501,8 +394,6 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	}
 	noBodyID := strings.TrimSpace(string(noBodyOut))
 
-	// Whitespace-only bead (--body " "): with the hk-lpbu7 fix, the TrimSpace guard
-	// in the launch-spec builder falls back to the title — same as no-body.
 	whitespaceBody := " "
 	whitespaceIDs := t6SeedBeads(t, brWrapper, 1, func(_ int) string { return whitespaceBody })
 	whitespaceID := whitespaceIDs[0]
@@ -526,8 +417,6 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	startDone := make(chan error, 1)
 	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
-	// Both beads must close: no-body falls back to title (== "" check), and
-	// whitespace-only now also falls back to title (TrimSpace == "" check, hk-lpbu7).
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, []string{noBodyID, whitespaceID}, 60*time.Second)
 
 	cancel()
@@ -543,19 +432,13 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	t.Logf("T6-3: all_closed=%v elapsed=%.2fs no-body=%s whitespace-only=%s",
 		allClosed, elapsed.Seconds(), noBodyID, whitespaceID)
 
-	// Both beads must drain+close via the title fallback.
 	if !allClosed {
 		t.Errorf("T6-3 FAIL: not all beads closed within 60s; " +
 			"no-body and whitespace-only should both fall back to title (hk-lpbu7)")
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T6-4: Unicode-heavy bead body
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestT6_UnicodeHeavyBody(t *testing.T) {
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	unicodeBody := "CJK: 这是一个测试条目，用于验证Unicode处理。" +
@@ -624,16 +507,10 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T6-5: Large worktree base (1000 subdirectories)
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestT6_LargeWorktreeBase(t *testing.T) {
 	skipRealDaemonE2EInShort(t) // real daemon E2E; creates 1000 dirs + git worktree — exceeds -short budget
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
-	// Create 1000 subdirectories in the project dir to simulate a large repo
 	t.Logf("T6-5: creating 1000 subdirs in %s", projectDir)
 	createStart := time.Now()
 	for i := 1; i <= 1000; i++ {
@@ -642,7 +519,6 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 		if err := os.MkdirAll(dirPath, 0o755); err != nil {
 			t.Fatalf("T6-5: mkdir %s: %v", dirPath, err)
 		}
-		// Add a placeholder file so git has something to see
 		fPath := filepath.Join(dirPath, "placeholder.txt")
 		if err := os.WriteFile(fPath, []byte(fmt.Sprintf("placeholder %d\n", i)), 0o644); err != nil {
 			t.Fatalf("T6-5: WriteFile %s: %v", fPath, err)
@@ -672,7 +548,6 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 	startDone := make(chan error, 1)
 	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
-	// Budget is 90s — if worktree add stalls this will catch it
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 90*time.Second)
 
 	cancel()
@@ -694,16 +569,10 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T6-6: Concurrent br create while daemon running
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestT6_ConcurrentBeadCreate(t *testing.T) {
 	skipRealDaemonE2EInShort(t) // real daemon E2E; 4-bead concurrent run — may exceed -short budget
-	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
-	// Seed 1 initial bead to get the daemon started
 	initialIDs := t6SeedBeads(t, brWrapper, 1, func(_ int) string {
 		return "T6-6 initial bead before daemon start"
 	})
@@ -726,10 +595,8 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 	startDone := make(chan error, 1)
 	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
-	// Wait a bit for the daemon to start processing
 	time.Sleep(1 * time.Second)
 
-	// Create 3 additional beads while the daemon is running
 	laterIDs := t6SeedBeads(t, brWrapper, 3, func(i int) string {
 		return fmt.Sprintf("T6-6 late-arriving bead %d created after daemon start", i)
 	})

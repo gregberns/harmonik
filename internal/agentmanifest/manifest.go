@@ -209,10 +209,6 @@ func Load(agentsDir, typeName string) (*TypeFolder, error) {
 		return nil, fmt.Errorf("%w: parse %q: %w", ErrInvalid, mPath, err)
 	}
 
-	// soul.md and operating.md come from the role folder when the manifest names
-	// one, and from the type folder otherwise. The error messages below name the
-	// directory actually read, because "type assessor has no soul.md" sent a
-	// reader to the wrong folder for as long as both spellings existed.
 	identityDir, err := roleDir(agentsDir, m.Role)
 	if err != nil {
 		return nil, fmt.Errorf("%w: type %q: %w", ErrInvalid, typeName, err)
@@ -264,8 +260,6 @@ var (
 	}
 )
 
-// validateManifest checks required fields and enumeration values.
-// It returns ErrInvalid (wrapped) describing the first defect found.
 func validateManifest(tf *TypeFolder) error {
 	m := &tf.Manifest
 	if m.Type == "" {
@@ -305,15 +299,6 @@ func validateManifest(tf *TypeFolder) error {
 	return nil
 }
 
-// roleDir turns a manifest's role path into the directory to read soul.md and
-// operating.md from. It returns "" when the manifest names no role, which means
-// the caller reads them from the type folder as it always has.
-//
-// The path is repo-root relative, the same spelling a path-bearing context ref
-// uses, and the repo root is agentsDir's grandparent (<root>/.harmonik/agents).
-// An absolute path or one that climbs out of the repo is refused rather than
-// resolved: a role folder is a checked-in part of the project, so anything
-// pointing outside it is a mistake, not a deployment.
 func roleDir(agentsDir, role string) (string, error) {
 	if role == "" {
 		return "", nil
@@ -329,18 +314,6 @@ func roleDir(agentsDir, role string) (string, error) {
 	return filepath.Join(repoRoot, clean), nil
 }
 
-// soulPathFor returns where a type's soul.md lives, following that type's own
-// role: key when it declares one.
-//
-// parent_intent names a sibling type and then reads its soul.md. Both readers
-// used to build agentsDir/<type>/soul.md directly, so moving one role's soul.md
-// into roles/ broke every OTHER type that named it as a parent — the child was
-// well-formed and still failed to validate. This is the one lookup that crosses
-// from one type folder into another, so it is the one that has to follow the
-// indirection too.
-//
-// Any problem reading or parsing the parent manifest falls back to the type
-// folder, which is where soul.md lived before role folders existed.
 func soulPathFor(agentsDir, typeName string) string {
 	dir := filepath.Join(agentsDir, typeName)
 	fallback := filepath.Join(dir, soulFile)
@@ -374,12 +347,10 @@ func ResolveRef(agentsDir, typeName, ref string) (string, error) {
 	if strings.Contains(ref, "/") {
 		return ref, nil
 	}
-	// Bare ref: shared _skills/ first.
 	sharedPath := filepath.Join(agentsDir, sharedSkillsDir, ref)
 	if _, err := os.Stat(sharedPath); err == nil {
 		return sharedPath, nil
 	}
-	// Then the type's own folder.
 	typePath := filepath.Join(agentsDir, typeName, ref)
 	if _, err := os.Stat(typePath); err == nil {
 		return typePath, nil

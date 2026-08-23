@@ -1,18 +1,5 @@
 package queue_test
 
-// quarantine_readsurface_hkujanf_test.go — the queue read commands report a
-// quarantined queue.
-//
-// HandleQueueList and HandleQueueStatus answer from the queue files on disk. A
-// quarantine lives in daemon memory, so the disk shows nothing: a queue that
-// will never accept another write serialises exactly like a healthy one. The
-// HandlerAdapter closes that gap by reading the quarantine off the QueueSetter
-// it was already given. These tests pin that wiring, because the marker in the
-// CLI renderer is dead code without it.
-//
-// Spec ref: specs/queue-model.md §3.1 QM-001.
-// Bead ref: hk-ujanf.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// quarantineFixtureStore is a QueueSetter that also reports quarantines, the
-// same pair of roles the daemon's real QueueStore plays.
 type quarantineFixtureStore struct {
 	shut map[string]error
 }
@@ -35,8 +20,6 @@ func (s *quarantineFixtureStore) QuarantineReason(n string) error {
 	return s.shut[n]
 }
 
-// quarantineFixturePersist writes one queue file so the disk-reading handlers
-// find it.
 func quarantineFixturePersist(t *testing.T, projectDir, name string, bead core.BeadID) {
 	t.Helper()
 	q := &queue.Queue{

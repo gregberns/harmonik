@@ -46,12 +46,6 @@ func main() {
 	os.Exit(run())
 }
 
-// run is the testable entry-point; it returns an exit code.
-//
-// Exit codes:
-//
-//	0 — scenario completed successfully.
-//	1 — precondition failure (unknown scenario, missing required flag, etc.).
 func run() int {
 	fs := flag.NewFlagSet("harmonik-twin-codex", flag.ContinueOnError)
 
@@ -59,7 +53,6 @@ func run() int {
 	scenarioName := fs.String("scenario", "", "canned scenario name (one of: trailer-commit, edits-no-commit, no-edits, turn-failed)")
 	beadID := fs.String("bead-id", "", "bead identifier for the Refs: commit trailer (trailer-commit scenario)")
 
-	// Codex exec interface flags — accepted for CLI compatibility, behaviour notes below.
 	worktreePath := fs.String("C", "", "working directory for git operations (codex -C / --cd flag)")
 	_ = fs.String("cd", "", "alias for -C (codex --cd flag)")
 	_ = fs.Bool("json", false, "enable JSONL output (accepted; twin always emits JSONL)")
@@ -67,11 +60,6 @@ func run() int {
 	_ = fs.String("a", "", "codex approval mode (accepted; ignored by twin)")
 	_ = fs.String("output-last-message", "", "codex -o flag (accepted; ignored by twin)")
 
-	// Parse: consume the "exec" subcommand and optional "resume <id>" prefix
-	// before handing the rest to flag.Parse.  This lets the twin be invoked
-	// exactly as the codex adapter would invoke codex:
-	//   harmonik-twin-codex exec --json -C <dir> ...
-	//   harmonik-twin-codex exec resume <thread_id> --json -C <dir> ...
 	args := os.Args[1:]
 	args = stripExecSubcommand(args)
 
@@ -87,7 +75,6 @@ func run() int {
 		return 0
 	}
 
-	// Resolve -C vs --cd: prefer -C if set; fall back to --cd.
 	wt := *worktreePath
 	if wt == "" {
 		if v := fs.Lookup("cd"); v != nil {
@@ -111,33 +98,18 @@ func run() int {
 	return 0
 }
 
-// stripExecSubcommand removes the leading "exec" subcommand and optional
-// "resume <thread_id>" prefix from args so the remaining args are pure flags.
-//
-// Handles three forms:
-//
-//	exec --json ...              → --json ...
-//	exec resume <id> --json ...  → --json ...
-//	--json ...                   → --json ...   (no exec prefix — pass-through)
 func stripExecSubcommand(args []string) []string {
 	if len(args) == 0 || args[0] != "exec" {
 		return args
 	}
 	args = args[1:] // drop "exec"
 	if len(args) > 0 && args[0] == "resume" {
-		// drop "resume" and the thread_id
 		if len(args) >= 2 {
 			args = args[2:]
 		} else {
 			args = args[1:]
 		}
 	}
-	// Drop any remaining positional prompt text (non-flag args) that appear
-	// after the flags.  flag.Parse stops at the first non-flag-looking arg
-	// (i.e. an arg not starting with "-"), so any positional prompt comes
-	// after the parsed flags and is handled automatically via fs.Args().
-	// However, if the prompt appears BEFORE flags we need to skip it here.
-	// Heuristic: skip leading args that don't start with '-'.
 	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		args = args[1:]
 	}

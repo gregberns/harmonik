@@ -8,15 +8,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// sessionLogLocFixture — per-bead helper prefix for test helpers in this file
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.11).
-
-// sessionLogLocFixturePtr returns a pointer to s (helper for *string fields).
 func sessionLogLocFixturePtr(s string) *string { return &s }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-010 — SessionLogLocationTimeout value
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSessionLogLoc_TimeoutValue verifies that SessionLogLocationTimeout equals
 // 10 seconds as required by specs/handler-contract.md §7.2.
@@ -38,10 +30,6 @@ func TestSessionLogLoc_TimeoutPositive(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-010 — SessionLogLocationMsg type field
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSessionLogLoc_MsgTypeField verifies that Type matches
 // ProgressMsgTypeSessionLogLocation per §4.2.HC-010.
 func TestSessionLogLoc_MsgTypeField(t *testing.T) {
@@ -62,10 +50,6 @@ func TestSessionLogLoc_MsgTypeField(t *testing.T) {
 			msg.Type, handlercontract.ProgressMsgTypeSessionLogLocation)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-010 — SessionLogLocationMsg JSON round-trip
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSessionLogLoc_MsgRoundTripMinimal verifies round-trip with no optional
 // fields (bead_id absent).
@@ -146,10 +130,6 @@ func TestSessionLogLoc_MsgRoundTripWithBeadID(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-010 — SessionLogLocationMsg wire field names
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSessionLogLoc_MsgWireFieldNames verifies that all 7 required fields (plus
 // the optional bead_id when set) use the on-wire names mandated by
 // specs/handler-contract.md §4.2.HC-010.
@@ -200,7 +180,6 @@ func TestSessionLogLoc_MsgBeadIDOmittedWhenNil(t *testing.T) {
 		AgentType: "claude",
 		LogPath:   "/tmp/l",
 		LogFormat: "jsonl",
-		// BeadID intentionally nil
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {

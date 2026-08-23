@@ -1,12 +1,5 @@
 package readiness
 
-// snapshot_test.go — the claims the pure record makes.
-//
-// Every refusal test below was watched failing before it was kept: the
-// "refuses" cases were first run against a request that satisfied the clause,
-// and each one went green, which is what proves the assertion is reading the
-// field it names.
-
 import (
 	"encoding/json"
 	"errors"
@@ -17,13 +10,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// capturedAt is a fixed instant. The record takes its time as an argument, so
-// no test here needs a clock.
 var capturedAt = time.Date(2026, 8, 4, 17, 30, 0, 0, time.UTC)
 
-// wholeRequest is a request that satisfies every clause of BI-013e. Each
-// refusal test starts from it and breaks exactly one thing, so a failure names
-// the clause and not the fixture.
 func wholeRequest() request {
 	return request{
 		CapturedAt: capturedAt,
@@ -64,8 +52,6 @@ func wholeRequest() request {
 	}
 }
 
-// manyItemRequest is the run the operator asked for: several items at once,
-// each with its own reason for being safe to re-run.
 func manyItemRequest() request {
 	req := wholeRequest()
 	req.Posture = Posture{Local: true, ItemCount: 3, Concurrency: 3}
@@ -86,7 +72,6 @@ func manyItemRequest() request {
 	return req
 }
 
-// multiItemSnapshot is the many-item record the validator tests judge against.
 func multiItemSnapshot(t *testing.T) Snapshot {
 	t.Helper()
 	snap, err := newSnapshot(manyItemRequest())
@@ -407,10 +392,6 @@ func TestSnapshot_KeepsStaleFindingsOutOfTheCurrentFindingListThroughJSON(t *tes
 			t.Error("a stale finding arrived in the current-finding list")
 		}
 	}
-	// Positive evidence that the two lists are distinct keys in the file, not
-	// one key the reader splits: a decoder that ignored the distinction would
-	// leave one of them empty above, but so would an encoder that wrote
-	// neither, so check the encoded form names both.
 	for _, key := range []string{`"stale_findings"`, `"current_findings"`} {
 		if !strings.Contains(string(body), key) {
 			t.Errorf("encoded snapshot has no %s key", key)
@@ -471,8 +452,6 @@ func TestSnapshot_OutputPathsSkipsACommandWhoseOutputWasNotRetained(t *testing.T
 	if len(paths) != 1 || paths[0] != "evidence/hk-canary.json" {
 		t.Errorf("output paths = %v, want only the retained one", paths)
 	}
-	// The fixture holds two commands, so a method that returned every command's
-	// path would have returned two. That is what makes the count above a claim.
 	if len(snap.Commands) != 2 {
 		t.Fatalf("fixture no longer has one retained and one unretained command")
 	}

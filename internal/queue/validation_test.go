@@ -9,13 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// Fake BeadLedger for validation tests
-// ---------------------------------------------------------------------------
-
-// validFixtureFakeLedger is a fake BeadLedger for validation_test.go unit tests.
-// It records per-bead statuses and per-pair blocks edges for deterministic
-// test control.
 type validFixtureFakeLedger struct {
 	// statuses maps bead ID → BeadStatus. Unknown IDs return BeadStatusNotFound.
 	statuses map[core.BeadID]queue.BeadStatus
@@ -36,8 +29,6 @@ func (f *validFixtureFakeLedger) BlocksEdge(_ context.Context, blocker, blocked 
 	return f.edges[[2]core.BeadID{blocker, blocked}], nil
 }
 
-// validFixtureSingleGroup constructs a ValidationRequest with one wave group
-// containing the given bead IDs, against no active queue (submit path).
 func validFixtureSingleGroup(ids ...core.BeadID) queue.ValidationRequest {
 	items := make([]queue.Item, len(ids))
 	for i, id := range ids {
@@ -57,7 +48,6 @@ func validFixtureSingleGroup(ids ...core.BeadID) queue.ValidationRequest {
 	}
 }
 
-// validFixtureOpenLedger returns a fake ledger where the given IDs are all "open".
 func validFixtureOpenLedger(ids ...core.BeadID) *validFixtureFakeLedger {
 	m := make(map[core.BeadID]queue.BeadStatus, len(ids))
 	for _, id := range ids {
@@ -65,10 +55,6 @@ func validFixtureOpenLedger(ids ...core.BeadID) *validFixtureFakeLedger {
 	}
 	return &validFixtureFakeLedger{statuses: m, edges: map[[2]core.BeadID]bool{}}
 }
-
-// ---------------------------------------------------------------------------
-// QM-027: single active queue (submit-only)
-// ---------------------------------------------------------------------------
 
 // TestValidateQM027SingleActiveQueue verifies that submitting while an
 // existing non-completed queue is held fails with queue_already_active, and
@@ -132,14 +118,10 @@ func TestValidateQM027SingleActiveQueue(t *testing.T) {
 		}
 	})
 
-	// hk-9ztth: a zero-value stub (status="") must be treated as recoverable —
-	// submit must overwrite it, not return queue_already_active.
 	t.Run("pass_zero_value_stub", func(t *testing.T) {
 		t.Parallel()
 		req := validFixtureSingleGroup(idA)
 		req.ActiveQueue = &queue.Queue{
-			// schema_version and queue_id intentionally zero/empty — simulates a
-			// half-written stub left by a crashed prior session.
 			Status: "", // zero-value
 		}
 		ledger := validFixtureOpenLedger(idA)
@@ -152,10 +134,6 @@ func TestValidateQM027SingleActiveQueue(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// QM-024: append target validity
-// ---------------------------------------------------------------------------
 
 // TestValidateQM024AppendTargetValidity verifies that appending to a valid
 // stream group passes, and that invalid targets (wave group, terminal group,
@@ -259,10 +237,6 @@ func TestValidateQM024AppendTargetValidity(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// QM-020: bead existence
-// ---------------------------------------------------------------------------
-
 // TestValidateQM020BeadExistence verifies that beads not in the ledger return
 // bead_not_found, and known beads pass.
 //
@@ -289,7 +263,6 @@ func TestValidateQM020BeadExistence(t *testing.T) {
 	t.Run("fail_bead_not_found", func(t *testing.T) {
 		t.Parallel()
 		req := validFixtureSingleGroup(idMissing)
-		// Empty ledger: idMissing is unknown.
 		ledger := &validFixtureFakeLedger{
 			statuses: map[core.BeadID]queue.BeadStatus{},
 			edges:    map[[2]core.BeadID]bool{},
@@ -309,10 +282,6 @@ func TestValidateQM020BeadExistence(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// QM-021: bead status
-// ---------------------------------------------------------------------------
 
 // TestValidateQM021BeadStatus verifies that only open beads pass, and beads in
 // other statuses (closed, in_progress, etc.) fail with bead_not_open.
@@ -361,10 +330,6 @@ func TestValidateQM021BeadStatus(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// QM-022: no double dispatch
-// ---------------------------------------------------------------------------
-
 // TestValidateQM022NoDoubleDispatch verifies that a bead already in_progress
 // in the ledger fails with bead_already_dispatched.
 //
@@ -411,10 +376,6 @@ func TestValidateQM022NoDoubleDispatch(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// QM-023: no cross-group or intra-group duplicates
-// ---------------------------------------------------------------------------
 
 // TestValidateQM023NoDuplicateBeadID verifies that duplicate bead IDs across
 // groups (submit) or within the appended set fail with duplicate_bead_id, and
@@ -501,10 +462,6 @@ func TestValidateQM023NoDuplicateBeadID(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// QM-025: parallelism-narrowed informational notice
-// ---------------------------------------------------------------------------
-
 // TestValidateQM025ParallelismNarrowed verifies that a blocks edge within a
 // group produces a LedgerDepPair notice but does NOT fail validation.
 //
@@ -567,10 +524,6 @@ func TestValidateQM025ParallelismNarrowed(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// QM-026: persisted-size bound
-// ---------------------------------------------------------------------------
-
 // TestValidateQM026PersistedSizeBound verifies that a proposed mutation that
 // would exceed 1 MiB fails with queue_too_large, and a normal-size queue passes.
 //
@@ -594,10 +547,6 @@ func TestValidateQM026PersistedSizeBound(t *testing.T) {
 
 	t.Run("fail_oversized_queue", func(t *testing.T) {
 		t.Parallel()
-		// Synthesise a large group by packing many items, each with a unique
-		// bead ID long enough that the marshalled JSON envelope exceeds 1 MiB.
-		// IDs are formatted as "hk-oversize-%07d" (18 chars each), giving ~100
-		// bytes per item in JSON; 12000 items × ~100 bytes ≈ 1.2 MiB > 1 MiB.
 		const numItems = 14000
 		ids := make([]core.BeadID, numItems)
 		for i := range ids {
@@ -619,7 +568,6 @@ func TestValidateQM026PersistedSizeBound(t *testing.T) {
 			ActiveQueue: nil,
 			IsAppend:    false,
 		}
-		// Ledger: all beads are open.
 		ledger := &validFixtureFakeLedger{
 			statuses: func() map[core.BeadID]queue.BeadStatus {
 				m := make(map[core.BeadID]queue.BeadStatus, numItems)
@@ -645,10 +593,6 @@ func TestValidateQM026PersistedSizeBound(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// QM-027: single active queue (submit-only) — explicit skipped-for-append check
-// ---------------------------------------------------------------------------
 
 // TestValidateQM027SkippedForAppend verifies that QM-027 is not evaluated for
 // append requests, i.e., an active queue does NOT cause append to fail with
@@ -698,10 +642,6 @@ func TestValidateQM027SkippedForAppend(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QM-029a: order-of-evaluation (first-failure short-circuit)
-// ---------------------------------------------------------------------------
-
 // TestValidateQM029aOrderOfEvaluation constructs a request that would fail
 // multiple validation rules simultaneously and asserts that only the FIRST
 // rule in the QM-029a sequence fires. The daemon MUST short-circuit on the
@@ -713,8 +653,6 @@ func TestValidateQM027SkippedForAppend(t *testing.T) {
 func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 	t.Parallel()
 
-	// QM-027 fires before QM-020: active queue + missing bead.
-	// Both rules would fire independently, but QM-027 is first in sequence.
 	t.Run("qm027_before_qm020", func(t *testing.T) {
 		t.Parallel()
 		const missingID = core.BeadID("hk-missing-order-027")
@@ -724,7 +662,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 			QueueID:       "order-test-queue",
 			Status:        queue.QueueStatusActive,
 		}
-		// Empty ledger: missingID is not found (would trigger QM-020 independently).
 		ledger := &validFixtureFakeLedger{
 			statuses: map[core.BeadID]queue.BeadStatus{},
 			edges:    map[[2]core.BeadID]bool{},
@@ -742,9 +679,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 		}
 	})
 
-	// QM-020 fires before QM-021: missing bead preempts not-open bead.
-	// Use two beads: one missing (QM-020), one closed (would trigger QM-021).
-	// QM-020 is first, so bead_not_found must be the returned reason.
 	t.Run("qm020_before_qm021", func(t *testing.T) {
 		t.Parallel()
 		const missingID = core.BeadID("hk-missing-order-020")
@@ -764,7 +698,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 			ActiveQueue: nil,
 			IsAppend:    false,
 		}
-		// closedID is in the ledger as "closed"; missingID is absent (not_found).
 		ledger := &validFixtureFakeLedger{
 			statuses: map[core.BeadID]queue.BeadStatus{
 				closedID: queue.BeadStatus("closed"),
@@ -784,9 +717,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 		}
 	})
 
-	// QM-021 fires before QM-022: not-open bead preempts in-progress (double-dispatch) bead.
-	// Use two beads: one closed (QM-021), one in_progress (would trigger QM-022).
-	// QM-021 is iterated first, so bead_not_open must be the returned reason.
 	t.Run("qm021_before_qm022", func(t *testing.T) {
 		t.Parallel()
 		const closedID = core.BeadID("hk-closed-order-021b")
@@ -827,10 +757,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// QM-025: parallelism-narrowed multi-event count
-// ---------------------------------------------------------------------------
-
 // TestValidateQM025ParallelismNarrowedMultiEvent submits a wave group with
 // multiple blocker→blocked pairs and asserts that Validate returns exactly one
 // LedgerDepPair notice per blocked item, validation passes (no errors), and the
@@ -840,8 +766,6 @@ func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
 func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 	t.Parallel()
 
-	// Build a wave group with numPairs blocker→blocked pairs.
-	// Pair k: blockerIDs[k] blocks blockedIDs[k].
 	const numPairs = 3
 	blockerIDs := [numPairs]core.BeadID{
 		core.BeadID("hk-multi-blocker-0"),
@@ -854,7 +778,6 @@ func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 		core.BeadID("hk-multi-blocked-2"),
 	}
 
-	// Assemble one flat group containing all 2*numPairs beads.
 	items := make([]queue.Item, 0, numPairs*2)
 	for i := 0; i < numPairs; i++ {
 		items = append(items,
@@ -875,7 +798,6 @@ func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 		IsAppend:    false,
 	}
 
-	// Ledger: all beads open; edges declare each pair as blocker→blocked.
 	statuses := make(map[core.BeadID]queue.BeadStatus, numPairs*2)
 	edges := make(map[[2]core.BeadID]bool, numPairs)
 	for i := 0; i < numPairs; i++ {
@@ -890,18 +812,15 @@ func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// QM-025 must NOT fail validation.
 	if len(errs) != 0 {
 		t.Fatalf("QM-025 must not produce validation errors; got %d: %v", len(errs), errs)
 	}
 
-	// Exactly numPairs notices — one per blocked item.
 	if len(notices) != numPairs {
 		t.Fatalf("expected %d LedgerDepPair notices (one per blocked item), got %d: %v",
 			numPairs, len(notices), notices)
 	}
 
-	// Each blocked bead must appear exactly once with its correct blocker.
 	for i := 0; i < numPairs; i++ {
 		wantBlocked := blockedIDs[i]
 		wantBlocker := blockerIDs[i]
@@ -918,19 +837,12 @@ func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 		}
 	}
 
-	// parallelism_narrowed is true when notices is non-empty (QueueDryRunResponse.ParallelismNarrowed).
 	parallelismNarrowed := len(notices) > 0
 	if !parallelismNarrowed {
 		t.Errorf("expected parallelism_narrowed=true (notices non-empty), got false")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QM-052a: handler-pause gate (submit-only)
-// ---------------------------------------------------------------------------
-
-// fakeHandlerPauseChecker is a test double for HandlerPauseChecker.
-// It maps bead IDs to agent_types and records which agent_types are paused.
 type fakeHandlerPauseChecker struct {
 	// agentTypes maps bead ID → agent_type.
 	agentTypes map[core.BeadID]core.AgentType
@@ -950,7 +862,6 @@ func (f *fakeHandlerPauseChecker) ResolvedAgentType(_ context.Context, id core.B
 	if at, ok := f.agentTypes[id]; ok {
 		return at, nil
 	}
-	// Default to "claude-code" for any bead not explicitly mapped.
 	return core.AgentTypeClaudeCode, nil
 }
 
@@ -975,7 +886,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("fail_paused_handler_single_bead", func(t *testing.T) {
 		t.Parallel()
-		// idA resolves to claude-code, which is paused.
 		req := validFixtureSingleGroup(idA)
 		ledger := validFixtureOpenLedger(idA)
 		req.PauseChecker = &fakeHandlerPauseChecker{
@@ -992,7 +902,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 		if errs[0].Reason != queue.ReasonHandlerPaused {
 			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
 		}
-		// Detail must include agent_type and bead_ids.
 		if errs[0].Detail["agent_type"] != string(core.AgentTypeClaudeCode) {
 			t.Errorf("detail agent_type: got %v, want %q", errs[0].Detail["agent_type"], core.AgentTypeClaudeCode)
 		}
@@ -1004,7 +913,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("fail_paused_handler_multiple_beads_same_type", func(t *testing.T) {
 		t.Parallel()
-		// idA and idB both resolve to claude-code (paused); idC resolves to pi (live).
 		items := []queue.Item{
 			{BeadID: idA, Status: queue.ItemStatusPending},
 			{BeadID: idB, Status: queue.ItemStatusPending},
@@ -1034,7 +942,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 		if errs[0].Reason != queue.ReasonHandlerPaused {
 			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
 		}
-		// Both idA and idB must appear in bead_ids; idC (pi, live) must not.
 		beadIDs, ok := errs[0].Detail["bead_ids"].([]string)
 		if !ok {
 			t.Fatalf("detail bead_ids: expected []string, got %T %v", errs[0].Detail["bead_ids"], errs[0].Detail["bead_ids"])
@@ -1046,7 +953,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("pass_live_handler", func(t *testing.T) {
 		t.Parallel()
-		// idA resolves to claude-code, which is NOT paused.
 		req := validFixtureSingleGroup(idA)
 		ledger := validFixtureOpenLedger(idA)
 		req.PauseChecker = &fakeHandlerPauseChecker{
@@ -1064,10 +970,8 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("pass_nil_checker_skips_qm052a", func(t *testing.T) {
 		t.Parallel()
-		// PauseChecker is nil → QM-052a is skipped entirely.
 		req := validFixtureSingleGroup(idA)
 		ledger := validFixtureOpenLedger(idA)
-		// req.PauseChecker is nil (zero value)
 		errs, _, err := queue.Validate(context.Background(), req, ledger)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1079,9 +983,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("fail_two_distinct_paused_types_first_encountered_wins", func(t *testing.T) {
 		t.Parallel()
-		// idA → claude-code (paused, submitted first); idC → pi (also paused).
-		// QM-052a short-circuits at the first paused type: claude-code is reported;
-		// pi is never mentioned even though it is also paused.
 		const idD = core.BeadID("hk-ddd-pause")
 		items := []queue.Item{
 			{BeadID: idA, Status: queue.ItemStatusPending},
@@ -1113,7 +1014,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 		if errs[0].Reason != queue.ReasonHandlerPaused {
 			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
 		}
-		// Only claude-code (first-encountered) must appear; pi must not.
 		if errs[0].Detail["agent_type"] != string(core.AgentTypeClaudeCode) {
 			t.Errorf("agent_type: got %v, want %q (first-encountered)", errs[0].Detail["agent_type"], core.AgentTypeClaudeCode)
 		}
@@ -1125,8 +1025,6 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 
 	t.Run("error_resolved_agent_type_propagates", func(t *testing.T) {
 		t.Parallel()
-		// ResolvedAgentType returns an error for idA → Validate must return a
-		// non-nil system error (third return value), not a typed ValidationError.
 		req := validFixtureSingleGroup(idA)
 		ledger := validFixtureOpenLedger(idA)
 		req.PauseChecker = &fakeHandlerPauseChecker{

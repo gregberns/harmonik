@@ -1,22 +1,5 @@
 package codex_test
 
-// codexcommit_test.go — Refs:<bead> trailer guarantee tests (codex-harness
-// C2/T9, hk-bpxci).
-//
-// Coverage (all three T9 parts):
-//   - INSTRUCT: the codex seed prompt references the bead ID and instructs a
-//     "Refs: <bead>" commit trailer.
-//   - VERIFY: worktreeHEADHasRefsTrailer detects an exact "Refs: <bead>" line on
-//     HEAD (and rejects near-misses like a "Refs: hk-foo.10" prefix collision).
-//   - FALLBACK (ensureCodexRefsTrailer, real git in t.TempDir):
-//       1. clean no-op when codex already committed WITH the trailer.
-//       2. codex-edited-but-not-committed → fallback CREATES a commit carrying
-//          the trailer.
-//       3. codex-committed-WITHOUT-trailer → fallback AMENDS HEAD to add it
-//          (same tree, single commit — the claude posture).
-//       4. codex did nothing (clean worktree, HEAD unchanged) → no_change, no
-//          commit fabricated.
-
 import (
 	"context"
 	"os"
@@ -29,11 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// test git helpers (real git in t.TempDir)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexCommitGit runs a git subcommand in dir, failing the test on error.
 func codexCommitGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -43,7 +21,6 @@ func codexCommitGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// codexCommitGitOut runs a git subcommand in dir and returns trimmed stdout.
 func codexCommitGitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -55,8 +32,6 @@ func codexCommitGitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// codexCommitRepo creates a temp git repo with one initial commit and returns
-// the path and the initial HEAD SHA (the "parent" before a codex turn).
 func codexCommitRepo(t *testing.T) (wtPath, parentSHA string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -70,7 +45,6 @@ func codexCommitRepo(t *testing.T) (wtPath, parentSHA string) {
 	return dir, codexCommitGitOut(t, dir, "rev-parse", "HEAD")
 }
 
-// codexCommitWriteFile writes name=content under dir.
 func codexCommitWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	//nolint:gosec // test fixture file
@@ -79,13 +53,11 @@ func codexCommitWriteFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// codexCommitHeadBody returns the HEAD commit message body.
 func codexCommitHeadBody(t *testing.T, dir string) string {
 	t.Helper()
 	return codexCommitGitOut(t, dir, "log", "-1", "--format=%B", "HEAD")
 }
 
-// codexCommitCount returns the number of commits reachable from HEAD.
 func codexCommitCount(t *testing.T, dir string) int {
 	t.Helper()
 	out := codexCommitGitOut(t, dir, "rev-list", "--count", "HEAD")
@@ -95,10 +67,6 @@ func codexCommitCount(t *testing.T, dir string) int {
 	}
 	return n
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// INSTRUCT
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexInstruct_SeedPromptCarriesRefsTrailer verifies the codex seed prompt
 // references the bead ID and instructs a "Refs: <bead>" commit trailer (the
@@ -119,10 +87,6 @@ func TestCodexInstruct_SeedPromptCarriesRefsTrailer(t *testing.T) {
 		t.Errorf("seed prompt does not mention committing: %q", prompt)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VERIFY
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexVerify_TrailerPresentDetected verifies worktreeHEADHasRefsTrailer
 // returns true when HEAD carries an exact "Refs: <bead>" line.
@@ -154,7 +118,6 @@ func TestCodexVerify_TrailerAbsentNotDetected(t *testing.T) {
 	dir, _ := codexCommitRepo(t)
 	codexCommitWriteFile(t, dir, "work.txt", "codex edit")
 	codexCommitGit(t, dir, "add", ".")
-	// Commit carries Refs: hk-foo.10 only.
 	codexCommitGit(t, dir, "commit", "-m", "work\n\nRefs: hk-foo.10")
 
 	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, core.BeadID("hk-foo.1"))
@@ -165,10 +128,6 @@ func TestCodexVerify_TrailerAbsentNotDetected(t *testing.T) {
 		t.Error("hk-foo.1 must NOT match a commit whose only trailer is 'Refs: hk-foo.10'")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FALLBACK — ensureCodexRefsTrailer
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexFallback_AlreadyCommittedWithTrailer_NoOp verifies the clean no-op
 // path: codex already committed WITH the trailer → ensureCodexRefsTrailer makes
@@ -207,7 +166,6 @@ func TestCodexFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 
 	dir, parentSHA := codexCommitRepo(t)
 	beadID := core.BeadID("hk-create")
-	// codex edited a tracked file AND added an untracked one, but did not commit.
 	codexCommitWriteFile(t, dir, "seed.txt", "modified by codex")
 	codexCommitWriteFile(t, dir, "new.txt", "new file from codex")
 	countBefore := codexCommitCount(t, dir)
@@ -219,7 +177,6 @@ func TestCodexFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	if outcome != codex.ExportedCodexRefsCommitted {
 		t.Errorf("outcome = %v; want committed", outcome)
 	}
-	// A new commit must exist past parent, carrying the trailer.
 	if got := codexCommitGitOut(t, dir, "rev-parse", "HEAD"); got == parentSHA {
 		t.Error("HEAD did not advance past parent after fallback commit")
 	}
@@ -233,7 +190,6 @@ func TestCodexFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	if !has {
 		t.Errorf("fallback commit missing 'Refs: %s' trailer; body=%q", beadID, codexCommitHeadBody(t, dir))
 	}
-	// The codex edits (tracked + untracked) must be in the commit, not left dirty.
 	if status := codexCommitGitOut(t, dir, "status", "--porcelain"); status != "" {
 		t.Errorf("worktree still dirty after fallback commit: %q", status)
 	}
@@ -260,15 +216,12 @@ func TestCodexFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 	if outcome != codex.ExportedCodexRefsAmended {
 		t.Errorf("outcome = %v; want amended", outcome)
 	}
-	// Same tree (amend preserves the codex edits exactly).
 	if got := codexCommitGitOut(t, dir, "rev-parse", "HEAD^{tree}"); got != treeBefore {
 		t.Errorf("amend changed the tree: %s -> %s", treeBefore, got)
 	}
-	// Single commit — amend, not a follow-up.
 	if got := codexCommitCount(t, dir); got != countBefore {
 		t.Errorf("commit count = %d; want %d (amend, not follow-up)", got, countBefore)
 	}
-	// Trailer now present.
 	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
@@ -276,7 +229,6 @@ func TestCodexFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 	if !has {
 		t.Errorf("amended commit missing 'Refs: %s' trailer; body=%q", beadID, codexCommitHeadBody(t, dir))
 	}
-	// Original message body preserved.
 	if !strings.Contains(codexCommitHeadBody(t, dir), "feat: codex did work but forgot the trailer") {
 		t.Errorf("amend dropped the original message; body=%q", codexCommitHeadBody(t, dir))
 	}
@@ -319,18 +271,6 @@ func TestCodexFallback_EmptyBeadIDErrors(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-jcrzn — the fallback must measure AGENT work, never daemon scaffolding
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexCommitWriteDaemonScaffolding writes the files the DAEMON itself drops
-// into a run worktree. None of these are the agent's work product.
-//
-// In a project whose gitignore does not cover them — `harmonik init` used to
-// scaffold an ENUMERATED .harmonik/.gitignore that omitted agent-task.md, and a
-// gitignore inside .harmonik/ cannot un-untrack its own directory — a bare
-// `git status --porcelain` reports `?? .harmonik/` even for a run in which the
-// agent did nothing at all.
 func codexCommitWriteDaemonScaffolding(t *testing.T, dir string) {
 	t.Helper()
 	for _, d := range []string{".harmonik", ".claude"} {
@@ -364,7 +304,6 @@ func TestCodexFallback_DaemonScaffoldingOnly_NoCommit(t *testing.T) {
 	dir, parentSHA := codexCommitRepo(t)
 	beadID := core.BeadID("hk-jcrzn-idle")
 
-	// The daemon writes its scaffolding; the agent then does nothing at all.
 	codexCommitWriteDaemonScaffolding(t, dir)
 
 	headBefore := codexCommitGitOut(t, dir, "rev-parse", "HEAD")
@@ -375,9 +314,6 @@ func TestCodexFallback_DaemonScaffoldingOnly_NoCommit(t *testing.T) {
 		t.Fatalf("ensureCodexRefsTrailer: %v", err)
 	}
 
-	// MUTATION ORACLE: neutralise the agent-work pathspec exclusions in
-	// internal/harness/shared/refstrailer.go and this assertion fails — the worktree reads dirty on the
-	// daemon's own files and the fallback fabricates a commit.
 	if outcome != codex.ExportedCodexRefsNoChange {
 		t.Errorf("outcome = %v; want no_change — the agent did nothing, so daemon scaffolding "+
 			"must not be read as uncommitted work (hk-jcrzn)", outcome)
@@ -407,7 +343,6 @@ func TestCodexFallback_AgentWorkWithScaffolding_ExcludesDaemonPaths(t *testing.T
 	beadID := core.BeadID("hk-jcrzn-real")
 
 	codexCommitWriteDaemonScaffolding(t, dir)
-	// Real agent work, uncommitted — the genuine fallback case.
 	codexCommitWriteFile(t, dir, "feature.go", "package main\n")
 
 	outcome, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
@@ -427,7 +362,6 @@ func TestCodexFallback_AgentWorkWithScaffolding_ExcludesDaemonPaths(t *testing.T
 			t.Errorf("daemon-owned path %q was committed as agent work; files = %q", forbidden, committed)
 		}
 	}
-	// The worktree keeps its scaffolding — excluded from the commit, not deleted.
 	if _, statErr := os.Stat(filepath.Join(dir, ".harmonik", "agent-task.md")); statErr != nil {
 		t.Errorf("scaffolding was removed from the worktree: %v", statErr)
 	}

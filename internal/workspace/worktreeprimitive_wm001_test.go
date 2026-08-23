@@ -27,10 +27,8 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0001"
 	branch := "run/" + runID
 
-	// The canonical worktree path strips the trailing separator for git invocation.
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	// Create the parent directory so that git can place the worktree there.
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -43,7 +41,6 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 		t.Fatalf("git worktree add -b: %v\n%s", err, out)
 	}
 
-	// (a) Assert canonical path exists with a valid checkout (HEAD file present).
 	headFile := filepath.Join(worktreePath, ".git")
 	if _, err := os.Stat(headFile); os.IsNotExist(err) {
 		t.Errorf("WM-001: worktree .git absent at %q; expected valid checkout", headFile)
@@ -60,8 +57,6 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 		t.Errorf("WM-001: branch %q tip = %q, want %q", branch, branchTip, sha)
 	}
 
-	// (c) Atomicity — forced-fail case: use a branch name that git rejects.
-	// git rejects names containing ".." as ref-unsafe.
 	badRunID := "bad..runid"
 	badBranch := "run/" + badRunID
 	badPath := filepath.Join(repo, ".harmonik", "worktrees", badRunID)
@@ -69,12 +64,10 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	//nolint:gosec // G204: git command and deliberately invalid fixture branch are test-controlled.
 	cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", badBranch, badPath, sha)
 	cmd2.Dir = repo
-	// We expect this to fail; the exit code is non-zero.
 	if out2, err2 := cmd2.CombinedOutput(); err2 == nil {
 		t.Errorf("WM-001: atomicity: expected failure for invalid branch name %q, got success\n%s", badBranch, out2)
 	}
 
-	// Neither the directory nor the branch should remain after a failed add.
 	if _, err := os.Stat(badPath); !os.IsNotExist(err) {
 		t.Errorf("WM-001: atomicity: worktree dir %q still exists after failed git worktree add", badPath)
 	}
@@ -185,7 +178,6 @@ func TestWM003_RunIDFilesystemSafetyRegex(t *testing.T) {
 			"",
 		},
 	}
-	// Filter out the empty-descriptor sentinel above.
 	filtered := pathological[:0]
 	for _, p := range pathological {
 		if p.desc != "" {
@@ -248,7 +240,6 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		// No lease-lock, no sessions dir — bare-worktree-no-lease state.
 		evidenceType, err := classifyCrashEvidence(repo, runID)
 		if err != nil {
 			t.Fatalf("WM-003a: bare-worktree-no-lease: classifyCrashEvidence: %v", err)
@@ -288,9 +279,6 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		// Synthesize a session sidecar to simulate a crash after the sidecar was
-		// written but before the lease-lock was fsynced (between steps (c) and (d)
-		// of WM-016).
 		sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000000001"
 		sidecarDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
 		if err := os.MkdirAll(sidecarDir, 0o700); err != nil {
@@ -302,7 +290,6 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 			t.Fatalf("WriteFile sidecar: %v", err)
 		}
 
-		// No lease-lock, but sidecar present — sidecar-without-lease state.
 		evidenceType, err := classifyCrashEvidence(repo, runID)
 		if err != nil {
 			t.Fatalf("WM-003a: sidecar-without-lease: classifyCrashEvidence: %v", err)
@@ -332,32 +319,14 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 func TestWM004_WorkspaceIDPrefixOpaqueToConsumers(t *testing.T) {
 	t.Parallel()
 
-	// The workspace_id is an opaque string. Its only allowed operations are:
-	//   - equality comparison (e.g., join on event payloads)
-	//   - storage and transmission as a string
-	//
-	// A consumer that extracts run_id by stripping "ws-" is WRONG per WM-004.
-	// The run_id is always present as a distinct explicit field on event payloads.
-
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0020"
 	workspaceID := "ws-" + runID
 
-	// Demonstrate the correct (opaque) consumer pattern: compare whole strings.
-	// Do NOT do: runIDFromWsID := strings.TrimPrefix(workspaceID, "ws-")
 	otherWorkspaceID := "ws-" + runID
 	if workspaceID != otherWorkspaceID {
 		t.Errorf("WM-004: opaque equality: %q != %q", workspaceID, otherWorkspaceID)
 	}
 
-	// Assert type shape: workspace_id is a plain string; no structured parsing
-	// is permitted. The type-level enforcement will be owned by the WorkspaceID
-	// type in hk-8mwo.24. Until then, this doc-test comment captures the obligation.
-	//
-	// WRONG (WM-004 violation): extractedRunID := strings.TrimPrefix(workspaceID, "ws-")
-	// CORRECT: use the explicit run_id field on the event payload.
-	//
-	// We assert opaqueness via the doc-test shape: the variable is only ever
-	// compared as a whole string, never parsed.
 	_ = workspaceID // opaque: only equality operations are permitted
 
 	// Negative assertion: if a consumer parses the prefix, it is wrong even if

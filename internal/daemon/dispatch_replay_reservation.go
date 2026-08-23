@@ -9,10 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// replayPreparedReservation applies the exact prepared binding through the
-// existing reservation owner. The temporary store is private to startup. It
-// gives replay the same cross-queue and attempt rules without installing a
-// queue into the daemon's live registry before startup reconciliation.
 func replayPreparedReservation(ctx context.Context, projectDir string, intent dispatch.Intent) error {
 	if err := intent.Validate(); err != nil {
 		return fmt.Errorf("daemon: replay reservation requires a valid prepared intent: %w", err)

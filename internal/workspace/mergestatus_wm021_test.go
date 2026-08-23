@@ -28,14 +28,6 @@ import (
 func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 	t.Parallel()
 
-	// mergeBackFixtureMergeStatusPayload mirrors the data shape of the
-	// workspace_merge_status event payload for status=merged per workspace-model.md §4.5
-	// WM-021 and event-model.md §8.5.3 (payload schema is EV's to own; this fixture
-	// verifies that the fields required by WM-021 can be populated from the merge
-	// result).
-	//
-	// This is a fixture-level struct — not a production type. The production emitter
-	// and EV-owned schema live in the event-model subsystem (deferred).
 	type mergeBackFixtureMergeStatusPayload struct {
 		EventType       string    // "workspace_merge_status"
 		Status          string    // "pending" or "merged"
@@ -59,7 +51,6 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-021-shape")
 		integBranch := mergeBackFixtureIntegBranchName("integ-021-shape")
 
-		// Perform squash-merge.
 		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
@@ -94,7 +85,6 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 			t.Fatalf("WM-021: parse commit timestamp: %v", err)
 		}
 
-		// Construct the payload as the workspace manager would before emitting.
 		workspaceID := "ws-" + runID // WM-004 derivation: workspace_id = "ws-" + run_id
 		payload := mergeBackFixtureMergeStatusPayload{
 			EventType:       "workspace_merge_status",
@@ -107,7 +97,6 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 			MergedAt:        mergedAt,
 		}
 
-		// Assert all required fields per WM-021 / EV §8.5.3.
 		if payload.EventType != "workspace_merge_status" {
 			t.Errorf("WM-021: event_type = %q, want %q", payload.EventType, "workspace_merge_status")
 		}
@@ -140,15 +129,11 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 	t.Run("status=pending/payload-fields", func(t *testing.T) {
 		t.Parallel()
 
-		// The paired-phase single-event rule: workspace_merge_status is emitted TWICE:
-		// once with status=pending on entry to merge-pending, once with status=merged
-		// on successful merge. This subtest verifies the pending payload shape.
 		runID := "0196b100-0000-7000-8000-00000000021b"
 		taskBranch := "run/" + runID
 		integBranch := "harmonik/integration/integ-021b"
 		workspaceID := "ws-" + runID
 
-		// Before merge executes, the pending payload has no merge_commit_hash yet.
 		pendingPayload := mergeBackFixtureMergeStatusPayload{
 			EventType:       "workspace_merge_status",
 			Status:          "pending",
@@ -174,7 +159,6 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		if pendingPayload.RunID != runID {
 			t.Errorf("WM-021 pending: run_id = %q, want %q", pendingPayload.RunID, runID)
 		}
-		// merge_commit_hash MUST be absent/empty at pending phase.
 		if pendingPayload.MergeCommitHash != "" {
 			t.Errorf("WM-021 pending: merge_commit_hash should be empty at pending, got %q",
 				pendingPayload.MergeCommitHash)
@@ -227,7 +211,6 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 				head, integTip)
 		}
 
-		// Verify merge_commit_hash is a valid 40-char hex SHA.
 		if len(integTip) != 40 {
 			t.Errorf("WM-021: merge_commit_hash length = %d, want 40 (full SHA)", len(integTip))
 		}

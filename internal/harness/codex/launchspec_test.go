@@ -1,16 +1,5 @@
 package codex_test
 
-// codexlaunchspec_test.go — unit tests for buildCodexLaunchSpec (hk-rgxwd C2/T7).
-//
-// Key invariants tested:
-//
-//   - AC2.1: initial run argv configures danger-full-access via -c overrides
-//   - AC2.2: resume run argv includes "resume <thread_id>" prefix
-//   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present),
-//     including when inherited from the real process env via os.Environ() (C3/T10, hk-jxgnp)
-//   - AC3.4: CODEX_HOME set to a non-empty path in env
-//   - Error cases: empty workspacePath, empty beadID, empty priorThreadID string
-
 import (
 	"os"
 	"strings"
@@ -18,10 +7,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_InitialTurn
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildCodexLaunchSpec_InitialTurn verifies AC2.1: initial launch argv shape.
 func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
@@ -40,17 +25,13 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		t.Fatalf("TestBuildCodexLaunchSpec_InitialTurn: unexpected error: %v", err)
 	}
 
-	// Binary default.
 	if spec.Binary != "codex" {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "codex")
 	}
-	// WorkDir set to worktreePath.
 	if spec.WorkDir != rc.WorkspacePath {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, rc.WorkspacePath)
 	}
 
-	// argv: codex exec --json -c sandbox_mode="danger-full-access" --model <model> -C <wt> <seed>
-	// Note: -a/--ask-for-approval was removed in codex 0.139.0.
 	codexLaunchSpecAssertArgv(t, spec.Args, false, "")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
 	codexLaunchSpecAssertConfigValue(t, spec.Args, `sandbox_mode="danger-full-access"`)
@@ -59,7 +40,6 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "-C", rc.WorkspacePath)
 
-	// Seed prompt present and references bead ID.
 	codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
 }
 
@@ -86,10 +66,6 @@ func TestBuildCodexLaunchSpec_CustomBinary(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_ResumeTurn
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildCodexLaunchSpec_ResumeTurn verifies AC2.2: resume turn includes
 // "exec resume <thread_id>" in argv.
 func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
@@ -109,12 +85,9 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 		t.Fatalf("TestBuildCodexLaunchSpec_ResumeTurn: unexpected error: %v", err)
 	}
 
-	// AC2.2: argv[0]="exec" argv[1]="resume" argv[2]=<thread_id>
 	codexLaunchSpecAssertArgv(t, spec.Args, true, threadID)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
 
-	// hk-mzgh: codex exec resume rejects -C (exit 2: "unexpected argument -C found").
-	// The resume subcommand must NOT pass -C; WorkDir in the LaunchSpec sets CWD.
 	for _, arg := range spec.Args {
 		if arg == "-C" {
 			t.Errorf("resume argv must not contain -C; codex exec resume rejects it: %v", spec.Args)
@@ -124,10 +97,6 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 
 	codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_CredentialStrip (AC3.1)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildCodexLaunchSpec_CredentialStrip verifies AC3.1: OPENAI_API_KEY and
 // CODEX_API_KEY are stripped from the child env and re-emitted as empty overrides.
@@ -151,7 +120,6 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 		t.Fatalf("TestBuildCodexLaunchSpec_CredentialStrip: unexpected error: %v", err)
 	}
 
-	// AC3.1: no live value for either key.
 	denyKeys := []string{"OPENAI_API_KEY", "CODEX_API_KEY"}
 	for _, kv := range spec.Env {
 		for _, dk := range denyKeys {
@@ -162,7 +130,6 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 		}
 	}
 
-	// Empty overrides must be present.
 	for _, dk := range denyKeys {
 		want := dk + "="
 		found := false
@@ -177,10 +144,6 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv (C3/T10, hk-jxgnp)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv is the T10
 // regression lock mirroring the claude-side
@@ -203,15 +166,9 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 //
 // Spec: C3-auth-billing-spec.md AC3.1; specs/harness-contract.md §2 N1.
 func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
-	// No t.Parallel: t.Setenv mutates process env, which forbids parallel tests.
-
-	// Set live credential values on the parent process. Test-only sentinels; no
-	// real credentials are used. t.Setenv restores the prior values on cleanup.
 	t.Setenv("OPENAI_API_KEY", "sk-t10-sentinel-must-not-reach-codex-child")
 	t.Setenv("CODEX_API_KEY", "ck-t10-sentinel-must-not-reach-codex-child")
 
-	// Sanity: confirm the sentinels really are in the process environment, so a
-	// passing assertion below cannot be a false negative from an unset var.
 	if os.Getenv("OPENAI_API_KEY") == "" || os.Getenv("CODEX_API_KEY") == "" {
 		t.Fatalf("test setup: expected OPENAI_API_KEY and CODEX_API_KEY to be set in process env")
 	}
@@ -233,8 +190,6 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 
 	denyKeys := []string{"OPENAI_API_KEY", "CODEX_API_KEY"}
 
-	// AC3.1: no live value for either credential key leaks into the child env.
-	// Error messages redact the value (print only the key).
 	for _, kv := range spec.Env {
 		for _, dk := range denyKeys {
 			prefix := dk + "="
@@ -244,8 +199,6 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 		}
 	}
 
-	// AC3.1: an explicit empty override ("KEY=") must be present for each key.
-	// Without it, the tmux server env value would survive into the child window.
 	for _, dk := range denyKeys {
 		want := dk + "="
 		found := false
@@ -261,10 +214,6 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_PATH (hk-07jrb)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone
 // verifies the hk-07jrb fix: when BaseEnv carries no PATH entry,
 // buildCodexEnv falls back to the daemon process's own PATH rather than
@@ -273,7 +222,6 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 // against the libc default (/usr/bin:/bin) and died with exit 127 ("go:
 // command not found") before the codex turn ever started.
 func TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *testing.T) {
-	// No t.Parallel: asserts against the live process PATH.
 	procPath := os.Getenv("PATH")
 	if procPath == "" {
 		t.Skip("test process has no PATH set; cannot assert fallback value")
@@ -338,16 +286,11 @@ func TestBuildCodexLaunchSpec_PATH_PreservedWhenBaseEnvHasOne(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_CodexHomeSet (AC3.4)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildCodexLaunchSpec_CodexHomeSet verifies AC3.4: CODEX_HOME is set to a
 // non-empty value in the env, either the caller-supplied value or the default.
 func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 	t.Parallel()
 
-	// Case 1: explicit CodexHome.
 	explicitHome := "/tmp/test-codex-home"
 	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home",
@@ -374,7 +317,6 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 		t.Errorf("AC3.4: explicit CODEX_HOME=%q not found in env; have %v", explicitHome, spec.Env)
 	}
 
-	// Case 2: default (empty CodexHome → non-empty path derived from $HOME).
 	rc2 := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home2",
 		BeadID:           "hk-test005b",
@@ -398,10 +340,6 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 		t.Errorf("AC3.4: default CODEX_HOME not set to non-empty value; have %v", spec2.Env)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildCodexLaunchSpec_ErrorCases
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildCodexLaunchSpec_EmptyWorkspacePath verifies a structural error when
 // workspacePath is empty.
@@ -474,11 +412,6 @@ func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 		}
 	}
 
-	// GAP-7: StdinDevNull must be true on the empty-model initial turn. This is
-	// the backstop against the old omitted-model stdin hang (hk-rpr6): even when
-	// codex resolves the account-default model with no --model flag, stdin is
-	// redirected to /dev/null so codex (ProcessExit) can never block on the pane
-	// PTY waiting for EOF.
 	if !spec.StdinDevNull {
 		t.Error("empty-model initial spec.StdinDevNull = false; want true (omitted-model stdin-hang backstop, hk-rpr6)")
 	}
@@ -502,7 +435,6 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 		return -1
 	}
 
-	// Non-empty model path.
 	t.Run("with model", func(t *testing.T) {
 		t.Parallel()
 		rc := codex.ExportedCodexRunCtx{
@@ -527,22 +459,18 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 			t.Errorf("argv ordering wrong: want sandbox config(%d) < --model(%d) < -C(%d); args=%v",
 				idxSandbox, idxModel, idxC, spec.Args)
 		}
-		// --model value immediately follows --model.
 		if idxModel+1 >= len(spec.Args) || spec.Args[idxModel+1] != "o4-mini" {
 			t.Errorf("--model value must immediately follow --model; args=%v", spec.Args)
 		}
-		// -C value immediately follows -C.
 		if idxC+1 >= len(spec.Args) || spec.Args[idxC+1] != rc.WorkspacePath {
 			t.Errorf("-C value must immediately follow -C; args=%v", spec.Args)
 		}
-		// Seed prompt is the final arg.
 		codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
 		if idxC+2 != len(spec.Args)-1 {
 			t.Errorf("seed prompt must be the final arg (immediately after the -C value); args=%v", spec.Args)
 		}
 	})
 
-	// Empty-model counterpart: seed last, no --model anywhere.
 	t.Run("empty model", func(t *testing.T) {
 		t.Parallel()
 		rc := codex.ExportedCodexRunCtx{
@@ -562,7 +490,6 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 		if idxSandbox < 0 || idxC < 0 || idxSandbox >= idxC {
 			t.Errorf("argv ordering wrong: want sandbox config(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
 		}
-		// Seed prompt is the final arg, immediately after the -C value.
 		codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
 		if idxC+2 != len(spec.Args)-1 {
 			t.Errorf("seed prompt must be the final arg (immediately after the -C value); args=%v", spec.Args)
@@ -684,13 +611,6 @@ func TestBuildCodexLaunchSpec_DangerFullAccess_hktckw3(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// assertion helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexLaunchSpecAssertArgv verifies the high-level argv shape.
-// wantResume=true checks for "exec resume <threadID>" prefix.
-// wantResume=false checks for "exec" (no "resume") as first token.
 func codexLaunchSpecAssertArgv(t *testing.T, args []string, wantResume bool, threadID string) {
 	t.Helper()
 	if len(args) == 0 {
@@ -711,7 +631,6 @@ func codexLaunchSpecAssertArgv(t *testing.T, args []string, wantResume bool, thr
 		if args[2] != threadID {
 			t.Errorf("AC2.2: args[2] = %q; want thread_id %q", args[2], threadID)
 		}
-		// Must not contain an additional "resume" token past the expected position.
 		for i, a := range args[3:] {
 			if a == "resume" {
 				t.Errorf("unexpected extra 'resume' token at args[%d]", i+3)
@@ -722,7 +641,6 @@ func codexLaunchSpecAssertArgv(t *testing.T, args []string, wantResume bool, thr
 	}
 }
 
-// codexLaunchSpecAssertArgContains verifies that flag is present in args.
 func codexLaunchSpecAssertArgContains(t *testing.T, args []string, flag string) {
 	t.Helper()
 	for _, a := range args {
@@ -733,8 +651,6 @@ func codexLaunchSpecAssertArgContains(t *testing.T, args []string, flag string) 
 	t.Errorf("flag %q not found in args %v", flag, args)
 }
 
-// codexLaunchSpecAssertArgContainsValue verifies that flag is immediately followed
-// by value in args.
 func codexLaunchSpecAssertArgContainsValue(t *testing.T, args []string, flag, value string) {
 	t.Helper()
 	for i, a := range args {
@@ -762,8 +678,6 @@ func codexLaunchSpecAssertConfigValue(t *testing.T, args []string, value string)
 	t.Errorf("config value %q not found immediately after -c in args %v", value, args)
 }
 
-// codexLaunchSpecAssertSeedPrompt verifies that the last arg is the seed prompt
-// and that it contains the beadID (for the Refs: instruction).
 func codexLaunchSpecAssertSeedPrompt(t *testing.T, args []string, beadID string) {
 	t.Helper()
 	if len(args) == 0 {
@@ -774,10 +688,6 @@ func codexLaunchSpecAssertSeedPrompt(t *testing.T, args []string, beadID string)
 	if !strings.Contains(last, beadID) {
 		t.Errorf("seed prompt (last arg) does not reference beadID %q; got %q", beadID, last)
 	}
-	// GAP-8: require the EXACT "Refs: <beadID>" substring, byte-matching what the
-	// detector (workloop.go beadAlreadySubsumedInMain) greps for. A looser
-	// lowercased "refs" check would pass even if the prompt instructed a
-	// trailer format the detector cannot recognise.
 	wantRefs := "Refs: " + beadID
 	if !strings.Contains(last, wantRefs) {
 		t.Errorf("seed prompt does not contain exact %q trailer instruction; got %q", wantRefs, last)

@@ -2,45 +2,6 @@
 
 package daemon_test
 
-// handlerpause_integration_lz485_test.go — T3 integration test: HandlerPausePolicyGoroutine
-// wired before bus.Seal (hk-lz485).
-//
-// # What this test covers
-//
-// Integration tier (//go:build integration) assertion that the composition root
-// in daemon.Start calls HandlerPausePolicyGoroutine.Subscribe(bus) before
-// bus.Seal().  This is the T3-track version (integration tests with build-tag
-// gating) of the always-running composition check in
-// handlerpause_policy_composition_37zy8_test.go.
-//
-// Catches: hk-37zy8 class — policy goroutine existed and was unit-tested but
-// was never Subscribe()d in the production composition root.  This test would
-// have caught the regression before merge.
-//
-// Two assertions are made:
-//
-//  1. Subscription count: WithBusObserver fires before bus.Seal(); the bus has
-//     exactly wantSubscriptions consumers registered at that moment.  A count
-//     below wantSubscriptions means at least one goroutine's Subscribe call is
-//     missing from daemon.Start.
-//
-//  2. Behavioural wiring: a synthetic budget_exhausted event is injected on the
-//     captured bus; the test asserts that exactly one handler_paused event is
-//     emitted with the expected agent_type and failure_class.  This exercises the
-//     same code path as a real twin emitting via its NDJSON stdout stream.
-//
-// Helper prefix: t3hp (bead hk-lz485, per implementer-protocol §Helper-prefix
-// discipline).
-//
-// Run via:
-//
-//	go test -race -tags=integration ./internal/daemon/...
-//
-// Spec refs: specs/handler-pause.md §4 HP-ENV-001, §5.2 HP-012, §7.1 HP-030;
-// specs/execution-model.md §4.6; specs/scenario-harness.md §4.
-// T3 track source: ~/.kerf/projects/gregberns-harmonik/testing-strategy-uplift/03-components.md §T3.
-// Bead: hk-lz485.
-
 import (
 	"context"
 	"encoding/json"
@@ -54,7 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// t3hpMakeRunID returns a UUIDv7-based RunID for use in synthetic events.
 func t3hpMakeRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -64,8 +24,6 @@ func t3hpMakeRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// t3hpBudgetExhaustedPayload builds a minimal budget_exhausted event payload
-// matching core.BudgetExhaustedEventPayload.Valid() constraints.
 func t3hpBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 	t.Helper()
 	payload := core.BudgetExhaustedEventPayload{
@@ -79,10 +37,6 @@ func t3hpBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 	}
 	return b
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal is the T3
 // integration test for HandlerPausePolicyGoroutine composition-root wiring
@@ -109,41 +63,17 @@ func t3hpBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 	t.Parallel()
 
-	// handlerPausedCh receives payloads of handler_paused events emitted after
-	// the budget_exhausted injection.  Buffered with capacity 4 so the async
-	// dispatch goroutine never blocks.
 	handlerPausedCh := make(chan core.HandlerPausedPayload, 4)
 
-	// captureBus holds the EventBus extracted from the WithBusObserver hook.
-	// Populated before bus.Seal() in startWithHooks, so Emit calls after Start
-	// returns are on the sealed (fully-wired) bus.
 	var captureBus eventbus.EventBus
 
-	// captureBusSet is closed once captureBus is populated so the emitter
-	// goroutine can proceed after StartForTesting exits.
 	captureBusSet := make(chan struct{})
 
-	// WithBusObserver fires inside startWithHooks after all pre-Seal
-	// subscriptions are registered and BEFORE bus.Seal() is called.
-	//
-	// Assertion 1 — subscription count:
-	// Exactly wantSubscriptions consumers must be registered at this point.
-	// A regression that removes HandlerPausePolicyGoroutine.Subscribe drops
-	// the count by 2 (agent_rate_limit_status + budget_exhausted) and fails here.
-	//
-	// wantSubscriptions is 5:
-	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis (hk-37zy8)
-	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic (hk-37zy8)
-	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain (hk-7urls)
-	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
-	//   5. * (wildcard)            — SubscribeHub fans events to socket 'subscribe' op (hk-6ynv4)
 	const wantSubscriptions = 5
 
 	busObserver := func(bus eventbus.EventBus) {
 		count := eventbus.BusSubscriptionCount(bus)
 		if count != wantSubscriptions {
-			// Cannot call t.Fatalf from a non-test goroutine; panic so the
-			// test framework recovers and reports a failure.
 			panic("t3hp: pre-Seal subscription count mismatch: " +
 				"got handler_paused consumer not registered; " +
 				"HandlerPausePolicyGoroutine.Subscribe() may be missing from daemon.Start (hk-37zy8)")
@@ -151,9 +81,6 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 
 		captureBus = bus
 
-		// Subscribe a test observer for handler_paused events.  This consumer
-		// receives any handler_paused event emitted by the policy goroutine
-		// after budget_exhausted is injected below.
 		sub := core.Subscription{
 			ConsumerID:    "test-t3hp-handler-paused-observer-lz485",
 			ConsumerClass: core.ConsumerClassAsynchronous,
@@ -210,9 +137,6 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 		t.Fatalf("t3hp: daemon.StartForTesting did not return within %s in no-op mode", daemon.ExportedDaemonExitHangBudget)
 	}
 
-	// Assertion 2 — behavioural wiring:
-	// Inject a synthetic budget_exhausted event on the captured (sealed) bus.
-	// HandlerPausePolicyGoroutine must handle it and emit handler_paused.
 	runID := t3hpMakeRunID(t)
 	payloadBytes := t3hpBudgetExhaustedPayload(t, runID)
 

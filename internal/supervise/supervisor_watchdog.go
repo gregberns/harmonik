@@ -148,9 +148,6 @@ func (sw *SupervisorWatchdog) Run(ctx context.Context) error {
 	}
 }
 
-// isSupervisorAlive probes supervisor liveness by reading the pidfile and
-// sending kill(pid, 0). Returns true only when the pidfile exists, contains a
-// valid PID, and the recorded process is alive.
 func (sw *SupervisorWatchdog) isSupervisorAlive() bool {
 	data, err := os.ReadFile(sw.spec.PidfilePath)
 	if err != nil {
@@ -163,9 +160,6 @@ func (sw *SupervisorWatchdog) isSupervisorAlive() bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-// pollUntilAlive probes isSupervisorAlive at interval until the supervisor
-// is live or window elapses. Returns true when the supervisor becomes live.
-// The final sleep is capped at the remaining window time.
 func (sw *SupervisorWatchdog) pollUntilAlive(ctx context.Context, window, interval time.Duration) bool {
 	deadline := time.Now().Add(window)
 	for {
@@ -188,8 +182,6 @@ func (sw *SupervisorWatchdog) pollUntilAlive(ctx context.Context, window, interv
 	}
 }
 
-// reviveWith spawns the supervisor revival command as a detached process
-// (setsid) so it outlives the caller's process group.
 func (sw *SupervisorWatchdog) reviveWith(argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("supervisor-watchdog: reviveWith: empty argv")

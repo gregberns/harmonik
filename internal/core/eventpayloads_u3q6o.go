@@ -1,22 +1,5 @@
 package core
 
-// eventpayloads_u3q6o.go — event-bus payload types for the six §8 event types
-// added in hk-u3q6o (event-model G4 conformance):
-//
-//   §8.2.13  gate_definition_drift           (F)  — Gate envelope drift at replay
-//   §8.2.14  gate_redefined_under_cat_6      (F)  — Cat 6 authorized Gate re-evaluation
-//   §8.12.1  decision_required               (F)  — daemon dispatch-blocking escalation
-//   §8.12.2  decision_acknowledged           (F)  — ACK for a decision_required
-//   §8.15.1  bead_sync_failed                (F)  — `br sync --import-only` failure
-//   §8.15.2  bead_ledger_conflict_audit      (O)  — Cat-BL3 conflict-log audit batch
-//
-// Spec ref: specs/event-model.md §8.2.13–14, §8.12.1–2, §8.15.1–2.
-// Bead ref: hk-u3q6o.
-
-// ---------------------------------------------------------------------------
-// §8.2.13 gate_definition_drift
-// ---------------------------------------------------------------------------
-
 // GateDefinitionDriftPayload is the typed event payload for the
 // gate_definition_drift event (event-model.md §8.2.13, v0.3.4).
 //
@@ -55,10 +38,6 @@ func (p GateDefinitionDriftPayload) Valid() bool {
 	return p.RunID != "" && p.GateName != "" &&
 		p.PriorEnvelopeHash != "" && p.CurrentEnvelopeHash != ""
 }
-
-// ---------------------------------------------------------------------------
-// §8.2.14 gate_redefined_under_cat_6
-// ---------------------------------------------------------------------------
 
 // GateDecision is the typed discriminator for the gate decision field in
 // gate_redefined_under_cat_6 (§8.2.14). Matches the allow/deny/escalate-to-human
@@ -124,10 +103,6 @@ func (p GateRedefinedUnderCat6Payload) Valid() bool {
 	return p.RunID != "" && p.GateName != "" &&
 		p.PriorDecision.Valid() && p.NewDecision.Valid() && p.Cat6VerdictID != ""
 }
-
-// ---------------------------------------------------------------------------
-// §8.12.1 decision_required
-// ---------------------------------------------------------------------------
 
 // DecisionRequiredReason is the typed discriminator for the reason field of a
 // decision_required event (§8.12.1). Exhaustive at v1; new variants require
@@ -258,10 +233,6 @@ func (p DecisionRequiredPayload) Valid() bool {
 		p.AckRef != "" && p.TriggeringEventID != ""
 }
 
-// ---------------------------------------------------------------------------
-// §8.12.2 decision_acknowledged
-// ---------------------------------------------------------------------------
-
 // DecisionAckMethod is the typed discriminator for the ack_method field of a
 // decision_acknowledged event (§8.12.2).
 type DecisionAckMethod string
@@ -323,10 +294,6 @@ func (p DecisionAcknowledgedPayload) Valid() bool {
 		p.AckMethod.Valid() && p.AckedAt != ""
 }
 
-// ---------------------------------------------------------------------------
-// §8.15.1 bead_sync_failed
-// ---------------------------------------------------------------------------
-
 // BeadSyncFailedPayload is the typed event payload for the bead_sync_failed
 // event (event-model.md §8.15.1, v0.6.4).
 //
@@ -361,10 +328,6 @@ func (p BeadSyncFailedPayload) Valid() bool {
 	return p.RunID != "" && p.Error != "" && p.Timestamp != ""
 }
 
-// ---------------------------------------------------------------------------
-// §8.BL2 bead_ledger_recovered
-// ---------------------------------------------------------------------------
-
 // BeadLedgerRecoveredPayload is the typed event payload for the
 // bead_ledger_recovered event (reconciliation/spec.md §8.BL2).
 //
@@ -392,10 +355,6 @@ type BeadLedgerRecoveredPayload struct {
 func (p BeadLedgerRecoveredPayload) Valid() bool {
 	return p.RunID != "" && p.Timestamp != ""
 }
-
-// ---------------------------------------------------------------------------
-// §8.BL2 bead_ledger_corrupt
-// ---------------------------------------------------------------------------
 
 // BeadLedgerCorruptPayload is the typed event payload for the
 // bead_ledger_corrupt event (reconciliation/spec.md §8.BL2).
@@ -428,10 +387,6 @@ type BeadLedgerCorruptPayload struct {
 func (p BeadLedgerCorruptPayload) Valid() bool {
 	return p.RunID != "" && p.Error != "" && p.Timestamp != ""
 }
-
-// ---------------------------------------------------------------------------
-// §8.15.2 bead_ledger_conflict_audit
-// ---------------------------------------------------------------------------
 
 // BeadLedgerConflict represents one conflict line from .beads/merge-conflicts.log
 // as read during a Cat-BL3 audit per BL-MRG-003.
@@ -487,10 +442,6 @@ type BeadLedgerConflictAuditPayload struct {
 func (p BeadLedgerConflictAuditPayload) Valid() bool {
 	return p.RunID != "" && p.Timestamp != ""
 }
-
-// ---------------------------------------------------------------------------
-// §8.15.3 orphaned_child_bead
-// ---------------------------------------------------------------------------
 
 // OrphanedChildBeadPayload is the typed event payload for the
 // orphaned_child_bead event (reconciliation/spec.md §8.BL1, v0.4.7).

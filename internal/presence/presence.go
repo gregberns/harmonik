@@ -157,7 +157,6 @@ func IsOffline(r Record) bool {
 func ComputeRegistry(eventsPath string) map[string]Record {
 	var zeroID core.EventID
 	byAgent := make(map[string]Record)
-	// lastActivity tracks the most recent agent_message.from timestamp per agent.
 	lastActivity := make(map[string]time.Time)
 
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
@@ -174,10 +173,6 @@ func ComputeRegistry(eventsPath string) map[string]Record {
 			if parseErr != nil {
 				continue
 			}
-			// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
-			// Carry forward SessionID from the previous record when the new beat omits it
-			// (e.g. recv-refresh beats never carry a session_id) so we don't lose the
-			// session binding established by the last explicit join/send beat.
 			prev := byAgent[p.Agent]
 			sessionID := p.SessionID
 			if sessionID == "" {
@@ -188,7 +183,6 @@ func ComputeRegistry(eventsPath string) map[string]Record {
 				Status:    string(p.Status),
 				LastSeen:  lastSeen,
 				SessionID: sessionID,
-				// EffectiveLastSeen filled in post-scan pass below.
 			}
 		case "agent_message":
 			var p core.AgentMessagePayload
@@ -202,11 +196,9 @@ func ComputeRegistry(eventsPath string) map[string]Record {
 				lastActivity[p.From] = ev.TimestampWall
 			}
 		default:
-			// Every other event type says nothing about agent presence.
 		}
 	}
 
-	// Post-scan: compute EffectiveLastSeen for agents with an explicit presence beat.
 	for agent, rec := range byAgent {
 		effective := rec.LastSeen
 		if act := lastActivity[agent]; act.After(effective) {
@@ -216,10 +208,6 @@ func ComputeRegistry(eventsPath string) map[string]Record {
 		byAgent[agent] = rec
 	}
 
-	// Synthesize entries for send-only agents — agents that appear only as senders
-	// in agent_message events but never emitted an explicit agent_presence beat.
-	// agent_message is F-class (fsync'd), so these entries survive daemon crashes
-	// even when the O-class implicit refresh beats were not flushed to disk (hk-nf111).
 	for agent, act := range lastActivity {
 		if _, known := byAgent[agent]; known {
 			continue // already covered above

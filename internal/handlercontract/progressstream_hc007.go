@@ -1,9 +1,5 @@
 package handlercontract
 
-// progressStream — per-bead helper prefix for test helpers in
-// progressstream_hc007_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.7).
-
 // ProgressMsgType is the string discriminator field ("type") carried in every
 // NDJSON-framed progress-stream message emitted by a handler subprocess.
 //
@@ -110,10 +106,6 @@ const (
 //
 // Normative value: 1 MiB (specs/handler-contract.md §4.2.HC-007a).
 const NDJSONMaxLineLenBytes = 1 << 20 // 1 MiB
-
-// Sub-reason string constants for progress-stream framing failures (§4.2.HC-007b,
-// §8.7).  These are the literal sub_reason field values placed in the
-// agent_failed payload when the watcher detects a framing violation.
 
 // NDJSONLineTooLongSubReason is the sub_reason value the watcher MUST use when
 // a progress-stream line exceeds NDJSONMaxLineLenBytes.

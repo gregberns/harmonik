@@ -12,24 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// restartnow.go — the DEAD-SIMPLE restart-now / ping path (hk-5da7).
-//
-// Operator design (authoritative): restart-now must be "the session id is
-// verified, and you push the /clear and the agent brief command into the
-// context, and be done." This replaces the elaborate marker → watcher-poll →
-// nonce-poll → cycle state machine (RunOnDemand + runOnDemandCycleTail + the
-// .restart-now marker) that was the source of the silent no-op bug: the CLI
-// wrote a marker under os.Getwd()'s .harmonik/keeper while the watcher polled a
-// DIFFERENT fixed project dir, so the marker landed where nobody looked —
-// "marker written", exit 0, nothing ever happened.
-//
-// The new path runs SYNCHRONOUSLY in the `harmonik keeper restart-now` process
-// itself: resolve the pane, verify the session id, ONE freshness check (handoff
-// present and not stale), inject an ACK line (so the agent can verify receipt),
-// then inject /clear and agent brief. Every step logs at INFO; any failure
-// returns an error so the CLI exits non-zero and the reason is in the log. A
-// silent no-op is impossible.
-
 // RestartNowInjector is the minimal injection surface RestartNow/Ping need.
 // Production wires keeper.InjectText. Tests substitute a spy. Each call submits
 // the text (via bracketed paste + Enter) into the tmux pane.
@@ -105,16 +87,11 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	log := slog.With("agent", cfg.AgentName, "op", "restart-now", "nonce", nonce)
 	log.InfoContext(ctx, "keeper: restart-now: request received")
 
-	// Step 1: a pane is mandatory — without it there is nothing to drive.
 	if cfg.TmuxTarget == "" {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "no_tmux_target")
 		return fmt.Errorf("keeper: restart-now: no tmux target resolved for agent %q", cfg.AgentName)
 	}
 
-	// Step 2: verify the session id (the gauge .ctx, overlaid with the
-	// authoritative .sid channel). The id must be present and a trusted primary
-	// (lowercase UUIDv4) — a daemon UUIDv7 or an absent id means we are not
-	// looking at a real interactive captain/crew session, so refuse.
 	cf, _, ctxErr := ReadCtxFile(cfg.ProjectDir, cfg.AgentName)
 	if ctxErr != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "no_gauge", "err", ctxErr)
@@ -127,60 +104,32 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	}
 	log.InfoContext(ctx, "keeper: restart-now: sid verified", "sid", sid)
 
-	// Step 3: ONE freshness check — the handoff must exist and not be stale
-	// (older than the request). This is the single minimal safety gate the
-	// operator kept: never /clear when HANDOFF-<agent>.md is missing or predates
-	// the restart request, or we would resume from a stale/absent handoff.
 	if err := checkHandoffFreshness(ctx, cfg, requestedAt, log); err != nil {
 		return err
 	}
 
-	// Step 3b: refuse to restart over in-flight queue work unless forced.
-	//
-	// The auto cycle has always deferred here (Gate 5, stepIdleGaugeTick), but
-	// restart-now consulted no gate ladder at all — so the operator-driven path
-	// would /clear straight over a live run. That cancels the crew's in-flight
-	// tool work, which is the first link in the hk-bl2k6 orphan chain: the
-	// killed run's descendants are not in a killable process group and get
-	// reparented to init.
-	//
-	// Ordered AFTER the freshness check and BEFORE the first inject, so a
-	// refusal injects NOTHING into the pane — the agent's context is untouched.
 	if err := checkInFlightDispatch(ctx, cfg, log); err != nil {
 		return err
 	}
 
-	// Step 4: inject the ACK line FIRST so the agent can verify receipt before
-	// the /clear wipes its context. A failure here is load-bearing: if we can't
-	// reach the pane, fail loudly rather than silently /clear into the void.
-	// Routed through cfg.Inject (same surface as /clear and agent brief) so
-	// the whole sequence is one injectable seam.
 	if err := inject(ctx, cfg.TmuxTarget, AckLine(nonce, "restart")); err != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "ack_inject_failed", "err", err)
 		return fmt.Errorf("keeper: restart-now: inject ack: %w", err)
 	}
 	log.InfoContext(ctx, "keeper: restart-now: ack injected")
 
-	// Step 5: /clear.
 	if err := inject(ctx, cfg.TmuxTarget, "/clear"); err != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "clear_inject_failed", "err", err)
 		return fmt.Errorf("keeper: restart-now: inject /clear: %w", err)
 	}
 	log.InfoContext(ctx, "keeper: restart-now: /clear injected")
 
-	// Step 6: agent brief re-pins identity from soul.md (I1, provenance rule).
 	if err := inject(ctx, cfg.TmuxTarget, briefRestartCmd(cfg.AgentName, cfg.ProjectDir)); err != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "brief_inject_failed", "err", err)
 		return fmt.Errorf("keeper: restart-now: inject agent brief: %w", err)
 	}
 	log.InfoContext(ctx, "keeper: restart-now: agent brief injected; done")
 
-	// Step 7 (additive audit, SK-030): record a durable session_keeper_restart_now
-	// event carrying the nonce so the self-restart joins to its originating cycle
-	// in events.jsonl by nonce. Emitted AFTER the injected sequence, so it does not
-	// change the verify/ACK/clear ordering. Carry-for-audit: the nonce is never
-	// validated. Best-effort — a failed audit write must not fail a restart that
-	// already drove /clear+brief. Ping does not emit (nil Emitter).
 	if cfg.Emitter != nil {
 		payload, marshalErr := json.Marshal(core.SessionKeeperRestartNowPayload{
 			AgentName: cfg.AgentName,
@@ -196,10 +145,6 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	return nil
 }
 
-// checkHandoffFreshness is Step 3 of RestartNow: the handoff must EXIST and not
-// predate the request by more than HandoffFreshnessWindow. Returns a non-nil
-// error (the refusal) or nil to proceed. Extracted from RestartNow verbatim so
-// the function stays under the cyclop ceiling once Step 3b joined it.
 func checkHandoffFreshness(ctx context.Context, cfg RestartNowConfig, requestedAt time.Time, log *slog.Logger) error {
 	handoffPath := handoffFilePathForAgent(cfg.ProjectDir, cfg.AgentName)
 	hStat, statErr := os.Stat(handoffPath)
@@ -218,18 +163,6 @@ func checkHandoffFreshness(ctx context.Context, cfg RestartNowConfig, requestedA
 	return nil
 }
 
-// checkInFlightDispatch is Step 3b of RestartNow: refuse to restart over
-// in-flight queue work unless cfg.Force is set. Returns a non-nil error (the
-// refusal) or nil to proceed.
-//
-// The auto cycle has always deferred here (Gate 5, stepIdleGaugeTick), but
-// restart-now consulted no gate ladder at all — so the operator-driven path
-// would /clear straight over a live run. That cancels the crew's in-flight tool
-// work, which is the first link in the hk-bl2k6 orphan chain: the killed run's
-// descendants are not in a killable process group and get reparented to init.
-//
-// FAIL-CLOSED, matching HoldingDispatch's own contract: an unreadable marker
-// reads as holding. Refs: hk-bl2k6.
 func checkInFlightDispatch(ctx context.Context, cfg RestartNowConfig, log *slog.Logger) error {
 	if cfg.Force {
 		log.WarnContext(ctx, "keeper: restart-now: in-flight dispatch gate FORCED past", "agent", cfg.AgentName)
@@ -270,9 +203,6 @@ func Ping(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	return nil
 }
 
-// handoffFilePathForAgent returns the conventional handoff path
-// <projectDir>/HANDOFF-<agent>.md. Mirrors the default HandoffFilePath used by
-// the cycle core so restart-now and the auto cycle target the same file.
 func handoffFilePathForAgent(projectDir, agent string) string {
 	return fmt.Sprintf("%s/HANDOFF-%s.md", projectDir, agent)
 }

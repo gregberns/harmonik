@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// scopeTargetFixtureWrapper wraps a ScopeTarget for JSON round-trip tests.
 type scopeTargetFixtureWrapper struct {
 	Target ScopeTarget `json:"scope_target"`
 }
-
-// --- constructor / Valid tests ---
 
 func TestScopeTargetWildcard(t *testing.T) {
 	t.Parallel()
@@ -73,7 +70,6 @@ func TestScopeTargetList(t *testing.T) {
 		t.Errorf("IDs length = %d, want 3", len(st.IDs))
 	}
 
-	// reject empty list
 	_, err = ScopeTargetList([]string{})
 	if err == nil {
 		t.Error("ScopeTargetList([]) should return error")
@@ -83,7 +79,6 @@ func TestScopeTargetList(t *testing.T) {
 		t.Error("ScopeTargetList(nil) should return error")
 	}
 
-	// reject list with empty element
 	_, err = ScopeTargetList([]string{"role-a", "", "role-c"})
 	if err == nil {
 		t.Error("ScopeTargetList with empty element should return error")
@@ -180,8 +175,6 @@ func TestScopeTargetValidRejects(t *testing.T) {
 	}
 }
 
-// --- marshal tests ---
-
 func TestScopeTargetMarshalJSON(t *testing.T) {
 	t.Parallel()
 
@@ -239,8 +232,6 @@ func TestScopeTargetMarshalJSON(t *testing.T) {
 	})
 }
 
-// --- unmarshal tests ---
-
 func TestScopeTargetUnmarshalJSON(t *testing.T) {
 	t.Parallel()
 
@@ -250,7 +241,6 @@ func TestScopeTargetUnmarshalJSON(t *testing.T) {
 		want    ScopeTarget
 		wantErr bool
 	}{
-		// wildcard
 		{
 			name:  "wildcard bare string",
 			input: `{"scope_target":"*"}`,
@@ -367,8 +357,6 @@ func TestScopeTargetUnmarshalJSON(t *testing.T) {
 	}
 }
 
-// --- round-trip tests ---
-
 func TestScopeTargetRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -411,8 +399,6 @@ func TestScopeTargetRoundTrip(t *testing.T) {
 		}
 	}
 }
-
-// --- test helpers ---
 
 func mustScopeTargetPredicate(t *testing.T, nodeType string) ScopeTarget {
 	t.Helper()

@@ -85,8 +85,6 @@ func (g *EventIDGenerator) Next() (EventID, error) {
 	return EventID(candidate), nil
 }
 
-// uuidGT reports whether a is strictly greater than b when each is
-// interpreted as a 16-byte big-endian unsigned integer.
 func uuidGT(a, b uuid.UUID) bool {
 	for i := 0; i < 16; i++ {
 		if a[i] > b[i] {
@@ -99,9 +97,6 @@ func uuidGT(a, b uuid.UUID) bool {
 	return false // equal
 }
 
-// increment128 adds 1 to v treated as a 16-byte big-endian unsigned integer.
-// If v is the maximum value (all 0xFF), it wraps to zero; this is a degenerate
-// case that cannot occur in practice within a single process lifetime.
 func increment128(v uuid.UUID) uuid.UUID {
 	result := v
 	for i := 15; i >= 0; i-- {
@@ -109,7 +104,6 @@ func increment128(v uuid.UUID) uuid.UUID {
 		if result[i] != 0 {
 			break
 		}
-		// carry
 	}
 	return result
 }

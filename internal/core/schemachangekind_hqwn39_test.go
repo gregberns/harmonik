@@ -5,20 +5,11 @@ import (
 	"testing"
 )
 
-// schemachangekind_hqwn39_test.go — tests for the §6.4 breaking-change
-// classification table per EV-030.
-//
-// Spec ref: event-model.md §4.7 EV-030; §6.4 breaking-change table.
-// Bead ref: hk-hqwn.39.
-
-// wantBreaking is the expected IsBreaking() result for each of the nine §6.4
-// change-kind rows.
 var ev030ChangeKindFixtures = []struct {
 	kind       SchemaChangeKind
 	breaking   bool
 	obligation string
 }{
-	// Row 1: Add optional field → non-breaking.
 	{SchemaChangeAddOptionalField, false, "Accept; ignore unknown fields on older readers."},
 	// Row 2: Add required field → breaking.
 	{SchemaChangeAddRequiredField, true, "Older readers fail closed with typed error on missing field."},

@@ -1,40 +1,5 @@
 package daemon_test
 
-// dot_auto_status_hk_oo4_test.go — unit tests: auto_status FAIL-axis slice.
-//
-// # What this file proves
-//
-//  1. Parser: auto_status="true" on an agentic node parses to
-//     node.AutoStatus=true with no strict errors and no warnings.
-//
-//  2. Parser: auto_status="false" on an agentic node parses to
-//     node.AutoStatus=false (explicit default) with no strict errors.
-//
-//  3. Parser: auto_status="true" on a non-agentic node is retained with a v1
-//     WARNING and does not raise a strict error (WG-031 permissive-retain).
-//
-//  4. Engine (AR-006 mechanism-tag): runAutoStatusInspection on a directory
-//     without a go.mod returns pass=true (inspection skipped — non-Go project).
-//
-//  5. Engine: runAutoStatusInspection on a directory with a valid go.mod and
-//     valid Go code returns pass=true (inspection passes → caller uses SUCCESS).
-//
-//  6. Engine: runAutoStatusInspection on a directory with a go.mod and broken
-//     Go code returns pass=false, Outcome.Status=FAIL,
-//     Outcome.FailureClass=deterministic (inspection fails → FAIL emitted).
-//
-// # AR-006 compliance assertion (mechanism-tag)
-//
-// runAutoStatusInspection is a mechanism-tagged evaluation point
-// (AR-006, execution-model.md §4.2). It MUST NOT invoke an LLM. The
-// implementation satisfies this by executing only deterministic subprocess
-// calls (go build / go vet with exit-code evaluation) and no LLM API calls.
-// Tests 4-6 below exercise this path with no LLM dependency: they call the
-// function directly in the test process, which would immediately deadlock or
-// time out if any LLM call were attempted (no API key / no network in CI).
-//
-// Bead ref: hk-oo4. Spec refs: WG-053, AR-006.
-
 import (
 	"context"
 	"os"
@@ -46,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parser tests (hk-oo4 §1-3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestDotParser_AutoStatusTrue_Parsed verifies that auto_status="true" on an
 // agentic node parses to node.AutoStatus=true with no errors (hk-oo4 WG-053).
@@ -135,21 +96,10 @@ func TestDotParser_AutoStatus_WarnOnNonAgentic(t *testing.T) {
 	if !found {
 		t.Errorf("no warning mentions auto_status + agentic-only; warnings: %v", g.Warnings)
 	}
-	// Value is retained in the AST.
 	if len(g.Nodes) != 1 || !g.Nodes[0].AutoStatus {
 		t.Errorf("AutoStatus not retained on non-agentic node; node=%v", g.Nodes)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Engine tests — runAutoStatusInspection (hk-oo4 §4-6)
-//
-// AR-006 compliance: these tests call runAutoStatusInspection directly. The
-// function is mechanism-tagged and MUST NOT invoke an LLM — verified here by
-// the absence of any LLM API key or network call in the test binary. If the
-// implementation called an LLM the test would immediately fail (timeout /
-// missing credentials).
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAutoStatusInspection_NoGoMod_Pass verifies that a directory without a
 // go.mod passes inspection unconditionally (non-Go project skip, AR-006-clean).
@@ -157,7 +107,6 @@ func TestAutoStatusInspection_NoGoMod_Pass(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	// No go.mod present.
 
 	_, pass := daemon.ExportedRunAutoStatusInspection(context.Background(), dir)
 	if !pass {
@@ -172,7 +121,6 @@ func TestAutoStatusInspection_ValidGo_Pass(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Write a minimal valid Go module.
 	autoStatusWriteFile(t, dir, "go.mod", "module example.com/autostatustest\n\ngo 1.21\n")
 	autoStatusWriteFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
 
@@ -194,7 +142,6 @@ func TestAutoStatusInspection_BrokenGo_Fail(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Write a go.mod + a broken .go file that will not compile.
 	autoStatusWriteFile(t, dir, "go.mod", "module example.com/autostatustest\n\ngo 1.21\n")
 	autoStatusWriteFile(t, dir, "broken.go", "package main\n\nfunc main() { this is not valid go syntax }\n")
 
@@ -216,7 +163,6 @@ func TestAutoStatusInspection_BrokenGo_Fail(t *testing.T) {
 	}
 }
 
-// autoStatusWriteFile is a test helper that writes content to path relative to dir.
 func autoStatusWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)

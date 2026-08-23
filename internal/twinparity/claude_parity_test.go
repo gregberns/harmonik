@@ -37,10 +37,6 @@ import (
 	"time"
 )
 
-// claudeSampleEvents / claudeSampleWire locate the committed Claude-A reference
-// capture. wire.ndjson is the raw progress stream (== the twin's verbatim
-// --replay-path output); events.jsonl is the DURABLE reference event log with
-// the daemon-projected terminal triad.
 func claudeSampleWire(t *testing.T) string {
 	t.Helper()
 	return filepath.Join("..", "..", "testdata", "twin-parity", "claude", "happy-path-sample", "wire.ndjson")
@@ -51,14 +47,6 @@ func claudeSampleEvents(t *testing.T) string {
 	return filepath.Join("..", "..", "testdata", "twin-parity", "claude", "happy-path-sample", "events.jsonl")
 }
 
-// observableSpine is the ordered kind-sequence that a wire-layer twin capture
-// and the durable reference BOTH carry: agent_ready → outcome_emitted. It is the
-// non-vacuous spine for the twin-vs-reference comparison — the durable-only
-// kinds bead_closed / run_completed are synthesized by the daemon
-// (runexec + runbridge) and never appear on the wire, so asserting the full
-// TerminalKinds spine against a wire twin would fail vacuously in locateSpine.
-// outcome_emitted anchors the TERMINAL OUTCOME (outcome_status + node_id are its
-// stable whitelisted fields).
 var observableSpine = []string{
 	"agent_ready",
 	"outcome_emitted",
@@ -82,28 +70,14 @@ func TestClaudeParityGate(t *testing.T) {
 		t.Fatalf("empty stream(s): twin=%d reference=%d events", len(twin.Events), len(reference.Events))
 	}
 
-	// (1) Ordered kind-sequence + terminal outcome: the twin replay and the
-	// reference capture agree on agent_ready → outcome_emitted, with
-	// outcome_emitted's stable fields (outcome_status, node_id) equal.
 	t.Run("kind-sequence-and-terminal-outcome", func(t *testing.T) {
 		AssertStreamEquivalent(t, twin, reference, EquivOptions{Kinds: observableSpine})
 	})
 
-	// (2) Durable terminal triad: the reference capture is spine-complete on the
-	// full TerminalKinds (outcome_emitted → bead_closed → run_completed). This
-	// pins the durable terminal outcome the wire twin cannot itself carry.
 	t.Run("durable-terminal-triad", func(t *testing.T) {
 		AssertStreamEquivalent(t, reference, reference, EquivOptions{})
 	})
 
-	// (3) Hook/causal timing within tolerance: the durable reference's causal
-	// edges (agent_ready→outcome, outcome→bead-close, bead-close→run-complete)
-	// resolve and fall within tolerance. NOTE: timing is asserted over the
-	// DURABLE reference only — the wire twin carries no envelope timestamps
-	// (meta.yaml: the wire tap carries none), so a meaningful twin-vs-reference
-	// latency comparison awaits a real daemon-projected durable twin log
-	// (deferred with WS3-Claude-B's light-proof). This still bites: it fails if
-	// the reference drifts to drop a causal endpoint.
 	t.Run("hook-timing-within-tolerance", func(t *testing.T) {
 		AssertTimingWithinTolerance(t, reference, reference, DefaultTimingEdges, time.Second)
 	})
@@ -120,9 +94,6 @@ func TestClaudeParityGateBitesOnDrift(t *testing.T) {
 		t.Fatalf("LoadStream(reference durable events): %v", err)
 	}
 
-	// Drift A — terminal-outcome flip: a twin whose outcome_emitted reports
-	// "failure" where the reference reports "success". The gate must diverge on
-	// the outcome_status field.
 	t.Run("terminal-outcome-drift", func(t *testing.T) {
 		driftTwin, err := LoadStreamLines([]string{
 			`{"event_type":"agent_ready","claude_session_id":"44444444-4444-4444-4444-444444444444"}`,
@@ -146,9 +117,6 @@ func TestClaudeParityGateBitesOnDrift(t *testing.T) {
 		}
 	})
 
-	// Drift B — dropped terminal kind: a twin whose replay is missing
-	// outcome_emitted entirely. The gate must diverge because the spine is not a
-	// subsequence of the (vacuous) twin.
 	t.Run("dropped-terminal-kind-drift", func(t *testing.T) {
 		driftTwin, err := LoadStreamLines([]string{
 			`{"event_type":"agent_ready","claude_session_id":"44444444-4444-4444-4444-444444444444"}`,

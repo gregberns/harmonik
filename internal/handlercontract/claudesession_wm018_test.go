@@ -8,21 +8,12 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// claudesessionFixture builds a JSON string that mimics `claude -p ...
-// --output-format json` output for test purposes.
-//
-// Helper prefix: claudesessionFixture (bead hk-7om2q.18; distinct from other
-// handlercontract helper prefixes).
 func claudesessionFixtureJSON(sessionID string) string {
 	if sessionID == "" {
 		return `{"result":"done","cost_usd":0.001,"duration_ms":1234}`
 	}
 	return `{"session_id":"` + sessionID + `","result":"done","cost_usd":0.001,"duration_ms":1234}`
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ParseClaudeSessionID happy path
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestParseClaudeSessionID_ExtractsSessionID verifies that a well-formed
 // claude --output-format json payload returns the correct session_id string.
@@ -64,10 +55,6 @@ func TestParseClaudeSessionID_AdditionalFieldsIgnored(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ParseClaudeSessionID missing session_id
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestParseClaudeSessionID_MissingSessionID verifies that absent session_id
 // returns ErrMissingClaudeSessionID (wrapping ErrStructural).
 func TestParseClaudeSessionID_MissingSessionID(t *testing.T) {
@@ -104,10 +91,6 @@ func TestParseClaudeSessionID_EmptySessionIDField(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ParseClaudeSessionID parse errors
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestParseClaudeSessionID_MalformedJSON verifies that invalid JSON returns a
 // wrapped ErrStructural.
 func TestParseClaudeSessionID_MalformedJSON(t *testing.T) {
@@ -137,10 +120,6 @@ func TestParseClaudeSessionID_EmptyInput(t *testing.T) {
 		t.Errorf("ParseClaudeSessionID: errors.Is(err, ErrStructural) = false; got %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ErrMissingClaudeSessionID sentinel checks
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestErrMissingClaudeSessionID_WrapsErrStructural verifies the sentinel error
 // chain at package level (independent of ParseClaudeSessionID).

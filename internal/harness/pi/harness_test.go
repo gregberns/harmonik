@@ -1,18 +1,5 @@
 package pi_test
 
-// piharness_test.go — PiHarness + pijsonlparser unit tests (codename:pilot, PI-010/012/013).
-//
-// Coverage (PI-100 MUST):
-//   - parsePiNDJSONEvent: session header, agent_end, unknown type, malformed line.
-//   - piSessionIDInterceptor: fires callback on first session header; passthrough
-//     bytes unchanged; first non-empty id wins; no callback on non-session lines.
-//   - PiHarness constant methods: AgentType=pi, SessionIDPolicy=Captured,
-//     Completion=ProcessExit.
-//   - DetectReady HC-041: false for launch_initiated, true for agent_ready, false
-//     for unrelated events.
-//   - Seed/Retask: no-op (nil error, no side effects).
-//   - Teardown: nil session is a no-op; live session is Kill()ed.
-
 import (
 	"context"
 	"io"
@@ -23,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// parsePiNDJSONEvent tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestParsePiNDJSONEvent_SessionHeader(t *testing.T) {
 	t.Parallel()
@@ -96,10 +79,6 @@ func TestParsePiNDJSONEvent_EmptyLine(t *testing.T) {
 		t.Error("expected error for empty line; got nil")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// piSessionIDInterceptor tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestPiSessionIDInterceptor_FiresOnSessionHeader verifies the interceptor fires
 // the callback with the session id from the first {"type":"session",...} line.
@@ -185,10 +164,6 @@ func TestPiSessionIDInterceptor_NoSessionLine(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PiHarness constant-method tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestPiHarness_AgentType(t *testing.T) {
 	t.Parallel()
 
@@ -215,10 +190,6 @@ func TestPiHarness_Completion(t *testing.T) {
 		t.Errorf("Completion = %v; want CompletionProcessExit", got)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DetectReady HC-041 tests (PI-013)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestPiHarness_DetectReady_LaunchInitiated verifies DetectReady returns false
 // for launch_initiated — HC-041 hard rule; MUST NOT return true for this event.
@@ -256,10 +227,6 @@ func TestPiHarness_DetectReady_OtherEvent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Seed / Retask no-op tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestPiHarness_Seed_NoOp(t *testing.T) {
 	t.Parallel()
 
@@ -278,10 +245,6 @@ func TestPiHarness_Retask_NoOp(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Teardown tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	t.Parallel()
 
@@ -291,8 +254,6 @@ func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	}
 }
 
-// killTrackingSession is a minimal handlercontract.Session implementation that
-// records Kill calls for Teardown verification (PI-100).
 type killTrackingSession struct {
 	killCalled int
 }
@@ -320,10 +281,6 @@ func TestPiHarness_Teardown_LiveSession_Kill(t *testing.T) {
 		t.Errorf("Kill called %d times; want 1 (Teardown must Kill live session)", sess.killCalled)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PI-014: agent_end watcher tests (hk-mkcwg)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestPiSessionIDInterceptor_AgentEndCb_Fires verifies agentEndCb fires on the
 // first {"type":"agent_end",...} line, even when no session line appears.
@@ -403,25 +360,6 @@ func TestPiSessionIDInterceptor_NilAgentEndCb_Safe(t *testing.T) {
 		t.Fatalf("ReadAll: %v (nil agentEndCb must not panic)", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PI-014 retry guard: agent_end with willRetry is NOT terminal (hk-z9nli)
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// Pi stamps willRetry on every agent_end and emits one before each retry:
-//
-//	{"type":"agent_end", ..., "willRetry":true}
-//	{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}
-//
-// Ending the session there kills pi during the backoff, and the daemon then
-// scores the SIGTERM as a clean exit. The flag is the whole signal, so these
-// tests pin both halves: quiet while a retry is coming, still fired on the
-// event that really ends the run.
-//
-// The assertions run through the interceptor rather than a parse seam, because
-// what matters is whether the callback fires, not whether a struct field
-// decoded. Fixtures follow the wire: pi 0.80.3 declares willRetry non-optional
-// and emits auto_retry_end after the last attempt.
 
 // TestPiSessionIDInterceptor_AgentEndCb_WillRetry covers the flag in all three
 // spellings pi can produce, plus the absent case an older build might send.

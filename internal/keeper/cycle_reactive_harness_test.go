@@ -1,32 +1,5 @@
 package keeper_test
 
-// cycle_reactive_harness_test.go — an OFFLINE, DETERMINISTIC reactive fake for
-// the session keeper's clear->restart cycle.
-//
-// The existing cycle tests (e.g. TestCycler_HappyPath) FAKE the loop: the spy
-// InjectFn merely records "/clear" as a string, and the post-clear session_id
-// flip is faked on a fixed gauge call-count (gaugeReturnsNewSIDAfter) — nothing
-// actually REACTS to the injected command. That leaves a gap: the test never
-// proves the session-id flip is CAUSED by /clear.
-//
-// reactiveSession closes that loop. It holds MUTABLE gauge state (a CtxFile read
-// back through the Cycler's ReadGaugeFn) plus a HANDOFF body, and its InjectFn
-// pattern-matches the injected text and mutates that state the way a real claude
-// session would:
-//
-//   - text contains "/session-handoff" -> extract the verbatim nonce
-//     "<!-- KEEPER:<cycleID> -->" from the injected string and WRITE that exact
-//     line into the HANDOFF body (this is what real claude's handoff skill does).
-//     Toggleable via writeNonce: when false, the nonce is never written, so the
-//     cycle's nonce poll times out and the cycle ABORTS before any /clear.
-//   - text contains "/clear" -> rotate the gauge SessionID from the seed S1 to a
-//     fresh UUIDv4 S2 (distinct, NOT a UUIDv7 — so waitForNewSessionID accepts
-//     it) and drop pct/tokens below warn. Toggleable via flipOnClear.
-//   - text contains "agent brief" -> keep S2, steady low pct (T8/I1).
-//
-// ALL shared scenario helpers live in THIS ONE file so later scenario authors
-// reuse them without redeclare collisions when the suite fans out.
-
 import (
 	"context"
 	"regexp"
@@ -36,13 +9,8 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// nonceLineRE extracts the verbatim keeper nonce line from injected text.
-// Must match the production format emitted by nonceMarker(): "<!-- KEEPER:<id> -->".
 var nonceLineRE = regexp.MustCompile(`<!-- KEEPER:[^>]*-->`)
 
-// reactiveSession is an in-process fake of a claude session that REACTS to
-// injected commands by mutating shared gauge + handoff state. It is the seam
-// that makes the clear->session-id-flip causal rather than time-faked.
 type reactiveSession struct {
 	mu sync.Mutex
 
@@ -94,10 +62,6 @@ type reactiveSession struct {
 	sidFlippedBeforeClear bool
 }
 
-// newReactiveSession seeds the harness over the act threshold on S1.
-// seedSID should be the pre-clear session id (UUIDv4 or any non-empty string);
-// clearedSID MUST be a UUIDv4 (version nibble 4) so waitForNewSessionID accepts
-// it (it rejects UUIDv7 daemon-spawned ids).
 func newReactiveSession(seedSID, clearedSID string, writeNonce, flipOnClear bool) *reactiveSession {
 	return &reactiveSession{
 		gauge: keeper.CtxFile{
@@ -113,8 +77,6 @@ func newReactiveSession(seedSID, clearedSID string, writeNonce, flipOnClear bool
 	}
 }
 
-// inject is the reactive InjectFn wired into CyclerConfig.InjectFn. It records
-// the command and mutates shared state to mimic a real session's response.
 func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -123,24 +85,17 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 
 	switch {
 	case containsSubstr(text, "/session-handoff"):
-		// Real claude's handoff skill writes the verbatim nonce line into the
-		// handoff file. Extract it from the injected directive and persist it.
 		if rs.writeNonce {
 			if m := nonceLineRE.FindString(text); m != "" {
 				rs.handoffBody = "# Handoff (reactive fake)\n\n" + m + "\n\nrestored context.\n"
 			}
 		} else if rs.writeHandoffNoNonce {
-			// Fresh handoff written, but WITHOUT the nonce line (hk-fi78d).
 			rs.handoffBody = "# Handoff (reactive fake)\n\nrestored context — NO nonce line echoed.\n"
 		}
 	case text == "/clear":
 		rs.clearedSeen = true
 		if rs.flipOnClear && rs.gauge.SessionID != rs.clearedSID {
 			if rs.clearDelay > 0 {
-				// SLOW /clear: rotate the SID on a background timer instead of
-				// synchronously, modeling a busy pane / slow re-mint that outlasts a
-				// single poll window (hk-vdqe2). Idempotent against repeated
-				// defensive re-injects of /clear — only one timer is ever armed.
 				if !rs.clearDelayScheduled {
 					rs.clearDelayScheduled = true
 					delay := rs.clearDelay
@@ -159,30 +114,20 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 					}()
 				}
 			} else {
-				// Rotate to the post-clear session and drop context below warn —
-				// this is the CAUSAL effect the real /clear has on the gauge.
 				rs.gauge.SessionID = rs.clearedSID
 				rs.gauge.Pct = 8.0
 				rs.gauge.Tokens = 12_000
 			}
 		}
 	case containsSubstr(text, "agent brief"):
-		// agent brief re-pins identity from soul.md (T8/I1). Keeps the
-		// post-clear session and steady-low context — no gauge change needed.
 	}
 
-	// Causality witness: if THIS command's reaction changed the SID away from the
-	// seed for the first time, record the command verbatim. The full-cycle test
-	// asserts the cause is exactly "/clear".
 	if rs.sidFlipCause == "" && rs.gauge.SessionID != sidBefore && rs.gauge.SessionID != rs.seedSID {
 		rs.sidFlipCause = text
 	}
 	return nil
 }
 
-// readGauge is the reactive ReadGaugeFn. It returns a COPY of the live gauge and
-// records a causality check: if a non-seed SID is observed before /clear was
-// injected, that is a violation (the flip must be caused by /clear).
 func (rs *reactiveSession) readGauge(_ /*projectDir*/, _ /*agent*/ string) (*keeper.CtxFile, time.Time, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -193,33 +138,12 @@ func (rs *reactiveSession) readGauge(_ /*projectDir*/, _ /*agent*/ string) (*kee
 	return &cp, time.Now(), nil
 }
 
-// readHandoff is the reactive ReadHandoff. Returns the current handoff body;
-// before the /session-handoff reaction writes the nonce, the body is empty.
 func (rs *reactiveSession) readHandoff(_ /*path*/ string) (string, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.handoffBody, nil
 }
 
-// handoffModTime is the reactive handoff freshness read. It reports a fresh mtime
-// (now) whenever a handoff body has been written, and "absent" while empty. This
-// mirrors os.Stat on a real handoff file and lets the ack-timeout recovery path
-// (hk-fi78d) distinguish "agent wrote a fresh handoff" from "nothing written".
-//
-// THIS HARNESS CANNOT BE COMBINED WITH AN INJECTED CLOCK. The time returned
-// here is REAL. The Cycler compares it against handoffInjectedAt, which comes
-// from CyclerConfig.Clock. Wire a fake clock in and the two stop being
-// commensurate: an anchor stamped in 2023 is before any real mod-time, so
-// mt.Before(anchor) is false and EVERY body reads as FRESH. That is the
-// dangerous direction — the cycle takes the recovery path and /clear lands over
-// a handoff the agent never wrote. Nothing is broken today only because the one
-// scenario that runs a fake clock (TestScenario_LateHandoff300sFakeClock_Aborts_qji8g)
-// writes no body and returns on the empty-content guard before the compare.
-//
-// A scenario that needs BOTH a fake clock and a handoff body must make this
-// return a time drawn from the same clock, or use a real file whose mod-time
-// the filesystem stamps (see TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts,
-// which stays on real time throughout for exactly this reason). Refs: hk-3ty39.
 func (rs *reactiveSession) handoffModTime(_ /*path*/ string) (time.Time, bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -237,11 +161,6 @@ func (rs *reactiveSession) writeMarkedHandoff(cycleID string) {
 
 func nonceMarkerForTest(cycleID string) string { return "<!-- KEEPER:" + cycleID + " -->" }
 
-// truncate is the reactive TruncateHandoffFn. It mirrors production
-// (defaultScrubHandoffNonces): strip the keeper's own "<!-- KEEPER:... -->"
-// marker(s) so a stale nonce cannot pre-satisfy the poll, and PRESERVE the rest
-// of the body. It used to wipe the whole body — the very defect hk-4tjyj fixed —
-// which would let a scenario test pass while production destroyed real handoffs.
 func (rs *reactiveSession) truncate(_ /*path*/ string) error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -249,7 +168,6 @@ func (rs *reactiveSession) truncate(_ /*path*/ string) error {
 	return nil
 }
 
-// snapshotInjected returns a copy of the injected-command sequence.
 func (rs *reactiveSession) snapshotInjected() []string {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -258,40 +176,30 @@ func (rs *reactiveSession) snapshotInjected() []string {
 	return out
 }
 
-// liveSID returns the current gauge session id.
 func (rs *reactiveSession) liveSID() string {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.gauge.SessionID
 }
 
-// sawClear reports whether "/clear" was ever injected.
 func (rs *reactiveSession) sawClear() bool {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.clearedSeen
 }
 
-// sidViolatedCausality reports whether a non-seed SID was ever observed in the
-// gauge before /clear was injected (i.e. the flip was NOT caused by /clear).
 func (rs *reactiveSession) sidViolatedCausality() bool {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.sidFlippedBeforeClear
 }
 
-// flipCause returns the injected command whose reaction first rotated the gauge
-// SID away from the seed. Empty if the SID never changed.
 func (rs *reactiveSession) flipCause() string {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.sidFlipCause
 }
 
-// withClearDelay arms a SLOW /clear reaction: the SID rotation happens on a
-// background timer d after "/clear" is injected instead of synchronously.
-// Must be called before the cycle runs (single-goroutine setup, no lock needed
-// beyond what inject()/readGauge() already take internally). Refs: hk-vdqe2.
 func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -299,17 +207,6 @@ func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
 	return rs
 }
 
-// newReactiveCycler builds a Cycler wired to drive rs. The seed CtxFile passed
-// to MaybeRun should be rs.gauge (over the act threshold on S1). ClearSettle /
-// HandoffTimeout / PollInterval are shrunk for fast deterministic unit runs.
-// ClearConfirmBackstop/Retries default to a small multiple of clearSettle (3x /
-// 5 attempts) so the hk-vdqe2 hard-gate retry loop stays fast in scenarios that
-// never confirm — see newReactiveCyclerWithBackstop for scenarios that need an
-// explicit, larger backstop (e.g. a delayed-flip race).
-//
-// managedSet is set to true by managed-session port so the test can assert the
-// final binding == S2 without touching disk (mirrors the IdentityPinned test's
-// capture-the-arg idiom).
 func newReactiveCycler(
 	agent, projectDir, cycleID string,
 	rs *reactiveSession,
@@ -324,10 +221,6 @@ func newReactiveCycler(
 	)
 }
 
-// newReactiveCyclerWithBackstop is newReactiveCycler with explicit control over
-// the hk-vdqe2 hard-gate retry loop (ClearConfirmBackstop / ClearConfirmRetries),
-// for scenarios that need a backstop wider than the default 3x-clearSettle
-// (e.g. proving the gate survives a delayed SID flip via withClearDelay).
 func newReactiveCyclerWithBackstop(
 	agent, projectDir, cycleID string,
 	rs *reactiveSession,
@@ -356,10 +249,6 @@ func newReactiveCyclerWithBackstop(
 		PollInterval:         5 * time.Millisecond,
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
-
-		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
-		// lands on the first AwaitModelDone detection tick, preserving the
-		// pre-T8 clear-right-after-confirm scenario cadence.
 	}
 	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}

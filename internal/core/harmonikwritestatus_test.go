@@ -138,7 +138,6 @@ func TestHarmonikWriteStatusMarshalText(t *testing.T) {
 		t.Errorf("MarshalText = %q, want %q", string(got), "open")
 	}
 
-	// valid values round-trip correctly
 	validCases := []struct {
 		status HarmonikWriteStatus
 		want   string
@@ -160,7 +159,6 @@ func TestHarmonikWriteStatusMarshalText(t *testing.T) {
 		}
 	}
 
-	// bogus path: invalid value must error
 	if _, err := HarmonikWriteStatus("bogus").MarshalText(); err == nil {
 		t.Error("MarshalText accepted invalid value")
 	}

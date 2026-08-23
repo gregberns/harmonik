@@ -10,15 +10,6 @@ import (
 	"testing"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Fake tmux binary helpers (osAdapter prefix per bead hk-gql20.7)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// osAdapterFixtureWriteFakeTmux writes a shell script at binDir/tmux that,
-// when invoked, prints outputLines to stdout and exits with exitCode. The
-// caller must prepend binDir to PATH before running tests.
-//
-// The script is used to test OSAdapter methods without a real tmux server.
 func osAdapterFixtureWriteFakeTmux(t *testing.T, binDir string, outputLines []string, exitCode int) {
 	t.Helper()
 
@@ -36,23 +27,15 @@ func osAdapterFixtureWriteFakeTmux(t *testing.T, binDir string, outputLines []st
 	}
 }
 
-// osAdapterFixtureBinDir creates a temp directory for the fake tmux binary and
-// returns its path. The caller owns prepending this to PATH.
 func osAdapterFixtureBinDir(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
 }
 
-// osAdapterFixtureWithFakeTmux prepends binDir to PATH for the duration of the
-// test, so exec.CommandContext calls in OSAdapter find the fake tmux.
 func osAdapterFixtureWithFakeTmux(t *testing.T, binDir string) {
 	t.Helper()
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// parseTmuxMajorVersion unit tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_ParseTmuxMajorVersion exercises the version-string parser used
 // by ProbeTmux. Happy path and edge cases from real tmux output formats.
@@ -103,10 +86,6 @@ func TestOSAdapter_ParseTmuxMajorVersion(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// buildNewWindowArgs unit tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_BuildNewWindowArgs verifies the tmux new-window argument
 // construction for the common cases: env injection, cwd, and command.
 func TestOSAdapter_BuildNewWindowArgs(t *testing.T) {
@@ -124,7 +103,6 @@ func TestOSAdapter_BuildNewWindowArgs(t *testing.T) {
 		}
 		args := buildNewWindowArgs(params)
 
-		// Verify required structural flags.
 		if !sliceContains(args, "-d") {
 			t.Error("buildNewWindowArgs: missing -d (detached) flag")
 		}
@@ -160,7 +138,6 @@ func TestOSAdapter_BuildNewWindowArgs(t *testing.T) {
 		}
 		args := buildNewWindowArgs(params)
 
-		// -c and -- should be absent when WorkDir and Command are empty.
 		if sliceContains(args, "-c") {
 			t.Error("buildNewWindowArgs: unexpected -c when WorkDir is empty")
 		}
@@ -179,7 +156,6 @@ func TestOSAdapter_BuildNewWindowArgs(t *testing.T) {
 		}
 		args := buildNewWindowArgs(params)
 
-		// Each env var must be preceded by -e.
 		for _, kv := range params.Env {
 			if !sliceContainsPair(args, "-e", kv) {
 				t.Errorf("buildNewWindowArgs: missing -e %s, got %v", kv, args)
@@ -188,15 +164,10 @@ func TestOSAdapter_BuildNewWindowArgs(t *testing.T) {
 	})
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.ProbeTmux tests (fake binary on PATH)
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_ProbeTmux_MissingBinary verifies that ProbeTmux returns
 // ErrTmuxMissing when tmux is not on PATH.
 // NOTE: uses t.Setenv — cannot be parallel.
 func TestOSAdapter_ProbeTmux_MissingBinary(t *testing.T) {
-	// Override PATH with a directory that contains no tmux binary.
 	emptyBinDir := osAdapterFixtureBinDir(t)
 	t.Setenv("PATH", emptyBinDir)
 
@@ -261,10 +232,6 @@ func TestOSAdapter_ProbeTmux_NonZeroExit(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.ListSessions tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_ListSessions_HappyPath verifies that ListSessions returns
 // session names when fake tmux prints them.
 // NOTE: uses t.Setenv — cannot be parallel.
@@ -328,10 +295,6 @@ func TestOSAdapter_ListSessions_UnexpectedFailure(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.ListWindows tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_ListWindows_HappyPath verifies that ListWindows returns window
 // names when the fake tmux emits them.
 // NOTE: uses t.Setenv — cannot be parallel.
@@ -384,17 +347,12 @@ func TestOSAdapter_ListWindows_TmuxFailure(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.NewWindowIn tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_NewWindowIn_HappyPath verifies that NewWindowIn returns an
 // Outcome with a non-empty Handle, non-empty PaneID, and nil Err on fake tmux
 // success. The fake tmux prints "%27" (the pane ID captured via -P -F "#{pane_id}").
 // NOTE: uses t.Setenv — cannot be parallel.
 func TestOSAdapter_NewWindowIn_HappyPath(t *testing.T) {
 	binDir := osAdapterFixtureBinDir(t)
-	// Fake tmux prints the pane ID to stdout (the -P -F "#{pane_id}" output).
 	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"%27"}, 0)
 	osAdapterFixtureWithFakeTmux(t, binDir)
 
@@ -414,7 +372,6 @@ func TestOSAdapter_NewWindowIn_HappyPath(t *testing.T) {
 	if outcome.Handle != expectedHandle {
 		t.Errorf("NewWindowIn happy path: Handle = %q, want %q", outcome.Handle, expectedHandle)
 	}
-	// Verify the pane ID was captured atomically from the -P -F "#{pane_id}" output.
 	if outcome.PaneID != "%27" {
 		t.Errorf("NewWindowIn happy path: PaneID = %q, want %%27 (hk-aievp: atomic capture)", outcome.PaneID)
 	}
@@ -430,13 +387,10 @@ func TestOSAdapter_NewWindowIn_HappyPath(t *testing.T) {
 // NOTE: uses t.Setenv — cannot be parallel.
 func TestOSAdapter_NewWindowIn_PaneIDCapturedAtomically(t *testing.T) {
 	binDir := osAdapterFixtureBinDir(t)
-	// Simulate the real tmux output: pane ID on its own line.
 	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"%42"}, 0)
 	osAdapterFixtureWithFakeTmux(t, binDir)
 
 	a := OSAdapter{}
-	// Window name is a slash-bearing filesystem path — the production scenario
-	// that caused the stale-pane misdirect (hk-aievp).
 	outcome := a.NewWindowIn(context.Background(), NewWindowIn{
 		Session:    "harmonik-proj",
 		WindowName: "/harmonik/worktrees/019e3d97-c2b7-7660-8827-36a079379cb0",
@@ -461,11 +415,9 @@ func TestOSAdapter_BuildNewWindowArgs_IncludesPrintFlag(t *testing.T) {
 	}
 	args := buildNewWindowArgs(params)
 
-	// -P must be present.
 	if !sliceContains(args, "-P") {
 		t.Errorf("buildNewWindowArgs: missing -P flag (required for atomic pane-ID capture, hk-aievp); got %v", args)
 	}
-	// -F "#{pane_id}" must be present as a pair.
 	if !sliceContainsPair(args, "-F", "#{pane_id}") {
 		t.Errorf("buildNewWindowArgs: missing -F #{pane_id} pair (required for atomic pane-ID capture, hk-aievp); got %v", args)
 	}
@@ -529,10 +481,6 @@ func TestOSAdapter_NewWindowIn_TmuxFailure(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.KillWindow tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_KillWindow_HappyPath verifies that KillWindow returns nil on
 // fake tmux success.
 // NOTE: uses t.Setenv — cannot be parallel.
@@ -594,10 +542,6 @@ func TestOSAdapter_KillWindow_TmuxFailure(t *testing.T) {
 		t.Errorf("KillWindow tmux-failure: tf.Op = %q, want %q", tf.Op, "kill-window")
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.WindowPanePID tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_WindowPanePID_HappyPath verifies that WindowPanePID returns
 // the PID reported by the fake tmux.
@@ -666,10 +610,6 @@ func TestOSAdapter_WindowPanePID_BadOutput(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// ErrTmuxFailure.Error tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_ErrTmuxFailureError verifies the Error() message format of
 // *ErrTmuxFailure, which must carry Op, ExitCode, and Stderr.
 func TestOSAdapter_ErrTmuxFailureError(t *testing.T) {
@@ -687,10 +627,6 @@ func TestOSAdapter_ErrTmuxFailureError(t *testing.T) {
 		t.Errorf("ErrTmuxFailure.Error: missing stderr in %q", msg)
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.LoadBuffer tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_LoadBuffer_HappyPath verifies that LoadBuffer returns nil when
 // the fake tmux exits 0.
@@ -747,7 +683,6 @@ func TestOSAdapter_LoadBuffer_InvalidBufferName(t *testing.T) {
 func TestOSAdapter_LoadBuffer_SyntheticSessionIDNotRejected(t *testing.T) {
 	t.Parallel()
 	a := OSAdapter{}
-	// Representative synthetic session ID after the hk-lckbv fix.
 	bufName := "harmonik-syntheticclaudesession20260528150405-task"
 	err := a.LoadBuffer(context.Background(), bufName, []byte("payload"))
 	if errors.Is(err, ErrStructural) {
@@ -773,10 +708,6 @@ func TestOSAdapter_LoadBuffer_TmuxFailure(t *testing.T) {
 		t.Errorf("LoadBuffer tmux-failure: tf.Op = %q, want %q", tf.Op, "load-buffer")
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.PasteBuffer tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_PasteBuffer_HappyPath verifies that PasteBuffer returns nil
 // when the fake tmux exits 0.
@@ -823,10 +754,6 @@ func TestOSAdapter_PasteBuffer_TmuxFailure(t *testing.T) {
 		t.Errorf("PasteBuffer tmux-failure: tf.Op = %q, want %q", tf.Op, "paste-buffer")
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// OSAdapter.SendKeysLiteral tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_SendKeysLiteral_HappyPath verifies that SendKeysLiteral returns
 // nil for a short, newline-free payload.
@@ -887,10 +814,6 @@ func TestOSAdapter_SendKeysLiteral_TmuxFailure(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// parseBufferNameComponents unit tests
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestParseBufferNameComponents verifies that parseBufferNameComponents
 // correctly extracts session-id and purpose from valid buffer names.
 func TestParseBufferNameComponents(t *testing.T) {
@@ -920,10 +843,6 @@ func TestParseBufferNameComponents(t *testing.T) {
 		})
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// bufferNameRe validation tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestBufferNameRe verifies the regex accepts valid names and rejects malformed ones.
 func TestBufferNameRe(t *testing.T) {
@@ -957,24 +876,14 @@ func TestBufferNameRe(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Interface compliance
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestOSAdapter_ImplementsAdapter is a compile-time check that OSAdapter satisfies
 // the Adapter interface. The variable is intentionally blank-assigned.
 func TestOSAdapter_ImplementsAdapter(t *testing.T) {
 	t.Parallel()
 
 	var _ Adapter = OSAdapter{}
-	// If OSAdapter does not implement Adapter, this file will not compile.
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Helper utilities
-// ──────────────────────────────────────────────────────────────────────────────
-
-// sliceContains reports whether s is present anywhere in slice.
 func sliceContains(slice []string, s string) bool {
 	for _, v := range slice {
 		if v == s {
@@ -984,8 +893,6 @@ func sliceContains(slice []string, s string) bool {
 	return false
 }
 
-// sliceContainsPair reports whether flag is immediately followed by value in
-// the slice (as in flag-value CLI argument pairs).
 func sliceContainsPair(slice []string, flag, value string) bool {
 	for i := 0; i+1 < len(slice); i++ {
 		if slice[i] == flag && slice[i+1] == value {
@@ -995,5 +902,4 @@ func sliceContainsPair(slice []string, flag, value string) bool {
 	return false
 }
 
-// Ensure the test helpers compile when unused by individual test functions.
 var _ = fmt.Sprintf

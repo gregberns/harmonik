@@ -1,58 +1,5 @@
 package eventbus_test
 
-// hc034_no_secret_in_event_log_test.go — end-to-end redaction sensor for HC-034.
-//
-// Spec ref: specs/handler-contract.md §4.7.HC-034; bead hk-8i31.41.
-//
-// HC-034 states: no secret value MAY appear in any persisted event record,
-// audit record, or session log as stored to disk.  Operator debugging of
-// secret-related failures MUST use redacted forms; full-secret access requires
-// filesystem-level privileges outside harmonik's control surface.
-//
-// # Scope
-//
-// This file covers the event-log (JSONL) persistence surface.  The session-log
-// surface is handler-specific and is tracked separately.  The JSONL file is the
-// only persisted output owned by the eventbus package; it is the primary
-// at-rest artifact in scope for HC-034.
-//
-// # What this file provides
-//
-//  1. TestHC034_SecretNamedFieldAbsentFromJSONL — HC-031 path: a payload field
-//     whose NAME matches the common-prefix regex MUST appear as "<redacted>" in
-//     the decoded JSONL payload, not as the original value.
-//
-//  2. TestHC034_SecretValuePatternAbsentFromJSONL — HC-032 path: a payload
-//     field whose VALUE matches a registered per-handler pattern MUST appear as
-//     "<redacted>" in the decoded JSONL payload, not as the original value.
-//
-//  3. TestHC034_BothHC031AndHC032SecretAbsentFromJSONL — composed path: a
-//     payload carrying both a secret-named field (HC-031) and a secret-valued
-//     field (HC-032) MUST have both values redacted in the JSONL output, with
-//     safe fields preserved unchanged.
-//
-//  4. TestHC034_SafeFieldsPreservedInJSONL — no over-redaction: a payload with
-//     only safe field names and values reaches the JSONL file verbatim.
-//
-//  5. TestHC034_EmitWithRunID_SecretAbsentFromJSONL — HC-031 path via
-//     EmitWithRunID: the run-stamped envelope path also redacts secret-named
-//     fields before JSONL append.
-//
-// # Helper prefix
-//
-// All package-level identifiers in this file use the hc034Fixture prefix per
-// implementer-protocol.md §Helper-prefix discipline.  The helper prefix is
-// derived from the bead ID (hk-8i31.41); "hc034" is the requirement tag.
-//
-// # Assertion strategy
-//
-// The JSONL payload is a JSON-encoded value nested inside the EV-001 envelope.
-// Go's json.Marshal HTML-escapes < and > by default, so the literal string
-// "<redacted>" round-trips as "<redacted>" in the raw bytes.
-// Tests decode the envelope and payload to compare values as Go strings so
-// that encoding artefacts do not produce false failures.  Raw-byte checks for
-// the original secret values are performed in addition to decoded checks.
-
 import (
 	"context"
 	"encoding/json"
@@ -69,43 +16,22 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hc034FixtureEventType is the synthetic event type used across HC-034 tests.
 const hc034FixtureEventType core.EventType = "test.hc034.v1"
 
-// hc034FixtureRunEventType is an F-class event used in EmitWithRunID tests.
-// "run_started" is F-class (§8.1) and carries a run_id stamp.
 const hc034FixtureRunEventType core.EventType = "run_started"
 
-// hc034FixtureAnthropicPattern is the compiled Anthropic API key shape.
-// Mirrors the pattern declared in redactionregistry_test.go (registryFixtureAnthropicPattern)
-// without cross-file import — test helpers are not importable across files.
 var hc034FixtureAnthropicPattern = regexp.MustCompile(`^sk-ant-[A-Za-z0-9_\-]{10,}$`)
 
-// hc034FixtureAnthropicKeyStub is a structural key stub matching the Anthropic
-// pattern shape.  Uses 'x' padding only per HC-034 compliance: the body MUST
-// NOT contain real credential material.
-//
-// Spec ref: specs/handler-contract.md §4.7.HC-034 — no real secret value in test fixtures.
 const hc034FixtureAnthropicKeyStub = "sk-ant-" +
 	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-// hc034FixtureRedactedFieldValue is a clearly-fake value used in HC-031
-// path tests (field-name redaction).  The value does NOT match any pattern
-// shape so that the test exercises HC-031 in isolation.
 const hc034FixtureRedactedFieldValue = "hc034-redacted-field-value"
 
-// hc034FixtureJSONLPath returns a temporary JSONL log path for one test.
 func hc034FixtureJSONLPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "events.jsonl")
 }
 
-// hc034FixtureReadJSONL reads the JSONL file at path and returns all non-empty
-// lines.
 func hc034FixtureReadJSONL(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
@@ -122,11 +48,6 @@ func hc034FixtureReadJSONL(t *testing.T, path string) []string {
 	return lines
 }
 
-// hc034FixtureDecodePayload decodes the JSONL line as an EV-001 envelope and
-// returns the nested payload as a string-keyed map.
-//
-// The JSONL line is a JSON object with an EV-001 envelope; the "payload" field
-// contains the redacted event payload as a nested JSON object.
 func hc034FixtureDecodePayload(t *testing.T, line string) map[string]any {
 	t.Helper()
 	var envelope struct {
@@ -142,7 +63,6 @@ func hc034FixtureDecodePayload(t *testing.T, line string) map[string]any {
 	return payload
 }
 
-// hc034FixtureNewRunID generates a UUIDv7-based RunID for EmitWithRunID tests.
 func hc034FixtureNewRunID(t *testing.T) core.RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -151,10 +71,6 @@ func hc034FixtureNewRunID(t *testing.T) core.RunID {
 	}
 	return core.RunID(id)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-034 test 1: HC-031 path — secret-named field absent from JSONL
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC034_SecretNamedFieldAbsentFromJSONL is the HC-031 path of the HC-034
 // end-to-end redaction sensor (hk-8i31.41).
@@ -181,13 +97,11 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 	}
 	defer eventbusFixtureClose(t, writer)
 
-	// Construct a bus with no HC-032 patterns — only HC-031 fires here.
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
 
-	// Payload: "token" matches HC-031; "node_id" is safe.
 	payload, marshalErr := json.Marshal(map[string]any{
 		"token":   hc034FixtureRedactedFieldValue,
 		"node_id": "hc034-node-hc031",
@@ -207,7 +121,6 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 
 	line := lines[0]
 
-	// HC-034: the raw secret value MUST NOT appear in the raw JSONL bytes.
 	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031 path): persisted JSONL raw bytes contain the secret value %q;\n"+
@@ -218,7 +131,6 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Decode and check the stored value in the payload.
 	got := hc034FixtureDecodePayload(t, line)
 
 	tokenVal, ok := got["token"]
@@ -233,17 +145,12 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Safe field MUST be present and unchanged.
 	if nodeVal, nodeOK := got["node_id"]; !nodeOK {
 		t.Error("HC-034: decoded payload missing safe field 'node_id'")
 	} else if nodeVal != "hc034-node-hc031" {
 		t.Errorf("HC-034: decoded payload[\"node_id\"] = %v, want %q; safe fields MUST NOT be redacted", nodeVal, "hc034-node-hc031")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-034 test 2: HC-032 path — secret-valued field absent from JSONL
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC034_SecretValuePatternAbsentFromJSONL is the HC-032 path of the HC-034
 // end-to-end redaction sensor (hk-8i31.41).
@@ -266,7 +173,6 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 	}
 	defer eventbusFixtureClose(t, writer)
 
-	// Register the Anthropic key-shape pattern for one subsystem.
 	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_test_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
@@ -275,8 +181,6 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 		t.Fatalf("Seal: %v", sealErr)
 	}
 
-	// Payload: "provider_key" is a benign field name but carries a secret-shaped value.
-	// HC-031 MUST NOT redact it (name is safe); HC-032 MUST redact it (value matches).
 	payload, marshalErr := json.Marshal(map[string]any{
 		"provider_key": hc034FixtureAnthropicKeyStub,
 		"node_id":      "hc034-node-hc032",
@@ -296,7 +200,6 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 
 	line := lines[0]
 
-	// HC-034: the raw Anthropic key stub MUST NOT appear in the raw JSONL bytes.
 	if strings.Contains(line, hc034FixtureAnthropicKeyStub) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-032 path): persisted JSONL raw bytes contain the secret value %q;\n"+
@@ -307,7 +210,6 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Decode and check the stored value in the payload.
 	got := hc034FixtureDecodePayload(t, line)
 
 	providerVal, providerOK := got["provider_key"]
@@ -322,17 +224,12 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Safe field MUST pass through unchanged.
 	if nodeVal, nodeOK := got["node_id"]; !nodeOK {
 		t.Error("HC-034: decoded payload missing safe field 'node_id'")
 	} else if nodeVal != "hc034-node-hc032" {
 		t.Errorf("HC-034: decoded payload[\"node_id\"] = %v, want %q; safe fields MUST NOT be redacted", nodeVal, "hc034-node-hc032")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-034 test 3: composed HC-031 + HC-032 path
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC034_BothHC031AndHC032SecretAbsentFromJSONL is the composed redaction
 // path of the HC-034 end-to-end sensor (hk-8i31.41).
@@ -354,7 +251,6 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	}
 	defer eventbusFixtureClose(t, writer)
 
-	// Registry with Anthropic key pattern (HC-032 path).
 	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_composed_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
@@ -363,10 +259,6 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 		t.Fatalf("Seal: %v", sealErr)
 	}
 
-	// Payload carries:
-	//   - "token": name matches HC-031 (independent of value)
-	//   - "provider_key": benign name, value matches HC-032 Anthropic pattern
-	//   - "node_id": safe field (MUST NOT be redacted)
 	payload, marshalErr := json.Marshal(map[string]any{
 		"token":        hc034FixtureRedactedFieldValue,
 		"provider_key": hc034FixtureAnthropicKeyStub,
@@ -387,7 +279,6 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 
 	line := lines[0]
 
-	// HC-034 / HC-031: raw value of "token" field MUST NOT appear in JSONL bytes.
 	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031 path, composed): raw JSONL bytes contain secret %q;\n"+
@@ -397,7 +288,6 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// HC-034 / HC-032: raw Anthropic key stub MUST NOT appear in JSONL bytes.
 	if strings.Contains(line, hc034FixtureAnthropicKeyStub) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-032 path, composed): raw JSONL bytes contain secret %q;\n"+
@@ -407,10 +297,8 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Decode and check decoded payload values.
 	got := hc034FixtureDecodePayload(t, line)
 
-	// "token" (HC-031): MUST be sentinel.
 	if tokenVal, tokenOK := got["token"]; !tokenOK {
 		t.Error("HC-034 composed: decoded payload missing 'token' key")
 	} else if tokenVal != core.RedactedSentinel {
@@ -420,7 +308,6 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// "provider_key" (HC-032): MUST be sentinel.
 	if providerVal, providerOK := got["provider_key"]; !providerOK {
 		t.Error("HC-034 composed: decoded payload missing 'provider_key' key")
 	} else if providerVal != core.RedactedSentinel {
@@ -430,17 +317,12 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Safe field MUST pass through unchanged.
 	if nodeVal, nodeOK := got["node_id"]; !nodeOK {
 		t.Error("HC-034 composed: decoded payload missing safe field 'node_id'")
 	} else if nodeVal != "hc034-node-composed" {
 		t.Errorf("HC-034 composed: decoded payload[\"node_id\"] = %v, want %q", nodeVal, "hc034-node-composed")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-034 test 4: no over-redaction — safe fields preserved in JSONL
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC034_SafeFieldsPreservedInJSONL verifies that the redaction pipeline
 // does NOT suppress or alter fields whose names and values are safe.
@@ -461,7 +343,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 	}
 	defer eventbusFixtureClose(t, writer)
 
-	// Registry with Anthropic pattern — neither field name nor value matches here.
 	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_safe_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
@@ -494,7 +375,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 	line := lines[0]
 	got := hc034FixtureDecodePayload(t, line)
 
-	// Every safe field MUST be preserved verbatim.
 	for k, want := range safePayload {
 		t.Run(k, func(t *testing.T) {
 			t.Parallel()
@@ -504,7 +384,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 					"  safe fields MUST NOT be redacted (HC-031 no over-redaction)", k)
 				return
 			}
-			// JSON numbers round-trip as float64; compare as fmt.Sprint for robustness.
 			if fmt.Sprint(v) != fmt.Sprint(want) {
 				t.Errorf("HC-034 over-redaction: JSONL payload[%q] = %v, want %v;\n"+
 					"  safe field value MUST be preserved verbatim", k, v, want)
@@ -512,7 +391,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 		})
 	}
 
-	// The redaction sentinel MUST NOT appear in the decoded payload values.
 	for k, v := range got {
 		if fmt.Sprint(v) == core.RedactedSentinel {
 			t.Errorf(
@@ -523,10 +401,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-034 test 5: EmitWithRunID path — secret absent from run-stamped JSONL
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC034_EmitWithRunID_SecretAbsentFromJSONL verifies that the EmitWithRunID
 // code path also redacts secret-named payload fields before JSONL append.
@@ -549,7 +423,6 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 	}
 	defer eventbusFixtureClose(t, writer)
 
-	// No HC-032 patterns — HC-031 field-name redaction only.
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
@@ -557,7 +430,6 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 
 	runID := hc034FixtureNewRunID(t)
 
-	// Payload with a secret-named field ("password") and a safe field.
 	payload, marshalErr := json.Marshal(map[string]any{
 		"password": hc034FixtureRedactedFieldValue,
 		"node_id":  "hc034-node-runid",
@@ -577,7 +449,6 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 
 	line := lines[0]
 
-	// HC-034: raw secret MUST NOT appear in the run-stamped JSONL raw bytes.
 	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (EmitWithRunID path): raw JSONL bytes contain secret %q;\n"+
@@ -587,10 +458,8 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Decode and check payload values.
 	got := hc034FixtureDecodePayload(t, line)
 
-	// "password" (HC-031): MUST be sentinel.
 	if pwdVal, pwdOK := got["password"]; !pwdOK {
 		t.Error("HC-034 EmitWithRunID: decoded payload missing 'password' key; redaction MUST preserve the key")
 	} else if pwdVal != core.RedactedSentinel {
@@ -602,7 +471,6 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// The run_id MUST be present in the envelope (EmitWithRunID contract).
 	if !strings.Contains(line, runID.String()) {
 		t.Errorf(
 			"HC-034 (EmitWithRunID path): JSONL envelope missing run_id %q;\n"+
@@ -611,7 +479,6 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 		)
 	}
 
-	// Safe field MUST pass through unchanged.
 	if nodeVal, nodeOK := got["node_id"]; !nodeOK {
 		t.Error("HC-034 EmitWithRunID: decoded payload missing safe field 'node_id'")
 	} else if nodeVal != "hc034-node-runid" {

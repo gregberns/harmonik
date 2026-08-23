@@ -1,22 +1,5 @@
 package daemon_test
 
-// pi_dgx_reasoning_test.go — Scenario 3 of the pi-provider-switch C5
-// two-provider e2e harness corpus (hk-m6uu2.6, C5-wiring; hk-4ir08): an
-// ornith/DGX reasoning-model profile bead hermetically reaches the loopback
-// launch spec + generated models.json.
-//
-// IMPORTANT — scope boundary: this test proves everything up to the launch
-// spec the real Pi turn consumes (argv, env, models.json). It does NOT drive
-// an actual `tool_calls` round-trip against the DGX reasoning model — that
-// requires a live loopback tunnel (http://127.0.0.1:8551/v1) and is a SEPARATE
-// operator canary (the DoD proof for pi-provider-switch), not part of this CI
-// gate. See C5-spec.md §"Verification — Operator canary".
-//
-// Helper prefix: hkppsDgx (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// Bead: hk-m6uu2.6 (pi-provider-switch C5-wiring); hk-4ir08.
-
 import (
 	"context"
 	"encoding/json"
@@ -41,8 +24,6 @@ const (
 	hkppsDgxReasonModel = "ornith-provider/reasoning-large"
 )
 
-// hkppsDgxArgFlagValue returns the token following the first occurrence of
-// flag in args, or "" if flag is absent or has no following token.
 func hkppsDgxArgFlagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
@@ -52,8 +33,6 @@ func hkppsDgxArgFlagValue(args []string, flag string) string {
 	return ""
 }
 
-// hkppsDgxKeyFile writes a dummy provider key to a temp file so the PI-040
-// billing guard passes hermetically without a live DGX key.
 func hkppsDgxKeyFile(t *testing.T) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "pi.key")
@@ -70,8 +49,6 @@ func hkppsDgxKeyFile(t *testing.T) string {
 // api: openai-completions). No network; the actual reasoning + tool_calls
 // round-trip is the separate live-tunnel operator canary (see file doc).
 func TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON(t *testing.T) {
-	// Not t.Parallel: t.Setenv makes the PI-042 on-disk credential check
-	// hermetic by pointing HOME at a fresh temp dir.
 	t.Setenv("HOME", t.TempDir())
 
 	ctx := context.Background()
@@ -180,7 +157,4 @@ func TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON(t *testing.T) {
 	if len(prov.Models) != 1 || prov.Models[0].ID == "" {
 		t.Errorf("models.json models = %v; want exactly one non-empty model id", prov.Models)
 	}
-
-	// The live reasoning + tool_calls round-trip over this loopback endpoint is
-	// the operator canary (DoD proof), NOT asserted here — see file doc.
 }

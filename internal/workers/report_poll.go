@@ -1,24 +1,5 @@
 package workers
 
-// report_poll.go — recurring worker-report poll (remote-substrate WR3).
-//
-// WR1/WR2/WR4 built the worker-report payload, the SSH collector (CollectReport),
-// and the problem-flag derivation. They are driven only at boot today (the boot
-// health check in the daemon runs once). WR3 adds a recurring ticker that calls
-// CollectReport on an interval so worker resource + problem reports actually flow
-// during operation.
-//
-// This is Phase-1 OBSERVABILITY ONLY: it emits worker_report events on a timer.
-// It does NOT touch SelectWorker, max_slots, or dispatch. The poll runs in its
-// own goroutine and a slow/failing CollectReport is logged-and-dropped, never
-// fatal, so it cannot wedge the daemon.
-//
-// Off-by-default: when no worker is ENABLED the loop returns immediately without
-// arming a ticker, exactly like the boot health check skips an empty registry.
-// Disabled workers are skipped on every tick.
-//
-// Bead ref: WR3 (hk-jn3u).
-
 import (
 	"context"
 	"fmt"
@@ -37,11 +18,6 @@ import (
 // causes the worker to be skipped for that tick (unsupported transport).
 type RunnerForWorker func(w Worker) tmux.CommandRunner
 
-// reportRunnerForWorker is the production RunnerForWorker: an SSHRunner for
-// transport "ssh", nil for any other transport. It mirrors BootHealthRunner in
-// this package so the recurring poll reaches a worker exactly as the boot health
-// check does. The two are deliberately NOT merged: this one is per-worker, while
-// BootHealthRunner is per-config with first-enabled-wins semantics.
 func reportRunnerForWorker(w Worker) tmux.CommandRunner {
 	if w.Transport == "ssh" {
 		return tmux.SSHRunner{Host: w.Host}
@@ -55,24 +31,6 @@ func ProductionRunnerForWorker(w Worker) tmux.CommandRunner {
 	return reportRunnerForWorker(w)
 }
 
-// pollWorkerReports runs ONE sweep: for each enabled worker in cfg it resolves a
-// runner via runnerFor and calls CollectReport, which emits a worker_report event
-// (and derives Problems) on success. Each worker's collection runs in its own
-// goroutine so a slow or failing worker cannot stall the others or the caller;
-// the sweep returns once all per-worker goroutines have settled.
-//
-// reg supplies live-disable state (the boot health check disables a probe-failed
-// worker in the registry, not in cfg) and in-flight counts for the orphaned_claude
-// derivation. reg may be nil (no worker configured) in which case the sweep is a
-// no-op.
-//
-// A CollectReport error is logged to stderr and dropped — never returned, never
-// fatal. This function never blocks on the work loop and never touches dispatch.
-//
-// This is the WR3 (Phase-1) sweep: it always samples + emits a worker_report for
-// every due worker. The Phase-2 adaptive sweep is breachSweep below; it reuses
-// the same per-worker iteration + skip guards but throttles worker_report and
-// also feeds the breach detectors.
 func pollWorkerReports(ctx context.Context, cfg Config, reg *Registry, runnerFor RunnerForWorker, emit EmitFunc) {
 	if reg == nil {
 		return
@@ -84,15 +42,11 @@ func pollWorkerReports(ctx context.Context, cfg Config, reg *Registry, runnerFor
 		if !w.Enabled {
 			continue
 		}
-		// Honour boot-time live-disable: the registry, not cfg, holds the
-		// post-health-check enabled state. registryWorkerEnabled returns false
-		// when the boot health check disabled the (single, v1) worker.
 		if !registryWorkerEnabled(reg, w.Name) {
 			continue
 		}
 		runner := runnerFor(w)
 		if runner == nil {
-			// Unsupported transport — skip silently (matches BootHealthRunner).
 			continue
 		}
 		wg.Add(1)
@@ -131,20 +85,6 @@ func RunReportLoop(ctx context.Context, cfg Config, reg *Registry, runnerFor Run
 	runReportLoopWithInterval(ctx, cfg, reg, runnerFor, emit, cfg.ReportInterval(), cfg.BreachSampleInterval())
 }
 
-// reportLoopInterval chooses the cadence for the loop's NEXT wait: fast while
-// any worker has a run in flight and breach detection is enabled, slow
-// otherwise.
-//
-// This is a pure decision, separated from the wait it feeds so a test can check
-// it WITHOUT measuring the machine (hk-vp02y). The test that covered this used
-// to run the real loop for 120 ms and assert it had swept at least five times.
-// That asserts the OS scheduled a goroutine at a given rate, which nothing in
-// the product promises: under the merge decision's own load — 110 test binaries
-// at once — it does not, and the gate returned a different verdict on an
-// unchanged commit. A cadence SELECTION is a property of the code. A cadence
-// RATE is a property of the box.
-//
-// Bead ref: hk-vp02y.
 func reportLoopInterval(breachEnabled bool, inFlight int, slowInterval, fastInterval time.Duration) time.Duration {
 	if breachEnabled && inFlight > 0 {
 		return fastInterval
@@ -152,16 +92,6 @@ func reportLoopInterval(breachEnabled bool, inFlight int, slowInterval, fastInte
 	return slowInterval
 }
 
-// runReportLoopWithInterval is the interval-injectable core of RunReportLoop.
-// Production passes cfg.ReportInterval() + cfg.BreachSampleInterval(); tests pass
-// sub-second intervals (the workers.yaml fields are whole-seconds, so test
-// cadences are injected here, not via config). The off-by-default guard lives
-// here so both entry points honour it.
-//
-// slowInterval is the worker_report cadence (also the cadence when no worker is
-// in flight); fastInterval is the cadence used while any worker has a run in
-// flight and breach detection is enabled. A fastInterval <= 0 (or >= slow)
-// collapses the loop to a single fixed slow cadence.
 func runReportLoopWithInterval(ctx context.Context, cfg Config, reg *Registry, runnerFor RunnerForWorker, emit EmitFunc, slowInterval, fastInterval time.Duration) {
 	if reg == nil || !hasEnabledWorker(cfg) {
 		return
@@ -171,15 +101,11 @@ func runReportLoopWithInterval(ctx context.Context, cfg Config, reg *Registry, r
 	}
 	breachEnabled := cfg.BreachDetectionEnabled()
 	if !breachEnabled || fastInterval <= 0 {
-		// No adaptive behaviour: collapse to the Phase-1 fixed slow ticker so the
-		// off (breach_detection_enabled:false) path is byte-identical to WR3.
 		fastInterval = slowInterval
 	}
 
 	st := newBreachLoopState(cfg)
 	for {
-		// reg.InFlight() is the single global in-flight counter (v1 single-worker
-		// registry).
 		interval := reportLoopInterval(breachEnabled, reg.InFlight(), slowInterval, fastInterval)
 		select {
 		case <-ctx.Done():
@@ -190,12 +116,6 @@ func runReportLoopWithInterval(ctx context.Context, cfg Config, reg *Registry, r
 	}
 }
 
-// breachLoopState holds the per-worker breach detectors and bookkeeping that
-// must persist across sweeps of the adaptive loop: the stateful state machines,
-// the last worker_report emit time (to throttle worker_report to the slow
-// cadence while ticking fast), and the previous in-flight state (to detect the
-// transition-to-idle that triggers a detector Reset). It is owned by the single
-// loop goroutine and is NOT safe for concurrent use.
 type breachLoopState struct {
 	cfg          Config
 	detectors    map[string]*breachDetector
@@ -212,9 +132,6 @@ func newBreachLoopState(cfg Config) *breachLoopState {
 	}
 }
 
-// detectorFor returns the worker's breach detector, creating it lazily on first
-// sight (held across sweeps because the state machine is stateful). The detector
-// is built from the cfg's Phase-2 knobs via cfg.BreachConfig().
 func (s *breachLoopState) detectorFor(name string) *breachDetector {
 	d := s.detectors[name]
 	if d == nil {
@@ -224,25 +141,6 @@ func (s *breachLoopState) detectorFor(name string) *breachDetector {
 	return d
 }
 
-// breachSweep runs ONE adaptive sweep. For each enabled, live-enabled,
-// reachable worker it:
-//
-//   - samples the box once via CollectReport, but emits the worker_report only
-//     when ~slowInterval has elapsed since the worker's last report (so a 5s fast
-//     tick does NOT emit a worker_report — only every ~Nth tick does);
-//   - when breachEnabled AND the worker has a run in flight, feeds the same
-//     sample to the worker's breach detector and emits each returned breach/clear
-//     event, stamping the worker's current reg.InFlight() onto each;
-//   - on the transition-to-idle (in flight last sweep, idle now) calls the
-//     detector's Reset and emits any resulting clear events (InFlight 0), so a
-//     breach can't dangle open across runs.
-//
-// Workers are swept concurrently (one goroutine each) so a slow/failing
-// collection cannot stall the others; ALL breachLoopState map mutation happens
-// SYNCHRONOUSLY in this function before the per-worker goroutine starts (the
-// goroutine touches only the already-resolved *detector), so the shared maps are
-// never written from a goroutine and need no lock. A CollectReport error is
-// logged and dropped — never fatal.
 func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor RunnerForWorker, emit EmitFunc, st *breachLoopState, breachEnabled bool, slowInterval time.Duration, now time.Time) {
 	if reg == nil {
 		return
@@ -264,10 +162,6 @@ func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor Runne
 
 		inFlight := reg.InFlight() > 0
 
-		// Transition-to-idle: a worker that was in flight last sweep but is idle
-		// now gets its detector Reset, emitting a clear for any dangling breach.
-		// This runs even though we won't feed a sample this sweep below. Detector
-		// + state mutation here is for THIS worker's keys only.
 		if breachEnabled && st.wasInFlight[w.Name] && !inFlight {
 			if d := st.detectors[w.Name]; d != nil {
 				for _, ev := range d.Reset(now) {
@@ -278,20 +172,12 @@ func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor Runne
 		}
 		st.wasInFlight[w.Name] = inFlight
 
-		// worker_report throttle: emit only when ~slowInterval has elapsed since
-		// this worker's last report. The zero-value last-report time (first sight)
-		// is always due. We still SAMPLE every sweep (for breach feeding); we just
-		// suppress the worker_report emit between slow boundaries.
 		last := st.lastReportAt[w.Name]
 		dueForReport := last.IsZero() || now.Sub(last) >= slowInterval
 		if dueForReport {
 			st.lastReportAt[w.Name] = now
 		}
 
-		// Resolve the worker's detector SYNCHRONOUSLY (mutating st.detectors) so
-		// the per-worker goroutine touches only the already-resolved *detector —
-		// the shared maps are never written from a goroutine, keeping the sweep
-		// race-free under -race.
 		var det *breachDetector
 		if breachEnabled && inFlight {
 			det = st.detectorFor(w.Name)
@@ -300,8 +186,6 @@ func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor Runne
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Suppress the worker_report emit when not due by passing a nil emit
-			// to CollectReport; we still need the parsed sample for breach feeding.
 			reportEmit := emit
 			if !dueForReport {
 				reportEmit = nil
@@ -322,10 +206,6 @@ func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor Runne
 	wg.Wait()
 }
 
-// emitResourceBreach marshals and emits a resource_breach event (PB3). No-op
-// when emit is nil (mirrors emitWorkerReport in telemetry.go). A marshal failure
-// is dropped silently — a breach event is observability, never fatal. InFlight is
-// expected to be stamped by the caller before this is called.
 func emitResourceBreach(ctx context.Context, p ResourceBreachPayload, emit EmitFunc) {
 	if emit == nil {
 		return
@@ -339,9 +219,6 @@ func emitResourceBreach(ctx context.Context, p ResourceBreachPayload, emit EmitF
 	}
 }
 
-// hasEnabledWorker reports whether cfg has at least one worker with Enabled==true.
-// Mirrors the daemon-side guard so the off-by-default decision lives next to the
-// loop it gates.
 func hasEnabledWorker(cfg Config) bool {
 	for _, w := range cfg.Workers {
 		if w.Enabled {
@@ -351,10 +228,6 @@ func hasEnabledWorker(cfg Config) bool {
 	return false
 }
 
-// registryWorkerEnabled reports whether the registry's worker named name is still
-// enabled (i.e. the boot health check did not disable it). The v1 registry holds
-// at most one worker; when reg has no worker, or the name does not match, it
-// returns false so the poll skips it.
 func registryWorkerEnabled(reg *Registry, name string) bool {
 	if reg == nil {
 		return false

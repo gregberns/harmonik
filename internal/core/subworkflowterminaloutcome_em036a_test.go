@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// subwfTerminalOutcomeFixture returns an Outcome produced by the last expanded
-// node in a sub-workflow execution, per EM-036a.
-//
-// EM-036a: The Outcome that escapes a sub-workflow node MUST be the Outcome
-// produced by the last node in the expanded sub-workflow executed before the
-// sub-workflow reached a terminal_node_id. This Outcome is the one the parent's
-// edge-selection cascade (§4.10.EM-041) observes on the outgoing edges of the
-// sub-workflow node.
 func subwfTerminalOutcomeFixture(t *testing.T) Outcome {
 	t.Helper()
 
@@ -24,8 +16,6 @@ func subwfTerminalOutcomeFixture(t *testing.T) Outcome {
 	}
 }
 
-// subwfTerminalOutcomeFixtureWithLabel returns an Outcome with a preferred
-// routing label, as the last expanded node might emit for cascade routing.
 func subwfTerminalOutcomeFixtureWithLabel(t *testing.T, label string) Outcome {
 	t.Helper()
 
@@ -34,10 +24,6 @@ func subwfTerminalOutcomeFixtureWithLabel(t *testing.T, label string) Outcome {
 	return o
 }
 
-// subwfTerminalOutcomeFixtureMultiTerminal builds a SubWorkflowExpansion with
-// two terminal nodes representing a branching sub-workflow. At runtime exactly
-// one terminal is reached; the Outcome that produced that terminal-reaching
-// transition is the sub-workflow's terminal outcome per EM-036a.
 func subwfTerminalOutcomeFixtureMultiTerminal(t *testing.T) SubWorkflowExpansion {
 	t.Helper()
 
@@ -155,14 +141,6 @@ func TestSubWorkflowTerminalOutcome_ParentNodeDoesNotDeclareOutcome(t *testing.T
 		t.Fatalf("expected NodeTypeSubWorkflow, got %q", n.Type)
 	}
 
-	// The Node type has no Outcome field. A sub-workflow node's outcome is always
-	// the terminal outcome of the last expanded node executed (EM-036a). The
-	// absence of a static outcome shape on Node is the structural enforcement of
-	// this rule: there is nothing for the sub-workflow node to declare.
-	//
-	// If an Outcome field were added to Node, that would violate EM-036a. This
-	// test documents the invariant by confirming the sub-workflow node is valid
-	// and its outcome emerges only at expansion time.
 	if !n.Valid() {
 		t.Error("sub-workflow node must be Valid() with no static Outcome field (EM-036a)")
 	}

@@ -10,20 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// Tests for the handoff scrub — the step that removes the keeper's own
-// "<!-- KEEPER:... -->" markers from a crew's handoff file.
-//
-// The scrub replaced an earlier step that truncated the handoff file to zero
-// bytes. That step destroyed the crew's whole handoff on nearly every cycle
-// after the first. The handoff file is how a restarted session recovers its
-// intent, so these tests hold one claim above all others: every byte that is
-// not a keeper marker survives, byte for byte.
-//
-// The pure scrub is reached through keeper.StripNonceMarkersForTest. The file
-// scrub is reached through the production file adapter.
-
-// scrubHandoffFile returns the production file scrub that a Cycler runs when
-// the operator supplies no override.
 func scrubHandoffFile(t *testing.T) func(string) error {
 	t.Helper()
 	return keeper.ScrubHandoffFileForTest
@@ -46,8 +32,6 @@ func TestHandoffScrubKeepsEveryByteThatIsNotAKeeperMarker(t *testing.T) {
 	if got != want {
 		t.Fatalf("the scrub did not preserve the crew's prose\n got: %q\nwant: %q", got, want)
 	}
-	// The input carries a marker and the wanted output does not, so a scrub that
-	// touched nothing cannot pass this test.
 	if strings.Contains(want, "<!-- KEEPER:") {
 		t.Fatal("the wanted output still holds a keeper marker; this test asks the scrub for nothing")
 	}
@@ -101,8 +85,6 @@ func TestHandoffScrubCutsAnEmbeddedMarkerOutOfItsLineAndKeepsTheRestOfTheLine(t 
 func TestHandoffScrubKeepsProseThatOpensAKeeperMarkerAndNeverClosesIt(t *testing.T) {
 	t.Parallel()
 
-	// A crew that writes a handoff ABOUT the keeper protocol types a bare
-	// "<!-- KEEPER:" prefix into prose very easily. It is not one of ours.
 	const handoff = "The keeper writes <!-- KEEPER: plus a cycle id into this file.\n"
 
 	if got := keeper.StripNonceMarkersForTest(handoff); got != handoff {
@@ -113,9 +95,6 @@ func TestHandoffScrubKeepsProseThatOpensAKeeperMarkerAndNeverClosesIt(t *testing
 func TestHandoffScrubStillRemovesAMarkerThatFollowsAnUnclosedPrefix(t *testing.T) {
 	t.Parallel()
 
-	// The closer is only ever searched for on the prefix's OWN line. Without
-	// that bound the unclosed prefix on line 1 claims the closer of the real
-	// marker on line 3 and deletes every byte between them.
 	const handoff = "We document <!-- KEEPER: in prose here.\n" +
 		"Decision: keep the crew's prose.\n" +
 		"<!-- KEEPER:cyc-3 -->\n" +
@@ -210,8 +189,6 @@ func TestHandoffFileScrubKeepsTheCrewsProseAndThePermissionBits(t *testing.T) {
 func TestHandoffFileScrubLeavesAFileWithNoMarkerCompletelyAlone(t *testing.T) {
 	t.Parallel()
 
-	// A freshness sampler reads this file's mtime. A rewrite that changes no
-	// byte still moves the mtime and makes a stale handoff look fresh.
 	const content = "# Handoff\n\nDecision: none.\nNext: rest.\n"
 
 	path := filepath.Join(t.TempDir(), "HANDOFF.md")

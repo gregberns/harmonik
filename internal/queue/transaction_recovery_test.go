@@ -13,10 +13,6 @@ import (
 	"testing"
 )
 
-// recoverFailedReplaceIntentBytes resolves one failed-recovery intent from its
-// durable bytes. Production reaches the same code through
-// RecoverReplaceIntents, which finds the intent on disk rather than being
-// handed it; these tests pin the single-intent behaviour underneath that sweep.
 func recoverFailedReplaceIntentBytes(projectDir string, intentBytes []byte) (ReplaceRecoveryAction, error) {
 	intent, err := decodeReplaceIntent(intentBytes)
 	if err != nil {

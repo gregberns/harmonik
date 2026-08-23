@@ -1,29 +1,5 @@
 package handler_test
 
-// terminalclassify_characterization_test.go — characterization of the PROBE
-// step of the shared launch → dispatch → wait → probe → teardown sequence:
-// MapWaitReturnToTerminalEvent, the function that turns "the agent process
-// ended" into "the agent did / did not do the work".
-//
-// It has exactly ONE production caller today: workloop.go's single mode. The
-// other four dispatch sites — reviewloop.go's implementer and reviewer phases,
-// dot_cascade_core.go's per-node dispatch, and dot_gate.go — call the same wait
-// primitive but DISCARD its outcome (`_, implEI := …`) and decide success by
-// probing whether the worktree HEAD moved instead. So an agent that reported
-// WORK_COMPLETE or FAILURE_SIGNAL through its Stop hook has that report thrown
-// away everywhere except single mode. That asymmetry is a Phase-3 finding in
-// its own right; it is recorded here so nobody reads this file as evidence that
-// the probe leg is already shared.
-//
-// Before this file it had no tests, so its three branches and their defaults
-// were unprotected.
-//
-// The tests pin the CLASSIFICATION — the observable answer, given the three
-// inputs the wait step produces. They do not pin how the branches are laid out,
-// so a decomposition that keeps the same answers keeps them green.
-//
-// Spec: specs/claude-hook-bridge.md §4.7 CHB-020.
-
 import (
 	"errors"
 	"testing"

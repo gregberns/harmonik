@@ -1,12 +1,5 @@
 package runexectest_test
 
-// relaunch10_test.go — the RT11 N=10 clean relaunch oracle (RSM-030;
-// liveness-parity-design §6 item (1)): ten CONSECUTIVE clean resumed-relaunch
-// cycles on ONE FakeClock timeline, each a fresh Dispatch + Run machine pair
-// driven by the synthesized resumed schedule with no fault injected. All ten
-// must land Done{closed} success with exactly one resume_prompt delivery and
-// one run terminal — all green, all virtual time.
-
 import (
 	"encoding/json"
 	"os"
@@ -20,12 +13,10 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// corpusRunsDir is the pinned RT10 corpus (extract-run-corpus goldens).
 func corpusRunsDir() string {
 	return filepath.Join("..", "..", "testdata", "daemon-runs", "baseline-2026-07-14", "runs")
 }
 
-// loadSummariesFrom reads every *.summary.json under dir in stable name order.
 func loadSummariesFrom(t *testing.T, dir string) []replay.RunSummary {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -57,7 +48,6 @@ func loadSummariesFrom(t *testing.T, dir string) []replay.RunSummary {
 	return out
 }
 
-// summaryForStratum returns the corpus summary for one stratum.
 func summaryForStratum(t *testing.T, stratum string) replay.RunSummary {
 	t.Helper()
 	for _, s := range loadSummaries(t) {

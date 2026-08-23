@@ -13,23 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// reconciliationlock_rc002a.go — per-run reconciliation lock primitive.
-//
-// RC-002a: for any given target_run_id, at most ONE reconciliation workflow may
-// be in-flight at a time. The daemon acquires this lock before emitting the
-// first reconciliation event (RC-013 category-assigned) and holds it until one
-// of the terminal states listed in RC-002a fires.
-//
-// The lock is an advisory flock(LOCK_EX|LOCK_NB) on the file:
-//
-//	.harmonik/reconciliation-locks/<target_run_id>.lock
-//
-// On EWOULDBLOCK the caller MUST emit reconciliation_dispatch_deduplicated and
-// skip dispatch. The kernel releases the lock automatically on process
-// termination; the orphan sweep (PL-006) removes stale files on startup.
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-002a.
-
 // ErrReconciliationLockHeld is returned by AcquireReconciliationLock when
 // flock(LOCK_EX|LOCK_NB) returns EWOULDBLOCK or EAGAIN — meaning another
 // reconciliation workflow is already in-flight for the same target_run_id.
@@ -84,8 +67,6 @@ func (l *ReconciliationLock) WriteVerdictExecuted() error {
 	if l.fd == nil {
 		return fmt.Errorf("lifecycle: WriteVerdictExecuted: lock already released")
 	}
-	// Seek to end before writing so the trailer is always appended regardless
-	// of where the fd offset was left after the last read (latent-corruption fix).
 	if _, err := l.fd.Seek(0, io.SeekEnd); err != nil {
 		return fmt.Errorf("lifecycle: WriteVerdictExecuted: seek: %w", err)
 	}
@@ -155,7 +136,6 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: flock %q: %w", lockPath, err)
 	}
 
-	// Write metadata after acquiring the lock (truncate-rewrite pattern per PL-002b discipline).
 	if err := fd.Truncate(0); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after truncate failure", "err", closeErr, "path", lockPath)

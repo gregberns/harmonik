@@ -2,60 +2,6 @@
 
 package daemon_test
 
-// scenario_concurrent_dispatch_vn4_hkukhzu_test.go — THE flagship concurrent-
-// dispatch regression guard (validation-net VN4, bead hk-ukhzu).
-//
-// # What incident this guards
-//
-// hk-37giq was a concurrency-ONLY bug: a single per-run event-tap channel (tapCh)
-// was consumed by two competitors — waitAgentReady's drain goroutine AND
-// pasteInjectQuitOnCommit's launch/heartbeat watchdog. A Go channel receive is
-// exclusive, so under 2+ concurrent runs the drainer stole every agent_heartbeat,
-// the watchdog never observed firstHeartbeatSeen, and (while the pane reported an
-// active child) the launch-suppression branch reset launchDeadline FOREVER — the
-// run wedged at launch (launch_stall_detected → run_stale) and never advanced to
-// merge. The fix (53ead2aa) made the tap a true fan-out so each consumer gets its
-// own copy of every event. The bug hid ~2 weeks because NO scenario test
-// exercised concurrent real-bead dispatch through the real heartbeat/launch/
-// watchdog path — the fix shipped with only a narrow channel-level unit test.
-//
-// # What this test asserts (the DETERMINISTIC TERMINAL OUTCOME)
-//
-// TestScenario_ConcurrentDispatch_VN4_AllReachMerge boots the full daemon
-// composition root at MaxConcurrent=N (N>=3), dispatches N distinct beads from a
-// single wave queue, and asserts — via the reusable RunConcurrentMerge fixture
-// (hk-944c2) — that on current main ALL N runs reach run_completed + merge +
-// close, with NO terminal run_stale / launch_stall_detected wedge, and the
-// concurrent-runs counter never exceeds the cap. The assertion is the terminal
-// LIFECYCLE (event-ordered via AssertEventCausality), NOT a suppression-line
-// count — the postmortem's environment-dependent "217×" figure is deliberately
-// NOT the assertion (it is flaky under -race).
-//
-// # Altitude caveat (read before changing the substrate wiring)
-//
-// The hk-37giq tapCh competing-consumer race requires TWO consumers of the per-
-// run tap. The SECOND consumer (the pasteInjectQuitOnCommit watchdog) only
-// launches when runPasteTarget is a quitSender, i.e. when daemon.Config.Substrate
-// is a *tmuxSubstrate (workloop.go:2079/2367). The standard exec / stdout-watcher
-// path used here (nil Substrate) has only ONE tap consumer (waitAgentReady), so
-// it CANNOT reproduce the wedge regardless of the fix — reverting 53ead2aa does
-// NOT make THIS exec-path test fail. The exec-path test is therefore the broad
-// concurrent-dispatch+merge regression guard (it would catch a regression that
-// wedges or violates the cap on the exec path), while the dedicated keystone
-// reproduction lives in the worktree experiment documented in the VN4 handoff:
-// engaging a fake-adapter *tmuxSubstrate makes the watchdog the second tap
-// consumer, but driving that substrate path to run_completed deterministically is
-// blocked by (a) the nil watcher on the substrate path (completion flows via the
-// hook-bridge socket, not stdout) and (b) HeartbeatInterval being a 300s const
-// (the only tap heartbeat producer on the substrate path). See the worktree
-// branch report for the empirical revert-demonstration result.
-//
-// Run by hand (the daemon commit-gate SKIPS //go:build scenario tests):
-//
-//	go test -tags=scenario -run TestScenario_ConcurrentDispatch_VN4 ./internal/daemon/ -race
-//
-// Bead: hk-ukhzu. Refs: hk-37giq, hk-944c2, hk-he18w, hk-3j50y.
-
 import (
 	"context"
 	"fmt"
@@ -70,15 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 )
 
-// vn4BootForTesting binds daemon.StartForTesting with the determinism options
-// the RunConcurrentMerge fixture requires but cannot reference itself (the
-// options live in package daemon's *_test.go files — see the fixture's
-// import-boundary note). Each bead goroutine shares the one merge exclusion
-// domain (mergeq) so concurrent merges to the shared bare-repo origin serialise.
-//
-// The injected queue is Started here (with a t.Cleanup cancel) because
-// runWorkLoop only starts a queue it created itself — an injected queue keeps
-// the injector's lifecycle (RSM-015).
 func vn4BootForTesting(t *testing.T) func(ctx context.Context, cfg daemon.Config) <-chan error {
 	t.Helper()
 	mergeQ := mergeq.New(nil)
@@ -123,8 +60,6 @@ func TestScenario_ConcurrentDispatch_VN4_AllReachMerge(t *testing.T) {
 		BeadPrefix:        "vn4",
 	})
 
-	// Belt-and-braces beyond the fixture's internal assertions: the cap and the
-	// all-complete invariant are the load-bearing regression signal.
 	if res.Completed < len(res.BeadIDs) {
 		t.Errorf("VN4: only %d/%d runs completed (concurrent-dispatch wedge signature)",
 			res.Completed, len(res.BeadIDs))
@@ -133,28 +68,6 @@ func TestScenario_ConcurrentDispatch_VN4_AllReachMerge(t *testing.T) {
 		len(res.BeadIDs), res.Completed, res.ClosedBeads, res.MaxConcurrent, res.Stale, res.LaunchStall)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Keystone: watchdog-engaging substrate variant (the hk-37giq reproduction)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// vn4PaneFixtureAdapter is a recording tmux.Adapter whose pane is "active" for a
-// bounded window after each NewWindowIn, then reports the window gone. While the
-// pane is active, WindowPanePID returns the test process PID — which has child
-// processes (go test spawns subprocesses), so perRunSubstrate.PaneHasActiveProcess
-// returns true. This keeps the pasteInjectQuitOnCommit launch-suppression branch
-// (internal/daemon/pasteinject.go:679) active during the launch window, which is
-// the exact condition the hk-37giq tapCh competing-consumer starve needed: with
-// the pane "active" and no heartbeat reaching the watchdog (stolen by
-// waitAgentReady's drainer on the pre-53ead2aa single-shared-channel tap), the
-// launch deadline resets until launchSuppressionCeiling, then the watchdog kills
-// the run → run_failed/run_stale. With the fan-out tap the watchdog observes the
-// immediate startup heartbeat (RunHeartbeatLoop emits the first beat synchronously
-// at launch), clears firstHeartbeatSeen, and the run advances.
-//
-// After paneAliveWindow elapses, WindowPanePID returns ErrNoSession so the
-// substrate session's runWait poll loop unblocks and the run completes.
-//
-// All methods are safe for concurrent use.
 type vn4PaneFixtureAdapter struct {
 	mu sync.Mutex
 	// paneCounter assigns sequential pane IDs.
@@ -211,8 +124,6 @@ func (a *vn4PaneFixtureAdapter) WindowPanePID(_ context.Context, handle tmux.Win
 	if t, ok := a.spawnedAt[h]; ok {
 		spawned = t
 	} else {
-		// Not a recorded pane ID (e.g. a "session:window" handle). Use the most
-		// recent spawn as a conservative liveness proxy.
 		for _, t := range a.spawnedAt {
 			if t.After(spawned) {
 				spawned = t
@@ -222,8 +133,6 @@ func (a *vn4PaneFixtureAdapter) WindowPanePID(_ context.Context, handle tmux.Win
 	if spawned.IsZero() || time.Since(spawned) > a.paneAliveWindow {
 		return 0, tmux.ErrNoSession
 	}
-	// Pane alive: return the test process PID. It has child processes (go test
-	// subprocesses), so hasAnyDirectChild → PaneHasActiveProcess returns true.
 	return os.Getpid(), nil
 }
 
@@ -311,8 +220,6 @@ func TestScenario_ConcurrentDispatch_VN4_WatchdogContention(t *testing.T) {
 		"unit test (workloopeventsource_hk37giq_test.go) is the deterministic tap-mechanism " +
 		"keystone; AllReachMerge is the end-to-end concurrent-merge guard.")
 
-	// Shrink the watchdog timing so a wedge (reverted) resolves in seconds and a
-	// healthy run (fixed) is not falsely guillotined. Restore on cleanup.
 	restore := vn4ShrinkWatchdogTimers(t,
 		2*time.Second,  // launchHeartbeatTimeout
 		6*time.Second,  // launchSuppressionCeiling (the reverted wedge kills here)
@@ -322,9 +229,6 @@ func TestScenario_ConcurrentDispatch_VN4_WatchdogContention(t *testing.T) {
 	)
 	defer restore()
 
-	// Pane stays "active" comfortably past launchSuppressionCeiling so the
-	// reverted path takes the suppress-then-kill branch, then dies so sess.Wait
-	// returns.
 	fakeAdapter := newVN4PaneFixtureAdapter(10 * time.Second)
 	substrate := daemon.NewTmuxSubstrate(fakeAdapter, "vn4-keystone-session")
 
@@ -343,8 +247,6 @@ func TestScenario_ConcurrentDispatch_VN4_WatchdogContention(t *testing.T) {
 		len(res.BeadIDs), res.Completed, res.Failed, res.ClosedBeads, res.MaxConcurrent, res.Stale, res.LaunchStall)
 }
 
-// vn4ShrinkWatchdogTimers sets the package-level watchdog timing vars (via the
-// export seams) to the supplied short durations and returns a restore func.
 func vn4ShrinkWatchdogTimers(t *testing.T, launchHB, launchSuppress, noChangeKill, postQuit, commitPoll time.Duration) func() {
 	t.Helper()
 	origLaunchHB := *daemon.ExportedLaunchHeartbeatTimeout

@@ -2,26 +2,8 @@ package orchestrator
 
 import "github.com/gregberns/harmonik/internal/core"
 
-// eagerfill.go — the pure EM-062 eager-refill + EM-063 pre-screen DECISIONS,
-// ported faithfully from internal/daemon/eagerfill_em063.go WITHOUT semantic
-// change (M5 slice 3B). The daemon shell owns every effect: it holds the
-// QueueStore write lock, projects live state into FleetSnapshot / the in-queue
-// set, runs kerf, does the git Phase-2 check, emits events, and appends items.
-// These functions only decide: where the deficit is, how many to over-fetch,
-// how many survivors to keep, and which candidates are already queued.
-//
-// Spec ref: specs/execution-model.md §4.13 EM-062, EM-063.
-// Bead ref: hk-9321v (eagerRefill).
-
-// groupKindStream is the string projection of queue.GroupKindStream. The daemon
-// projects the enum to this string at the snapshot boundary so orchestrator
-// never imports internal/queue (mirrors GroupSnapshot.Kind's doc).
 const groupKindStream = "stream"
 
-// eagerfillOverfetchFactor is the EM-062 OVERFETCH_FACTOR: kerf next is called
-// with limit = deficit × factor so that pre-screen rejections do not leave an
-// avoidable gap in the filled stream. Mirrors the daemon constant of the same
-// name (execution-model.md §4.13 EM-062).
 const eagerfillOverfetchFactor = 2
 
 // FillTarget names the active stream group that has an available-slot deficit,

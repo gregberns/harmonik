@@ -51,8 +51,6 @@ type BudgetPayload struct {
 	ScopeTarget ScopeTarget `json:"scope_target"`
 }
 
-// defaultWarningThreshold is the spec-mandated default for WarningThreshold
-// per specs/control-points.md §4.5.CP-022.
 const defaultWarningThreshold = 0.8
 
 // NewBudgetPayload returns a BudgetPayload with the spec-mandated default

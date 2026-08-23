@@ -1,24 +1,5 @@
 package scenario_test
 
-// implement_review_fix_test.go — scenario tests for specs/examples/implement-review-fix.dot.
-//
-// Five named scenarios:
-//   1. approve-on-first-pass         → start→implement→review(APPROVE)→close (terminal, success)
-//   2. two-REQUEST_CHANGES-then-approve → 2× loop-back then APPROVE → close
-//   3. BLOCK-on-first                → review(BLOCK) → close-needs-attention (terminal)
-//   4. cap-hit-fallback              → 3× REQUEST_CHANGES → cap-hit failure
-//   5. unrecognized-label-fallback   → unknown label → unconditional fallback → close-needs-attention
-//
-// Spec refs:
-//   - docs/sdlc-workflow-corpus.md §1 (implement-review-fix topology)
-//   - specs/workflow-graph.md  WG-010 (5-step cascade)
-//   - specs/workflow-graph.md  WG-011 (unconditional-edge fallback invariant)
-//   - specs/workflow-graph.md  WG-028 (cycle bounding / traversal_cap)
-//   - specs/execution-model.md EM-015e (no-progress / cap-hit vocabulary)
-//   - specs/execution-model.md EM-043  (traversal-cap enforcement)
-//
-// Helper prefix: irf (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"os"
 	"path/filepath"
@@ -30,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func irfDotPath(t *testing.T) string {
 	t.Helper()
@@ -65,8 +44,6 @@ func irfOutcome(label string) core.Outcome {
 	return o
 }
 
-// ── Scenario 1: approve-on-first-pass ────────────────────────────────────────
-
 // TestIRF_ApproveOnFirstPass exercises the happy path:
 // start → implement → review(APPROVE) → close (terminal).
 func TestIRF_ApproveOnFirstPass(t *testing.T) {
@@ -79,32 +56,26 @@ func TestIRF_ApproveOnFirstPass(t *testing.T) {
 	run := irfRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// implement → review
 	dec = workflow.DecideNextNode(graph, "implement", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review" {
 		t.Fatalf("implement→review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// review(APPROVE) → close
 	dec = workflow.DecideNextNode(graph, "review", irfOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", irfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 2: two REQUEST_CHANGES then approve ─────────────────────────────
 
 // TestIRF_TwoRequestChangesThenApprove exercises the bounded loop:
 // start → implement → review(RC) → implement → review(RC) →
@@ -119,26 +90,21 @@ func TestIRF_TwoRequestChangesThenApprove(t *testing.T) {
 	run := irfRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
 
-	// Loop twice: review(REQUEST_CHANGES) → implement
 	for i := 1; i <= 2; i++ {
-		// implement → review
 		dec = workflow.DecideNextNode(graph, "implement", irfOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "review" {
 			t.Fatalf("iteration %d implement→review: %+v", i, dec)
 		}
 
-		// Increment cycle counter for the review→implement back-edge.
 		if _, err := cycles.Increment(run.RunID, "review", "implement", nil); err != nil {
 			t.Fatalf("pre-fill cycle counter review\u2192implement: %v", err)
 		}
 
-		// review(REQUEST_CHANGES) → implement
 		dec = workflow.DecideNextNode(graph, "review", irfOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "implement" {
 			t.Fatalf("iteration %d review→implement: Advance=%v NextNodeID=%q",
@@ -146,7 +112,6 @@ func TestIRF_TwoRequestChangesThenApprove(t *testing.T) {
 		}
 	}
 
-	// Third pass: implement → review → APPROVE → close
 	dec = workflow.DecideNextNode(graph, "implement", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review" {
 		t.Fatalf("final implement→review: %+v", dec)
@@ -163,8 +128,6 @@ func TestIRF_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 }
 
-// ── Scenario 3: BLOCK on first ───────────────────────────────────────────────
-
 // TestIRF_BlockOnFirst exercises:
 // start → implement → review(BLOCK) → close-needs-attention (terminal).
 func TestIRF_BlockOnFirst(t *testing.T) {
@@ -177,33 +140,27 @@ func TestIRF_BlockOnFirst(t *testing.T) {
 	run := irfRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
 
-	// implement → review
 	dec = workflow.DecideNextNode(graph, "implement", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review" {
 		t.Fatalf("implement→review: %+v", dec)
 	}
 
-	// review(BLOCK) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "review", irfOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("review→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", irfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 4: cap-hit fallback ─────────────────────────────────────────────
 
 // TestIRF_CapHitFallback exercises WG-028/EM-043: when the review→implement
 // back-edge's traversal_cap (3) is exhausted, the conditional edge is
@@ -218,11 +175,9 @@ func TestIRF_CapHitFallback(t *testing.T) {
 	run := irfRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → implement → review.
 	workflow.DecideNextNode(graph, "start", irfOutcome(""), run, cycles)
 	workflow.DecideNextNode(graph, "implement", irfOutcome(""), run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of review→implement.
 	traversalCap := 3
 	for i := 0; i < traversalCap; i++ {
 		if _, err := cycles.Increment(run.RunID, "review", "implement", &traversalCap); err != nil {
@@ -230,8 +185,6 @@ func TestIRF_CapHitFallback(t *testing.T) {
 		}
 	}
 
-	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
-	// suppressed; the cascade reports a cap-hit failure.
 	dec := workflow.DecideNextNode(graph, "review", irfOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
@@ -243,8 +196,6 @@ func TestIRF_CapHitFallback(t *testing.T) {
 		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
-
-// ── Scenario 5: unrecognized label → unconditional fallback ──────────────────
 
 // TestIRF_UnrecognizedLabelFallback exercises the WG-011 unconditional fallback:
 // when the reviewer emits a label that matches no conditional edge, the cascade
@@ -259,7 +210,6 @@ func TestIRF_UnrecognizedLabelFallback(t *testing.T) {
 	run := irfRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → implement → review.
 	dec := workflow.DecideNextNode(graph, "start", irfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
@@ -269,7 +219,6 @@ func TestIRF_UnrecognizedLabelFallback(t *testing.T) {
 		t.Fatalf("implement→review: %+v", dec)
 	}
 
-	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
 	dec = workflow.DecideNextNode(graph, "review", irfOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
@@ -280,7 +229,6 @@ func TestIRF_UnrecognizedLabelFallback(t *testing.T) {
 			dec.NextNodeID, "close-needs-attention")
 	}
 
-	// close-needs-attention is terminal.
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", irfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)

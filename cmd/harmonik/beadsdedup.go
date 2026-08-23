@@ -1,21 +1,11 @@
 package main
 
-// beadsdedup.go — `harmonik beads-dedup` subcommand implementation.
-//
-// Deduplicates .beads/issues.jsonl in-place, keeping the record with the
-// newest updated_at timestamp for each bead ID.  This is the one-time fix for
-// ghost "open" beads left by older-open + newer-closed duplicate records that
-// caused br show / br list to over-report open work.
-//
-// Bead ref: hk-0f35x.
-
 import (
 	"fmt"
 	"os"
 	"sort"
 )
 
-// beadsDedupUsage prints the help text for `harmonik beads-dedup`.
 func beadsDedupUsage() {
 	fmt.Print(`harmonik beads-dedup — deduplicate .beads/issues.jsonl in-place
 
@@ -43,8 +33,6 @@ EXAMPLES
 `)
 }
 
-// runBeadsDedupSubcommand implements `harmonik beads-dedup`.
-// subArgs is os.Args[2:] (everything after "beads-dedup").
 func runBeadsDedupSubcommand(subArgs []string) int {
 	path := ".beads/issues.jsonl"
 	dryRun := false
@@ -97,10 +85,6 @@ func runBeadsDedupSubcommand(subArgs []string) int {
 	return 0
 }
 
-// deduplicateBeadRows returns a deduplicated slice keeping the record with the
-// newest updated_at for each bead ID.  When two records share the same
-// updated_at, the later one in the input slice wins (file-order tiebreaker,
-// consistent with rowsToMap).  Output is sorted by bead ID.
 func deduplicateBeadRows(rows []beadRow) []beadRow {
 	best := make(map[string]beadRow, len(rows))
 	for _, r := range rows {

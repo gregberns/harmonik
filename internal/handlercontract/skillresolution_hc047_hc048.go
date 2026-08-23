@@ -6,14 +6,6 @@ import (
 	"path/filepath"
 )
 
-// skillResolution — per-bead helper prefix for test helpers in
-// skillresolution_hc047_hc048_test.go (implementer-protocol.md
-// §Helper-prefix discipline; bead hk-8i31.56).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-047 — Skill resolution is mechanism-tagged
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ResolvedSkill is the result of a successful skill resolution: the skill name
 // and the absolute path of the first matching package directory on the search
 // path.
@@ -58,7 +50,6 @@ func ResolveSkill(skillName string, searchPaths []string) (ResolvedSkill, error)
 		candidate := filepath.Join(searchDir, skillName)
 		info, err := os.Stat(candidate)
 		if err != nil {
-			// Not found in this search path; continue.
 			continue
 		}
 		if info.IsDir() {
@@ -70,10 +61,6 @@ func ResolveSkill(skillName string, searchPaths []string) (ResolvedSkill, error)
 		skillName, ErrSkillProvisioningFailed,
 	)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-048 — Fail-launch on unresolvable required skill (structural)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ResolveAllSkills resolves every name in requiredSkills against searchPaths
 // per HC-047, returning the full set of resolved skills on success.
@@ -95,7 +82,6 @@ func ResolveAllSkills(requiredSkills, searchPaths []string) ([]ResolvedSkill, er
 	for _, name := range requiredSkills {
 		r, err := ResolveSkill(name, searchPaths)
 		if err != nil {
-			// HC-048: first unresolvable skill → fail-launch immediately.
 			return nil, fmt.Errorf(
 				"handlercontract: HC-048: required skill %q unresolvable: %w",
 				name, ErrSkillProvisioningFailed,

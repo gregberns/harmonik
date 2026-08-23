@@ -1,20 +1,5 @@
 package supervisecmd
 
-// pause.go — `harmonik supervise pause` (hk-ry8q1).
-//
-// Sends an operator-pause request to the running daemon via its Unix socket.
-// The daemon responds by emitting operator_pause_status events and
-// transitioning the active queue to paused-by-drain.
-//
-// Exit codes:
-//
-//	0  — daemon acknowledged the pause (or was already paused)
-//	1  — argument or I/O error
-//	17 — daemon not running (socket absent or ECONNREFUSED)
-//
-// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
-// Bead ref: hk-ry8q1.
-
 import (
 	"bufio"
 	"context"
@@ -96,12 +81,6 @@ NOTES
   Use 'harmonik supervise resume' to resume.
 `
 
-// ---------------------------------------------------------------------------
-// sendOperatorOp — shared socket client for pause and resume
-// ---------------------------------------------------------------------------
-
-// sendOperatorOp dials sockPath, sends {"op": op}, and interprets the response.
-// Returns 0 on success, 1 on protocol/I/O error, 17 when the daemon is down.
 func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) (code int) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
@@ -133,7 +112,6 @@ func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) 
 		return 1
 	}
 
-	// Half-close write side so the daemon's json.Decoder sees EOF.
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // the daemon can decode, respond and close before this statement runs, at which point CloseWrite returns ENOTCONN for an operation that already succeeded
 	}
@@ -164,7 +142,6 @@ func pauseWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// opVerb returns the human-readable verb for an op string ("operator-pause" → "pause").
 func opVerb(op string) string {
 	switch op {
 	case "operator-pause":
@@ -176,8 +153,6 @@ func opVerb(op string) string {
 	}
 }
 
-// isSocketAbsentOrRefused reports whether the error indicates the daemon's
-// socket is absent or not accepting connections.
 func isSocketAbsentOrRefused(err error) bool {
 	if err == nil {
 		return false

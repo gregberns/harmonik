@@ -1,23 +1,5 @@
 package main
 
-// graph.go — `harmonik graph validate <path>` subcommand.
-//
-// Reads a .dot workflow file, parses + validates it via internal/workflow/dot
-// (the SAME parser+validator the daemon execution path uses through
-// workflow.LoadDotWorkflow), prints diagnostics to stdout, and exits non-zero
-// on any validation failure.
-//
-// Unifying on internal/workflow/dot resolves hk-kxygy: the CLI pre-run check
-// (EM-038) and the daemon execution path now agree on the DOT dialect. The
-// legacy internal/workflowvalidator parser disagreed with the daemon on bare
-// graph-level attributes, leading comments, strict digraph, handler_ref on
-// non-agentic nodes (EM-007), start_node vs start_node_id, the control-point
-// node type, and idempotency_class on gate/sub-workflow nodes — every one of
-// those divergences is eliminated by parsing through the daemon's parser.
-//
-// Spec ref: Operator-NFR §4.3 needs-attention surfacing.
-// Bead ref: hk-voyf4 (T-IMPL-014), hk-kxygy (parser unification).
-
 import (
 	"encoding/json"
 	"errors"
@@ -27,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// runGraphSubcommand dispatches harmonik graph <verb> [args].
 func runGraphSubcommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Print(`harmonik graph — workflow graph utilities
@@ -60,15 +41,12 @@ EXIT CODES
 	}
 }
 
-// diagnostic is the serialisable form of a single validation failure.
 type diagnostic struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
 }
 
-// runGraphValidate implements `harmonik graph validate [--json] <path>`.
 func runGraphValidate(args []string) int {
-	// Parse flags manually (pre-flag.Parse subcommand pattern).
 	jsonMode := false
 	var dotPath string
 
@@ -99,11 +77,6 @@ EXAMPLES
 		case "--json":
 			jsonMode = true
 		default:
-			// Reject an UNRECOGNIZED leading-dash token LOUDLY (exit 2) instead of
-			// silently treating it as the <path> (which would surface only as an
-			// obscure exit-1 read error). Mirrors the keeper/queue parser-parity
-			// discipline (hk-t1wd / hk-snjr). A bare "-" (len 1) and genuine paths
-			// do not start with a dash, so real positionals are never swallowed.
 			if len(args[i]) > 1 && args[i][0] == '-' {
 				fmt.Fprintln(os.Stderr, "harmonik graph validate: unrecognized flag:", args[i])
 				return 2
@@ -128,12 +101,6 @@ EXAMPLES
 		return 1
 	}
 
-	// Parse + validate through internal/workflow/dot — the same path the daemon
-	// uses via workflow.LoadDotWorkflow. A parse failure (strict WG-031 error)
-	// becomes a single em038_not_parseable diagnostic so the run cannot start;
-	// validation findings are mapped to their WG-/CP-/EM- codes. Only
-	// SeverityError diagnostics count as invalid (matching LoadDotWorkflow),
-	// SeverityWarning diagnostics are surfaced but do not flip the exit code.
 	diags := validateDot(string(src))
 
 	if len(diags) == 0 {
@@ -162,23 +129,6 @@ EXAMPLES
 	return 1
 }
 
-// validateDot parses + validates a DOT source string through
-// internal/workflow/dot and returns the failure diagnostics in the CLI's
-// presentation shape ({Code, Detail}). It returns an empty slice when the
-// workflow is valid (no parse error, no SeverityError validation findings).
-//
-// A parse failure short-circuits validation and is reported as the single
-// stable em038_not_parseable diagnostic, carrying the parser's positional
-// message as the detail. This preserves the documented EM-038 contract: a
-// workflow that cannot be parsed cannot start. Multiple strict parse errors
-// (dot.ParseErrors) are each surfaced as their own em038_not_parseable
-// diagnostic.
-//
-// Validation diagnostics map directly: each SeverityError finding becomes one
-// {Code, Detail} entry using the finding's WG-/CP-/EM- code and its message
-// (line-prefixed when known). SeverityWarning findings are dropped here — they
-// do not block a run per LoadDotWorkflow's contract — so the CLI exit code
-// matches what the daemon would do at load time.
 func validateDot(src string) []diagnostic {
 	graph, parseErr := dot.Parse(src, "")
 	if parseErr != nil {
@@ -186,7 +136,6 @@ func validateDot(src string) []diagnostic {
 		var single *dot.ParseError
 		switch {
 		case errors.As(parseErr, &multi):
-			// multi already bound by errors.As.
 		case errors.As(parseErr, &single):
 			multi = dot.ParseErrors{single}
 		default:
@@ -210,8 +159,6 @@ func validateDot(src string) []diagnostic {
 	return diags
 }
 
-// diagnosticDetail renders a dot.Diagnostic's human-facing detail, prefixing the
-// source line when the parser/validator located one.
 func diagnosticDetail(d dot.Diagnostic) string {
 	if d.Line > 0 {
 		return fmt.Sprintf("dot:%d: %s", d.Line, d.Message)

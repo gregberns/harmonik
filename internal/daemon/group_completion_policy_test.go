@@ -102,8 +102,6 @@ func TestGroupCompletionEffectsRejectContradictoryFacts(t *testing.T) {
 }
 
 func TestGroupCompletionEffectsAcceptReceiptInstallFailureBoundary(t *testing.T) {
-	// WriteReplacement reports this exact pair when the completed canonical is
-	// durable but completion receipt installation is indeterminate.
 	got, err := decideGroupCompletionEffects(groupCompletionDurability{
 		Disposition: queue.GroupCompletionDispositionQueueCompleted,
 		Outcome:     queue.OutcomeCommitIndeterminate,

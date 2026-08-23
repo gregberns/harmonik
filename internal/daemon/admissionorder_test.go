@@ -1,94 +1,5 @@
 package daemon_test
 
-// admissionorder_test.go — the admission gates of runWorkLoop must run in a
-// fixed order, and these tests hold that order.
-//
-// # Why this file exists
-//
-// runWorkLoop in internal/daemon/scheduler.go decides whether to dispatch a
-// queue item through a run of inline gates. A measurement pass found nine
-// ordering constraints between those gates and almost nothing that asserts any
-// of them. The order lived only in the source order plus comments, and several
-// of those comments cited line numbers that were already wrong.
-//
-// The order is load-bearing and the failure mode is silent. Move a gate and the
-// code still compiles, the gate stops firing, and no test goes red. So the
-// planned fold of these gates into internal/orchestrator (DECOMPOSITION-MAP.md
-// §3 Step 3) is unsafe until the order is executable. That is what this file
-// makes it.
-//
-// # The constraint map
-//
-// The numbers below are the numbers in DECOMPOSITION-MAP.md §3 "Ordering
-// constraints that exist only as the current source order". They are kept the
-// same on purpose, so the plan and this file can be read side by side. Do not
-// renumber one without the other.
-//
-//   - 1 cooldown before the pre-claim br show — PINNED.
-//     TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead. The cooldown's whole
-//     purpose is to suppress that subprocess at poll cadence.
-//   - 2 greenlight after the pre-claim br show — PINNED.
-//     TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead. The gate reads
-//     labels off preClaimRecord, which is the zero value until ShowBead returns.
-//   - 3 local-cap before the Phase-3 stamp — TWO CLAUSES, both now pinned, in
-//     two different places. The guard's POSITION relative to the stamp is pinned
-//     by l5saf_localonly_strand_test.go, which drives a real tick and asserts the
-//     persisted item status. That is the shape this file copies and it is not
-//     duplicated here. The second clause — localInFlight must not be incremented
-//     before the guard — is pinned by
-//     TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount, because the
-//     l5saf fixture structurally cannot see it: it sits ON the saturated side of
-//     the cap, where hoisting the increment does not change the branch.
-//   - 4 cross-queue dedup inside the same write-lock hold as the stamp —
-//     HALF PINNED. TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim pins the
-//     outcome: the loser is failed for the dedup reason and never claimed. The
-//     lock HOLD is a declared gap. See that test's own comment for why.
-//   - 5 attempts-bound(a) fused to the stamp — PINNED.
-//     TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp. A bead held by a
-//     pre-stamp gate must not spend its dispatch budget.
-//   - 6 governor.tick before the sentinel-queue gate in the same tick — PINNED,
-//     in sentinelgate_test.go rather than here. The gate is
-//     m.sentinelBlocksDispatch, which returns false unless a movementGovernor was
-//     constructed. The test seam passes a governor port separately from the
-//     bundle, so a loop in which the gate can fire is buildable from daemon_test.
-//     Three tests: the gate holds on the queue path,
-//     it holds on the br-ready path, and a trip armed INSIDE governor.tick gates
-//     the same tick it was armed.
-//   - 7 the two dispatch paths order the same gates differently — PINNED.
-//     TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause.
-//   - 8 delay is two different outcomes — HALF PINNED.
-//     TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending pins the fact that
-//     decides the merge: a wake token is already pending at four of the five
-//     no-sleep sites, so merging those toward the sleeping variant costs zero
-//     latency, not one poll interval. The other direction — merging toward the
-//     no-sleep variant — busy-spins the cooldown, and no test can reach a code
-//     shape that does not exist. See OPEN-DEFECTS.md.
-//     That test used to drive the cross-queue duplicate. It cannot any more: a
-//     collision is no longer terminal on sight (hk-nsion), so that fixture never
-//     reaches all-terminal and the loop never exits. It now drives the hk-6pspu
-//     max-attempts stamp, which is another of the same five sites and reaches
-//     the SAME branch of evaluateGroupAdvanceWithOutcome on its first tick.
-//   - 9 decision-required and sentinel-queue are freely swappable — nothing to
-//     pin. The plan records this as the one pair with no real constraint, and
-//     re-reading the two blocks agrees: only the stderr string differs.
-//
-// # How these tests are built
-//
-// Each one drives real ticks of runWorkLoop and asserts an observable the gate
-// controls: how many times a subprocess seam was called, whether the bead was
-// claimed, what the persisted queue item says. None of them re-states the
-// boolean a gate evaluates. Re-stating the condition is the documented way this
-// codebase's guards have been missed — see the header of
-// l5saf_localonly_strand_test.go.
-//
-// Every negative assertion is paired with a positive control on the SAME
-// fixture. Without the control a test would still pass when the fixture simply
-// could not reach the thing under test, and it would prove nothing.
-//
-// Every test here was checked by mutation: the ordering it claims to protect was
-// broken in a throwaway copy of the tree, and the test was confirmed to go red
-// while go build and go vet stayed green.
-
 import (
 	"context"
 	"encoding/json"
@@ -109,67 +20,18 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 const (
-	// admissionWakePumpInterval is how often these tests poke the queue store's
-	// wake channel. Every hold gate in runWorkLoop sleeps one poll interval
-	// (workloopPollInterval, 2 s) and workloopSleep returns as soon as a wake
-	// signal arrives. Without the pump an observation window holds one tick, and
-	// a test that must count ticks cannot work.
 	admissionWakePumpInterval = 2 * time.Millisecond
 
-	// admissionObserveWindow is how long each test lets the loop run. At the pump
-	// rate above it holds many ticks.
-	//
-	// No test that USES this window asserts an exact tick count. Each asserts a
-	// floor on an observable, or an exact count on a value that saturates, so a
-	// slow machine makes the window hold fewer ticks rather than making the test
-	// wrong. Both saturating cases — the attempts budget and the pre-increment
-	// claim count — are bounded by queue.MaxItemAttempts, and no non-test code path
-	// resets a queue item's Attempts, so extra ticks cannot inflate them.
 	admissionObserveWindow = 600 * time.Millisecond
 
-	// admissionMinTicks is the floor a positive control must clear before the
-	// paired negative assertion means anything. A "the gate suppressed the call"
-	// claim is empty if the window only ever held one tick.
 	admissionMinTicks = 4
 )
 
-// errAdmissionClaimRefused is what the fake ledger returns from ClaimBead.
-//
-// A failing claim is what keeps these tests hermetic. The loop logs the failure,
-// reverts the queue item and continues, so it never reaches beadRunOne. No
-// worktree, no tmux window and no agent process is created, and the test needs
-// no -short exclusion.
-//
-// DO NOT "SIMPLIFY" THIS TEXT. It deliberately avoids the word "blocked".
-// runWorkLoop's dependency-blocked detector (hk-n91y0) is a bare
-// strings.Contains(claimErr.Error(), "blocked"), so ANY error text containing that
-// word anywhere routes the item down a different branch: it is driven terminal
-// through evaluateGroupAdvanceWithOutcome instead of being reverted to pending and
-// retried. Every test here that counts claims across ticks depends on the retry
-// path. The substring match itself is a recorded defect — see OPEN-DEFECTS.md.
 var errAdmissionClaimRefused = errors.New("admission-order fake: claim refused")
 
-// errAdmissionShowFailed is what the fake ledger returns from ShowBead when the
-// test arms showErr.
 var errAdmissionShowFailed = errors.New("admission-order fake: br show failed")
 
-// ─────────────────────────────────────────────────────────────────────────────
-// admissionLedger — the bead-ledger fake these tests observe the loop through
-// ─────────────────────────────────────────────────────────────────────────────
-
-// admissionLedger is a beadLedger fake that counts the two calls the admission
-// order is visible through: ShowBead (the pre-claim subprocess the cooldown
-// exists to suppress, and the only source of the labels the greenlight gate
-// reads) and ClaimBead (the first irreversible act of a dispatch).
-//
-// It records rather than absorbs. CloseBead and ReopenBead belong to the run
-// path, which no test here reaches, so a call to either lands in unexpected and
-// fails the test. A permissive stub would swallow that signal.
 type admissionLedger struct {
 	mu sync.Mutex
 
@@ -238,7 +100,6 @@ func (l *admissionLedger) ShowBead(_ context.Context, id core.BeadID) (core.Bead
 	hook := l.onShowBead
 	l.mu.Unlock()
 
-	// The hook runs with the lock released so it may reach back into the fixture.
 	if hook != nil {
 		hook(total)
 	}
@@ -322,24 +183,6 @@ func (l *admissionLedger) assertNoRunPathCalls(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// admissionResetter — the stranded-bead auto-reset seam, wired but unreachable
-// ─────────────────────────────────────────────────────────────────────────────
-
-// admissionResetter is the hk-l2xd1 stranded-in-progress resetter. Production
-// wires this seam unconditionally, so a fixture that leaves it nil is testing a
-// configuration that cannot occur.
-//
-// It is wired here and must never be called. The cooldown fixture registers a
-// live run for its bead, so runRegistry.HasBeadRun is true and the auto-reset
-// branch is skipped by its own guard.
-//
-// Read this assertion for what it is: a fixture check, not the proof that the
-// cooldown armed. The reset branch arms no cooldown, so if the fixture had taken
-// it the ShowBead count would have run away and the count assertion would already
-// have failed. What proves the cooldown is the differential between the two
-// subtests — draft and in_progress traverse byte-identical code apart from the two
-// CoarseStatusInProgress comparisons.
 type admissionResetter struct {
 	mu    sync.Mutex
 	calls []core.BeadID
@@ -362,19 +205,6 @@ func (r *admissionResetter) assertUnused(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// admissionQueueLedger — the seam ReevaluateDeferred re-checks blockers through
-// ─────────────────────────────────────────────────────────────────────────────
-
-// admissionQueueLedger is the queue.BeadLedger the loop calls
-// queue.ReevaluateDeferred with. ReevaluateDeferred returns early on a nil
-// ledger, so a test whose item is deferred needs a non-nil one to get the item
-// back to pending on the next tick.
-//
-// Both methods count and then fail the test. Every group in this file that can
-// be deferred holds ONE deferrable item, and ReevaluateDeferred only asks about
-// in-group SIBLINGS, so neither method has a legitimate caller here. A call
-// means the fixture stopped being the fixture the tests were reasoned about.
 type admissionQueueLedger struct {
 	mu    sync.Mutex
 	calls []string
@@ -404,11 +234,6 @@ func (l *admissionQueueLedger) assertUnused(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// admissionQueue builds a single-group active queue holding items.
 func admissionQueue(name string, items ...queue.Item) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
@@ -426,18 +251,6 @@ func admissionQueue(name string, items ...queue.Item) *queue.Queue {
 	}
 }
 
-// admissionParkedItem returns an item the dispatcher can never select and that
-// never counts as terminal.
-//
-// The projection in internal/queue admits a pending item only while Attempts is
-// below queue.MaxItemAttempts, and itemIsTerminal counts only completed and
-// failed. So an over-budget pending item is invisible to selection AND keeps its
-// group off all-terminal.
-//
-// That matters because a group that reaches all-terminal advances, which can
-// clear the queue out of the store and erase the state a test is about to read.
-// Parking one item keeps the queue alive without adding a second dispatchable
-// bead.
 func admissionParkedItem(id core.BeadID) queue.Item {
 	return queue.Item{
 		BeadID:   id,
@@ -446,17 +259,11 @@ func admissionParkedItem(id core.BeadID) queue.Item {
 	}
 }
 
-// admissionDeps builds the work-loop deps every test here shares.
-//
-// NoAutoPull is left to the caller: the queue-path tests set it so the br-ready
-// fallback cannot supply dispatch input, and the br-ready test clears it.
 func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController) daemon.TestRuntimeParams {
 	t.Helper()
 	return admissionDepsWithBus(t, ledger, qs, qLedger, noAutoPull, pause, &stubEventCollector{})
 }
 
-// admissionDepsWithBus is admissionDeps with the event collector supplied by the
-// caller, for the one test that reads what the loop emitted.
 func admissionDepsWithBus(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController, bus *stubEventCollector) daemon.TestRuntimeParams {
 	t.Helper()
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -476,17 +283,6 @@ func admissionDepsWithBus(t *testing.T, ledger *admissionLedger, qs *queuewiring
 	}
 }
 
-// runAdmissionLoop drives real ticks of the work loop, then calls inspect while
-// the loop is STILL ALIVE, then shuts the loop down.
-//
-// inspect must run before the cancel. The shutdown drain
-// (drainQueuesForRestart) parks every active queue as paused-by-drain and
-// writes it back to the in-memory store, which overwrites exactly the state
-// these tests read. The queue is not erased any more, but its status and item
-// state are no longer what the loop left there.
-//
-// runLoop is a closure rather than a deps argument because testRuntime is
-// unexported, so no helper outside package daemon can name it in a signature.
 func runAdmissionLoop(t *testing.T, qs *queuewiring.QueueStore, runLoop func(context.Context), inspect func()) {
 	t.Helper()
 
@@ -575,9 +371,6 @@ func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
 	ledger.assertNoRunPathCalls(t)
 }
 
-// admissionFirstItem returns the item under test out of a snapshot, or fails the
-// test. Every fixture here puts the bead under test at index 0 of the single
-// group, and any later index holds only the parked filler item.
 func admissionFirstItem(t *testing.T, q *queue.Queue) queue.Item {
 	t.Helper()
 	if q == nil {
@@ -592,7 +385,6 @@ func admissionFirstItem(t *testing.T, q *queue.Queue) queue.Item {
 	return q.Groups[0].Items[0]
 }
 
-// newAdmissionPauseController builds a handler-pause controller on a sealed bus.
 func newAdmissionPauseController(t *testing.T) *daemon.HandlerPauseController {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -601,10 +393,6 @@ func newAdmissionPauseController(t *testing.T) *daemon.HandlerPauseController {
 	}
 	return daemon.NewHandlerPauseController(bus, nil)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 1 — the cooldown runs BEFORE the pre-claim ShowBead
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead pins the position of the
 // hk-403fw in-progress cooldown against the pre-claim ShowBead.
@@ -631,15 +419,6 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 
 	const beadID core.BeadID = "hk-403fw-cooldown-bead"
 
-	// observe runs one fixture and returns how many times ShowBead was called for
-	// the bead under test, plus how many ticks the loop actually completed.
-	//
-	// The tick count comes from the periodic disk probe with its cadence overridden
-	// to a nanosecond, so it fires once per tick. It is the one per-tick observable
-	// in this fixture that is independent of ShowBead: on the armed path nothing
-	// else moves, because the item is un-deferred once and then simply held Pending
-	// by the cooldown on every later tick. Without it the armed subtest could only
-	// borrow the control subtest's tick evidence.
 	observe := func(t *testing.T, status core.CoarseStatus) (showCalls, ticks int) {
 		t.Helper()
 		ledger := newAdmissionLedger()
@@ -649,25 +428,10 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		qs := daemon.ExportedNewQueueStore()
 		qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
 
-		// Reach the cooldown by the route production takes.
-		//
-		// The resetter seam is wired, because production wires it unconditionally.
-		// The way production still reaches the arm site is runRegistry.HasBeadRun:
-		// the auto-reset branch guards on the bead having NO live run, and a bead
-		// with a live run is exactly what the cooldown is for. So register a run for
-		// this bead, which skips the reset branch and arms the cooldown.
-		//
-		// QueueName is empty, which is the shape a br-ready-dispatched run has. An
-		// empty name also keeps this handle out of the "main" queue's per-queue
-		// in-flight tally, so selection still offers the item.
 		reg := daemon.NewRunRegistry()
 		daemon.ExportedRunRegistryRegister(reg, core.RunID(uuid.New()), &daemon.RunHandle{BeadID: beadID})
 		resetter := &admissionResetter{}
 
-		// tickCount rises once per tick: the disk probe's cadence is overridden below
-		// so it is always due. Free space is reported far above the watermark, so the
-		// probe only counts — it never latches diskLow and never runs the worktree
-		// reclaim subprocess that would touch this machine.
 		var tickMu sync.Mutex
 		tickCount := 0
 		params := admissionDeps(t, ledger, qs, qLedger, true, nil)
@@ -703,8 +467,6 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		return ledger.showCount(beadID), ticks
 	}
 
-	// Positive control FIRST, so a failure reads as "the fixture cannot tick"
-	// rather than as a broken gate.
 	t.Run("draft bead arms no cooldown, so every tick calls ShowBead", func(t *testing.T) {
 		t.Parallel()
 		calls, ticks := observe(t, core.CoarseStatusDraft)
@@ -719,10 +481,6 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 	t.Run("in-progress bead arms the cooldown, which suppresses every later ShowBead", func(t *testing.T) {
 		t.Parallel()
 		calls, ticks := observe(t, core.CoarseStatusInProgress)
-		// The tick floor is what lets this subtest stand on its own. Without it,
-		// "ShowBead was called once" would also be true of a window that only held
-		// one tick, and the result would rest on the control subtest's evidence
-		// rather than on its own.
 		if ticks < admissionMinTicks {
 			t.Fatalf("the loop completed %d tick(s) over %v, want at least %d. "+
 				"The suppression claim below is empty unless there were later ticks to suppress.",
@@ -738,10 +496,6 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 2 — the greenlight gate runs AFTER the pre-claim ShowBead
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead pins the position of
 // the hk-lacr greenlight gate against the pre-claim ShowBead.
@@ -770,7 +524,6 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 	const beadID core.BeadID = "hk-lacr-greenlight-bead"
 	const parkedID core.BeadID = "hk-lacr-parked-bead"
 
-	// observe runs one fixture with the given labels on the ShowBead reply.
 	observe := func(t *testing.T, labels []string) (showCalls, claimCalls int, item queue.Item) {
 		t.Helper()
 		ledger := newAdmissionLedger()
@@ -794,7 +547,6 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 		return ledger.showCount(beadID), ledger.claimCount(beadID), admissionFirstItem(t, snapshot)
 	}
 
-	// Positive control FIRST. It establishes that this fixture reaches the claim.
 	t.Run("unlabeled bead reaches the claim", func(t *testing.T) {
 		t.Parallel()
 		showCalls, claimCalls, _ := observe(t, nil)
@@ -813,21 +565,16 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 		t.Parallel()
 		showCalls, claimCalls, item := observe(t, []string{"needs-greenlight"})
 
-		// (1) The label reached the loop. The fake ledger's ShowBead reply is the
-		// only place it exists, so no ShowBead means no label was ever read and a
-		// hold would have some other cause.
 		if showCalls == 0 {
 			t.Fatal("ShowBead was never called, so the needs-greenlight label never entered the loop. " +
 				"Any hold observed below would be evidence about something else.")
 		}
-		// (2) The gate held the bead.
 		if claimCalls != 0 {
 			t.Errorf("ClaimBead called %d time(s) for a bead carrying needs-greenlight, want 0.\n"+
 				"The greenlight gate (hk-lacr) reads preClaimRecord.Labels. It must run AFTER the pre-claim ShowBead "+
 				"fills that record. Above it the record is the zero value, the gate finds no labels, and it "+
 				"silently never fires — which compiles clean.", claimCalls)
 		}
-		// (3) The item was never even stamped, so it is not stranded.
 		if item.Status != queue.ItemStatusPending {
 			t.Errorf("held item status = %q, want %q — the greenlight gate must defer without stamping",
 				item.Status, queue.ItemStatusPending)
@@ -837,10 +584,6 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 4 — cross-queue dedup stops the loser before the claim
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim pins the hk-a11re
 // cross-queue dedup guard.
@@ -882,8 +625,6 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 
 	ledger := newAdmissionLedger()
 
-	// alpha is the winner: its item already carries the dispatched stamp, so
-	// selection skips it and the dedup scan finds it.
 	alphaRunID := "alpha-run-id"
 	alpha := admissionQueue("alpha", queue.Item{
 		BeadID: sharedBead,
@@ -891,11 +632,6 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 		RunID:  &alphaRunID,
 	})
 
-	// beta is the loser: the same bead, still pending, so selection picks it. The
-	// second item is NOT parked — it is a plain dispatchable bead sitting behind
-	// the refused one, and it is the positive control. §9.8 QM-067 requires the
-	// dispatcher to offer it on the SAME tick, so a claim for it is the evidence
-	// that the refusal cost the queue nothing.
 	beta := admissionQueue("beta",
 		queue.Item{BeadID: sharedBead, Status: queue.ItemStatusPending},
 		queue.Item{BeadID: behindID, Status: queue.ItemStatusPending},
@@ -920,24 +656,18 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 	)
 	ledger.assertNoRunPathCalls(t)
 
-	// The load-bearing assertion: the bead was never claimed a second time.
 	if got := ledger.claimCount(sharedBead); got != 0 {
 		t.Errorf("ClaimBead called %d time(s) for a bead queue %q had already dispatched, want 0.\n"+
 			"The hk-a11re dedup guard must run before the dispatch stamp and the claim. Without it the "+
 			"same bead gets two implementers.", got, "alpha")
 	}
 
-	// The positive control. Without it "the loser stayed pending" is also what a
-	// fixture that never reached the dedup guard at all would produce.
 	if got := ledger.claimCount(behindID); got == 0 {
 		t.Errorf("ClaimBead was never called for the bead sitting BEHIND the refused one.\n" +
 			"Either the loop never reached the dedup guard — in which case every assertion here is empty — or the " +
 			"refusal cost the queue its turn, which is the head-of-line stall §9.8 QM-067 forbids.")
 	}
 
-	// The disposition assertion: the loser is REFUSED, not failed. A terminal
-	// status here is the durable form of a per-tick refusal, and it parks every
-	// unrelated item behind it.
 	betaItem := admissionFirstItem(t, betaSnapshot)
 	if betaItem.Status != queue.ItemStatusPending {
 		t.Errorf("losing item status = %q, want %q — a refusal belongs to the tick, so it must leave the item "+
@@ -959,8 +689,6 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 			"and it stops every unrelated item behind the collision", betaSnapshot.Status, queue.QueueStatusActive)
 	}
 
-	// The collision is reported. Removing the durable failure would otherwise
-	// leave a real misconfiguration with no signal at all.
 	collisions := admissionCollisionPayloads(t, bus)
 	if len(collisions) != 1 {
 		t.Fatalf("%d cross_queue_collision events, want exactly 1 naming both queues: %+v", len(collisions), collisions)
@@ -973,7 +701,6 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 		t.Errorf("collision disposition = %q, want %q", collisions[0].Disposition, core.CrossQueueCollisionRefused)
 	}
 
-	// The winner is untouched.
 	alphaItem := admissionFirstItem(t, alphaSnapshot)
 	if alphaItem.Status != queue.ItemStatusDispatched {
 		t.Errorf("winning item status = %q, want %q — the dedup guard must stop the loser, not the winner",
@@ -981,8 +708,6 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 	}
 }
 
-// admissionCollisionPayloads returns every cross_queue_collision payload the bus
-// recorded.
 func admissionCollisionPayloads(t *testing.T, bus *stubEventCollector) []core.CrossQueueCollisionPayload {
 	t.Helper()
 	events := bus.allEvents()
@@ -1019,11 +744,8 @@ func TestAdmissionOrder_CrossQueueFinishedSiblingCompletesTheLoser(t *testing.T)
 
 	ledger := newAdmissionLedger()
 
-	// alpha already RAN the bead: its item is completed, not dispatched.
 	alpha := admissionQueue("alpha", queue.Item{BeadID: sharedBead, Status: queue.ItemStatusCompleted})
 
-	// The parked item keeps beta's group off all-terminal, so this test reads the
-	// item write rather than the queue-completion machinery.
 	beta := admissionQueue("beta",
 		queue.Item{BeadID: sharedBead, Status: queue.ItemStatusPending},
 		admissionParkedItem(parkedID),
@@ -1098,12 +820,6 @@ func TestAdmissionOrder_CrossQueueFinishedSiblingCompletesTheLoser(t *testing.T)
 func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 	t.Parallel()
 
-	// Both terminal statuses, on purpose. QM-002b Class A names closed AND
-	// tombstone together, and core.CoarseStatus.IsTerminal() admits exactly those
-	// two. A tombstoned bead is withdrawn rather than delivered, so "completed"
-	// reads generously — but the item's status says whether this queue still has
-	// work to do, and it does not. Splitting them here would make dispatch
-	// disagree with startup on the same item.
 	for _, status := range []core.CoarseStatus{core.CoarseStatusClosed, core.CoarseStatusTombstone} {
 		t.Run(string(status), func(t *testing.T) {
 			t.Parallel()
@@ -1114,10 +830,6 @@ func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 			ledger := newAdmissionLedger()
 			ledger.setStatus(status)
 
-			// The parked item keeps the group off all-terminal, so the queue stays
-			// in the store and this subtest reads the ITEM write rather than the
-			// queue-completion machinery. The queue-parking consequence is the
-			// subtest below.
 			qs := daemon.ExportedNewQueueStore()
 			qs.SetQueue(admissionQueue("main",
 				queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
@@ -1136,9 +848,6 @@ func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 			)
 			ledger.assertNoRunPathCalls(t)
 
-			// The fixture control: the loop really took the BI-013c branch. Without
-			// this, "the item is completed" could be some other path's doing and the
-			// assertion below would prove nothing about the pre-claim guard.
 			if got := admissionSkippedStatuses(t, bus); len(got) == 0 || got[0] != string(status) {
 				t.Fatalf("bead_claim_skipped observed_status values = %v, want the first to be %q — the fixture "+
 					"did not reach the BI-013c pre-claim guard, so nothing below is evidence about it", got, status)
@@ -1158,11 +867,6 @@ func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 		})
 	}
 
-	// The consequence, on the fixture that can show it: with nothing else in the
-	// group, the item's disposition decides the QUEUE's. Failing it takes the
-	// group to complete-with-failures and parks the queue, and a closed bead
-	// makes that unrecoverable — §8.3b QM-052b refuses to recover a queue whose
-	// bead is not open.
 	t.Run("the queue does not park", func(t *testing.T) {
 		t.Parallel()
 
@@ -1189,9 +893,6 @@ func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 		if got := admissionSkippedStatuses(t, bus); len(got) == 0 {
 			t.Fatal("no bead_claim_skipped event — the fixture did not reach the BI-013c pre-claim guard")
 		}
-		// A queue whose only item completed reaches complete-success and releases
-		// its name, so an absent snapshot is the SUCCESS shape here. A failed item
-		// leaves the queue in the store at paused-by-failure.
 		if snapshot != nil && snapshot.Status == queue.QueueStatusPausedByFailure {
 			t.Errorf("queue status = %q, want it not parked — one already-finished bead must not stop every "+
 				"unrelated item behind it, and a closed bead makes that park unrecoverable (§8.3b QM-052b)",
@@ -1200,8 +901,6 @@ func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
 	})
 }
 
-// admissionSkippedStatuses returns the observed_status of every
-// bead_claim_skipped event the bus recorded, in order.
 func admissionSkippedStatuses(t *testing.T, bus *stubEventCollector) []string {
 	t.Helper()
 	events := bus.allEvents()
@@ -1218,10 +917,6 @@ func admissionSkippedStatuses(t *testing.T, bus *stubEventCollector) []string {
 	}
 	return out
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 5 — the attempts bound stays fused to the dispatch stamp
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp pins the hk-6pspu attempt
 // counter to the stamp.
@@ -1271,8 +966,6 @@ func TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp(t *testing.T) {
 		return admissionFirstItem(t, snapshot)
 	}
 
-	// Positive control FIRST: a stamp attempt does spend budget, and the window
-	// holds more ticks than the budget allows.
 	t.Run("a real stamp attempt spends one unit of budget", func(t *testing.T) {
 		t.Parallel()
 		item := observe(t, nil)
@@ -1368,10 +1061,6 @@ func TestClaimFailureRoutingUsesTypedRefusal(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 7 — the br-ready path bounds attempts BEFORE handler-pause
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause pins the one
 // place the two dispatch paths order the same two gates differently.
 //
@@ -1396,11 +1085,6 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 
 	const beadID core.BeadID = "hk-6pspu-ready-path-bead"
 
-	// observe runs one br-ready fixture and returns the ShowBead count plus the
-	// number of held events emitted.
-	//
-	// armPauseAfter is the ShowBead call on which the handler pause is armed. Zero
-	// means "arm before the loop starts".
 	observe := func(t *testing.T, showFails bool, armPauseAfter int) (showCalls, heldEvents int) {
 		t.Helper()
 		ledger := newAdmissionLedger()
@@ -1433,9 +1117,6 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 			})
 		}
 
-		// An EMPTY queue store. The loop still needs one for the wake channel the
-		// tick pump drives, and with zero queues loaded selection finds nothing and
-		// falls through to the br-ready path.
 		qs := daemon.ExportedNewQueueStore()
 		bus := &stubEventCollector{}
 		params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, false, pause)
@@ -1459,10 +1140,6 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 		return ledger.showCount(beadID), held
 	}
 
-	// Positive control FIRST: with the pause armed from the start and the bead
-	// always within budget, the pause gate does emit the held event on this
-	// fixture. Without this the negative result below could just mean the pause
-	// controller was never wired.
 	t.Run("a br-ready bead within budget is held for handler pause", func(t *testing.T) {
 		t.Parallel()
 		_, held := observe(t, false, 0)
@@ -1475,8 +1152,6 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 
 	t.Run("a br-ready bead over budget is skipped before the pause gate", func(t *testing.T) {
 		t.Parallel()
-		// ShowBead fails every time, so each tick spends one attempt. The pause is
-		// armed on the call that exhausts the budget.
 		showCalls, held := observe(t, true, queue.MaxItemAttempts)
 		if showCalls != queue.MaxItemAttempts {
 			t.Fatalf("ShowBead called %d time(s), want exactly %d. The bead's br-ready budget is spent one "+
@@ -1492,10 +1167,6 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 8 — the two delay variants are not interchangeable
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending pins the fact that
 // decides how the two delay variants may be merged.
@@ -1563,11 +1234,6 @@ func TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending(t *testing.T) {
 
 	ledger := newAdmissionLedger()
 
-	// One item, one attempt short of the bound. The reservation write charges the
-	// last attempt, fails the item, and the group reaches all-terminal at once,
-	// so the queue goes paused-by-failure and evaluateGroupAdvanceWithOutcome
-	// fires cancelOnQueueExit. That is what stops the loop before it can sleep and
-	// consume the token this test reads.
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(admissionQueue("main", queue.Item{
 		BeadID:   boundBead,
@@ -1583,8 +1249,6 @@ func TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending(t *testing.T) {
 	params.CancelOnQueueExit = stopDispatch
 	deps := daemon.ExportedTestRuntime(params)
 
-	// The control: empty the wake channel so any token observed at the end was put
-	// there by the run.
 	drainWake(qs)
 	if pendingWake(qs) {
 		t.Fatal("wake channel still holds a token after draining, so the assertion below could not " +
@@ -1600,8 +1264,6 @@ func TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending(t *testing.T) {
 		daemon.ExportedRunWorkLoopWithTestPorts(ctx, deps, params) //nolint:errcheck,gosec // G104: background loop; error unactionable here
 	}()
 
-	// No wake pump here. The loop must reach the stamp on its FIRST tick and then
-	// exit, so it needs no wake to make progress and cannot consume a token.
 	select {
 	case <-loopDone:
 	case <-time.After(20 * time.Second):
@@ -1623,11 +1285,6 @@ func TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending(t *testing.T) {
 	}
 }
 
-// drainWake empties the queue store's wake channel.
-//
-// The channel has a buffer of one, so a single non-blocking receive is enough.
-// The loop is the channel's only other consumer, so callers must drain before
-// starting it.
 func drainWake(qs *queuewiring.QueueStore) {
 	select {
 	case <-qs.WakeCh():
@@ -1635,9 +1292,6 @@ func drainWake(qs *queuewiring.QueueStore) {
 	}
 }
 
-// pendingWake reports whether a wake token is waiting, WITHOUT consuming it in
-// the false case. It does consume the token when one is present, so call it once
-// per observation.
 func pendingWake(qs *queuewiring.QueueStore) bool {
 	select {
 	case <-qs.WakeCh():
@@ -1646,10 +1300,6 @@ func pendingWake(qs *queuewiring.QueueStore) bool {
 		return false
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 3, second clause — the local-cap guard reads a PRE-increment count
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount pins the half of
 // constraint 3 that l5saf_localonly_strand_test.go structurally cannot see.
@@ -1692,7 +1342,6 @@ func TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount(t *testing.T) {
 
 	ledger := newAdmissionLedger()
 
-	// A LOCAL-ONLY queue, so capturedQueueLocalOnly is true and the guard applies.
 	q := admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending})
 	q.LocalOnly = true
 
@@ -1704,9 +1353,6 @@ func TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount(t *testing.T) {
 	params.MaxConcurrent = gateMax
 	deps := daemon.ExportedTestRuntime(params)
 
-	// One slot below the cap. No worker registry, so the primary split gate at
-	// Step 2 passes on the local branch alone and the secondary local-cap guard is
-	// the only thing that can refuse this bead.
 	daemon.ExportedStoreLocalInFlight(deps, gateMax-1)
 
 	runAdmissionLoop(t, qs,
@@ -1718,9 +1364,6 @@ func TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount(t *testing.T) {
 	ledger.assertNoRunPathCalls(t)
 	qLedger.assertUnused(t)
 
-	// MaxItemAttempts-1 claims: each tick stamps and claims, the claim fails and
-	// the item reverts, and the stamp attempt that reaches the bound fails the item
-	// before it can claim again.
 	wantClaims := queue.MaxItemAttempts - 1
 	if got := ledger.claimCount(beadID); got != wantClaims {
 		t.Errorf("ClaimBead called %d time(s) for a local-only bead one slot below the cap, want %d.\n"+

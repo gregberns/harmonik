@@ -96,10 +96,8 @@ func SelectNextEdge(
 	eval ConditionEvaluator,
 	cycles *CycleCounter,
 ) CascadeResult {
-	// §4.10.EM-041a — apply context updates BEFORE evaluating conditions.
 	ApplyContextUpdates(run, outcome.ContextUpdates)
 
-	// §4.10.EM-041 (a) — filter to condition-true edges.
 	matched := make([]Edge, 0, len(candidates))
 	for _, e := range candidates {
 		if e.Condition == nil || eval(*e.Condition, run.Context, outcome) {
@@ -107,7 +105,6 @@ func SelectNextEdge(
 		}
 	}
 
-	// §4.10.EM-041 (b) — prefer label matching outcome.PreferredLabel.
 	if outcome.PreferredLabel != nil {
 		label := *outcome.PreferredLabel
 		preferred := make([]Edge, 0, len(matched))
@@ -120,8 +117,6 @@ func SelectNextEdge(
 			matched = preferred
 		}
 	} else if len(outcome.SuggestedNextIDs) > 0 {
-		// §4.10.EM-041 (c) — prefer edges matching outcome.SuggestedNextIDs.
-		// Build a set for O(1) lookup.
 		hintSet := make(map[NodeID]struct{}, len(outcome.SuggestedNextIDs))
 		for _, id := range outcome.SuggestedNextIDs {
 			hintSet[id] = struct{}{}
@@ -137,20 +132,10 @@ func SelectNextEdge(
 		}
 	}
 
-	// §4.10.EM-041 (d)+(e) — sort by -Weight, then conditional-before-
-	// unconditional, then by OrderingKey (lexical) as the final tie-break.
-	//
-	// The conditional-before-unconditional tier implements WG-010/WG-011:
-	// conditional edges are evaluated before the unconditional fallback edge.
-	// Without this, an unconditional edge whose OrderingKey sorts
-	// alphabetically before a conditional edge would win the tie-break,
-	// preventing the conditional path from ever firing (hk-hx8ja).
 	sort.SliceStable(matched, func(i, j int) bool {
 		if matched[i].Weight != matched[j].Weight {
 			return matched[i].Weight > matched[j].Weight // higher weight first
 		}
-		// Conditional edges (non-nil Condition) sort before unconditional
-		// edges (nil Condition) at the same weight.
 		iCond := matched[i].Condition != nil
 		jCond := matched[j].Condition != nil
 		if iCond != jCond {
@@ -159,7 +144,6 @@ func SelectNextEdge(
 		return matched[i].OrderingKey < matched[j].OrderingKey // lexical ascending
 	})
 
-	// §4.10.EM-046a — no matching edge: structural failure.
 	if len(matched) == 0 {
 		return CascadeResult{
 			Failed:        true,
@@ -170,7 +154,6 @@ func SelectNextEdge(
 
 	chosen := matched[0]
 
-	// §4.10.EM-043 — traversal-cap check (compilation_loop).
 	if chosen.TraversalCap != nil {
 		count := cycles.Get(run.RunID, chosen.FromNode, chosen.ToNode)
 		if count >= uint64(*chosen.TraversalCap) {

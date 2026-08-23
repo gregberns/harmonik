@@ -1,10 +1,5 @@
 package daemon
 
-// export_extpkg_queuewiring_test.go — thin re-exports of the already-extracted
-// internal/queuewiring package (RT19.15b split of export_test.go). RETAINED shims
-// for STAYING daemon_test files that name the queuewiring types. package daemon
-// test file; see export_test.go header for the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"

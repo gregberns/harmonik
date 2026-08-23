@@ -38,7 +38,6 @@ func TestBusOverflow_SpecContainsEV011a(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed — cannot locate event-model.md")
 	}
-	// internal/core/busoverflow_hqwn61_test.go → ../../.. → repo root → specs/
 	specPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "specs", "event-model.md")
 
 	raw, err := os.ReadFile(specPath) //nolint:gosec // G304: specPath constructed from runtime.Caller + known relative segments; not user input
@@ -47,19 +46,16 @@ func TestBusOverflow_SpecContainsEV011a(t *testing.T) {
 	}
 	content := string(raw)
 
-	// EV-011a section must be present.
 	if !strings.Contains(content, "EV-011a") {
 		t.Error("event-model.md does not contain \"EV-011a\"; " +
 			"the non-blocking back-pressure section is missing from the spec")
 	}
 
-	// "Non-blocking producer back-pressure" is the normative heading of EV-011a.
 	if !strings.Contains(content, "Non-blocking producer back-pressure") {
 		t.Error("event-model.md does not contain the EV-011a heading " +
 			"\"Non-blocking producer back-pressure\"; the section may have been renamed or removed")
 	}
 
-	// The three shed-policy values must appear in the spec.
 	for _, policy := range []string{"fsync-spilled", "ordinary-dropped", "lossy-dropped"} {
 		if !strings.Contains(content, policy) {
 			t.Errorf("event-model.md does not contain shed_policy value %q; "+
@@ -67,19 +63,16 @@ func TestBusOverflow_SpecContainsEV011a(t *testing.T) {
 		}
 	}
 
-	// "spill-<consumer>.jsonl" is the spill-file naming convention per EV-011a.
 	if !strings.Contains(content, "spill-") {
 		t.Error("event-model.md does not contain spill-file naming pattern " +
 			"\"spill-<consumer>.jsonl\"; the EV-011a spill-file requirement may have been removed")
 	}
 
-	// The capacity-1 reservation guarantee must be stated.
 	if !strings.Contains(content, "capacity-1 reservation") {
 		t.Error("event-model.md does not contain \"capacity-1 reservation\"; " +
 			"the EV-011a observer-queue reservation requirement may have been removed")
 	}
 
-	// The direct JSONL append fallback must be stated.
 	if !strings.Contains(content, "direct JSONL append") {
 		t.Error("event-model.md does not contain \"direct JSONL append\"; " +
 			"the EV-011a reservation-exhausted fallback requirement may have been removed")
@@ -105,12 +98,10 @@ func TestBusOverflow_SpecContainsBusOverflowPayload(t *testing.T) {
 	}
 	content := string(raw)
 
-	// §8.8.4 must be present.
 	if !strings.Contains(content, "bus_overflow") {
 		t.Error("event-model.md does not contain event type \"bus_overflow\"; §8.8.4 is missing")
 	}
 
-	// Six required payload fields per §8.8.4.
 	requiredFields := []string{
 		"consumer_name",
 		"event_type",

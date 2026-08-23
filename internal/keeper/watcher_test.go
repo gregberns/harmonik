@@ -14,43 +14,11 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// driveWatcherFakeClockFrom runs a Watcher under a substrate.FakeClock from a
-// caller-supplied virtual start time. Use it for a test that seeds a GAUGE FILE
-// and cares about its age: the start time must be derived from the seeded
-// file's stat'd mod-time.
-//
-// WHY THE START TIME MATTERS. The watcher reads gauge age as
-// Clock.Since(modTime): an INJECTED clock against a REAL filesystem mod-time. A
-// fake clock that starts at an arbitrary epoch is not commensurate with that
-// mod-time. Start it in 2023 against a 2026 file and every age is large and
-// NEGATIVE, so no threshold reads true and the test passes without asserting
-// anything. Starting from the stat'd mod-time makes the boot-time age EXACTLY
-// the age the test seeded, with no real-time term at all. Refs: hk-nvqy7,
-// hk-vp02y.
-//
-// WHAT THE ANCHOR DOES NOT FIX, so a reader does not expect more of it than it
-// gives. A file mod-time is real time and cannot record virtual time, so a
-// gauge the watcher WRITES during the run lands at the real clock while virtual
-// time keeps running ahead of it by a whole PollInterval per tick. From then on
-// the gauge age is, in effect, the virtual time since the run began. A test
-// that wants a live gauge to stay out of the stale branch does not get that
-// from the clock — it gets it from the watcher refreshing the gauge on the same
-// pass (the `refreshed` short-circuit in Watcher.Run, hk-oduuc). Say which of
-// the two is doing the work when a test leans on it.
 func driveWatcherFakeClockFrom(t *testing.T, start time.Time, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
 	t.Helper()
 	driveWatcherLockstep(t, substrate.NewFakeClock(start), cfg, em, ticks)
 }
 
-// driveWatcherLockstep advances virtual time exactly `ticks` poll intervals in
-// deterministic lockstep with the loop (through the TEST-ONLY OnPollTickFn
-// hook), then cancels and waits for Run to return. It replaces the
-// wall-clock-margin pattern of runWatcherFor, where a fixed real-time window
-// yielded a
-// nondeterministic number of poll iterations under -race starvation — the
-// hk-3dn16 flake. Each processed tick advances virtual time by PollInterval, so
-// cooldown and staleness windows are honoured in virtual time exactly as they
-// are in production.
 func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
 	t.Helper()
 
@@ -60,10 +28,6 @@ func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.Wa
 		interval = 5 * time.Millisecond
 	}
 
-	// Unbuffered: the loop blocks in the hook until the driver reads, giving
-	// tight lockstep. Reading signal k (top of iteration k) proves iterations
-	// 0..k-1 fully processed (the loop cannot receive tick k until it returned
-	// to select after processing k-1).
 	tickCh := make(chan struct{})
 	prev := cfg.OnPollTickFn
 	cfg.OnPollTickFn = func() {
@@ -81,16 +45,12 @@ func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.Wa
 		_ = w.Run(ctx) //nolint:errcheck // context.Canceled is expected
 	}()
 
-	// Wait for the loop to register its poll ticker before advancing.
 	fake.BlockUntil(1)
-	// ticks+1 signals guarantee `ticks` fully-processed iterations.
 	for i := 0; i <= ticks; i++ {
 		fake.Advance(interval)
 		<-tickCh
 	}
 	cancel()
-	// The loop is at select (last processed tick done, no further tick armed);
-	// ctx.Done unblocks it. Drain a possible in-flight hook send so it can exit.
 	go func() {
 		for {
 			select {
@@ -103,7 +63,6 @@ func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.Wa
 	<-done
 }
 
-// spyInjector records injection calls without spawning real tmux processes.
 type spyInjector struct {
 	mu    sync.Mutex
 	calls int
@@ -122,7 +81,6 @@ func (s *spyInjector) count() int {
 	return s.calls
 }
 
-// writeCtxFile writes a .ctx gauge file for the given agent under projectDir.
 func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID string) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -139,9 +97,6 @@ func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID
 	}
 }
 
-// writeCtxFileTokens writes a .ctx gauge file carrying an absolute token count
-// and an explicit window size (either may be 0) in addition to the percentage.
-// Used by the F45 regression test to exercise the Tokens-vs-Pct gate path.
 func writeCtxFileTokens(t *testing.T, projectDir, agent string, pct float64, tokens, windowSize int64, sessionID string) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -160,7 +115,6 @@ func writeCtxFileTokens(t *testing.T, projectDir, agent string, pct float64, tok
 	}
 }
 
-// runWatcherFor starts the watcher and cancels it after dur.
 func runWatcherFor(ctx context.Context, cfg keeper.WatcherConfig, em keeper.Emitter, dur time.Duration) {
 	ctx2, cancel := context.WithTimeout(ctx, dur)
 	defer cancel()
@@ -177,7 +131,6 @@ func TestWatcher_EmitsOneWarnOnUpwardCrossing(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "test-agent"
 
-	// Create managed marker so keep is a no-op guard check is bypassed.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -195,10 +148,8 @@ func TestWatcher_EmitsOneWarnOnUpwardCrossing(t *testing.T) {
 		TmuxTarget:   "",                   // no real injection in tests
 	}
 
-	// Write a gauge file above the threshold.
 	writeCtxFile(t, projectDir, agent, 85.0, "sess-abc")
 
-	// Run the watcher for a few poll intervals.
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
@@ -207,7 +158,6 @@ func TestWatcher_EmitsOneWarnOnUpwardCrossing(t *testing.T) {
 		return
 	}
 
-	// Verify payload fields.
 	var payload core.SessionKeeperWarnPayload
 	if err := json.Unmarshal(warns[0].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal warn payload: %v", err)
@@ -251,13 +201,10 @@ func TestWatcher_NoWarnWhenGaugeIsStale(t *testing.T) {
 		TmuxTarget:   "",
 	}
 
-	// Write a gauge file above the threshold.
 	writeCtxFile(t, projectDir, agent, 90.0, "sess-stale")
 
-	// Sleep so the gauge file is stale before the watcher starts.
 	time.Sleep(5 * time.Millisecond)
 
-	// Run the watcher.
 	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
 
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
@@ -286,9 +233,6 @@ func TestWatcher_EmitsNoGaugeWhenFileAbsent(t *testing.T) {
 		TmuxTarget:   "",
 	}
 
-	// Do NOT write a gauge file — it is absent.
-
-	// Run the watcher for a few ticks.
 	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
 
 	noGauge := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
@@ -297,7 +241,6 @@ func TestWatcher_EmitsNoGaugeWhenFileAbsent(t *testing.T) {
 		return
 	}
 
-	// Verify payload.
 	var payload core.SessionKeeperNoGaugePayload
 	if err := json.Unmarshal(noGauge[0].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal no_gauge payload: %v", err)
@@ -330,7 +273,6 @@ func TestWatcher_NoWarnWhenBelowThreshold(t *testing.T) {
 		TmuxTarget:   "",
 	}
 
-	// Write a gauge file well below the threshold.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-below")
 
 	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
@@ -372,10 +314,6 @@ func TestWatcher_NoWarnBelowPctWhenWindowUnknown(t *testing.T) {
 		TmuxTarget:   "",
 	}
 
-	// Tokens (270k) exceed the FallbackWindowSize-derived 140k threshold, but Pct
-	// (27%) is far below WarnPct (80%) and the gauge reports NO window_size. With a
-	// known window this would be a legitimate abs-token warn; with the window
-	// unknown the watcher must defer to the pct comparison, exactly as the cycler does.
 	writeCtxFileTokens(t, projectDir, agent, 27.0, 270_000, 0, "sess-f45")
 
 	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
@@ -422,22 +360,15 @@ func TestWatcher_InjectDeliveredAfterQuiescence(t *testing.T) {
 		InjectFn:     spy.inject,
 	}
 
-	// Write the gauge BEFORE the watcher starts so modTime is established.
-	// On tick 1: lastModTime is zero → gaugeQuiesced = false (crossing detected,
-	// pendingInject set). On tick 3+: file unchanged → gaugeQuiesced = true →
-	// inject delivered.
 	writeCtxFile(t, projectDir, agent, 85.0, "sess-inject")
 
-	// Run long enough for the crossing tick + ≥2 quiescence ticks.
 	runWatcherFor(context.Background(), cfg, em, 150*time.Millisecond)
 
-	// (a) Exactly one session_keeper_warn event emitted.
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
 	if len(warns) != 1 {
 		t.Errorf("want exactly 1 session_keeper_warn; got %d", len(warns))
 	}
 
-	// (b) Exactly one inject delivered (not zero, not more than one).
 	if n := spy.count(); n != 1 {
 		t.Errorf("want exactly 1 spy inject call; got %d (BUG-1 regression: crossing-tick non-quiescence must retry)", n)
 	}
@@ -494,15 +425,12 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 		_ = w.Run(ctx) //nolint:errcheck // context.Canceled expected
 	}()
 
-	// Tick 1: above threshold → first warn.
 	writeCtxFile(85.0)
 	time.Sleep(30 * time.Millisecond)
 
-	// Tick 2: drop below threshold → reset.
 	writeCtxFile(70.0)
 	time.Sleep(30 * time.Millisecond)
 
-	// Tick 3: cross upward again → second warn.
 	writeCtxFile(90.0)
 	time.Sleep(30 * time.Millisecond)
 
@@ -552,12 +480,10 @@ func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
 		},
 	}
 
-	// Write gauge with a DIFFERENT session_id — foreign session.
 	writeCtxFile(t, projectDir, agent, 90.0, "sess-foreign")
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// No warn — gauge belongs to a different session.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn for foreign session; got %d", len(warns))
 	}
@@ -605,17 +531,14 @@ func TestWatcher_AdoptsSameAgentNewSidAfterExternalClear(t *testing.T) {
 		},
 	}
 
-	// Gauge carries the new session_id at high pct.
 	writeCtxFile(t, projectDir, agent, 90.0, newSID)
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// Watcher must have adopted the new sid by calling WriteManagedSessionFn.
 	if adoptedSID != newSID {
 		t.Errorf("want adopted sid %q; got %q", newSID, adoptedSID)
 	}
 
-	// Warn must fire — the gauge is valid and above threshold.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) == 0 {
 		t.Errorf("want ≥1 session_keeper_warn after adopt; got 0")
 	}
@@ -662,7 +585,6 @@ func TestWatcher_RejectsConcurrentDifferentSession(t *testing.T) {
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// No warn — gauge is foreign.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn for concurrent foreign session; got %d", len(warns))
 	}
@@ -711,12 +633,10 @@ func TestWatcher_NoAdoptWhenSidMalformed(t *testing.T) {
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// Must NOT adopt — malformed .sid fails closed.
 	if adoptCalled {
 		t.Errorf("want no adopt on malformed .sid; WriteManagedSessionFn was called")
 	}
 
-	// No warn — gauge is treated as foreign.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn for malformed-sid case; got %d", len(warns))
 	}
@@ -769,7 +689,6 @@ func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "respawn-agent"
 
-	// Track respawn attempts via the spy pane-idle fn and a channel.
 	respawnCh := make(chan struct{}, 5)
 
 	em := &keeper.RecordingEmitter{}
@@ -789,15 +708,11 @@ func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
 		InjectFn: func(_ context.Context, _ string) error { return nil },
 	}
 
-	// Deliberately write NO gauge file so the gauge is immediately absent.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Replace respawn command with one that signals via a temp file. Since
-	// we can't easily intercept exec.Command("sh","-c","true"), we verify
-	// via the emitted event instead.
 	_ = respawnCh // not used — events are the observable
 
 	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
@@ -884,7 +799,6 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Run for 300ms — many poll ticks but cooldown should hold to 1 attempt.
 	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
 
 	events := em.EventsOfType(core.EventTypeSessionKeeperRespawnAttempted)
@@ -930,17 +844,14 @@ func TestWatcher_ForeignSessionEmitsNoGauge(t *testing.T) {
 		},
 	}
 
-	// Gauge belongs to a different session — foreign.
 	writeCtxFile(t, projectDir, agent, 90.0, "sess-foreign")
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// (a) No warn — guard against false positives from foreign sessions.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn for foreign session; got %d", len(warns))
 	}
 
-	// (b) At least one no_gauge:foreign_session event — the alarm channel must fire.
 	noGauge := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
 	foreignCount := 0
 	for _, ev := range noGauge {

@@ -9,28 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/testhelpers"
 )
 
-// --- EM-031 sensor: state reconstruction uses git + Beads only ---
-//
-// The tests below assert the two complementary halves of EM-031:
-//
-//  1. Structural: DiscoverActiveRuns accepts only BeadsQuerier and BranchTipReader
-//     parameters — there is no JSONL input path. A compile error in this file
-//     would signal a path-leakage regression.
-//
-//  2. Behavioral: DiscoverActiveRuns returns a valid ActiveRunSet from a
-//     fully-populated git + Beads context even when no JSONL file exists on disk.
-//     This is the "JSONL-not-walked-for-state" sensor for EM-031.
-//
-// Spec ref: execution-model.md §4.7 EM-031 — "The JSONL event log MUST NOT be
-// walked to reconstruct state."
-
-// reconstructFixtureCompileTimeCheck is a compile-time assertion that
-// DiscoverActiveRuns does not accept a JSONL reader parameter. If the function
-// signature ever gains a JSONL source, this file will fail to compile because
-// the test call sites below do not pass one.
-//
-// This is intentionally a documentation comment on a blank identifier — the
-// actual enforcement is the set of test call sites using only (ctx, querier, reader).
 var _ = DiscoverActiveRuns // function must remain (ctx, BeadsQuerier, BranchTipReader)
 
 // TestEM031_ReconstructionUsesOnlyGitAndBeads verifies that DiscoverActiveRuns
@@ -43,31 +21,25 @@ var _ = DiscoverActiveRuns // function must remain (ctx, BeadsQuerier, BranchTip
 func TestEM031_ReconstructionUsesOnlyGitAndBeads(t *testing.T) {
 	t.Parallel()
 
-	// Two in-flight runs: one with a task branch (git source), one Beads-only.
 	runID := reconstructFixtureRunID(1)
 	const beadOnlyID = "hk-em031.1"
 
-	// Querier: one non-terminal bead (the Beads-only run).
 	querier := &activeRunDiscoveryFixtureFakeQuerier{
 		statusMap: map[string][]core.BeadRecord{
 			"open": {activeRunDiscoveryFixtureBeadRecord(beadOnlyID, core.CoarseStatusOpen)},
 		},
 	}
 
-	// Reader: one task branch with a valid Harmonik-Run-ID trailer.
 	reader := activeRunDiscoveryFixtureReaderWithTips(BranchTip{
 		BranchName: "run/" + runID,
 		RunID:      runID,
 		BeadID:     "",
 	})
 
-	// DiscoverActiveRuns must succeed with only these two sources.
-	// No JSONL path is available or needed.
 	set, err := DiscoverActiveRuns(t.Context(), querier, reader)
 	if err != nil {
 		t.Fatalf("DiscoverActiveRuns: unexpected error: %v", err)
 	}
-	// Expect two entries: one from the branch scan, one from Beads.
 	if set.Len() != 2 {
 		t.Errorf("ActiveRunSet.Len() = %d; want 2 (one git-branch run + one Beads-only run)", set.Len())
 	}
@@ -94,20 +66,6 @@ func TestEM031_ReconstructionEmptyGitAndBeads(t *testing.T) {
 		t.Errorf("ActiveRunSet.Len() = %d; want 0", set.Len())
 	}
 }
-
-// --- EM-031 sensor: JSONL torn-tail tolerance ---
-//
-// The tests below exercise ReadJSONLForDivergenceEvidence, the divergence-
-// evidence JSONL reader, against each torn-tail variant defined in EM-031 and
-// the testhelpers.JSONLFixtureTornTail fixture set.
-//
-// EM-031 specifies three cases:
-//  1. Torn tail (unparseable final line, no terminating newline) → discard,
-//     return valid preceding lines, NO Cat 6b signal.
-//  2. Mid-file corruption → ErrJSONLMidFileCorruption (Cat 6b signal).
-//  3. Terminated bad tail (unparseable final line WITH a newline) → Cat 6b.
-//
-// Spec ref: execution-model.md §4.7 EM-031 — torn-tail tolerance paragraph.
 
 // TestEM031_TornTail_MissingNewline verifies that a final line containing
 // valid JSON but lacking a terminating newline is returned as a valid line.
@@ -141,8 +99,6 @@ func TestEM031_TornTail_MissingNewline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadJSONLForDivergenceEvidence: unexpected error for missing-newline (parseable JSON): %v", err)
 	}
-	// The MissingNewline fixture has 1 valid preceding line + 1 valid unterminated final line.
-	// Both should be returned because the final line IS parseable JSON (not a torn tail per EM-031).
 	wantLines := fixture.ValidLineCount + 1 // valid preceding + valid unterminated final
 	if len(results) != wantLines {
 		t.Errorf("len(results) = %d; want %d (parseable unterminated final line is returned, not discarded)",
@@ -196,8 +152,6 @@ func TestEM031_TornTail_BadJSON(t *testing.T) {
 func TestEM031_TornTail_TerminatedBadLine_IsCat6b(t *testing.T) {
 	t.Parallel()
 
-	// Build a JSONL with one valid line + a second invalid (truncated) line that
-	// IS newline-terminated. This is NOT a torn tail — it is a terminated bad line.
 	data := bytes.Join([][]byte{
 		[]byte(`{"event_id":"0196e3d1-3af8-7000-8000-000000000001","schema_version":1}` + "\n"),
 		[]byte(`{"event_id":"BAD` + "\n"), // truncated but has newline
@@ -220,7 +174,6 @@ func TestEM031_TornTail_TerminatedBadLine_IsCat6b(t *testing.T) {
 func TestEM031_MidFileCorruption_IsCat6b(t *testing.T) {
 	t.Parallel()
 
-	// Three lines: valid, corrupt mid-file, valid trailing.
 	data := bytes.Join([][]byte{
 		[]byte(`{"event_id":"0196e3d1-3af8-7000-8000-000000000001","schema_version":1}` + "\n"),
 		[]byte(`{CORRUPT` + "\n"),
@@ -280,7 +233,6 @@ func TestEM031_ValidJSONL_AllLinesReturned(t *testing.T) {
 	if len(results) != 3 {
 		t.Errorf("len(results) = %d; want 3", len(results))
 	}
-	// Verify line numbers are sequential.
 	for i, r := range results {
 		if r.LineNumber != i+1 {
 			t.Errorf("results[%d].LineNumber = %d; want %d", i, r.LineNumber, i+1)
@@ -310,10 +262,6 @@ func TestEM031_SingleTornTail_OnlyValidLine(t *testing.T) {
 	}
 }
 
-// --- Fixture helpers (reconstructFixture prefix per hk-b3f.39 discipline) ---
-
-// reconstructFixtureRunID returns a deterministic UUIDv7-shaped string for use
-// in EM-031 reconstruction tests. Uses the same format as sibling bead helpers.
 func reconstructFixtureRunID(n int) string {
 	return activeRunDiscoveryFixtureRunID(n + 100) // offset from EM-031a range
 }

@@ -28,10 +28,6 @@ import (
 // pass as conformance gates once the implementation lands. Sections that require
 // the implementation are marked TODO with the owning bead reference.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.8 WM-031: Failed-run worktrees persist until operator cleanup
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM031_FailedRunWorktreePersists verifies that a worktree whose run reached
 // a terminal failure state persists on disk with its branch intact after lease
 // release. The workspace manager MUST NOT auto-delete the worktree directory or
@@ -62,8 +58,6 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	// Write the lease-lock (simulates a live run).
-	// LeaseLockPath and WriteLeaseLockAtomic are production functions (WM-013a).
 	u := uuid.MustParse(runID)
 	lock := &core.LeaseLockFile{
 		RunID:     core.RunID(u),
@@ -76,19 +70,14 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 		t.Fatalf("WM-031: WriteLeaseLockAtomic: %v", err)
 	}
 
-	// Run reaches terminal failure → lease released (lock removed), but
-	// worktree directory and branch MUST remain per WM-031.
-	// ReleaseLeaseLock is the production function (WM-013b).
 	if err := ReleaseLeaseLock(leaseLockPath); err != nil {
 		t.Fatalf("WM-031: ReleaseLeaseLock: %v", err)
 	}
 
-	// Lease-lock MUST be absent.
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 		t.Errorf("WM-031: lease-lock still present after terminal failure release")
 	}
 
-	// Worktree directory MUST still exist.
 	if _, err := os.Stat(worktreePath); err != nil {
 		t.Errorf("WM-031: worktree directory absent after lease release; want persisted: %v", err)
 	}
@@ -101,10 +90,6 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 			branch, err, out)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.8 WM-032: Failed-run workspace state is discarded; interrupt composes
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM032_FailedRunStateIsDiscarded verifies that on terminal failure the
 // workspace state transitions to discarded AND any non-none interrupt_state is
@@ -143,24 +128,18 @@ func TestWM032_FailedRunStateIsDiscarded(t *testing.T) {
 				SchemaVersion: 1,
 			}
 
-			// Terminal failure → discarded transition MUST succeed.
 			if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 				t.Fatalf("WM-032: Transition(leased → discarded): %v", err)
 			}
 			if ws.State != core.WorkspaceStateDiscarded {
 				t.Errorf("WM-032: state = %q; want discarded", ws.State)
 			}
-			// WM-037a: interrupt_state MUST be cleared.
 			if ws.InterruptState != core.InterruptStateNone {
 				t.Errorf("WM-032+WM-037a: interrupt_state = %q after discarded; want none", ws.InterruptState)
 			}
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.8 WM-033: Startup orphan sweep — content-first staleness, git worktree prune
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM033_OrphanSweepContentFirstStaleness verifies that the orphan sweep
 // detects staleness primarily from the lease-lock JSON content (PID liveness),
@@ -176,7 +155,6 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 	t.Run("dead-pid-is-stale-regardless-of-mtime", func(t *testing.T) {
 		t.Parallel()
 
-		// PID 0 is never a live process.
 		deadPID := 0
 		content := leaseFixtureMakeLockJSON("some-run-id", deadPID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
@@ -188,7 +166,6 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 	t.Run("live-pid-is-not-stale-on-content", func(t *testing.T) {
 		t.Parallel()
 
-		// Own PID is definitely live.
 		livePID := os.Getpid()
 		content := leaseFixtureMakeLockJSON("some-run-id", livePID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
@@ -198,8 +175,6 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 	})
 }
 
-// failedRunFixtureLeaseLockRecord is the parsed form of a lease-lock JSON file
-// per workspace-model.md §4.3 WM-013a.
 type failedRunFixtureLeaseLockRecord struct {
 	RunID     string `json:"run_id"`
 	PID       int    `json:"pid"`
@@ -220,16 +195,11 @@ type failedRunFixtureLeaseLockRecord struct {
 func failedRunFixtureIsLeaseLockStale(content []byte) bool {
 	var rec failedRunFixtureLeaseLockRecord
 	if err := json.Unmarshal(content, &rec); err != nil {
-		// Unparseable content is treated as stale.
 		return true
 	}
-	// PID 0 is never live; negative PIDs are invalid.
 	if rec.PID <= 0 {
 		return true
 	}
-	// Check whether the PID is live by sending signal 0 (kill(pid, 0)).
-	// syscall.Signal(0) is the zero signal; no signal is delivered but the
-	// kernel reports whether the process exists and is accessible.
 	proc, err := os.FindProcess(rec.PID)
 	if err != nil {
 		return true // OS can't find the process → stale
@@ -266,19 +236,16 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	// Simulate: worktree directory is removed from disk (orphaned git metadata).
 	if err := os.RemoveAll(worktreePath); err != nil {
 		t.Fatalf("RemoveAll worktree: %v", err)
 	}
 
-	// `git worktree prune` MUST succeed after the directory is gone.
 	pruneCmd := exec.CommandContext(t.Context(), "git", "worktree", "prune")
 	pruneCmd.Dir = repo
 	if out, err := pruneCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-033: git worktree prune: %v\n%s", err, out)
 	}
 
-	// Post-prune: `git worktree list` MUST NOT include the removed worktree path.
 	listCmd := exec.CommandContext(t.Context(), "git", "worktree", "list", "--porcelain")
 	listCmd.Dir = repo
 	out, err := listCmd.CombinedOutput()
@@ -290,7 +257,6 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 	}
 }
 
-// contains reports whether s contains substr.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr ||
 		s != "" && containsAt(s, substr))
@@ -350,14 +316,12 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 		}
 	})
 
-	// `git worktree prune` MUST NOT remove the locked worktree entry.
 	pruneCmd := exec.CommandContext(t.Context(), "git", "worktree", "prune")
 	pruneCmd.Dir = repo
 	if out, err := pruneCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-033: git worktree prune (locked): %v\n%s", err, out)
 	}
 
-	// Locked worktree MUST still appear in the list.
 	listCmd := exec.CommandContext(t.Context(), "git", "worktree", "list", "--porcelain")
 	listCmd.Dir = repo
 	out, err := listCmd.CombinedOutput()
@@ -368,10 +332,6 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 		t.Errorf("WM-033: locked worktree %q absent from list after prune; want retained", worktreePath)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.9 WM-034: reopen-bead verdict triggers fresh run_id + fresh worktree
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM034_ReopenBeadFreshRunID verifies that reopen-bead produces a fresh
 // run_id distinct from every prior run_id dispatched against the bead, and that
@@ -387,7 +347,6 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 
 	repo, sha := tempRepo(t)
 
-	// Run A: original run (failed).
 	runIDA := "0196b300-0000-7000-8000-000000034001"
 	branchA := "run/" + runIDA
 	worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
@@ -401,7 +360,6 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if out, err := addA.CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add A: %v\n%s", err, out)
 	}
-	// Use production functions for run A's lease lifecycle (WM-013a, WM-013b).
 	uA := uuid.MustParse(runIDA)
 	lockA := &core.LeaseLockFile{
 		RunID:     core.RunID(uA),
@@ -417,7 +375,6 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 		t.Fatalf("WM-034: ReleaseLeaseLock A: %v", err)
 	}
 
-	// Run B: reopen-bead verdict produces a FRESH run_id (distinct from A).
 	runIDB := "0196b300-0000-7000-8000-000000034002"
 	if runIDB == runIDA {
 		t.Fatal("WM-034: test precondition: run B run_id must differ from run A")
@@ -426,7 +383,6 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	branchB := "run/" + runIDB
 	worktreePathB := filepath.Join(repo, ".harmonik", "worktrees", runIDB)
 
-	// Canonical paths MUST differ (distinct run_ids).
 	if worktreePathA == worktreePathB {
 		t.Fatalf("WM-034: run A and run B share canonical path %q; want distinct paths", worktreePathA)
 	}
@@ -441,7 +397,6 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 		t.Fatalf("git worktree add B: %v\n%s", err, out)
 	}
 
-	// Run A's worktree and branch MUST still exist per WM-031.
 	if _, err := os.Stat(worktreePathA); err != nil {
 		t.Errorf("WM-034+WM-031: run A worktree absent after reopen-bead; want persisted: %v", err)
 	}
@@ -451,14 +406,10 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 		t.Errorf("WM-034+WM-031: run A branch %q absent; want persisted: %v\n%s", branchA, err, out)
 	}
 
-	// Run B's worktree MUST exist at its canonical path.
 	if _, err := os.Stat(worktreePathB); err != nil {
 		t.Errorf("WM-034: run B worktree absent at canonical path: %v", err)
 	}
 
-	// WM-034: prior run_id MUST NOT be reused (reject same path attempt).
-	// The workspace manager rejects run_id reuse; we verify the canonical path
-	// uniqueness as the mechanical proxy for the id-reuse check.
 	err := failedRunFixtureCheckRunIDReuse(runIDA, []string{runIDA})
 	if err == nil {
 		t.Errorf("WM-034: reuse of prior run_id %q was not rejected; want error", runIDA)
@@ -479,17 +430,11 @@ func failedRunFixtureCheckRunIDReuse(candidateRunID string, priorRunIDs []string
 	return nil
 }
 
-// errRunIDReused is returned when a workspace-create attempt reuses a prior run_id.
 var errRunIDReused = failedRunError("workspace: run_id has already been dispatched (WM-034)")
 
-// failedRunError is a simple error type for failed-run / verdict test errors.
 type failedRunError string
 
 func (e failedRunError) Error() string { return string(e) }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.9 WM-035+WM-036: Intra-run rollback verdicts keep the same worktree
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM036_VerdictDispositionClassification verifies that the verdict-disposition
 // mapping per WM-036 table is deterministic on the verdict enum value.
@@ -546,8 +491,6 @@ func TestWM036_VerdictDispositionClassification(t *testing.T) {
 	})
 }
 
-// failedRunFixtureVerdictDisposition categorises the workspace disposition
-// resulting from a reconciliation verdict per WM-036.
 type failedRunFixtureVerdictDisposition int
 
 const (
@@ -663,17 +606,12 @@ func TestWM036_NoOpAcceptClearsInterruptState(t *testing.T) {
 			if ws.InterruptState != core.InterruptStateNone {
 				t.Errorf("WM-036+WM-040[%s]: interrupt_state = %q after no-op-accept; want none", iv, ws.InterruptState)
 			}
-			// Lifecycle state MUST remain unchanged (no-op).
 			if ws.State != core.WorkspaceStateLeased {
 				t.Errorf("WM-036: lifecycle state changed to %q by no-op-accept; want leased (no-op)", ws.State)
 			}
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.10 WM-037: interrupt_state orthogonal to lifecycle for in-flight states
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM037_InterruptStateOrthogonalToInFlightLifecycle verifies that every
 // in-flight lifecycle state composes with every valid interrupt_state value.
@@ -706,12 +644,10 @@ func TestWM037_InterruptStateOrthogonalToInFlightLifecycle(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				// Direct assignment: both values are orthogonal per WM-037.
 				ws := &Workspace{
 					State:          ls,
 					InterruptState: is,
 				}
-				// Verify both values are preserved (no coupling).
 				if ws.State != ls {
 					t.Errorf("WM-037: lifecycle state mutated by interrupt assignment: got %q, want %q",
 						ws.State, ls)
@@ -720,7 +656,6 @@ func TestWM037_InterruptStateOrthogonalToInFlightLifecycle(t *testing.T) {
 					t.Errorf("WM-037: interrupt_state mutated by lifecycle assignment: got %q, want %q",
 						ws.InterruptState, is)
 				}
-				// Both must be valid.
 				if !ws.State.Valid() {
 					t.Errorf("WM-037: lifecycle state %q is not Valid()", ls)
 				}
@@ -731,10 +666,6 @@ func TestWM037_InterruptStateOrthogonalToInFlightLifecycle(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.10 WM-038a: Workspace-local interrupt_state_changed marker
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM038a_InterruptStateChangedMarkerWritten verifies that when the workspace
 // manager mutates interrupt_state, it appends an interrupt_state_changed JSONL
@@ -754,15 +685,12 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 	newInterruptState := string(core.InterruptStateOperatorPaused)
 	cause := "operator-pause"
 
-	// Write the marker as the workspace manager would.
 	marker := failedRunFixtureBuildInterruptStateMarker(
 		t, workspaceID, runID, priorInterruptState, newInterruptState, cause,
 	)
-	// WorkspaceLocalEventsPath is the production function (WM-013b / §6.2).
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 	failedRunFixtureAppendJSONLMarker(t, eventsFile, marker)
 
-	// Read back and verify the marker fields.
 	data := mustReadFile(t, eventsFile)
 	var parsed map[string]string
 	if err := json.Unmarshal(data[:len(data)-1], &parsed); err != nil { // trim trailing newline
@@ -790,8 +718,6 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 	}
 }
 
-// failedRunFixtureBuildInterruptStateMarker builds the interrupt_state_changed
-// JSONL marker per WM-038a.
 func failedRunFixtureBuildInterruptStateMarker(
 	t *testing.T,
 	workspaceID, runID, priorInterruptState, newInterruptState, cause string,
@@ -813,8 +739,6 @@ func failedRunFixtureBuildInterruptStateMarker(
 	return b
 }
 
-// failedRunFixtureAppendJSONLMarker appends marker + newline to path, creating
-// parent directories and fsyncing the file per WM-038a discipline.
 func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte) {
 	t.Helper()
 	dir := filepath.Dir(path)
@@ -826,8 +750,6 @@ func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte)
 	if err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker OpenFile %q: %v", path, err)
 	}
-	// Own buffer: append(marker, '\n') would write into marker's spare capacity
-	// and mutate the caller's slice.
 	line := make([]byte, 0, len(marker)+1)
 	line = append(line, marker...)
 	line = append(line, '\n')
@@ -841,10 +763,6 @@ func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte)
 		t.Fatalf("failedRunFixtureAppendJSONLMarker Close: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.10 WM-039: workspace_interrupted emitted by reconciliation, not WM
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM039_WorkspaceInterruptedEmittedByReconciliationOnly verifies the split
 // of emission authority: the workspace manager owns the interrupt_state FIELD;
@@ -872,10 +790,6 @@ func TestWM039_WorkspaceInterruptedEmittedByReconciliationOnly(t *testing.T) {
 		"workspace manager MUST write WM-038a marker only.")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.10 WM-040: interrupt_state reset requires reconciliation or operator resume
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM040_InterruptStateClearRequiresCause verifies that interrupt_state cannot
 // be silently cleared — the clear MUST be driven by an operator-resuming event or
 // a reconciliation verdict.
@@ -897,11 +811,9 @@ func TestWM040_InterruptStateClearRequiresCause(t *testing.T) {
 			SchemaVersion:  1,
 		}
 
-		// Operator resume: clear interrupt_state with a cause marker.
 		cause := "operator_resuming"
 		ws.InterruptState = core.InterruptStateNone
 
-		// Verify the clear happened and that the cause is recorded (WM-038a marker).
 		if ws.InterruptState != core.InterruptStateNone {
 			t.Errorf("WM-040: interrupt_state = %q after operator resume; want none", ws.InterruptState)
 		}
@@ -922,7 +834,6 @@ func TestWM040_InterruptStateClearRequiresCause(t *testing.T) {
 			SchemaVersion:  1,
 		}
 
-		// Reconciliation verdict (e.g., no-op-accept): clear interrupt_state.
 		verdict := "no-op-accept"
 		ws.InterruptState = core.InterruptStateNone
 
@@ -933,10 +844,6 @@ func TestWM040_InterruptStateClearRequiresCause(t *testing.T) {
 		_ = verdict
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// §5 WM-INV-003 Part B: Prose-level — history-editing audit
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWMINV003PartB_HistoryEditingAuditObligation verifies at the prose level
 // that git filter-branch / git replace / rewrite operations on an in-flight task
@@ -968,7 +875,6 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	// Add a normal checkpoint commit (append-only — valid).
 	f := filepath.Join(worktreePath, "checkpoint.txt")
 	if err := os.WriteFile(f, []byte("checkpoint content\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile checkpoint: %v", err)
@@ -1009,7 +915,6 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 			tipBefore, tipAfter)
 	}
 
-	// Log the OQ-WM-017 obligation: the auditor tool itself is deferred.
 	t.Log("WM-INV-003 Part B: git reflog-based history-editing audit is deferred to " +
 		"OQ-WM-017 / testing.md. This test verifies the append-only precondition on " +
 		"a normal fast-forward commit trail.")

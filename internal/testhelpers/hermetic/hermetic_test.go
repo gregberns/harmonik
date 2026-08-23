@@ -1,12 +1,5 @@
 package hermetic
 
-// These tests guard the helper the whole core suite now depends on. If any of
-// them goes red, every package that calls hermetic.Main has quietly gone back to
-// reading the machine it runs on, and the core gate stops being evidence.
-//
-// The package has no TestMain of its own on purpose: Setup is what is under
-// test, so the tests call it directly and observe the environment it leaves.
-
 import (
 	"os"
 	"os/exec"

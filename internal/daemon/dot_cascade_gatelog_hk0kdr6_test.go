@@ -1,19 +1,5 @@
 package daemon
 
-// dot_cascade_gatelog_hk0kdr6_test.go — the failed commit gate's log must outlive
-// the worktree it ran in (hk-0kdr6).
-//
-// Pre-fix: dispatchDotToolNode wrote the gate output to
-// <worktree>/.harmonik/commit-gate.log and named that path in the daemon log. The
-// worktree is removed on the run's terminal transition, so by the time a cell
-// reported RED the named path did not exist and nothing said WHY the merge
-// decision failed. One live run made four gate attempts and left zero readable
-// logs.
-//
-// Post-fix: every failed attempt ALSO appends to
-// <projectDir>/.harmonik/gate-logs/<run_id>/<node_id>.log, which nothing removes,
-// and the reported path is that one.
-
 import (
 	"context"
 	"os"
@@ -37,8 +23,6 @@ func gateLogNewRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// gateLogFailingNode returns a shell tool node whose command prints marker on
-// stdout and exits non-zero — the deterministic-FAIL shape of a red commit gate.
 func gateLogFailingNode(marker string) *dot.Node {
 	return &dot.Node{
 		ID:          "commit_gate",
@@ -72,7 +56,6 @@ func TestGateLogArchive_SurvivesWorktreeRemoval(t *testing.T) {
 		t.Fatalf("expected FAIL from `exit 2`, got %q", outcome.Status)
 	}
 
-	// The run ends: the worktree, and the worktree copy of the log with it, go away.
 	if err := os.RemoveAll(wtPath); err != nil {
 		t.Fatalf("remove worktree: %v", err)
 	}

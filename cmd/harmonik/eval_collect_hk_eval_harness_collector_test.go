@@ -1,10 +1,5 @@
 package main
 
-// eval_collect_hk_eval_harness_collector_test.go
-// Sensors for `harmonik eval collect` (EH1, bead hk-eval-harness-collector-uavgd).
-//
-// RED-then-GREEN: these tests must pass against the implementation above.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -15,7 +10,6 @@ import (
 	"time"
 )
 
-// evalWriteEvents writes a slice of raw JSON lines to a file.
 func evalWriteEvents(t *testing.T, path string, lines []string) {
 	t.Helper()
 	// #nosec G304 -- path is rooted in this test's temporary fixture directory.
@@ -42,7 +36,6 @@ func evalWriteEvents(t *testing.T, path string, lines []string) {
 	}
 }
 
-// evalEventLine builds a minimal event JSONL line.
 func evalEventLine(t *testing.T, eventType, runID string, payload map[string]any) string {
 	t.Helper()
 	env := map[string]any{
@@ -61,7 +54,6 @@ func evalEventLine(t *testing.T, eventType, runID string, payload map[string]any
 	return string(b)
 }
 
-// evalEventLineAt builds an event line with a specific wall timestamp.
 func evalEventLineAt(t *testing.T, eventType, runID, wallTS string, payload map[string]any) string {
 	t.Helper()
 	env := map[string]any{
@@ -178,7 +170,6 @@ func TestEvalReadEvents_GradeFail(t *testing.T) {
 			"node_id":      "grade",
 			"requested_at": "2026-07-02T22:01:00Z",
 		}),
-		// Grade failed → DOT topology routes to record-fail, never reaches judge.
 	})
 
 	states, err := evalReadEvents(evPath, "")
@@ -284,7 +275,6 @@ func TestEvalBuildRecord_WallTime(t *testing.T) {
 		commitSHA:       "abc123",
 		completedWall:   time.Date(2026, 7, 2, 22, 3, 34, 0, time.UTC),
 	}
-	// Use empty projectDir so br show fails gracefully.
 	rec, err := evalBuildRecord("run-id-1", st, t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("evalBuildRecord: %v", err)
@@ -469,7 +459,6 @@ func TestRunEvalCollect_SkipsNonEvalRuns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("runEvalCollect exit %d: stderr=%s", code, stderr.String())
 	}
-	// Output file should not exist or be empty.
 	info, err := os.Stat(outPath)
 	if err == nil && info.Size() > 0 {
 		data, readErr := os.ReadFile(outPath)

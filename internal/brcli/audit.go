@@ -63,8 +63,6 @@ type AuditEvent struct {
 	NewValue string `json:"new_value,omitempty"`
 }
 
-// brAuditLogEnvelope is the JSON response shape for `br --json audit log <id>`
-// on exit 0.
 type brAuditLogEnvelope struct {
 	IssueID string       `json:"issue_id"`
 	Events  []AuditEvent `json:"events"`
@@ -94,7 +92,6 @@ func (a *Adapter) AuditLog(ctx context.Context, id core.BeadID) ([]AuditEvent, e
 	}
 
 	if result.ExitCode != 0 {
-		// Attempt to parse as an error envelope to detect ISSUE_NOT_FOUND.
 		var envelope brShowErrorEnvelope
 		if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr == nil && envelope.Error.Code == "ISSUE_NOT_FOUND" {
 			return nil, ErrBeadNotFound
@@ -117,15 +114,11 @@ func (a *Adapter) AuditLog(ctx context.Context, id core.BeadID) ([]AuditEvent, e
 		)
 	}
 
-	// Success path: parse {issue_id, events: [...]} envelope.
-	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var envelope brAuditLogEnvelope
 	if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr != nil {
 		return nil, fmt.Errorf("brcli.AuditLog: malformed br audit log output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
-	// Return empty slice (not nil) when the events array is empty, so callers
-	// can distinguish "no events" from "not queried".
 	if len(envelope.Events) == 0 {
 		return []AuditEvent{}, nil
 	}

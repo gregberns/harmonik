@@ -28,7 +28,6 @@ import (
 	"strings"
 )
 
-// templateTokenRe matches __[A-Z][A-Z0-9_]*__ per WG-045.
 var templateTokenRe = regexp.MustCompile(`__[A-Z][A-Z0-9_]*__`)
 
 // ErrResidualToken is returned when one or more template tokens remain in the

@@ -1,30 +1,5 @@
 package queue_test
 
-// rpc_spawncap_bounds_ad79i_test.go — `queue set-concurrency` resizes the local
-// spawn cap in BOTH directions, and within a floor and a ceiling.
-//
-// Two defects live here, and the second is the sharper one.
-//
-// THE RATCHET. The resize used to run only inside `N*2 > cap`, so a LOWER N
-// never reached the setter. One `set-concurrency 999999` against a live daemon
-// installed 1999998 session slots, and setting the value back to 1 left them
-// installed for the life of the daemon. The readback that looked stale was
-// telling the truth: the operator's undo did not undo the thing that matters.
-//
-// THE MISSING BOUND. The auto-raise (hk-omvan) took its target from the request
-// itself, so it agreed with any number it was given and reported the typo back
-// as "safe max_concurrent = 999999". Each spawned session costs real money, so
-// the failure mode is a box that stops answering while spending.
-//
-// A fix for the ratchet alone would introduce the mirror-image defect: a low N
-// silently discarding an operator's explicit HARMONIK_MAX_CONCURRENT_SESSIONS.
-// The floor is what stops that, so it is tested here beside the rest.
-//
-// Bead ref: hk-ad79i (follow-ups hk-vfeeo, hk-omvan).
-//
-// NOTHING TESTED THIS HANDLER'S SPAWN-CAP ARMS BEFORE THIS FILE. That is the
-// most likely reason the ratchet survived two beads about the same command.
-
 import (
 	"context"
 	"encoding/json"
@@ -34,9 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// capFixture is a HandlerAdapter wired the way daemon.Start wires one, with an
-// in-memory stand-in for the substrate's spawn cap so a test can read back what
-// the handler actually installed.
 type capFixture struct {
 	adapter *queue.HandlerAdapter
 	// cap is the live spawn cap, in non-terminal session slots.
@@ -48,10 +20,6 @@ type capFixture struct {
 	concurrency int
 }
 
-// newCapFixture wires an adapter with a live-resize substrate (the hk-omvan
-// path, and the one the operator's daemon actually runs). startupCap is both
-// the initial cap and the floor, mirroring the boot wiring, which reads the
-// startup cap before any resize can have moved it.
 func newCapFixture(startupCap, hostCeiling int) *capFixture {
 	f := &capFixture{cap: startupCap, concurrency: startupCap / 2}
 	f.adapter = queue.NewHandlerAdapter(nil, "", nil, nil)
@@ -72,8 +40,6 @@ func newCapFixture(startupCap, hostCeiling int) *capFixture {
 	return f
 }
 
-// setConcurrency calls the handler with N and returns the decoded spawn_cap the
-// response reports, plus the RPC error if it refused.
 func (f *capFixture) setConcurrency(t *testing.T, n int) (reportedCap int, rpcErr *queue.RPCError) {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"n": n})
@@ -110,7 +76,6 @@ func TestSetConcurrency_CapComesBackDown(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("set-concurrency 1 was refused: %+v", rpcErr.Detail)
 	}
-	// The whole bead in one assertion: the operator's undo has to reach the cap.
 	if f.cap != 2 {
 		t.Errorf("the spawn cap RATCHETED: after undoing back to 1 it still holds %d slots, want 2 — the operator's undo did not reach the thing that matters", f.cap)
 	}
@@ -156,9 +121,6 @@ func TestSetConcurrency_RaiseAboveHostBoundIsRefused(t *testing.T) {
 	if got := rpcErr.Message; !strings.HasPrefix(got, "spawn_cap_exceeded") {
 		t.Errorf("refusal message is %q, want it to start with spawn_cap_exceeded — the token existing surface callers match on", got)
 	}
-	// The refusal has to be actionable, which is the half the original output
-	// got wrong: it computed "safe max_concurrent" from the number it had just
-	// been handed, so it agreed with the typo.
 	if got, want := rpcErr.Detail["host_bound"], 64; got != want {
 		t.Errorf("refusal reports host_bound %v, want %v", got, want)
 	}
@@ -200,7 +162,6 @@ func TestSetConcurrency_CeilingNeverRefusesTheOperatorsOwnFloor(t *testing.T) {
 		t.Errorf("spawn cap is %d, want the operator's declared 200 held", f.cap)
 	}
 
-	// The floor lifts the ceiling to meet it, and no further.
 	if _, rpcErr := f.setConcurrency(t, 101); rpcErr == nil {
 		t.Errorf("set-concurrency 101 (202 slots) was accepted; the ceiling should sit at the operator's floor of 200, not vanish")
 	}
@@ -218,7 +179,6 @@ func TestSetConcurrency_NoLiveResizeStillRefusesWithTheOlderDetail(t *testing.T)
 		func(n int) (int, error) { old := f.concurrency; f.concurrency = n; return old, nil },
 	)
 	f.adapter.SetSpawnCapFunc(func() int { return f.cap })
-	// No SetSpawnCapSetFunc and no bounds — this substrate cannot resize.
 
 	_, rpcErr := f.setConcurrency(t, 8)
 	if rpcErr == nil {
@@ -231,8 +191,6 @@ func TestSetConcurrency_NoLiveResizeStillRefusesWithTheOlderDetail(t *testing.T)
 		t.Errorf("refusal reports safe_max %v, want %v", got, want)
 	}
 
-	// And a LOWER request is still fine on that substrate: there is nothing to
-	// resize, so it must not be refused either.
 	if _, rpcErr := f.setConcurrency(t, 1); rpcErr != nil {
 		t.Errorf("set-concurrency 1 was refused on a fixed-cap substrate: %+v", rpcErr.Detail)
 	}

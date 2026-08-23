@@ -43,27 +43,12 @@ import (
 	"github.com/gregberns/harmonik/internal/scenario"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture constants — bead IDs
-// ─────────────────────────────────────────────────────────────────────────────
-
-// queueLifecycleFixture bead IDs match .beads/queue-test-fixtures/two-wave-group-queue.json.
-//
-//	Group 0 — wave, 2 items dispatched in parallel (QM-036 wave admission).
-//	Group 1 — wave, 1 item; activates only after group 0 all-terminal (EM-015f).
 const (
 	queueLifecycleG0Item0 = core.BeadID("hk-qtfix-g0-item0")
 	queueLifecycleG0Item1 = core.BeadID("hk-qtfix-g0-item1")
 	queueLifecycleG1Item0 = core.BeadID("hk-qtfix-g1-item0")
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// queueLifecycleFixtureProjectDir creates an isolated project root via
-// BootstrapFixture (SH-012). Returns the absolute path to the synthetic project
-// root. The fixture root is cleaned up via t.Cleanup.
 func queueLifecycleFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	fixtureRoot, err := os.MkdirTemp("", "harmonik-ql-")
@@ -88,12 +73,6 @@ func queueLifecycleCleanupTempDir(t *testing.T, dir string) {
 	})
 }
 
-// queueLifecycleFixtureTwoGroupQueue constructs the canonical 2-wave-group queue:
-//
-//	group 0 (wave, active):  items G0Item0, G0Item1 — parallel-eligible per QM-036
-//	group 1 (wave, pending): item  G1Item0           — activates per QM-051 after group 0
-//
-// This layout matches .beads/queue-test-fixtures/two-wave-group-queue.json.
 func queueLifecycleFixtureTwoGroupQueue(t *testing.T) queue.Queue {
 	t.Helper()
 	now := time.Now()
@@ -126,14 +105,9 @@ func queueLifecycleFixtureTwoGroupQueue(t *testing.T) queue.Queue {
 	}
 }
 
-// queueLifecycleFixtureQueueJSON returns the canonical .harmonik/queue.json path.
 func queueLifecycleFixtureQueueJSON(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_BootstrapFixture_ProjectRootExists
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_BootstrapFixture_ProjectRootExists verifies that
 // queueLifecycleFixtureProjectDir produces a valid isolated project root per
@@ -155,16 +129,11 @@ func TestQueueLifecycle_BootstrapFixture_ProjectRootExists(t *testing.T) {
 		t.Errorf("(SH-012) project root %q: exists but is not a directory", projectDir)
 	}
 
-	// .harmonik/events/ must exist per SH-014.
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
 	if _, err := os.Stat(eventsDir); err != nil {
 		t.Errorf("(SH-014) events dir %q: %v", eventsDir, err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_WaveParallelism
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_WaveParallelism verifies that a wave group with two pending
 // items returns both as eligible simultaneously (QM-036 wave admission is
@@ -202,10 +171,6 @@ func TestQueueLifecycle_WaveParallelism(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_GroupAdvance_EM015f_Gate
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestQueueLifecycle_GroupAdvance_EM015f_Gate verifies acceptance criterion (c):
 // group 0 remains active (blocking dispatch-eligible items from running) until
 // all items are terminal, then group 0 transitions to complete-success (QM-030).
@@ -233,12 +198,9 @@ func TestQueueLifecycle_GroupAdvance_EM015f_Gate(t *testing.T) {
 	queueID := q.QueueID
 	now := time.Now()
 
-	// Simulate both group-0 items dispatched (in-flight) and then one completes.
 	q.Groups[0].Items[0].Status = queue.ItemStatusCompleted  // first item terminal
 	q.Groups[0].Items[1].Status = queue.ItemStatusDispatched // second item still in-flight
 
-	// ── Step 1: one item done, one still dispatched → QM-030 all-terminal gate. ──
-	// AdvanceGroup MUST return active because item 1 is dispatched (not terminal).
 	newStatus0, events0, err := queue.AdvanceGroup(context.Background(), &q.Groups[0], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("(step 1) AdvanceGroup group 0: %v", err)
@@ -251,15 +213,12 @@ func TestQueueLifecycle_GroupAdvance_EM015f_Gate(t *testing.T) {
 		t.Errorf("(step 1 QM-030) expected 0 events when group stays active; got %d", len(events0))
 	}
 
-	// EligibleItems for group 0 at this point: item 1 is dispatched, not pending;
-	// item 0 is completed.  Neither is pending → no new items eligible.
 	eligible := queue.EligibleItems(&q.Groups[0])
 	if len(eligible) != 0 {
 		t.Errorf("(step 1 QM-036) EligibleItems = %d; want 0 (item 1 dispatched, item 0 completed)",
 			len(eligible))
 	}
 
-	// ── Step 2: item 1 also becomes terminal → group 0 now all-terminal. ──
 	q.Groups[0].Items[1].Status = queue.ItemStatusCompleted
 
 	newStatus0b, events0b, err := queue.AdvanceGroup(context.Background(), &q.Groups[0], q.Status, queueID, now)
@@ -275,8 +234,6 @@ func TestQueueLifecycle_GroupAdvance_EM015f_Gate(t *testing.T) {
 	}
 	q.Groups[0].Status = newStatus0b
 
-	// ── Step 3: caller now advances group 1 (EM-015f: advance only when predecessor
-	// is complete-success). QM-031 requires queue.status == active. ──
 	newStatus1, events1, err := queue.AdvanceGroup(context.Background(), &q.Groups[1], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("(step 3) AdvanceGroup group 1: %v", err)
@@ -290,7 +247,6 @@ func TestQueueLifecycle_GroupAdvance_EM015f_Gate(t *testing.T) {
 	}
 	q.Groups[1].Status = newStatus1
 
-	// Group 1 item is now eligible for dispatch.
 	eligible1 := queue.EligibleItems(&q.Groups[1])
 	if len(eligible1) != 1 {
 		t.Fatalf("(step 3 QM-036) EligibleItems group 1 = %d; want 1", len(eligible1))
@@ -299,10 +255,6 @@ func TestQueueLifecycle_GroupAdvance_EM015f_Gate(t *testing.T) {
 		t.Errorf("(step 3) eligible1[0].BeadID = %q; want %q", eligible1[0].BeadID, queueLifecycleG1Item0)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_EmissionOrdering_QM065
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_EmissionOrdering_QM065 verifies §8.10 / QM-065 emission
 // ordering: after group 0 reaches complete-success, the event sequence is:
@@ -321,11 +273,9 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 	queueID := q.QueueID
 	now := time.Now()
 
-	// Simulate group 0 all-terminal (both items completed).
 	q.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	q.Groups[0].Items[1].Status = queue.ItemStatusCompleted
 
-	// Advance group 0: must produce queue_group_completed.
 	newStatus0, events0, err := queue.AdvanceGroup(context.Background(), &q.Groups[0], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("AdvanceGroup group 0: %v", err)
@@ -335,22 +285,17 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 	}
 	q.Groups[0].Status = newStatus0
 
-	// Advance group 1: must produce queue_group_started.
 	_, events1, err := queue.AdvanceGroup(context.Background(), &q.Groups[1], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("AdvanceGroup group 1: %v", err)
 	}
 
-	// Collect events in emission order: group-0 events first, then group-1 events.
-	// This mirrors the production path in evaluateGroupAdvanceWithOutcome where
-	// group-0 events are collected then group-1 events appended (events = append(events, nextEvents...)).
 	allEvents := append(events0, events1...) //nolint:gocritic // appendAssign: explicit collect for ordering test
 
 	if len(allEvents) < 2 {
 		t.Fatalf("(QM-065) expected at least 2 events (group_completed + group_started); got %d", len(allEvents))
 	}
 
-	// Verify ordering: queue_group_completed must precede queue_group_started.
 	completedIdx := -1
 	startedIdx := -1
 	for i, e := range allEvents {
@@ -364,7 +309,6 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 				startedIdx = i
 			}
 		default:
-			// This assertion reads only the two group-lifecycle event types.
 		}
 	}
 	if completedIdx < 0 {
@@ -378,7 +322,6 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 			completedIdx, startedIdx)
 	}
 
-	// Verify queue_group_completed payload carries final_status=complete-success.
 	if completedIdx >= 0 {
 		var p core.QueueGroupCompletedPayload
 		if err := json.Unmarshal(allEvents[completedIdx].Payload, &p); err != nil {
@@ -396,7 +339,6 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 		}
 	}
 
-	// Verify queue_group_started payload carries group_index=1.
 	if startedIdx >= 0 {
 		var p core.QueueGroupStartedPayload
 		if err := json.Unmarshal(allEvents[startedIdx].Payload, &p); err != nil {
@@ -410,10 +352,6 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion verifies acceptance criterion
 // (e): queue.json is absent from .harmonik/ after the last group reaches
@@ -431,13 +369,10 @@ func TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion(t *testing.T) {
 	projectDir := queueLifecycleFixtureProjectDir(t)
 	queueJSONPath := queueLifecycleFixtureQueueJSON(projectDir)
 
-	// Build a 2-wave-group queue with all groups complete-success (simulates
-	// the state immediately before the QM-053 completion sequence fires).
 	q := queueLifecycleFixtureTwoGroupQueue(t)
 	q.Groups[0].Status = queue.GroupStatusCompleteSuccess
 	q.Groups[1].Status = queue.GroupStatusCompleteSuccess
 
-	// Persist queue.json so it exists before the completion sequence.
 	if err := queue.Persist(t.Context(), projectDir, &q); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
@@ -445,24 +380,20 @@ func TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion(t *testing.T) {
 		t.Fatalf("queue.json must exist before CompleteAndUnlink: %v", err)
 	}
 
-	// Execute the QM-053 completion sequence.
 	if err := queue.CompleteAndUnlink(t.Context(), projectDir, &q); err != nil {
 		t.Fatalf("CompleteAndUnlink: %v", err)
 	}
 
-	// (e) queue.json must be absent after CompleteAndUnlink.
 	if _, err := os.Stat(queueJSONPath); !os.IsNotExist(err) {
 		t.Errorf("(QM-003) queue.json at %q: expected absent after CompleteAndUnlink; stat err=%v",
 			queueJSONPath, err)
 	}
 
-	// (e) In-memory queue status must be completed (persisted before unlink per QM-053 step 1).
 	if q.Status != queue.QueueStatusCompleted {
 		t.Errorf("(QM-053) q.Status after CompleteAndUnlink = %q; want %q",
 			q.Status, queue.QueueStatusCompleted)
 	}
 
-	// (e) Load after unlink must return nil (no active queue per QM-053 step 4).
 	loaded, err := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after CompleteAndUnlink: %v", err)
@@ -471,10 +402,6 @@ func TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion(t *testing.T) {
 		t.Errorf("(QM-053) Load after CompleteAndUnlink: got non-nil queue %+v; want nil", loaded)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_QueueStore_HoldsActiveQueue
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_QueueStore_HoldsActiveQueue verifies that the daemon's
 // QueueStore correctly holds the 2-wave-group queue and that its group structure
@@ -494,7 +421,6 @@ func TestQueueLifecycle_QueueStore_HoldsActiveQueue(t *testing.T) {
 	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&q)
 
-	// Queue must be readable and match the fixture.
 	got := qs.Queue()
 	if got == nil {
 		t.Fatal("QueueStore.Queue() returned nil after SetQueue")
@@ -521,16 +447,11 @@ func TestQueueLifecycle_QueueStore_HoldsActiveQueue(t *testing.T) {
 		t.Errorf("Groups[1].Items count = %d; want 1", len(got.Groups[1].Items))
 	}
 
-	// ClearQueue must cause Queue() to return nil.
 	qs.ClearQueue()
 	if qs.Queue() != nil {
 		t.Error("QueueStore.Queue() must return nil after ClearQueue")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueLifecycle_FullStateSequence
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueLifecycle_FullStateSequence exercises the complete 2-wave-group queue
 // lifecycle through the state machine in a single test:
@@ -560,7 +481,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 	queueID := q.QueueID
 	now := time.Now()
 
-	// ── Phase 1: initial state. ──
 	if q.Status != queue.QueueStatusActive {
 		t.Fatalf("(phase 1) initial queue.Status = %q; want active", q.Status)
 	}
@@ -571,17 +491,14 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 		t.Fatalf("(phase 1) group 1 initial status = %q; want pending", q.Groups[1].Status)
 	}
 
-	// ── Phase 2: wave parallelism — both items eligible. ──
 	eligible := queue.EligibleItems(&q.Groups[0])
 	if len(eligible) != 2 {
 		t.Fatalf("(phase 2 QM-036) EligibleItems = %d; want 2 for wave parallelism", len(eligible))
 	}
 
-	// ── Phase 3: dispatch both items (simulate concurrent dispatch). ──
 	q.Groups[0].Items[0].Status = queue.ItemStatusDispatched
 	q.Groups[0].Items[1].Status = queue.ItemStatusDispatched
 
-	// Group 0 stays active while items are in-flight.
 	newSt, evts, err := queue.AdvanceGroup(context.Background(), &q.Groups[0], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("(phase 3) AdvanceGroup: %v", err)
@@ -593,7 +510,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 		t.Errorf("(phase 3) expected 0 events while group 0 in-flight; got %d", len(evts))
 	}
 
-	// ── Phase 4: both items complete; group 0 → complete-success. ──
 	q.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	q.Groups[0].Items[1].Status = queue.ItemStatusCompleted
 
@@ -609,7 +525,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 	}
 	q.Groups[0].Status = newSt0
 
-	// ── Phase 5: group 1 activates (QM-051) + item eligible. ──
 	newSt1, evts1, err := queue.AdvanceGroup(context.Background(), &q.Groups[1], q.Status, queueID, now)
 	if err != nil {
 		t.Fatalf("(phase 5) AdvanceGroup group 1: %v", err)
@@ -622,9 +537,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 	}
 	q.Groups[1].Status = newSt1
 
-	// ── Phase 5 continued: emission ordering (QM-065). ──
-	// The production path appends group-1 events after group-0 events:
-	//   events = append(events0b, events1b...) in evaluateGroupAdvance.
 	combinedEvents := append(evts0, evts1...) //nolint:gocritic // appendAssign: explicit ordering test
 	if combinedEvents[0].Type != "queue_group_completed" {
 		t.Errorf("(QM-065) combined[0] = %q; want queue_group_completed", combinedEvents[0].Type)
@@ -633,7 +545,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 		t.Errorf("(QM-065) combined[1] = %q; want queue_group_started", combinedEvents[1].Type)
 	}
 
-	// ── Phase 5: group 1 eligible items. ──
 	eligible1 := queue.EligibleItems(&q.Groups[1])
 	if len(eligible1) != 1 {
 		t.Fatalf("(phase 5) EligibleItems group 1 = %d; want 1", len(eligible1))
@@ -642,7 +553,6 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 		t.Errorf("(phase 5) eligible1[0].BeadID = %q; want %q", eligible1[0].BeadID, queueLifecycleG1Item0)
 	}
 
-	// ── Phase 6: group 1 item completes; group 1 → complete-success. ──
 	q.Groups[1].Items[0].Status = queue.ItemStatusCompleted
 	newSt1b, evts1b, err := queue.AdvanceGroup(context.Background(), &q.Groups[1], q.Status, queueID, now)
 	if err != nil {
@@ -656,28 +566,19 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 	}
 	q.Groups[1].Status = newSt1b
 
-	// ── Phase 7: QM-053 completion + QM-003 unlink. ──
-	// CompleteAndUnlink is the production completion path for the last group.
 	if err := queue.CompleteAndUnlink(t.Context(), projectDir, &q); err != nil {
 		t.Fatalf("(phase 7 QM-053) CompleteAndUnlink: %v", err)
 	}
 
-	// (e) queue.json must be absent.
 	if _, err := os.Stat(queueJSONPath); !os.IsNotExist(err) {
 		t.Errorf("(phase 7 QM-003) queue.json still present at %q after CompleteAndUnlink", queueJSONPath)
 	}
 
-	// (e) in-memory status must be completed.
 	if q.Status != queue.QueueStatusCompleted {
 		t.Errorf("(phase 7 QM-053) q.Status = %q; want completed", q.Status)
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// eventTypes — helper for error messages
-// ─────────────────────────────────────────────────────────────────────────────
-
-// eventTypes returns the type strings of queue event intents.
 func eventTypes(events []queue.EventIntent) []string {
 	out := make([]string, len(events))
 	for i, e := range events {

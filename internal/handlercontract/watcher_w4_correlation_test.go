@@ -1,9 +1,5 @@
 package handlercontract_test
 
-// watcher_w4_correlation_test.go — Wave-4 regression: watcher-synthesized
-// agent_failed events MUST carry session_id and run_id so self-defect
-// terminals are attributable and auto-recoverable by the reconciler.
-
 import (
 	"context"
 	"encoding/json"
@@ -17,7 +13,6 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
-// w4corrPublisher captures full payloads (the shared fixture publisher drops them).
 type w4corrPublisher struct {
 	mu       sync.Mutex
 	payloads map[string][]byte // eventType -> last payload

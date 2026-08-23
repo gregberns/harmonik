@@ -2,55 +2,6 @@
 
 package daemon_test
 
-// scenario_remote_substrate_localhost_dot_test.go — end-to-end scenario coverage
-// for the remote-substrate Phase 1 feature driven through the PRODUCTION DOT
-// workflow mode (--workflow-mode dot) over a real SSH transport to localhost.
-//
-// # What this proves
-//
-// This is THE remote-substrate lifecycle proof: fetch-base → worktree-add on the
-// worker → commit → push-branch → box-A-fetch → merge, all over a real ssh
-// transport. A "single-mode" twin used to sit beside it in
-// scenario_remote_substrate_localhost_test.go; that file's header records why it
-// is gone. Production runs in DOT workflow mode, and the DOT path
-// (driveDotWorkflow / dispatchDotAgenticNode, dot_cascade.go) owns the
-// HEAD-resolution + spawn sites the remote flow has to get right. On a real
-// worker a DOT run failed with:
-//
-//	dot: resolve HEAD before agentic node "implement" at iteration 0:
-//	daemon: gitprobe.ResolveWorktreeHEAD: git rev-parse HEAD in
-//	"<worker>/.harmonik/worktrees/<run_id>": chdir … no such file
-//
-// i.e. the DOT workflow ran gitprobe.ResolveWorktreeHEAD LOCALLY on box A against the
-// WORKER's worktree path, instead of via the run's SSHRunner. This test drives
-// the whole ssh-localhost remote lifecycle in DOT workflow mode, so every
-// DOT-specific worktree probe is exercised over ssh.
-//
-// # Topology (all under t.TempDir())
-//
-//	origin.git (bare)
-//	  ├── boxA   (projectDir; the daemon's repo; pushes main here)
-//	  └── worker (the SSH worker's clone; RepoPath in the worker registry)
-//
-// The MINIMAL DOT graph used here (start → implement → close) avoids a reviewer
-// node and a commit_gate shell node: those would require a live claude that the
-// /bin/sh stub handler cannot drive. The stub implementer handler commits DURING
-// the node, so the implementer node sees HEAD advance past preHeadSHA and returns
-// SUCCESS, the cascade follows the unconditional edge to the `close` success
-// terminal, and the daemon merges the worker's commit to box A main.
-//
-// What this exercises in the DOT path:
-//   - driveDotWorkflow's resolve-HEAD-before-agentic-node (dot_cascade.go ~357)
-//   - dispatchDotAgenticNode's preHeadSHA / postHeadSHA / implementer-phase HEAD
-//     reads (dot_cascade.go ~821 / ~1020 / ~1092)
-//   - the agentic-node spawn (newPerRunSubstrate runner threading)
-//
-// Harness lineage: reuses the rsb12* helpers (ledger, git fixture, ssh-available
-// probe, run_started worker_name decode) from
-// scenario_remote_substrate_localhost_test.go verbatim.
-//
-// Bead: hk-rs-b12-e2e-localhost.
-
 import (
 	"context"
 	"os"
@@ -68,13 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// rsb12DotMinimalGraph is a minimal valid DOT workflow: start (non-agentic noop)
-// → implement (agentic implementer; commit required) → close (success terminal).
-// The eager-commit worktree factory makes the implementer's HEAD advance, so the
-// implementer node returns SUCCESS and the cascade reaches `close`. No reviewer
-// node (would need a verdict the stub cannot write) and no commit_gate shell node
-// (would need `go`/test on the worker) appear, keeping the run hermetic while
-// still traversing every DOT-mode worktree probe.
 const rsb12DotMinimalGraph = `digraph "remote-substrate-dot-e2e" {
     schema_version="1";
     version="1.0";
@@ -144,16 +88,8 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	t.Helper()
 	skipRealDaemonE2EInShort(t)
 
-	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
 	rsb12RequireSSHOrSkip(t)
 
-	// ── Claude-config isolation. The remote leg runs EnsureWorktreeTrust on the
-	//    worker, and without this it resolves the OPERATOR'S OWN ~/.claude.json
-	//    and takes that file's write lock. On any box with a live agent session
-	//    the lock is held, so both tests spent the worker's full 15s budget and
-	//    then failed on a contended path that has nothing to do with what they
-	//    assert. Measured: 317s and red without this line, 17s and green with it.
-	//    The worker honours this override; ~ expansion is what it falls back to.
 	claudeCfg := filepath.Join(t.TempDir(), ".claude.json")
 	//nolint:gosec // G306: test fixture file
 	if err := os.WriteFile(claudeCfg, []byte("{}\n"), 0o644); err != nil {
@@ -168,15 +104,9 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	sshHost := rsb12SSHHost()
 	sshRunner := tmux.SSHRunner{Host: sshHost}
 
-	// ── origin (bare) + worker-clone paths. Under the docker drive both live on a
-	//    volume mounted at the SAME absolute path in both containers, so the
-	//    worker's `git fetch origin <baseSHA>` and box A's `git fetch ssh://worker
-	//    <workerDir>` resolve the identical repos across the network. See
-	//    rsb12OriginWorkerDirs and test/docker/README.md. ───────────────────────
 	originDir, workerDir := rsb12OriginWorkerDirs(t)
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
-	// ── box A (projectDir): the daemon's repo (STAYS daemon-local, not shared). ─
 	projectDir := rsb12ShortTempDir(t)
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
@@ -205,11 +135,9 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		t.Fatalf("WriteFile workflow.dot: %v", err)
 	}
 
-	// ── worker clone: the SSH worker's repo (registry RepoPath). ─────────────
 	rsb12Git(t, ".", "clone", originDir, workerDir)
 	rsb12GitConfig(t, workerDir)
 
-	// ── worker registry: one ssh worker (host from HARMONIK_E2E_SSH_HOST). ────
 	cfg := workers.Config{
 		Version: 1,
 		Workers: []workers.Worker{{
@@ -224,15 +152,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	}
 	reg := workers.NewRegistry(cfg)
 
-	// ── SSHRunner-backed worktree factory (mirrors production remote factory). ─
-	// PRODUCTION-FAITHFUL: create the run-branch worktree on the WORKER via ssh and
-	// return it WITHOUT committing. The graph captures preHeadSHA AFTER the worktree
-	// is created and BEFORE the implementer launches, then requires postHeadSHA to
-	// advance — so the commit MUST happen DURING the node, which is what a real
-	// claude implementer does. Here the stub handler (below) makes that commit. A
-	// factory that commits eagerly is already in the baseline and trips the
-	// no-advance guard in dot_cascade_core.go, which is what retired the
-	// eager-commit twin of this test.
 	worktreeFactory := func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
 		wtCfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner)
 		if err := workspace.CreateWorktree(ctx, workerDir, runID, headSHA, wtCfg); err != nil {
@@ -251,12 +170,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		return wtPath, cleanup, nil
 	}
 
-	// ── Stub implementer handler that COMMITS in the worktree during the node. ─
-	// The handler is spawned with cmd.Dir = the worker worktree path (handler.go
-	// `cmd.Dir = spec.WorkDir`), so the bare `git add`/`git commit` run inside the
-	// worker's run/<id> worktree — advancing HEAD past preHeadSHA exactly as a real
-	// implementer's commit does. The `Refs:` trailer makes the commit the bead's
-	// landed work; the Harmonik-Run-ID trailer keys the daemon's commit-detect.
 	marker := ""
 	if shutdownDrain {
 		marker = filepath.Join(workerDir, "dot-drain-committed")
@@ -296,7 +209,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		WorkerRegistry:      reg, // activates the DD1 remote code-sync path (B8/B11)
 	})
 
-	// 300s ceiling: a safety net, not a budget (several real ssh round-trips).
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Second)
 	defer cancel()
 	checkpointBeforeDrain := make(chan bool, 1)
@@ -311,8 +223,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	}()
 
 	if shutdownDrain {
-		// Cancellation is the test input. The drain still owes its terminal
-		// release result after ctx.Done(), so wait on the ledger independently.
 		select {
 		case <-ledger.doneCh:
 		case <-time.After(30 * time.Second):
@@ -329,15 +239,11 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 
 	awaitLoopTeardown(t, loopDone, "localhost DOT-mode work loop")
 
-	// ── Diagnostics. ──────────────────────────────────────────────────────────
 	closed := ledger.closedCount(bead)
 	reopened := ledger.reopenedCount(bead)
 	t.Logf("remote-substrate DOT e2e: bead %s closed=%d reopened=%d reopenReason=%q events=%v",
 		bead, closed, reopened, ledger.reopenReasonOf(bead), collector.eventTypes())
 
-	// The cascade must have walked the graph — node_dispatch_requested is emitted
-	// ONLY by driveDotWorkflow, so it is the positive evidence that the graph
-	// driver ran rather than the run reaching a terminal state some other way.
 	if !rsb12Contains(collector.eventTypes(), string(core.EventTypeNodeDispatchRequested)) {
 		t.Errorf("DOT-mode remote e2e: node_dispatch_requested not emitted — the cascade "+
 			"driver did not walk the graph (DOT path not exercised); events=%v", collector.eventTypes())
@@ -351,7 +257,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		t.Fatalf("remote DOT bead %s closed %d times; want 1 (the full ssh-localhost DOT lifecycle must land + close it)", bead, closed)
 	}
 
-	// ── Assert the worker's commit landed on box A's main. ────────────────────
 	rsb12Git(t, projectDir, "checkout", "main")
 	workPath := filepath.Join(projectDir, "remote-work.txt")
 	if _, err := os.Stat(workPath); err != nil {
@@ -362,7 +267,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		t.Errorf("box A main tip commit message does not carry %q; got:\n%s", "Refs: "+string(bead), mainLog)
 	}
 
-	// ── Assert origin's main also advanced (the push origin main step). ───────
 	originMainSHA := rsb12Git(t, originDir, "rev-parse", "main")
 	boxAMainSHA := rsb12Git(t, projectDir, "rev-parse", "main")
 	if originMainSHA != boxAMainSHA {
@@ -370,14 +274,6 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 			originMainSHA, boxAMainSHA)
 	}
 
-	// ── Assert the run was actually ROUTED to the worker (not silently run LOCAL).
-	// The emitted run_started event must carry worker_name == the single registered
-	// worker. A silent route-to-LOCAL regression (SelectWorker returns nil → rbc==nil
-	// → local path) would land the same commit on main yet leave worker_name empty:
-	// every merge assertion above would still pass and the routing regression would
-	// slip through. This makes the routing observable and fails it loud (hk-mcf1z).
-	// TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty is the negative
-	// guard that proves this assertion is load-bearing.
 	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)
 	if !ok {
 		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
@@ -440,7 +336,6 @@ func rsb12ShortTempDir(t *testing.T) string {
 	return dir
 }
 
-// rsb12Contains reports whether haystack contains needle.
 func rsb12Contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle || strings.Contains(s, needle) {
@@ -450,12 +345,6 @@ func rsb12Contains(haystack []string, needle string) bool {
 	return false
 }
 
-// rsb12DotImplementerHandlerScript writes a /bin/sh handler script that commits a
-// sentinel file in its working directory (the worker's run/<id> worktree, set via
-// cmd.Dir = spec.WorkDir) so HEAD advances during the DOT implementer node. The
-// commit carries the bead's `Refs:` trailer (for the box-A-main assertion and the
-// noCommit/subsume guards) and the `Harmonik-Run-ID:` trailer (read from the
-// daemon-supplied HARMONIK_RUN_ID env var) for commit-detect keying.
 func rsb12DotImplementerHandlerScript(t *testing.T, bead core.BeadID) string {
 	return rsb12DotHandlerScript(t, bead, "exit 0\n")
 }

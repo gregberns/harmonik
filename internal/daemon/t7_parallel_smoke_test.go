@@ -1,33 +1,5 @@
 package daemon_test
 
-// t7_parallel_smoke_test.go — N=2 parallelism smoke test (hk-e61c3.4).
-//
-// TestParallelSmoke_TwoBeadsConcurrent is the roadmap row 7 integration test:
-// two ready beads, MaxConcurrent=2, both close before daemon.Start returns.
-// Uses daemon.Start at the binary-entrypoint level (real br adapter, real git
-// worktrees, real handler subprocess via the twin /bin/sh exit-0 pattern).
-//
-// Acceptance criteria (hk-e61c3.4 bead body):
-//   - Both beads close before Start returns.
-//   - Both runs emit run_started AND run_completed in JSONL with distinct
-//     run_id values on the EV-001 envelope (hk-a6nob).
-//   - Worktree paths (workspace_path in run_started payload) are distinct.
-//   - go test -race is clean for internal/daemon/, internal/eventbus/,
-//     internal/handlercontract/.
-//
-// Design:
-//   - Two beads seeded via `br create` with status=open.
-//   - daemon.Start called with MaxConcurrent=2 and a baked handler.sh that
-//     sleeps briefly (0.2 s) so both goroutines are simultaneously in-flight.
-//   - Context cancelled once both beads are confirmed closed in SQLite AND
-//     both run_completed events appear in JSONL.
-//   - JSONL is parsed to extract run_id (from envelope, hk-a6nob) and
-//     workspace_path (from run_started payload) for the distinct-values assertions.
-//   - eventbus.Filter is used to verify envelope-level run_id coverage.
-//
-// Helper prefix: parallelSmokeFixture (per implementer-protocol.md
-// §Helper-prefix discipline; bead hk-e61c3.4).
-
 import (
 	"bufio"
 	"context"
@@ -44,12 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// parallelSmokeFixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// parallelSmokeFixtureLocateBr finds the real `br` binary via exec.LookPath.
-// Skips the test when br is not available (same pattern as smokeFixtureBrPath).
 func parallelSmokeFixtureLocateBr(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -59,17 +25,10 @@ func parallelSmokeFixtureLocateBr(t *testing.T) string {
 	return brPath
 }
 
-// parallelSmokeFixtureSleepHandlerScript writes a /bin/sh script to t.TempDir()
-// that sleeps briefly, makes a minimal git commit, then exits 0.  The sleep
-// ensures both goroutines are simultaneously in-flight before either commits.
-// A commit is required because the no-commit guard (hk-mmh8f) fails the run
-// when HEAD does not advance; exit-0 with no commit no longer auto-closes.
 func parallelSmokeFixtureSleepHandlerScript(t *testing.T) string {
 	t.Helper()
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "handler.sh")
-	// Redirect git output to stderr so the daemon's NDJSON stdout parser does
-	// not see non-JSON output and raise a malformed_progress_message error.
 	content := `#!/bin/sh
 set -e
 sleep 0.3
@@ -88,15 +47,11 @@ exit 0
 	return scriptPath
 }
 
-// parallelSmokeFixtureSetup initialises the full fixture for the parallel smoke
-// test: git repo, .harmonik dirs, br init, two seeded beads, br wrapper script.
-// Returns projectDir, jsonlPath, brWrapperPath, and the two bead IDs.
 func parallelSmokeFixtureSetup(t *testing.T) (projectDir, jsonlPath, brWrapper, beadID1, beadID2 string) {
 	t.Helper()
 
 	realBrPath := parallelSmokeFixtureLocateBr(t)
 
-	// Create project directory and standard sub-trees.
 	projectDir, jsonlPath = smokeFixtureProjectDir(t)
 	smokeFixtureGitRepo(t, projectDir)
 
@@ -112,7 +67,6 @@ func parallelSmokeFixtureSetup(t *testing.T) (projectDir, jsonlPath, brWrapper, 
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper = smokeFixtureBrWrapperScript(t, realBrPath, dbPath)
 
-	// Seed two ready beads.
 	beadID1 = parallelSmokeFixtureCreateBead(t, brWrapper, "parallel smoke bead 1")
 	beadID2 = parallelSmokeFixtureCreateBead(t, brWrapper, "parallel smoke bead 2")
 	t.Logf("parallelSmoke: seeded bead1=%s bead2=%s", beadID1, beadID2)
@@ -120,8 +74,6 @@ func parallelSmokeFixtureSetup(t *testing.T) (projectDir, jsonlPath, brWrapper, 
 	return projectDir, jsonlPath, brWrapper, beadID1, beadID2
 }
 
-// parallelSmokeFixtureCreateBead creates a single bead via brWrapper and
-// returns its ID.
 func parallelSmokeFixtureCreateBead(t *testing.T, brWrapper, title string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), brWrapper,
@@ -137,8 +89,6 @@ func parallelSmokeFixtureCreateBead(t *testing.T, brWrapper, title string) strin
 	return id
 }
 
-// parallelSmokeFixturePollBeadClosed polls `br show <id>` for up to budget and
-// returns true if the bead reaches "closed" status.
 func parallelSmokeFixturePollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -160,9 +110,6 @@ func parallelSmokeFixturePollBeadClosed(t *testing.T, brWrapper, beadID string, 
 	return false
 }
 
-// parallelSmokeFixtureCountRunTerminalEvents polls the JSONL file for
-// run_completed or run_failed events and returns the count found.  Polling
-// stops when count >= target or budget expires.
 func parallelSmokeFixtureCountRunTerminalEvents(t *testing.T, jsonlPath string, target int, budget time.Duration) int {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -176,8 +123,6 @@ func parallelSmokeFixtureCountRunTerminalEvents(t *testing.T, jsonlPath string, 
 	return parallelSmokeFixtureCountTerminalInJSONL(t, jsonlPath)
 }
 
-// parallelSmokeFixtureCountTerminalInJSONL reads the JSONL file and counts
-// run_completed and run_failed events (both are terminal events).
 func parallelSmokeFixtureCountTerminalInJSONL(t *testing.T, jsonlPath string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -197,16 +142,11 @@ func parallelSmokeFixtureCountTerminalInJSONL(t *testing.T, jsonlPath string) in
 	return count
 }
 
-// parallelSmokeRunStartedEntry holds the run_id and workspace_path extracted
-// from a run_started JSONL line.
 type parallelSmokeRunStartedEntry struct {
 	runID         string
 	workspacePath string
 }
 
-// parallelSmokeFixtureExtractRunStarted reads the JSONL file and extracts
-// run_id (from the EV-001 envelope, stamped by EmitWithRunID per hk-a6nob)
-// and workspace_path (from the payload) for every run_started event.
 func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []parallelSmokeRunStartedEntry {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -216,7 +156,6 @@ func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []par
 	}
 	defer func() { _ = f.Close() }()
 
-	// workspace_path is a payload field; run_id is now on the envelope (hk-a6nob).
 	type startedPayload struct {
 		WorkspacePath string `json:"workspace_path"`
 	}
@@ -250,9 +189,6 @@ func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []par
 	return entries
 }
 
-// parallelSmokeFixtureExtractRunCompletedRunIDs reads the JSONL file and
-// extracts run_id from the EV-001 envelope of every run_completed or
-// run_failed event (envelope-stamped by EmitWithRunID per hk-a6nob).
 func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -283,10 +219,6 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 	}
 	return runIDs
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestParallelSmoke_TwoBeadsConcurrent
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestParallelSmoke_TwoBeadsConcurrent is the row 7 N=2 smoke test.
 //
@@ -321,7 +253,6 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
@@ -330,23 +261,16 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Phase 1: wait for both beads to be closed in SQLite (30 s budget).
 	const closeBudget = 30 * time.Second
 	closed1 := parallelSmokeFixturePollBeadClosed(t, brWrapper, beadID1, closeBudget)
 	closed2 := parallelSmokeFixturePollBeadClosed(t, brWrapper, beadID2, closeBudget)
 
-	// Phase 2: after both beads are confirmed closed in SQLite, wait for both
-	// run_completed/run_failed events to appear in JSONL before cancelling.
-	// (Same rationale as smokeFixturePollRunTerminal: avoids race between bead
-	// close and event emission hk-c1ln2.)
 	if closed1 && closed2 {
 		_ = parallelSmokeFixtureCountRunTerminalEvents(t, jsonlPath, 2, 5*time.Second)
 	}
 
-	// Cancel the work loop.
 	loopCancel()
 
-	// Wait for daemon.Start to return.
 	select {
 	case err := <-startDone:
 		if err != nil {
@@ -356,7 +280,6 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		t.Errorf("daemon.Start did not return within %s after context cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
-	// ── Assert both beads closed ───────────────────────────────────────────────
 	if !closed1 {
 		t.Errorf("bead1 %s was not closed within %s", beadID1, closeBudget)
 	}
@@ -364,14 +287,12 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		t.Errorf("bead2 %s was not closed within %s", beadID2, closeBudget)
 	}
 
-	// ── Assert JSONL contains two run_started events with distinct run_ids ─────
 	startedEntries := parallelSmokeFixtureExtractRunStarted(t, jsonlPath)
 	if len(startedEntries) < 2 {
 		t.Fatalf("expected >= 2 run_started events in JSONL; got %d; lines: %v",
 			len(startedEntries), parallelSmokeFixtureReadAllJSONLLines(t, jsonlPath))
 	}
 
-	// Collect distinct run_ids from run_started events.
 	startedRunIDs := make(map[string]struct{})
 	for _, entry := range startedEntries {
 		if entry.runID == "" {
@@ -383,7 +304,6 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		t.Errorf("run_started events do not have distinct run_id values; got run_ids: %v", startedRunIDs)
 	}
 
-	// ── Assert distinct workspace_path values ──────────────────────────────────
 	startedPaths := make(map[string]struct{})
 	for _, entry := range startedEntries {
 		if entry.workspacePath == "" {
@@ -395,7 +315,6 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		t.Errorf("run_started events do not have distinct workspace_path values; got paths: %v", startedPaths)
 	}
 
-	// ── Assert two run_completed/run_failed events with matching run_ids ───────
 	completedRunIDs := parallelSmokeFixtureExtractRunCompletedRunIDs(t, jsonlPath)
 	if len(completedRunIDs) < 2 {
 		t.Fatalf("expected >= 2 run_completed/run_failed events in JSONL; got %d", len(completedRunIDs))
@@ -412,18 +331,12 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		t.Errorf("run_completed/run_failed events do not have distinct run_id values; got: %v", completedRunIDSet)
 	}
 
-	// Every run_id in run_completed must also appear in run_started.
 	for id := range completedRunIDSet {
 		if _, ok := startedRunIDs[id]; !ok {
 			t.Errorf("run_completed run_id %q does not appear in any run_started event; started IDs: %v", id, startedRunIDs)
 		}
 	}
 
-	// ── Assert eventbus.Filter returns >= 2 events per run_id (hk-a6nob) ───────
-	//
-	// emitRunStarted and emitRunCompleted now use EmitWithRunID, so the envelope
-	// run_id is populated.  Filter must return at least 2 events per run_id
-	// (run_started + run_completed/run_failed).
 	for idStr := range startedRunIDs {
 		var rid core.RunID
 		if err := rid.UnmarshalText([]byte(idStr)); err != nil {
@@ -446,8 +359,6 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		len(startedPaths), len(completedRunIDs))
 }
 
-// parallelSmokeFixtureReadAllJSONLLines reads all non-empty lines from jsonlPath
-// for diagnostic logging in test failures.
 func parallelSmokeFixtureReadAllJSONLLines(t *testing.T, jsonlPath string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input

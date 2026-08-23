@@ -57,7 +57,6 @@ func TestUnlockRoundtrip(t *testing.T) {
 		t.Errorf("ReadUnlock after ClearUnlock: got %+v, want nil", cleared)
 	}
 
-	// ClearUnlock on an already-absent file is a no-op, not an error.
 	if err := dashboard.ClearUnlock(dir); err != nil {
 		t.Fatalf("ClearUnlock on absent file: unexpected error: %v", err)
 	}

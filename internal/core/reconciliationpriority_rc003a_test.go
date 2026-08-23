@@ -2,16 +2,6 @@ package core
 
 import "testing"
 
-// rc73PriorityFixtureOrder is the canonical RC-003a first-match priority order
-// for reconciliation detection categories. It is declared as a slice so tests
-// can verify adjacency and relative position without hardcoding index arithmetic.
-//
-// Order per specs/reconciliation/spec.md §4.1 RC-003a:
-//
-//	Cat 0 → Cat 6b → Cat 6a → Cat 5 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat 4 → Cat 1
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-003a — "Detectors MUST apply
-// the following priority order and emit the first category whose rule fires."
 var rc73PriorityFixtureOrder = []ReconciliationCategory{
 	ReconciliationCategoryCat0,
 	ReconciliationCategoryCat6b,
@@ -26,8 +16,6 @@ var rc73PriorityFixtureOrder = []ReconciliationCategory{
 	ReconciliationCategoryCat1,
 }
 
-// rc73PriorityFixtureIndexOf returns the position of cat in the RC-003a
-// priority order, or -1 if not present.
 func rc73PriorityFixtureIndexOf(cat ReconciliationCategory) int {
 	for i, c := range rc73PriorityFixtureOrder {
 		if c == cat {
@@ -37,8 +25,6 @@ func rc73PriorityFixtureIndexOf(cat ReconciliationCategory) int {
 	return -1
 }
 
-// rc73PriorityFixtureHigherThan returns true if a has higher priority than b
-// (lower index = higher priority in first-match order).
 func rc73PriorityFixtureHigherThan(a, b ReconciliationCategory) bool {
 	ai := rc73PriorityFixtureIndexOf(a)
 	bi := rc73PriorityFixtureIndexOf(b)

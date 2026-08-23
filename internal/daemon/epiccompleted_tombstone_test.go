@@ -1,32 +1,5 @@
 package daemon
 
-// epiccompleted_tombstone_test.go — a tombstoned child must not suppress
-// epic_completed for its parent.
-//
-// maybeEmitEpicCompleted used to test each child edge against
-// core.CoarseStatusClosed. A tombstoned child is finished, but it never becomes
-// closed, so one tombstone held its parent's epic_completed back forever. The
-// lane waiting on that event stopped with nothing red and nothing logged. The
-// check is now core.CoarseStatus.IsTerminal(), which admits closed and tombstone
-// and nothing else.
-//
-// Two cases, because the fix must not go the other way either:
-//   - a two-child epic with one tombstoned child and one closed child emits;
-//   - the same epic with one tombstoned child and one OPEN child stays silent.
-//
-// This is an internal (package daemon) test: it drives the unexported
-// maybeEmitEpicCompleted and builds testRuntime through ExportedTestRuntime.
-// It carries no build tag on purpose — the scenario-tier coverage of this helper
-// in epiccompleted_scenario_hktfxjp_test.go does not run in `make fast` or
-// `make full`, and this behaviour is cheap enough to gate on every commit.
-//
-// Every helper here is namespaced with an "epictomb" prefix so it cannot
-// redeclare a symbol in another test file of package daemon — the scenario file
-// above declares the same fixtures under its own prefix and both compile
-// together under -tags scenario.
-//
-// Refs: DECOMPOSITION-MAP.md step 19; plans/2026-07-27-delete-and-rewrite/LANES.md §7.
-
 import (
 	"context"
 	"encoding/json"
@@ -39,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// epictombStubLedger is a beadLedger whose ShowBead returns canned records keyed
-// by bead id. maybeEmitEpicCompleted calls ShowBead twice — once for the closed
-// child, to find its parent, and once for the parent, to read every sibling's
-// status. No other beadLedger method is reached.
 type epictombStubLedger struct {
 	mu      sync.Mutex
 	records map[core.BeadID]core.BeadRecord
@@ -81,8 +50,6 @@ func (l *epictombStubLedger) ReopenBead(_ context.Context, _ string, _ brcli.Tim
 	return nil
 }
 
-// epictombCapturingBus records every emit so a test can count epic_completed and
-// decode its payload.
 type epictombCapturingBus struct {
 	mu     sync.Mutex
 	events []epictombCapturedEvent
@@ -109,7 +76,6 @@ func (b *epictombCapturingBus) EmitWithRunID(_ context.Context, _ core.RunID, ev
 	return nil
 }
 
-// epicCompleted returns the captured epic_completed events.
 func (b *epictombCapturingBus) epicCompleted() []epictombCapturedEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -122,9 +88,6 @@ func (b *epictombCapturingBus) epicCompleted() []epictombCapturedEvent {
 	return out
 }
 
-// epictombChildEdge builds the incoming parent-child edge a parent's dependents[]
-// entry parses into: FromBeadID is the child, ToBeadID is the parent, and
-// EndpointStatus carries the child's status.
 func epictombChildEdge(child, parent core.BeadID, status core.CoarseStatus) core.DependencyEdge {
 	return core.DependencyEdge{
 		FromBeadID:     child,
@@ -134,9 +97,6 @@ func epictombChildEdge(child, parent core.BeadID, status core.CoarseStatus) core
 	}
 }
 
-// epictombParentEdge builds the outgoing parent-child edge a child's
-// dependencies[] entry parses into. maybeEmitEpicCompleted finds the parent
-// through exactly this edge.
 func epictombParentEdge(child, parent core.BeadID) core.DependencyEdge {
 	return core.DependencyEdge{
 		FromBeadID: child,
@@ -147,8 +107,6 @@ func epictombParentEdge(child, parent core.BeadID) core.DependencyEdge {
 
 func epictombDeps(t *testing.T, ledger beadLedger, bus *epictombCapturingBus) testRuntime {
 	t.Helper()
-	// AdapterRegistry2 stays nil: this path touches only the ledger, the bus and
-	// the emittedEpics guard.
 	return ExportedTestRuntime(TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           bus,
@@ -167,8 +125,6 @@ func epictombNewRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// epictombLedger wires a two-child epic whose second child carries siblingStatus.
-// It returns the ledger, the epic's id, and the id of the child that is closed.
 func epictombLedger(t *testing.T, siblingStatus core.CoarseStatus) (ledger *epictombStubLedger, epicID, closedChildID core.BeadID) {
 	t.Helper()
 	const (

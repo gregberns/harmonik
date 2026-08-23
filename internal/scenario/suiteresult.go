@@ -134,7 +134,6 @@ func (s SuiteResult) Valid() bool {
 	if !s.SuiteVerdict.Valid() {
 		return false
 	}
-	// Suite-verdict invariant: pass iff every result has Verdict=pass.
 	allPass := true
 	for _, r := range s.Results {
 		if r.Verdict != ScenarioVerdictPass {

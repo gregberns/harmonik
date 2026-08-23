@@ -14,28 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// twinparity_hc036to049a_test.go — sensor tests for twin-parity requirements
-// HC-036, HC-037, HC-038, HC-040, and HC-049a.
-//
-// Spec refs: specs/handler-contract.md §4.8.HC-036, HC-037, HC-038, HC-040, HC-049a.
-// Beads: hk-8i31.43 (HC-036), hk-8i31.44 (HC-037), hk-8i31.45 (HC-038),
-//
-//	hk-8i31.47 (HC-040), hk-8i31.59 (HC-049a).
-//
-// Verifies:
-//
-//	(a) Handler interface has no isTwin conditional logic — zero "isTwin" or
-//	    "is_twin" identifiers anywhere in the handlercontract package source.
-//	(b) Spec-corpus sensors: handler-contract.md contains each requirement ID
-//	    and its key constraint clause.
-//	(c) ProgressMsgTypeAgentReady is a declared constant (twins MUST emit
-//	    agent_ready identically per HC-040 — it must be a fixed type string).
-//	(d) ProgressMsgTypeSkillsProvisioned is a declared constant (HC-049a wire
-//	    parity — the type string must be stable for twin to wire-emit it).
-//
-// Helper prefix: twinParityFixture (per implementer-protocol.md).
-
-// twinParityFixtureModuleRoot returns the module root by walking upward.
 func twinParityFixtureModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -55,7 +33,6 @@ func twinParityFixtureModuleRoot(t *testing.T) string {
 	}
 }
 
-// twinParityFixtureHCSpec reads and returns the handler-contract.md spec text.
 func twinParityFixtureHCSpec(t *testing.T) string {
 	t.Helper()
 	root := twinParityFixtureModuleRoot(t)
@@ -67,10 +44,6 @@ func twinParityFixtureHCSpec(t *testing.T) string {
 	}
 	return string(content)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-INV-002 / HC-035: no isTwin conditional logic in daemon-side packages
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestTwinParity_NoIsTwinBranchesInHandlerContract verifies that no source
 // file in the handlercontract package contains "isTwin" or "is_twin" identifiers.
@@ -85,7 +58,6 @@ func TestTwinParity_NoIsTwinBranchesInHandlerContract(t *testing.T) {
 
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, pkgDir, func(fi os.FileInfo) bool {
-		// Exclude test files — the lint is for production code only.
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0)
 	if err != nil {
@@ -113,10 +85,6 @@ func TestTwinParity_NoIsTwinBranchesInHandlerContract(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-036: Twin subprocesses honor the same wire protocol (hk-8i31.43)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC036_SpecCorpusClause verifies that handler-contract.md contains HC-036
 // and the permitted-differences constraint.
 func TestHC036_SpecCorpusClause(t *testing.T) {
@@ -127,15 +95,11 @@ func TestHC036_SpecCorpusClause(t *testing.T) {
 	if !strings.Contains(spec, "HC-036") {
 		t.Error("handler-contract.md missing HC-036 clause")
 	}
-	// HC-036 enumerates permitted differences: (a) script drives LLM, (b) no budget, (c) binary name.
 	if !strings.Contains(spec, "Permitted differences") && !strings.Contains(spec, "permitted differences") {
 		t.Error("handler-contract.md HC-036 missing 'permitted differences' enumeration; spec may have drifted")
 	}
 }
 
-// twinParityFixtureStub is a minimal Handler implementation for twin-parity
-// interface-conformance tests. It represents the canonical twin binary's
-// in-process surface — the same Handler interface that real handlers satisfy.
 type twinParityFixtureStub struct{}
 
 func (twinParityFixtureStub) Launch(_ context.Context, _ *handlercontract.LaunchSpec) (handlercontract.Session, error) {
@@ -154,14 +118,8 @@ func (twinParityFixtureStub) AgentType() string { return "twin-claude-code" }
 func TestHC036_HandlerInterfaceIsSharedForTwins(t *testing.T) {
 	t.Parallel()
 
-	// Compile-time check: both real and twin handlers satisfy handlercontract.Handler.
-	// The stub below represents the canonical twin binary's in-process surface.
 	var _ handlercontract.Handler = twinParityFixtureStub{}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-037: Twins carry identical boundary-classification tags (hk-8i31.44)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC037_SpecCorpusClause verifies that handler-contract.md contains HC-037
 // and the "tagging deviation is a twin defect" constraint.
@@ -178,10 +136,6 @@ func TestHC037_SpecCorpusClause(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-038: Twin conformance drift detection scoped to S07 (hk-8i31.45)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC038_SpecCorpusClause verifies that handler-contract.md contains HC-038
 // and the S07 scope declaration.
 func TestHC038_SpecCorpusClause(t *testing.T) {
@@ -192,15 +146,10 @@ func TestHC038_SpecCorpusClause(t *testing.T) {
 	if !strings.Contains(spec, "HC-038") {
 		t.Error("handler-contract.md missing HC-038 clause")
 	}
-	// HC-038 delegates drift-detection obligation to S07 (scenario-harness).
 	if !strings.Contains(spec, "S07") {
 		t.Error("handler-contract.md HC-038 missing S07 scope reference; drift-detection delegation may have drifted")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-040: Twins MUST emit agent_ready identically (hk-8i31.47)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC040_SpecCorpusClause verifies that handler-contract.md contains HC-040
 // and the "twin handlers MUST emit agent_ready" constraint.
@@ -231,10 +180,6 @@ func TestHC040_AgentReadyTypeIsStableConstant(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-049a: Twin-parity for skill provisioning is wire-only (hk-8i31.59)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC049a_SpecCorpusClause verifies that handler-contract.md contains HC-049a
 // and the "wire signal only" constraint.
 func TestHC049a_SpecCorpusClause(t *testing.T) {
@@ -245,8 +190,6 @@ func TestHC049a_SpecCorpusClause(t *testing.T) {
 	if !strings.Contains(spec, "HC-049a") {
 		t.Error("handler-contract.md missing HC-049a clause")
 	}
-	// HC-049a: twin parity applies to the wire signal (skills_provisioned event),
-	// NOT filesystem side effects.
 	if !strings.Contains(spec, "skills_provisioned") {
 		t.Error("handler-contract.md HC-049a missing 'skills_provisioned' reference; spec may have drifted")
 	}
@@ -274,7 +217,6 @@ func TestHC049a_WireOnlyParityExcludesFilesystemSideEffects(t *testing.T) {
 
 	spec := twinParityFixtureHCSpec(t)
 
-	// HC-049a specifically carves out filesystem side effects.
 	if !strings.Contains(spec, "filesystem") && !strings.Contains(spec, "file system") {
 		t.Error("handler-contract.md HC-049a missing filesystem-carve-out reference; wire-only parity scope may have drifted")
 	}

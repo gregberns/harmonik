@@ -1,14 +1,5 @@
 package cli
 
-// submit_default_workflow_test.go — wire-shape tests for the submit default
-// workflow_mode behaviour (hk-y3o51).
-//
-// Verifies that beadsToQueueDoc correctly omits workflow_mode when passed ""
-// (so the daemon default applies) and stamps it when a non-empty value is given.
-//
-// Helper prefix: submitWfDefault (per implementer-protocol.md §Helper-prefix discipline).
-// Bead ref: hk-y3o51.
-
 import (
 	"encoding/json"
 	"testing"

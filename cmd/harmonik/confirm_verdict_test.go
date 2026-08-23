@@ -1,9 +1,5 @@
 package main
 
-// confirm_verdict_test.go — behavior tests for `harmonik confirm-verdict`,
-// the shared sendVerdictOverrideRequest socket client, and the two dial-error
-// predicate helpers (RC-027, hk-63oh.39).
-
 import (
 	"encoding/json"
 	"io"
@@ -15,11 +11,6 @@ import (
 	"testing"
 )
 
-// startFakeVerdictDaemon listens on ${projectDir}/.harmonik/daemon.sock and
-// answers exactly one connection with respBody (JSON-marshalled). The bytes the
-// client sent are delivered on the returned channel so the test can assert the
-// request shape. Uses a short /tmp-rooted dir to stay under the ~104-byte unix
-// socket path limit on macOS.
 func startFakeVerdictDaemon(t *testing.T, respBody map[string]any) (projectDir string, gotReq <-chan []byte) {
 	t.Helper()
 	base, err := os.MkdirTemp("/tmp", "hkv")
@@ -46,7 +37,6 @@ func startFakeVerdictDaemon(t *testing.T, respBody map[string]any) (projectDir s
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		// Client writes the payload then half-closes; read to EOF.
 		reqBytes, _ := io.ReadAll(conn)
 		reqCh <- reqBytes
 		out, _ := json.Marshal(respBody)
@@ -64,7 +54,6 @@ func TestSendVerdictOverride_ConfirmOK(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0 on ok response", code)
 	}
 
-	// Assert the request the client marshalled.
 	raw := <-gotReq
 	var req struct {
 		Op        string `json:"op"`
@@ -124,7 +113,6 @@ func TestSendVerdictOverride_OtherDaemonErrorCode1(t *testing.T) {
 
 func TestSendVerdictOverride_DaemonNotRunning(t *testing.T) {
 	vgSilenceStd(t)
-	// A real project dir but no socket => dial fails with socket-absent => 17.
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
 		t.Fatal(err)
@@ -175,7 +163,6 @@ func TestRunConfirmVerdict_NonexistentProject(t *testing.T) {
 
 func TestRunConfirmVerdict_ReachesDaemonDial(t *testing.T) {
 	vgSilenceStd(t)
-	// Existing project dir, no daemon => passes validation, dials, returns 17.
 	dir := t.TempDir()
 	code := runConfirmVerdictSubcommand([]string{"run-a", "--project", dir})
 	if code != 17 {

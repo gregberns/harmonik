@@ -10,16 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// sessionOrphanPrefix returns the harmonik session name prefix for the given
-// project hash: "harmonik-<12-char-hash>-". Only sessions whose name has this
-// exact prefix belong to this project's daemon runs.
-//
-// The full 12-char hash is used here (unlike the 6-char hk-<hash6>- window
-// prefix) because session names are created with the full project hash via
-// lifecycle.TmuxSessionName.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006a — "Scope tmux session names
-// (harmonik-<project_hash>-<session_name>)."
 func sessionOrphanPrefix(projectHash core.ProjectHash) string {
 	return "harmonik-" + string(projectHash) + "-"
 }
@@ -70,7 +60,6 @@ func SweepOrphanTmuxSessions(
 
 	for _, session := range sessions {
 		if !strings.HasPrefix(session, prefix) {
-			// Different project hash or non-harmonik session — skip entirely.
 			continue
 		}
 
@@ -87,9 +76,6 @@ func SweepOrphanTmuxSessions(
 
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: killing orphan session %q", session)
 		if killErr := adapter.KillSession(ctx, session); killErr != nil {
-			// ErrNoSession means the session vanished between our check and the kill —
-			// treat as already-gone (non-fatal TOCTOU). Either way the kill did not
-			// happen here, so it is NOT counted in killed.
 			sessionSweepLog(logger, "SweepOrphanTmuxSessions: kill-session %q error (proceeding): %v", session, killErr)
 			continue
 		}
@@ -99,15 +85,6 @@ func SweepOrphanTmuxSessions(
 	return killed, nil
 }
 
-// sessionIsOrphaned reports whether a harmonik session is safe to kill.
-// A session is orphaned when either:
-//  1. It has zero non-idle-shell windows (the workload process has exited, leaving
-//     only an idle shell pane), OR
-//  2. The first pane of the first window reports a PID that is dead
-//     (kill(pid, 0) returns ESRCH — no such process).
-//
-// If both checks are inconclusive (e.g., empty window list or PID read error),
-// the function returns false to avoid false-positive kills.
 func sessionIsOrphaned(
 	ctx context.Context,
 	adapter Adapter,
@@ -116,38 +93,29 @@ func sessionIsOrphaned(
 ) bool {
 	windows, listErr := adapter.ListWindows(ctx, session)
 	if listErr != nil {
-		// TOCTOU or other error: can't determine status; don't kill.
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: ListWindows(%q) error: %v (skipping session)", session, listErr)
 		return false
 	}
 
-	// Condition 1: zero non-idle-shell windows.
 	nonShell := countNonShellWindows(windows)
 	if nonShell == 0 {
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: session %q has %d window(s), all idle shells — orphaned", session, len(windows))
 		return true
 	}
 
-	// Condition 2: first pane PID is dead.
-	// Use a handle of "session:" to target the first window's first pane.
 	firstHandle := WindowHandle(session + ":")
 	pid, pidErr := adapter.WindowPanePID(ctx, firstHandle)
 	if pidErr != nil {
-		// Can't read PID: don't kill.
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: WindowPanePID(%q) error: %v (skipping session)", firstHandle, pidErr)
 		return false
 	}
 
 	if pid <= 0 {
-		// Invalid PID (0 or negative): treat as dead.
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: session %q pane PID %d invalid — orphaned", session, pid)
 		return true
 	}
 
-	// kill(pid, 0) probes liveness without sending a signal.
 	if err := syscall.Kill(pid, 0); err != nil {
-		// ESRCH = no such process; EPERM = exists but we don't have permission
-		// (still alive). Only ESRCH means dead.
 		if isESRCH(err) {
 			sessionSweepLog(logger, "SweepOrphanTmuxSessions: session %q pane PID %d is dead — orphaned", session, pid)
 			return true
@@ -157,13 +125,6 @@ func sessionIsOrphaned(
 	return false
 }
 
-// idleShellNames is the set of window names that tmux assigns when the pane is
-// running a bare interactive shell (tmux defaults the window name to the
-// running command's basename). A window whose name is exactly one of these is
-// treated as an idle shell pane that can be abandoned; any other name
-// indicates an active workload window. Hardcoding only "zsh" defeated PL-006
-// on bash/fish/sh hosts — an idle bash shell counted as active and the
-// orphaned session was never reclaimed.
 var idleShellNames = map[string]struct{}{
 	"zsh":  {},
 	"bash": {},
@@ -175,8 +136,6 @@ var idleShellNames = map[string]struct{}{
 	"csh":  {},
 }
 
-// countNonShellWindows returns the number of window names in the slice that
-// are not idle-shell names (case-sensitive match against idleShellNames).
 func countNonShellWindows(windows []string) int {
 	count := 0
 	for _, w := range windows {
@@ -187,16 +146,10 @@ func countNonShellWindows(windows []string) int {
 	return count
 }
 
-// isESRCH reports whether err is ESRCH (no such process).
-//
-// Uses errors.Is, not ==: a wrapped ESRCH must still read as "process gone", or
-// the sweep silently reclassifies a dead pane's session as live and never
-// reclaims it. This matches orphanSweepIsPidLive in the parent package.
 func isESRCH(err error) bool {
 	return errors.Is(err, syscall.ESRCH)
 }
 
-// sessionSweepLog writes a formatted log message to logger if non-nil.
 func sessionSweepLog(logger *log.Logger, format string, args ...any) {
 	if logger == nil {
 		return
@@ -204,7 +157,6 @@ func sessionSweepLog(logger *log.Logger, format string, args ...any) {
 	logger.Printf(format, args...)
 }
 
-// sessionSweepError wraps an error from a named session-sweep step.
 type sessionSweepError struct {
 	op    string
 	cause error

@@ -15,17 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// workspace_w4_regressions_test.go — Wave-4 mega-review regression tests:
-//
-//  1. DetectSquashMergeConflict is a side-effect-free probe: the worktree is
-//     byte-clean afterward in BOTH the no-conflict and conflict cases
-//     (previously the trial `git merge --squash` left a staged squash on
-//     success and conflict markers + a half-staged index on conflict).
-//  2. WriteLeaseLockAtomic is test-and-set: a second claim on the same path
-//     fails with ErrLeaseAlreadyHeld instead of silently overwriting the
-//     holder's lease; release re-opens the path for claiming.
-
-// gitOutput runs git in dir and returns trimmed stdout, failing t on error.
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -37,8 +26,6 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// assertWorktreeByteClean asserts dir has an empty `git status --porcelain`
-// and that HEAD equals wantHEAD.
 func assertWorktreeByteClean(t *testing.T, dir, wantHEAD, label string) {
 	t.Helper()
 	if status := gitOutput(t, dir, "status", "--porcelain"); status != "" {
@@ -74,7 +61,6 @@ func TestW4_DetectSquashMergeConflict_NoConflict_LeavesWorktreeClean(t *testing.
 
 	assertWorktreeByteClean(t, integPath, headBefore, "no-conflict probe")
 
-	// The probe must be repeatable with the same answer (no leftover state).
 	again, err := DetectSquashMergeConflict(integPath, taskBranch)
 	if err != nil {
 		t.Fatalf("DetectSquashMergeConflict (repeat): %v", err)
@@ -127,7 +113,6 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 
 	assertWorktreeByteClean(t, integPath, headBefore, "conflict probe")
 
-	// The conflicted file must be restored byte-for-byte (no conflict markers).
 	sharedAfter := mustReadFile(t, filepath.Join(integPath, "shared.txt"))
 	if !bytes.Equal(sharedAfter, sharedBefore) {
 		t.Errorf("shared.txt mutated by probe:\nbefore: %q\nafter:  %q", sharedBefore, sharedAfter)
@@ -167,7 +152,6 @@ func TestW4_WriteLeaseLockAtomic_SecondClaimFails(t *testing.T) {
 		t.Fatalf("second claim error = %v, want errors.Is(_, ErrLeaseAlreadyHeld)", err)
 	}
 
-	// The holder's lease content must be untouched by the failed claim.
 	got, err := ReadLeaseLock(target)
 	if err != nil {
 		t.Fatalf("ReadLeaseLock: %v", err)
@@ -176,7 +160,6 @@ func TestW4_WriteLeaseLockAtomic_SecondClaimFails(t *testing.T) {
 		t.Fatalf("lease content clobbered: got %+v, want run_id %s", got, first.RunID)
 	}
 
-	// No temp-file litter from the failed claim.
 	entries, err := os.ReadDir(filepath.Dir(target))
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
@@ -187,7 +170,6 @@ func TestW4_WriteLeaseLockAtomic_SecondClaimFails(t *testing.T) {
 		}
 	}
 
-	// After release, the path can be claimed again.
 	if err := ReleaseLeaseLock(target); err != nil {
 		t.Fatalf("ReleaseLeaseLock: %v", err)
 	}

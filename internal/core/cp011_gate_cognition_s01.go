@@ -142,30 +142,23 @@ func InvokeCognitionGate(
 	reader GateVerdictReader,
 	envelope InputEnvelope,
 ) (GateVerdictRecord, error) {
-	// Structural invariant: cp must be cognition-tagged with a valid delegation path.
 	if cp.Evaluator.Mode != ModeTagCognition || cp.Evaluator.DelegationPath == nil {
 		return GateVerdictRecord{}, fmt.Errorf("gate %q: InvokeCognitionGate requires a cognition-tagged ControlPoint (mode=%s)", cp.Name, cp.Evaluator.Mode)
 	}
 
-	// CP-040a: compute the input envelope hash for replay-safety checks.
 	currentHash, err := ComputeInputEnvelopeHash(envelope)
 	if err != nil {
 		return GateVerdictRecord{}, fmt.Errorf("gate %q: envelope hash computation failed: %w", cp.Name, err)
 	}
 
-	// CP-041: check for an existing persisted verdict before dispatching.
 	existing, found, readErr := reader.LookupGateVerdict(ctx, run.RunID, cp.Name)
 	if readErr != nil {
 		return GateVerdictRecord{}, fmt.Errorf("gate %q: verdict lookup failed: %w", cp.Name, readErr)
 	}
 	if found {
 		if existing.InputEnvelopeHash == currentHash {
-			// Hash match: replay path — consume the persisted verdict without
-			// re-invoking the model per CP-INV-003 (idempotency=idempotent).
 			return existing, nil
 		}
-		// Hash mismatch: the envelope has drifted since the verdict was persisted.
-		// Only a Cat 6 reconciliation verdict can authorise re-invocation per CP-041.
 		return GateVerdictRecord{}, &ErrGateVerdictEnvelopeMismatch{
 			GateName:    cp.Name,
 			StoredHash:  existing.InputEnvelopeHash,
@@ -173,14 +166,11 @@ func InvokeCognitionGate(
 		}
 	}
 
-	// No prior verdict: first invocation. Dispatch to the declared role per
-	// CP-039 / §7.2 dispatch_to_role (cognition boundary per CP-042).
 	verdict, dispatchErr := eval.EvaluateCognitionGate(ctx, cp, run, chosen, outcome)
 	if dispatchErr != nil {
 		return GateVerdictRecord{}, fmt.Errorf("gate %q: cognition dispatch failed: %w", cp.Name, dispatchErr)
 	}
 
-	// Stamp the mechanical fields (InvokeCognitionGate owns these per CP-042).
 	verdict.GateName = cp.Name
 	verdict.InputEnvelopeHash = currentHash
 	verdict.ProducedAt = time.Now().UTC().Format(time.RFC3339)

@@ -1,11 +1,5 @@
 package claude
 
-// launchspec_remote_test.go — gate-runnable tests that
-// BuildLaunchSpec threads the run's CommandRunner into the three
-// materialization writes for a REMOTE run, and uses the unchanged box-A-local
-// path for a LOCAL run (hk-z8ek). All remote writes are intercepted by a
-// RecordingRunner; NO real ssh / worker is touched.
-
 import (
 	"context"
 	"encoding/base64"
@@ -22,8 +16,6 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// newNoOpRecorderZ8ek returns a RecordingRunner that succeeds for every call
-// without side effects (exec.Command("true")).
 func newNoOpRecorderZ8ek() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -79,17 +71,6 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		t.Fatalf("BuildLaunchSpec (remote): %v", err)
 	}
 
-	// Three remote writes expected, in CHB order: settings (sh) → trust (python3)
-	// → agent-task (sh). Collect and classify by command.
-	//
-	// hk-gglt: the trust upsert is now `python3 - <worktreePath>` (program on
-	// STDIN, NOT `python3 -c <prog>`), because over SSH the ssh client space-joins
-	// the argv and the worker's login shell re-splits it — a multi-line `-c`
-	// program is shredded by that re-split and python never runs the upsert. With
-	// `python3 -` the program bytes ride cmd.Stdin and never touch the remote
-	// command line. The program-content assertion lives in the workspace package
-	// test (TestEnsureWorktreeTrustVia_*), which can read the stdin reader; here we
-	// assert the argv shape (`-` mode + worktree path token).
 	var settingsScript, taskScript, trustArg string
 	trustSawDash := false
 	for _, c := range rr.Calls {
@@ -121,8 +102,6 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		t.Fatalf("no remote trust (python3 - <path>) write recorded; calls=%v", rr.Calls)
 	}
 
-	// settings.json must target the WORKER worktree path and carry the WORKER
-	// hook command — NOT box A's path.
 	wantSettingsDest := filepath.Join(workerWt, ".claude", "settings.json")
 	if !strings.Contains(settingsScript, wantSettingsDest) {
 		t.Errorf("settings write does not target worker path %q:\n%s", wantSettingsDest, settingsScript)
@@ -140,7 +119,6 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		}
 	}
 
-	// agent-task.md must target the WORKER worktree path and carry the bead body.
 	wantTaskDest := filepath.Join(workerWt, ".harmonik", "agent-task.md")
 	if !strings.Contains(taskScript, wantTaskDest) {
 		t.Errorf("agent-task write does not target worker path %q:\n%s", wantTaskDest, taskScript)
@@ -150,7 +128,6 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		t.Errorf("agent-task.md missing bead body:\n%s", taskContent)
 	}
 
-	// trust upsert must be keyed by the WORKER worktree path.
 	if trustArg != workerWt {
 		t.Errorf("trust worktree arg = %q, want %q", trustArg, workerWt)
 	}
@@ -160,7 +137,6 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 // (local run) BuildLaunchSpec writes the three artifacts to box A's local
 // filesystem and makes NO runner-routed remote write (NFR7).
 func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
-	// Not parallel: sets HARMONIK_CLAUDE_CONFIG_PATH via t.Setenv.
 	ctx := context.Background()
 	wt := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
@@ -186,7 +162,6 @@ func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 		t.Fatalf("BuildLaunchSpec (local): %v", err)
 	}
 
-	// Local-FS artifacts must exist on box A's disk.
 	if _, err := os.Stat(filepath.Join(wt, ".claude", "settings.json")); err != nil {
 		t.Errorf("local settings.json not written: %v", err)
 	}
@@ -202,8 +177,6 @@ func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 	}
 }
 
-// decodeBase64FromScript extracts and decodes the base64 payload from a
-// `... printf %s '<b64>' | base64 -d > '<path>'` remote-write script.
 func decodeBase64FromScript(t *testing.T, script string) string {
 	t.Helper()
 	const pfx = "printf %s '"

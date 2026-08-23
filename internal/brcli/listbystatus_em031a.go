@@ -62,8 +62,6 @@ func (a *Adapter) ListBeadsByStatus(ctx context.Context, status string) ([]core.
 		)
 	}
 
-	// Success path: parse {issues: [...]} envelope.
-	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var envelope brListEnvelope
 	if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr != nil {
 		return nil, fmt.Errorf("brcli.ListBeadsByStatus: malformed br list output (status=%s): %w; %w", status, jsonErr, BrSchemaMismatch)

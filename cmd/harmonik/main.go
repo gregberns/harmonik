@@ -61,10 +61,6 @@ func main() {
 	os.Exit(run())
 }
 
-// queueTopUsage is the help block for `harmonik queue`. It is printed both at
-// the verb position (`harmonik queue --help`, hk-y4e96) and when --help is the
-// first sub-arg of a file-or-args-taking verb (`harmonik queue submit --help`,
-// hk-l7b) so that --help is never swallowed as a queue-file path.
 const queueTopUsage = `harmonik queue — submit or inspect the bead queue
 
 USAGE
@@ -151,18 +147,7 @@ EXAMPLES
   harmonik worker enable gb-mbp --json
 `
 
-// run is the testable entry-point. It constructs the composition root and
-// starts the daemon. It returns an exit code.
-//
-// The composition root pattern keeps dependency construction separate from
-// daemon logic so that the wiring can be inspected and replaced at this single
-// site.
 func run() int {
-	// Subcommand dispatch: tmux-start and hook-relay must be checked before
-	// flag.Parse so that flag does not consume their positional arguments.
-
-	// --help / -h: print top-level usage and exit 0 before any flag.Parse so
-	// that "harmonik --help" always exits 0 with the subcommand listing.
 	if len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		harmonikUsage()
 		return 0
@@ -172,25 +157,6 @@ func run() int {
 		return runSessionBootstrap(os.Args[2:], os.Getenv, os.Environ, resolveSessionBootstrapExecutable, sessionBootstrapDial, sessionBootstrapExec, os.Stderr)
 	}
 
-	// harmonik version  (or --version / -version): print semver + commit and exit 0.
-	//
-	// Output format (normative, specs/release-pipeline.md §2.3):
-	//   harmonik v0.y.z (commit: <sha>)
-	//
-	// Dispatched before flag.Parse so the global flag set does not reject
-	// the positional "version" argument.
-	//
-	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
-	//
-	// The POSITIONAL form with trailing arguments — `harmonik version --binary
-	// PATH …` — is the authoritative binary-provenance check; see
-	// cmd/harmonik/version_verify.go for why `strings | grep` and
-	// `go tool nm | grep` are not answers. The FLAG forms (`--version` /
-	// `-version`) deliberately do NOT route there: §2.3 makes their output
-	// format normative and says any other format is a spec violation, so
-	// `harmonik --version --json` must still print the version line.
-	//
-	// Bead ref: hk-9hvr0.
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
 		if versionArgsRouteToInspect(os.Args) {
 			return runVersionInspect(os.Args[2:], os.Stdout, os.Stderr)
@@ -199,14 +165,8 @@ func run() int {
 		return 0
 	}
 
-	// hk tmux-start — operator-facing tmux session bootstrap.
-	// Parses its own --session-name flag and must run before flag.Parse so
-	// that the global flag set does not reject the subcommand-specific flag.
-	//
-	// Spec: process-lifecycle.md §4.10 PL-028 refinement.
 	if len(os.Args) >= 2 && os.Args[1] == "tmux-start" {
 		subArgs := os.Args[2:]
-		// --help/-h intercept (hk-y4e96).
 		for _, arg := range subArgs {
 			if arg == "--help" || arg == "-h" {
 				fmt.Print(`harmonik tmux-start — create a detached tmux session and attach to it
@@ -250,7 +210,6 @@ EXAMPLES
 		}
 		sessionNameFlag := ""
 		projectDirFlag := ""
-		// Minimal flag parsing for tmux-start arguments only.
 		for i := 0; i < len(subArgs); i++ {
 			switch {
 			case subArgs[i] == "--session-name" && i+1 < len(subArgs):
@@ -281,9 +240,7 @@ EXAMPLES
 		return tmux.RunTmuxStart(absProjectDir, sessionNameFlag, os.Stdout, os.Stderr, tmux.SyscallExec, nil)
 	}
 
-	// Spec: specs/claude-hook-bridge.md §4.4 CHB-010..017.
 	if len(os.Args) >= 2 && os.Args[1] == "hook-relay" {
-		// --help/-h intercept (hk-y4e96).
 		if len(os.Args) >= 3 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
 			fmt.Print(`harmonik hook-relay — forward a Claude hook event to the daemon (internal use)
 
@@ -339,26 +296,6 @@ EXIT CODES
 		return hookrelay.Run(eventKind, os.Stdin, os.Stderr, nil)
 	}
 
-	// hk queue {submit,append,status,dry-run} — external orchestrator queue
-	// control surface. Dispatched before flag.Parse per PL-028c so that the
-	// global flag set does not reject subcommand-specific flags.
-	//
-	// Exit-code contract (all four verbs):
-	//   0  — success (JSON response to stdout)
-	//   1  — validation error (JSON error body to stdout, not stderr)
-	//   2  — transport/protocol error or unrecognised verb
-	//  17  — daemon not running (socket absent or ECONNREFUSED)
-	//
-	// Spec ref: specs/process-lifecycle.md §4.4 PL-028 + PL-028c.
-	// Bead ref: hk-eblue.
-
-	// harmonik init [--project DIR] [--target-branch BRANCH] [--prefix PREFIX]
-	// [--doctor] [--force] [--smoke] [--no-supervise]
-	//
-	// Bootstrap a new project for harmonik: create .harmonik/ structure, init
-	// beads database, write config files, render AGENTS.md, symlink CLAUDE.md.
-	//
-	// Bead ref: hk-y171w.
 	if len(os.Args) >= 2 && os.Args[1] == "init" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -367,15 +304,6 @@ EXIT CODES
 		return runInitSubcommand(subArgs)
 	}
 
-	// harmonik sync-assets [--project DIR] [--dry-run|--apply|--commit] [--force]
-	//
-	// Ongoing UPDATE path (sibling of init): reconcile a project's on-disk
-	// instruction files against the binary's embedded asset bundle via a
-	// class-aware 3-way reconcile. --dry-run is the default; --apply refuses
-	// while the daemon is dispatching unless --force.
-	//
-	// Exit codes: 0 success, 1 arg/IO error, 3 daemon-lull gate refused.
-	// Bead ref: hk-i7i3. Design: plans/2026-06-20-doc-instruction-audit/10-asset-sync.md.
 	if len(os.Args) >= 2 && os.Args[1] == "sync-assets" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -384,130 +312,39 @@ EXIT CODES
 		return runSyncAssetsSubcommand(subArgs)
 	}
 
-	// harmonik reconcile [--project DIR] [--target-branch BRANCH]
-	// Cat 3c auto-reconciler: detect and close IN_PROGRESS beads whose
-	// implementation has already merged to the target branch.
-	//
-	// Exit-code contract:
-	//   0  — success (0 or more beads closed)
-	//   1  — argument or adapter error
-	//   2  — at least one bead close failed
-	//
-	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
 	if len(os.Args) >= 2 && os.Args[1] == "reconcile" {
 		return runReconcileSubcommand(os.Args[2:])
 	}
 
-	// harmonik confirm-verdict <run_id> [--project DIR]
-	// Operator verdict-confirmation surface: confirm a pending reconciliation
-	// verdict so the daemon proceeds with verdict execution.
-	//
-	// Exit-code contract:
-	//   0  — success
-	//   1  — argument or flag error
-	//  16  — no pending verdict for run_id (operator-control-invalid-state)
-	//  17  — daemon not running
-	//
-	// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-	//           specs/operator-nfr.md §4.3 ON-014.
-	// Bead ref: hk-63oh.39.
 	if len(os.Args) >= 2 && os.Args[1] == "confirm-verdict" {
 		return runConfirmVerdictSubcommand(os.Args[2:])
 	}
 
-	// harmonik veto-verdict <run_id> [--promote-to escalate-to-human] [--project DIR]
-	// Operator verdict-veto surface: veto a pending reconciliation verdict.
-	// With --promote-to escalate-to-human, the daemon substitutes the vetoed
-	// verdict with escalate-to-human and executes that instead.
-	//
-	// Exit-code contract:
-	//   0  — success
-	//   1  — argument or flag error
-	//  16  — no pending verdict for run_id (operator-control-invalid-state)
-	//  17  — daemon not running
-	//
-	// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-	//           specs/operator-nfr.md §4.3 ON-014.
-	// Bead ref: hk-63oh.39.
 	if len(os.Args) >= 2 && os.Args[1] == "veto-verdict" {
 		return runVetoVerdictSubcommand(os.Args[2:])
 	}
 
-	// harmonik write-review-verdict --verdict=<V> --notes=<TEXT> [--flags=a,b,c] [--project DIR]
-	// Reviewer-facing surface: writes .harmonik/review.json via encoding/json
-	// instead of the reviewer hand-typing raw JSON text, which can mis-escape
-	// a backtick in a code-snippet-quoting Notes value (hk-9w79a).
-	//
-	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008/ON-009; local filesystem
-	// write of the reviewer's own verdict file inside the reviewer's worktree
-	// — no daemon connection, no socket RPC, no queue or run-state mutation.
-	// It writes the same review.json the reviewer's Write tool would have
-	// hand-typed; it cannot abort an in-flight run, only produce the verdict
-	// the running review-loop node already waits on.
-	//
-	// Bead ref: hk-9w79a.
 	if len(os.Args) >= 2 && os.Args[1] == "write-review-verdict" {
 		return runWriteReviewVerdictSubcommand(os.Args[2:])
 	}
 
-	// harmonik beads-merge %O %A %B %P — custom git merge-driver for .beads/issues.jsonl.
-	//
-	// Union-by-bead-ID merge with last-writer-wins collision resolution on updated_at.
-	// Registered via .gitattributes + .git/config per bead hk-jon6r.
-	//
-	// Bead ref: hk-jon6r.
 	if len(os.Args) >= 2 && os.Args[1] == "beads-merge" {
 		return runBeadsMergeSubcommand(os.Args[2:])
 	}
 
-	// harmonik beads-dedup [--path FILE] [--dry-run]
-	// One-time dedup of .beads/issues.jsonl: keeps the newest record per bead ID.
-	// Fixes ghost "open" beads left by older-open + newer-closed duplicate JSONL
-	// records that caused br show / br list to over-report open work.
-	//
-	// Bead ref: hk-0f35x.
 	if len(os.Args) >= 2 && os.Args[1] == "beads-dedup" {
 		return runBeadsDedupSubcommand(os.Args[2:])
 	}
 
-	// harmonik sleep [--force] [--project DIR]
-	// Manual operator override to quiesce (park) all LLM sessions now.
-	// Without --force, the daemon's GenuineDrain oracle is consulted first.
-	// --force bypasses the drain gate (operator/captain maintenance escape hatch).
-	//
-	// Exit-code contract:
-	//   0  — fleet parked
-	//   1  — argument error
-	//   2  — daemon rejected the request or protocol error
-	//  17  — daemon not running
-	//
-	// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
 	if len(os.Args) >= 2 && os.Args[1] == "sleep" {
 		subArgs := os.Args[2:]
 		return runSleepSubcommand(context.Background(), subArgs)
 	}
 
-	// harmonik sleep-gate [--project DIR]
-	// Check whether the fleet is sleeping; exit 0 = sleeping (suppress cron/timer),
-	// exit 1 = awake (proceed normally). No daemon connection required.
-	// Bead ref: hk-xjr1n.
-	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008; read-only filesystem check (.harmonik/.fleet-sleeping), no daemon connection, no run state mutation, no in-flight run abort
 	if len(os.Args) >= 2 && os.Args[1] == "sleep-gate" {
 		return runSleepGateSubcommand(os.Args[2:])
 	}
 
-	// harmonik wake (--agent <name> | --all) [--project DIR]
-	// Manual operator override to wake sleeping LLM sessions.
-	// --agent <name> wakes one specific session; --all wakes every sleeping session.
-	// This is the fleet-stall human escape hatch when automatic wake triggers miss.
-	//
-	// Exit-code contract:
-	//   0  — the daemon accepted the wake request
-	//   1  — argument error, or no session by that name (hk-o3mz8)
-	//   2  — daemon rejected the request or protocol error
-	//  17  — daemon not running
-	//
-	// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
 	if len(os.Args) >= 2 && os.Args[1] == "wake" {
 		subArgs := os.Args[2:]
 		return runWakeSubcommand(context.Background(), subArgs)
@@ -518,8 +355,6 @@ EXIT CODES
 		if len(os.Args) >= 3 {
 			verb = os.Args[2]
 		}
-		// --help/-h intercept (hk-y4e96): catch on the verb position; the
-		// first-subArg case (e.g. `queue submit --help`) is handled below (hk-l7b).
 		if verb == "--help" || verb == "-h" {
 			fmt.Print(queueTopUsage)
 			return 0
@@ -528,14 +363,6 @@ EXIT CODES
 		if len(os.Args) >= 4 {
 			subArgs = os.Args[3:]
 		}
-		// --help/-h intercept (hk-l7b): catch --help as the FIRST sub-arg of a
-		// file-or-args-taking verb (submit/dry-run/append/set-concurrency).
-		// Without this, `harmonik queue submit --help` reaches the submit handler
-		// and treats "--help" as the queue-file path ("open --help: no such file").
-		// Reuse the verb-position queue help block above; exit 0 like that path.
-		// 'readiness' carries its own two-verb help, so the intercept must not
-		// answer for it: an assessor typing `queue readiness --help` needs the
-		// capture-and-validate flags, not the queue verb list.
 		if len(subArgs) >= 1 && verb != "readiness" && (subArgs[0] == "--help" || subArgs[0] == "-h") {
 			fmt.Print(queueTopUsage)
 			return 0
@@ -563,8 +390,6 @@ EXIT CODES
 		case "set-concurrency":
 			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
 		case "readiness":
-			// Not a socket call. The readiness gate runs with the fleet daemon
-			// down, so it reaches the ledger directly and never the daemon.
 			return runQueueReadiness(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, readiness, dry-run, cancel, set-concurrency\n", verb)
@@ -572,11 +397,6 @@ EXIT CODES
 		}
 	}
 
-	// harmonik worker enable|disable <name> [--project DIR] [--json]
-	// Live operator toggle for the remote worker registry (hk-xjbvi): flips a
-	// worker's enabled flag in the running daemon via socket RPC so remote
-	// dispatch can be turned on/off WITHOUT a restart. Mirrors `queue
-	// set-concurrency`.
 	if len(os.Args) >= 2 && os.Args[1] == "worker" {
 		verb := ""
 		if len(os.Args) >= 3 {
@@ -606,62 +426,19 @@ EXIT CODES
 		}
 	}
 
-	// harmonik handler status [--type T] [--format json|text] [--project DIR]
-	// Read-only status surface for handler-pause state.
-	// Reads .harmonik/handler-state.json directly (no daemon required).
-	//
-	// Exit-code contract:
-	//   0  — success (output written)
-	//   1  — argument or file-parse error
-	//   2  — forward-incompatible schema version
-	//
-	// Bead ref: hk-39ryh.
 	if len(os.Args) >= 2 && os.Args[1] == "handler" {
 		return runHandlerSubcommand(os.Args[2:])
 	}
 
-	// harmonik run <bead-id> [--project DIR] — single-bead invocation.
-	//
-	// Submits a single-item queue to the daemon and blocks until the bead reaches
-	// a terminal state. The daemon context is cancelled after the queue drains so
-	// the process exits with code 0 on success or non-zero on failure.
-	//
-	// Exit-code contract:
-	//   0  — bead reached SUCCESS terminal (bead closed)
-	//   1  — bead validation or daemon error
-	//  17  — daemon not running (socket absent) — not used here (in-process)
-	//
-	// Bead ref: hk-icecw.
 	if len(os.Args) >= 2 && os.Args[1] == "run" {
 		return runBeadSubcommand(os.Args[2:])
 	}
 
-	// harmonik keeper <verb|flags> — session-keeper context watcher and
-	// dispatching-marker control surface (codename:session-keeper, hk-ekap1).
-	//
-	// Verbs (hk-rc51s):
-	//   set-dispatching   <agent> [--project DIR] — write .dispatching marker
-	//   clear-dispatching <agent> [--project DIR] — remove .dispatching marker
-	//
-	// Watcher mode (flags only):
-	//   --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N]
-	//
-	// Dispatched before flag.Parse so that the global flag set does not reject
-	// subcommand-specific flags.
-	//
-	// Exit-code contract: 0 success/no-op, 1 arg/IO error, 2 lock held.
-	//
-	// Spec ref: codename:session-keeper (hk-ekap1); beads hk-fzzc6, hk-rc51s.
 	if len(os.Args) >= 2 && os.Args[1] == "keeper" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
 			subArgs = os.Args[2:]
 		}
-		// Route to verb handlers before the help intercept. Note: verbs use
-		// flag.ContinueOnError, so "harmonik keeper set-dispatching --help"
-		// prints the verb's own flag usage and exits 1 (not keeperTopUsage).
-		// The keeperTopUsage intercept below only fires for bare
-		// "harmonik keeper --help" or unknown subcommands.
 		if len(subArgs) > 0 {
 			switch subArgs[0] {
 			case "config":
@@ -685,15 +462,6 @@ EXIT CODES
 			case "await-ack":
 				return runKeeperAwaitAck(subArgs[1:])
 			default:
-				// W7 (hk-x7s): a NON-flag first token that matches no known verb is a
-				// typo'd subcommand (e.g. "restrt-now"). Previously it fell through to
-				// runKeeperSubcommand and was rejected as a stray positional with the
-				// misleading "this command is flag-only" message — so the operator
-				// thought the FLAG form was wrong, not that they fat-fingered the verb
-				// (a real recovery footgun for a destructive verb like restart-now).
-				// Catch it loudly here with the verb list and a non-zero exit. Tokens
-				// that START with '-' are watcher-mode flags, not verbs, so they fall
-				// through to the help intercept + runKeeperSubcommand below.
 				if !strings.HasPrefix(subArgs[0], "-") {
 					fmt.Fprintf(os.Stderr, "harmonik keeper: unknown keeper subcommand %q\n\n", subArgs[0])
 					fmt.Fprint(os.Stderr, keeperTopUsage)
@@ -710,15 +478,6 @@ EXIT CODES
 		return runKeeperSubcommand(subArgs)
 	}
 
-	// harmonik supervise {start,stop,status,attach,restart,logs} — manage the
-	// supervisor/cognition process per §PL-019. Dispatched before flag.Parse so
-	// that the global flag set does not reject subcommand-specific flags.
-	//
-	// Exit-code contract: 0 success, 1 op-error, 2 unknown-verb,
-	// 17 daemon-not-running, 25 supervisor-already-running.
-	//
-	// Spec ref: specs/process-lifecycle.md §4.10 PL-028d.
-	// Bead ref: hk-qx702.
 	if len(os.Args) >= 2 && os.Args[1] == "supervise" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -727,77 +486,30 @@ EXIT CODES
 		return runSuperviseSubcommand(subArgs)
 	}
 
-	// harmonik subscribe — stream daemon events on the Unix socket (hk-6ynv4).
-	// Long-running observation-only command; routed through ON-055 (subscribe
-	// is read-only observation, no control-plane authority).
 	if len(os.Args) >= 2 && os.Args[1] == "subscribe" {
 		return runSubscribeSubcommand(os.Args[2:])
 	}
 
-	// harmonik smoke — 5-signal end-to-end verification of a live daemon (hk-4rkrg).
-	// Creates a smoke bead, submits it to the queue, and asserts
-	// run_started → run_completed + commit-on-branch + reviewer_verdict + bead_closed.
-	// Exit codes: 0 pass, 1 failure, 2 timeout, 17 daemon not running.
 	if len(os.Args) >= 2 && os.Args[1] == "smoke" {
 		return runSmokeSubcommand(os.Args[2:])
 	}
 
-	// harmonik comms <verb> — agent-to-agent messaging surface (agent-comms spec §2.1 C2/C3).
-	// Currently supports: comms send (T3), comms log (T5).
-	// Exit code 17 = daemon not running (send only; log reads directly from events.jsonl).
-	// Bead ref: hk-cnjhx (T3), hk-onn1x (T5).
 	if len(os.Args) >= 2 && os.Args[1] == "comms" {
 		return runCommsSubcommand(os.Args[2:])
 	}
 
-	// harmonik decisions <verb> — agent→human decision surface (hitl-decisions
-	// SPEC §2; agent-side K2). raise/withdraw are daemon emit ops (exit 17 when
-	// daemon down); wait is a pure client-side subscribe stream (§4 N8). The
-	// operator side (list/show/answer) is component K4, a later bead.
-	// Bead ref: hk-xz9 (K2).
 	if len(os.Args) >= 2 && os.Args[1] == "decisions" {
 		return runDecisionsSubcommand(os.Args[2:])
 	}
 
-	// harmonik mailbox [--json] — thin alias of
-	// `decisions list --topic operator-mailbox` (bead hk-pltjs, pending
-	// operator sign-off per the hitl-decisions spec-change rule). Reuses the
-	// SAME hitl-decisions lifecycle scoped to the operator-mailbox topic
-	// convention — NOT a second bus.
-	// ON-INV-006-AUTH: hitl-decisions SPEC §2/§3; delegates to the "decisions-list"
-	// socket RPC, a pure-read K3 projection over events.jsonl (no event emitted,
-	// no run state mutation, no in-flight run abort) — same invariant class as
-	// the "decisions list"/"show" verbs and the "dashboard" subcommand above.
 	if len(os.Args) >= 2 && os.Args[1] == "mailbox" {
 		return runMailboxSubcommand(os.Args[2:])
 	}
 
-	// harmonik captain — bare launcher for the Captain LLM session: mint/validate
-	// a stable UUIDv4 --session-id and bring up `claude --remote-control` in a
-	// tmux session. It is a launcher, not a daemon — it never touches the pidfile
-	// lock. Bead ref: hk-ly0n.
 	if len(os.Args) >= 2 && os.Args[1] == "captain" {
 		return runCaptainSubcommand(os.Args[2:])
 	}
 
-	// harmonik start daemon [flags] — THE ONLY spelling that starts a daemon
-	// (hk-cli-flag-first-starts-daemon-gjhiy).
-	//
-	// Before this, the daemon started by FALLING THROUGH the verb chain: any argv
-	// that matched no verb reached flag.Parse and booted one. That made three
-	// spellings start a daemon by accident — `harmonik` bare, `harmonik --project
-	// DIR`, and `harmonik --project DIR status` — because unknownSubcommand
-	// declines anything beginning with "-" and anything with no argument at all.
-	// The last one is the one that hurt: there is no `status` subcommand, so an
-	// operator poll-checking a redeploy started a second daemon that contended
-	// with the one being revived.
-	//
-	// The daemon now starts the same way every other thing in this CLI starts: by
-	// being named. Reaching the end of the chain is no longer a request to boot.
-	//
-	// This is a rewrite, not a new parser: the flags after `start daemon` are the
-	// daemon's own, so the argv is shortened back to the flag-only form the setup
-	// below already parses, and startDaemonRequested records that a verb asked.
 	startDaemonRequested := false
 	if len(os.Args) >= 3 && os.Args[1] == "start" && os.Args[2] == "daemon" {
 		daemonArgs := os.Args[3:]
@@ -809,34 +521,18 @@ EXIT CODES
 		os.Args = append([]string{os.Args[0]}, daemonArgs...)
 	}
 
-	// harmonik start <role> … — the umbrella easy-start verb (codename:easy-start,
-	// ES1/hk-kbjl). Owns ALL start-routing: enforces the positional-XOR-flags rule
-	// (operator decision D2) then delegates to the captain launcher (above) or the
-	// crew subcommand (below). The former `start captain` alias is folded in here.
 	if len(os.Args) >= 2 && os.Args[1] == "start" {
 		return runStart(os.Args[2:])
 	}
 
-	// harmonik crew <verb> — captain & crew session management (C2).
-	// crew start/stop are daemon RPCs (exit 17 when daemon down).
-	// crew list is a local read that works daemon-down.
-	// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
-	// Bead ref: hk-yj2j6 (C2 CLI).
 	if len(os.Args) >= 2 && os.Args[1] == "crew" {
 		return runCrewSubcommand(os.Args[2:])
 	}
 
-	// harmonik agent <verb> — agent type folder management (agent-manifest SPEC §3).
-	// Verbs: check (schema/layout validation). Bead: hk-9cheh (T5).
-	// ON-INV-006-AUTH: agent-manifest SPEC §3; read-only filesystem validation, no daemon connection, no queue or run mutation, cannot abort an in-flight run
 	if len(os.Args) >= 2 && os.Args[1] == "agent" {
 		return runAgentSubcommand(os.Args[2:])
 	}
 
-	// harmonik ops-monitor <verb> — launchd LaunchAgent management for the
-	// ops-monitor-check.sh fleet health probe (hk-qpzsv). Verbs: install,
-	// uninstall, status. Installs a per-project LaunchAgent so the probe runs
-	// every 5 min independent of any Claude or captain session. No daemon required.
 	if len(os.Args) >= 2 && os.Args[1] == "ops-monitor" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -845,25 +541,14 @@ EXIT CODES
 		return runOpsMonitorSubcommand(subArgs)
 	}
 
-	// harmonik schedule <verb> — generic recurring-job primitive (codename:schedule,
-	// hk-0es). All verbs mutate/read .harmonik/schedules.json directly and work
-	// whether or not the daemon is running; a running daemon picks up changes on
-	// its next poll tick. No daemon connection required (no exit-17 path).
 	if len(os.Args) >= 2 && os.Args[1] == "schedule" {
 		return runScheduleSubcommand(os.Args[2:])
 	}
 
-	// harmonik sentinel <verb> — flywheel sentinel surface (flywheel V4, hk-9mr2).
-	// Exposes governor-trip exception writes to the adversary crew and operators.
-	// No daemon required; file-only operations.
 	if len(os.Args) >= 2 && os.Args[1] == "sentinel" {
 		return runSentinelSubcommand(os.Args[2:])
 	}
 
-	// harmonik greenlight <bead-id> [--project DIR] — captain approval for staged
-	// deploy+verify beads (AC2, hk-lacr). Removes the "needs-greenlight" label so
-	// the daemon's dispatch loop can claim the bead. No daemon required; calls br.
-	// Spec ref: flywheel-motion.md §5.3/§6.2.
 	if len(os.Args) >= 2 && os.Args[1] == "greenlight" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -872,12 +557,6 @@ EXIT CODES
 		return runGreenlightSubcommand(subArgs)
 	}
 
-	// harmonik goal-keeper [--project DIR] — ephemeral goal-state updater
-	// (flywheel V6, hk-owz1). Reads operator comms since the last_event_id
-	// cursor in .harmonik/intent/goal-state.json, appends new messages as
-	// verbatim operator_directives, and exits. Spawned by the daemon's
-	// schedule primitive on idle-triggered realign; also callable manually.
-	// No daemon required.
 	if len(os.Args) >= 2 && os.Args[1] == "goal-keeper" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -886,17 +565,10 @@ EXIT CODES
 		return runGoalkeeperSubcommand(subArgs)
 	}
 
-	// harmonik graph <verb> — workflow graph utilities (hk-voyf4).
-	// Currently supports: graph validate <path>
-	// No daemon required; reads files directly.
 	if len(os.Args) >= 2 && os.Args[1] == "graph" {
 		return runGraphSubcommand(os.Args[2:])
 	}
 
-	// harmonik promote <sha>... | --pr — banked-commit cherry-pick to target with
-	// build gate + non-ff-safe push (push-mode), or PR opener (PR-mode).
-	// No daemon required; operates directly on git and gh.
-	// Spec ref: specs/promote.md. Bead ref: hk-pk3p1 (reconciles hk-gax8v).
 	if len(os.Args) >= 2 && os.Args[1] == "promote" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -905,12 +577,6 @@ EXIT CODES
 		return runPromoteSubcommand(subArgs)
 	}
 
-	// harmonik gc <verb> — garbage-collect stale harmonik artifacts (hk-fpjxi).
-	// Verbs: branches (reap merged/orphaned run/* + worktree-agent-* refs).
-	// No daemon required; operates directly on git.
-	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008/ON-009; no daemon connection,
-	// no socket RPC, no queue or run-state mutation — deletes fully-merged or
-	// orphaned git branches directly via git plumbing, cannot abort an in-flight run.
 	if len(os.Args) >= 2 && os.Args[1] == "gc" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -919,10 +585,6 @@ EXIT CODES
 		return runGCSubcommand(subArgs)
 	}
 
-	// harmonik release <verb> — release ledger management (hk-n7ofb).
-	// ledger: list entries; certify: flip prerelease:false + stamp certified_at;
-	// yank: mark yanked. No daemon required; operates on the ledger JSON file.
-	// Spec ref: specs/release-pipeline.md §4, §6, §7.1.
 	if len(os.Args) >= 2 && os.Args[1] == "release" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -931,39 +593,18 @@ EXIT CODES
 		return runReleaseSubcommand(subArgs)
 	}
 
-	// harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
-	// Pure-Go status sheet builder; snapshot mode requires no daemon.
-	// harmonik state [--json] — typed StateSnapshot aggregator (hk-gv04 P2-a).
-	// Spec: specs/system-state.md §4.  Emits JSON or compact human table.
-	// Daemon-up: live socket RPC ("state" op); daemon-down: disk fallback.
 	if len(os.Args) >= 2 && os.Args[1] == "state" {
 		return runStateSubcommand(os.Args[2:])
 	}
 
-	// harmonik dashboard [--json] — DashboardSnapshot operator panel (hk-2exz9).
-	// Joins live StateSnapshot + dashboard.json + lanes.json + decisions + stalls.
-	// Daemon-up: live socket RPC ("dashboard" op); daemon-down: exits 1.
-	// ON-INV-006-AUTH: read-only operator panel; delegates to "dashboard" socket RPC
-	// which is a pure-read projection (no state mutation, no in-flight run abort).
-	// Same invariant as "state" subcommand (specs/system-state.md SS-001/SS-INV-007).
 	if len(os.Args) >= 2 && os.Args[1] == "dashboard" {
 		return runDashboardSubcommand(os.Args[2:])
 	}
 
-	// Missing .harmonik/ → exit 7. Spec: specs/digest-command.md; CL-030..033.
-	// Bead ref: hk-1qrty.
 	if len(os.Args) >= 2 && os.Args[1] == "digest" {
 		return runDigestSubcommand(os.Args[2:])
 	}
 
-	// harmonik project-hash [--project DIR] — read-only PL-006a hash printer.
-	// Prints the first 12 hex chars of SHA-256(realpath(project_root)) and exits 0.
-	// No daemon required; side-effect-free. Shell scripts use this to obtain the
-	// project hash without reimplementing SHA-256 in bash.
-	//
-	// Exit codes: 0 success, 1 argument or path-resolution error.
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-031.
-	// Bead ref: hk-dmw.
 	if len(os.Args) >= 2 && os.Args[1] == "project-hash" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -972,10 +613,6 @@ EXIT CODES
 		return runProjectHashSubcommand(subArgs)
 	}
 
-	// harmonik remote-control-prefix [--project DIR] — read-only printer for the
-	// per-project Claude RC label prefix (daemon.remote_control_prefix). No daemon
-	// required; side-effect-free. Mirrors project-hash; fetches the prefix without
-	// parsing YAML. Bead ref: hk-igpg.
 	if len(os.Args) >= 2 && os.Args[1] == "remote-control-prefix" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -984,11 +621,6 @@ EXIT CODES
 		return runRemoteControlPrefixSubcommand(subArgs)
 	}
 
-	// harmonik migrate-rc-prefix [--project DIR] — interactive migration for
-	// existing projects that pre-date daemon.remote_control_prefix. Prompts the
-	// user for a slug (defaulting to the project's beads issue_prefix) and
-	// writes it in-place to .harmonik/config.yaml. Satisfies §8.3 of the
-	// rc-prefix plan (hk-f4w7): do NOT silently backfill; ask the user.
 	if len(os.Args) >= 2 && os.Args[1] == "migrate-rc-prefix" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -997,10 +629,6 @@ EXIT CODES
 		return runMigrateRCPrefixSubcommand(subArgs)
 	}
 
-	// harmonik usage [--since DURATION|ISO] [--until ISO] [--format json|summary] [--project DIR]
-	// Token cost analysis: join Claude transcripts × events.jsonl on run/<run_id>.
-	// No daemon required; reads files directly.
-	// Bead ref: hk-b89kk (Phase-0 token-usage join).
 	if len(os.Args) >= 2 && os.Args[1] == "usage" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -1009,10 +637,6 @@ EXIT CODES
 		return runUsageSubcommand(subArgs)
 	}
 
-	// harmonik eval <verb> — eval-harness tooling (EH1).
-	// harmonik eval collect: post-run collector, reads events.jsonl,
-	// writes per-run records to eval-results.jsonl. No daemon connection.
-	// ON-INV-006-AUTH: operator-nfr.md §4.9 ON-055; offline post-run collector, read-only over events.jsonl, no daemon connection, no in-flight run abort
 	if len(os.Args) >= 2 && os.Args[1] == "eval" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -1021,13 +645,6 @@ EXIT CODES
 		return runEvalCmd(subArgs, os.Stdout, os.Stderr)
 	}
 
-	// harmonik harness [flags] — scenario harness runner (hk-nwqa0).
-	//
-	// Implements the CLI surface: 8 flags (--cadence, --scenario,
-	// --fixture-root, --twin-search-path, --list, --dry-run, --output,
-	// --verbose) and 5 exit codes (0/1/2/3/130).
-	//
-	// Spec ref: specs/scenario-harness.md §4.12 SH-032.
 	if len(os.Args) >= 2 && os.Args[1] == "harness" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
@@ -1036,60 +653,20 @@ EXIT CODES
 		return runHarnessSubcommand(subArgs)
 	}
 
-	// End of the subcommand chain. An argument that reached this point matched
-	// no verb above, and every block above returns, so a positional argument
-	// here names a subcommand that does not exist. Refuse it.
-	//
-	// Without this refusal the argument fell through to flag.Parse and the
-	// process started a daemon against the current directory. A typo therefore
-	// wrote .harmonik/ into whatever directory the operator stood in, and after
-	// a minute the daemon spawned a supervisor to revive itself.
-	//
-	// This check must stay above the daemon setup below. Everything after it
-	// touches the disk.
-	//
-	// Bead ref: hk-j7yo0.
 	if verb, ok := unknownSubcommand(os.Args); ok {
 		fmt.Fprintf(os.Stderr, "harmonik: unknown subcommand %q\n", verb)
 		harmonikUsage()
 		return exitUnknownSubcommand
 	}
 
-	// Nothing above claimed this argv and no verb asked for a daemon, so this is
-	// either bare `harmonik` or a flag-first spelling. Both used to start one by
-	// falling through. Refuse instead, and name the one verb that starts a daemon
-	// (hk-cli-flag-first-starts-daemon-gjhiy).
-	//
-	// This must stay ABOVE the daemon setup below for the same reason the
-	// unknown-verb refusal does: everything after it touches the disk.
 	if !startDaemonRequested {
 		fmt.Fprint(os.Stderr, daemonStartRefusal(os.Args))
 		harmonikUsage()
 		return exitUnknownSubcommand
 	}
 
-	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
-	//
-	// logFlusher and busFlusher are both nil for now:
-	//   - logFlusher:  the structured-log channel does not exist yet; the flush
-	//     step is nil-safe and skipped (lifecycle.RecoverWithLogFlush nil-safety).
-	//   - busFlusher:  the EventBus (hk-hqwn.57) is not yet implemented; the
-	//     bus-flush step is nil-safe per EV-019a. Substitute with the real
-	//     EventBus once hk-hqwn.57 lands (wiring site: hk-hqwn.70).
-	//
-	// Spec refs:
-	//   - event-model.md §4.4 EV-019  — log flush MUST precede exit on panic.
-	//   - event-model.md §4.4 EV-019a — bus flush SHOULD follow log flush (nil-safe).
 	defer lifecycle.RecoverWithLogFlush(nil, nil, nil)
 
-	// PolicyEngine binding.
-	//
-	// NoOpPolicyEngine is the production interface — not a nil check, not a
-	// test double. The dispatcher always calls policyEngine.Evaluate; the
-	// no-op always returns {Permitted: true, Constraints: nil}.
-	//
-	// Spec ref: docs/foundation/phase-1-readiness-gap-analysis.md §A5;
-	// specs/scenario-harness.md §4.3.SH-018; bootstrap-subset.md §1.
 	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{}
 	_ = policyEngine // consumed by dispatcher once cluster-A EM beads land
 
@@ -1097,132 +674,58 @@ EXIT CODES
 	// dispatcher wiring beads (hk-b3f cluster-A) land. The binding site is
 	// here; the consumer site is internal/orchestrator (not yet shipped).
 
-	// --project flag (EARLY_ROADMAP row #1, hk-56ajv).
-	//
-	// Default: current working directory. Resolved to an absolute path via
-	// filepath.Abs before the directory-existence check, so relative paths
-	// work intuitively from any shell context.
-	//
-	// The daemon stays foreground — no additional flags, no env-var fallbacks,
-	// no config-file loading (EARLY_ROADMAP §"What we are NOT building").
 	var projectFlag string
 	flag.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
 
-	// --max-concurrent: maximum beads dispatched concurrently.
-	// Default 1 preserves single-threaded semantics
-	// (POST_OPERATIONAL_PARALLELISM_ROADMAP row 6, hk-e61c3.1).
-	// Values >1 are inert until the work-loop goroutine scheduler (hk-e61c3.2) lands.
 	var maxConcurrentFlag int
 	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")
 
-	// --subscription-token-ceiling: per-5h token budget for the shared Claude
-	// subscription.  When non-zero the bandwidth tuner (hk-ymav1) reads rolling
-	// token usage from ~/.claude/projects/*/*.jsonl and auto-scales --max-concurrent
-	// to stay within this ceiling.  Zero (the default) disables the tuner.
-	// Start conservative and raise empirically until a 429 is observed.
 	var subscriptionTokenCeilingFlag int64
 	flag.Int64Var(&subscriptionTokenCeilingFlag, "subscription-token-ceiling", 0,
 		"per-5h token ceiling for the Claude subscription; enables auto-tuning of --max-concurrent (0 = disabled)")
 
-	// --workflow-mode: daemon-level default workflow mode (hk-rssrg).
-	// Tier-3 of the four-tier resolution chain (execution-model.md §4.3 EM-012a):
-	// per-bead label → per-project → daemon-default (this flag) → built-in fallback.
-	// Defaults to "dot" so every bead with no explicit ref runs the embedded
-	// standard-bead.dot workflow (implement → commit_gate → review → merge).
-	// Pass --workflow-mode single to override.
-	// Valid values: single, dot ("review-loop" RETIRED per EM-015d).
 	var workflowModeFlag string
 	flag.StringVar(&workflowModeFlag, "workflow-mode", string(core.WorkflowModeDot),
 		"daemon-level default workflow mode: single, dot (default: dot)")
 
-	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
-	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready
-	// drain for non-queue-driven deployments. --no-auto-pull is kept as an
-	// accepted no-op alias for back-compat (it was the opt-in; now queue-only is
-	// the default so passing it is redundant but harmless).
 	var autoPullFlag bool
 	flag.BoolVar(&autoPullFlag, "auto-pull", false, "enable br-ready fallback poll (historical single-daemon topology; opt-in)")
 	flag.BoolVar(new(bool), "no-auto-pull", false, "no-op alias; queue-only is now the default (back-compat)")
 
-	// --target-branch: branch the daemon merges completed bead branches into
-	// (default "main").  Threaded into mergeRunBranchToMain by codename:productization
-	// beads (hk-mkxw1).
 	var targetBranchFlag string
 	flag.StringVar(&targetBranchFlag, "target-branch", "", "branch to merge completed bead branches into (default: main)")
 
-	// --protect-branch: repeatable; names a branch the daemon must never merge
-	// into or overwrite (hk-mkxw1).
 	var protectBranchesFlag stringSliceFlag
 	flag.Var(&protectBranchesFlag, "protect-branch", "branch name to protect from daemon merges (repeatable)")
 
-	// --forbid-default-main: refuse to start when the repository default branch
-	// is not in the protected set (hk-mkxw1).
 	var forbidUnprotectedDefaultFlag bool
 	flag.BoolVar(&forbidUnprotectedDefaultFlag, "forbid-default-main", false,
 		"refuse to start if the default branch (main/master) is not in --protect-branch")
 
-	// --default-harness: tier-4 (global) default for the harness-selection chain
-	// (bead > queue > node > global, codex-harness C4/T4, hk-y01k6).
-	// The empty default causes the daemon to fall back to the built-in default
-	// (claude-code) per the tier-4 fallback in resolveHarness.
-	// Valid values: "claude-code", "codex", or any registered AgentType (AR-025).
 	var defaultHarnessFlag string
 	flag.StringVar(&defaultHarnessFlag, "default-harness", "",
 		"global default harness (tier-4): claude-code, codex (default: claude-code built-in fallback)")
 
-	// --codex-binary: path to the codex executable used when the resolved harness
-	// is codex.  Empty falls back to bare "codex" resolved by PATH (hk-y01k6).
 	var codexBinaryFlag string
 	flag.StringVar(&codexBinaryFlag, "codex-binary", "",
 		"path to the codex executable (default: 'codex' resolved by PATH)")
 
-	// --worker-host: CLI override for the single remote worker's host field.
-	// When explicitly set, takes precedence over the value in .harmonik/workers.yaml
-	// following flag > file > default precedence (B4 remote-substrate).
 	var workerHostFlag string
 	flag.StringVar(&workerHostFlag, "worker-host", "",
 		"override the remote worker host (B4 remote-substrate; empty = use workers.yaml value)")
 
-	// --worker-enabled: CLI override for the single remote worker's enabled field.
-	// When explicitly set via --worker-enabled or --no-worker-enabled, takes
-	// precedence over the value in .harmonik/workers.yaml (B4 remote-substrate).
 	var workerEnabledFlag bool
 	flag.BoolVar(&workerEnabledFlag, "worker-enabled", false,
 		"override the remote worker enabled state (B4 remote-substrate)")
 
-	// --agent-ready-timeout: HC-056 per-dispatch timeout for the agent_ready event.
-	// The daemon kills and reopens the bead when the agent does not signal ready
-	// within this window. Zero (the default) falls back to the compiled-in default
-	// (90s as of hk-hzj). Increase for slow-disk / high-concurrency environments
-	// where claude cold-start exceeds the default; decrease for fast NVMe boxes to
-	// surface hung spawns sooner.
-	//
-	// Bead ref: hk-hzj.
 	var agentReadyTimeoutFlag time.Duration
 	flag.DurationVar(&agentReadyTimeoutFlag, "agent-ready-timeout", 0,
 		"per-dispatch timeout for agent_ready event; 0 uses the built-in default (150s) (hk-hzj)")
 
-	// --remote-agent-ready-timeout: HC-056 agent_ready timeout applied to a
-	// dispatch routed to a REMOTE (SSH worker) node instead of
-	// --agent-ready-timeout. A remote spawn additionally clears reverse-SSH-
-	// tunnel readiness and, for the reviewer node, may compete with a resident
-	// implementer agent for CPU/disk on the same worker — the separate, longer
-	// default covers that extra latency without loosening the local timeout.
-	//
-	// Bead ref: hk-96d7w (LOCAL slice of hk-5z1f0).
 	var remoteAgentReadyTimeoutFlag time.Duration
 	flag.DurationVar(&remoteAgentReadyTimeoutFlag, "remote-agent-ready-timeout", 0,
 		"per-dispatch timeout for agent_ready event on a REMOTE worker; 0 uses the built-in default (210s) (hk-96d7w)")
 
-	// --spawn-stagger: minimum interval between consecutive tmux window creations.
-	// Under a concurrent dispatch burst all claude agents cold-start simultaneously,
-	// competing for disk I/O and CPU. Spreading window creation by this interval
-	// reduces the peak cold-start contention and lowers the probability of
-	// agent_ready_timeout under disk pressure. Zero (the default) disables
-	// staggering. A value of 2–5s is a reasonable starting point for
-	// --max-concurrent ≥ 4 on a disk-heavy box.
-	//
-	// Bead ref: hk-hzj.
 	var spawnStaggerFlag time.Duration
 	flag.DurationVar(&spawnStaggerFlag, "spawn-stagger", 0,
 		"minimum interval between consecutive agent window creations; 0 disables (hk-hzj)")
@@ -1230,7 +733,6 @@ EXIT CODES
 	flag.Usage = harmonikUsage
 	flag.Parse()
 
-	// Resolve project directory.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -1246,39 +748,20 @@ EXIT CODES
 		return 1
 	}
 
-	// Validate the directory exists. Fail fast with a clear message so the
-	// operator knows immediately when they've pointed at a non-existent path.
 	if _, err := os.Stat(projectDir); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
 		return 1
 	}
 
-	// PL-004b (hk-rcp7): flag > config > default precedence for max_concurrent,
-	// workflow_mode, and target_branch.
-	//
-	// flag.Visit iterates only the flags that were explicitly set on the command
-	// line (not defaulted-and-not-passed).  An explicitly-passed flag always wins
-	// over any config-file value; a defaulted-but-not-passed flag defers to the
-	// config file, which in turn defers to the built-in default.
 	explicitFlags := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
 
-	// Load the daemon: block from .harmonik/config.yaml.  The loader validates
-	// the workflow_mode value and returns *ErrWorkflowModeFloorViolation when
-	// single is found (PL-004a review floor — daemon-level config must never
-	// lower the mode below review-loop).
 	projCfg, projCfgErr := projectconfig.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", projCfgErr)
 		return 1
 	}
 
-	// hk-f8u5j: Pi harness config validation at daemon boot (PI-051).
-	// When harnesses.pi is present (any required field non-empty), validate it
-	// fully via ResolvePiConfig so the operator sees a clear PiConfigMissingError
-	// before the daemon accepts beads rather than at first Pi dispatch.
-	// When harnesses.pi is entirely absent, no validation — Pi is simply
-	// unavailable and buildPiLaunchSpec surfaces the error at dispatch time.
 	piBlock := projCfg.Harnesses.Pi
 	if piBlock.Provider != "" || piBlock.Model != "" || piBlock.APIKeyEnv != "" {
 		if _, piCfgErr := ResolvePiConfig(piBlock, projectDir); piCfgErr != nil {
@@ -1287,66 +770,40 @@ EXIT CODES
 		}
 	}
 
-	// Load branching.yaml for the authoritative target_branch precedence source
-	// (config.yaml daemon.target_branch is observability/symmetry only per PL-004b).
 	branchDflt, branchErr := branching.Load(projectDir)
 	if branchErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", branchErr)
 		return 1
 	}
 
-	// Load workers.yaml for the remote-substrate worker registry (B4).
-	// Missing file → zero-value Config (local execution only); malformed → fatal.
 	workersCfg, workersErr := workers.Load(projectDir)
 	if workersErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", workersErr)
 		return 1
 	}
-	// Apply CLI overrides: flag > file > default (B4).
 	workersCfg = applyWorkerOverrides(workersCfg, explicitFlags, workerHostFlag, workerEnabledFlag)
 
-	// Resolve max_concurrent: explicit flag > config (> 0) > flag default (1).
 	if !explicitFlags["max-concurrent"] && projCfg.Daemon.MaxConcurrent > 0 {
 		maxConcurrentFlag = projCfg.Daemon.MaxConcurrent
 	}
 
-	// Resolve workflow_mode: explicit flag > config (non-empty, already validated) > flag default (dot).
-	// The loader already enforces the PL-004a review floor on the config value.
 	if !explicitFlags["workflow-mode"] && projCfg.Daemon.WorkflowMode != "" {
 		workflowModeFlag = string(projCfg.Daemon.WorkflowMode)
 	}
 
-	// Resolve target_branch: explicit flag > branching.yaml lands_on > flag default ("").
-	// The daemon normalises empty → "main" via resolveTargetBranch.
 	if !explicitFlags["target-branch"] && branchDflt.LandsOn != "" {
 		targetBranchFlag = branchDflt.LandsOn
 	}
 
-	// hk-sm6j7: resolve br binary via PATH so the work loop is reachable.
-	// If br is not on PATH, BrPath remains empty and daemon.Start skips the
-	// work loop (existing nil-path guard at daemon.go:251 is preserved).
 	brPath := optionalExecutablePath("br")
 
-	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
-	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
 	kerfPath := optionalExecutablePath("kerf")
-	// M6 WS4-3: HARMONIK_DISABLE_EAGER_REFILL forces eager-refill off without
-	// removing kerf from PATH. The core-loop-proof matrix needs queue-submit to
-	// be the SOLE deterministic dispatcher: otherwise the daemon auto-dispatches
-	// the ready seed beads at boot (via `kerf next`) before a cell's subscribe
-	// arms, so the cell's `queue submit` hits bead_already_dispatched and its
-	// capture folds empty. kerf shares a bin dir with pi/codex, so a PATH shim
-	// can't drop kerf alone; this explicit toggle is the clean lever.
 	if v := os.Getenv("HARMONIK_DISABLE_EAGER_REFILL"); v == "1" || v == "true" {
 		kerfPath = ""
 	}
 
-	// hk-keul6: default JSONL log path to <ProjectDir>/.harmonik/events/events.jsonl
-	// per event-model.md §6.2 EV-020.
 	jsonlLogPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 
-	// hk-woebv: create required subdirectories before daemon.Start so that
-	// eventbus.OpenJSONLWriter never fails with "no such file or directory".
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/events/: %v\n", err)
 		return 1
@@ -1356,25 +813,8 @@ EXIT CODES
 		return 1
 	}
 
-	// hk-002zx: startup banner so the operator knows the daemon is active.
 	fmt.Fprintln(os.Stderr, "harmonik daemon starting in", projectDir)
 
-	// F56 (hk-86eh): two-phase shutdown — separate dispatch-halt from in-flight cancel.
-	//
-	// ctx (from signal.NotifyContext) is cancelled immediately on SIGINT/SIGTERM.
-	// It is used ONLY as StopDispatchCtx: it halts new dispatch without touching
-	// in-flight DOT/implement goroutines, which run on runCtx below.
-	//
-	// runCtx is passed to daemon.Start. It is independent of signals; the grace
-	// goroutine cancels it after inFlightDrainGrace once ctx fires, bounding
-	// the window in which a hung implement node can delay process exit.
-	// In practice the supervisor sends SIGKILL within its StopTimeout (10 s)
-	// before the grace fires; either way, goroutines never see a cancelled
-	// context and never emit 'context cancelled during node implement'.
-	// QM-002a on the next daemon start resets in-progress beads to open.
-	//
-	// Signal handling lives at the composition root (hk-7oz2f) so daemon.Start
-	// is testable without process-level signals.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -1382,31 +822,12 @@ EXIT CODES
 	defer cancelRun()
 	go inFlightDrainGoroutine(ctx, runCtx, cancelRun)
 
-	// hk-kqdpf.6: resolve the absolute path to this binary so that settings.json
-	// hook commands reference an absolute path rather than a bare "harmonik" name.
-	// Fail fast here so the daemon never starts with an unresolvable hook command.
 	daemonBinaryPath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: os.Executable() failed — cannot resolve daemon binary path for hook commands: %v\n", err)
 		return 1
 	}
 
-	// hk-kqdpf.4: wire tmuxSubstrate into the daemon composition root.
-	//
-	// tmux hosting is RESOLVED, not demanded. An ambient $TMUX client is the
-	// preferred host and remains the operator's inspection surface, but its
-	// absence no longer refuses the boot: resolveTmuxHosting falls back to the
-	// deterministic per-project session and creates it. tmuxhosting.go carries
-	// the three outcomes and the operator direction (2026-07-28) that reopened
-	// locked decision #4 to allow this.
-	//
-	// Missing tmux ENTIRELY is still fatal for the tmux substrate — every spawn
-	// routes through `tmux new-window`, so booting would be a lie. It is only a
-	// degradation for the structured Codex driver, which owns child stdio.
-	//
-	// Spec ref: specs/process-lifecycle.md PL-021a, PL-021b items 2-3 and PL-028b,
-	// as amended 2026-07-28 (PL v0.6.2) to specify exactly this behavior. The two
-	// declared residuals are listed at the top of tmuxhosting.go.
 	tmuxAdapter := tmux.OSAdapter{}
 	hosting := resolveTmuxHosting(ctx, projectDir, tmuxAdapter, os.Stderr)
 	if !hosting.Available {
@@ -1415,20 +836,8 @@ EXIT CODES
 		}
 	}
 
-	// hk-xb5yi: resolve spawn cap. HARMONIK_MAX_CONCURRENT_SESSIONS env var
-	// overrides; default is maxConcurrentFlag*2 to cover both implementer and
-	// reviewer sessions per in-flight bead.
 	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
 
-	// hk-9ptu: build substrate options; add session keepalive when the daemon owns
-	// the session (hosting.NeedKeepalive). Three boot paths reach it: $TMUX unset
-	// (the common one since 2026-07-28), supervisor-revive into the flywheel /
-	// supervisor session, and display-message failure inside a tmux client. On all
-	// three the daemon is responsible for keeping the "-default" session alive for
-	// its entire lifetime. The keepalive goroutine complements the reactive hk-yaj
-	// ErrNoSession self-heal in SpawnWindow by proactively recreating the session
-	// between dispatches, so a killed session does not cause a fleet-wide
-	// launch_initiated outage.
 	substrateOpts := []daemon.TmuxSubstrateOption{
 		daemon.WithSpawnCap(maxSessions),
 		daemon.WithSpawnStagger(spawnStaggerFlag),                            // hk-hzj: spread concurrent cold-starts; 0 = disabled
@@ -1438,26 +847,8 @@ EXIT CODES
 		substrateOpts = append(substrateOpts, daemon.WithSessionKeepalive(0)) // 0 = default 30 s interval
 	}
 
-	// Resolve the binary's commit hash once: ldflags stamp takes precedence;
-	// runtime/debug VCS embedding is the fallback for plain go install builds.
-	// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
 	resolvedHash := resolvedCommitHash()
 
-	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
-	// the live worker registry into the Codex driver's runner (nil for tmux).
-	//
-	// The tmux substrate is built ONLY when tmux hosting resolved. NewTmuxSubstrate
-	// panics on an empty session name (it treats that as a daemon defect), and the
-	// argument would be evaluated eagerly even on the codexdriver path where it is
-	// discarded — so a no-tmux boot must hand selectSubstrate a nil tmux substrate,
-	// not one built on an empty name. Unreachable with the tmux substrate selected:
-	// that combination already returned above.
-	//
-	// The third return is reviewerSubstrate (always tmuxSub), NOT the older
-	// requireIsolationBoundary bool: the fence was removed by operator decision
-	// 2026-07-23 and this branch replaced it with the reviewer-substrate pin, so
-	// the nil-safety fix above is grafted onto the newer signature rather than
-	// carrying its base's older one back in.
 	var tmuxSub handler.Substrate
 	if hosting.Available {
 		tmuxSub = daemon.NewTmuxSubstrate(tmuxAdapter, hosting.SessionName, substrateOpts...)
@@ -1488,18 +879,7 @@ EXIT CODES
 		Workers:                  workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
 	}
 
-	// Yanked-binary check (specs/release-pipeline.md §7.2 point 4).
-	//
-	// Belt-and-suspenders over the supervisor guard: if the compiled-in ledger or
-	// the on-disk ledger marks this binary's commit hash as yanked, exit 9 with a
-	// clear FATAL message so operators know immediately why the daemon refused to start.
-	//
-	// Only applies to the daemon path (after subcommand dispatch), so operator
-	// tools like `harmonik release rollback` remain usable even on a yanked binary.
-	//
-	// Exit code 9 = yanked-binary per spec §7.2.4.
 	if resolvedHash != "unknown" && resolvedHash != "" {
-		// Check compiled-in ledger.
 		for _, e := range release.Ledger {
 			if e.CommitHash == resolvedHash && e.Yanked {
 				fmt.Fprintf(os.Stderr, "FATAL: this binary (%s, %s) has been yanked: %s\n",
@@ -1507,7 +887,6 @@ EXIT CODES
 				return 9
 			}
 		}
-		// Check on-disk (mutable) ledger.
 		if onDiskEntries, ldErr := release.LoadLedgerFile(release.LedgerPath(projectDir)); ldErr == nil {
 			for _, e := range onDiskEntries {
 				if e.CommitHash == resolvedHash && e.Yanked {
@@ -1519,11 +898,6 @@ EXIT CODES
 		}
 	}
 
-	// Supervisor watchdog: daemon-side liveness monitor for the flywheel supervisor
-	// (hk-dqlkz). When the supervisor is found dead the daemon revives it via
-	// 'harmonik supervise restart --watch-restart', closing the gap where the
-	// supervisor's own DaemonWatchdog dies with it and leaves no auto-revive path
-	// for the daemon itself (hk-pen9: 7h11m undetected outage).
 	startSupervisorWatchdogIfEnabled(
 		ctx,
 		projCfg.Subsystems,
@@ -1531,12 +905,8 @@ EXIT CODES
 		os.Stderr,
 	)
 
-	// F56 (hk-86eh): wire signal ctx as StopDispatchCtx so SIGTERM halts new
-	// dispatch immediately; in-flight goroutines continue on runCtx.
 	cfg.StopDispatchCtx = ctx
 
-	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.
-	// All other errors map to exit code 1.
 	if err := daemon.Start(runCtx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", err)
 		if errors.Is(err, lifecycle.ErrPidfileLocked) {
@@ -1548,11 +918,6 @@ EXIT CODES
 	return 0
 }
 
-// stringSliceFlag is a flag.Value implementation for repeatable string flags
-// such as --protect-branch.  Each invocation of Set appends one value; the
-// zero value (nil slice) is safe and means "no values provided".
-//
-// Bead ref: hk-mkxw1.
 type stringSliceFlag []string
 
 func (f *stringSliceFlag) String() string { return strings.Join(*f, ",") }
@@ -1561,18 +926,8 @@ func (f *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
-// inFlightDrainGrace is the bounded window the persistent daemon gives
-// in-flight DOT/implement goroutines to complete after SIGTERM fires (F56,
-// hk-86eh). After this duration runCtx is cancelled, which surfaces as an
-// error in still-running goroutines. In practice the supervisor (or the
-// operator's shell) sends SIGKILL within its own StopTimeout (10 s) before
-// this timer fires; the constant exists to ensure the process exits eventually
-// even without an external kill.
 const inFlightDrainGrace = 5 * time.Minute
 
-// inFlightDrainGoroutine implements the F56 (hk-86eh) two-phase shutdown:
-// wait for sigCtx to fire, then cancel runCtx after inFlightDrainGrace. If
-// runCtx is cancelled first (normal exit), the goroutine exits immediately.
 func inFlightDrainGoroutine(sigCtx, runCtx context.Context, cancelRun context.CancelFunc) {
 	select {
 	case <-sigCtx.Done():
@@ -1587,24 +942,6 @@ func inFlightDrainGoroutine(sigCtx, runCtx context.Context, cancelRun context.Ca
 	}
 }
 
-// startSupervisorWatchdogIfEnabled is the ONE construction seam for the
-// daemon-side supervisor watchdog. It applies subsystem partitioning the same
-// way daemon.bindSocketIfEnabled applies it to the socket subtree.
-//
-// When `subsystems.supervisor_watchdog.enabled: false` is set in
-// .harmonik/config.yaml, NOTHING here is built: no SupervisorWatchdog, no
-// goroutine, no pidfile probe, and no `harmonik supervise restart` child. This
-// is deliberately NOT "constructed but inert". An inert watchdog still holds
-// the composition root hostage, and a watchdog that is built but not run is one
-// deleted `if` away from starting a supervisor again.
-//
-// The return value is the observable decision: the watchdog when it was built,
-// nil when the subsystem is off. The production caller discards it. A test
-// reads it to tell "absent" from "present and idle" — a bool computed from the
-// switch could not tell those two apart.
-//
-// Absent config (the zero SubsystemsConfig) enables the watchdog, so a
-// deployment with no subsystems: block behaves as it did before this switch.
 func startSupervisorWatchdogIfEnabled(
 	ctx context.Context,
 	subsystems projectconfig.SubsystemsConfig,
@@ -1631,9 +968,6 @@ func startSupervisorWatchdogIfEnabled(
 	return sw
 }
 
-// buildSupervisorWatchdogSpec returns the SupervisorWatchdogSpec used by the
-// daemon-side supervisor liveness watchdog (hk-dqlkz). Factored out for
-// testability.
 func buildSupervisorWatchdogSpec(projectDir, binaryPath string) supervise.SupervisorWatchdogSpec {
 	return supervise.SupervisorWatchdogSpec{
 		PidfilePath: filepath.Join(projectDir, ".harmonik", "cognition", "supervisor.pid"),
@@ -1643,13 +977,6 @@ func buildSupervisorWatchdogSpec(projectDir, binaryPath string) supervise.Superv
 	}
 }
 
-// spawnCapFromEnv resolves the concurrent-session spawn ceiling (hk-xb5yi).
-//
-// Precedence:
-//  1. HARMONIK_MAX_CONCURRENT_SESSIONS env var (operator override).
-//  2. maxConcurrent*2 — default covering both implementer and reviewer per bead.
-//
-// Returns 0 when HARMONIK_MAX_CONCURRENT_SESSIONS is set to "0" (disables cap).
 func spawnCapFromEnv(maxConcurrent int) int {
 	if v := os.Getenv("HARMONIK_MAX_CONCURRENT_SESSIONS"); v != "" {
 		var n int

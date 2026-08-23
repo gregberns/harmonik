@@ -151,7 +151,6 @@ func ComputeInputEnvelopeHash(e InputEnvelope) (string, error) {
 		return "", fmt.Errorf("ComputeInputEnvelopeHash: invalid ContextSubsetMode %q", e.ContextSubsetMode)
 	}
 
-	// Sort a copy of SkillPackages so the hash is order-independent.
 	sorted := make([]string, len(e.SkillPackages))
 	copy(sorted, e.SkillPackages)
 	sort.Strings(sorted)

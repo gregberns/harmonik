@@ -17,13 +17,6 @@ const (
 	GitSeedOpCheckout GitSeedOpKind = "checkout"
 )
 
-// gitSeedOpRequiredKeys maps each GitSeedOpKind to the args keys that MUST be
-// present for a GitSeedOp to be structurally well-formed. Optional keys
-// (parent, ref, from, target) are not listed; their absence does not
-// invalidate the op.
-//
-// Source of truth: specs/scenario-harness.md §6.3 — GitSeedOp.args
-// interpretation table.
 var gitSeedOpRequiredKeys = map[GitSeedOpKind][]string{
 	GitSeedOpCommit:   {"message"},
 	GitSeedOpBranch:   {"name"},

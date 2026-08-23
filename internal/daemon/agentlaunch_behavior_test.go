@@ -1,33 +1,5 @@
 package daemon
 
-// agentlaunch_behavior_test.go — BEHAVIORAL coverage of runAgentLaunch's
-// pre-launch boundaries.
-//
-// Everything else watching agentlaunch.go is a source-level AST sensor
-// (conformance_m4c7_test.go's D2 chokepoint checker, agentlaunch_scope_test.go's
-// sandbox-scope pin). A sensor proves the code has the right SHAPE; it cannot
-// prove the shape does anything. That gap was demonstrated, not theorised: with
-// the two lines that record the refusal deleted from refuseLaunch —
-//
-//	res.Fail = agentLaunchPrelaunchFailed
-//	res.FailErr = errors.New(reason)
-//
-// — the entire internal/daemon suite, D2 sensor included, stayed green, and a
-// remote run carrying live Anthropic credentials would have proceeded to launch.
-// The pre-collapse shape survived that mutation for free because the refusal
-// rode in the RETURN VALUE (`failRun(...); return false` against a named
-// `succeeded bool` result), so a broken reporter still abandoned the run. The
-// collapsed shape (`refuseLaunch(reason); return res`) carries nothing on its
-// own, so the safety property now lives entirely in refuseLaunch's body and
-// needs a test that observes the RESULT.
-//
-// Reaching runAgentLaunch needs no tmux and no worker: newPerRunSubstrate
-// returns nil for any substrate that is not a *tmuxSubstrate, the zero
-// SandboxCfg leaves the backend empty so sandboxSpawnForRun returns nil, and a
-// nil harness registry / nil hook store skip the rest. The only hard requirement
-// before the guard is a non-nil AdapterRegistry (handler.NewHandler panics on
-// nil) and a non-nil Emitter/Clock.
-
 import (
 	"bytes"
 	"context"
@@ -47,10 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// alaunchSpySubstrate is the "was a launch attempted?" witness. runAgentLaunch's
-// single handler.Launch call reaches this substrate through spec.Substrate, so a
-// non-zero spawn count means the launch happened. It refuses the spawn so the
-// non-refused path terminates promptly instead of waiting on a real agent.
 type alaunchSpySubstrate struct {
 	mu     sync.Mutex
 	spawns int
@@ -71,8 +39,6 @@ func (s *alaunchSpySubstrate) count() int {
 	return s.spawns
 }
 
-// alaunchDiscardEmitter accepts and drops every event. The launch path emits
-// diagnostics unconditionally; none of them is what these tests assert on.
 type alaunchDiscardEmitter struct{}
 
 var _ handlercontract.EventEmitter = alaunchDiscardEmitter{}
@@ -82,8 +48,6 @@ func (alaunchDiscardEmitter) EmitWithRunID(context.Context, core.RunID, core.Eve
 	return nil
 }
 
-// alaunchInput builds the minimum viable agentLaunchInput: no sandbox, no
-// harness registry, no hook store, no per-site hooks.
 func alaunchInput(t *testing.T, spy handler.Substrate, remote bool, specEnv []string) agentLaunchInput {
 	t.Helper()
 	wt := t.TempDir()
@@ -98,8 +62,6 @@ func alaunchInput(t *testing.T, spy handler.Substrate, remote bool, specEnv []st
 			Clock:   substrate.SystemClock{},
 		},
 		Handles: runloop.SharedHandles{
-			// Non-nil because handler.NewHandler panics on a nil registry. Empty
-			// because ForAgent's miss is a supported, non-fatal launch path.
 			AdapterRegistry: handlercontract.NewAdapterRegistry(),
 		},
 		RunID:     z8ekRunID(t),
@@ -147,7 +109,6 @@ func TestRunAgentLaunch_RemoteRunWithLiveCredentialsIsRefused(t *testing.T) {
 		t.Errorf("FailErr = %q, want it to carry %q", res.FailErr, string(d2APIKeyRefusal))
 	}
 
-	// The refusal must ABANDON the launch, not merely annotate it.
 	if got := spy.count(); got != 0 {
 		t.Errorf("substrate SpawnWindow calls = %d, want 0 — the launch was attempted despite the refusal", got)
 	}

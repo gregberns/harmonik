@@ -1,23 +1,5 @@
 package core
 
-// Property tests for ActorRole using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. AllActorRoles round-trip: every role returned by AllActorRoles() marshals
-//     to its string representation and unmarshals back identically.
-//
-//  2. Invalid values rejected: strings outside the declared set return errors
-//     from both MarshalText and UnmarshalText.
-//
-//  3. AllActorRoles completeness: every declared constant appears in
-//     AllActorRoles() exactly once.
-//
-// See actorrole.go and architecture.md §4.8.AR-032.
-
 import (
 	"testing"
 

@@ -1,28 +1,5 @@
 package brcli_test
 
-// workflowlabelconflict_test.go — unit tests for BI-009a multi-workflow-label
-// conflict detection (workflowlabelconflict.go).
-//
-// Spec refs:
-//   - specs/beads-integration.md §4.3 BI-009a
-//   - specs/event-model.md §8.8.6
-//
-// Coverage:
-//   - Two workflow:<mode> labels → Conflicted=true, one event emitted.
-//   - Three workflow:<mode> labels → Conflicted=true, one event emitted.
-//   - Single unknown-mode workflow:<mode> label → Conflicted=true.
-//   - Single valid workflow:single → Conflicted=false, no event.
-//   - Single valid workflow:review-loop → Conflicted=false.
-//   - Single valid workflow:dot → Conflicted=false.
-//   - No workflow: labels → Conflicted=false, no event.
-//   - Structured-log fallback: nil bus does not panic; result is still Conflicted.
-//   - Bus error fallback: emit error triggers structured-log path; still Conflicted.
-//   - ConflictingLabels carries all offending labels (not a subset).
-//   - Deterministic fallback: calling twice with the same inputs yields the same result.
-//   - Spec-content sensor: BI-009a anchor present in beads-integration.md.
-//
-// Bead: hk-7om2q.12.
-
 import (
 	"context"
 	"errors"
@@ -37,10 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ─── Stub emitter ─────────────────────────────────────────────────────────────
-
-// wlcStubEmitter is a minimal LabelConflictEmitter stub that records every
-// emission call for inspection.
 type wlcStubEmitter struct {
 	mu     sync.Mutex
 	calls  []wlcEmitCall
@@ -59,21 +32,14 @@ func (s *wlcStubEmitter) Emit(_ context.Context, eventType core.EventType, paylo
 	return s.retErr
 }
 
-// wlcFixtureEmitter returns a fresh stub emitter with no configured error.
 func wlcFixtureEmitter() *wlcStubEmitter {
 	return &wlcStubEmitter{}
 }
 
-// wlcFixtureEmitterWithError returns a stub that returns retErr on every Emit.
 func wlcFixtureEmitterWithError(retErr error) *wlcStubEmitter {
 	return &wlcStubEmitter{retErr: retErr}
 }
 
-// ─── Spec-content sensor ──────────────────────────────────────────────────────
-
-// wlcFixtureSpecContent reads specs/beads-integration.md and returns the
-// paragraph containing the BI-009a anchor. The test fails if the spec is
-// unreadable or the anchor is absent.
 func wlcFixtureSpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -81,7 +47,6 @@ func wlcFixtureSpecContent(t *testing.T) string {
 	if !ok {
 		t.Fatal("wlcFixtureSpecContent: runtime.Caller failed — cannot locate repo root")
 	}
-	// internal/brcli/<file> → internal → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "beads-integration.md")
 
@@ -101,15 +66,12 @@ func wlcFixtureSpecContent(t *testing.T) string {
 		)
 	}
 
-	// Return the paragraph from the anchor to the next section boundary.
 	para := content[idx:]
 	if end := strings.Index(para, "\n####"); end > 0 {
 		para = para[:end]
 	}
 	return para
 }
-
-// ─── Conflict detection: two labels ──────────────────────────────────────────
 
 // TestWLC_TwoWorkflowLabels_Conflicted verifies that two workflow:<mode> labels
 // produce Conflicted=true and exactly one bead_label_conflict event emission.
@@ -175,8 +137,6 @@ func TestWLC_ThreeWorkflowLabels_Conflicted(t *testing.T) {
 	}
 }
 
-// ─── Conflict detection: unknown mode ────────────────────────────────────────
-
 // TestWLC_SingleUnknownMode_Conflicted verifies that a single workflow:<mode>
 // label with an unrecognised mode is treated as a conflict (BI-009a condition b).
 func TestWLC_SingleUnknownMode_Conflicted(t *testing.T) {
@@ -202,8 +162,6 @@ func TestWLC_SingleUnknownMode_Conflicted(t *testing.T) {
 		t.Errorf("BI-009a: bus.Emit call count = %d; want 1", callCount)
 	}
 }
-
-// ─── No-conflict: valid single labels ────────────────────────────────────────
 
 // TestWLC_SingleValidSingle_NoConflict verifies workflow:single does not conflict.
 func TestWLC_SingleValidSingle_NoConflict(t *testing.T) {
@@ -278,8 +236,6 @@ func TestWLC_SingleValidDot_NoConflict(t *testing.T) {
 	}
 }
 
-// ─── No-conflict: no workflow: labels ────────────────────────────────────────
-
 // TestWLC_NoWorkflowLabels_NoConflict verifies that beads without any
 // workflow: label produce no conflict.
 func TestWLC_NoWorkflowLabels_NoConflict(t *testing.T) {
@@ -315,8 +271,6 @@ func TestWLC_EmptyLabels_NoConflict(t *testing.T) {
 	}
 }
 
-// ─── Structured-log fallback: nil bus ─────────────────────────────────────────
-
 // TestWLC_NilBus_ConflictedAndNosPanic verifies that a nil bus does not
 // panic, the result is still Conflicted=true, and the function returns
 // normally (relying on structured-log fallback).
@@ -327,7 +281,6 @@ func TestWLC_NilBus_ConflictedAndNoPanic(t *testing.T) {
 
 	labels := []string{"workflow:single", "workflow:review-loop"}
 
-	// Must not panic.
 	result := brcli.DetectWorkflowLabelConflict(context.Background(), "hk-test.9", labels, nil)
 
 	if !result.Conflicted {
@@ -351,8 +304,6 @@ func TestWLC_NilBus_UnknownMode_NoPanic(t *testing.T) {
 	}
 }
 
-// ─── Structured-log fallback: bus emit error ──────────────────────────────────
-
 // TestWLC_BusEmitError_FallbackAndConflicted verifies that a bus emission
 // error triggers the structured-log fallback path but still returns
 // Conflicted=true (the error is non-fatal to the conflict result).
@@ -369,7 +320,6 @@ func TestWLC_BusEmitError_FallbackAndConflicted(t *testing.T) {
 		t.Fatal("BI-009a: bus emit error: expected Conflicted=true")
 	}
 
-	// The stub Emit was called even though it returned an error.
 	bus.mu.Lock()
 	callCount := len(bus.calls)
 	bus.mu.Unlock()
@@ -378,8 +328,6 @@ func TestWLC_BusEmitError_FallbackAndConflicted(t *testing.T) {
 		t.Errorf("BI-009a: bus emit error: expected 1 Emit call; got %d", callCount)
 	}
 }
-
-// ─── Deterministic fallback ───────────────────────────────────────────────────
 
 // TestWLC_Deterministic_SameResultOnTwoCalls verifies that calling
 // DetectWorkflowLabelConflict twice with the same inputs yields identical
@@ -407,8 +355,6 @@ func TestWLC_Deterministic_SameResultOnTwoCalls(t *testing.T) {
 	}
 }
 
-// ─── ConflictingLabels completeness ──────────────────────────────────────────
-
 // TestWLC_ConflictingLabels_CarriesAllOffendingLabels verifies that
 // ConflictingLabels contains all workflow: labels (not just the first two).
 func TestWLC_ConflictingLabels_CarriesAllOffendingLabels(t *testing.T) {
@@ -427,7 +373,6 @@ func TestWLC_ConflictingLabels_CarriesAllOffendingLabels(t *testing.T) {
 		t.Errorf("BI-009a: ConflictingLabels has %d entry/entries; want 3 (all offending labels); got %v",
 			len(result.ConflictingLabels), result.ConflictingLabels)
 	}
-	// Verify all three are present.
 	got := make(map[string]bool, len(result.ConflictingLabels))
 	for _, l := range result.ConflictingLabels {
 		got[l] = true
@@ -438,8 +383,6 @@ func TestWLC_ConflictingLabels_CarriesAllOffendingLabels(t *testing.T) {
 		}
 	}
 }
-
-// ─── No-conflict: ConflictingLabels nil ──────────────────────────────────────
 
 // TestWLC_NoConflict_ConflictingLabelsNil verifies that ConflictingLabels is
 // nil (not an empty slice) when there is no conflict, so callers can use
@@ -455,8 +398,6 @@ func TestWLC_NoConflict_ConflictingLabelsNil(t *testing.T) {
 		t.Errorf("BI-009a: no conflict: ConflictingLabels = %v; want nil", result.ConflictingLabels)
 	}
 }
-
-// ─── Spec-content sensor ──────────────────────────────────────────────────────
 
 // TestWLC_SpecContainsBI009a verifies that BI-009a is present in
 // specs/beads-integration.md and encodes the required normative phrases.

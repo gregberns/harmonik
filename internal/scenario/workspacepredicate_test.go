@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// workspacePredicateFixtureFileExists returns a valid file_exists predicate.
 func workspacePredicateFixtureFileExists(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	return WorkspacePredicate{
@@ -18,7 +17,6 @@ func workspacePredicateFixtureFileExists(t *testing.T) WorkspacePredicate {
 	}
 }
 
-// workspacePredicateFixtureFileContentsEqual returns a valid file_contents_equal predicate.
 func workspacePredicateFixtureFileContentsEqual(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	val := "hello world\n"
@@ -30,7 +28,6 @@ func workspacePredicateFixtureFileContentsEqual(t *testing.T) WorkspacePredicate
 	}
 }
 
-// workspacePredicateFixtureFileContentsMatch returns a valid file_contents_match predicate.
 func workspacePredicateFixtureFileContentsMatch(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	pattern := `^status: (ok|done)$`
@@ -42,7 +39,6 @@ func workspacePredicateFixtureFileContentsMatch(t *testing.T) WorkspacePredicate
 	}
 }
 
-// workspacePredicateFixtureGitRefAtSHA returns a valid git_ref_at predicate using a full SHA-1.
 func workspacePredicateFixtureGitRefAtSHA(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	sha := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
@@ -54,7 +50,6 @@ func workspacePredicateFixtureGitRefAtSHA(t *testing.T) WorkspacePredicate {
 	}
 }
 
-// workspacePredicateFixtureGitRefAtRef returns a valid git_ref_at predicate using a ref name.
 func workspacePredicateFixtureGitRefAtRef(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	ref := "refs/heads/main"
@@ -66,7 +61,6 @@ func workspacePredicateFixtureGitRefAtRef(t *testing.T) WorkspacePredicate {
 	}
 }
 
-// workspacePredicateFixtureCommitTrailerPresent returns a valid commit_trailer_present predicate.
 func workspacePredicateFixtureCommitTrailerPresent(t *testing.T) WorkspacePredicate {
 	t.Helper()
 	key := "Harmonik-Run-ID"
@@ -78,7 +72,6 @@ func workspacePredicateFixtureCommitTrailerPresent(t *testing.T) WorkspacePredic
 	}
 }
 
-// workspacePredicateFixtureStrPtr is a helper to take address of a string literal.
 func workspacePredicateFixtureStrPtr(s string) *string {
 	return &s
 }
@@ -194,7 +187,6 @@ func TestWorkspacePredicateValid(t *testing.T) {
 		wantValid  bool
 		wantReason string // substring that must appear in rejection reason if wantValid=false
 	}{
-		// file_exists
 		{
 			name:      "file_exists: nil expected → valid",
 			input:     workspacePredicateFixtureFileExists(t),
@@ -212,7 +204,6 @@ func TestWorkspacePredicateValid(t *testing.T) {
 			wantReason: "file_exists",
 		},
 
-		// file_contents_equal
 		{
 			name:      "file_contents_equal: non-nil expected → valid",
 			input:     workspacePredicateFixtureFileContentsEqual(t),
@@ -230,7 +221,6 @@ func TestWorkspacePredicateValid(t *testing.T) {
 			wantReason: "file_contents_equal",
 		},
 
-		// file_contents_match
 		{
 			name:      "file_contents_match: valid regex → valid",
 			input:     workspacePredicateFixtureFileContentsMatch(t),
@@ -259,7 +249,6 @@ func TestWorkspacePredicateValid(t *testing.T) {
 			wantReason: "file_contents_match",
 		},
 
-		// git_ref_at
 		{
 			name:      "git_ref_at: full 40-char SHA → valid",
 			input:     workspacePredicateFixtureGitRefAtSHA(t),
@@ -303,7 +292,6 @@ func TestWorkspacePredicateValid(t *testing.T) {
 			wantReason: "git_ref_at",
 		},
 
-		// commit_trailer_present
 		{
 			name:      "commit_trailer_present: non-empty key → valid",
 			input:     workspacePredicateFixtureCommitTrailerPresent(t),
@@ -496,8 +484,6 @@ func TestWorkspacePredicateJSONRoundTrip(t *testing.T) {
 func TestWorkspacePredicateJSONExpectedOmitEmpty(t *testing.T) {
 	t.Parallel()
 
-	// When Expected is nil (file_exists), the marshaled JSON MUST NOT contain
-	// the "expected" key (omitempty contract on the struct tag).
 	pred := workspacePredicateFixtureFileExists(t)
 	data, err := json.Marshal(pred)
 	if err != nil {

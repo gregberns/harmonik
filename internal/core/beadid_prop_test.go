@@ -1,26 +1,5 @@
 package core
 
-// Property tests for BeadID using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. String round-trip: BeadID(s) → string → BeadID must recover the original
-//     underlying value for any non-empty opaque string.
-//
-//  2. Equality symmetry: two BeadIDs constructed from the same raw string are
-//     equal; two BeadIDs constructed from distinct strings are not.
-//
-//  3. Opacity — no parsing: BeadID values carry no structure that would allow
-//     a consumer to extract a sub-field.  This test encodes that by verifying
-//     that round-trip is the *only* operation (no prefix stripping, no length
-//     constraint) — any string maps to a valid BeadID.
-//
-// See beads-integration.md BI-008, BI-008a.
-// See hk-m084e for the bead that introduced this file.
-
 import (
 	"testing"
 

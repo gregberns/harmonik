@@ -2,44 +2,6 @@
 
 package daemon_test
 
-// scenario_multibead_mergeconflict_serial_hktijaj_test.go — scenario coverage
-// for the two multi-bead merge properties the per-bead merge tests miss
-// (bead hk-tijaj).
-//
-// The existing mergetomain_*_test.go suite proves the SINGLE-bead halves:
-//   - TestMergeToMain_SuccessPath          — one bead merges + closes.
-//   - TestMergeToMain_NonFFReopen          — one bead conflicts → reopens.
-//   - TestMergeToMain_ConcurrentAdvance…   — one bead rebases past an advance.
-//
-// What none of them exercise (and what hk-tijaj demands):
-//
-//   (1) OTHERS-PROCEED on conflict (EM-053): when several beads are dispatched
-//       in one batch and exactly one of them conflicts on merge, that one
-//       reopens (is NOT silently lost, main NOT corrupted by it) WHILE the
-//       sibling beads in the same batch still merge + close. The single-bead
-//       conflict test cannot show "the others proceed" because it has no
-//       others.
-//
-//   (2) SERIALIZED N-COMPLETION (mergeMu, hk-yyso7): N near-simultaneous
-//       completions merge strictly one-at-a-time under the global merge mutex
-//       — every one of the N distinct commits lands on the target branch (no
-//       lost commit), and the resulting history is a clean linear chain (no
-//       interleave / no clobbered update-ref).
-//
-// Both halves are driven through the in-process work-loop driver
-// (ExportedTestRuntime + ExportedRunWorkLoop) against REAL throwaway git
-// repos under t.TempDir(). No daemon.Start, no tmux, no claude subprocess —
-// the handler is `/bin/sh -c "exit 0"` so the auto-close heuristic branch
-// runs lockedMergeRunBranchToMain for real. This mirrors the lighter harness
-// the sibling mergetomain_*_test.go files use.
-//
-// Code anchors (per bead hk-tijaj):
-//   - EM-053 conflict→reopen caller:  workloop.go (merge-outcome reopen branch)
-//   - mergeMu serialisation:          lockedMergeRunBranchToMain / mergeMu
-//
-// Spec refs: specs/execution-model.md §4.12 EM-052 / EM-053; mergeMu (hk-yyso7).
-// Bead: hk-tijaj. Refs: hk-pphof, hk-yyso7, hk-zguy6.
-
 import (
 	"context"
 	"fmt"
@@ -56,19 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/mergeq"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-bead recording ledger
-//
-// This ledger differs from mergeToMainRecordingLedger in two load-bearing ways:
-//   - It serves a SET of beads from Ready (one per call, FIFO) so the work loop
-//     dispatches N runs.
-//   - It records close/reopen PER bead-id (not just aggregate counts) so the
-//     test can assert "bead A reopened, beads B..N closed".
-//   - ClaimBead records the runID→beadID correspondence so the worktree factory
-//     (which only receives runID) can shape per-bead behaviour (the conflict
-//     bead vs the clean beads).
-// ─────────────────────────────────────────────────────────────────────────────
 
 type multiBeadLedger struct {
 	mu sync.Mutex
@@ -122,10 +71,6 @@ func (l *multiBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 }
 
 func (l *multiBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	// workflow:single is load-bearing; see stubBeadLedger.labels. An unlabelled
-	// bead selects the reviewed graph, whose commit gate cannot pass in a fixture
-	// repo that holds one README, so no bead ever reached the merge these two
-	// tests are about.
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
@@ -160,8 +105,6 @@ func (l *multiBeadLedger) ReopenBead(_ context.Context, _ string, _ brcli.Timeou
 	return nil
 }
 
-// maybeSignalDoneNoLock closes doneCh once the union of distinct closed+reopened
-// bead-ids covers every seeded bead. Caller must hold l.mu.
 func (l *multiBeadLedger) maybeSignalDoneNoLock() {
 	terminal := make(map[core.BeadID]struct{}, l.total)
 	for b := range l.closed {
@@ -203,10 +146,6 @@ func (l *multiBeadLedger) totalClosed() int {
 	return n
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// git fixture helpers (scenario-local, prefix hktijaj)
-// ─────────────────────────────────────────────────────────────────────────────
-
 func hktijajGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -218,9 +157,6 @@ func hktijajGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// hktijajInitRepoWithOrigin creates a project repo on `main` with an initial
-// commit, plus a bare origin so `git push origin main` succeeds inside the
-// merge sequence. Returns (projectDir, originDir).
 func hktijajInitRepoWithOrigin(t *testing.T) (string, string) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -252,18 +188,6 @@ func hktijajInitRepoWithOrigin(t *testing.T) (string, string) {
 	return projectDir, originDir
 }
 
-// hktijajStageInWorktree writes `content` to `relPath` inside the run-branch
-// worktree and leaves it UNCOMMITTED. Fatals on error.
-//
-// It does not commit, and that is the point. The worktree factory runs BEFORE
-// the agent launches, and the graph node reads the worktree HEAD just before
-// that launch and keeps it as the node baseline. A commit made in the factory is
-// already in the baseline, so the node's no-advance guard correctly refuses a
-// run whose agent produced nothing, and every bead in both tests below reopened
-// with "exited without advancing HEAD past ...". The factory now only shapes
-// WHAT each bead will commit — one unique file per clean bead, the shared
-// conflict path for the conflict bead — and hktijajAgentHandlerArgs commits it
-// during the run, which is what a real implementer does.
 func hktijajStageInWorktree(t *testing.T, ctx context.Context, wtPath, relPath, content string) {
 	t.Helper()
 	full := filepath.Join(wtPath, relPath)
@@ -271,9 +195,6 @@ func hktijajStageInWorktree(t *testing.T, ctx context.Context, wtPath, relPath, 
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatalf("hktijajStageInWorktree: WriteFile %s: %v", relPath, err)
 	}
-	// Stage it here so the handler can commit the INDEX rather than the whole
-	// tree. The daemon writes its own run-context file into the worktree, and a
-	// `git add -A` in the handler swept that up as agent work.
 	cmd := exec.CommandContext(ctx, "git", "add", relPath)
 	cmd.Dir = wtPath
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -281,13 +202,6 @@ func hktijajStageInWorktree(t *testing.T, ctx context.Context, wtPath, relPath, 
 	}
 }
 
-// hktijajAgentHandlerArgs returns the `/bin/sh -c` argument pair for the fake
-// agent both tests launch: it commits what the factory staged, then exits 0.
-//
-// git is called by absolute path because handler.Launch replaces the child
-// environment with LaunchSpec.Env, which carries no PATH. The script sends its
-// own stdout to stderr, because the handler contract reads the child's stdout as
-// an NDJSON event stream and git chatter there reads as a malformed line.
 func hktijajAgentHandlerArgs(t *testing.T) []string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
@@ -301,10 +215,6 @@ func hktijajAgentHandlerArgs(t *testing.T) []string {
 	return []string{"-c", script}
 }
 
-// hktijajAdvanceMainOn commits `content` to `relPath` directly on the project's
-// main branch (and pushes), simulating an out-of-band advance that the
-// run-branch must rebase past. When the run-branch also committed to `relPath`
-// with different content, the rebase conflicts (EM-053 path).
 func hktijajAdvanceMainOn(t *testing.T, ctx context.Context, projectDir, relPath, content string) {
 	t.Helper()
 	full := filepath.Join(projectDir, relPath)
@@ -324,10 +234,6 @@ func hktijajAdvanceMainOn(t *testing.T, ctx context.Context, projectDir, relPath
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 1 — conflict-skip with others-proceed (EM-053)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_MultiBead_ConflictSkipsButOthersProceed verifies the EM-053
 // "others-proceed" property the single-bead conflict test cannot reach:
@@ -369,55 +275,17 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 	ledger := newMultiBeadLedger(allBeads)
 	collector := &stubEventCollector{}
 
-	// mergeMu is the SAME mutex the work loop holds across each
-	// lockedMergeRunBranchToMain (rebase → update-ref → push → reset --hard).
-	//
-	// Three distinct callers mutate projectDir/.git and therefore contend on
-	// projectDir/.git/index.lock when MaxConcurrent=4 dispatches all beads at
-	// once:
-	//
-	//   (a) the work loop's merge step (rebase/update-ref/push/reset --hard) —
-	//       already serialised because it runs under deps.mergeMu (we pass this
-	//       same mutex in via MergeMu below);
-	//   (b) the conflict bead's out-of-band advance — `git commit`/`git push`
-	//       run directly in projectDir by hktijajAdvanceMainOn;
-	//   (c) the worktree factory's `git worktree add` — every bead's factory
-	//       calls daemon.ExportedProductionWorktreeFactory →
-	//       workspace.CreateWorktree, which runs `git worktree add` with
-	//       cmd.Dir = projectDir (createworktree.go:136). `git worktree add`
-	//       takes projectDir/.git/index.lock for the duration of the add, and
-	//       this is the DOMINANT concurrent projectDir/.git writer — it fires
-	//       N times near-simultaneously at factory time, before any merge.
-	//
-	// (c) is serialised for free now: RSM-018 runs the base-sync + worktree-add as
-	// ONE critical section INSIDE the merge exclusion domain (mergeq), and the
-	// daemon calls this test's WorktreeFactory from within that Submit closure. So
-	// the factory `git worktree add` (c) and the out-of-band advance (b) it drives
-	// already run in the SAME domain as the commit-phase merge (a) — all three
-	// serialise on the one queue owner. The test therefore injects a shared,
-	// pre-started queue via MergeQueue and does NOT lock separately (a re-entrant
-	// Submit from inside the factory would deadlock the single owner goroutine).
-	// This preserves the test's concurrency intent: beads still PROCESS
-	// concurrently (MaxConcurrent=4); only the brief projectDir/.git writes
-	// serialise.
 	mergeQ := mergeq.New(nil)
 	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
 	mergeQ.Start(mergeQCtx)
 	t.Cleanup(mergeQCancel)
 
-	// fileForBead gives each bead a unique, collision-free filename so clean
-	// beads never conflict with each other.
 	fileForBead := func(id core.BeadID) string {
 		return "work-" + strings.ReplaceAll(string(id), "/", "_") + ".txt"
 	}
 	const conflictFile = "conflict.txt"
 
 	worktreeFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
-		// The daemon calls this factory from INSIDE the base-sync+worktree-add
-		// Submit critical section (RSM-018), so the `git worktree add`
-		// (cmd.Dir = projectDir, takes projectDir/.git/index.lock) is already
-		// serialised against every sibling factory call and the commit-phase merge.
-		// No separate lock — a re-entrant Submit here would deadlock the owner.
 		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
 		if err != nil {
 			return "", nil, err
@@ -428,16 +296,10 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 			return "", nil, fmt.Errorf("hktijaj: no bead recorded for run %s", runID)
 		}
 		if beadID == beadConflict {
-			// Commit the conflict file in the worktree (own worktree index — no
-			// projectDir contention), then advance main on the SAME path with
-			// different content → rebase conflict at merge time. The advance mutates
-			// projectDir directly, but this factory already runs inside the merge
-			// exclusion domain (RSM-018), so it is serialised against sibling merges.
 			hktijajStageInWorktree(t, ctx, wtPath, conflictFile, "agent version of conflict file\n")
 			hktijajAdvanceMainOn(t, ctx, projectDir, conflictFile, "main's out-of-band conflicting content\n")
 			return wtPath, cleanup, nil
 		}
-		// Clean bead: commit a unique file that never collides.
 		hktijajStageInWorktree(t, ctx, wtPath, fileForBead(beadID), "clean work for "+string(beadID)+"\n")
 		return wtPath, cleanup, nil
 	}
@@ -455,14 +317,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		MergeQueue:       mergeQ,
 	})
 
-	// 240s ceiling (was 90s): this is an infinite-loop safety net, not a
-	// performance budget. The conflict-skip path runs four real git
-	// merge/rebase sequences in t.TempDir() repos; under `go test -race`
-	// combined with t.Parallel() and a loaded box (12–16 concurrent test
-	// goroutines) the merge sequence is starved well past 90s, producing a
-	// spurious TIMEOUT (not a data race — zero DATA RACE reports observed).
-	// The work always completes long before 240s once it gets CPU, so the
-	// larger ceiling removes the flake without weakening any assertion.
 	ctx, cancel := context.WithTimeout(t.Context(), 240*time.Second)
 	defer cancel()
 
@@ -481,7 +335,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── (1) Conflict bead reopened, not closed, not lost. ─────────────────────
 	if got := ledger.reopenedCount(beadConflict); got < 1 {
 		t.Errorf("conflict bead %s reopened %d times; want ≥1 (EM-053 auto-skip)", beadConflict, got)
 	}
@@ -492,7 +345,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		t.Errorf("conflict bead reopen reason = %q; want it to name the conflict", reason)
 	}
 
-	// ── (2) Every clean bead in the same batch merged + closed. ───────────────
 	for _, b := range cleanBeads {
 		if got := ledger.closedCount(b); got != 1 {
 			t.Errorf("clean bead %s closed %d times; want 1 (others-proceed)", b, got)
@@ -502,8 +354,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		}
 	}
 
-	// ── (3) main NOT corrupted: clean files present, conflict-bead's worktree
-	//        content (the agent string) absent. ───────────────────────────────
 	hktijajGit(t, projectDir, "checkout", "main")
 	for _, b := range cleanBeads {
 		path := filepath.Join(projectDir, fileForBead(b))
@@ -511,9 +361,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 			t.Errorf("clean bead %s file %s missing on main: %v", b, fileForBead(b), err)
 		}
 	}
-	// conflict.txt exists on main (from the out-of-band advance), but it must
-	// carry main's content, NOT the agent's — proving the conflicting run was
-	// not merged.
 	cb, err := os.ReadFile(filepath.Join(projectDir, conflictFile)) //nolint:gosec // test path
 	if err != nil {
 		t.Fatalf("read conflict.txt on main: %v", err)
@@ -525,10 +372,6 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 
 	t.Logf("conflict-skip+others-proceed OK: conflict bead reopened, %d clean beads closed; main intact", len(cleanBeads))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 2 — serialized N-completion under mergeMu (no lost commit, linear chain)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_MultiBead_SerializedNCompletion verifies the mergeMu property
 // (hk-yyso7) that the per-bead tests cannot reach: when N beads complete
@@ -565,9 +408,6 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		return "serial-" + string(id) + ".txt"
 	}
 
-	// Every bead commits a unique, non-colliding file. A short sleep in the
-	// handler widens the window in which multiple runs reach the merge step
-	// "near-simultaneously", maximising pressure on mergeMu.
 	worktreeFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
 		if err != nil {
@@ -612,7 +452,6 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── All N beads closed, none reopened. ────────────────────────────────────
 	for _, b := range beads {
 		if got := ledger.closedCount(b); got != 1 {
 			t.Errorf("bead %s closed %d times; want 1 (serialized completion, no lost merge)", b, got)
@@ -622,7 +461,6 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		}
 	}
 
-	// ── No lost commit: every one of the N work files is present on main. ─────
 	hktijajGit(t, projectDir, "checkout", "main")
 	for _, b := range beads {
 		path := filepath.Join(projectDir, fileForBead(b))
@@ -632,10 +470,6 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		}
 	}
 
-	// ── Linear chain: no merge commits. A merge race or a non-FF merge would
-	//    produce a merge commit (≥2 parents), a dropped commit, or a forked
-	//    history. Under one-at-a-time FF merges every commit has exactly one
-	//    parent (except the root).
 	logOut := hktijajGit(t, projectDir, "log", "--format=%H %P", "main")
 	mergeCommits := 0
 	for _, ln := range strings.Split(strings.TrimSpace(logOut), "\n") {

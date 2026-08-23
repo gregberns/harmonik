@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// errorCategoryFixture returns a valid ErrorCategory for structural tests
-// (hk-b3f.109). Helper prefix: errorCategory per bead concept.
 func errorCategoryFixture() ErrorCategory {
 	return ErrorCategoryStructural
 }
@@ -173,7 +171,6 @@ func TestErrorCategory_BusInternalDistinctFromHandlerSentinels(t *testing.T) {
 func TestErrorCategory_SubSentinelsWrapStructural(t *testing.T) {
 	t.Parallel()
 
-	// Sub-sentinels are distinct from the base structural category.
 	if ErrorCategorySkillProvisioningFailed == ErrorCategoryStructural {
 		t.Error("ErrSkillProvisioningFailed and ErrStructural must be distinct ErrorCategory values")
 	}

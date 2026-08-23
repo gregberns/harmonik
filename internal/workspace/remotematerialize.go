@@ -1,52 +1,5 @@
 package workspace
 
-// remotematerialize.go — SSH-aware variants of the three claude-launch
-// materialization writes for remote-substrate runs (hk-z8ek).
-//
-// # Why this exists
-//
-// buildClaudeLaunchSpec materializes three per-launch artifacts into the run's
-// worktree before the agent is spawned:
-//
-//  1. .claude/settings.json   — the hook-bridge config (MaterializeClaudeSettings)
-//  2. .harmonik/agent-task.md — the per-launch task brief    (WriteAgentTask)
-//  3. ~/.claude.json trust     — the worktree-trust entry      (EnsureWorktreeTrust)
-//
-// All three use box-A-local os.MkdirAll/os.WriteFile. For a LOCAL run that is
-// correct: the worktree lives on box A's filesystem. For a REMOTE run (the bead
-// is dispatched to an SSH worker) the worktree lives on the WORKER's filesystem,
-// so a box-A-local write lands the hook config on the wrong machine — box A grows
-// orphan files at the worker's mirror path and the worker's claude launches with
-// NO hook installed, never dials the daemon socket, and times out at
-// agent_ready_timeout (the hk-z8ek symptom).
-//
-// The *Via helpers below route each write THROUGH a tmux.CommandRunner so the
-// content (generated on box A exactly as today) is written onto the WORKER's
-// filesystem. A nil runner short-circuits to the existing box-A-local function,
-// byte-for-byte unchanged (NFR7 — local runs MUST NOT change).
-//
-// # Remote-write mechanism
-//
-// The robust, content-agnostic pattern (already proven by the worker probe:
-// gb-mbp has /usr/bin/base64 and a POSIX sh): base64-encode the file content on
-// box A, then run on the worker through the runner:
-//
-//	sh -lc "mkdir -p '<dir>' && printf %s '<b64>' | base64 -d > '<file>'"
-//
-// base64 sidesteps all content quoting; only the directory and file paths are
-// single-quoted (worktree paths are operator-sanctioned, never contain a single
-// quote, but the helper escapes one anyway for safety). This mirrors the
-// existing remote-command idiom in internal/transport/tunnel
-// (tunnel.EnsureWorkerHarmonikDir) and internal/transport/codesync (the DD1
-// fetch-base step), which all run `runner.Command(...).CombinedOutput()`.
-//
-// Spec refs:
-//   - claude-hook-bridge.md §4.1 CHB-001..005 (settings), §4.11 CHB-028
-//     (agent-task), §4.12 CHB-029 / workspace-model.md §4.7b WM-040b (trust).
-//   - remote-substrate gap #7 + B7/B8 (SSH worktree + code-sync seam).
-//
-// Bead: hk-z8ek, hk-rs-phase1-qfn1
-
 import (
 	"bytes"
 	"context"
@@ -63,23 +16,10 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// shellSingleQuote wraps s in single quotes safe for a POSIX sh command line,
-// escaping any embedded single quote via the '\” idiom. Used only for the
-// directory and file PATHS in the remote-write command; the file CONTENT is
-// base64-encoded and never needs quoting.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// writeRemoteFile writes content to absPath on the host reached by runner,
-// creating parent directories as needed. It is the single small remote
-// file-write helper shared by the *Via materializers (hk-z8ek).
-//
-// The command issued is:
-//
-//	sh -lc "mkdir -p '<dir>' && printf %s '<base64(content)>' | base64 -d > '<absPath>'"
-//
-// runner MUST be non-nil (callers gate on a present runner before calling).
 func writeRemoteFile(ctx context.Context, runner tmux.CommandRunner, absPath string, content []byte) error {
 	dir := filepath.Dir(absPath)
 	b64 := base64.StdEncoding.EncodeToString(content)
@@ -92,9 +32,6 @@ func writeRemoteFile(ctx context.Context, runner tmux.CommandRunner, absPath str
 	return nil
 }
 
-// removeRemoteFile removes absPath on the host reached by runner via `rm -f`,
-// which is a no-op when the file is absent (mirrors os.Remove's tolerate-missing
-// use at the call sites, where the error is discarded). runner MUST be non-nil.
 func removeRemoteFile(ctx context.Context, runner tmux.CommandRunner, absPath string) error {
 	script := fmt.Sprintf("rm -f %s", shellSingleQuote(absPath))
 	out, err := runner.Command(ctx, "sh", "-lc", script).CombinedOutput()
@@ -288,29 +225,6 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 		return EnsureWorktreeTrust(worktreePath)
 	}
 
-	// The Python program is fed to `python3 - <worktreePath>` ON STDIN, NOT via
-	// `python3 -c <prog>`. This is load-bearing for the REMOTE (SSH) path:
-	// tmux.SSHRunner produces `ssh <host> -- python3 -c <prog> <path>`, and the
-	// ssh client space-JOINS those argv tokens into one remote command string that
-	// the worker's LOGIN SHELL re-splits on whitespace. A multi-line `-c` program
-	// is shredded by that re-split — python's `-c` receives only the first
-	// whitespace token ("Argument expected for the -c option"; the rest run as
-	// stray shell commands: `import: command not found`), so the upsert never
-	// executes and the worker's ~/.claude.json never gets the worktree key
-	// (hk-gglt: untrusted per-run worktree → trust/bypass modal → no_commit).
-	//
-	// Piping the program on stdin to `python3 -` sidesteps the re-split entirely:
-	// the program bytes never appear on the remote command line. The worktree path
-	// is the one argv token that DOES traverse the command line; it is a harmonik
-	// per-run worktree path (a UUID run-id dir) that never contains whitespace, so
-	// it survives the remote shell's word-splitting as a single sys.argv[1]. The
-	// program defensively strips a surrounding pair of single quotes (a no-op for
-	// the bare path; tolerant should a caller ever pre-quote it). It then
-	// realpath-normalizes the path on the worker (mirrors EnsureWorktreeTrust's
-	// filepath.EvalSymlinks) and upserts
-	// ~/.claude.json["projects"][<realpath>]["hasTrustDialogAccepted"] = true,
-	// writing atomically via a temp file + os.replace and preserving all other
-	// keys. It is a no-op (no rewrite) when the entry is already trusted.
 	cmd := runner.Command(ctx, "python3", "-", worktreePath)
 	cmd.Stdin = bytes.NewReader([]byte(workerTrustUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout)))
 	out, err := cmd.CombinedOutput()
@@ -326,103 +240,20 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 	return nil
 }
 
-// workerConfigLockTimeoutExit is the exit status the worker programs use for a
-// lock-acquire timeout, so the Go caller can tell that failure apart from every
-// other way python can exit non-zero and report it as the same structural error
-// the in-process path reports (ErrTrustLockTimeout).
-//
-// 75 is EX_TEMPFAIL from sysexits.h — a temporary failure, try again later —
-// which is what a contended lock is. It cannot be confused with ssh's own
-// failure status (255) on a remote run, and ssh passes the remote command's exit
-// status through unchanged, so the code survives the round trip.
 const workerConfigLockTimeoutExit = 75
 
-// workerConfigUnparseableExit is the exit status the worker programs use when
-// the config on disk is not JSON, or is JSON but not an object. The Go caller
-// turns it into ErrTrustConfigUnparseable.
-//
-// It exists because the alternative the program used to take was to treat an
-// unreadable config as an absent one and write a fresh file over it, which
-// discards every other project entry and every other top-level key on that
-// worker. The in-process path has always refused that (readClaudeConfigMap
-// returns a parse error and ensureWorktreeTrustAt reports it rather than
-// overwriting), and the two paths write the same shape of file, so the remote
-// one refuses too.
-//
-// A torn read is the expected way to reach this, not a corrupt disk: the writer
-// this whole subsystem defends against rewrites the shared config wholesale and
-// does not take our lock, so a reader can land mid-rewrite and see truncated
-// JSON. The in-process path retries such a read within its budget before giving
-// up. The remote program has no retry loop to hang that on, so it fails and
-// says why — a launch that stops is recoverable, and a worker whose config was
-// silently rebuilt is not.
-//
-// 65 is EX_DATAERR from sysexits.h — the input data was incorrect. Like 75 it
-// cannot be confused with ssh's own 255, and ssh passes it through unchanged.
 const workerConfigUnparseableExit = 65
 
-// workerConfigLockTimedOut reports whether err is a worker program exiting with
-// the lock-timeout status.
 func workerConfigLockTimedOut(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigLockTimeoutExit
 }
 
-// workerConfigUnparseable reports whether err is a worker program exiting with
-// the unparseable-config status.
 func workerConfigUnparseable(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigUnparseableExit
 }
 
-// workerConfigProgramPrelude returns the head of the worker program that writes
-// the SHARED Claude config: the trust upsert. It resolves the config path, and it
-// defines the bounded lock acquire, the config read, and the atomic write that
-// program uses.
-//
-// # Where the config path comes from
-//
-// The program applies the same three-step precedence as
-// defaultClaudeGlobalConfigPath — HARMONIK_CLAUDE_CONFIG_PATH, then
-// CLAUDE_CONFIG_HOME, then ~/.claude.json. The steps differ only in WHICH MACHINE
-// evaluates them, and that split is the point:
-//
-//   - cfgPathForWorker is step 1, evaluated HERE and baked in as a value
-//     (claudeConfigPathForWorker). It is harmonik's own test seam:
-//     internal/testhelpers/hermetic points it at a temp file, and before this the
-//     python program ignored it and locked and rewrote the operator's REAL
-//     ~/.claude.json — three internal/daemon tests blocked about 50s each on that
-//     lock, and the failure named the dispatch path instead (hk-g8d5x). Passing
-//     it as a value rather than re-deriving it on the far side is what stops the
-//     two ends disagreeing about which file they mean.
-//   - Steps 2 and 3 are evaluated ON THE WORKER, in the worker's own environment.
-//     CLAUDE_CONFIG_HOME is Claude Code's variable and it describes the box it is
-//     set on; the claude that later reads this file is the WORKER's, and it reads
-//     the WORKER's copy. ~ is the worker user's home, which box A cannot resolve.
-//
-// So a real remote run is unchanged even when the daemon box exports
-// CLAUDE_CONFIG_HOME — which docs/live-twin-testing.md requires it to do. Baking
-// box A's CLAUDE_CONFIG_HOME into the program instead would point the worker at a
-// directory that need not exist there, and the program would die on the missing
-// lock file and fail the launch.
-//
-// The residual case, stated plainly: an operator who exports
-// HARMONIK_CLAUDE_CONFIG_PATH and dispatches to a real remote worker does send a
-// box-A path across. That variable is an explicit instruction to write exactly
-// that file, so obeying it is right; every setter of it in this repo runs the
-// program on the box that set it.
-//
-// # Why the lock wait is bounded
-//
-// An unbounded flock(LOCK_EX) lets ONE stuck holder starve every later run with
-// no diagnostic: the program never returns, the launch-spec build never
-// finishes, and the run dies at some later deadline that blames another
-// subsystem. lockTimeout is the same budget the in-process sibling
-// acquireExclusiveBounded uses, polled at the same trustLockRetryInterval, and
-// the message it prints names the lock file and how to find the holder.
-//
-// The program needs python 3.6 or later — see EnsureWorktreeTrustVia for the
-// floor and why it is safe.
 func workerConfigProgramPrelude(cfgPathForWorker string, lockTimeout time.Duration) string {
 	return fmt.Sprintf(workerConfigProgramPreludeTemplate,
 		cfgPathForWorker,
@@ -532,47 +363,6 @@ def write_cfg(cfg):
         raise
 `
 
-// workerTrustUpsertProgram builds the python3 program (fed on STDIN to
-// `python3 -`, NOT via -c — see EnsureWorktreeTrustVia for why) that
-// idempotently upserts the worktree-trust entry in the worker's Claude config
-// (~/.claude.json unless the precedence below names another file).
-// It mirrors ensureWorktreeTrustAt's contract: realpath-normalize the key, set
-// projects[key].hasTrustDialogAccepted = true, preserve all other content, write
-// atomically, and skip the rewrite when already trusted.
-//
-// The config path and the lock budget come from workerConfigProgramPrelude —
-// read its comment for which machine resolves which step of the config path, and
-// why the wait is bounded. Both are baked into the program TEXT, which rides stdin, so the argv
-// the worker sees (`python3 - <worktreePath>`) is the same as it ever was.
-//
-// # Cross-process lost-update safety (concurrent-slot race)
-//
-// Under max_slots>1 the daemon launches several remote runs at once and EACH
-// spawns this program against the SAME worker ~/.claude.json. The naive
-// read-modify-write below (read cfg, add only THIS run's worktree key,
-// os.replace) is a classic lost-update race: two copies both read the config
-// BEFORE either writes, each adds only its own key to its in-memory copy, and the
-// last os.replace CLOBBERS the other's key. The clobbered run's worktree is then
-// NOT trusted → Claude Code shows the folder-trust dialog → the launch hangs →
-// agent_ready never fires → the run stalls (and --dangerously-skip-permissions
-// does NOT suppress that trust dialog). A prior run PROVED this: 5 concurrent
-// unlocked writers → only 1 worktree survived trusted.
-//
-// The fix mirrors the LOCAL Go writer's contract (see
-// claudetrust_hkbfvby_test.go — sidecar lockfile, lock-free fast path, LOCK_EX
-// write path): the read-modify-write is made atomic across processes with an
-// fcntl.flock(LOCK_EX) held on a SIDECAR lockfile (~/.claude.json.lock) — NOT on
-// ~/.claude.json itself, because os.replace() swaps the inode out from under any
-// lock held on the config file, which is unsound. The exclusive lock is acquired
-// BEFORE the read and held through os.replace(), so each writer sees the previous
-// writer's committed keys and merges onto them; no update is lost.
-//
-// The already-trusted fast path stays cheap: it probes the config WITHOUT the
-// lock and exits 0 when the key is already trusted (mirroring the local writer's
-// mtime/quick-read fast path). Only a run that must WRITE takes the lock; and
-// because a concurrent writer may have trusted this same key between the probe
-// and the lock acquisition, the program RE-READS the config under the lock and
-// re-checks the fast-path condition before writing.
 func workerTrustUpsertProgram(cfgPathForWorker string, lockTimeout time.Duration) string {
 	return workerConfigProgramPrelude(cfgPathForWorker, lockTimeout) + workerTrustUpsertProgramBody
 }
@@ -691,26 +481,9 @@ func PrepareIsolatedClaudeConfigDirVia(ctx context.Context, runner tmux.CommandR
 	if err != nil {
 		return "", fmt.Errorf("workspace: PrepareIsolatedClaudeConfigDirVia %s: %w\nremote: %s", workspacePath, err, out)
 	}
-	// The worker-absolute path of the isolated dir mirrors the local layout
-	// (<worktree>/.harmonik/claude-config); workspacePath is already the
-	// worker-absolute worktree path for a remote run, so filepath.Join yields the
-	// worker path CLAUDE_CONFIG_DIR must carry (same idiom as ClaudeSettingsPath).
 	return filepath.Join(workspacePath, ".harmonik", isolatedClaudeConfigDirName), nil
 }
 
-// workerIsolatedConfigProgram is the python3 program (fed on STDIN to `python3 -`,
-// NOT via -c — see EnsureWorktreeTrustVia for why) that provisions the isolated
-// per-launch Claude config dir ON THE WORKER: mkdir the dir under the worktree,
-// seed <dir>/.claude.json from the WORKER's own ~/.claude.json (or a minimal
-// onboarding-complete fallback), and upsert the realpath-normalized worktree-trust
-// entry — mirroring PrepareIsolatedClaudeConfigDir + ensureWorktreeTrustAt. The
-// fallback firstStartTime literal MUST stay in sync with fallbackFirstStartTime in
-// claudeconfigdir_hk8juwz.go (injected here so there is a single source of truth).
-//
-// No flock is taken: the isolated dir is private to ONE worktree (unlike the
-// shared ~/.claude.json that workerTrustUpsertProgram must lock), so there is no
-// concurrent writer to lose-update against. The dest is written atomically via a
-// temp file + os.replace so a reader never sees a half-written config.
 var workerIsolatedConfigProgram = fmt.Sprintf(`
 import json, os, sys, tempfile
 arg = sys.argv[1]

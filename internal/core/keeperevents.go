@@ -1,13 +1,5 @@
 package core
 
-// keeperevents.go — event-bus payload types for §8.16 session-keeper events
-// (codename:session-keeper, hk-ekap1):
-//   - session_keeper_warn     (§8.16.1) — upward pct-threshold crossing
-//   - session_keeper_no_gauge (§8.16.2) — gauge file absent or stale
-//
-// Spec ref: codename:session-keeper (hk-ekap1).
-// Bead ref: hk-8vzek.
-
 // SessionKeeperWarnPayload is the typed event payload for session_keeper_warn
 // (event-model.md §8.16.1).
 //
@@ -445,23 +437,6 @@ type SessionKeeperConfigRejectedPayload struct {
 	Reason string `json:"reason"`
 }
 
-// ---------------------------------------------------------------------------
-// §8.20 Session-keeper interior cycle events (codename:session-restart-substrate)
-// ---------------------------------------------------------------------------
-//
-// Fine-grained restart-cycle milestones, durable on the bus and joinable by the
-// composite (agent_name, cycle_id) key (EV-046). Emitted by internal/keeper;
-// consumed by the internal/replay invariant harness (EV-048). All class O.
-//
-// Each payload carries AgentName + a REQUIRED CycleID (json "cycle_id", no
-// omitempty) with a Valid() method asserting non-empty cycle scope, following
-// the ReconciliationStartedPayload.Valid() precedent. Valid() is NOT wired into
-// DecodePayload (EventPayload is an empty marker interface); it is exercised by
-// the roundtrip/prop tests and the replay harness explicitly.
-//
-// Spec ref: event-model.md §8.20; EV-046..EV-050.
-// Bead ref: codename:session-restart-substrate.
-
 // SessionKeeperHandoffWrittenPayload is the payload for
 // session_keeper_handoff_written (event-model.md §8.20.1).
 //
@@ -551,11 +526,6 @@ func (p SessionKeeperNewSessionUpPayload) Valid() bool {
 		p.NewSessionID != "" && p.NewSessionID != p.PrevSessionID
 }
 
-// validCycleScope is the shared §8.20 keeper-interior precondition: a well-formed
-// cycle-scoped payload carries a non-empty agent_name and cycle_id. The ^cyc-
-// prefix is a SOFT check kept OUT of Valid() (a future CycleIDGen change must not
-// retro-invalidate historical corpora); the replay harness reports a
-// non-conforming id as a low-severity finding rather than dropping the event.
 func validCycleScope(agent, cycleID string) bool {
 	return agent != "" && cycleID != ""
 }

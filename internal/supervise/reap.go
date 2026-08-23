@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// flywheelSessionRe matches a flywheel orphan session name:
-// harmonik-<12hex>-flywheel. The hash is the existing 12-hex project hash
-// (sha256[:6] rendered as 12 lowercase hex chars). This is the ONLY family the
-// reaper may ever kill — it can never match a -default, -captain, -crew-*,
-// -supervise, or any non-flywheel session (CONTRACT.md invariant I3).
 var flywheelSessionRe = regexp.MustCompile(`^harmonik-[0-9a-f]{12}-flywheel$`)
 
 // IsFlywheelOrphanName reports whether name is a flywheel-suffixed session in
@@ -131,9 +126,6 @@ func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts R
 	for _, s := range sessions {
 		result.Scanned++
 
-		// Defense-in-depth: re-assert the flywheel-name discipline on every
-		// candidate. This is the I3 guard mirrored from
-		// reapDeadCoordinatorSession's belt-and-suspenders suffix check.
 		if !IsFlywheelOrphanName(s.Name) {
 			result.Skipped++
 			continue
@@ -143,25 +135,16 @@ func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts R
 			continue
 		}
 		if !s.PaneDead {
-			// Live pane → an active flywheel (or a wedged-but-running shim).
-			// Never reap; restart/stop owns that path.
 			result.Skipped++
 			continue
 		}
 		if !opts.DaemonStartTime.IsZero() && !s.Created.Before(opts.DaemonStartTime) {
-			// Created at/after the live daemon start: may belong to the live
-			// supervisor. Preserve.
 			result.Skipped++
 			continue
 		}
 
-		// Eligible: dead pane, predates the daemon, not protected. Reap it.
 		now := time.Now().UTC()
 		if killErr := adapter.KillSession(ctx, s.Name); killErr != nil {
-			// Record the failure and keep going: aborting here would drop the
-			// tmux_orphan_reaped events for the sessions this pass DID kill —
-			// losing observability exactly when something is going wrong. The
-			// joined error still makes the pass fail for the caller.
 			killErrs = append(killErrs, fmt.Errorf("supervise: reap: kill session %q: %w", s.Name, killErr))
 			continue
 		}
@@ -175,16 +158,9 @@ func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts R
 		})
 	}
 
-	// errors.Join(nil-free empty slice) is nil, so a clean pass still returns nil.
 	return result, errors.Join(killErrs...)
 }
 
-// parseSessionCreated parses a tmux #{session_created} epoch field (unix
-// seconds, possibly with trailing whitespace) into a time.Time. A blank or
-// unparseable value yields the zero time, which the reaper treats as "predates
-// every daemon start" only when no predate gate is set; with a gate, a zero
-// created-time is Before any non-zero start and therefore eligible — acceptable
-// because such a session is malformed and pane-dead to even be considered.
 func parseSessionCreated(field string) time.Time {
 	field = strings.TrimSpace(field)
 	if field == "" {

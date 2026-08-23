@@ -163,26 +163,18 @@ func (r GroupCompletionResult) Validate() error {
 	return nil
 }
 
-// leavesQueueAlone is true when the result asks the caller to write nothing.
 func (r GroupCompletionResult) leavesQueueAlone() bool {
 	return !r.Changed && r.NextQueue == nil && len(r.Intents) == 0
 }
 
-// validAsNoChange is true for a result that reports an expected race or a
-// repeated call. Such a result writes nothing and it names the reason.
 func (r GroupCompletionResult) validAsNoChange() bool {
 	return r.leavesQueueAlone() && r.NoChangeReason.valid()
 }
 
-// validAsReceiptRequired is true for a result that asks the caller for an ID
-// and then a retry. Such a result writes nothing. It is a request and not a
-// race, so it names no reason.
 func (r GroupCompletionResult) validAsReceiptRequired() bool {
 	return r.leavesQueueAlone() && r.NoChangeReason == ""
 }
 
-// validAsChanged is true for a result that carries the one detached next
-// queue. Such a result is not a race, so it names no reason.
 func (r GroupCompletionResult) validAsChanged() bool {
 	return r.Changed && r.NextQueue != nil && r.NoChangeReason == ""
 }

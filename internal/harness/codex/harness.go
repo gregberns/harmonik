@@ -1,40 +1,5 @@
 package codex
 
-// codexharness.go — Harness: handlercontract.Harness impl for OpenAI codex
-// (codex-harness C2/T8, hk-m57va).
-//
-// codex's shape differs from claude's in the two ways the Harness interface was
-// designed to abstract (specs/harness-contract.md §2 N2/N3):
-//
-//   - Completion = CompletionProcessExit. `codex exec --json` is a one-shot
-//     run-to-exit invocation: it streams JSONL and self-terminates on turn
-//     completion. There is no TUI, no bracketed-paste seed, and no `/quit`. The
-//     shared loop therefore bypasses pasteInjectQuitOnCommit and relies on
-//     sess.Wait + the absolute commitHardCeiling.
-//
-//   - SessionIDPolicy = SessionIDCaptured. codex does not accept a caller-minted
-//     session id; the thread identifier is CAPTURED from the first thread.started
-//     event in the JSONL stream (codexjsonlparser.go) and recorded in
-//     codexRunArtifacts. The next turn is launched with
-//     `codex exec resume <thread_id>` (BuildLaunchSpec resume path, T7).
-//
-// Because codex delivers its task via argv (the seed prompt in
-// BuildLaunchSpec) and self-terminates, Seed/Retask/Teardown are no-ops or
-// best-effort kills — there is no interactive session to paste into. The real
-// re-task mechanism is the resume argv, built by BuildLaunchSpec when the
-// next turn's RunCtx carries PriorSessionID (the captured thread_id); Retask
-// itself has no live REPL to drive.
-//
-// NOT REGISTERED in newHarnessRegistry by this bead: T3's routedLaunchSpecBuilder
-// fails closed for any resolved-but-non-claude harness ("not wired into the
-// claudeRunArtifacts launch path"). Registering Harness here without the T12
-// cascade wiring would turn that fail-closed into a hard run failure the moment a
-// bead resolves to codex. The cascade + registration is T12 (hk-xhawy). This file
-// builds the adapter as a standalone, fully-tested unit.
-//
-// Spec: specs/harness-contract.md §2. See also: claudeharness.go (the structural
-// template), codexlaunchspec.go (BuildLaunchSpec), codexjsonlparser.go.
-
 import (
 	"context"
 	"fmt"
@@ -70,7 +35,6 @@ func NewHarness(codexBinary, codexHome string) *Harness {
 	}
 }
 
-// Compile-time assertion: *Harness satisfies handlercontract.Harness.
 var _ handlercontract.Harness = (*Harness)(nil)
 
 // AgentType returns core.AgentTypeCodex — the registry key for this harness.
@@ -89,20 +53,10 @@ func (h *Harness) AgentType() core.AgentType {
 // Returns a non-nil error on any BuildLaunchSpec failure; the caller MUST
 // NOT call handler.Launch on error.
 func (h *Harness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
-	// Per-launch stale-WAL guard (hk-2pb79): clean a stale, unheld codex
-	// state_*.sqlite-wal left by a killed codex run before this launch, so the
-	// new codex session is not corrupted into a <10s "exited without advancing
-	// HEAD" fast-fail. No-op when there is no .harmonik/config.yaml; fails loud
-	// only when config.yaml exists but omits the required codex.stale_wal_max_bytes
-	// key. projectRoot is the daemon CWD (== ProjectDir).
 	projectRoot, err := os.Getwd()
 	if err != nil {
 		return handlercontract.SpawnSpec{}, fmt.Errorf("resolve project working directory: %w", err)
 	}
-	// LaunchSpec has no context of its own — its signature is fixed by
-	// handlercontract.Harness — so the guard gets a fresh background context.
-	// Threading one through is what lets the guard's log records and its lsof
-	// probe be context-aware instead of detached.
 	if err := cleanCodexStaleWAL(context.Background(), projectRoot, h.codexHome); err != nil {
 		return handlercontract.SpawnSpec{}, err
 	}

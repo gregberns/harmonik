@@ -18,9 +18,6 @@ import (
 //
 // Tags: cognition (WM-022 sidecar-walk identification), mechanism (WM-022a null fallback).
 
-// implRefFixtureWriteSidecar writes a minimal harmonik.meta.json at
-// ${workspacePath}/.harmonik/sessions/${sessionID}/harmonik.meta.json with the
-// given agentType and launchedAt per WM-026.
 func implRefFixtureWriteSidecar(t *testing.T, workspacePath, sessionID string, agentType core.AgentType, launchedAt time.Time) {
 	t.Helper()
 	dir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
@@ -89,10 +86,8 @@ func TestWM022_FindImplementerHandlerRef_MostRecentAgenticChosen(t *testing.T) {
 		t0 := time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC)
 		t1 := t0.Add(30 * time.Minute) // later = most recent
 
-		// Session 1: agentic (older), different class.
 		implRefFixtureWriteSidecar(t, dir, "sess-01", "pi", t0)
 
-		// Session 2: agentic (most recent), different class.
 		implRefFixtureWriteSidecar(t, dir, "sess-02", "claude-code", t1)
 
 		ref, err := FindImplementerHandlerRef(dir)
@@ -102,7 +97,6 @@ func TestWM022_FindImplementerHandlerRef_MostRecentAgenticChosen(t *testing.T) {
 		if ref == nil {
 			t.Fatal("WM-022: FindImplementerHandlerRef returned nil; want non-nil")
 		}
-		// Most-recent agentic (sess-02 = claude-code) must win over older (sess-01 = pi).
 		want := core.HandlerRef("claude-code")
 		if *ref != want {
 			t.Errorf("WM-022: implementer_handler_ref = %q, want %q (most-recent agentic)", *ref, want)
@@ -116,13 +110,10 @@ func TestWM022_FindImplementerHandlerRef_MostRecentAgenticChosen(t *testing.T) {
 		t0 := time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC)
 		t1 := t0.Add(1 * time.Hour)
 
-		// Session 1: agentic (older).
 		implRefFixtureWriteSidecar(t, dir, "sess-01", "claude-code", t0)
 
-		// Session 2: non-agentic (most recent — merge-node does NOT displace agentic).
 		implRefFixtureWriteSidecar(t, dir, "sess-02", "merge-node", t1)
 
-		// Session 3: non-agentic (generator).
 		implRefFixtureWriteSidecar(t, dir, "sess-03", "generator", t1.Add(10*time.Minute))
 
 		ref, err := FindImplementerHandlerRef(dir)
@@ -172,7 +163,6 @@ func TestWM022a_FindImplementerHandlerRef_OnlyNonAgenticSidecars(t *testing.T) {
 func TestWM022a_FindImplementerHandlerRef_ZeroSidecars(t *testing.T) {
 	t.Parallel()
 
-	// t.TempDir() creates an empty directory — no .harmonik/sessions/ subdirectory.
 	dir := t.TempDir()
 
 	ref, err := FindImplementerHandlerRef(dir)

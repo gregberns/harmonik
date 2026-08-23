@@ -52,16 +52,13 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		lockContent := leaseFixtureMakeLockJSON(runID, pid, now)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 
-		// The lease-lock must exist while an agent is "active".
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Fatalf("WM-011: lease-lock absent while agent is active: %v", err)
 		}
 
-		// Read the lock content and verify it identifies the owning run.
 		data := mustReadFile(t, leaseLockPath)
 		content := string(data)
 
-		// Verify run_id is present in the lock content.
 		if !leaseFixtureContainsSubstring(content, runID) {
 			t.Errorf("WM-011: lease-lock content does not contain run_id %q; got: %s", runID, content)
 		}
@@ -70,9 +67,6 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 	t.Run("parallel-runs-have-disjoint-worktrees", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-011: "Parallel nodes across different runs occupy separate worktrees
-		// per WM-002." This test verifies that two parallel runs writing to their
-		// respective worktrees do not share a lease-lock path.
 		repo, sha := tempRepo(t)
 
 		runIDs := []string{
@@ -98,12 +92,10 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 		}
 
-		// Lease paths must be disjoint.
 		if leasePaths[0] == leasePaths[1] {
 			t.Errorf("WM-011: parallel runs share a lease-lock path %q; want disjoint paths", leasePaths[0])
 		}
 
-		// Both lease-locks exist simultaneously (concurrent runs in separate worktrees).
 		for i, lp := range leasePaths {
 			if _, err := os.Stat(lp); err != nil {
 				t.Errorf("WM-011: run[%d] lease-lock absent at %q: %v", i, lp, err)
@@ -112,8 +104,6 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 	})
 }
 
-// leaseFixtureContainsSubstring returns true if s contains substr.
-// Inlined to avoid adding an untested utility to the package.
 func leaseFixtureContainsSubstring(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || substr == "" ||
 		leaseFixtureFindSubstring(s, substr))

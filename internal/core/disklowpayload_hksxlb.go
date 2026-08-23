@@ -1,14 +1,5 @@
 package core
 
-// disklowpayload_hksxlb.go — payload type for the disk_low event type.
-//
-// Emitted by the daemon work loop when available disk space on the project
-// filesystem falls below the configured watermark (default 10 GiB). The daemon
-// pauses new bead dispatch while disk_low is active and attempts a
-// `go clean -cache` to reclaim the Go build cache (typically 10–20 GiB).
-//
-// Refs: hk-sxlb.
-
 // DiskLowPayload is the event-bus payload for the disk_low event type.
 //
 // Emitted by the daemon when available disk space falls below the watermark.

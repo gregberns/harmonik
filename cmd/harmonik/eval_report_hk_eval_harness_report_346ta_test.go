@@ -1,8 +1,5 @@
 package main
 
-// eval_report_hk_eval_harness_report_346ta_test.go
-// Sensors for `harmonik eval report` (EH4, bead hk-eval-harness-report-346ta).
-
 import (
 	"bytes"
 	"encoding/json"

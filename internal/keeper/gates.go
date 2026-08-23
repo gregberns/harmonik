@@ -11,20 +11,14 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// idleMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.idle.
 func idleMarkerPath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".idle")
 }
 
-// dispatchingMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.dispatching.
 func dispatchingMarkerPath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".dispatching")
 }
 
-// precompactMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.precompact.
-// This file is written by keeper-precompact-hook.sh when it blocks native
-// auto-compaction (exit 2 / decision:block). The keeper watcher detects it and
-// runs the intent-preserving cycle, then calls ClearPrecompactTrigger.
 func precompactMarkerPath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".precompact")
 }
@@ -54,19 +48,6 @@ func ClearPrecompactTrigger(projectDir, agent string) error {
 	return nil
 }
 
-// NOTE (hk-5da7): the .restart-now MARKER and its helpers (RestartNowMarker,
-// HasRestartNowTrigger, ClearRestartNowTrigger, WriteRestartNowMarker,
-// ReadRestartNowMarker) were REMOVED. restart-now no longer hands work to the
-// watcher via a marker file — `harmonik keeper restart-now` drives the
-// ack→/clear→agent-brief synchronously in-process
-// (internal/keeper/restartnow.go). The marker write/poll indirection was the
-// silent-no-op bug (CLI wrote under os.Getwd()'s project dir; the watcher polled
-// a different fixed dir, so the marker landed where nobody looked).
-
-// crispIdleTolerance is the maximum age by which .ctx may postdate .idle and
-// still be considered a statusLine poll rather than real tool activity. The
-// statusLine hook rewrites .ctx every ~2s, so any .ctx refresh within this
-// window is a passive gauge update, not an agent action.
 const crispIdleTolerance = 10 * time.Second
 
 // CrispIdle reports whether the agent is at a crisp await-input boundary: the
@@ -91,7 +72,6 @@ func CrispIdle(projectDir, agent string) bool {
 	if idleMtime.After(ctxMtime) {
 		return true // .idle strictly newer — clean boundary
 	}
-	// .ctx is marginally newer: treat as a statusLine poll if within tolerance.
 	return ctxMtime.Sub(idleMtime) <= crispIdleTolerance
 }
 
@@ -145,7 +125,6 @@ func ClearDispatching(projectDir, agent string) error {
 	return nil
 }
 
-// holdMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.hold.<sessionID>.
 func holdMarkerPath(projectDir, agent, sessionID string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".hold."+sessionID)
 }
@@ -173,10 +152,6 @@ func SetHold(projectDir, agent string) (sessionID string, err error) {
 	return setHoldAt(projectDir, agent, substrate.SystemClock{})
 }
 
-// setHoldAt is SetHold with the marker timestamp read through the given
-// ClockPort (SK-008/SK-R3): the cycle path stamps holds via the injected
-// Clock, while the public SetHold keeps the wall clock
-// for CLI callers. Nil clock falls back to the system clock.
 func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID string, err error) {
 	if clock == nil {
 		clock = substrate.SystemClock{}
@@ -243,10 +218,6 @@ func IsHeld(projectDir, agent string, ttl time.Duration) bool {
 	return isHeldAt(projectDir, agent, ttl, substrate.SystemClock{})
 }
 
-// isHeldAt is IsHeld with the TTL-expiry math read through the given ClockPort
-// (SK-008/SK-R3): the cycle hold probe routes through the
-// injected Clock so a FakeClock can drive hold expiry deterministically. Nil
-// clock falls back to the system clock.
 func isHeldAt(projectDir, agent string, ttl time.Duration, clock substrate.ClockPort) bool {
 	if clock == nil {
 		clock = substrate.SystemClock{}

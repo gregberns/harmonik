@@ -1,24 +1,11 @@
 package core
 
-// reconciliationevents_hqwn59_prop_test.go — property tests for the Valid()
-// methods declared in reconciliationevents_hqwn59.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// Approach: rapid generator builds a valid payload, flips exactly one required
-// field to its zero/invalid value, asserts Valid()==false; all-valid -> true.
-//
-// Refs: hk-qgzso (property-test coverage uplift for hk-j3hrn core uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ============================================================
-// ReconciliationTrigger
-// ============================================================
 
 func TestProp_ReconciliationTrigger_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
@@ -44,10 +31,6 @@ func TestProp_ReconciliationTrigger_KnownConstantsAccepted(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// ReconciliationStartedPayload
-// ============================================================
 
 func TestProp_ReconciliationStartedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -92,10 +75,6 @@ func TestProp_ReconciliationStartedPayload_InvalidTriggerRejected(t *testing.T) 
 		}
 	})
 }
-
-// ============================================================
-// ReconciliationCategoryAssignedPayload
-// ============================================================
 
 func TestProp_ReconciliationCategoryAssignedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -172,10 +151,6 @@ func TestProp_ReconciliationCategoryAssignedPayload_EmptyEvidenceRefRejected(t *
 	})
 }
 
-// ============================================================
-// ReconciliationVerdictEmittedPayload
-// ============================================================
-
 func TestProp_ReconciliationVerdictEmittedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := ReconciliationVerdictEmittedPayload{
@@ -251,10 +226,6 @@ func TestProp_ReconciliationVerdictEmittedPayload_EmptyRationaleRejected(t *test
 	})
 }
 
-// ============================================================
-// DivergenceKind
-// ============================================================
-
 func TestProp_DivergenceKind_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allDivergenceKinds {
@@ -279,10 +250,6 @@ func TestProp_DivergenceKind_KnownConstantsAccepted(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// StoreDivergenceDetectedPayload
-// ============================================================
 
 func TestProp_StoreDivergenceDetectedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -382,10 +349,6 @@ func TestProp_StoreDivergenceDetectedPayload_InvalidCorroborationRejected(t *tes
 	})
 }
 
-// ============================================================
-// OperatorEscalationReason
-// ============================================================
-
 func TestProp_OperatorEscalationReason_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allOperatorEscalationReasons {
@@ -410,10 +373,6 @@ func TestProp_OperatorEscalationReason_KnownConstantsAccepted(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// OperatorEscalationRequiredPayload
-// ============================================================
 
 func TestProp_OperatorEscalationRequiredPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -458,10 +417,6 @@ func TestProp_OperatorEscalationRequiredPayload_InvalidReasonRejected(t *testing
 	})
 }
 
-// ============================================================
-// DivergenceInconclusiveReason
-// ============================================================
-
 func TestProp_DivergenceInconclusiveReason_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allDivergenceInconclusiveReasons {
@@ -486,10 +441,6 @@ func TestProp_DivergenceInconclusiveReason_KnownConstantsAccepted(t *testing.T) 
 		}
 	})
 }
-
-// ============================================================
-// DivergenceInconclusivePayload
-// ============================================================
 
 func TestProp_DivergenceInconclusivePayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -563,10 +514,6 @@ func TestProp_DivergenceInconclusivePayload_InvalidReasonRejected(t *testing.T) 
 	})
 }
 
-// ============================================================
-// ReconciliationDispatchDeduplicatedPayload
-// ============================================================
-
 func TestProp_ReconciliationDispatchDeduplicatedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := ReconciliationDispatchDeduplicatedPayload{
@@ -616,10 +563,6 @@ func TestProp_ReconciliationDispatchDeduplicatedPayload_EmptyDedupAtRejected(t *
 		}
 	})
 }
-
-// ============================================================
-// ReconciliationDetectorPanicPayload
-// ============================================================
 
 func TestProp_ReconciliationDetectorPanicPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -681,10 +624,6 @@ func TestProp_ReconciliationDetectorPanicPayload_EmptyPanickedAtRejected(t *test
 	})
 }
 
-// ============================================================
-// ReconciliationVerdictExecutionRetryPayload
-// ============================================================
-
 func TestProp_ReconciliationVerdictExecutionRetryPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := ReconciliationVerdictExecutionRetryPayload{
@@ -737,10 +676,6 @@ func TestProp_ReconciliationVerdictExecutionRetryPayload_EmptyRetriedAtRejected(
 	})
 }
 
-// ============================================================
-// BeadTerminalTransitionOp
-// ============================================================
-
 func TestProp_BeadTerminalTransitionOp_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allBeadTerminalTransitionOps {
@@ -765,10 +700,6 @@ func TestProp_BeadTerminalTransitionOp_KnownConstantsAccepted(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// BeadTerminalTransitionRecoveredPayload
-// ============================================================
 
 func TestProp_BeadTerminalTransitionRecoveredPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

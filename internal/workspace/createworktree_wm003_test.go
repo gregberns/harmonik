@@ -30,13 +30,11 @@ func TestWM003_CreateWorktree(t *testing.T) {
 			t.Fatalf("WM-003: CreateWorktree: %v", err)
 		}
 
-		// Canonical path per WM-002.
 		wantPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		if _, err := os.Stat(wantPath); os.IsNotExist(err) {
 			t.Errorf("WM-003: worktree not found at canonical path %q", wantPath)
 		}
 
-		// Valid git worktree: must contain a .git file (worktree-gitdir link).
 		dotGit := filepath.Join(wantPath, ".git")
 		if _, err := os.Stat(dotGit); os.IsNotExist(err) {
 			t.Errorf("WM-003: .git absent in worktree at %q", wantPath)
@@ -46,8 +44,6 @@ func TestWM003_CreateWorktree(t *testing.T) {
 	t.Run("creates-task-branch-pinned-to-parent-commit", func(t *testing.T) {
 		t.Parallel()
 
-		// The -b form creates the task branch from the explicit parentCommit.
-		// The branch tip MUST equal parentCommit.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0004"
 		branch := TaskBranchName(runID)
@@ -71,11 +67,9 @@ func TestWM003_CreateWorktree(t *testing.T) {
 	t.Run("parent-dir-created-if-absent", func(t *testing.T) {
 		t.Parallel()
 
-		// CreateWorktree must create <repo>/.harmonik/worktrees/ if absent.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0005"
 
-		// Confirm the worktree root does NOT exist before the call.
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
 		if _, err := os.Stat(worktreeRoot); !os.IsNotExist(err) {
 			t.Skip("worktree root already exists; cannot exercise MkdirAll branch")
@@ -93,7 +87,6 @@ func TestWM003_CreateWorktree(t *testing.T) {
 	t.Run("worktree-registered-in-git", func(t *testing.T) {
 		t.Parallel()
 
-		// git worktree list --porcelain must show the new worktree as registered.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0006"
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
@@ -116,8 +109,6 @@ func TestWM003_CreateWorktree(t *testing.T) {
 	t.Run("invalid-parent-commit-returns-worktree-creation-error", func(t *testing.T) {
 		t.Parallel()
 
-		// Providing a bogus parent commit SHA causes git to fail; CreateWorktree
-		// must return ErrWorktreeCreationFailed.
 		repo, _ := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0007"
 		bogusCommit := "0000000000000000000000000000000000000000"
@@ -134,7 +125,6 @@ func TestWM003_CreateWorktree(t *testing.T) {
 	t.Run("context-cancellation-propagates", func(t *testing.T) {
 		t.Parallel()
 
-		// A cancelled context must cause CreateWorktree to return an error.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0008"
 

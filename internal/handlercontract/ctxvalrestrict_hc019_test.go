@@ -8,59 +8,15 @@ import (
 	"testing"
 )
 
-// ctxvalrestrict_hc019_test.go — sensor asserting HC-019 (context values are
-// restricted to observability metadata). Production code MUST NOT pass business
-// data (run fields, outcomes, bead IDs) via context values; only observability
-// metadata (trace IDs, correlation IDs, operator-identity tokens) is permitted.
-//
-// Spec refs: specs/handler-contract.md §4.4.HC-019;
-// bead hk-8i31.23.
-//
-// Helper prefix: ctxValRestrictFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-
-// ctxValRestrictFixtureForbiddenPatterns enumerates source-code patterns that
-// constitute business-data carriage via context values. Each pattern is a
-// substring matched against non-test Go source files under the daemon tree.
-//
-// The patterns are derived from the normative statement in
-// specs/handler-contract.md §4.4.HC-019:
-//
-//	"Context values MUST NOT carry business data (run fields, outcomes,
-//	bead IDs). Context values MAY carry observability metadata only:
-//	trace IDs, correlation IDs, operator-identity tokens."
-//
-// Each pattern targets a context.WithValue call whose key argument names a
-// business-data concept. The patterns are intentionally narrow — they match
-// only the identifier forms most likely to appear in production code — so that
-// legitimate observability metadata keys (e.g. "traceID", "correlationID")
-// are not flagged.
-//
-// Pattern rationale:
-//
-//   - "RunID" / "runID" / "run_id": run identifier — business data per HC-019.
-//   - "BeadID" / "beadID" / "bead_id": bead identifier — business data per HC-019.
-//   - "WorkflowID" / "workflowID" / "workflow_id": workflow identifier — a run field.
-//   - "NodeID" / "nodeID" / "node_id": node identifier — a run field.
-//   - "LaunchSpec" / "launchSpec": the full launch specification — business data.
-//   - "Outcome" / "outcome": run outcome — business data per HC-019.
-//
-// Each pattern is combined with "context.WithValue" via the
-// ctxValRestrictFixtureContainsBothParts check to avoid false positives: a
-// file that merely declares a RunID type does not violate HC-019; only a file
-// that passes such a value into context.WithValue does.
 var ctxValRestrictFixtureForbiddenKeyPatterns = []string{
-	// Run identifier forms named directly by HC-019.
 	"RunID",
 	"runID",
 	"run_id",
 
-	// Bead identifier forms named directly by HC-019.
 	"BeadID",
 	"beadID",
 	"bead_id",
 
-	// Workflow and node identifiers — run fields per execution-model.md §6.1.
 	"WorkflowID",
 	"workflowID",
 	"workflow_id",
@@ -68,33 +24,20 @@ var ctxValRestrictFixtureForbiddenKeyPatterns = []string{
 	"nodeID",
 	"node_id",
 
-	// Full launch specification struct — business data per handler-contract.md §6.1.
 	"LaunchSpec",
 	"launchSpec",
 
-	// Run outcome — business data per HC-019 ("outcomes" are explicitly named).
 	"Outcome",
 	"outcome",
 }
 
-// ctxValRestrictFixtureWithValueCall is the production API that MUST NOT be
-// used with business-data keys. Presence of this substring in the same file as
-// a forbidden key pattern constitutes an HC-019 violation candidate; the
-// per-file line-level check in ctxValRestrictFixtureFilePairsViolated confirms
-// they appear on the same logical call.
 const ctxValRestrictFixtureWithValueCall = "context.WithValue"
 
-// ctxValRestrictFixtureScannedRoots is the set of source-tree subdirectories
-// that constitute the daemon codebase for HC-019 purposes. Test files
-// (_test.go) are excluded by the walker.
 var ctxValRestrictFixtureScannedRoots = []string{
 	"internal",
 	"cmd",
 }
 
-// ctxValRestrictFixtureRepoRoot resolves the absolute path of the repo root
-// (the directory containing `go.mod`) by walking upward from the test file's
-// location. Calls t.Fatalf on failure.
 func ctxValRestrictFixtureRepoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -115,8 +58,6 @@ func ctxValRestrictFixtureRepoRoot(t *testing.T) string {
 	}
 }
 
-// ctxValRestrictFixtureCollectGoSources walks root and returns all non-test
-// .go files found under it.
 func ctxValRestrictFixtureCollectGoSources(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -139,14 +80,6 @@ func ctxValRestrictFixtureCollectGoSources(t *testing.T, root string) []string {
 	return files
 }
 
-// ctxValRestrictFixtureViolatingLines returns any lines in content that
-// contain both ctxValRestrictFixtureWithValueCall and keyPattern. A line
-// containing both is a HC-019 violation candidate: it passes a business-data
-// key into context.WithValue.
-//
-// Returning per-line violations (rather than a file-level bool) gives the
-// failure message enough precision to navigate to the offending call without a
-// full-tree grep.
 func ctxValRestrictFixtureViolatingLines(content, keyPattern string) []string {
 	var violations []string
 	for _, line := range strings.Split(content, "\n") {
@@ -183,9 +116,6 @@ func TestCtxValRestrict_HC019_NoBusinessDataInContext(t *testing.T) {
 	for _, rel := range ctxValRestrictFixtureScannedRoots {
 		root := filepath.Join(repoRoot, rel)
 		if _, err := os.Stat(root); os.IsNotExist(err) {
-			// Root doesn't exist yet (e.g., cmd/ before any cmd is added);
-			// skip silently — the test is still meaningful for whichever
-			// roots do exist.
 			continue
 		}
 		sourceFiles = append(sourceFiles, ctxValRestrictFixtureCollectGoSources(t, root)...)

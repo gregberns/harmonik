@@ -2,33 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// daemonevents_hqwn59.go — event-bus payload types for §8.7 operator-control and
-// daemon lifecycle events:
-//   - daemon_started                  (§8.7.1)
-//   - daemon_ready                    (§8.7.2)
-//   - daemon_shutdown                 (§8.7.3)
-//   - daemon_startup_failed           (§8.7.4)
-//   - daemon_degraded                 (§8.7.5)
-//   - operator_pause_status           (§8.7.6)
-//   - operator_resuming               (§8.7.7)
-//   - operator_stopped                (§8.7.8)
-//   - operator_upgrading              (§8.7.9)
-//   - operator_upgrade_completed      (§8.7.10)
-//   - operator_upgrade_rejected       (§8.7.11)
-//   - operator_command_rejected       (§8.7.12)
-//   - dispatch_deferred               (§8.7.13)
-//   - daemon_orphan_sweep_completed   (§8.7.14)
-//   - infrastructure_unavailable      (§8.7.15)
-//   - operator_command_failed         (§8.7.16)
-//   - operator_escalation_cleared     (§8.7.17)
-//
-// Spec ref: specs/event-model.md §8.7, §6.3.
-// Bead refs: hk-hqwn.59.57 through hk-hqwn.59.73.
-
-// ---------------------------------------------------------------------------
-// Enum types for §8.7 payload discriminators
-// ---------------------------------------------------------------------------
-
 // ShutdownMode is the typed discriminator for the `mode` field of daemon_shutdown
 // (§8.7.3) and operator_stopped (§8.7.8) payloads.
 //
@@ -82,10 +55,6 @@ func (v OperatorPauseStatusValue) Valid() bool {
 		return false
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Payload structs for §8.7 events
-// ---------------------------------------------------------------------------
 
 // DaemonStartedPayload is the typed event payload for the daemon_started event
 // (event-model.md §8.7.1).

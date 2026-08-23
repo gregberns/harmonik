@@ -1,16 +1,5 @@
 package daemon
 
-// export_substrate_test.go — tmux substrate / per-run-substrate test seams.
-//
-// Split out of export_test.go (RT19.7, P2 E5 export_test.go split) so the
-// tmuxsubstrate.go and per-run-substrate shims (spawn-cap slots, crew session
-// naming, session teardown, the newPerRunSubstrate constructors, runWait
-// ctx-cancel driving, the srt argv-wrap shell-quote and remote stat seams) live
-// in one topic file. Same package (daemon), so every daemon_test caller resolves
-// daemon.ExportedX byte-identically after the move.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 

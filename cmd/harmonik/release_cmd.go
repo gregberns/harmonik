@@ -1,26 +1,5 @@
 package main
 
-// release_cmd.go — `harmonik release` subcommand.
-//
-// Implements the release-ledger CLI surface from specs/release-pipeline.md §4:
-//
-//	harmonik release ledger              — list all ledger entries
-//	harmonik release certify <semver>    — certify a pre-release (flip Prerelease:false, stamp CertifiedAt)
-//	harmonik release yank <semver>       — mark a certified release as yanked
-//
-// The ledger is a JSON file at <project>/.harmonik/release-ledger.json.
-// No daemon is required; all verbs operate directly on the file.
-//
-// Exit codes:
-//
-//	0  success
-//	1  argument / flag error
-//	2  ledger invariant violation (already certified, already yanked, etc.)
-//	3  file I/O error
-//
-// Spec ref: specs/release-pipeline.md §4, §6, §7.1.
-// Bead ref: hk-n7ofb.
-
 import (
 	"context"
 	"errors"
@@ -77,8 +56,6 @@ EXAMPLES
   harmonik release rollback --bin /usr/local/bin/harmonik
 `
 
-// runReleaseSubcommand dispatches `harmonik release <verb> [args]`.
-// subArgs is os.Args[2:].
 func runReleaseSubcommand(subArgs []string) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
 		fmt.Print(releaseTopUsage)
@@ -105,8 +82,6 @@ func runReleaseSubcommand(subArgs []string) int {
 	}
 }
 
-// parseReleaseFlags parses the shared --project flag out of args.
-// Returns projectDir and the remaining positional args after flag extraction.
 func parseReleaseFlags(args []string) (projectDir string, positional []string, extraFlags map[string]string, err error) {
 	extraFlags = make(map[string]string)
 	for i := 0; i < len(args); i++ {
@@ -159,7 +134,6 @@ func parseReleaseFlags(args []string) (projectDir string, positional []string, e
 	return absDir, positional, extraFlags, nil
 }
 
-// runReleaseLedger implements `harmonik release ledger [--project DIR]`.
 func runReleaseLedger(args []string) int {
 	projectDir, _, flags, err := parseReleaseFlags(args)
 	if err != nil {
@@ -206,8 +180,6 @@ FLAGS
 	return 0
 }
 
-// runReleaseRecordCreate implements
-// `harmonik release record-create <semver> --commit <sha> [--tag <tag>]`.
 func runReleaseRecordCreate(args []string) int {
 	projectDir, positional, flags, err := parseReleaseFlags(args)
 	if err != nil {
@@ -271,7 +243,6 @@ FLAGS
 	return 0
 }
 
-// runReleaseCertify implements `harmonik release certify <semver> [--project DIR]`.
 func runReleaseCertify(args []string) int {
 	projectDir, positional, flags, err := parseReleaseFlags(args)
 	if err != nil {
@@ -335,22 +306,12 @@ func promoteGitHubRelease(projectDir, semver string) error {
 		return nil
 	}
 	if _, err := exec.LookPath("gh"); err != nil {
-		// "gh is not installed" is a legitimate skip. Anything else — an
-		// unreadable PATH entry, a gh that exists but is not executable — is a
-		// real failure and must not be reported as a successful skip.
 		if errors.Is(err, exec.ErrNotFound) {
 			fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
 			return nil
 		}
 		return fmt.Errorf("locate gh CLI: %w", err)
 	}
-	// context.Background(): `harmonik release certify` is a synchronous CLI entry
-	// point with no cancellable context in scope. Killing `gh release edit`
-	// part-way would also leave the GitHub release in an indeterminate state
-	// while the local ledger has NOT yet been written — SaveLedgerFile runs
-	// after this call, and a gh failure returns without saving. A mid-flight
-	// kill would therefore flip the GitHub release while the ledger never
-	// records the certification, so this call is deliberately not cancellable.
 	cmd := exec.CommandContext(context.Background(), "gh", "release", "edit", semver, "--prerelease=false")
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()
@@ -360,7 +321,6 @@ func promoteGitHubRelease(projectDir, semver string) error {
 	return nil
 }
 
-// runReleaseYank implements `harmonik release yank <semver> --reason <reason> [--project DIR]`.
 func runReleaseYank(args []string) int {
 	projectDir, positional, flags, err := parseReleaseFlags(args)
 	if err != nil {
@@ -415,21 +375,6 @@ FLAGS
 	return 0
 }
 
-// runReleaseRollback implements `harmonik release rollback [--bin PATH] [--project DIR]`.
-//
-// Reads the last-good binary path from the supervisor state file and copies it
-// to --bin (default: current executable). Useful for operator-driven rollback
-// when the supervisor has not yet auto-recovered.
-//
-// Exit codes:
-//
-//	0  success
-//	1  argument / flag error
-//	3  file I/O error
-//	4  no last-good binary recorded
-//
-// Spec ref: specs/release-pipeline.md §7 — ROLLBACK stage.
-// Bead ref: hk-ya51z.
 func runReleaseRollback(args []string) int {
 	projectDir, _, flags, err := parseReleaseFlags(args)
 	if err != nil {
@@ -464,7 +409,6 @@ EXAMPLES
 		return 0
 	}
 
-	// Resolve target binary path.
 	binPath := flags["bin"]
 	if binPath == "" {
 		exe, exeErr := os.Executable()

@@ -16,80 +16,14 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// jsonlAppender is the write surface of [JSONLWriter] used by [busImpl].
-//
-// The interface allows [busImpl] to hold either a real [*JSONLWriter] or a
-// [nullJSONLWriter] without nil-guarding every call site.  Constructors that
-// receive a nil [*JSONLWriter] MUST substitute [nullJSONLWriter{}] so that
-// Emit and EmitWithRunID can call Append unconditionally.
-//
-// Bead ref: hk-2m3bq.
 type jsonlAppender interface {
 	Append(line []byte, sync bool) error
 }
 
-// nullJSONLWriter is a jsonlAppender that silently discards all writes.
-// Used as the required-argument default when no log path is configured.
-//
-// Bead ref: hk-2m3bq.
 type nullJSONLWriter struct{}
 
 func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 
-// busImpl is the concrete in-process implementation of [EventBus].
-//
-// Emit applies the full EV-035 redaction pipeline before JSONL append and
-// consumer dispatch: HC-031 common-prefix field-name redaction PLUS HC-032
-// per-handler value-pattern redaction via the [core.RedactionRegistry]
-// supplied at construction.
-//
-// When constructed via [NewBusImpl] (no patterns), the registry applies HC-031
-// only. When constructed via [NewBusImplWithRegistry], the caller's patterns
-// are also applied.
-//
-// # JSONL wiring (hk-8mup.63)
-//
-// When constructed via [NewBusImplWithWriter], a [*JSONLWriter] is threaded
-// through the bus and Emit appends each redacted event as a JSONL line.
-// F-class (fsync-boundary) events call Append(line, sync=true); O-class and
-// L-class events call Append(line, sync=false). The durability class is
-// derived from [isFsyncBoundaryEvent] per the §8 taxonomy table.
-//
-// When no writer is provided, jsonlWriter holds a [nullJSONLWriter] and
-// Append calls are unconditional no-ops (no nil-guard required).
-//
-// # Dead-letter sink (hk-xvpwb)
-//
-// When constructed via [NewBusImplWithSink], a [core.DeadLetterSink]
-// is injected at construction time and receives undeliverable events:
-//   - Observer/async consumer panics are recorded with reason "observer_panic".
-//   - Async/observer consumer dispatch errors are recorded with reason "consumer_error".
-//
-// When no sink is provided, deadLetterSink holds a [core.NoopDeadLetterSink]
-// and Record calls are unconditional no-ops (no nil-guard required).
-//
-// # Dispatch order (EV-014a)
-//
-// Emit returns after: (a) redaction (EV-035), (b) JSONL append + fsync for
-// F-class events per EV-016 (hk-8mup.63), (c) synchronous consumer dispatch
-// on the caller's goroutine. Asynchronous and observer consumers are dispatched
-// off the critical path via per-handler goroutines and MUST NOT extend
-// Emit latency. A bounded worker pool (default 4 workers, operator-configurable)
-// will replace the per-goroutine approach in the deferred worker-pool bead.
-//
-// # Per-run Drain coordination (hk-fx6zl)
-//
-// inflight is the process-level in-flight counter: it tracks ALL in-flight
-// async/observer goroutines and is used by the existing [EventBus.Drain]
-// method to wait for global quiescence. runDrainersMu guards runInflight, a
-// per-run in-flight counter map keyed by run_id string. EmitWithRunID counts
-// each dispatched goroutine in both inflight (global) and the run-specific
-// counter so that [busImpl.DrainRun] can wait for a single run's consumers
-// without blocking on other runs. Plain Emit (no run_id) only touches
-// inflight; DrainRun does not wait for those.
-//
-// Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb, hk-2m3bq.
 type busImpl struct {
 	registry       *core.RedactionRegistry
 	jsonlWriter    jsonlAppender       // never nil; nullJSONLWriter when no log path configured
@@ -152,27 +86,13 @@ type busImpl struct {
 	jsonlPath string
 }
 
-// recordDeadLetter preserves asynchronous dispatch semantics while making a
-// failed dead-letter write observable. Async handler failures cannot be
-// returned to the emitter after Emit has completed, so logging is the only
-// available error-reporting channel here.
 func (b *busImpl) recordDeadLetter(ctx context.Context, evt core.Event, reason string) {
 	if err := b.deadLetterSink.Record(ctx, evt, reason); err != nil {
 		log.Printf("eventbus: record dead letter for event %s (%s): %v", evt.EventID, reason, err)
 	}
 }
 
-// fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
-// event types derived from the §8 taxonomy table in specs/event-model.md.
-// F-class events require Append(line, sync=true) per EV-016 / EV-016a.
-//
-// This set is exhaustive for the §8 rows marked "F" as of event-model.md
-// v0.6.4. Additions to the §8 taxonomy MUST update this map.
-//
-// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a; §8 taxonomy table.
-// Bead ref: hk-8mup.63, hk-uunpf (G1 gap — 15 missing F-class entries added).
 var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
-	// §8.1 Run lifecycle (F-class rows).
 	core.EventTypeRunStarted:        {},
 	core.EventTypeRunCompleted:      {},
 	core.EventTypeRunFailed:         {},
@@ -218,13 +138,6 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	core.EventTypeBeadSyncFailed: {},
 }
 
-// isFsyncBoundaryEvent reports whether eventType is an F-class (fsync-boundary)
-// event per the §8 taxonomy table. F-class events require an fsync after JSONL
-// append (EV-016 / EV-016a). All other classes (O = ordinary, L = lossy-tail-ok)
-// do not require an fsync.
-//
-// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a; §8.
-// Bead ref: hk-8mup.63.
 func isFsyncBoundaryEvent(eventType core.EventType) bool {
 	_, ok := fsyncBoundaryEventTypes[eventType]
 	return ok
@@ -397,17 +310,6 @@ func NewBusImplWithWriterAndHWM(
 	}
 }
 
-// maybeUpdateHWM writes hwm to the HWM file when hwm is strictly greater than
-// the last persisted value. Called after every F-class JSONL fsync to keep
-// the HWM file current per EV-002c.
-//
-// The write is atomic (temp-file + rename) but not fsynced; HWM durability
-// piggybacks on the JSONL fsync domain (EV-002c "no additional fsync cost").
-// On crash between JSONL fsync and this write the HWM file may be stale;
-// daemon startup handles that via the "seed from wall clock" fallback.
-//
-// Thread-safe: protected by hwmMu.
-// Non-fatal: write errors are logged but do not fail the Emit call.
 func (b *busImpl) maybeUpdateHWM(hwm core.EventID) {
 	if b.hwmPath == "" {
 		return
@@ -442,7 +344,6 @@ func (b *busImpl) maybeUpdateHWM(hwm core.EventID) {
 //
 // Spec ref: specs/event-model.md §6.1, §7.1, §4.2 EV-014a, §4.4 EV-035.
 func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
-	// Step 1: decode payload to map for redaction (EV-035).
 	var rawPayload map[string]any
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &rawPayload); err != nil {
@@ -450,22 +351,13 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		}
 	}
 
-	// Step 2: apply HC-031 + HC-032 redaction pipeline BEFORE JSONL append
-	// and consumer dispatch (EV-035).
 	redacted := b.registry.RedactionMiddleware(rawPayload)
 
-	// Step 3: re-encode redacted payload.
 	redactedBytes, err := json.Marshal(redacted)
 	if err != nil {
 		return fmt.Errorf("eventbus.Emit: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4a: build the complete EV-001 envelope. event_id and timestamp_wall
-	// are stamped here, inside the emitter, per EV-001. source_subsystem uses
-	// the eventbus package identifier; callers that need a subsystem-specific
-	// value should set it before dispatch (deferred daemon-watcher stamping per
-	// EV-002b will own this). schema_version is taken from the per-type registry
-	// per EV-028 so it matches the declared payload version for this event type.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return fmt.Errorf("eventbus.Emit: generate event_id: %w", idErr)
@@ -484,11 +376,6 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		Payload:         redactedBytes,
 	}
 
-	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
-	// Marshal the COMPLETE envelope (all EV-001 fields + nested payload) to a
-	// single JSON object. F-class (fsync-boundary) events are fsynced before
-	// returning; O-class and L-class events are written without fsync.
-	// jsonlWriter is never nil (nullJSONLWriter when no log path configured).
 	envelopeBytes, marshalErr := json.Marshal(evt)
 	if marshalErr != nil {
 		return fmt.Errorf("eventbus.Emit: marshal envelope: %w", marshalErr)
@@ -501,14 +388,11 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		b.maybeUpdateHWM(eventID)
 	}
 
-	// Step 5: collect matching subscriptions once under lock so dispatch runs
-	// without holding the mutex.
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.Unlock()
 
-	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {
 		if !sub.EventPattern.MatchesType(eventType) {
 			continue
@@ -519,36 +403,20 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 
 		switch sub.ConsumerClass {
 		case core.ConsumerClassSynchronous:
-			// Synchronous consumers run on the caller's goroutine and block
-			// Emit until they return (EV-010). At most one per event type is
-			// permitted; enforced at subscription time (hk-hqwn.49).
 			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
 				return fmt.Errorf("eventbus.Emit: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
 			}
 
 		default:
-			// Asynchronous and observer consumers run off the critical path
-			// (EV-014a / EV-011 / EV-012). A dedicated goroutine is
-			// launched per dispatch; later: replace with bounded worker pool
-			// (default 4 workers, operator-configurable per EV-014a).
 			sub := sub // capture loop variable
 			b.addGlobalDrainer()
 			go func() {
 				defer b.doneGlobalDrainer()
-				// Panic recovery (hk-xvpwb): recover observer panics and record
-				// them to the dead-letter sink with reason "observer_panic". If
-				// the sink is nil, the panic is absorbed and logged nowhere
-				// (deferred: add structured logger fallback).
 				defer func() {
 					if r := recover(); r != nil {
-						// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
 						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
-				// Context is passed through so callers can cancel in-flight
-				// async/observer work during shutdown before Drain returns.
-				// Consumer errors are recorded to the dead-letter sink with
-				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
 					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
@@ -568,7 +436,6 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 // Spec ref: specs/event-model.md §6.1 EV-001; specs/execution-model.md §4.3 EM-013.
 // Bead: hk-n9f51.
 func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
-	// Step 1: decode payload to map for redaction (EV-035).
 	var rawPayload map[string]any
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &rawPayload); err != nil {
@@ -576,17 +443,13 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 		}
 	}
 
-	// Step 2: apply HC-031 + HC-032 redaction pipeline BEFORE JSONL append
-	// and consumer dispatch (EV-035).
 	redacted := b.registry.RedactionMiddleware(rawPayload)
 
-	// Step 3: re-encode redacted payload.
 	redactedBytes, err := json.Marshal(redacted)
 	if err != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4a: build the complete EV-001 envelope with run_id stamped.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: generate event_id: %w", idErr)
@@ -607,8 +470,6 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 		Payload:         redactedBytes,
 	}
 
-	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
-	// jsonlWriter is never nil (nullJSONLWriter when no log path configured).
 	envelopeBytes, marshalErr := json.Marshal(evt)
 	if marshalErr != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: marshal envelope: %w", marshalErr)
@@ -621,13 +482,11 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 		b.maybeUpdateHWM(eventID)
 	}
 
-	// Step 5: collect matching subscriptions once under lock.
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.Unlock()
 
-	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {
 		if !sub.EventPattern.MatchesType(eventType) {
 			continue
@@ -642,32 +501,18 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 				return fmt.Errorf("eventbus.EmitWithRunID: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
 			}
 		default:
-			// Asynchronous and observer consumers for a run-scoped event are
-			// tracked in BOTH the global inflight counter (for Drain/global
-			// quiescence) and the per-run counter (for DrainRun/per-run fair
-			// termination). Bead: hk-fx6zl, hk-4hctu.
 			sub := sub // capture loop variable
-			// addRunDrainer increments the run's in-flight counter under
-			// runDrainersMu. Unlike the old sealed WaitGroup path, it ALWAYS
-			// tracks — including a re-entrant emit issued from within a handler
-			// during this run's DrainRun — so DrainRun waits on the run-scoped
-			// cascade tail instead of returning early (hk-4hctu).
 			runKey := evt.RunID.String()
 			b.addRunDrainer(runKey)
 			b.addGlobalDrainer()
 			go func() {
 				defer b.doneGlobalDrainer()
 				defer b.doneRunDrainer(runKey)
-				// Panic recovery (hk-xvpwb): recover observer panics and record
-				// them to the dead-letter sink with reason "observer_panic".
-				// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
 				defer func() {
 					if r := recover(); r != nil {
 						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
-				// Consumer errors are recorded to the dead-letter sink with
-				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
 					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
@@ -693,7 +538,6 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: marshal payload: %w", marshalErr)
 	}
 
-	// Steps 1–3: redaction pipeline (EV-035) — same as Emit.
 	var rawPayload map[string]any
 	if err := json.Unmarshal(payloadBytes, &rawPayload); err != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: payload unmarshal for redaction: %w", err)
@@ -704,7 +548,6 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4a: generate event_id BEFORE building the envelope so we can return it.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: generate event_id: %w", idErr)
@@ -723,7 +566,6 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 		Payload:         redactedBytes,
 	}
 
-	// Step 4b: JSONL append with fsync (F-class per fsyncBoundaryEventTypes).
 	envelopeBytes, marshalEnvErr := json.Marshal(evt)
 	if marshalEnvErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: marshal envelope: %w", marshalEnvErr)
@@ -733,7 +575,6 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	}
 	b.maybeUpdateHWM(eventID)
 
-	// Steps 5–6: fan-out to subscribers — same pattern as Emit (no run_id, no runWG).
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
@@ -783,7 +624,6 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal payload: %w", marshalErr)
 	}
 
-	// Redaction pipeline (EV-035) — same as EmitAgentMessage.
 	var rawPayload map[string]any
 	if err := json.Unmarshal(payloadBytes, &rawPayload); err != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: payload unmarshal for redaction: %w", err)
@@ -794,7 +634,6 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: re-encoding redacted payload: %w", err)
 	}
 
-	// Generate event_id before building the envelope so we can return it.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: generate event_id: %w", idErr)
@@ -813,9 +652,6 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 		Payload:         redactedBytes,
 	}
 
-	// JSONL append — O-class: fsync=false (agent_presence is not fsync-boundary).
-	// Persist refreshes as well as join/leave edges: `comms who` is intentionally
-	// daemon-free and reconstructs its TTL registry from this log.
 	envelopeBytes, marshalEnvErr := json.Marshal(evt)
 	if marshalEnvErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal envelope: %w", marshalEnvErr)
@@ -824,7 +660,6 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: JSONL append: %w", appendErr)
 	}
 
-	// Fan-out to subscribers.
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
@@ -884,7 +719,6 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, payload []byte) (core.EventID, error) {
 	typeName := string(eventType)
 
-	// Step 1–3: redaction pipeline (EV-035) — same as EmitAgentMessage.
 	var rawPayload map[string]any
 	if err := json.Unmarshal(payload, &rawPayload); err != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): payload unmarshal for redaction: %w", typeName, err)
@@ -895,7 +729,6 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): re-encoding redacted payload: %w", typeName, err)
 	}
 
-	// Step 4a: generate event_id BEFORE building the envelope so we can return it.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): generate event_id: %w", typeName, idErr)
@@ -913,7 +746,6 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 		Payload:         redactedBytes,
 	}
 
-	// Step 4b: JSONL append. Fsync iff the type is F-class per the §8 taxonomy.
 	envelopeBytes, marshalEnvErr := json.Marshal(evt)
 	if marshalEnvErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): marshal envelope: %w", typeName, marshalEnvErr)
@@ -926,7 +758,6 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 		b.maybeUpdateHWM(eventID)
 	}
 
-	// Step 5–6: fan-out to subscribers — same pattern as EmitAgentMessage.
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
@@ -1031,15 +862,11 @@ func (b *busImpl) Subscribe(sub core.Subscription) (core.Subscription, error) {
 		return core.Subscription{}, fmt.Errorf("eventbus: Subscribe called after Seal (EV-009): consumer %q", sub.ConsumerID)
 	}
 
-	// Registration-time invariant checks for synchronous consumers (EV-014, EV-010).
 	if sub.ConsumerClass == core.ConsumerClassSynchronous {
-		// Check 1 — EV-014 cardinality: at most one synchronous consumer per event type.
 		if err := b.checkSyncCardinality(sub); err != nil {
 			return core.Subscription{}, err
 		}
 
-		// Check 2 — EV-010 acyclicity: DeclaredEmitTypes MUST NOT form a
-		// re-dispatch cycle among synchronous consumers.
 		if err := b.checkSyncAcyclicity(sub); err != nil {
 			return core.Subscription{}, err
 		}
@@ -1110,17 +937,11 @@ func BusSubscribedConsumerIDs(bus EventBus) []string {
 	return nil
 }
 
-// checkSyncCardinality enforces EV-014 / EV-INV-003: at most one synchronous
-// consumer per event type. Called under b.mu.
 func (b *busImpl) checkSyncCardinality(incoming core.Subscription) error {
 	for _, existing := range b.subscriptions {
 		if existing.ConsumerClass != core.ConsumerClassSynchronous {
 			continue
 		}
-		// Detect overlap between existing.EventPattern and incoming.EventPattern.
-		// Overlap exists when both patterns can match the same event type:
-		//   - wildcard ∩ anything → overlap
-		//   - explicit ∩ explicit → check set intersection
 		conflictType, overlaps := syncPatternOverlap(existing.EventPattern, incoming.EventPattern)
 		if overlaps {
 			return &ErrDuplicateSynchronousConsumer{
@@ -1133,16 +954,10 @@ func (b *busImpl) checkSyncCardinality(incoming core.Subscription) error {
 	return nil
 }
 
-// syncPatternOverlap reports whether two EventPatterns can match the same event
-// type. Returns a representative conflicting type string and true when they overlap.
-// For wildcard-vs-anything, returns "*". For explicit-vs-explicit, returns a
-// member of the intersection set.
 func syncPatternOverlap(a, b core.EventPattern) (string, bool) {
 	if a.Wildcard || b.Wildcard {
-		// Wildcard overlaps with everything.
 		return "*", true
 	}
-	// Both explicit: check for intersection.
 	for t := range a.Types {
 		if _, ok := b.Types[t]; ok {
 			return string(t), true
@@ -1151,25 +966,11 @@ func syncPatternOverlap(a, b core.EventPattern) (string, bool) {
 	return "", false
 }
 
-// checkSyncAcyclicity enforces EV-010 / EV-INV-003: synchronous consumers MUST
-// NOT form a re-dispatch cycle via their DeclaredEmitTypes. Called under b.mu.
-//
-// A cycle exists when following the edges:
-//
-//	syncConsumer.EventPattern → syncConsumer.DeclaredEmitTypes → (next syncConsumer) → …
-//
-// produces a path that eventually re-reaches a consumer whose pattern matches
-// one of the event types the incoming consumer subscribes to.
-//
-// The check is conservative: for wildcard patterns, all declared emit types are
-// treated as potential subscribers to avoid false negatives.
 func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 	if len(incoming.DeclaredEmitTypes) == 0 {
 		return nil // emits nothing → cannot form a cycle
 	}
 
-	// Build the set of all synchronous consumers (existing + incoming) for DFS.
-	// incoming is included so the DFS can detect direct self-cycles.
 	allSync := make([]core.Subscription, 0, len(b.subscriptions)+1)
 	allSync = append(allSync, incoming)
 	for _, s := range b.subscriptions {
@@ -1178,26 +979,12 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 		}
 	}
 
-	// DFS from each of incoming's DeclaredEmitTypes to check for a path back
-	// to the incoming consumer itself.
-	//
-	// The cycle condition: incoming declares it emits type T → some existing sync
-	// consumer A subscribes to T and declares it emits type U → … → eventually
-	// some consumer emits a type that matches incoming's EventPattern. This means
-	// an Emit on that final type would re-dispatch to incoming, completing the cycle.
-	//
-	// visited tracks consumer IDs already explored in the current DFS to avoid
-	// infinite loops. path records the current DFS path for error reporting.
 	var dfs func(emitType core.EventType, visited map[string]bool, path []string) []string
 	dfs = func(emitType core.EventType, visited map[string]bool, path []string) []string {
-		// First check: does emitType itself match the incoming consumer's subscription?
-		// If yes, a direct re-dispatch cycle is detected.
 		if incoming.EventPattern.MatchesType(emitType) {
 			return append(path, incoming.ConsumerID)
 		}
 
-		// Find existing synchronous consumers that subscribe to emitType and
-		// follow their declared emissions.
 		for _, s := range allSync {
 			if s.ConsumerID == incoming.ConsumerID {
 				continue
@@ -1209,7 +996,6 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 				continue
 			}
 			visited[s.ConsumerID] = true
-			// Follow s's declared emissions transitively.
 			for _, nextEmit := range s.DeclaredEmitTypes {
 				if cyclePath := dfs(nextEmit, visited, append(path, s.ConsumerID)); cyclePath != nil {
 					return cyclePath
@@ -1246,8 +1032,6 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 func (b *busImpl) Seal() error {
 	b.mu.Lock()
 	b.sealed = true
-	// Copy subscriptions while holding the lock so replay sees a stable
-	// snapshot without holding the mutex across potentially slow handler calls.
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.Unlock()
@@ -1325,8 +1109,6 @@ func (b *busImpl) ReplayFrom(consumerID string, since core.EventID) error {
 	return err
 }
 
-// deadLetterEntry is the JSON shape of one entry in the dead-letter JSONL file.
-// Mirrors the unexported deadLetterRecord written by core.jsonlDeadLetterSink.
 type deadLetterEntry struct {
 	Envelope core.Event `json:"envelope"`
 }
@@ -1438,7 +1220,6 @@ func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID
 		if len(lineBytes) > 0 {
 			hasTerm := lineBytes[len(lineBytes)-1] == '\n'
 			if !hasTerm && readErr == io.EOF {
-				// Torn tail: non-empty partial line at EOF without newline terminator.
 				return lastDurable, true, nil
 			}
 			trimmed := bytes.TrimRight(lineBytes, "\n")
@@ -1464,23 +1245,12 @@ func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID
 	}
 }
 
-// addGlobalDrainer registers one in-flight async/observer dispatch goroutine
-// by incrementing b.inflight under drainMu. Every registration is tracked —
-// including re-entrant emits from handlers running during a Drain — so Drain
-// waits for cascades (hk-okzy1). The caller must arrange a matching
-// doneGlobalDrainer (typically `defer b.doneGlobalDrainer()` inside the
-// dispatch goroutine). Because Drain waits on a condition variable rather
-// than a WaitGroup, incrementing during a Drain is safe (no H7-style
-// "Add called concurrently with Wait" hazard).
 func (b *busImpl) addGlobalDrainer() {
 	b.drainMu.Lock()
 	b.inflight++
 	b.drainMu.Unlock()
 }
 
-// doneGlobalDrainer is the matching decrement for addGlobalDrainer. When the
-// counter reaches 0 it broadcasts drainCond so any Drain waiter re-checks
-// quiescence.
 func (b *busImpl) doneGlobalDrainer() {
 	b.drainMu.Lock()
 	b.inflight--
@@ -1490,8 +1260,6 @@ func (b *busImpl) doneGlobalDrainer() {
 	b.drainMu.Unlock()
 }
 
-// drainCondLocked returns b.drainCond, lazily initialising it. The caller
-// MUST hold drainMu.
 func (b *busImpl) drainCondLocked() *sync.Cond {
 	if b.drainCond == nil {
 		b.drainCond = sync.NewCond(&b.drainMu)
@@ -1499,24 +1267,12 @@ func (b *busImpl) drainCondLocked() *sync.Cond {
 	return b.drainCond
 }
 
-// addRunDrainer registers one in-flight per-run goroutine by incrementing the
-// run's entry in runInflight under runDrainersMu. Every registration is
-// tracked — including a re-entrant EmitWithRunID from a handler running during
-// this run's DrainRun (a run-scoped cascade) — so DrainRun waits for the
-// cascade tail (hk-4hctu). The caller must arrange a matching doneRunDrainer
-// (typically `defer b.doneRunDrainer(runID)` inside the dispatch goroutine).
-// Because DrainRun waits on a condition variable rather than a per-run
-// WaitGroup, incrementing during a DrainRun is safe (no "Add called
-// concurrently with Wait" hazard) and no seal is required.
 func (b *busImpl) addRunDrainer(runID string) {
 	b.runDrainersMu.Lock()
 	b.runInflight[runID]++
 	b.runDrainersMu.Unlock()
 }
 
-// doneRunDrainer is the matching decrement for addRunDrainer. When the run's
-// counter reaches 0 it deletes the entry (bounding map growth) and broadcasts
-// runDrainCond so any DrainRun waiter re-checks quiescence.
 func (b *busImpl) doneRunDrainer(runID string) {
 	b.runDrainersMu.Lock()
 	b.runInflight[runID]--
@@ -1529,8 +1285,6 @@ func (b *busImpl) doneRunDrainer(runID string) {
 	b.runDrainersMu.Unlock()
 }
 
-// runDrainCondLocked returns b.runDrainCond, lazily initialising it. The caller
-// MUST hold runDrainersMu.
 func (b *busImpl) runDrainCondLocked() *sync.Cond {
 	if b.runDrainCond == nil {
 		b.runDrainCond = sync.NewCond(&b.runDrainersMu)
@@ -1551,19 +1305,6 @@ func (b *busImpl) runDrainCondLocked() *sync.Cond {
 //
 // Bead: hk-fx6zl.
 func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
-	// Wait for the run's in-flight counter to reach 0 via runDrainCond. Because
-	// cond.Wait releases runDrainersMu while parked, a re-entrant EmitWithRunID
-	// from a still-in-flight handler for this run (a run-scoped cascade) can
-	// increment the counter during the wait; the loop re-checks after every
-	// broadcast, so DrainRun returns only at true per-run quiescence — cascade
-	// descendants included (hk-4hctu). No per-run WaitGroup is involved, so the
-	// "Add called concurrently with Wait" crash cannot occur and no seal is
-	// needed. A per-run counter that was never created (nil map entry) reads as
-	// 0, so a run with no tracked goroutines returns immediately.
-	//
-	// ctx cancellation: sync.Cond has no context-aware wait, so the wait loop
-	// runs in a goroutine that closes done at quiescence. On ctx cancellation we
-	// close stop and broadcast so the waiter wakes, observes stop, and exits.
 	key := runID.String()
 	done := make(chan struct{})
 	stop := make(chan struct{})
@@ -1603,18 +1344,6 @@ func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
 //
 // Spec ref: specs/event-model.md §6.1.
 func (b *busImpl) Drain(ctx context.Context) error {
-	// Wait for the global in-flight counter to reach 0 via drainCond. Because
-	// cond.Wait releases drainMu while parked, a re-entrant Emit from a
-	// still-in-flight handler (a cascade) can increment the counter during the
-	// wait; the loop re-checks after every broadcast, so Drain returns only at
-	// true quiescence — cascade descendants included (hk-okzy1). No WaitGroup
-	// is involved, so the H7 "Add called concurrently with Wait" crash cannot
-	// occur, and the bus remains fully usable after Drain returns.
-	//
-	// ctx cancellation: sync.Cond has no context-aware wait, so the wait loop
-	// runs in a goroutine that closes done at quiescence. On ctx cancellation
-	// we close stop and broadcast so the waiter wakes, observes stop, and
-	// exits — it cannot block forever after cancellation.
 	done := make(chan struct{})
 	stop := make(chan struct{})
 	go func() {

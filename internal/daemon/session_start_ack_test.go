@@ -249,10 +249,6 @@ func persistSessionStartAuthority(t *testing.T, projectDir string, intent dispat
 	}
 }
 
-// acknowledgeSessionStartLocally runs the acknowledgement over the production
-// adapter resolver for a local execution location. The resolver is the same one
-// the daemon builds at boot, so the test proves the path production takes rather
-// than a shortcut that hands the adapter straight to the acknowledgement.
 func acknowledgeSessionStartLocally(
 	t *testing.T,
 	projectDir string,
@@ -293,9 +289,6 @@ func sessionStartAckFixture(t *testing.T) (dispatch.Intent, runpkg.DispatchRecor
 	return intent, record, receipt
 }
 
-// sessionStartAckProbe returns the probe an exact live target reports for one
-// intent. A test that needs a different target state changes a field of the
-// result, or replaces the whole probe.
 func sessionStartAckProbe(intent dispatch.Intent) ltmux.TargetProbe {
 	return ltmux.TargetProbe{
 		Status: ltmux.TargetProbeExact, RunID: intent.Binding.RunID.String(),

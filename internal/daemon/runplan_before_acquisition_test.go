@@ -1,31 +1,5 @@
 package daemon
 
-// runplan_before_acquisition_test.go — the structural invariant the run plan
-// exists to hold: a refused bead takes nothing.
-//
-// This is the successor to the worker-slot leak regression test (hk-3hozm). The
-// old test reproduced one bug: the balancing ReleaseSlot sat BELOW four
-// refuse-before-launch returns, so a remote bead refused by any of the four
-// returned without releasing its pre-reserved slot, and after MaxSlots such
-// refusals the remote path wedged for the life of the daemon. That bug is fixed
-// and the fix has held.
-//
-// So this is not written as a repro. It is written as an invariant over ALL the
-// refusals, present and future: every verdict the plan can refuse with must
-// leave the worker registry at the count it started with, must create no
-// worktree, and must build no launch spec. A fifth refusal added to the plan
-// later is covered by the same table, which is the property the old single-case
-// repro did not have.
-//
-// The invariant is structural because the plan is a value. Every decision that
-// can refuse resolves inside resolveRunPlan, which acquires nothing and returns
-// a verdict. beadRunOne acquires only after it reads runPlanReady. A refusal
-// can no longer drift below an acquisition without moving the whole plan call.
-//
-// Helper prefix: runplanacq (implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-3hozm (the leak this structure makes unrepresentable).
-
 import (
 	"context"
 	"os"
@@ -47,14 +21,11 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// runplanacqReopen records one ReopenBead call.
 type runplanacqReopen struct {
 	beadID core.BeadID
 	reason string
 }
 
-// runplanacqLedger captures ReopenBead. Every other method is inert: a refused
-// bead reaches none of them.
 type runplanacqLedger struct {
 	mu      sync.Mutex
 	reopens []runplanacqReopen
@@ -89,8 +60,6 @@ func (l *runplanacqLedger) calls() []runplanacqReopen {
 	return out
 }
 
-// runplanacqSealedRegistry registers the real claude adapter and seals it.
-// beadRunOne requires a sealed registry even on a path that never launches.
 func runplanacqSealedRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 	t.Helper()
 	reg := handlercontract.NewAdapterRegistry()
@@ -101,7 +70,6 @@ func runplanacqSealedRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 	return reg
 }
 
-// runplanacqRepo initialises a git repository with one commit on main.
 func runplanacqRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -124,7 +92,6 @@ func runplanacqRepo(t *testing.T) string {
 	return dir
 }
 
-// runplanacqBody wraps yaml in a ## Branching section.
 func runplanacqBody(yaml string) string {
 	return "Probe bead.\n\n## Branching\n\n```yaml\n" + yaml + "\n```\n"
 }
@@ -134,8 +101,6 @@ func runplanacqBody(yaml string) string {
 // asserts three things each time: the bead was reopened, the reserved slot came
 // back, and nothing was acquired on the way out.
 func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
-	// harnesses.pi.profiles holds a differently-named profile, so an unknown
-	// reference is a real existence failure and not an empty map.
 	piCfg := projectconfig.ProjectConfig{
 		Harnesses: projectconfig.HarnessesConfig{
 			Pi: projectconfig.PiHarnessConfig{
@@ -197,8 +162,6 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := runplanacqRepo(t)
 
-			// One worker with one slot, reserved before the call — exactly what
-			// the outer dispatch loop hands beadRunOne.
 			reg := workers.NewRegistry(workers.Config{Workers: []workers.Worker{{
 				Name:     "runplanacq-worker",
 				Host:     "runplanacq.example.com",
@@ -213,8 +176,6 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 				t.Fatalf("setup: InFlight = %d; want 1", got)
 			}
 
-			// A worktree factory that fails the test if it is ever reached. A
-			// worktree is the first thing beadRunOne acquires after the plan.
 			var worktreeCreated bool
 			worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
 				worktreeCreated = true
@@ -261,7 +222,6 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 			env := deps.runEnv(runID, bead, "", "", core.AgentType(""))
 			succeeded := runBeadOneTest(ctx, deps, env, "", preSelected, false)
 
-			// The refusal fired, and named its cause.
 			calls := ledger.calls()
 			if len(calls) != 1 {
 				t.Fatalf("ReopenBead call count = %d; want exactly 1 (the %s refusal)\ncalls=%+v",
@@ -277,7 +237,6 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 				t.Error("beadRunOne reported success for a refused bead")
 			}
 
-			// NOTHING was acquired.
 			if worktreeCreated {
 				t.Error("a worktree was created for a refused bead")
 			}

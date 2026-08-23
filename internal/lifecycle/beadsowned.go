@@ -1,24 +1,5 @@
 package lifecycle
 
-// beadsowned.go — SentinelFileProvenanceChecker, a ProvenanceChecker backed
-// by the .harmonik/beads-owned/ sentinel directory.
-//
-// A file at .harmonik/beads-owned/<bead-id> is written by brcli.Adapter.ClaimBead
-// on successful claim and deleted on successful CloseBead, ReopenBead, or
-// ResetBead. The sentinel outlives the BI-030 claim intent file (which is
-// deleted in step 6 after claim success) and provides an independent provenance
-// signal for the PL-006 sixth-bullet orphan sweep. When all intent files have
-// been cleared by prior crash-recovery runs, the sentinel file is the only
-// remaining evidence of ownership.
-//
-// SentinelFileProvenanceChecker.Owns is a pure filesystem stat — no subprocess
-// invocation, no network call, no SQLite access. It reports true iff the
-// sentinel file exists for the given bead ID.
-//
-// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet (provenance OR clause);
-// §4.4 PL-006a (project_hash discipline).
-// Bead ref: hk-11xkn.
-
 import (
 	"context"
 	"fmt"
@@ -64,7 +45,6 @@ func (c *SentinelFileProvenanceChecker) Owns(_ context.Context, beadID core.Bead
 		return true, nil
 	}
 	if os.IsNotExist(err) {
-		// Directory or file absent — not owned.
 		return false, nil
 	}
 	return false, fmt.Errorf("lifecycle: SentinelFileProvenanceChecker.Owns %q: %w", sentinelPath, err)

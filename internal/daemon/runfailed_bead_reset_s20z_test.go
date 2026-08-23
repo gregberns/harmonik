@@ -1,27 +1,5 @@
 package daemon_test
 
-// runfailed_bead_reset_s20z_test.go — bead is reset to open after run_failed (hk-s20z).
-//
-// When a run terminates with run_failed (no commit, no merge), the daemon MUST call
-// ReopenBead to transition the bead from in_progress back to open so that a
-// subsequent `harmonik queue dry-run --beads <id>` succeeds (not -32015
-// bead_already_dispatched).
-//
-// This test verifies the invariant using a stub beadLedger that records ReopenBead
-// calls. The handler is `/bin/sh -c "exit 1"` — it exits without committing,
-// triggering the no_commit_during_implementer failure path in beadRunOne.
-//
-// Assertions:
-//
-//	(a) ReopenBead is called on the stub ledger (bead reset to open).
-//	(b) run_failed event is emitted in the collector.
-//
-// Helper prefix: rfs20z (bead hk-s20z).
-// Namespace suffix: _s20z per hk-s20z CONCURRENCY NOTE (sibling hk-xfuc dispatches
-// concurrently; helpers must not collide on names).
-//
-// Bead: hk-s20z.
-
 import (
 	"context"
 	"os"
@@ -35,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rfs20z fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// rfs20zProjectDir creates the minimal project directory for this test:
-// .harmonik/events/ and .harmonik/beads-intents/.
 func rfs20zProjectDir_s20z(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -55,13 +27,6 @@ func rfs20zProjectDir_s20z(t *testing.T) string {
 	return dir
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rfs20zLedger — stub beadLedger that records ReopenBead calls
-// ─────────────────────────────────────────────────────────────────────────────
-
-// rfs20zLedger is a stub beadLedger for the run-failed bead-reset test.
-// It seeds one bead via Ready, records all ClaimBead and ReopenBead calls,
-// and signals via the reopened channel on the first ReopenBead call.
 type rfs20zLedger_s20z struct {
 	mu sync.Mutex
 
@@ -135,10 +100,6 @@ func (l *rfs20zLedger_s20z) getClaimCount_s20z() int {
 	return l.claimCount
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestRunFailed_BeadResetToOpen_s20z
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunFailed_BeadResetToOpen_s20z verifies that after run_failed (no commit),
 // the daemon calls ReopenBead to transition the bead back to open.
 //
@@ -174,9 +135,6 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeSingle,
 	})
 
-	// Allow enough headroom: worktree creation + process launch + no-commit
-	// detection + ReopenBead call. The handler exits instantly, so this is
-	// dominated by git worktree setup time (~1-2s).
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
@@ -186,10 +144,8 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for ReopenBead (bead reset to open) or test timeout.
 	select {
 	case <-ledger.reopened:
-		// ReopenBead observed — cancel the loop, then verify.
 		cancel()
 	case <-ctx.Done():
 		t.Errorf("TestRunFailed_BeadResetToOpen_s20z: timed out waiting for ReopenBead: "+
@@ -197,25 +153,13 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 			ledger.getClaimCount_s20z(), ledger.getReopenCount_s20z())
 	}
 
-	// Wait for the loop to exit.
 	awaitLoopTeardown(t, loopDone, "work loop")
-
-	// ── Assertion (a): ReopenBead was called ─────────────────────────────────
-	//
-	// ReopenBead transitions the bead from in_progress → open. Without this
-	// call, the bead is stuck in_progress and queue submit returns -32015.
 
 	if reopens := ledger.getReopenCount_s20z(); reopens < 1 {
 		t.Errorf("TestRunFailed_BeadResetToOpen_s20z: ReopenBead call count = %d; want >= 1 "+
 			"(bead must be reset to open after run_failed without commit — hk-s20z)",
 			reopens)
 	}
-
-	// ── Assertion (b): run_failed was emitted ────────────────────────────────
-	//
-	// The no_commit_during_implementer path calls ReopenBead THEN emits
-	// run_failed. We accept run_failed appearing anywhere in the collected
-	// events (the run terminal is emitted after ReopenBead returns).
 
 	runFailedFound := false
 	for _, et := range collector.eventTypes() {

@@ -17,12 +17,6 @@ import (
 	"path/filepath"
 )
 
-// twinSettingsFixture — per-bead helper prefix for test helpers in this file.
-// (Actual test helpers are in settings_test.go; prefix declared here as a
-// godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
-
-// cloneSettings holds the minimal subset of .claude/settings.json that the
-// twin needs to read. All other fields are ignored.
 type cloneSettings struct {
 	// permissionsPresent is true when the settings.json contained a
 	// dangerouslyAllowedPermissions key (presence is enough; value not interpreted).
@@ -37,9 +31,6 @@ type cloneSettings struct {
 	stopHookCommand string
 }
 
-// settingsHookEntry is the inner hook object shape per CHB-003:
-//
-//	{ "type": "command", "command": "harmonik", "args": [...], "timeout": 30 }
 type settingsHookEntry struct {
 	Type    string   `json:"type"`
 	Command string   `json:"command"`
@@ -47,16 +38,11 @@ type settingsHookEntry struct {
 	Timeout int      `json:"timeout"`
 }
 
-// settingsMatcherGroup is one entry in the event's hook array per CHB-003:
-//
-//	{ "matcher": "", "hooks": [...] }
 type settingsMatcherGroup struct {
 	Matcher string              `json:"matcher"`
 	Hooks   []settingsHookEntry `json:"hooks"`
 }
 
-// rawSettings is the minimal JSON shape of .claude/settings.json that the
-// twin parses. Unknown top-level fields are silently ignored by encoding/json.
 type rawSettings struct {
 	// DangerouslyAllowedPermissions is tested for presence via a custom
 	// json.RawMessage field: when the key is absent json.RawMessage is nil;
@@ -67,15 +53,6 @@ type rawSettings struct {
 	Hooks map[string][]settingsMatcherGroup `json:"hooks"`
 }
 
-// loadCloneSettings reads .claude/settings.json from worktreePath.
-//
-// Behaviour matrix (per bead body §Error handling):
-//   - File absent: returns valid cloneSettings with both flags false, no error.
-//   - Malformed JSON: returns error (caller emits error wire + exits 1).
-//   - Valid JSON: parses fields; returns populated cloneSettings.
-//
-// The caller (main.go) is responsible for emitting the twin_settings_loaded
-// wire message after this call.
 func loadCloneSettings(worktreePath string) (*cloneSettings, error) {
 	settingsPath := filepath.Join(worktreePath, ".claude", "settings.json")
 
@@ -83,8 +60,6 @@ func loadCloneSettings(worktreePath string) (*cloneSettings, error) {
 	raw, err := os.ReadFile(settingsPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			// Absent settings.json is normal: workflows may not need hooks.
-			// Return both-false with no error per bead error policy.
 			return &cloneSettings{}, nil
 		}
 		return nil, fmt.Errorf("loadCloneSettings: read %q: %w", settingsPath, err)
@@ -97,11 +72,8 @@ func loadCloneSettings(worktreePath string) (*cloneSettings, error) {
 
 	cs := &cloneSettings{}
 
-	// Permissions presence: DangerouslyAllowedPermissions is non-nil when the
-	// key is present in the JSON object, regardless of value.
 	cs.permissionsPresent = rs.DangerouslyAllowedPermissions != nil
 
-	// Stop hook: scan the Stop event's matcher groups for the first valid command.
 	if stopGroups, ok := rs.Hooks["Stop"]; ok {
 		for _, group := range stopGroups {
 			for _, entry := range group.Hooks {

@@ -6,8 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// errorsAllReasons is the exhaustive list of all QueueValidationReason values
-// defined in specs/queue-model.md §6.10 QM-029 and §6.11a QM-029b.
 var errorsAllReasons = []queue.QueueValidationReason{
 	queue.ReasonQueueAlreadyActive,
 	queue.ReasonAppendTargetInvalid,
@@ -21,8 +19,6 @@ var errorsAllReasons = []queue.QueueValidationReason{
 	queue.ReasonQueueNameInvalid,
 }
 
-// errorsExpectedCodes is the normative code-to-reason table per QM-029b.
-// Keys and values MUST match specs/queue-model.md §6.11a exactly.
 var errorsExpectedCodes = map[queue.QueueValidationReason]int{
 	queue.ReasonQueueAlreadyActive:    queue.ErrorCodeQueueAlreadyActive,
 	queue.ReasonAppendTargetInvalid:   queue.ErrorCodeAppendTargetInvalid,
@@ -36,8 +32,6 @@ var errorsExpectedCodes = map[queue.QueueValidationReason]int{
 	queue.ReasonQueueNameInvalid:      queue.ErrorCodeQueueNameInvalid,
 }
 
-// errorsExpectedMessages is the normative message-to-reason table per QM-029b.
-// Message strings mirror the wire-level reason strings per QM-029.
 var errorsExpectedMessages = map[queue.QueueValidationReason]string{
 	queue.ReasonQueueAlreadyActive:    "queue_already_active",
 	queue.ReasonAppendTargetInvalid:   "append_target_invalid",

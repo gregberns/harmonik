@@ -12,9 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// exitErrorWithCode runs a trivial shell that exits with the given code and
-// returns the resulting *exec.ExitError, so tests exercise the real
-// os.ProcessState exit-code semantics rather than a hand-rolled fake.
 func exitErrorWithCode(t *testing.T, code int) error {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit "+itoa(code))
@@ -25,9 +22,6 @@ func exitErrorWithCode(t *testing.T, code int) error {
 	return err
 }
 
-// killedExitError runs a process and SIGKILLs it, yielding an *exec.ExitError
-// whose ProcessState reports termination-by-signal (Exited()==false,
-// ExitCode()==-1) — the real OOM/SIGKILL shape the gate must treat as non-block.
 func killedExitError(t *testing.T) error {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", "sleep 60")
@@ -62,9 +56,6 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// skipScenarioGateSubprocessTests skips under -short: these tests spawn real
-// shell subprocesses to obtain *exec.ExitError values with genuine OS signal
-// shape. Excluded from the -race lane to de-saturate the ./... pass (hk-qpf2g).
 func skipScenarioGateSubprocessTests(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
@@ -73,7 +64,6 @@ func skipScenarioGateSubprocessTests(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_Pass(t *testing.T) {
-	// testErr == nil → tests passed → non-block.
 	res := classifyScenarioGateError(nil, nil, []byte("ok\tpkg\t0.5s\n"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked)
 	require.Empty(t, res.reason)
@@ -81,45 +71,37 @@ func TestClassifyScenarioGateError_Pass(t *testing.T) {
 
 func TestClassifyScenarioGateError_Killed(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// SIGKILL (the OOM shape) → gate could not produce a verdict → non-block.
 	killErr := killedExitError(t)
 	res := classifyScenarioGateError(nil, killErr, []byte("signal: killed"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked, "SIGKILL must NOT block (fail-open)")
 
-	// Also covered via the output marker even if the error shape were opaque.
 	res2 := classifyScenarioGateError(nil, exitErrorWithCode(t, 2), []byte("--- some output\nsignal: killed"), nil)
 	require.False(t, res2.blocked, "`signal: killed` output marker must NOT block")
 }
 
 func TestClassifyScenarioGateError_Timeout(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Gate context deadline exceeded → non-block.
 	res := classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked, "timeout must NOT block (fail-open)")
 
-	// Also when the timeout surfaces on testErr (errors.Is chain).
 	res2 := classifyScenarioGateError(nil, context.DeadlineExceeded, []byte(""), nil)
 	require.False(t, res2.blocked)
 }
 
 func TestClassifyScenarioGateError_CompileFail(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Exit code 2 from `go test` = build failure → non-block.
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 2), []byte("# pkg\n./x.go:1:1: undefined: Foo\nFAIL\tpkg [build failed]\n"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked, "compile/build failure must NOT block (fail-open)")
 
-	// `[setup failed]` marker even on exit code 1.
 	res2 := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), []byte("FAIL\tpkg [setup failed]\n"), nil)
 	require.False(t, res2.blocked, "[setup failed] must NOT block")
 
-	// build-constraints-exclude marker.
 	res3 := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), []byte("build constraints exclude all Go files in ...\n"), nil)
 	require.False(t, res3.blocked)
 }
 
 func TestClassifyScenarioGateError_GenuineTestFail(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Exit code 1 with a real --- FAIL marker = tests ran and failed → BLOCK.
 	out := []byte("--- FAIL: TestSomething (0.01s)\n    foo_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), out, []string{"./internal/daemon/..."})
 	require.True(t, res.blocked, "a genuine test FAILURE must BLOCK")
@@ -128,7 +110,6 @@ func TestClassifyScenarioGateError_GenuineTestFail(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_Unclassified(t *testing.T) {
-	// A non-ExitError error we cannot positively classify as RED → fail-open.
 	res := classifyScenarioGateError(nil, errors.New("exec: \"go\": executable file not found in $PATH"), []byte(""), nil)
 	require.False(t, res.blocked, "unclassified gate-infra error must NOT block (fail-open)")
 }
@@ -159,9 +140,6 @@ func TestIsGenuineTestFailure(t *testing.T) {
 	require.False(t, isGenuineTestFailure(errors.New("plain"), "--- FAIL"))
 }
 
-// genuineFailResult builds the scenarioGateResult that classifyScenarioGateError
-// returns for a genuine exit-1 `--- FAIL` (the shape AllReachMerge /
-// CaptainCrewE2E produce when they flake under load).
 func genuineFailResult(t *testing.T) scenarioGateResult {
 	t.Helper()
 	out := []byte("--- FAIL: TestAllReachMerge (0.01s)\n    x_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
@@ -171,7 +149,6 @@ func genuineFailResult(t *testing.T) scenarioGateResult {
 }
 
 func TestScenarioGateWithRetry_PassFirstRun(t *testing.T) {
-	// A clean first run never retries and never blocks.
 	calls := 0
 	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
 		calls++
@@ -183,9 +160,6 @@ func TestScenarioGateWithRetry_PassFirstRun(t *testing.T) {
 
 func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Genuine FAIL on run 1, pass on run 2 = load-induced flake → fail-open
-	// (hk-5em). This is the AllReachMerge / CaptainCrewE2E-under-load case the
-	// old gate false-blocked.
 	calls := 0
 	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
 		calls++
@@ -201,8 +175,6 @@ func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
 
 func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Genuine FAIL on both runs = deterministic regression → BLOCK. A real
-	// code-break must still be caught; retry does not weaken coverage.
 	calls := 0
 	want := genuineFailResult(t)
 	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
@@ -217,16 +189,12 @@ func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
 
 func TestScenarioGateWithRetry_FlakyThenNonBlockInfra(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
-	// Genuine FAIL on run 1, then a non-block infra outcome (e.g. timeout /
-	// SIGKILL) on retry → still fail-open. The retry being non-block for ANY
-	// reason means we did not confirm a deterministic regression.
 	calls := 0
 	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
 		calls++
 		if calls == 1 {
 			return genuineFailResult(t)
 		}
-		// Retry surfaces as a timeout (non-block per classifyScenarioGateError).
 		return classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
 	})
 	require.False(t, res.blocked, "an unconfirmed first-run FAIL (retry non-block) must NOT block")
@@ -253,10 +221,8 @@ func TestFileToGoPackagePattern(t *testing.T) {
 
 func TestIsScenarioTouching_PathPrefix(t *testing.T) {
 	dir := t.TempDir()
-	// Files under test/scenario/ are always scenario-touching regardless of content.
 	require.True(t, isScenarioTouching(dir, "test/scenario/foo_test.go"))
 	require.True(t, isScenarioTouching(dir, "internal/scenario/bar.go"))
-	// Files outside those paths that are not Go files are not scenario-touching.
 	require.False(t, isScenarioTouching(dir, "internal/daemon/workloop.go"))
 }
 
@@ -269,19 +235,15 @@ func TestIsScenarioTouching_BuildTag(t *testing.T) {
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
 	}
 
-	// File with //go:build scenario → touching.
 	write("internal/daemon/x_test.go", "//go:build scenario\n\npackage daemon\n")
 	require.True(t, isScenarioTouching(dir, "internal/daemon/x_test.go"))
 
-	// File with legacy // +build scenario → touching.
 	write("internal/daemon/y_test.go", "// +build scenario\n\npackage daemon\n")
 	require.True(t, isScenarioTouching(dir, "internal/daemon/y_test.go"))
 
-	// Ordinary Go file without the tag → not touching.
 	write("internal/daemon/z.go", "package daemon\n")
 	require.False(t, isScenarioTouching(dir, "internal/daemon/z.go"))
 
-	// Non-existent file → not touching (conservative).
 	require.False(t, isScenarioTouching(dir, "internal/daemon/missing.go"))
 }
 

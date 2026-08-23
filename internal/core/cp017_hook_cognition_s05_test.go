@@ -1,27 +1,5 @@
 package core
 
-// cp017_hook_cognition_s05_test.go — conformance tests for CP-017.
-//
-// specs/control-points.md §4.3.CP-017:
-//
-//	Hook evaluator MAY be cognition-tagged
-//	A Hook's evaluator MAY be cognition-tagged (e.g., an on_review_required Hook
-//	that delegates to a reviewer agent). Cognition-tagged Hook evaluators MUST
-//	satisfy the replay-safety contract of §4.8. The delegation path — role,
-//	model class, input shape, response schema — MUST be named on the Hook record.
-//
-// Coverage (§7.2 three-path logic + structural invariants):
-//  1. First invocation: evaluator called once; mechanical fields are stamped.
-//  2. Replay — hash match: evaluator NOT called; persisted verdict returned.
-//  3. Replay — hash mismatch: ErrHookVerdictEnvelopeMismatch returned; evaluator NOT called.
-//  4. Evaluator error: error propagated; no verdict returned.
-//  5. Reader error: error propagated; evaluator NOT called.
-//  6. Mechanism-tagged ControlPoint: error returned immediately (invariant guard).
-//  7. Cognition-tagged ControlPoint with nil DelegationPath: error returned (invariant guard).
-//  8. Mechanical fields (HookName, InvocationID) are stamped from the caller's parameters.
-//
-// Refs: hk-a8bg.43
-
 import (
 	"context"
 	"errors"
@@ -32,9 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── test-local stubs ──────────────────────────────────────────────────────────
-
-// cp017StubEval is a stub CognitionHookEvaluator that records call count.
 type cp017StubEval struct {
 	returnVerdict HookVerdictRecord
 	returnErr     error
@@ -46,7 +21,6 @@ func (e *cp017StubEval) EvaluateCognitionHook(_ context.Context, _ ControlPoint,
 	return e.returnVerdict, e.returnErr
 }
 
-// cp017StubReader is a stub HookVerdictReader.
 type cp017StubReader struct {
 	found   bool
 	verdict HookVerdictRecord
@@ -57,13 +31,10 @@ func (r *cp017StubReader) LookupHookVerdict(_ context.Context, _ RunID, _ uuid.U
 	return r.verdict, r.found, r.readErr
 }
 
-// Compile-time interface satisfaction checks.
 var (
 	_ CognitionHookEvaluator = (*cp017StubEval)(nil)
 	_ HookVerdictReader      = (*cp017StubReader)(nil)
 )
-
-// ── fixtures ──────────────────────────────────────────────────────────────────
 
 func cp017FixtureRun(t *testing.T) *Run {
 	t.Helper()
@@ -89,8 +60,6 @@ func cp017FixtureInvocationID(t *testing.T) uuid.UUID {
 	return uuid.Must(uuid.NewV7())
 }
 
-// cp017FixtureCognitionHook returns a cognition-tagged Hook ControlPoint with
-// a fully-populated DelegationPath.
 func cp017FixtureCognitionHook(t *testing.T, name string) ControlPoint {
 	t.Helper()
 	dp := DelegationPath{
@@ -116,7 +85,6 @@ func cp017FixtureCognitionHook(t *testing.T, name string) ControlPoint {
 	}
 }
 
-// cp017FixtureSideEffect returns a valid SideEffect for use in test HookVerdictRecord construction.
 func cp017FixtureSideEffect(t *testing.T) SideEffect {
 	t.Helper()
 	return SideEffect{
@@ -127,9 +95,6 @@ func cp017FixtureSideEffect(t *testing.T) SideEffect {
 	}
 }
 
-// cp017ComputeExpectedHash computes the hash that InvokeCognitionHook should
-// produce for the given cp, run, and triggeringEventID. Used in tests that
-// pre-seed the reader with a correctly-hashed persisted verdict.
 func cp017ComputeExpectedHash(t *testing.T, cp ControlPoint, run *Run, triggeringEventID EventID) string {
 	t.Helper()
 	hash, err := computeHookEnvelopeHash(cp, run, triggeringEventID)
@@ -138,8 +103,6 @@ func cp017ComputeExpectedHash(t *testing.T, cp ControlPoint, run *Run, triggerin
 	}
 	return hash
 }
-
-// ── CP-017 §1: first invocation ───────────────────────────────────────────────
 
 // TestCP017_FirstInvocation_EvaluatorCalledOnce verifies that on first invocation
 // (no prior verdict), the cognition evaluator is called exactly once and the
@@ -173,33 +136,26 @@ func TestCP017_FirstInvocation_EvaluatorCalledOnce(t *testing.T) {
 		t.Fatalf("CP-017: unexpected error: %v", err)
 	}
 
-	// Evaluator must have been called exactly once (first invocation).
 	if eval.callCount != 1 {
 		t.Errorf("CP-017: evaluator called %d times, want 1 (first invocation)", eval.callCount)
 	}
 
-	// HookName must be stamped from the ControlPoint, not the evaluator's value.
 	if verdict.HookName != cp.Name {
 		t.Errorf("CP-017: verdict.HookName = %q, want %q (stamped from ControlPoint)", verdict.HookName, cp.Name)
 	}
 
-	// InvocationID must be stamped from the caller's invocationID parameter.
 	if verdict.InvocationID != invID {
 		t.Errorf("CP-017: verdict.InvocationID = %v, want %v (stamped from parameter)", verdict.InvocationID, invID)
 	}
 
-	// InputEnvelopeHash must be non-empty and 64-char lowercase hex.
 	if len(verdict.InputEnvelopeHash) != 64 {
 		t.Errorf("CP-017: InputEnvelopeHash len = %d, want 64 (SHA-256 hex)", len(verdict.InputEnvelopeHash))
 	}
 
-	// ProducedAt must be non-empty.
 	if verdict.ProducedAt == "" {
 		t.Error("CP-017: ProducedAt is empty; InvokeCognitionHook must stamp ProducedAt")
 	}
 }
-
-// ── CP-017 §2: replay — hash match ───────────────────────────────────────────
 
 // TestCP017_Replay_HashMatch_EvaluatorNotCalled verifies that when a persisted
 // verdict exists with a matching envelope hash, the evaluator is NOT called and
@@ -234,13 +190,11 @@ func TestCP017_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 		t.Fatalf("CP-017: unexpected error on replay: %v", err)
 	}
 
-	// Evaluator MUST NOT be called on replay (idempotency=idempotent).
 	if eval.callCount != 0 {
 		t.Errorf("CP-017: evaluator called %d times on replay, want 0 "+
 			"(CP-INV-003: persisted verdict must be reused without re-invoking the model)", eval.callCount)
 	}
 
-	// Returned verdict must be the persisted one.
 	if verdict.HookName != persistedVerdict.HookName {
 		t.Errorf("CP-017: replay returned verdict.HookName = %q, want %q", verdict.HookName, persistedVerdict.HookName)
 	}
@@ -248,8 +202,6 @@ func TestCP017_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 		t.Errorf("CP-017: replay returned verdict.InputEnvelopeHash = %q, want %q", verdict.InputEnvelopeHash, correctHash)
 	}
 }
-
-// ── CP-017 §3: replay — hash mismatch ────────────────────────────────────────
 
 // TestCP017_Replay_HashMismatch_ReturnsEnvelopeMismatchError verifies that when
 // a persisted verdict exists but its envelope hash does not match the current
@@ -305,13 +257,10 @@ func TestCP017_Replay_HashMismatch_ReturnsEnvelopeMismatchError(t *testing.T) {
 		t.Error("CP-017: mismatch error StoredHash == CurrentHash; hashes should differ")
 	}
 
-	// Evaluator MUST NOT be called on hash mismatch.
 	if eval.callCount != 0 {
 		t.Errorf("CP-017: evaluator called %d times on hash mismatch, want 0", eval.callCount)
 	}
 }
-
-// ── CP-017 §4: evaluator error ────────────────────────────────────────────────
 
 // TestCP017_EvaluatorError_PropagatesError verifies that when the cognition
 // evaluator returns an error, InvokeCognitionHook propagates it and no verdict
@@ -336,13 +285,10 @@ func TestCP017_EvaluatorError_PropagatesError(t *testing.T) {
 		t.Errorf("CP-017: error chain does not include original dispatch error: %v", err)
 	}
 
-	// Evaluator was called (dispatch was attempted).
 	if eval.callCount != 1 {
 		t.Errorf("CP-017: evaluator callCount = %d, want 1 (dispatch was attempted)", eval.callCount)
 	}
 }
-
-// ── CP-017 §5: reader error ───────────────────────────────────────────────────
 
 // TestCP017_ReaderError_PropagatesError verifies that when the HookVerdictReader
 // returns an error, InvokeCognitionHook propagates it and does NOT call the
@@ -367,13 +313,10 @@ func TestCP017_ReaderError_PropagatesError(t *testing.T) {
 		t.Errorf("CP-017: error chain does not include original read error: %v", err)
 	}
 
-	// Evaluator MUST NOT be called when the reader fails.
 	if eval.callCount != 0 {
 		t.Errorf("CP-017: evaluator called %d times despite reader error, want 0", eval.callCount)
 	}
 }
-
-// ── CP-017 §6: mechanism-tagged ControlPoint rejected ────────────────────────
 
 // TestCP017_MechanismTaggedCP_ReturnsError verifies that InvokeCognitionHook
 // returns an error when called with a mechanism-tagged ControlPoint.
@@ -408,13 +351,10 @@ func TestCP017_MechanismTaggedCP_ReturnsError(t *testing.T) {
 		t.Fatal("CP-017: expected error for mechanism-tagged ControlPoint, got nil")
 	}
 
-	// Evaluator and reader MUST NOT be called.
 	if eval.callCount != 0 {
 		t.Errorf("CP-017: evaluator called on mechanism-tagged CP, want 0 calls")
 	}
 }
-
-// ── CP-017 §7: nil DelegationPath rejected ────────────────────────────────────
 
 // TestCP017_NilDelegationPath_ReturnsError verifies that InvokeCognitionHook
 // returns an error when the ControlPoint claims ModeTagCognition but has a nil
@@ -449,8 +389,6 @@ func TestCP017_NilDelegationPath_ReturnsError(t *testing.T) {
 		t.Fatal("CP-017: expected error for nil DelegationPath, got nil")
 	}
 }
-
-// ── CP-017 §8: mechanical fields are stamped from caller parameters ───────────
 
 // TestCP017_MechanicalFields_StampedFromParameters verifies that HookName and
 // InvocationID in the returned verdict are taken from cp.Name and the

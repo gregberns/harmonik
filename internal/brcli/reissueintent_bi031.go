@@ -1,21 +1,5 @@
 package brcli
 
-// reissueintent_bi031.go — BI-031 step-4 re-drive: re-issue a stale pre-state
-// terminal-transition write at adapter startup.
-//
-// At daemon startup, GCRetiredIntents finds intent files whose bead is still at
-// the pre-state for the recorded op (the prior `br` invocation was interrupted
-// before it completed). The spec (beads-integration.md §4.10 BI-031 step 4)
-// requires the adapter to re-issue the `br` write using the same idempotency_key
-// rather than leaving the intent file for Cat 3a reconciliation.
-//
-// This method skips BI-030 steps 1–4 (the intent file is already durably
-// written on disk from the prior run) and proceeds directly to step 5 (invoke
-// `br`) and step 6 (delete the intent file on success).
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4 (4a–4f).
-// Bead ref: hk-aev8t (G3 fix — step-4 re-drive missing).
-
 import (
 	"context"
 	"fmt"
@@ -54,7 +38,6 @@ func (a *Adapter) ReissueTerminalTransition(
 	cfg TimeoutConfig,
 	entry core.IntentLogEntry,
 ) error {
-	// Derive the br argv for this op — same args used by the original write.
 	var brArgs []string
 	switch entry.Op {
 	case core.TerminalOpClaim:
@@ -69,80 +52,39 @@ func (a *Adapter) ReissueTerminalTransition(
 		return fmt.Errorf("brcli.ReissueTerminalTransition: unsupported op %q for bead %s", entry.Op, entry.BeadID)
 	}
 
-	// Serialize with concurrent terminal writes per BI-025e (hk-hdbls).
 	a.terminalMu.Lock()
 	defer a.terminalMu.Unlock()
 
-	// BI-031 step 5 re-issue: invoke br with the UnavailableRetryMax budget
-	// (step 4c-transient) via RunWithDBLockedRetry.  The BI-030 intent file
-	// backing provides idempotency across all retry attempts.
 	retryMax, retryBase, retryCap := cfg.terminalWriteRetryParams()
 	result, err := a.RunWithDBLockedRetry(
 		ctx, cfg, CommandKindWrite, retryMax, retryBase, retryCap, brArgs...,
 	)
 	if err != nil {
-		// (4d) BrUnavailable — retry budget exhausted or binary missing.
-		// Intent file retained; daemon will degrade per ON-037.
 		return fmt.Errorf("brcli.ReissueTerminalTransition: br unavailable (op=%s bead=%s): %w", entry.Op, entry.BeadID, err)
 	}
 
 	switch result.BrErr {
 	case BrOK:
-		// (4a) Write completed successfully.  BI-031 step 6: delete intent file.
-		// Keep the ownership sentinel in step with the op first: brcli's claim
-		// gate reads it as proof of "we own this bead", so a re-drive that moves
-		// a bead without touching it leaves a lie on disk. A re-driven close,
-		// reopen or reset that left the sentinel behind would later credit a
-		// claim on a bead another actor holds. A re-driven claim that wrote no
-		// sentinel would later refuse a bead that is genuinely ours.
 		a.syncOwnershipSentinel(entry.Op, entry.BeadID)
 		if delErr := DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey); delErr != nil {
-			// Write succeeded; stale intent file will be resolved by BI-031 GC
-			// on the next startup (gcIntentOpLanded will return true).
 			return fmt.Errorf("brcli.ReissueTerminalTransition: step-6 delete intent (op=%s bead=%s): %w", entry.Op, entry.BeadID, delErr)
 		}
 		return nil
 
 	case BrConflict:
-		// (4b) A concurrent writer may have landed the transition between step 2
-		// and step 4.  Re-execute step 3: re-read ShowBead and check whether the
-		// bead has reached IntendedPostState.  terminalMu is already held so no
-		// new concurrent writes can race during the read.
 		record, showErr := a.ShowBead(ctx, entry.BeadID)
 		if showErr == nil && record.Status == entry.IntendedPostState {
-			// Post-state confirmed.  BI-031 step 6: delete intent file.
-			// Same sentinel bookkeeping as the BrOK path: the bead reached the
-			// post-state, so our ownership marker must match it.
 			a.syncOwnershipSentinel(entry.Op, entry.BeadID)
-			// best-effort: stale file resolved by BI-031 GC on next startup if this fails.
 			_ = DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey) //nolint:errcheck // best-effort; startup GC resolves a retained intent
 			return nil
 		}
-		// Cannot confirm post-state — retain intent for Cat 3a auto-resolver.
 		return fmt.Errorf("brcli.ReissueTerminalTransition: BrConflict (op=%s bead=%s): post-state unconfirmed — retaining intent for Cat 3a", entry.Op, entry.BeadID)
 
 	default:
-		// (4e) BrSchemaMismatch — schema drift; divergence_inconclusive.
-		// (4f) BrOther — unrecognised exit; divergence_inconclusive; Cat 6b.
-		// In both cases the intent file is retained so reconciliation can route
-		// appropriately.
 		return fmt.Errorf("brcli.ReissueTerminalTransition: op=%s bead=%s br error %w (exit %d): retaining intent for Cat 3a/6b routing", entry.Op, entry.BeadID, result.BrErr, result.ExitCode)
 	}
 }
 
-// syncOwnershipSentinel brings the beads-owned ownership sentinel into step with
-// a terminal op that has just landed. A claim gains the sentinel. A close,
-// reopen or reset clears it. Any other op leaves it alone.
-//
-// ClaimBead, CloseBead, ReopenBead and ResetBead each do this inline for the
-// writes they issue. ReissueTerminalTransition re-drives those same writes at
-// crash-recovery boot, so it has to do the same bookkeeping or it leaves the
-// sentinel disagreeing with the ledger. That matters because
-// Adapter.postStateIsOurs reads the sentinel as sole proof of "we own this
-// bead" when it decides whether a refused claim may be credited.
-//
-// Both calls are best-effort, matching every other sentinel call site. A miss
-// degrades to the intent-log provenance signal.
 func (a *Adapter) syncOwnershipSentinel(op core.TerminalOp, beadID core.BeadID) {
 	switch op {
 	case core.TerminalOpClaim:

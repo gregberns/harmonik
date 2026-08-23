@@ -2,10 +2,6 @@ package handlercontract
 
 import "time"
 
-// sessionLogLoc — per-bead helper prefix for test helpers in
-// sessionlogloc_hc010_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.11).
-
 // SessionLogLocationMsg is the on-wire NDJSON message the handler subprocess
 // MUST emit early in the session — after handler_capabilities and before
 // skills_provisioned / agent_ready — to announce the session-log path.

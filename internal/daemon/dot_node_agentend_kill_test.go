@@ -1,45 +1,5 @@
 package daemon_test
 
-// dot_node_agentend_kill_test.go — a kill the daemon issued because the agent
-// said it was finished must not be read as a crash the agent suffered.
-//
-// Pi announces the end of its turn on its own NDJSON stdout
-// (`{"type":"agent_end"}`) and its process exit is unreliable, so the daemon
-// SIGTERMs it ON that announcement. Every kill arrives at the wait as the same
-// three facts — SIGTERM, exit code -1, "signal: terminated" — and the DOT
-// terminal classifier required exit 0. So a Pi node that read the task, made
-// the change and committed it with a valid Refs: trailer was recorded
-// `agent_failed class=structural sub_reason=claude_crashed exit=-1`, its bead
-// was reopened and its commit was thrown away.
-//
-// Four tests in two kinds, and the two kinds are deliberately different:
-//
-//   - two run tests drive the real sequence end to end — a real /bin/sh child
-//     on the exec path, the real Pi stdout interceptor, the real announcement
-//     kill, the real signal death — and assert on what the run DID to the
-//     bead. One announces an end that is real; the other announces an end it is
-//     about to retry. Neither names the exemption, so both stay true whatever
-//     mechanism carries it.
-//   - two tables hold the classifier FAIL-CLOSED. The exemption withdraws a
-//     claim about how the process died and nothing more, so an unannounced
-//     signal death, a watcher that could not read the stream, and a reported
-//     FAILURE_SIGNAL must all still fail — and only a direct call can put those
-//     three inputs beside the announcement.
-//
-// WHAT THE RUN TESTS DO NOT COVER. The fixture runs /bin/sh in place of Pi, so
-// real argv, the env strip, models.json, PI_CODING_AGENT_DIR and the billing
-// guard never execute here. The commit that added the retry test said the three
-// pi launch e2e files cover them. That is wrong. A reviewer disabled the
-// billing guard and deleted the PI_CODING_AGENT_DIR env append in
-// internal/harness/pi/launchspec.go, and all three of
-// hk_pkugu_pi_launch_e2e_test.go, hk_lfrub_dot_pi_launch_e2e_test.go and
-// hk_6atjk_pi_path_e2e_test.go stayed green — they assert the --model argv
-// token, the models.json body and PATH, and nothing more. The cover for the
-// rest is internal/harness/pi/launchspec_test.go,
-// internal/harness/pi/billingguard_test.go and
-// harnessregistry_pi_remote_runner_m4c4_test.go. Only the citation was wrong:
-// nothing in this file touches any of that behaviour.
-
 import (
 	"errors"
 	"os"
@@ -53,54 +13,15 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// dotFixtureAgentEndThenLingerHandler writes an implementer that behaves the
-// way a real Pi turn behaves at its end: it commits real work, announces the
-// end of its turn on stdout, and then DOES NOT EXIT.
-//
-// The lingering is the whole point. An implementer that announced and then
-// exited 0 would be judged on the exit code it produced itself, and would pass
-// before the fix as readily as after it — which is exactly how this defect hid:
-// a Pi run passed when it happened to die before the SIGTERM landed and failed
-// whenever the announcement kill actually did its job. Lingering makes the
-// daemon's kill the thing that ends the process every time, so the wait always
-// reports the signal death this test is about.
-//
-// The loop sleeps rather than blocking forever, the same reason test/twins/hang
-// documents for the hanging twin: a shell parked on a blocking wait with no
-// timer pending is a shell that can be optimised or scheduled into looking dead
-// on its own, and a twin that dies by itself is a condition the test never
-// produced. A one-second period also bounds how long the shell can take to
-// notice a signal on any /bin/sh.
 func dotFixtureAgentEndThenLingerHandler(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-agent-end-linger.sh",
 		dotFixtureCommitLines(bead)+
-			// The session header is Pi's first line and the daemon's proof the
-			// child spawned; the announcement is its terminal event.
 			`printf '{"type":"session","version":3,"id":"pi-fixture-session"}\n'`+"\n"+
 			`printf '{"type":"agent_end","messages":[]}\n'`+"\n"+
 			"while :; do sleep 1; done\n")
 }
 
-// dotFixtureAgentEndWillRetryHandler writes an implementer that behaves the way
-// a real Pi turn behaves when the model endpoint refuses a connection: it
-// commits, announces the end of a turn it is about to RETRY, waits out its own
-// backoff, and only then announces the end that is real.
-//
-// Pi stamps willRetry on every agent_end and emits one before each attempt. The
-// daemon used to end the session on the first announcement whatever the flag
-// said, so the SIGTERM landed inside the backoff — two seconds before Pi would
-// have tried again. The marker write after the sleep is the thing the kill used
-// to prevent, so its presence is the whole assertion.
-//
-// The TERM trap costs nothing and turns the failure from an absent file into a
-// file that says what happened, which is worth more to whoever reads a red test
-// than a bare "marker missing".
-//
-// The path enters the script once, as a single-quoted assignment, and every use
-// after that reads the variable in double quotes. A $TMPDIR that holds a space
-// would otherwise split the redirect targets, and the test would report a
-// missing marker for the wrong reason — a real failure made hard to read.
 func dotFixtureAgentEndWillRetryHandler(t *testing.T, bead core.BeadID, markerPath string) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-agent-end-willretry.sh",
@@ -108,15 +29,10 @@ func dotFixtureAgentEndWillRetryHandler(t *testing.T, bead core.BeadID, markerPa
 			"trap 'echo killed-during-backoff > \"${marker}.bad\"; exit 143' TERM\n"+
 			dotFixtureCommitLines(bead)+
 			`printf '{"type":"session","version":3,"id":"pi-fixture-session"}\n'`+"\n"+
-			// Not terminal. Pi is announcing a retry, not an ending.
 			`printf '{"type":"agent_end","messages":[],"willRetry":true}\n'`+"\n"+
 			`printf '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}\n'`+"\n"+
-			// Pi's real backoff. Kill latency is sub-millisecond against this,
-			// so the buggy and the fixed outcomes are three orders of magnitude
-			// apart and the test is decided by causal order, not by a race.
 			"sleep 2\n"+
 			"echo survived > \"${marker}\"\n"+
-			// Terminal: no flag, so the watcher must end the session here.
 			`printf '{"type":"agent_end","messages":[]}\n'`+"\n"+
 			"while :; do sleep 1; done\n")
 }
@@ -141,8 +57,6 @@ func TestDotNode_PiAgentEndWithWillRetryDoesNotKillDuringTheBackoff(t *testing.T
 
 	const beadID = core.BeadID("hk-pi-agentend-willretry-survives")
 
-	// Outside the worktree on purpose: the marker is evidence about the child's
-	// lifetime and must not become part of what the run merges.
 	markerPath := filepath.Join(t.TempDir(), "survived-the-backoff")
 
 	opts := dotFixtureProcessExitOpts(t, core.AgentTypePi,
@@ -154,13 +68,6 @@ func TestDotNode_PiAgentEndWithWillRetryDoesNotKillDuringTheBackoff(t *testing.T
 
 	events := res.Bus.eventTypes()
 
-	// This is the only assertion here that fires on the regression. A reviewer
-	// removed the fix and ran the test: the buggy daemon still emits bead_closed
-	// and run_completed, so the reopened, closed and run_failed checks below all
-	// pass on broken code. Delete this block to "simplify" the test and the test
-	// stays green while the regression it guards walks free. The three checks
-	// below state the other half of the contract — the run must still END — and
-	// they are worth keeping for that. They are not a second detector.
 	if _, err := os.Stat(markerPath); err != nil {
 		detail := "the marker was never written"
 		if _, bad := os.Stat(markerPath + ".bad"); bad == nil {
@@ -177,12 +84,6 @@ func TestDotNode_PiAgentEndWithWillRetryDoesNotKillDuringTheBackoff(t *testing.T
 		t.Errorf("bead %s was REOPENED although its agent retried and then finished (reopened=%v, events=%v)",
 			beadID, reopened, events)
 	}
-	// The message below cannot print. A watcher that suppressed the retry
-	// announcement and then never re-armed leaves the run with no terminal
-	// transition at all, so runDotFixtureBead fails first, on its own 50-second
-	// deadline, with generic text about a bead that reached no terminal
-	// transition. Read that failure as this one: the retry announcement was
-	// swallowed and the real announcement never ended the session.
 	if closed := res.Ledger.closedIDs(); !slices.Contains(closed, beadID) {
 		t.Errorf("bead %s was not closed after the terminal agent_end (closed=%v, events=%v).\n"+
 			"Suppressing a retry announcement must not disarm the watcher: the real announcement still has to end the session,\n"+
@@ -208,10 +109,7 @@ func TestDotNode_PiAgentEndKillAfterACommitClosesTheBead(t *testing.T) {
 
 	opts := dotFixtureProcessExitOpts(t, core.AgentTypePi,
 		dotFixtureAgentEndThenLingerHandler(t, beadID))
-	// Nothing on the hook socket: the Pi harness has no Stop hook to report one.
 	opts.HookOutcome = ""
-	// Hold the loop open until the run itself reaches a terminal event, so the
-	// run_failed assertion below reads a bus that has finished talking.
 	opts.WaitForRunTerminal = true
 
 	res := runDotFixtureBead(t, beadID, opts)
@@ -245,7 +143,6 @@ func TestDotNode_PiAgentEndKillAfterACommitClosesTheBead(t *testing.T) {
 func TestDotNodeTerminalFailure_AnnouncedEndIsExemptOnlyFromTheExitCode(t *testing.T) {
 	t.Parallel()
 
-	// The signal death every daemon-issued kill produces, announced or not.
 	const killedExitCode = -1
 
 	failureSignal := &handler.ExportedOutcomeEmittedPayload{

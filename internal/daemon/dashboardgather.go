@@ -1,15 +1,5 @@
 package daemon
 
-// dashboardgather.go — DashboardBuilder for `harmonik dashboard` (hk-2exz9).
-//
-// DashboardBuilder joins LiveStateBuilder.Build() with captain-curated files
-// (dashboard.json, lanes.json), a windowed session-data.jsonl aggregation,
-// open decisions, and active stall signals from events.jsonl.
-// Read-only; no new persisted store.
-//
-// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §2.
-// Bead ref: hk-2exz9.
-
 import (
 	"context"
 	"encoding/json"
@@ -53,10 +43,8 @@ func NewDashboardBuilder(stateBuilder *LiveStateBuilder, projectDir, eventsPath 
 func (b *DashboardBuilder) Build(ctx context.Context) DashboardSnapshot {
 	now := time.Now().UTC()
 
-	// Tier A: live state (reuse verbatim).
 	stateSnap := b.state.Build(ctx)
 
-	// Collect active run IDs for stall cross-reference.
 	activeRunIDs := make(map[string]bool, len(stateSnap.Runs))
 	for _, r := range stateSnap.Runs {
 		activeRunIDs[r.RunID] = true
@@ -68,25 +56,18 @@ func (b *DashboardBuilder) Build(ctx context.Context) DashboardSnapshot {
 		State:         stateSnap,
 	}
 
-	// Tier B: captain-curated planning layer.
 	snap.Config = b.readDashboardConfig()
 	snap.Lanes = b.readLanes()
 
-	// Open decisions (hitl-decisions K3 projection).
 	snap.OpenDecisions = b.readOpenDecisions()
 
-	// Active stalls from events.jsonl.
 	snap.ActiveStalls = b.readActiveStalls(now, activeRunIDs)
 
-	// Windowed throughput from session-data.jsonl.
 	snap.Throughput = b.readThroughput(now)
 
 	return snap
 }
 
-// readDashboardConfig reads .harmonik/context/dashboard.json.
-// Returns nil when the file is absent or malformed (the file is optional —
-// it starts empty until the captain creates it).
 func (b *DashboardBuilder) readDashboardConfig() *DashboardConfig {
 	if b.projectDir == "" {
 		return nil
@@ -103,8 +84,6 @@ func (b *DashboardBuilder) readDashboardConfig() *DashboardConfig {
 	return &cfg
 }
 
-// readLanes reads .harmonik/context/lanes.json.
-// Returns nil slice when the file is absent or malformed.
 func (b *DashboardBuilder) readLanes() []DashLane {
 	if b.projectDir == "" {
 		return nil
@@ -121,7 +100,6 @@ func (b *DashboardBuilder) readLanes() []DashLane {
 	return lf.Lanes
 }
 
-// readOpenDecisions projects the hitl-decisions open set from events.jsonl.
 func (b *DashboardBuilder) readOpenDecisions() []DashDecision {
 	if b.eventsPath == "" {
 		return nil
@@ -146,8 +124,6 @@ func (b *DashboardBuilder) readOpenDecisions() []DashDecision {
 	return out
 }
 
-// readActiveStalls scans events.jsonl for stall_detected events within the
-// last dashStallWindowH hours whose run_id is still in activeRunIDs.
 func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[string]bool) []DashStall {
 	if b.eventsPath == "" {
 		return nil
@@ -161,7 +137,6 @@ func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[stri
 		if ev.Type != core.EventTypeStallDetected {
 			continue
 		}
-		// Filter by window using the wall timestamp.
 		if !ev.TimestampWall.IsZero() && ev.TimestampWall.Before(cutoff) {
 			continue
 		}
@@ -172,7 +147,6 @@ func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[stri
 		if !p.Valid() {
 			continue
 		}
-		// Only report stalls for currently-active runs.
 		if !activeRunIDs[p.RunID] {
 			continue
 		}
@@ -186,11 +160,6 @@ func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[stri
 	return out
 }
 
-// readThroughput reads a windowed roll-up from session-data.jsonl (hk-r22bd):
-// beads closed, mean/p50 wall-time, and tokens+cost per outcome, grouped by
-// crew/queue/harness/model. session-data.jsonl is a SOFT dependency (WS1,
-// plans/2026-07-03-eval-program) — absent file degrades this axis to
-// {available: false} rather than blocking the dashboard.
 func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 	if b.projectDir == "" {
 		return &DashThroughput{Available: false}
@@ -209,8 +178,6 @@ func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 		return &DashThroughput{Available: true, WindowH: throughputWindowH}
 	}
 
-	// queue → lane / crew, joined from lanes.json. Session-data records carry
-	// queue_id, not lane or crew directly.
 	queueToLane := make(map[string]string)
 	queueToCrew := make(map[string]string)
 	for _, l := range b.readLanes() {
@@ -342,8 +309,6 @@ func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 	}
 }
 
-// groupKey identifies one crew/queue/harness/model roll-up bucket. Crew is
-// joined from lanes.json (queue→crew); empty when the queue has no lane entry.
 type groupKey struct {
 	Crew    string
 	Queue   string
@@ -351,7 +316,6 @@ type groupKey struct {
 	Model   string
 }
 
-// outcomeAgg accumulates tokens+cost for one outcome within a group.
 type outcomeAgg struct {
 	count   int
 	tokens  sessiondata.TokenUsage
@@ -369,7 +333,6 @@ func meanF(xs []float64) float64 {
 	return sum / float64(len(xs))
 }
 
-// medianF returns the p50 of xs. Does not mutate xs.
 func medianF(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0

@@ -1,20 +1,5 @@
 package core
 
-// wipcapture_rc019.go — WIPCapture: work-in-progress snapshot captured by the
-// reconciliation investigator before emitting a reopen-bead verdict (RC-019).
-//
-// Spec ref: specs/reconciliation/spec.md §4.4 RC-019.
-//
-// RC-019 requires the investigator to capture any recoverable WIP from the
-// outer run's worktree before emitting reopen-bead. The capture is mandatory
-// for reopen-bead verdicts and optional for all other verdicts (which keep
-// the worktree and retain WIP by default).
-//
-// Captured files are written to:
-//   .harmonik/reconciliation/<investigator_run_id>/wip-capture/
-// and are committed as part of the verdict commit by the daemon's
-// verdict-executor (RC-022, RC-022a).
-
 // WIPCapture holds the work-in-progress snapshot captured from the outer
 // run's worktree before the investigator emits a reopen-bead verdict.
 //

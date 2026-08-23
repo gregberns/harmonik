@@ -2,24 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// reviewloopevents_hk7om2q4.go — event-bus payload types for §8.1a review-loop
-// cycle events and §8.8.6 bead_label_conflict:
-//
-//   - implementer_resumed       (§8.1a.1)
-//   - reviewer_launched         (§8.1a.2)
-//   - reviewer_verdict          (§8.1a.3)
-//   - iteration_cap_hit         (§8.1a.4)
-//   - no_progress_detected      (§8.1a.5)
-//   - review_loop_cycle_complete (§8.1a.6)
-//   - bead_label_conflict       (§8.8.6)
-//
-// Spec ref: specs/event-model.md §8.1a, §8.8.6, §6.3.
-// Bead ref: hk-7om2q.4.
-
-// ---------------------------------------------------------------------------
-// Enum types for §8.1a payload discriminators
-// ---------------------------------------------------------------------------
-
 // ReviewerVerdict is the verdict value from the agent-reviewer JSON schema v1.
 // Used in reviewer_verdict (§8.1a.3) and iteration_cap_hit (§8.1a.4) payloads.
 //
@@ -101,10 +83,6 @@ func (r ReviewLoopCompletionReason) Valid() bool {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// §8.1a.1 — implementer_resumed
-// ---------------------------------------------------------------------------
-
 // ImplementerResumedPayload is the typed event payload for the
 // implementer_resumed event (event-model.md §8.1a.1).
 //
@@ -185,10 +163,6 @@ func (p ImplementerResumedPayload) Valid() bool {
 	return true
 }
 
-// ---------------------------------------------------------------------------
-// §8.1a.2 — reviewer_launched
-// ---------------------------------------------------------------------------
-
 // ReviewerLaunchedPayload is the typed event payload for the reviewer_launched
 // event (event-model.md §8.1a.2).
 //
@@ -253,10 +227,6 @@ func (p ReviewerLaunchedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.1a.3 — reviewer_verdict
-// ---------------------------------------------------------------------------
 
 // ReviewerVerdictPayload is the typed event payload for the reviewer_verdict
 // event (event-model.md §8.1a.3).
@@ -364,10 +334,6 @@ func (p ReviewerVerdictPayload) Valid() bool {
 	return true
 }
 
-// ---------------------------------------------------------------------------
-// §8.1a.4 — iteration_cap_hit
-// ---------------------------------------------------------------------------
-
 // IterationCapHitPayload is the typed event payload for the iteration_cap_hit
 // event (event-model.md §8.1a.4).
 //
@@ -432,7 +398,6 @@ func (p IterationCapHitPayload) Valid() bool {
 	if p.CapValue < 1 {
 		return false
 	}
-	// APPROVE cannot co-occur with cap-hit; only REQUEST_CHANGES and BLOCK are valid.
 	switch p.FinalVerdict {
 	case ReviewerVerdictRequestChanges, ReviewerVerdictBlock:
 		return true
@@ -440,10 +405,6 @@ func (p IterationCapHitPayload) Valid() bool {
 		return false
 	}
 }
-
-// ---------------------------------------------------------------------------
-// §8.1a.5 — no_progress_detected
-// ---------------------------------------------------------------------------
 
 // NoProgressDetectedPayload is the typed event payload for the
 // no_progress_detected event (event-model.md §8.1a.5).
@@ -521,10 +482,6 @@ func (p NoProgressDetectedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.1a.7 — review_fixup_stalled
-// ---------------------------------------------------------------------------
 
 // ReviewFixupStalledPayload is the typed event payload for the
 // review_fixup_stalled event (event-model.md §8.1a.7).
@@ -611,10 +568,6 @@ func (p ReviewFixupStalledPayload) Valid() bool {
 	return true
 }
 
-// ---------------------------------------------------------------------------
-// §8.1a.6 — review_loop_cycle_complete
-// ---------------------------------------------------------------------------
-
 // ReviewLoopCycleCompletePayload is the typed event payload for the
 // review_loop_cycle_complete event (event-model.md §8.1a.6).
 //
@@ -674,10 +627,6 @@ func (p ReviewLoopCycleCompletePayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.8.6 — bead_label_conflict
-// ---------------------------------------------------------------------------
 
 // BeadLabelConflictPayload is the typed event payload for the bead_label_conflict
 // event (event-model.md §8.8.6).

@@ -44,8 +44,6 @@ func (r *RedactionRegistry) RegisterPattern(subsystem string, patterns []*regexp
 	r.patterns[subsystem] = append(existing, patterns...)
 }
 
-// allPatterns returns a flat snapshot of all registered patterns across all
-// subsystems.
 func (r *RedactionRegistry) allPatterns() []*regexp.Regexp {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -72,10 +70,8 @@ func (r *RedactionRegistry) RedactionMiddleware(payload map[string]any) map[stri
 		return nil
 	}
 
-	// Step 1: HC-031 field-name redaction.
 	out := RedactByFieldName(payload)
 
-	// Step 2: HC-032 per-handler value-pattern redaction.
 	patterns := r.allPatterns()
 	if len(patterns) == 0 {
 		return out

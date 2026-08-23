@@ -1,10 +1,5 @@
 package codextest_test
 
-// L1 contract tier for the INPUT driver (T9): the synthesized stimulus
-// round-trips through the InputTwin codec, and the twin drives the reactor's
-// full expected action sequence on the happy path (no fault) via the real
-// substrate.Run seam.
-
 import (
 	"bytes"
 	"context"
@@ -83,14 +78,11 @@ func TestL1AIS_TwinProducesExpectedActions(t *testing.T) {
 		case codexinput.ActionTypeCancelTimer:
 			cancels++
 		default:
-			// WriteInput/SendHandshake/CloseInput/Interrupt: not asserted here.
 		}
 	}
-	// submitted then acked, in that order.
 	if len(emits) != 2 || emits[0] != codexinput.EmitInputSubmitted || emits[1] != codexinput.EmitInputAcked {
 		t.Fatalf("emit sequence = %v, want [agent_input_submitted agent_input_acked]", emits)
 	}
-	// handshake + input-ack timers both armed and both cancelled (nothing leaks).
 	if arms != 2 || cancels != 2 {
 		t.Fatalf("timers armed=%d cancelled=%d, want 2 and 2 (no leak)", arms, cancels)
 	}

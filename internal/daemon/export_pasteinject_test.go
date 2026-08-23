@@ -1,20 +1,5 @@
 package daemon
 
-// export_pasteinject_test.go — paste-inject delivery test-seam exports.
-//
-// Split out of export_test.go (RT19.5, P2 E5 export_test.go split) so the
-// pasteinject.go delivery shims (the pasteInjectReviewer / pasteInjectImplementerInitial
-// / pasteInjectQuitOnReviewFile kick-off path, its pasteInjecter / enterSender /
-// paneCapturer stub interfaces, the splash-dismiss and seed-paste verify knobs,
-// and the hk-sah87 diff-scaled reviewer-budget seams) live in one topic file.
-// Same package (daemon), so every daemon_test caller resolves daemon.ExportedX
-// byte-identically after the move.
-//
-// Several knobs are re-exported BY POINTER (var Exported... = &pkgVar) so tests
-// can mutate the production var; the pointer form is preserved exactly.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"

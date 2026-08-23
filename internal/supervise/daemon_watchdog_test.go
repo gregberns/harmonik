@@ -13,9 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
-// socketDir creates a temp dir under /tmp with a short path so that Unix
-// socket files created inside it stay within macOS's 104-char sun_path limit.
-// t.TempDir() embeds the full test name and exceeds the limit on macOS.
 func socketDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hkwd")
@@ -30,15 +27,6 @@ func socketDir(t *testing.T) string {
 	return dir
 }
 
-// serveAccepts runs the fixture accept-and-close loop for ln in a goroutine and
-// returns a join function that blocks until that loop has exited (ln.Close()
-// is what ends it, so close FIRST, then join).
-//
-// Joining is not optional. The loop calls t.Errorf, and a t.Errorf that lands
-// after its test function has returned panics with "Log in goroutine after test
-// has completed" — which kills the ENTIRE package test binary, not just the one
-// test. That only ever triggers when something is already failing, i.e. exactly
-// when the rest of the suite still needs to report.
 func serveAccepts(t *testing.T, ln net.Listener) (join func()) {
 	t.Helper()
 	stopped := make(chan struct{})
@@ -94,14 +82,9 @@ func TestDaemonWatchdog_NoReviveWhenAlive(t *testing.T) {
 	}
 
 	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
-	// Widened from 150ms to give several 30ms checks headroom even under load;
-	// the test can only fail on a spurious revive, never on running "too long".
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	// Assert WHY Run returned: a spec missing SocketPath/Command makes Run bail
-	// immediately with a config error, and the assertions below would then pass
-	// without the watchdog loop ever having run.
 	if runErr := dw.Run(ctx); !errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("dw.Run: want context.DeadlineExceeded, got %v", runErr)
 	}
@@ -132,8 +115,6 @@ func TestDaemonWatchdog_RevivesOnDeadSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Run must stop because the revival cap was reached, NOT because ctx expired
-	// (that would mean the cap never engaged) and not on a config error.
 	runErr := dw.Run(ctx)
 	if runErr == nil || errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("dw.Run: want revival-cap error, got %v", runErr)
@@ -142,7 +123,6 @@ func TestDaemonWatchdog_RevivesOnDeadSocket(t *testing.T) {
 		t.Fatalf("dw.Run: want revival-cap error, got %v", runErr)
 	}
 
-	// Give the detached `touch` process time to complete.
 	time.Sleep(150 * time.Millisecond)
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Error("expected revival command to be spawned, but marker file was not created")
@@ -201,7 +181,6 @@ func TestDaemonWatchdog_StopsOnContextCancel(t *testing.T) {
 
 	select {
 	case <-done:
-		// OK — watchdog exited promptly
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return within 2s after context cancellation")
 	}
@@ -238,17 +217,12 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 
-	// The fixture goroutine below calls t.Errorf; it must not outlive the test
-	// (see serveAccepts). cancel() first — the goroutine parks on <-ctx.Done()
-	// — then join, and do both from a defer so a t.Fatalf path joins too.
 	fixtureDone := make(chan struct{})
 	defer func() {
 		cancel()
 		<-fixtureDone
 	}()
 
-	// Goroutine cycles the socket: dead → alive → dead → alive → dead → alive
-	// then stays alive so ctx-timeout (not cap) terminates Run.
 	go func() {
 		defer close(fixtureDone)
 
@@ -260,32 +234,21 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 			return ln, serveAccepts(t, ln), true
 		}
 
-		// 3 cycles: let the socket be dead long enough for a revive, then recover.
 		for range 3 {
-			// Let watchdog detect the dead socket and call revive().
 			time.Sleep(60 * time.Millisecond)
 
-			// Bring socket up so pollUntilAlive resets the counter.
 			ln, joinAccepts, ok := bindAndServe()
 			if !ok {
 				return
 			}
-			// Hold it long enough for pollUntilAlive to probe successfully.
 			time.Sleep(100 * time.Millisecond)
 
-			// Drop the socket to trigger the next revival.
-			// No os.Remove here: a UnixListener unlinks its own socket file on
-			// Close (SetUnlinkOnClose defaults to true for a listener that
-			// created the path), so the explicit remove this replaced could only
-			// ever fail with ENOENT — it never once did anything.
 			if closeErr := ln.Close(); closeErr != nil {
 				t.Errorf("fixture: close listener: %v", closeErr)
 			}
 			joinAccepts()
 		}
 
-		// After 3 successful recoveries, bring the socket back up and hold it
-		// until ctx expires so the watchdog exits via timeout (not cap).
 		time.Sleep(60 * time.Millisecond)
 		ln, joinAccepts, ok := bindAndServe()
 		if !ok {
@@ -303,8 +266,6 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
 	runErr := dw.Run(ctx)
 
-	// Run should exit via ctx cancellation, not via the cap. Read ctx.Err()
-	// here, BEFORE the deferred cancel() makes it non-nil unconditionally.
 	if runErr != nil && ctx.Err() == nil {
 		t.Errorf("Run returned early (cap hit?): %v — counter may not be resetting", runErr)
 	}
@@ -360,26 +321,17 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 
-	// The fixture goroutine below calls t.Errorf; it must not outlive the test
-	// (see serveAccepts). cancel() first — the goroutine parks on <-ctx.Done()
-	// — then join, and do both from a defer because the Run assertion below is
-	// a t.Fatalf, which unwinds through deferred calls only.
 	fixtureDone := make(chan struct{})
 	defer func() {
 		cancel()
 		<-fixtureDone
 	}()
 
-	// Simulate applyBootBackoff: socket stays absent for 80ms after revive(),
-	// then binds and stays up for the test duration.
 	go func() {
 		defer close(fixtureDone)
 
-		// Let the watchdog detect the dead socket and call revive().
 		time.Sleep(60 * time.Millisecond)
-		// Simulate boot-backoff delay: socket still unbound for 80ms.
 		time.Sleep(80 * time.Millisecond)
-		// Now bind — pollUntilAlive should succeed on its next poll.
 		ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
 		if err != nil {
 			return
@@ -395,9 +347,6 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 	}()
 
 	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
-	// Assert WHY Run returned: a spec missing SocketPath/Command makes Run bail
-	// immediately with a config error, and the assertions below would then pass
-	// without the watchdog loop ever having run.
 	if runErr := dw.Run(ctx); !errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("dw.Run: want context.DeadlineExceeded, got %v", runErr)
 	}
@@ -441,8 +390,6 @@ func TestDaemonWatchdog_CrashLogCapture(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Run must stop because the revival cap was reached, NOT because ctx expired
-	// (that would mean the cap never engaged) and not on a config error.
 	runErr := dw.Run(ctx)
 	if runErr == nil || errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("dw.Run: want revival-cap error, got %v", runErr)
@@ -450,7 +397,6 @@ func TestDaemonWatchdog_CrashLogCapture(t *testing.T) {
 	if !strings.Contains(runErr.Error(), "revival cap reached") {
 		t.Fatalf("dw.Run: want revival-cap error, got %v", runErr)
 	}
-	// Give the detached sh process time to flush its output.
 	time.Sleep(200 * time.Millisecond)
 
 	//nolint:gosec // G304: crashLog is created beneath this test's private temp directory.
@@ -487,8 +433,6 @@ func TestDaemonWatchdog_CrashLogRotation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// Run must stop because the revival cap was reached, NOT because ctx expired
-	// (that would mean the cap never engaged) and not on a config error.
 	runErr := dw.Run(ctx)
 	if runErr == nil || errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("dw.Run: want revival-cap error, got %v", runErr)
@@ -498,13 +442,11 @@ func TestDaemonWatchdog_CrashLogRotation(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	// Expect: crashLog (current), crashLog.1, crashLog.2 — exactly keep=3 files.
 	for _, name := range []string{crashLog, crashLog + ".1", crashLog + ".2"} {
 		if _, err := os.Stat(name); err != nil {
 			t.Errorf("expected crash log %s to exist: %v", name, err)
 		}
 	}
-	// crashLog.3 must not exist — oldest was discarded by rotation.
 	if _, err := os.Stat(crashLog + ".3"); !os.IsNotExist(err) {
 		t.Errorf("crash log .3 should not exist (keep=%d), but Stat returned: %v", keep, err)
 	}

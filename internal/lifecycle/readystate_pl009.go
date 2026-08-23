@@ -112,8 +112,6 @@ func BuildDaemonReadyPayload(investigatorRunIDs []core.RunID) (core.DaemonReadyP
 		return core.DaemonReadyPayload{}, err
 	}
 
-	// Normalise nil slice to empty slice so that JSON serialization emits []
-	// rather than null, matching the event-model §8.7.2 array requirement.
 	if investigatorRunIDs == nil {
 		investigatorRunIDs = []core.RunID{}
 	}

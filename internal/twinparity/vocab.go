@@ -94,9 +94,6 @@ func IsKnownKind(kind string) bool {
 	return false
 }
 
-// coreEventTypes lists the core.EventType constants that participate in the
-// equivalence vocabulary. Kept explicit (rather than reflected) so the set is
-// auditable; the terminal/anomaly named sets are drawn from these same consts.
 func coreEventTypes() []string {
 	return []string{
 		string(core.EventTypeAgentReady),

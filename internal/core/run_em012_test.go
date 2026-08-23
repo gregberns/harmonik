@@ -43,13 +43,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Fixture helpers (runFixture prefix)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// runFixtureMinimalRun returns a structurally valid Run carrying only the
-// fields required by EM-012 (no optional BeadID, no EndTime).
-// It satisfies Run.Valid() and represents the smallest valid EM-012 carrier.
 func runFixtureMinimalRun(t *testing.T) Run {
 	t.Helper()
 	return Run{
@@ -66,8 +59,6 @@ func runFixtureMinimalRun(t *testing.T) Run {
 	}
 }
 
-// runFixtureTerminalRun returns a structurally valid Run in a terminal state:
-// all required fields set, EndTime non-nil (signalling a completed run).
 func runFixtureTerminalRun(t *testing.T) Run {
 	t.Helper()
 	now := time.Now()
@@ -87,9 +78,6 @@ func runFixtureTerminalRun(t *testing.T) Run {
 	}
 }
 
-// runFixtureEm012SpecContent reads specs/execution-model.md and returns the
-// paragraph anchored by "EM-012". Fails the test if the file is unreadable or
-// the anchor is absent.
 func runFixtureEm012SpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -97,7 +85,6 @@ func runFixtureEm012SpecContent(t *testing.T) string {
 	if !ok {
 		t.Fatal("runFixtureEm012SpecContent: runtime.Caller failed")
 	}
-	// Walk up: internal/core/<file> → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "execution-model.md")
 
@@ -108,25 +95,17 @@ func runFixtureEm012SpecContent(t *testing.T) string {
 	}
 	content := string(raw)
 
-	// Search for the requirement heading "#### EM-012" to avoid matching the
-	// anchor in cross-references or glossary entries that precede the heading
-	// in the spec (e.g. "(see §4.3.EM-012)" in the §3 glossary).
 	const anchor = "#### EM-012"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
 		t.Fatalf("EM-012 heading not found in %s; the EM-012 requirement may have been removed or renamed", specPath)
 	}
 	para := content[idx:]
-	// Clip at the next subsection header so we don't bleed into unrelated requirements.
 	if end := strings.Index(para, "\n####"); end > 0 {
 		para = para[:end]
 	}
 	return para
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Spec-content sensors
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestRunEM012_SpecContainsRequiredFields verifies that execution-model.md §4.3
 // EM-012 encodes the required field list with the canonical identifier names.
@@ -254,10 +233,6 @@ func TestRunEM012_SpecEncodesTransitionDiscovery(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Record-shape sensors
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestRunEM012_MinimalRunIsValid verifies that a Run carrying only the
 // EM-012-required fields (no optional BeadID, no EndTime) is structurally
 // valid per Run.Valid().
@@ -309,7 +284,6 @@ func TestRunEM012_RunCarriesExactlyOneWorkflowID(t *testing.T) {
 
 	r := runFixtureMinimalRun(t)
 
-	// A non-zero WorkflowID is required.
 	if !r.WorkflowID.Valid() {
 		t.Error("EM-012: runFixtureMinimalRun returned a zero WorkflowID; fixture must assign a non-zero WorkflowID")
 	}
@@ -317,7 +291,6 @@ func TestRunEM012_RunCarriesExactlyOneWorkflowID(t *testing.T) {
 		t.Error("EM-012: Run with non-zero WorkflowID must be Valid()")
 	}
 
-	// Zero WorkflowID → invalid: the singleton is unset.
 	r.WorkflowID = WorkflowID("")
 	if r.Valid() {
 		t.Error("EM-012: Run.Valid() = true with zero WorkflowID, want false (singleton workflow must be set)")
@@ -342,7 +315,6 @@ func TestRunEM012_RunCarriesExactlyOneInput(t *testing.T) {
 
 	r := runFixtureMinimalRun(t)
 
-	// A non-empty Input is required.
 	if r.Input == "" {
 		t.Error("EM-012: runFixtureMinimalRun returned an empty Input; fixture must assign a non-empty WorkspaceRef")
 	}
@@ -350,7 +322,6 @@ func TestRunEM012_RunCarriesExactlyOneInput(t *testing.T) {
 		t.Error("EM-012: Run with non-empty Input must be Valid()")
 	}
 
-	// Empty Input → invalid: the singleton input is unset.
 	r.Input = WorkspaceRef("")
 	if r.Valid() {
 		t.Error("EM-012: Run.Valid() = true with empty Input, want false (singleton input must be set)")
@@ -382,10 +353,6 @@ func TestRunEM012_RunHasNoTransitionsField(t *testing.T) {
 
 	r := runFixtureMinimalRun(t)
 
-	// A Run constructed with only the EM-012 required fields must be valid.
-	// If Valid() returned false here, it would mean some field beyond the
-	// EM-012 required set is mandatory — which would contradict the spec's
-	// statement that transitions are NOT a field on the Run record.
 	if !r.Valid() {
 		t.Error("EM-012: Run.Valid() = false for minimal-field Run; " +
 			"Run must not require a Transitions field beyond the EM-012 specified set")
@@ -420,16 +387,6 @@ func TestRunEM012_InputMustBeWorkspaceRefNotInlinePayload(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Forward-doc marker
-// ──────────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────────
-// WorkflowMode field sensors (T-WM-003 / hk-7om2q.3)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// runFixtureWMRun returns a minimal valid Run with WorkflowMode set to the
-// supplied mode. Used by T-WM-003 sensors.
 func runFixtureWMRun(t *testing.T, mode WorkflowMode) Run {
 	t.Helper()
 	return Run{
@@ -578,7 +535,3 @@ func TestRunWM003_WorkflowModeJSONRoundTrip(t *testing.T) {
 		})
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Forward-doc marker
-// ──────────────────────────────────────────────────────────────────────────────

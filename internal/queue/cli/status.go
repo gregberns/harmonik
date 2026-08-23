@@ -57,8 +57,6 @@ func RunQueueStatus(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return exitTransportError
 	}
 
-	// Build the request payload. Include name/queue_id when provided so the
-	// daemon routes to the correct named queue (hk-1k5as).
 	type statusPayload struct {
 		Op      string `json:"op"`
 		Name    string `json:"name,omitempty"`
@@ -89,7 +87,5 @@ func RunQueueStatus(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return earlyExit
 	}
 
-	// queue-status always exits 0 when the daemon is reachable, even when the
-	// queue is null. The response carries {queue: null} in that case per QM-057.
 	return handleResponse(resp, out, outputJSON, renderQueueStatusText)
 }

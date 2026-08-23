@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// counter records how many times a give-back call was made, so a test can say
-// "exactly once" rather than "at least once".
 type counter struct {
 	mu    sync.Mutex
 	calls int
@@ -47,8 +45,6 @@ func TestALeaseGivesItsResourceBackExactlyOnce(t *testing.T) {
 func TestConcurrentReleasesStillGiveTheResourceBackOnce(t *testing.T) {
 	t.Parallel()
 
-	// The release sites for a session are spread across goroutines: a watcher,
-	// a deferred cleanup, and the run's own tail can all reach one lease.
 	var c counter
 	l := Hold(AgentSession, c.release)
 
@@ -72,8 +68,6 @@ func TestConcurrentReleasesStillGiveTheResourceBackOnce(t *testing.T) {
 func TestAFailedReleaseIsSpentAndIsNotRetried(t *testing.T) {
 	t.Parallel()
 
-	// Retrying a give-back call that cannot succeed is how one stuck resource
-	// becomes a loop. The error reaches the caller once and the lease is done.
 	wantErr := errors.New("worktree busy")
 	c := counter{err: wantErr}
 	l := Hold(Worktree, c.release)
@@ -95,8 +89,6 @@ func TestAFailedReleaseIsSpentAndIsNotRetried(t *testing.T) {
 func TestALeaseWithNothingToCallIsBornSpent(t *testing.T) {
 	t.Parallel()
 
-	// A caller with an optional cleanup passes nil rather than branching at
-	// every release site.
 	l := Hold(Worktree, nil)
 
 	if !l.spent() {
@@ -134,15 +126,9 @@ func TestAnUnreleasedLeaseIsNotYetSpent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Give — the early give-back that reads the run's answer
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestGiveHandsBackAResourceTheDispositionReleases(t *testing.T) {
 	t.Parallel()
 
-	// The hook session is given back at the end of an ordinary launch, before
-	// the scope holding it closes.
 	var c counter
 	l := Hold(HookSession, c.release)
 
@@ -161,9 +147,6 @@ func TestGiveHandsBackAResourceTheDispositionReleases(t *testing.T) {
 func TestGiveKeepsAResourceTheDispositionKeepsAndDisarmsIt(t *testing.T) {
 	t.Parallel()
 
-	// This is the whole reason Give exists. Release would hand the hook session
-	// back here, and the surviving agent would keep a session it can no longer
-	// report through.
 	var c counter
 	l := Hold(HookSession, c.release)
 
@@ -177,7 +160,6 @@ func TestGiveKeepsAResourceTheDispositionKeepsAndDisarmsIt(t *testing.T) {
 	if !l.spent() {
 		t.Error("a kept lease is left armed. A later caller could still give back what the run decided to leave standing")
 	}
-	// Disarmed means disarmed: the scope's own close finds nothing to do.
 	if rep2 := l.Give(Reclaim); len(rep2.Released) != 0 || len(rep2.Kept) != 0 {
 		t.Errorf("a second Give reported %+v, want an empty report", rep2)
 	}
@@ -227,8 +209,6 @@ func TestGiveReportsAFailedGiveBackAndSpendsTheLease(t *testing.T) {
 func TestGiveOnALeaseWithNothingToCallReportsNothing(t *testing.T) {
 	t.Parallel()
 
-	// A launch with no hook store holds a lease born spent, so the give-back
-	// site needs no test for whether there is anything to give.
 	l := Hold(HookSession, nil)
 
 	for _, d := range []Disposition{Reclaim, Survive, RetainEvidence} {
@@ -242,8 +222,6 @@ func TestGiveOnALeaseWithNothingToCallReportsNothing(t *testing.T) {
 func TestAScopeCloseFindsNothingLeftAfterAnEarlyGive(t *testing.T) {
 	t.Parallel()
 
-	// The shape the launch uses: the hook session is held by the scope AND given
-	// back early. The close must not make a second call.
 	var c counter
 	var s Scope
 	l := s.Hold(HookSession, c.release)
@@ -262,9 +240,6 @@ func TestAScopeCloseFindsNothingLeftAfterAnEarlyGive(t *testing.T) {
 func TestAGiveBackCallReachesTheWorldOutsideTheLeaseLock(t *testing.T) {
 	t.Parallel()
 
-	// Same property as the scope's, at the lease. A release that re-enters its
-	// own lease must find it already spent and return, not block on the lock
-	// its own caller is holding.
 	var l *Lease
 	var again error
 	l = Hold(AgentSession, func() error {

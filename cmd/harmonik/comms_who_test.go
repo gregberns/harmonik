@@ -1,15 +1,5 @@
 package main
 
-// comms_who_test.go — wire-shape contract for `harmonik comms who --json`.
-//
-// The fleet health probe (scripts/ops-monitor-check.sh) reads three keys off
-// every NDJSON line: agent, last_seen, and status. It compares status against
-// the literal "online". Rename any of those tags and the probe reports an
-// entirely empty fleet with no error anywhere — every agent reads as absent
-// while every one of them is up.
-//
-// comms who reads events.jsonl directly, so these need a temp dir and no daemon.
-
 import (
 	"encoding/json"
 	"strings"
@@ -17,15 +7,12 @@ import (
 	"time"
 )
 
-// whoLine is one decoded NDJSON record from `comms who --json`.
 type whoLine struct {
 	Agent    string `json:"agent"`
 	LastSeen string `json:"last_seen"`
 	Status   string `json:"status"`
 }
 
-// captureCommsWho runs the who subcommand against projectDir and returns its
-// stdout and exit code.
 func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (stdout string, exitCode int) {
 	t.Helper()
 	args := []string{"--project", projectDir}
@@ -36,8 +23,6 @@ func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (stdout stri
 	return stdout, exitCode
 }
 
-// decodeWhoJSON splits NDJSON output into decoded records plus the raw key set
-// of each line, so a test can assert both values and spellings.
 func decodeWhoJSON(t *testing.T, out string) (entries []whoLine, rawKeys []map[string]any) {
 	t.Helper()
 	split := strings.Split(strings.TrimSpace(out), "\n")
@@ -68,11 +53,8 @@ func decodeWhoJSON(t *testing.T, out string) (entries []whoLine, rawKeys []map[s
 func TestCommsWhoJSON_FieldNamesAndStaleAnnotation(t *testing.T) {
 	now := time.Now()
 	fresh := now.Add(-10 * time.Second).UTC().Format(time.RFC3339)
-	// Beyond the 120s TTL but inside the 10m stale cutoff.
 	aging := now.Add(-5 * time.Minute).UTC().Format(time.RFC3339)
 
-	// Deliberately out of alphabetical order in the file. The registry is a map,
-	// so only the sort in runCommsWhoSubcommand can make the output stable.
 	projDir := commsWriteEvents(t,
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000001", fresh, "zoe", "online", "join"),
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000002", fresh, "mallory", "online", "join"),
@@ -80,7 +62,6 @@ func TestCommsWhoJSON_FieldNamesAndStaleAnnotation(t *testing.T) {
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000004", fresh, "bob", "online", "join"),
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000005", fresh, "alice", "online", "join"),
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000006", fresh, "yara", "online", "join"),
-		// dave joined and left: offline, and must not appear at all.
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000007", fresh, "dave", "online", "join"),
 		commsPresenceLine(t, "01965b00-0000-7000-8000-000000000008", fresh, "dave", "offline", "leave"),
 	)
@@ -128,7 +109,6 @@ func TestCommsWhoJSON_FieldNamesAndStaleAnnotation(t *testing.T) {
 		t.Errorf("comms who --json: dave sent a leave beat and must be omitted; got %v", gotOrder)
 	}
 
-	// last_seen has to be a parseable timestamp — the probe converts it to an age.
 	for _, e := range entries {
 		if _, err := time.Parse(time.RFC3339, e.LastSeen); err != nil {
 			t.Errorf("comms who --json: %s last_seen = %q is not RFC3339: %v", e.Agent, e.LastSeen, err)

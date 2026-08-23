@@ -1,23 +1,5 @@
 package handlercontract
 
-// harnessregistry.go — HarnessRegistry: per-agent-type Harness route table (codex-harness C1/T3, hk-hj9ld).
-//
-// HarnessRegistry is the harness-selection counterpart to AdapterRegistry
-// (adapterregistry_hc012.go). Where AdapterRegistry maps an agent_type to the
-// watcher-side Adapter (DetectReady/DetectRateLimit/CleanExitSequence), this
-// registry maps an agent_type to the launch-side Harness (LaunchSpec/Seed/
-// Retask/Teardown). The daemon dispatch path resolves an agent_type via the
-// four-tier precedence walk (resolveHarness) and looks up the concrete Harness
-// here to build the per-spawn launch spec.
-//
-// Behaviour parity with AdapterRegistry is deliberate: duplicate registrations
-// and lookups of unregistered agent types both surface as errors (neither
-// silently succeeds), and the registry seals implicitly on the first ForAgent
-// call so any post-dispatch Register is a detectable defect.
-//
-// Spec: specs/harness-contract.md §2 N5 (registry-routed launchSpecBuilder seam).
-// See also: handlercontract/harness.go (the Harness interface).
-
 import (
 	"fmt"
 	"sync"
@@ -73,8 +55,6 @@ func (r *HarnessRegistry) Register(agentType core.AgentType, harness Harness) er
 	if r.harnesses == nil {
 		panic("handlercontract: HarnessRegistry.Register called on zero-value registry; use NewHarnessRegistry")
 	}
-	// Validate before acquiring the lock — these checks are argument-only and do
-	// not touch shared state.
 	if !agentType.Valid() {
 		return fmt.Errorf(
 			"handlercontract: HarnessRegistry.Register: invalid agent_type %q; "+
@@ -120,8 +100,6 @@ func (r *HarnessRegistry) ForAgent(agentType core.AgentType) (Harness, error) {
 	if r.harnesses == nil {
 		panic("handlercontract: HarnessRegistry.ForAgent called on zero-value registry; use NewHarnessRegistry")
 	}
-	// Write-lock for seal transition: concurrent ForAgent calls must each observe
-	// sealed=true after the first caller sets it, and must not race with Register.
 	r.mu.Lock()
 	r.sealed = true
 	harness, ok := r.harnesses[agentType]

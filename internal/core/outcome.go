@@ -126,7 +126,6 @@ func (o Outcome) Valid() bool {
 	if !o.Kind.Valid() {
 		return false
 	}
-	// FailureClass: must be absent on non-FAIL; when present must be a valid value.
 	if o.FailureClass != nil {
 		if o.Status != OutcomeStatusFail {
 			return false

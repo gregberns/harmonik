@@ -1,22 +1,5 @@
 package daemon
 
-// verdictoverride_c079_test.go — RC-027 operator verdict-override wiring (C1 fix).
-//
-// C1 was: the CLI verbs `harmonik confirm-verdict` / `veto-verdict` sent socket
-// ops ("confirm_verdict" / "veto_verdict") that no daemon dispatch path
-// registered, so every operator override hit the neutral Unknown path
-// ("daemon: unknown op %q") and the CLI exited 1 — the whole operator control
-// path was dead.
-//
-// These tests pin the durable fix:
-//   - TestVerdictOverrideOps_AreRegistered — the root-cause guard: every
-//     CLI-reachable verdict-override op resolves to a registered daemon handler
-//     (never Unknown), with a bogus op as the negative control.
-//   - TestVerdictOverride_ConfirmReleasesParkedRun / _VetoPromote / _NoParkedRun
-//     — end-to-end via the router + registry rendezvous.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-027; specs/operator-nfr.md §4.3 ON-014.
-
 import (
 	"context"
 	"encoding/json"
@@ -27,11 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// cliReachableVerdictOps are the exact wire op strings the CLI sends for the
-// RC-027 operator override surface (cmd/harmonik/confirm_verdict.go,
-// veto_verdict.go → sendVerdictOverrideRequest). Every entry here MUST resolve
-// to a registered daemon handler; a drift means the operator control path is
-// dead again (C1 regression).
 var cliReachableVerdictOps = []string{"confirm_verdict", "veto_verdict"}
 
 // TestVerdictOverrideOps_AreRegistered is the root-cause guard for C1: it proves
@@ -50,24 +28,18 @@ func TestVerdictOverrideOps_AreRegistered(t *testing.T) {
 		if _, ok := registered[op]; !ok {
 			t.Fatalf("CLI-reachable op %q is NOT registered in buildSocketRouter — operator override path is dead (C1 regression)", op)
 		}
-		// A registered op must never resolve to the Unknown wire path.
 		res := router.Dispatch(context.Background(), op, json.RawMessage(`{"op":"`+op+`","run_id":"r1"}`))
 		if res.Unknown {
 			t.Fatalf("registered op %q resolved to Unknown — routing hole", op)
 		}
 	}
 
-	// Negative control: a bogus op MUST hit the Unknown path.
 	bogus := router.Dispatch(context.Background(), "confirm_verdikt_typo", json.RawMessage(`{"op":"confirm_verdikt_typo"}`))
 	if !bogus.Unknown {
 		t.Fatal("bogus op did not resolve to Unknown — negative control failed")
 	}
 }
 
-// newVerdictRouter builds a router backed by a real OperatorPauseController with
-// a sealed in-memory bus, returning the router and the controller so the test
-// can park runs on the same VerdictConfirmationRegistry the router resolves
-// against.
 func newVerdictRouter(t *testing.T) (*socketrouter.Router, *OperatorPauseController) {
 	t.Helper()
 	bus := eventbus.NewBusImpl()

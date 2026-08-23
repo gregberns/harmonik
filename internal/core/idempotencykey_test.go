@@ -14,8 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// idempotencyKeyFixtureIDs returns a stable (runID, transitionID) pair for use in
-// idempotency key tests. Both IDs are freshly generated UUIDv7 values.
 func idempotencyKeyFixtureIDs(t *testing.T) (RunID, TransitionID) {
 	t.Helper()
 	return RunID(uuid.Must(uuid.NewV7())), TransitionID(uuid.Must(uuid.NewV7()))
@@ -46,7 +44,6 @@ func TestIdempotencyKey_BI029Shape(t *testing.T) {
 			transStr := transitionID.String()
 			opStr := string(tc.op)
 
-			// Key must have exactly three colon-separated segments.
 			parts := strings.SplitN(got, ":", 3)
 			if len(parts) != 3 {
 				t.Errorf("IdempotencyKey %q: want 3 colon-separated segments, got %d", got, len(parts))

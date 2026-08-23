@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// gateVerdictRecordFixture returns a fully-populated GateVerdictRecord with all
-// fields set to valid non-zero values, suitable for structural tests (hk-a8bg.71).
 func gateVerdictRecordFixture(t *testing.T) GateVerdictRecord {
 	t.Helper()
 
@@ -23,8 +21,6 @@ func gateVerdictRecordFixture(t *testing.T) GateVerdictRecord {
 	}
 }
 
-// gateVerdictRecordAllowFixture returns a GateVerdictRecord for the allow action
-// (Reason is nil, which is valid for allow).
 func gateVerdictRecordAllowFixture(t *testing.T) GateVerdictRecord {
 	t.Helper()
 

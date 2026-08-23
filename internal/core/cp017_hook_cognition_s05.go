@@ -90,48 +90,6 @@ func (e *ErrHookVerdictEnvelopeMismatch) Error() string {
 		e.HookName, e.InvocationID, e.StoredHash, e.CurrentHash)
 }
 
-// hookInputEnvelope is the canonical set of inputs hashed to produce the
-// InputEnvelopeHash for a cognition-tagged Hook evaluator per
-// specs/control-points.md §4.8.CP-040a.
-//
-// CP-040a declares five envelope inputs. This implementation covers a subset;
-// the covered and deferred items are listed below so readers know the exact
-// replay-safety surface:
-//
-// Item 1 — expression_text: nil for Hook ControlPoints (Hooks have no
-//
-//	mechanism-tagged expression body; the delegation-path ref set serves as
-//	the structural identity of the evaluator).
-//
-// Item 2 — resolved prompt-template body: NOT YET IMPLEMENTED. This envelope
-//
-//	carries PromptTemplateRef (a registry name) rather than the resolved
-//	template body. A template content change that leaves the ref name unchanged
-//	will NOT bust the hash and will NOT trigger Cat 6 escalation. Tracked as a
-//	known narrowing; full coverage requires a template-resolver pass at
-//	invocation time. File a follow-up bead to add resolved body inclusion.
-//
-// Item 3 — skill_packages snapshot: NOT YET IMPLEMENTED. No skill-package
-//
-//	snapshot is included in the envelope. A skill-package update will NOT bust
-//	the hash. Tracked as a known narrowing; coverage requires the skill-package
-//	registry snapshot surface. File a follow-up bead to add snapshotting.
-//
-// Item 4 — context_subset (conservative fallback): covered. The full run.Context
-//
-//	map is used since this implementation does not AST-walk delegation-path
-//	prompt templates to determine the reachable subset. Any change to run.Context
-//	busts the hash and triggers Cat 6 escalation on replay per CP-041. This
-//	behaviour is declared explicitly on cognition-tagged Hook ControlPoints per
-//	the single-mode rule in CP-040a.
-//
-// Item 5 — policy_meta block: PARTIALLY COVERED. Only the integer SchemaVersion
-//
-//	field is included rather than the full policy_meta block declared in CP-040a.
-//	Changes to other policy metadata fields (e.g., document hash, policy name)
-//	will NOT bust the hash. Tracked as a known narrowing; full coverage requires
-//	the PolicyMeta record to be carried on the ControlPoint. File a follow-up
-//	bead to promote SchemaVersion to a full PolicyMeta struct.
 type hookInputEnvelope struct {
 	ControlPointName  string         `json:"control_point_name"`
 	DelegationPath    DelegationPath `json:"delegation_path"`
@@ -140,8 +98,6 @@ type hookInputEnvelope struct {
 	SchemaVersion     int            `json:"schema_version"`
 }
 
-// computeHookEnvelopeHash returns the SHA-256 hex digest of the canonical JSON
-// of the hook's input envelope per specs/control-points.md §4.8.CP-040a.
 func computeHookEnvelopeHash(cp ControlPoint, run *Run, triggeringEventID EventID) (string, error) {
 	envelope := hookInputEnvelope{
 		ControlPointName:  cp.Name,
@@ -214,30 +170,23 @@ func InvokeCognitionHook(
 	eval CognitionHookEvaluator,
 	reader HookVerdictReader,
 ) (HookVerdictRecord, error) {
-	// Structural invariant: cp must be cognition-tagged with a valid delegation path.
 	if cp.Evaluator.Mode != ModeTagCognition || cp.Evaluator.DelegationPath == nil {
 		return HookVerdictRecord{}, fmt.Errorf("hook %q: InvokeCognitionHook requires a cognition-tagged ControlPoint (mode=%s)", cp.Name, cp.Evaluator.Mode)
 	}
 
-	// CP-040a: compute the input envelope hash for replay-safety checks.
 	currentHash, err := computeHookEnvelopeHash(cp, run, triggeringEventID)
 	if err != nil {
 		return HookVerdictRecord{}, fmt.Errorf("hook %q: envelope hash computation failed: %w", cp.Name, err)
 	}
 
-	// CP-041: check for an existing persisted verdict before dispatching.
 	existing, found, readErr := reader.LookupHookVerdict(ctx, run.RunID, invocationID)
 	if readErr != nil {
 		return HookVerdictRecord{}, fmt.Errorf("hook %q: verdict lookup failed: %w", cp.Name, readErr)
 	}
 	if found {
 		if existing.InputEnvelopeHash == currentHash {
-			// Hash match: replay path — consume the persisted verdict without
-			// re-invoking the model per CP-INV-003 (idempotency=idempotent).
 			return existing, nil
 		}
-		// Hash mismatch: the envelope has drifted since the verdict was persisted.
-		// Only a Cat 6 reconciliation verdict can authorise re-invocation per CP-041.
 		return HookVerdictRecord{}, &ErrHookVerdictEnvelopeMismatch{
 			HookName:     cp.Name,
 			InvocationID: invocationID,
@@ -246,14 +195,11 @@ func InvokeCognitionHook(
 		}
 	}
 
-	// No prior verdict: first invocation. Dispatch to the declared role per
-	// CP-039 / §7.2 dispatch_to_role (cognition boundary per CP-042).
 	verdict, dispatchErr := eval.EvaluateCognitionHook(ctx, cp, run, triggeringEventID)
 	if dispatchErr != nil {
 		return HookVerdictRecord{}, fmt.Errorf("hook %q: cognition dispatch failed: %w", cp.Name, dispatchErr)
 	}
 
-	// Stamp the mechanical fields (InvokeCognitionHook owns these per CP-042).
 	verdict.HookName = cp.Name
 	verdict.InvocationID = invocationID
 	verdict.InputEnvelopeHash = currentHash

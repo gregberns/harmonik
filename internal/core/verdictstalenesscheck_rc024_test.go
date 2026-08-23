@@ -192,10 +192,6 @@ func TestCheckVerdictStaleness_SiblingBeadsAndJSONLDoNotTriggerStaleness(t *test
 		CapturedAtTimestamp: "2026-05-01T00:00:00Z",
 	}
 
-	// Even if a sibling bead changed (the caller passes only the target bead's
-	// audit ID), staleness is not triggered when both target-scoped values match.
-	// The caller owns the re-capture scope; this test confirms the function
-	// treats its two arguments as the complete staleness signal.
 	result := CheckVerdictStaleness(snapshot, "abc123", "audit-001")
 
 	if result.Stale {

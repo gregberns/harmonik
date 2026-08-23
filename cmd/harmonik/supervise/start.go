@@ -65,15 +65,12 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(args[i], "--project="):
 			projectDir = strings.TrimPrefix(args[i], "--project=")
 		case args[i] == "--command" && i+1 < len(args):
-			// --command CMD [ARGS...]: rest of args is the supervisee argv.
 			i++
 			command = args[i:]
 			i = len(args) // consume remaining
 		case strings.HasPrefix(args[i], "--command="):
-			// --command=CMD (single token, no sub-args).
 			command = []string{strings.TrimPrefix(args[i], "--command=")}
 		case args[i] == "--":
-			// -- CMD [ARGS...]: supervisee argv follows the separator.
 			command = args[i+1:]
 			i = len(args) // consume remaining
 		}
@@ -98,7 +95,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// (b) Probe daemon socket — exit 17 if missing / refused.
 	sockPath := lifecycle.SocketPath(projectDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -106,14 +102,11 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Read daemon_instance_id from daemon pidfile (PL-019e).
 	_, _, instanceID, err := lifecycle.ReadPidfile(projectDir)
 	if err != nil {
-		// Non-fatal: use "unknown" when pidfile is absent/unreadable.
 		instanceID = "unknown"
 	}
 
-	// Ensure cognition dir exists before opening the lock file.
 	if err := os.MkdirAll(CognitionDir(projectDir), core.HarmonikDirMode); err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", err); writeErr != nil {
 			return 1
@@ -121,13 +114,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// (c) Acquire supervisor.lock (flock LOCK_EX|LOCK_NB).
-	//
-	// Hold the fd open until AFTER tmux new-session completes. This closes the
-	// race window where a concurrent `start` sees a free lock between probe and
-	// session-creation: any second `start` invocation will hit EWOULDBLOCK
-	// (exit 25) while the first start holds the fd. The shim acquires the lock
-	// (blocking) once start exits and releases it.
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err); writeErr != nil {
@@ -135,8 +121,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	// lockFd is released at the bottom after session creation (or on any error
-	// path via the deferred close below).
 	lockReleased := false
 	defer func() {
 		if !lockReleased {
@@ -162,12 +146,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// (c2) Pre-flight: check for an existing flywheel session BEFORE writing any
-	// files. If the session exists (remain-on-exit pane from a prior shim crash),
-	// refuse immediately without touching sentinel or config. This prevents
-	// corrupting the existing flywheel's sentinel — which a reparented Pi (from
-	// --watch-restart) may still be relying on to survive the next daemon orphan
-	// sweep (PL-006d, PL-019c, hk-li14r).
 	sessionName := FlywheelSessionName(projectDir)
 	// #nosec G204 -- sessionName is passed as a discrete tmux argument, never through a shell.
 	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", sessionName).Run(); err == nil {
@@ -179,7 +157,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return ExitCodeFlywheelSessionExists
 	}
 
-	// Write sentinel before launching (PL-006d).
 	if err := WriteSentinel(projectDir); err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: write sentinel: %v\n", err); writeErr != nil {
 			return 1
@@ -187,7 +164,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Resolve the API key before writing config — fail-closed when required (CI-006).
 	apiKey, err := resolveAPIKey(projectDir, requireAPIKey)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: %v\n", err); writeErr != nil {
@@ -201,7 +177,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Atomically write config.json snapshot (PL-019e).
 	now := time.Now().UTC().Format(time.RFC3339)
 	cfg := Config{
 		SchemaVersion:    configSchemaVersion,
@@ -227,13 +202,10 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// (f) Create tmux session harmonik-<project_hash>-flywheel with remain-on-exit on.
-	// sessionName is already computed above (pre-flight check).
 	shimArgs := []string{"supervise", "_shim", projectDir}
 	if watchRestart {
 		shimArgs = append(shimArgs, "--watch-restart")
 	}
-	// Resolve harmonik binary path for the shim command.
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "harmonik"
@@ -245,10 +217,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		"-c", projectDir, shimCmd)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "duplicate session") {
-			// Narrow race: pre-flight has-session showed no session, but between
-			// that check and now an external process created the session. We wrote
-			// sentinel and config above, so remove them as cleanup before exiting.
-			// Normal remain-on-exit cases are caught by the pre-flight check above.
 			if _, writeErr := fmt.Fprintf(stderr,
 				"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
 				sessionName); writeErr != nil {
@@ -282,17 +250,8 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Boot auto-reap (Tier 3): a fresh supervisor start cleans up stale
-	// flywheel orphans left by prior killed/crashed daemons (dead pane,
-	// predating the live daemon) BUT never touches the session we just created
-	// (ProtectSession) nor any non-flywheel session (the reaper only ever
-	// targets harmonik-<12hex>-flywheel — CONTRACT.md invariant I3). Best-effort:
-	// a reap error is non-fatal to the start (the supervisor is already running).
 	bootReapOrphanFlywheels(projectDir, sessionName)
 
-	// Release the lock now that the tmux session (and shim) is running.
-	// The shim will immediately acquire it (blocking flock). Releasing here
-	// rather than via the defer lets the defer no-op cleanly.
 	lockReleased = true
 	if closeErr := lockFd.Close(); closeErr != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: close lock: %v\n", closeErr); writeErr != nil {
@@ -307,8 +266,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// probeDaemonSocket attempts a connection to the Unix socket at sockPath.
-// Returns 17 (ExitCodeDaemonDown) if the socket is absent or ECONNREFUSED, 0 if reachable.
 func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) int {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
@@ -333,21 +290,6 @@ func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) i
 	return 0
 }
 
-// resolveAPIKey reads the Pi-scoped ANTHROPIC_API_KEY from the non-committed
-// scoped source per specs/credential-isolation.md §4.4 CI-006.
-//
-// Precedence:
-//  1. ANTHROPIC_API_KEY already exported by the operator in the current env.
-//  2. A gitignored repo-root .env file (KEY=VALUE lines; comments ignored).
-//  3. If require is true: fail-closed error (CI-006).
-//     If require is false: empty string — Pi may authenticate via OAuth.
-//
-// Pass require=true (via --require-api-key) when the operator intends API-key
-// auth and a silent empty string would cause an opaque auth failure at Pi boot.
-//
-// The value is stored in config.json (inside .harmonik/cognition/, which is
-// gitignored) and injected into Pi's env by the shim at exec time. The daemon
-// process MUST NOT read config.APIKey (CI-006).
 func resolveAPIKey(projectDir string, require bool) (string, error) {
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
 		return v, nil

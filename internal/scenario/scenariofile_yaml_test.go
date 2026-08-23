@@ -9,17 +9,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// scenarioYAMLFixtureDir creates a temporary directory for scenario YAML
-// fixture files and registers cleanup. All helpers below write files into
-// this directory.
 func scenarioYAMLFixtureDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	return dir
 }
 
-// scenarioYAMLFixtureWrite writes content to a file with the given name inside
-// dir. It registers t.Fatal on any write failure. Returns the absolute path.
 func scenarioYAMLFixtureWrite(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -30,9 +25,6 @@ func scenarioYAMLFixtureWrite(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// scenarioYAMLFixtureMinimal returns the YAML content of a minimally valid
-// ScenarioFile using workflow_path. All required fields are present, no
-// optional fields are set.
 func scenarioYAMLFixtureMinimal(t *testing.T) string {
 	t.Helper()
 	return `name: smoke-basic
@@ -44,8 +36,6 @@ cadence_tag: smoke
 `
 }
 
-// scenarioYAMLFixtureFull returns the YAML content of a fully-populated valid
-// ScenarioFile exercising every optional field.
 func scenarioYAMLFixtureFull(t *testing.T) string {
 	t.Helper()
 	return `name: full-scenario
@@ -84,8 +74,6 @@ matrix:
 `
 }
 
-// scenarioYAMLFixtureWorkflowID returns the YAML content of a valid ScenarioFile
-// that uses workflow_id instead of workflow_path.
 func scenarioYAMLFixtureWorkflowID(t *testing.T) string {
 	t.Helper()
 	return `name: id-based-scenario
@@ -208,7 +196,6 @@ func TestParseScenarioFile_InvalidSchema_UnknownField(t *testing.T) {
 	t.Parallel()
 
 	dir := scenarioYAMLFixtureDir(t)
-	// KnownFields(true) must reject unknown fields.
 	content := `name: schema-fail
 description: test
 workflow_path: workflows/basic.dot
@@ -232,7 +219,6 @@ func TestParseScenarioFile_InvalidSchema_MissingRequired(t *testing.T) {
 	t.Parallel()
 
 	dir := scenarioYAMLFixtureDir(t)
-	// Valid() will reject a ScenarioFile with missing required fields.
 	content := `description: missing name
 workflow_path: workflows/basic.dot
 fixture_setup: {}
@@ -330,7 +316,6 @@ func TestParseScenarioFile_InvalidSchema_MatrixOverLimit(t *testing.T) {
 	t.Parallel()
 
 	dir := scenarioYAMLFixtureDir(t)
-	// 33 × 32 = 1056 > 1024 cells — must be rejected.
 	valuesA := strings.Repeat("    - v\n", 33)
 	valuesB := strings.Repeat("    - v\n", 32)
 	content := `name: big-matrix
@@ -359,7 +344,6 @@ func TestParseScenarioFile_RejectsUTF8BOM(t *testing.T) {
 	t.Parallel()
 
 	dir := scenarioYAMLFixtureDir(t)
-	// Prepend a UTF-8 BOM to an otherwise valid scenario file.
 	content := "\xEF\xBB\xBF" + scenarioYAMLFixtureMinimal(t)
 	path := scenarioYAMLFixtureWrite(t, dir, "bom-scenario.yaml", content)
 
@@ -452,7 +436,6 @@ func TestParseScenarioFile_RejectsOversizeFile(t *testing.T) {
 	t.Parallel()
 
 	dir := scenarioYAMLFixtureDir(t)
-	// Write a file of scenarioFileSizeLimitBytes + 1 bytes.
 	oversized := make([]byte, scenarioFileSizeLimitBytes+1)
 	for i := range oversized {
 		oversized[i] = '#' // valid YAML comment character — won't parse as valid scenario
@@ -510,14 +493,8 @@ func TestParseScenarioFile_InvalidNamePattern(t *testing.T) {
 func TestParseScenarioFile_YAMLRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Verify that the struct's YAML tags are correct end-to-end: marshal a
-	// known-valid ScenarioFile as YAML, write to disk, parse it back, and
-	// deep-compare the in-memory structs. Uses gopkg.in/yaml.v3 (the same
-	// library ParseScenarioFile uses) to marshal, confirming tag symmetry.
 	dir := scenarioYAMLFixtureDir(t)
 
-	// Write the minimal fixture directly to a file via the canonical YAML content
-	// (not by marshalling, to avoid circular dependency on yaml.Marshal correctness).
 	path := scenarioYAMLFixtureWrite(t, dir, "roundtrip.yaml", scenarioYAMLFixtureMinimal(t))
 
 	sf, err := ParseScenarioFile(path)
@@ -525,7 +502,6 @@ func TestParseScenarioFile_YAMLRoundTrip(t *testing.T) {
 		t.Fatalf("ParseScenarioFile() round-trip setup error: %v", err)
 	}
 
-	// Verify fields match the declared fixture values.
 	if sf.Name != "smoke-basic" {
 		t.Errorf("Name = %q, want %q", sf.Name, "smoke-basic")
 	}

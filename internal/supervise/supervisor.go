@@ -216,8 +216,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			RestartCount: len(restartTimes),
 		})
 
-		// Assume-running gate: transition starting → running after StartTimeout
-		// if the child hasn't exited yet.
 		assumeTimer := time.AfterFunc(s.spec.StartTimeout, func() {
 			cur := s.state.Load()
 			if cur.Status == StatusStarting {
@@ -228,7 +226,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			}
 		})
 
-		// Health probe goroutine (runs for the lifetime of this child).
 		healthDone := make(chan struct{})
 		var stopHealthOnce sync.Once
 		stopHealth := func() { stopHealthOnce.Do(func() { close(healthDone) }) }
@@ -236,7 +233,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			go s.runHealthProbe(ctx, pid, healthDone)
 		}
 
-		// Wait for child exit in a goroutine so we can also select on ctx/stop.
 		waitCh := make(chan error, 1)
 		go func() { waitCh <- cmd.Wait() }()
 
@@ -271,17 +267,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		next.LastExitCode = exitCode
 		s.state.Store(&next)
 
-		// Policy evaluation.
 		if s.spec.Policy == PolicyNever {
 			return nil
 		}
-		// PolicyOnFailure: only restart on non-zero exit.
 		if exitCode == 0 {
 			s.log.InfoContext(ctx, "supervise: clean exit with on-failure policy — not restarting")
 			return nil
 		}
 
-		// Restart cap / crash-loop guard.
 		now := time.Now()
 		restartTimes = append(restartTimes, now)
 
@@ -292,8 +285,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return fmt.Errorf("supervise: crash-loop: exceeded %d restarts", s.spec.Backoff.MaxRestarts)
 		}
 
-		// Sliding-window crash-loop check: if MaxRestarts restarts all happened
-		// within CrashLoopWindow, declare crash-loop.
 		if s.spec.Backoff.MaxRestarts > 0 && len(restartTimes) >= s.spec.Backoff.MaxRestarts {
 			windowStart := now.Add(-s.spec.CrashLoopWindow)
 			count := 0
@@ -312,7 +303,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			}
 		}
 
-		// Backoff with jitter before respawn.
 		delay := backoffWithJitter(backoff, s.spec.Backoff.Jitter)
 		s.log.InfoContext(ctx, "supervise: backoff before restart", "delay", delay, "restart", len(restartTimes))
 
@@ -326,7 +316,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return nil
 		}
 
-		// Advance backoff for next iteration (double, cap).
 		backoff *= 2
 		if backoff > s.spec.Backoff.Cap {
 			backoff = s.spec.Backoff.Cap
@@ -334,8 +323,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 }
 
-// buildCmd constructs an exec.Cmd from the spec. stdout/stderr are inherited
-// from the shim so the tmux pane absorbs them (PL-028d).
 func (s *Supervisor) buildCmd() *exec.Cmd {
 	//nolint:gosec // command comes from operator-controlled config
 	// The run loop implements the graceful context-cancellation path itself;
@@ -343,9 +330,6 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 	cmd := exec.Command(s.spec.Command[0], s.spec.Command[1:]...) //nolint:noctx // Run performs graceful cancellation itself
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	// When BaseEnv is set, use it as the base (scoped injection, CI-005);
-	// otherwise fall back to os.Environ() when Env has supplemental vars.
-	// When both are absent, leave cmd.Env nil (inherit parent env, legacy path).
 	if s.spec.BaseEnv != nil || len(s.spec.Env) > 0 {
 		base := s.spec.BaseEnv
 		if base == nil {
@@ -357,14 +341,10 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 	if s.spec.WorkDir != "" {
 		cmd.Dir = s.spec.WorkDir
 	}
-	// Place child in its own process group so SIGTERM can be forwarded cleanly.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd
 }
 
-// terminateChild implements PL-011: SIGTERM → bounded wait → SIGKILL. The
-// bounded wait honours the timeout passed to Stop() (recorded in
-// stopTimeoutNanos); a zero value falls back to Spec.StopTimeout.
 func (s *Supervisor) terminateChild(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error) {
 	killTimeout := time.Duration(s.stopTimeoutNanos.Load())
 	if killTimeout <= 0 {
@@ -391,9 +371,6 @@ func (s *Supervisor) forwardSignal(ctx context.Context, cmd *exec.Cmd, sig sysca
 	}
 }
 
-// runHealthProbe periodically checks process liveness (kill(pid,0)) and
-// heartbeat-file freshness. Health failures update state.Status but do NOT
-// trigger a restart — only process exit does (matches TS behaviour).
 func (s *Supervisor) runHealthProbe(ctx context.Context, pid int, done <-chan struct{}) {
 	ticker := time.NewTicker(s.spec.HealthProbeInterval)
 	defer ticker.Stop()
@@ -423,11 +400,9 @@ func (s *Supervisor) runHealthProbe(ctx context.Context, pid int, done <-chan st
 }
 
 func (s *Supervisor) checkHealth(pid int) bool {
-	// Process liveness via kill(pid, 0).
 	if err := syscall.Kill(pid, 0); err != nil {
 		return false
 	}
-	// Heartbeat-file freshness.
 	if s.spec.HeartbeatPath != "" {
 		info, err := os.Stat(s.spec.HeartbeatPath)
 		if err != nil {
@@ -460,7 +435,6 @@ func (s *Supervisor) setCrashLoopState(restartCount, exitCode int) {
 	s.state.Store(&next)
 }
 
-// exitCodeFrom extracts the integer exit code from cmd.Wait()'s error.
 func exitCodeFrom(err error) int {
 	if err == nil {
 		return 0
@@ -476,7 +450,6 @@ func isExitError(err error, target **exec.ExitError) bool {
 	return errors.As(err, target)
 }
 
-// backoffWithJitter adds uniform random jitter of ±(jitter*d)/2.
 func backoffWithJitter(d time.Duration, jitter float64) time.Duration {
 	if jitter <= 0 {
 		return d

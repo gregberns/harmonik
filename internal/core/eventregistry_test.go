@@ -14,11 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/testhelpers/hermetic"
 )
 
-// initialRegistrySnapshot holds the entries captured at TestMain time (after
-// all init() functions have run). eventRegistryReset restores from this
-// snapshot instead of clearing to empty, so parallel tests in package core_test
-// that depend on the global registry (e.g. EV-029 compat tests) see consistent
-// production entries regardless of execution order.
 var initialRegistrySnapshot map[EventType]typeEntry
 
 // hermetic.Setup, not hermetic.Main, because this TestMain already has work of
@@ -39,9 +34,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// eventRegistryReset restores the global registry to the production state
-// captured at TestMain time. MUST be called only from test cleanup (t.Cleanup).
-// Not exported — visible only to tests in the same package (package core).
 func eventRegistryReset() {
 	globalEventRegistry.mu.Lock()
 	defer globalEventRegistry.mu.Unlock()
@@ -62,7 +54,6 @@ func TestSealEventRegistry_RejectsPostSealRegistration(t *testing.T) {
 		t.Fatal("registry unexpectedly sealed at test start")
 	}
 
-	// Registration before seal succeeds.
 	if err := RegisterEventType("test.ev034.presail", func() EventPayload { return &struct{}{} }); err != nil {
 		t.Fatalf("pre-seal RegisterEventType err = %v; want nil", err)
 	}
@@ -72,8 +63,6 @@ func TestSealEventRegistry_RejectsPostSealRegistration(t *testing.T) {
 		t.Fatal("EventRegistrySealed() = false after SealEventRegistry()")
 	}
 
-	// Registration after seal is rejected with the typed error — no panic, no
-	// silent success.
 	err := RegisterEventType("test.ev034.postseal", func() EventPayload { return &struct{}{} })
 	if !errors.Is(err, ErrRegistrySealed) {
 		t.Errorf("post-seal RegisterEventType err = %v; want wrapping ErrRegistrySealed", err)
@@ -82,12 +71,10 @@ func TestSealEventRegistry_RejectsPostSealRegistration(t *testing.T) {
 		t.Error("post-seal type leaked into the registry despite the rejected registration")
 	}
 
-	// RegisterEventTypeAtVersion is rejected too.
 	if err := RegisterEventTypeAtVersion("test.ev034.postseal2", func() EventPayload { return &struct{}{} }, 2); !errors.Is(err, ErrRegistrySealed) {
 		t.Errorf("post-seal RegisterEventTypeAtVersion err = %v; want wrapping ErrRegistrySealed", err)
 	}
 
-	// Read path still works for a type registered before the seal.
 	if _, ok := LookupTypeSchemaVersion("test.ev034.presail"); !ok {
 		t.Error("pre-seal type missing from registry after seal; read path must remain functional")
 	}
@@ -103,7 +90,6 @@ func TestSealEventRegistry_Idempotent(t *testing.T) {
 	}
 }
 
-// Test-only payload types — defined here so they never leak to production code.
 type testPayloadAlpha struct {
 	Foo string `json:"foo"`
 	Bar int    `json:"bar"`
@@ -114,8 +100,6 @@ type testPayloadBeta struct {
 	Score float64 `json:"score"`
 }
 
-// minimalEvent returns a valid Event with the given type and payload.
-// Helper used by multiple subtests.
 func minimalEvent(t *testing.T, typeName EventType, payloadJSON []byte) Event {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -150,7 +134,6 @@ func TestRegistry(t *testing.T) {
 			t.Fatalf("RegisterEventType returned unexpected error: %v", err)
 		}
 
-		// Confirm the type is reachable via DecodePayload round-trip.
 		want := &testPayloadAlpha{Foo: "hello", Bar: 42}
 		raw, err := json.Marshal(want)
 		if err != nil {
@@ -268,7 +251,6 @@ func TestRegistry(t *testing.T) {
 			t.Errorf("typeB registration failed: %v", err)
 		}
 
-		// Both types must be reachable.
 		rawA, err := json.Marshal(&testPayloadAlpha{Foo: "concurrent", Bar: 1})
 		if err != nil {
 			t.Fatalf("marshal typeA payload: %v", err)
@@ -364,7 +346,6 @@ func TestEV028_ValidateEnvelopeSchemaVersion(t *testing.T) {
 		}
 
 		ev := minimalEvent(t, typeName, json.RawMessage(`{}`))
-		// minimalEvent sets SchemaVersion=1 and RegisterEventType defaults to 1.
 		if err := ValidateEnvelopeSchemaVersion(ev); err != nil {
 			t.Errorf("ValidateEnvelopeSchemaVersion: expected nil for matching versions, got %v", err)
 		}
@@ -378,7 +359,6 @@ func TestEV028_ValidateEnvelopeSchemaVersion(t *testing.T) {
 			t.Fatalf("RegisterEventTypeAtVersion: %v", err)
 		}
 
-		// Envelope carries version 1 but type is registered at version 2.
 		ev := minimalEvent(t, typeName, json.RawMessage(`{}`)) // minimalEvent sets SchemaVersion=1
 		err := ValidateEnvelopeSchemaVersion(ev)
 		if err == nil {

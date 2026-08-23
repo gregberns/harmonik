@@ -1,23 +1,5 @@
 package daemon
 
-// testopts_test.go — test-only constructor and functional options for daemon.Start.
-//
-// StartForTesting is the sanctioned entry point for tests that need to inject
-// behaviour into daemon.Start without polluting the production Config surface.
-// The former Config.TestOnlyBusObserver and Config.TestOnlyBrAdapterFactory
-// fields have been moved here as functional options; production Config is now
-// free of test-only branches.
-//
-// Design rationale:
-//   - The seam belongs in a test-only constructor, not on production Config.
-//   - kerf testing-strategy-uplift T3 originally proposed TestOnly* fields on
-//     Config (the right intent — a daemon-level seam for tests), but the fields
-//     belong here so Start has a single, test-free code path.
-//   - startWithHooks (daemon.go) is unexported; only this file and daemon.go
-//     can call it, keeping the hook surface invisible to daemon_test callers.
-//
-// Bead ref: hk-j192n.
-
 import (
 	"context"
 

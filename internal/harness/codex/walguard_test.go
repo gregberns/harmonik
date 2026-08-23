@@ -1,23 +1,5 @@
 package codex
 
-// codexwalguard_test.go — unit tests for cleanCodexStaleWAL (hk-2pb79, hk-xisvb).
-//
-// Covered:
-//   - WAL larger than threshold, no open handle => removed AND backup exists.
-//   - SMALL WAL (well under threshold), no open handle => removed (hk-xisvb
-//     regression: the old size-gate left it in place; staleness is size-free).
-//   - config.yaml present but stale_wal_max_bytes absent => returns an error
-//     that wraps ErrMissingStaleWALMaxBytes; WAL untouched.
-//   - No config.yaml in projectRoot => returns nil; WAL untouched.
-//   - Explicit stale_wal_max_bytes: 0 => a non-empty WAL is removed.
-//   - walUnchanged re-check: size-change OR mtime-change => skip removal.
-//
-// The lsof-held case is environment-dependent (it requires a real process
-// holding a real handle) and is deliberately NOT exercised here to avoid
-// flakiness — these tests pin the size/threshold/config/backup logic. On a host
-// with no `lsof`, fileHasOpenHandle returns an error => removal is skipped; the
-// removal-expecting cases skip themselves in that environment.
-
 import (
 	"errors"
 	"fmt"
@@ -28,8 +10,6 @@ import (
 	"time"
 )
 
-// writeConfigYAML writes a minimal .harmonik/config.yaml under projectRoot with
-// the given body and returns the project root. An empty body writes no file.
 func writeConfigYAML(t *testing.T, projectRoot, body string) {
 	t.Helper()
 	dir := filepath.Join(projectRoot, ".harmonik")
@@ -41,8 +21,6 @@ func writeConfigYAML(t *testing.T, projectRoot, body string) {
 	}
 }
 
-// writeWAL writes a state_*.sqlite-wal of size bytes under codexHome and also a
-// matching base state file and -shm sidecar. Returns the wal path.
 func writeWAL(t *testing.T, codexHome string, size int) string {
 	t.Helper()
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
@@ -63,9 +41,6 @@ func writeWAL(t *testing.T, codexHome string, size int) string {
 	return wal
 }
 
-// lsofAvailable reports whether lsof is on PATH. When it is not, the guard
-// conservatively SKIPS removal (cannot confirm a file is unheld), so the
-// removal-expecting cases must skip themselves.
 func lsofAvailable() bool {
 	_, err := exec.LookPath("lsof")
 	return err == nil
@@ -86,7 +61,6 @@ func TestCleanCodexStaleWAL_LargerThanThreshold_Removed(t *testing.T) {
 	if _, err := os.Stat(wal); !os.IsNotExist(err) {
 		t.Fatalf("expected wal removed, stat err = %v", err)
 	}
-	// A backup dir with a copy of the wal must exist.
 	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
 	if globErr != nil {
 		t.Fatalf("glob backup dirs: %v", globErr)
@@ -113,7 +87,6 @@ func TestCleanCodexStaleWAL_SmallUnheldWAL_Removed(t *testing.T) {
 	const small = 234 * 1024                                                    // 239616 bytes, well under 1 MiB
 	wal := writeWAL(t, codexHome, small)
 
-	// Sanity: this WAL would have been SKIPPED under the old size-gate.
 	if info, err := os.Stat(wal); err != nil {
 		t.Fatalf("stat wal: %v", err)
 	} else if info.Size() > 1048576 {
@@ -126,7 +99,6 @@ func TestCleanCodexStaleWAL_SmallUnheldWAL_Removed(t *testing.T) {
 	if _, err := os.Stat(wal); !os.IsNotExist(err) {
 		t.Fatalf("expected small under-threshold wal REMOVED (hk-xisvb), stat err = %v", err)
 	}
-	// A backup copy of the small wal must exist.
 	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
 	if globErr != nil {
 		t.Fatalf("glob backup dirs: %v", globErr)
@@ -139,7 +111,6 @@ func TestCleanCodexStaleWAL_SmallUnheldWAL_Removed(t *testing.T) {
 func TestCleanCodexStaleWAL_MissingKey_FailsLoud(t *testing.T) {
 	projectRoot := t.TempDir()
 	codexHome := t.TempDir()
-	// config.yaml present, but NO codex.stale_wal_max_bytes key.
 	writeConfigYAML(t, projectRoot, "codex:\n  something_else: true\n")
 	wal := writeWAL(t, codexHome, 4096)
 
@@ -159,7 +130,6 @@ func TestCleanCodexStaleWAL_MissingKey_FailsLoud(t *testing.T) {
 func TestCleanCodexStaleWAL_CodexBlockNoKey_FailsLoud(t *testing.T) {
 	projectRoot := t.TempDir()
 	codexHome := t.TempDir()
-	// A `codex:` block is present but stale_wal_max_bytes is absent.
 	writeConfigYAML(t, projectRoot, "codex:\n  model: gpt-5\n")
 	wal := writeWAL(t, codexHome, 4096)
 
@@ -187,18 +157,15 @@ func TestWALUnchanged(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 
-	// Untouched => safe to remove (regardless of size — no threshold arg).
 	if !walUnchanged(pre, wal) {
 		t.Fatalf("expected walUnchanged to be true for an untouched wal")
 	}
-	// A live writer grows the wal => size changes => skip.
 	if err := os.WriteFile(wal, make([]byte, 8192), 0o600); err != nil {
 		t.Fatalf("rewrite wal larger: %v", err)
 	}
 	if walUnchanged(pre, wal) {
 		t.Fatalf("expected false when size changed after pre-stat")
 	}
-	// Restore original size, then change only the mtime => skip.
 	if err := os.WriteFile(wal, make([]byte, 4096), 0o600); err != nil {
 		t.Fatalf("restore wal size: %v", err)
 	}
@@ -209,7 +176,6 @@ func TestWALUnchanged(t *testing.T) {
 	if walUnchanged(pre, wal) {
 		t.Fatalf("expected false when mtime changed after pre-stat")
 	}
-	// Gone entirely => skip.
 	if err := os.Remove(wal); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -221,7 +187,6 @@ func TestWALUnchanged(t *testing.T) {
 func TestCleanCodexStaleWAL_NoConfig_NoOp(t *testing.T) {
 	projectRoot := t.TempDir()
 	codexHome := t.TempDir()
-	// No .harmonik/config.yaml written.
 	wal := writeWAL(t, codexHome, 4096)
 
 	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
@@ -279,13 +244,11 @@ func TestReapCodexWALBackupDirs_KeepsLastN(t *testing.T) {
 	if len(remaining) != walBackupKeepLast {
 		t.Fatalf("expected %d backup dirs to remain, got %d: %v", walBackupKeepLast, len(remaining), remaining)
 	}
-	// The oldest (lowest-numbered) dirs must be the ones removed.
 	for i := 0; i < total-walBackupKeepLast; i++ {
 		if _, err := os.Stat(dirs[i]); !os.IsNotExist(err) {
 			t.Fatalf("expected oldest backup dir %s reaped, stat err = %v", dirs[i], err)
 		}
 	}
-	// The newest dirs must survive.
 	for i := total - walBackupKeepLast; i < total; i++ {
 		if _, err := os.Stat(dirs[i]); err != nil {
 			t.Fatalf("expected newest backup dir %s to survive, stat err = %v", dirs[i], err)
@@ -323,8 +286,6 @@ func TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The wal copy failed, so no backup dir should remain (empty ones are
-	// dropped rather than left as stubs).
 	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
 	if globErr != nil {
 		t.Fatalf("glob backup dirs: %v", globErr)

@@ -36,9 +36,6 @@ import (
 func TestBusImpl_DrainRunConcurrentEmitNoWaitGroupMisuse(t *testing.T) {
 	bus := eventbus.NewBusImpl()
 
-	// An asynchronous consumer whose handler lingers briefly, so per-run
-	// goroutines are still in-flight when DrainRun starts — the exact window the
-	// race needs.
 	sub := core.Subscription{
 		ConsumerID:    "linger-consumer",
 		ConsumerClass: core.ConsumerClassAsynchronous,
@@ -63,14 +60,6 @@ func TestBusImpl_DrainRunConcurrentEmitNoWaitGroupMisuse(t *testing.T) {
 	ctx := context.Background()
 	payload := []byte(`{"k":"v"}`)
 
-	// One runID, hammered from two goroutines: a continuous emitter (each emit
-	// adds a tracked per-run dispatch and its async goroutine completes, so the
-	// counter oscillates through 0) racing a continuous DrainRun. This is
-	// the run-teardown-while-still-emitting window. With a WaitGroup, an
-	// Add(1) eventually lands when the counter is 0 with a waiter registered →
-	// "fatal error: sync: WaitGroup misuse: Add called concurrently with Wait",
-	// aborting the test binary. The counter-and-condition implementation tracks
-	// every emission without an Add/Wait race.
 	id, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("uuid.NewV7: %v", err)

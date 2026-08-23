@@ -1,15 +1,5 @@
 package cli_test
 
-// recover_test.go — claims defended for `harmonik queue recover`.
-//
-// The verb must send `queue-recover`, which is the op the daemon registers. A
-// CLI that sends a name the daemon does not route reaches the unknown-op path
-// and the operator gets no recovery at all.
-//
-// A success must carry a durable recovery receipt. The daemon answers only
-// after the receipt is durable, so a success with no receipt is a claim nothing
-// can re-check, and the verb must refuse it rather than print it.
-
 import (
 	"context"
 	"strings"
@@ -87,8 +77,6 @@ func TestRunQueueRecover_RefusesASuccessThatCarriesNoReceipt(t *testing.T) {
 
 	projectDir := queueCliFixtureTempDir(t)
 	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
-		// The shape a pre-receipt daemon returned: a result and a re-armed
-		// list, and nothing durable behind either.
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue":         "investigate",
 			"result":        "accepted",

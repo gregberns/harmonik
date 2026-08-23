@@ -1,33 +1,5 @@
 package crewrun
 
-// idlereap.go — SD-3: tear down crews that COMPLETED work and went idle,
-// reclaiming their slot after a short grace window.
-//
-// CrewIdleReaper is a daemon-hosted periodic sweep, shaped after StaleWatcher
-// (stalewatch.go): a ticker re-checks every crew registry record, and a crew
-// only reaps after its bound queue has read queue.QueueStatusCompleted for at
-// least GraceAfter — not on the first tick that sees it. The grace window
-// exists so a captain re-tasking the same crew to the next-ranked lane (the
-// common case right after an epic finishes) does not trigger a stop+respawn
-// cycle for the slot it is about to reuse.
-//
-// Detection signal: a crew's bound queue (crew.Record.Queue) reads
-// queue.QueueStatusCompleted — all groups reached complete-success, so there
-// is no more ready or in-flight work for that crew. A crew whose queue has
-// never been loaded (QueueByName returns nil) or is paused/active/cancelled
-// is NEVER a reap candidate: absence of a completion signal must not read as
-// "idle-completed" (mirrors the negative-test guard in
-// plans/2026-07-02-stall-sentinel/DESIGN.md §2 Layer B — a correctly-idle
-// crew must not be swept).
-//
-// Teardown reuses the exact operator crew-stop path (CrewHandler.HandleCrewStop):
-// quit→grace→kill the pane/session, remove the .managed marker, remove the
-// registry record.
-//
-// Plan ref: plans/2026-06-25-admiral-framework/PLAN-v2.md Part 5 "SD-3" +
-// open question 2 ("recommend a short grace window").
-// Bead ref: hk-s2eac.
-
 import (
 	"context"
 	"encoding/json"
@@ -41,34 +13,19 @@ import (
 )
 
 const (
-	// crewIdleReapDefaultGrace is the default window a crew's bound queue
-	// must continuously read QueueStatusCompleted before its slot is
-	// reclaimed. Short enough to free the slot promptly; long enough that a
-	// captain re-tasking the same crew right after an epic completes does not
-	// trigger avoidable spawn churn.
 	crewIdleReapDefaultGrace = 5 * time.Minute
 
-	// crewIdleReapDefaultScanInterval is how often the sweep re-checks every
-	// crew record. Small relative to GraceAfter so detection latency stays a
-	// small fraction of the grace window itself.
 	crewIdleReapDefaultScanInterval = 30 * time.Second
 )
 
-// crewStopper is the seam CrewIdleReaper uses to tear a crew down. Satisfied
-// by CrewHandler.HandleCrewStop (wire.go); a test double may substitute
-// any function matching this shape.
 type crewStopper interface {
 	HandleCrewStop(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
 
-// crewQueueLookup is the seam CrewIdleReaper uses to read a crew's bound
-// queue. Satisfied by *queuewiring.QueueStore.QueueByName.
 type crewQueueLookup interface {
 	QueueByName(name string) *queue.Queue
 }
 
-// crewListFunc enumerates crew registry records. Satisfied by crew.List;
-// overridable in tests.
 type crewListFunc func(projectDir string) ([]crew.Record, error)
 
 // CrewIdleReaperConfig holds the construction-time parameters for
@@ -175,7 +132,6 @@ func NewCrewIdleReaper(cfg CrewIdleReaperConfig) *CrewIdleReaper {
 // there. If you are moving or renaming them, run them against a re-enabled
 // StartWatcher first — a claim in a comment is not a test.
 func (r *CrewIdleReaper) StartWatcher(ctx context.Context) {
-	// Idle-crew reaping is disabled; the sweep goroutine is never launched.
 }
 
 // loop is the background goroutine body.
@@ -194,9 +150,6 @@ func (r *CrewIdleReaper) loop(ctx context.Context) {
 	}
 }
 
-// scan re-evaluates every crew record once. Exposed (not just loop-private)
-// so tests can drive a single deterministic tick instead of waiting on the
-// ticker.
 func (r *CrewIdleReaper) scan(ctx context.Context) {
 	if r.cfg.ProjectDir == "" || r.cfg.Queues == nil {
 		return
@@ -214,8 +167,6 @@ func (r *CrewIdleReaper) scan(ctx context.Context) {
 		r.checkCrew(ctx, rec, now)
 	}
 
-	// Prune tracking entries for crews no longer in the registry (already
-	// removed by a manual crew-stop, or otherwise gone).
 	r.mu.Lock()
 	for name := range r.doneSince {
 		if _, ok := live[name]; !ok {
@@ -225,30 +176,17 @@ func (r *CrewIdleReaper) scan(ctx context.Context) {
 	r.mu.Unlock()
 }
 
-// checkCrew evaluates a single crew record and, once its bound queue has read
-// QueueStatusCompleted for at least GraceAfter, reaps it.
 func (r *CrewIdleReaper) checkCrew(ctx context.Context, rec crew.Record, now time.Time) {
 	if rec.Queue == "" {
-		// No bound queue recorded — no completion signal available.
 		r.clearCandidate(rec.Name)
 		return
 	}
 	if r.crewIsPersistent(rec) {
-		// GATE-0: a persistent OVERSIGHT role (admiral, watch — manifest
-		// lifecycle.persistent: true) is NEVER reclaimed. Such roles never submit
-		// work, so their crew-start formality queue reads QueueStatusCompleted
-		// forever (ensureQueue, hk-vrnh3); without this gate the reaper culls them
-		// at exactly GraceAfter (hk-dy5gw, same root cause as the watch
-		// self-terminate hk-kojyr). The manifest property is the durable source of
-		// truth — not a queue-shape heuristic.
 		r.clearCandidate(rec.Name)
 		return
 	}
 	q := r.cfg.Queues.QueueByName(rec.Queue)
 	if q == nil || q.Status != queue.QueueStatusCompleted {
-		// Either no completion signal yet, or the queue was re-armed with new
-		// work (status left Completed) — clear any pending candidacy so a
-		// re-tasked crew is never torn down mid-flight.
 		r.clearCandidate(rec.Name)
 		return
 	}
@@ -271,9 +209,6 @@ func (r *CrewIdleReaper) checkCrew(ctx context.Context, rec crew.Record, now tim
 	r.reap(ctx, rec, idleFor)
 }
 
-// crewIsPersistent reports whether rec's agent type is a persistent oversight
-// role (manifest lifecycle.persistent: true) that must never be reaped. When no
-// PersistentType seam is wired (unit-test mode), no crew is persistent.
 func (r *CrewIdleReaper) crewIsPersistent(rec crew.Record) bool {
 	if r.cfg.PersistentType == nil {
 		return false
@@ -281,15 +216,12 @@ func (r *CrewIdleReaper) crewIsPersistent(rec crew.Record) bool {
 	return r.cfg.PersistentType(rec.EffectiveType())
 }
 
-// clearCandidate removes any pending-teardown tracking for the named crew.
 func (r *CrewIdleReaper) clearCandidate(name string) {
 	r.mu.Lock()
 	delete(r.doneSince, name)
 	r.mu.Unlock()
 }
 
-// reap tears the crew down via the same stop path an operator-driven
-// crew-stop uses (CrewStopRequest → HandleCrewStop).
 func (r *CrewIdleReaper) reap(ctx context.Context, rec crew.Record, idleFor time.Duration) {
 	fmt.Fprintf(os.Stderr,
 		"daemon: crew-idle-reap: crew %q queue %q completed and idle %s — reclaiming slot\n",

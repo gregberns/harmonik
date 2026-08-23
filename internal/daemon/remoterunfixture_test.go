@@ -1,32 +1,5 @@
 package daemon
 
-// remoterunfixture_test.go — the shared fixture for a test that drives the real
-// beadRunOne down the REMOTE path.
-//
-// # Why this file exists
-//
-// A remote run needs five things a local run does not: a repository whose
-// daemon-socket path fits the platform limit, an ssh that answers, a reverse
-// tunnel that is not a real ssh forward, a worker with a reserved slot, and a
-// bead plus a run environment. Two files grew their own copy of all five within
-// one commit of each other, and the copies agreed in shape and differed only in
-// spelling. Eight more resources get tests like these next, and each will copy
-// whichever shape it finds first.
-//
-// So the shape lives here once. A test file keeps only what it varies.
-//
-// # What a caller still owns
-//
-// The parts that are the test rather than the setting: the bead ledger and the
-// event bus it reads its assertions out of, the worktree factory, the adapter
-// registry, and whatever seam its own claim is about. remotefixParams fills the
-// fields that are the same in every remote fixture and leaves the rest at their
-// zero value for the caller to set by name.
-//
-// Helper names in this package are package-scoped, so grep for a name before you
-// add one here. Two files that add the same helper in separate worktrees merge
-// cleanly and then fail to build.
-
 import (
 	"context"
 	"errors"
@@ -46,12 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// remotefixWorker is the worker the outer dispatch loop pre-selects. Handing a
-// pre-selected worker to beadRunOne is what makes a run remote.
-//
-// The host is unroutable on purpose. The ssh shim below answers every remote
-// command, so a run that escaped the shim fails loudly rather than reaching a
-// real machine.
 var remotefixWorker = workers.Worker{
 	Name:     "remotefix-worker",
 	Host:     "remotefix.invalid",
@@ -60,8 +27,6 @@ var remotefixWorker = workers.Worker{
 	RepoPath: "/tmp/remotefix-worker-repo",
 }
 
-// remotefixReserveWorker builds a one-slot registry and reserves that slot, which
-// is the state the outer dispatch loop hands beadRunOne.
 func remotefixReserveWorker(t *testing.T) (*workers.Registry, *workers.Worker) {
 	t.Helper()
 	reg := workers.NewRegistry(workers.Config{Workers: []workers.Worker{remotefixWorker}})
@@ -75,13 +40,6 @@ func remotefixReserveWorker(t *testing.T) (*workers.Registry, *workers.Worker) {
 	return reg, preSelected
 }
 
-// remotefixRepo returns a one-commit git repository whose
-// <dir>/.harmonik/daemon.sock path fits the platform's socket-path limit.
-//
-// t.TempDir is not used. Its path carries the test's name, which on a machine
-// with a long temp prefix pushes the socket past the limit. The run plan then
-// refuses for the hook-socket reason, and a test that meant to measure something
-// further down the run measures that refusal instead.
 func remotefixRepo(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hkremfix")
@@ -101,44 +59,17 @@ func remotefixRepo(t *testing.T) string {
 	return dir
 }
 
-// remotefixSSHShim puts a recording ssh first on PATH and returns the path of the
-// file it appends one line to per call.
-//
-// Every ssh a remote run makes is a subprocess resolved through PATH — the tmux
-// SSHRunner and the tunnel alike — so the shim is the one place that sees all of
-// them. It keeps a test that regressed off any network, and its log is how a test
-// asserts which round trips a run did or did not make.
-//
-// exitCode is what the shim returns. Pass 0 for a fixture that must reach the
-// launch, because the tunnel readiness probe runs over this shim and a non-zero
-// exit refuses the run.
 func remotefixSSHShim(t *testing.T, exitCode int) string {
 	t.Helper()
 	return remotefixSSHShimAnsweringHEAD(t, exitCode, "")
 }
 
-// remotefixSSHShimAnsweringHEAD is remotefixSSHShim for a fixture whose run must
-// get past the node baseline probe.
-//
-// A remote run reads the worktree HEAD over the runner, so `git -C <wt>
-// rev-parse HEAD` arrives at this shim like every other round trip. The plain
-// shim answers it with nothing, and empty is not a SHA: the graph node refuses a
-// baseline it could not read, so the run dies before it builds a launch spec. No
-// real ssh behaves that way against a real worktree.
-//
-// Pass the worktree path and the shim answers that one command from the real
-// repository. Both boxes are this machine in these fixtures, so a local read
-// gives the same SHA the worker would report. Everything else still records and
-// exits with exitCode. Pass "" for the plain recording shim.
 func remotefixSSHShimAnsweringHEAD(t *testing.T, exitCode int, wtPath string) string {
 	t.Helper()
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "ssh-calls.log")
 	headAnswer := ""
 	if wtPath != "" {
-		// SSHRunner ships the remote command shell-quoted token by token, so the
-		// argv reads `host -- 'git' '-C' '<path>' 'rev-parse' 'HEAD'`. Match the
-		// verb alone; a pattern that spelled the whole phrase would never match.
 		headAnswer = "case \"$*\" in\n" +
 			"  *rev-parse*) exec git -C " + wtPath + " rev-parse HEAD ;;\n" +
 			"esac\n"
@@ -146,7 +77,6 @@ func remotefixSSHShimAnsweringHEAD(t *testing.T, exitCode int, wtPath string) st
 	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + logPath + "\n" +
 		headAnswer +
 		"exit " + strconv.Itoa(exitCode) + "\n"
-	// 0o700 rather than 0o600: the shim is put on PATH and must be executable.
 	if err := os.WriteFile(filepath.Join(binDir, "ssh"), []byte(shim), 0o700); err != nil { //nolint:gosec // G306: an exec shim in a per-test temp dir must carry the execute bit
 		t.Fatalf("remotefixSSHShim: write shim: %v", err)
 	}
@@ -154,8 +84,6 @@ func remotefixSSHShimAnsweringHEAD(t *testing.T, exitCode int, wtPath string) st
 	return logPath
 }
 
-// remotefixSSHCalls returns the lines the shim recorded, or nothing when no ssh
-// ran at all.
 func remotefixSSHCalls(t *testing.T, logPath string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(logPath) //nolint:gosec // a path the fixture just created under its own temp dir
@@ -172,11 +100,6 @@ func remotefixSSHCalls(t *testing.T, logPath string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// remotefixTunnelSeam replaces the reverse-tunnel process builder for the length
-// of the test and restores it after.
-//
-// The seam is a package-level variable in internal/transport/tunnel, so a test
-// that swaps it MUST NOT be parallel.
 func remotefixTunnelSeam(t *testing.T, build func(ctx context.Context, name string, args ...string) *exec.Cmd) {
 	t.Helper()
 	orig := tunnelpkg.ReverseTunnelRunner
@@ -184,37 +107,10 @@ func remotefixTunnelSeam(t *testing.T, build func(ctx context.Context, name stri
 	tunnelpkg.ReverseTunnelRunner = build
 }
 
-// remotefixIdleTunnel is a reverse tunnel that starts, stays up, and carries
-// nothing. A fixture that must reach the launch needs a live process for the run
-// to hold and then kill.
 func remotefixIdleTunnel(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "sh", "-c", "sleep 300")
 }
 
-// remotefixParams fills the work-loop fields that are the same in every remote
-// fixture. The caller sets the rest by name.
-//
-// The values here are settings rather than subjects. /bin/sh with a stub script
-// stands in for the agent, one concurrent run keeps the dispatch gate out of the
-// way, and main is the branch the run plan resolves against.
-//
-// AdapterRegistry2 is deliberately NOT set. It decides how the readiness phase
-// ends, which is the subject of some of these tests rather than a setting, so a
-// caller inheriting somebody else's readiness behaviour is the worse failure.
-//
-// Two things about how it fails, because neither is what you would guess and a
-// fixture this one is copied from should not teach the guess:
-//
-//   - Nil does NOT refuse at construction. ExportedTestRuntime assigns the
-//     field straight through with no guard and no default, unlike AgentSpawnSem
-//     a few lines above it. The nil guard lives in the
-//     production constructor, which no fixture goes through. So nil panics
-//     inside ForAgent, on the run's own spawned goroutine, and takes the whole
-//     test binary down.
-//   - Non-nil is not sufficient. A registry that holds no adapter for the
-//     resolved agent type degrades to a synthetic ready, which collapses the
-//     readiness window instead of failing. A test about the readiness window
-//     then passes while measuring nothing.
 func remotefixParams(t *testing.T, projectDir string) TestRuntimeParams {
 	t.Helper()
 	return TestRuntimeParams{
@@ -227,8 +123,6 @@ func remotefixParams(t *testing.T, projectDir string) TestRuntimeParams {
 	}
 }
 
-// remotefixBead returns an open task bead with no labels and no body, which is
-// the plainest thing the run plan can resolve.
 func remotefixBead(id core.BeadID, title string) core.BeadRecord {
 	return core.BeadRecord{
 		BeadID:   id,
@@ -238,11 +132,6 @@ func remotefixBead(id core.BeadID, title string) core.BeadRecord {
 	}
 }
 
-// remotefixRunEnv builds the run environment for one fresh run of bead.
-//
-// deps.runEnv takes eleven positional arguments, ten of which every fixture here
-// leaves at their zero value. Spelling them out per file is how a fixture ends up
-// depending on an argument it never meant to set.
 func remotefixRunEnv(deps testRuntime, bead core.BeadRecord) runloop.RunEnv {
 	return deps.runEnv(core.RunID(uuid.New()), bead, "", "", core.AgentType(""))
 }

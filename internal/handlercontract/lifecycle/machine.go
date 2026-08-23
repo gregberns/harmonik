@@ -120,15 +120,12 @@ func (m *Machine) RecordActivity() {
 	m.mu.Unlock()
 }
 
-// appendHistory appends t to the ring buffer. When the buffer is full the
-// oldest entry is silently evicted (tail-keep, drop-oldest per HC-067).
 func (m *Machine) appendHistory(t Transition) {
 	idx := (uint(m.head) + uint(m.count)) % maxHistorySize
 	m.history[idx] = t
 	if m.count < maxHistorySize {
 		m.count++
 	} else {
-		// Buffer full: overwrite oldest slot and advance head.
 		m.head = (m.head + 1) % maxHistorySize
 	}
 }

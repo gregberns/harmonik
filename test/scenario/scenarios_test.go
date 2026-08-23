@@ -2,52 +2,6 @@
 
 package scenario
 
-// scenarios_test.go — five twin-feasible-today scenario tests.
-//
-// Each test function corresponds to one of the five fixes identified in the
-// twin-parity audit as exercisable without new twin extensions:
-//
-//  - TestScenario_Fix1_TrustEnvOverride   (hk-lj1p9.3)
-//  - TestScenario_Fix2_SocketBoundBeforeTwin (hk-tjl40)
-//  - TestScenario_Fix3_WaitUnblocksAfterTwinExit (hk-smuku)
-//  - TestScenario_Fix6_EvalSymlinksTrustLookup (hk-o5eww)
-//  - TestScenario_Fix10_AgentTaskSessionCompletion (hk-cmybm layer 1)
-//
-// # Daemon boot strategy
-//
-// Scenarios that need the full daemon socket binding use daemon.Start (in-process)
-// with BrPath="" (skips the work loop) to test just the socket + trust paths.
-//
-// Scenarios that need the work loop (Fix 3) use daemon.ExportedTestRuntime +
-// daemon.ExportedRunWorkLoop with stub ledgers, matching the pattern in
-// internal/daemon/t2_scenarios_test.go.
-//
-// Scenarios that test workspace-layer behavior (Fixes 1, 6, 10) call workspace
-// package functions directly, since those fixes are implemented at the workspace
-// layer and do not require a running daemon.
-//
-// # Why these can run today without twin extensions
-//
-// Fix 1 (trust env-override): the HARMONIK_CLAUDE_CONFIG_PATH env var redirect is
-// already in workspace.claudeGlobalConfigPath (hk-lj1p9.3). No twin behavior needed.
-//
-// Fix 2 (socket bind): daemon.Start already calls RunSocketListener before
-// starting the work loop (hk-tjl40). Assertion: stat the socket file.
-//
-// Fix 3 (Wait stored PID): the work loop closes the bead after the handler
-// exits (hk-smuku). Assertion: stub ledger records CloseBead; loop exits.
-//
-// Fix 6 (EvalSymlinks): workspace.EnsureWorktreeTrust calls
-// filepath.EvalSymlinks before writing the trust entry (hk-o5eww). Assertion:
-// trust entry in .claude.json uses the resolved (canonical) path.
-//
-// Fix 10 (agent-task.md): workspace.WriteAgentTask emits the ## Session Completion
-// section (hk-cmybm layer 1). Assertion: section header present in file.
-//
-// Spec refs: specs/scenario-harness.md §4; specs/handler-contract.md §4.8 HC-036;
-// specs/claude-hook-bridge.md §4.11 CHB-028; specs/workspace-model.md §4.7b WM-040b.
-// Bead refs: hk-mg1ya, hk-lj1p9, hk-tjl40, hk-smuku, hk-o5eww, hk-cmybm.
-
 import (
 	"bufio"
 	"context"
@@ -65,10 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fix 1 — hk-lj1p9.3: trust env-override (HARMONIK_CLAUDE_CONFIG_PATH)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_Fix1_TrustEnvOverride verifies that workspace.EnsureWorktreeTrust
 // respects the HARMONIK_CLAUDE_CONFIG_PATH environment variable so tests (and the
@@ -89,23 +39,16 @@ import (
 //  2. The written file contains the worktree path as a trust entry.
 //  3. A second call (idempotent) returns nil without re-writing.
 func TestScenario_Fix1_TrustEnvOverride(t *testing.T) {
-	// Note: t.Setenv is incompatible with t.Parallel (Go enforces this).
-	// This test is intentionally sequential to avoid env var races.
-
-	// Per-scenario isolation: temp dir for the fake ~/.claude.json redirect.
 	tmpDir := t.TempDir()
 	fakeConfigPath := filepath.Join(tmpDir, ".claude.json")
 	worktreePath := t.TempDir()
 
-	// Redirect EnsureWorktreeTrust to our fake config path via env var.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", fakeConfigPath)
 
-	// First call: must succeed and write the trust entry.
 	if err := workspace.EnsureWorktreeTrust(worktreePath); err != nil {
 		t.Fatalf("Fix1: EnsureWorktreeTrust first call failed: %v", err)
 	}
 
-	// Assert: the fake config was written (not ~/.claude.json).
 	if _, err := os.Stat(fakeConfigPath); err != nil {
 		t.Fatalf("Fix1: expected fake config at %s to exist after EnsureWorktreeTrust, got: %v",
 			fakeConfigPath, err)
@@ -122,7 +65,6 @@ func TestScenario_Fix1_TrustEnvOverride(t *testing.T) {
 		t.Fatalf("Fix1: unmarshal config: %v", err)
 	}
 
-	// Resolve the canonical worktreePath (EvalSymlinks is applied by the function).
 	canonicalPath := worktreePath
 	if resolved, err := filepath.EvalSymlinks(worktreePath); err == nil {
 		canonicalPath = resolved
@@ -142,7 +84,6 @@ func TestScenario_Fix1_TrustEnvOverride(t *testing.T) {
 		t.Errorf("Fix1: hasTrustDialogAccepted is not true for path %q", canonicalPath)
 	}
 
-	// Second call: idempotent — must return nil without modifying the file.
 	if err := workspace.EnsureWorktreeTrust(worktreePath); err != nil {
 		t.Errorf("Fix1: EnsureWorktreeTrust second call (idempotent) failed: %v", err)
 	}
@@ -150,7 +91,6 @@ func TestScenario_Fix1_TrustEnvOverride(t *testing.T) {
 	t.Logf("Fix1 PASS: trust entry written to %s for path %q", fakeConfigPath, canonicalPath)
 }
 
-// scenarioFixtureMapKeys returns the keys of a map[string]interface{} for logging.
 func scenarioFixtureMapKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -158,10 +98,6 @@ func scenarioFixtureMapKeys(m map[string]interface{}) []string {
 	}
 	return keys
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fix 2 — hk-tjl40: socket bound before twin can connect
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_Fix2_SocketBoundBeforeTwin verifies that daemon.Start binds the
 // Unix-domain socket at <ProjectDir>/.harmonik/daemon.sock BEFORE the work loop
@@ -207,7 +143,6 @@ func TestScenario_Fix2_SocketBoundBeforeTwin(t *testing.T) {
 		scenarioFixtureWaitDaemon(t, done, 5*time.Second)
 	}()
 
-	// Poll for socket with mode 0600 (matches TestDaemonStart_BindsSocket pattern).
 	const sockBudget = 5 * time.Second
 	sockFound := scenarioFixturePollSocket(proj.sockPath, sockBudget)
 
@@ -220,10 +155,6 @@ func TestScenario_Fix2_SocketBoundBeforeTwin(t *testing.T) {
 		t.Logf("Fix2 PASS: socket at %q bound within %s", proj.sockPath, sockBudget)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fix 3 — hk-smuku: sess.Wait unblocks after agent_completed
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_Fix3_WaitUnblocksAfterTwinExit verifies that handler.Session.Wait
 // returns promptly when the handler subprocess exits (subprocess path, no tmux).
@@ -246,8 +177,6 @@ func TestScenario_Fix2_SocketBoundBeforeTwin(t *testing.T) {
 func TestScenario_Fix3_WaitUnblocksAfterTwinExit(t *testing.T) {
 	t.Parallel()
 
-	// Choose handler: prefer twin binary (tests real event stream); fall back to
-	// shell script (tests bare subprocess exit path).
 	var binary string
 	var args []string
 
@@ -255,7 +184,6 @@ func TestScenario_Fix3_WaitUnblocksAfterTwinExit(t *testing.T) {
 		binary = twinBinaryPath
 		args = []string{"--scenario", "single-happy-path"}
 	} else {
-		// Minimal handler: exits 0 immediately (no NDJSON).
 		scriptDir := t.TempDir()
 		scriptPath := filepath.Join(scriptDir, "exit-zero.sh")
 		//nolint:gosec // G306: script is test-only, chmod 0755 required for execution
@@ -287,14 +215,12 @@ func TestScenario_Fix3_WaitUnblocksAfterTwinExit(t *testing.T) {
 		t.Fatalf("Fix3: handler.Launch failed: %v", err)
 	}
 
-	// Wait for the watcher to drain (subprocess stdout → EOF).
 	select {
 	case <-watcher.Done():
 	case <-ctx.Done():
 		t.Fatalf("Fix3: context done before watcher finished: %v", ctx.Err())
 	}
 
-	// sess.Wait MUST return within bounded time (the fix: stored PID, not window name).
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- sess.Wait(ctx) }()
 
@@ -312,10 +238,6 @@ func TestScenario_Fix3_WaitUnblocksAfterTwinExit(t *testing.T) {
 
 	_ = pub.EventTypes() // satisfy import
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fix 6 — hk-o5eww: EvalSymlinks in EnsureWorktreeTrust
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_Fix6_EvalSymlinksTrustLookup verifies that workspace.EnsureWorktreeTrust
 // resolves symlinks before writing the trust entry, so the key matches what Claude
@@ -339,28 +261,20 @@ func TestScenario_Fix3_WaitUnblocksAfterTwinExit(t *testing.T) {
 //   - Trust entry key = resolved path (via EvalSymlinks).
 //   - Trust entry key ≠ symlink path (unless they happen to resolve to the same).
 func TestScenario_Fix6_EvalSymlinksTrustLookup(t *testing.T) {
-	// Note: t.Setenv is incompatible with t.Parallel (Go enforces this).
-	// This test is intentionally sequential to avoid env var races.
-
 	tmpDir := t.TempDir()
 	fakeConfigPath := filepath.Join(tmpDir, ".claude.json")
 
-	// Create a real directory and a symlink pointing to it.
 	realDir := filepath.Join(tmpDir, "real-worktree")
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatalf("Fix6: MkdirAll realDir: %v", err)
 	}
 	symlinkDir := filepath.Join(tmpDir, "symlink-worktree")
 	if err := os.Symlink(realDir, symlinkDir); err != nil {
-		// Symlink creation can fail on some CI environments (lack of permissions).
-		// Skip gracefully — the behavior is tested on platforms that support it.
 		t.Skipf("Fix6: Symlink creation failed (may be a CI sandbox restriction): %v", err)
 	}
 
-	// Redirect EnsureWorktreeTrust to our fake config.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", fakeConfigPath)
 
-	// Call with the symlink path.
 	if err := workspace.EnsureWorktreeTrust(symlinkDir); err != nil {
 		t.Fatalf("Fix6: EnsureWorktreeTrust with symlink path failed: %v", err)
 	}
@@ -381,7 +295,6 @@ func TestScenario_Fix6_EvalSymlinksTrustLookup(t *testing.T) {
 		t.Fatalf("Fix6: config.projects missing or wrong type; got: %v", cfg["projects"])
 	}
 
-	// Determine the canonical resolved path.
 	resolvedDir, evalErr := filepath.EvalSymlinks(symlinkDir)
 	if evalErr != nil {
 		t.Fatalf("Fix6: EvalSymlinks test-side call failed: %v", evalErr)
@@ -389,7 +302,6 @@ func TestScenario_Fix6_EvalSymlinksTrustLookup(t *testing.T) {
 
 	t.Logf("Fix6: symlink=%q resolved=%q projects keys=%v", symlinkDir, resolvedDir, scenarioFixtureMapKeys(projects))
 
-	// The trust entry MUST be under the RESOLVED path.
 	entry, ok := projects[resolvedDir].(map[string]interface{})
 	if !ok {
 		t.Errorf("Fix6 FAIL: trust entry not found under resolved path %q; projects keys=%v (hk-o5eww)",
@@ -401,7 +313,6 @@ func TestScenario_Fix6_EvalSymlinksTrustLookup(t *testing.T) {
 		t.Errorf("Fix6: hasTrustDialogAccepted is not true under resolved path %q", resolvedDir)
 	}
 
-	// When symlink and realDir differ, confirm the symlink path is NOT a key.
 	if symlinkDir != resolvedDir {
 		if _, foundUnderSymlink := projects[symlinkDir]; foundUnderSymlink {
 			t.Errorf("Fix6 FAIL: trust entry also written under symlink path %q; should only be under resolved path %q",
@@ -411,10 +322,6 @@ func TestScenario_Fix6_EvalSymlinksTrustLookup(t *testing.T) {
 
 	t.Logf("Fix6 PASS: trust entry under resolved path %q", resolvedDir)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Fix 10 — hk-cmybm layer 1: agent-task.md ## Session Completion section
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_Fix10_AgentTaskSessionCompletion verifies that workspace.WriteAgentTask
 // materialises the ## Session Completion section in agent-task.md.
@@ -461,7 +368,6 @@ func TestScenario_Fix10_AgentTaskSessionCompletion(t *testing.T) {
 		t.Fatalf("Fix10: WriteAgentTask failed: %v", err)
 	}
 
-	// Read the materialized file.
 	taskPath := workspace.AgentTaskPath(workspacePath)
 	//nolint:gosec // G304: taskPath constructed from workspacePath (t.TempDir()) + known suffix
 	data, err := os.ReadFile(taskPath)
@@ -471,23 +377,19 @@ func TestScenario_Fix10_AgentTaskSessionCompletion(t *testing.T) {
 	content := string(data)
 	t.Logf("Fix10: agent-task.md content (%d bytes):\n%s", len(data), content)
 
-	// Assert ## Session Completion section is present.
 	if !strings.Contains(content, "## Session Completion") {
 		t.Errorf("Fix10 FAIL: agent-task.md does not contain '## Session Completion' section (hk-cmybm)")
 	}
 
-	// Assert /quit instruction is present.
 	if !strings.Contains(content, "/quit") {
 		t.Errorf("Fix10 FAIL: agent-task.md does not contain '/quit' instruction; " +
 			"claude will not exit the session and the workloop will block forever")
 	}
 
-	// Assert task description is present.
 	if !strings.Contains(content, payload.Body) {
 		t.Errorf("Fix10 FAIL: agent-task.md does not contain the bead body (## Task Description)")
 	}
 
-	// Assert daemon_cannot_detect instruction (informs claude why /quit is required).
 	if !strings.Contains(content, "cannot detect") {
 		t.Errorf("Fix10: agent-task.md does not contain 'cannot detect' explanation; " +
 			"claude may not understand why /quit is mandatory")
@@ -495,10 +397,6 @@ func TestScenario_Fix10_AgentTaskSessionCompletion(t *testing.T) {
 
 	t.Logf("Fix10 PASS: ## Session Completion section present with /quit instruction")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Twin smoke: single-happy-path via built twin binary
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_TwinSmoke_SingleHappyPath is an additional scenario that verifies
 // the built harmonik-twin-claude binary emits the expected event sequence when
@@ -539,7 +437,6 @@ func TestScenario_TwinSmoke_SingleHappyPath(t *testing.T) {
 	gotTypes := scenarioParseNDJSONTypes(t, stdout.String())
 	t.Logf("TwinSmoke: event types from twin: %v", gotTypes)
 
-	// Assert event sequence: agent_ready must precede agent_completed.
 	readyIdx, completedIdx := -1, -1
 	for i, et := range gotTypes {
 		if et == "agent_ready" && readyIdx < 0 {
@@ -565,8 +462,6 @@ func TestScenario_TwinSmoke_SingleHappyPath(t *testing.T) {
 	}
 }
 
-// scenarioParseNDJSONTypes parses NDJSON lines from s and returns the "type"
-// field value from each JSON object. Used by TwinSmoke.
 func scenarioParseNDJSONTypes(t *testing.T, s string) []string {
 	t.Helper()
 	var types []string

@@ -2,10 +2,6 @@ package handlercontract
 
 import "time"
 
-// versionNego — per-bead helper prefix for test helpers in
-// versionnego_hc009_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.10).
-
 // HandlerCapabilitiesMsg is the on-wire NDJSON message the handler subprocess
 // MUST emit as the FIRST progress-stream message on connection.
 //

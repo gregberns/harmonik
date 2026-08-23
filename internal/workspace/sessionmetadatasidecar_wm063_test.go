@@ -11,12 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Tests for the SessionMetadataSidecar record per workspace-model.md §6.1
-// and §4.7.WM-026 (bead hk-8mwo.63).
-//
-// Helper prefix: sidecarRecordFixture (distinct from other helper prefixes).
-
-// sidecarRecordFixtureValid returns a fully-populated, valid SessionMetadataSidecar.
 func sidecarRecordFixtureValid(t *testing.T) SessionMetadataSidecar {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196e300-0000-7000-8000-000000000001"))
@@ -36,10 +30,6 @@ func sidecarRecordFixtureValid(t *testing.T) SessionMetadataSidecar {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Field set — all 7 fields accessible
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM063_SidecarRecord7Fields verifies that all 7 fields declared in §6.1
 // are present and accessible on SessionMetadataSidecar.
 func TestWM063_SidecarRecord7Fields(t *testing.T) {
@@ -47,7 +37,6 @@ func TestWM063_SidecarRecord7Fields(t *testing.T) {
 
 	s := sidecarRecordFixtureValid(t)
 
-	// Required fields.
 	if s.RunID == (core.RunID{}) {
 		t.Error("WM-063: RunID is zero")
 	}
@@ -67,15 +56,10 @@ func TestWM063_SidecarRecord7Fields(t *testing.T) {
 		t.Errorf("WM-063: SchemaVersion = %d; want positive", s.SchemaVersion)
 	}
 
-	// Optional field (present in fixture).
 	if s.BeadID == nil {
 		t.Error("WM-063: BeadID is nil in fixture; want non-nil (test setup error)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Valid() — required field validation
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM063_ValidHappyPath verifies that a fully-populated sidecar passes Valid().
 func TestWM063_ValidHappyPath(t *testing.T) {
@@ -164,10 +148,6 @@ func TestWM063_ValidRejectsZeroSchemaVersion(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// JSON round-trip and tag verification
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM063_JSONRoundTrip verifies that a valid sidecar can be marshalled and
 // unmarshalled with all fields intact.
 func TestWM063_JSONRoundTrip(t *testing.T) {
@@ -241,10 +221,6 @@ func TestWM063_JSONRequiredFieldsPresent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Path helper
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM063_SidecarPathShape verifies that SessionMetadataSidecarPath returns
 // the canonical path per §6.2:
 // ${workspace_path}/.harmonik/sessions/<session_id>/harmonik.meta.json
@@ -273,10 +249,6 @@ func TestWM063_SidecarPathContainsHarmonikMeta(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Schema version constant
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM063_SchemaVersionConstantIsPositive verifies SessionMetadataSidecarSchemaVersion > 0.
 func TestWM063_SchemaVersionConstantIsPositive(t *testing.T) {
 	t.Parallel()
@@ -294,19 +266,13 @@ func TestWM063_AgentTypeIsAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	s := sidecarRecordFixtureValid(t)
-	// AgentType must be non-empty; the fixture uses "claude-code" (agentic).
 	if s.AgentType == "" {
 		t.Error("WM-063: AgentType is empty; WM-022 requires it for implementer identification")
 	}
-	// The agent_type field must survive Valid() — it's a required field.
 	if err := s.Valid(); err != nil {
 		t.Errorf("WM-063: sidecar with AgentType %q: Valid() = %v; want nil", s.AgentType, err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WriteSessionMetadataSidecarAtomic / ReadSessionMetadataSidecar
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM063_WriteAtomicCreatesFile verifies that WriteSessionMetadataSidecarAtomic
 // creates the sidecar file at the canonical path.
@@ -341,7 +307,6 @@ func TestWM063_WriteAtomicNoTempFileAfterSuccess(t *testing.T) {
 		t.Fatalf("WM-026: WriteSessionMetadataSidecarAtomic: %v", err)
 	}
 
-	// No .tmp-* file should remain in the session directory.
 	dir := filepath.Dir(target)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -416,16 +381,6 @@ func TestWM063_WriteAtomicRejectsInvalidSidecar(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T-WM-030 acceptance tests: WorkflowMode field on sidecar (hk-7om2q.30)
-//
-// BI-020 amendment: the sidecar MAY carry the resolved workflow_mode.
-// When non-nil, the value MUST match the mode the daemon dispatched the run
-// under. Helper prefix: sidecarWMFixture (distinct from sidecarRecordFixture).
-// ─────────────────────────────────────────────────────────────────────────────
-
-// sidecarWMFixtureWithMode returns a valid SessionMetadataSidecar with the
-// WorkflowMode field set to mode.
 func sidecarWMFixtureWithMode(t *testing.T, mode core.WorkflowMode) SessionMetadataSidecar {
 	t.Helper()
 	s := sidecarRecordFixtureValid(t)
@@ -498,7 +453,6 @@ func TestWM030_SingleModeSidecarOmitsWorkflowMode(t *testing.T) {
 	t.Parallel()
 
 	s := sidecarRecordFixtureValid(t)
-	// WorkflowMode is nil — represents a single-mode run that omits the field.
 
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -565,7 +519,6 @@ func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
 		t.Fatal("T-WM-030: decoded is nil")
 	}
 
-	// All pre-existing required fields must survive.
 	if decoded.RunID != original.RunID {
 		t.Errorf("T-WM-030: RunID mismatch: got %v, want %v", decoded.RunID, original.RunID)
 	}
@@ -573,7 +526,6 @@ func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
 		t.Errorf("T-WM-030: AgentType mismatch: got %q, want %q", decoded.AgentType, original.AgentType)
 	}
 
-	// WorkflowMode must survive.
 	if decoded.WorkflowMode == nil {
 		t.Fatal("T-WM-030: decoded.WorkflowMode is nil after round-trip; want dot")
 	}
@@ -588,7 +540,6 @@ func TestWM030_WorkflowModeFieldIsOptional(t *testing.T) {
 	t.Parallel()
 
 	s := sidecarRecordFixtureValid(t)
-	// WorkflowMode is nil — the field is optional.
 	if err := s.Valid(); err != nil {
 		t.Errorf("T-WM-030: Valid() with nil WorkflowMode = %v; want nil (field is optional)", err)
 	}

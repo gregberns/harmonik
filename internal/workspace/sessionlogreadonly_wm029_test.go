@@ -36,14 +36,12 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
-	// Write the sidecar (S06 action — write side).
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
 	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-029: sidecar write: %v", err)
 	}
 
-	// Also write a session.log to simulate handler output in the session dir.
 	sessionLog := filepath.Join(sessionDir, "session.log")
 	if err := os.WriteFile(sessionLog, []byte("handler output line 1\n"), 0o600); err != nil {
 		t.Fatalf("WM-029: WriteFile session.log: %v", err)
@@ -66,7 +64,6 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 		t.Fatalf("WM-029: JSON decode via O_RDONLY: %v", err)
 	}
 
-	// Assert required fields are readable.
 	for _, key := range []string{"run_id", "session_id", "node_id", "agent_type", "launched_at", "schema_version"} {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("WM-029: required field %q not readable from sidecar", key)
@@ -85,7 +82,6 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 		}
 	}()
 
-	// Assert: we can read from the log.
 	buf := make([]byte, 256)
 	n, err := logF.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -95,8 +91,6 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 		t.Errorf("WM-029: session.log is empty; expected handler output")
 	}
 
-	// Assert: the session directory still contains exactly the files written by S06/S04.
-	// S08 read path must not create any new files in the directory.
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		t.Fatalf("WM-029: ReadDir: %v", err)
@@ -111,7 +105,6 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	if !fileNames["session.log"] {
 		t.Errorf("WM-029: session.log absent after S08-style read")
 	}
-	// Assert: no unexpected files were created (no write side-effects from reads).
 	for name := range fileNames {
 		if name != "harmonik.meta.json" && name != "session.log" {
 			t.Errorf("WM-029: unexpected file in session dir after read-only pass: %q", name)

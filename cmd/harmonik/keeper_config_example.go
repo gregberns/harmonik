@@ -6,33 +6,6 @@ import (
 	"os"
 )
 
-// keeper_config_example.go — `harmonik keeper config --example` + the SINGLE
-// source-of-truth keeper: config template.
-//
-// Operator-philosophy change: harmonik imposes NO built-in keeper defaults at
-// RUNTIME (ResolveKeeperConfig refuses to start on any unset required value). The
-// migration is one command: `harmonik keeper config --example` prints a COMPLETE,
-// COMMENTED keeper: block with a sensible SUGGESTED starting value for every
-// required key. The operator pastes it into .harmonik/config.yaml and OWNS/tunes
-// the numbers from there.
-//
-// The suggested values are sourced from internal/keeper's Default* consts. That is
-// ALLOWED here (and ONLY here + `harmonik init`): this is a template the operator
-// copies and edits, NOT a runtime fallback. keeperConfigExampleBlock is the single
-// source of truth shared by this command AND init_cmd.go so the two can never drift.
-//
-// LOAD-BEARING round-trip invariant (asserted in a test): the block this prints,
-// pasted under schema_version: 1, MUST parse via daemon.LoadProjectConfig and
-// resolve via ResolveKeeperConfig with ZERO missing-value errors. If you add a new
-// required keeper value, you MUST add a line here or the round-trip test fails.
-
-// keeperConfigExampleBlock is the complete, commented keeper: block — every
-// operator-required key with a suggested starting value. It is a standalone YAML
-// fragment (the `keeper:` mapping) so it can be embedded under schema_version: 1 in
-// .harmonik/config.yaml. Indentation is two-space, matching the rest of config.yaml.
-//
-// Suggested values mirror the keeper.Default* consts (thresholds.go). These are a
-// STARTING POINT the operator owns — NOT a runtime default.
 const keeperConfigExampleBlock = `keeper:
   # context_thresholds — the warn/act/force token band + pct-of-window caps.
   # Token fields are plain integers. INVARIANT: warn < act < force_act.
@@ -92,22 +65,14 @@ const keeperConfigExampleBlock = `keeper:
     crew_defer_text: ""              # reserved crew-specific defer wording
 `
 
-// keeperConfigExampleYAML returns the complete keeper: example block. It is the
-// single source of truth shared by `harmonik keeper config --example` and
-// `harmonik init`'s generated config.yaml so the two cannot drift.
 func keeperConfigExampleYAML() string {
 	return keeperConfigExampleBlock
 }
 
-// runKeeperConfig implements `harmonik keeper config`. The only supported form is
-// `harmonik keeper config --example`, which prints the complete starting keeper:
-// block to stdout. Any other invocation prints usage to stderr and exits non-zero.
 func runKeeperConfig(args []string) int {
 	return runKeeperConfigTo(args, os.Stdout, os.Stderr)
 }
 
-// runKeeperConfigTo is the io-injectable core of runKeeperConfig (testable without
-// touching the process stdio).
 func runKeeperConfigTo(args []string, stdout, stderr io.Writer) int {
 	example := false
 	for _, a := range args {

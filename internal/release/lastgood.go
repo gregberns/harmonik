@@ -105,8 +105,6 @@ func RestoreLastGoodBinary(statePath, dstBin string) error {
 	return nil
 }
 
-// copyBinary copies src to dst atomically (tmp + rename), preserving the
-// source file's permission bits.
 func copyBinary(src, dst string) error {
 	in, err := os.Open(src) //nolint:gosec // G304: operator-supplied path
 	if err != nil {

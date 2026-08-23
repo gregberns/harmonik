@@ -1,20 +1,5 @@
 package pi
 
-// export_test.go — the pi test seams, relocated verbatim from
-// internal/daemon/export_test.go by P2 unit E1c
-// (plans/2026-07-21-p2-extraction/E1c-pi.md §4 step 9).
-//
-// A Go export_test.go seam is visible only inside its OWN package's test
-// binary, so the eight pi test files that moved with the implementation could
-// not keep calling daemon.ExportedPi*. Every shim below is a byte-for-byte copy
-// of the daemon-side original with the qualifier dropped; the daemon-side
-// copies are deleted in the same commit because their only consumers moved
-// here. The two that daemon KEEPS (ExportedPiHarnessFields, ExportedNewPiHarness)
-// are the ones whose consumers stayed behind.
-//
-// ExportedWorktreeHEADHasRefsTrailer forwards to internal/harness/shared there
-// as it does here — same as internal/harness/codex/export_test.go.
-
 import (
 	"context"
 	"io"
@@ -24,10 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Refs:<bead> trailer fallback seams (hk-mazln PI-030/031)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedPiRefsOutcome mirrors the internal piRefsOutcome enum for tests.
 type ExportedPiRefsOutcome = piRefsOutcome
@@ -67,10 +48,6 @@ func ExportedEnsurePiRefsTrailer(ctx context.Context, wtPath, parentSHA string, 
 func ExportedEnsurePiRefsTrailerViaRunner(ctx context.Context, runner tmuxPkg.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
 	return EnsureRefsTrailer(ctx, runner, wtPath, parentSHA, beadID)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Harness + NDJSON parser seams (hk-4rmj1 PI-010/012/013, hk-mkcwg PI-014)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedNewPiHarness re-exports NewHarness for tests in package pi_test.
 //
@@ -134,10 +111,6 @@ const ExportedPiEventKindMessageStart = piEventKindMessageStart
 // ExportedPiEventKindMessageEnd re-exports piEventKindMessageEnd for tests.
 const ExportedPiEventKindMessageEnd = piEventKindMessageEnd
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BuildLaunchSpec test seams (hk-1c16h PI-015/020/021)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ExportedPiRunCtx is the exported shape of the pi per-launch run context.
 //
 // Bead ref: hk-1c16h.
@@ -187,10 +160,6 @@ func ExportedBuildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string
 func ExportedResolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
 	return resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pi billing guard test seams (hk-l1bkp PI-040/042/043)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedRunPiBillingGuard exposes runPiBillingGuard for tests in package
 // pi_test. piHome is forwarded as-is so tests can supply a fake home dir and

@@ -6,25 +6,6 @@ import (
 	"sync/atomic"
 )
 
-// prereject_pl003b.go — PL-003b pre-ready request rejection gate.
-//
-// Between socket bind (PL-005 step 3a) and completion of the in-memory model
-// build (PL-005 step 7), the daemon MUST reject any emit-outcome, claim-next,
-// or other agent-originated request whose run_id is not recognised in the
-// daemon's in-memory state, with the typed error
-// daemon_not_ready{reason="unknown_run_id"}.
-//
-// CLI daemon-status requests are exempt (they are ready-detection probes per
-// PL-009b).
-//
-// Spec ref: process-lifecycle.md §4.1 PL-003b.
-
-// agentOriginatedMethods is the set of JSON-RPC method names that are
-// agent-originated and must be rejected during the pre-ready window.
-// CLI-facing methods (status, pause, resume, stop, upgrade, attach, enqueue,
-// list) are exempt.
-//
-// Spec ref: process-lifecycle.md §4.1 PL-003a — agent-facing method inventory.
 var agentOriginatedMethods = map[string]bool{
 	"claim-next":      true,
 	"emit-outcome":    true,

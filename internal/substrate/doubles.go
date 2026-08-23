@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-// ─── FakeEffector ────────────────────────────────────────────────────────────
-
 // FakeEffector is a generic recorder Effector that records every action it
 // receives (RS-006). It is safe for concurrent use (Execute may be called from
 // the driver-loop goroutine while Actions is read from the test goroutine). It
@@ -39,8 +37,6 @@ func (f *FakeEffector[A]) Reset() {
 	f.actions = nil
 	f.mu.Unlock()
 }
-
-// ─── SyntheticSource ─────────────────────────────────────────────────────────
 
 // SyntheticSource is a generic fixed-slice EventSource that delivers a fixed
 // []E slice (RS-007). Events returns a pre-filled, immediately closed channel —

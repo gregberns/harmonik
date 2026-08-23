@@ -76,7 +76,6 @@ func (s ScenarioFile) ExpandMatrix() ([]ScenarioFile, error) {
 		results = append(results, expanded)
 	}
 
-	// Sort by synthetic name (byte-lexicographic) per SH-007.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Name < results[j].Name
 	})
@@ -84,10 +83,6 @@ func (s ScenarioFile) ExpandMatrix() ([]ScenarioFile, error) {
 	return results, nil
 }
 
-// matrixCartesianProduct generates all cells of the cartesian product for
-// matrix. Keys within each cell are iterated in byte-lexicographic order so
-// the per-cell maps are deterministically ordered. The slice of cells is NOT
-// sorted; callers order by synthetic name for suite ordering (per ExpandMatrix).
 func matrixCartesianProduct(matrix map[string][]string) []map[string]string {
 	keys := make([]string, 0, len(matrix))
 	for k := range matrix {
@@ -114,11 +109,6 @@ func matrixCartesianProduct(matrix map[string][]string) []map[string]string {
 	return result
 }
 
-// substituteString applies Go text/template substitution to s using params as
-// the template data. The template data is a map[string]string; field access
-// uses the standard {{.key}} syntax. missingkey=error is set so that any
-// reference to an unknown parameter key returns an error per SH-030.
-// Returns s unchanged when s contains no "{{" markers (fast path).
 func substituteString(s string, params map[string]string) (string, error) {
 	if !strings.Contains(s, "{{") {
 		return s, nil
@@ -134,21 +124,15 @@ func substituteString(s string, params map[string]string) (string, error) {
 	return buf.String(), nil
 }
 
-// applyMatrixParams returns a deep-copy of sf with all substitutable string
-// fields processed via substituteString using params. The Name and Matrix
-// fields are NOT modified here; callers set the synthetic name and clear
-// Matrix after calling this function (see ExpandMatrix).
 func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile, error) {
 	result := sf // start with a shallow copy; nested fields replaced below
 
-	// Description
 	desc, err := substituteString(sf.Description, params)
 	if err != nil {
 		return ScenarioFile{}, fmt.Errorf("description: %w", err)
 	}
 	result.Description = desc
 
-	// WorkflowPath (*string)
 	if sf.WorkflowPath != nil {
 		p, err := substituteString(*sf.WorkflowPath, params)
 		if err != nil {
@@ -157,7 +141,6 @@ func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile,
 		result.WorkflowPath = &p
 	}
 
-	// AgentOverrides
 	if sf.AgentOverrides != nil {
 		result.AgentOverrides = make(map[string]AgentOverride, len(sf.AgentOverrides))
 		for role, ao := range sf.AgentOverrides {
@@ -180,14 +163,12 @@ func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile,
 		}
 	}
 
-	// FixtureSetup
 	fs, err := applyMatrixParamsFixtureSetup(sf.FixtureSetup, params)
 	if err != nil {
 		return ScenarioFile{}, fmt.Errorf("fixture_setup: %w", err)
 	}
 	result.FixtureSetup = fs
 
-	// ExpectedEvents
 	if sf.ExpectedEvents != nil {
 		result.ExpectedEvents = make([]EventExpectation, len(sf.ExpectedEvents))
 		for i, ee := range sf.ExpectedEvents {
@@ -199,7 +180,6 @@ func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile,
 		}
 	}
 
-	// ExpectedWorkspace
 	if sf.ExpectedWorkspace != nil {
 		result.ExpectedWorkspace = make([]WorkspacePredicate, len(sf.ExpectedWorkspace))
 		for i, wp := range sf.ExpectedWorkspace {
@@ -225,7 +205,6 @@ func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile,
 		}
 	}
 
-	// ExpectedOutcome
 	if sf.ExpectedOutcome != nil {
 		desc, err := substituteString(sf.ExpectedOutcome.Description, params)
 		if err != nil {
@@ -239,8 +218,6 @@ func applyMatrixParams(sf ScenarioFile, params map[string]string) (ScenarioFile,
 	return result, nil
 }
 
-// applyMatrixParamsFixtureSetup returns a deep-copy of fs with substitutable
-// string fields processed via substituteString.
 func applyMatrixParamsFixtureSetup(fs FixtureSetup, params map[string]string) (FixtureSetup, error) {
 	result := fs
 
@@ -270,7 +247,6 @@ func applyMatrixParamsFixtureSetup(fs FixtureSetup, params map[string]string) (F
 				return FixtureSetup{}, fmt.Errorf("files[%q] key: %w", path, err)
 			}
 			newSeed := seed
-			// Only substitute utf8 contents; base64 contents are binary data.
 			if seed.Encoding != FileSeedEncodingBase64 {
 				contents, err := substituteString(seed.Contents, params)
 				if err != nil {
@@ -296,9 +272,6 @@ func applyMatrixParamsFixtureSetup(fs FixtureSetup, params map[string]string) (F
 	return result, nil
 }
 
-// applyMatrixParamsEventExpectation returns a deep-copy of ee with substitutable
-// string fields processed. String values in PayloadMatch are substituted; non-string
-// values are preserved as-is.
 func applyMatrixParamsEventExpectation(ee EventExpectation, params map[string]string, idx int) (EventExpectation, error) {
 	desc, err := substituteString(ee.Description, params)
 	if err != nil {

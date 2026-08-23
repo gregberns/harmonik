@@ -23,10 +23,6 @@ import (
 	"os"
 )
 
-// commitHash is optionally injected at build time via
-// -ldflags "-X main.commitHash=<sha>" so that VerifyTwinLaunch can verify
-// the binary against a pinned hash (HC-045).  Empty string is acceptable for
-// exploratory runs that bypass hash verification.
 var commitHash string //nolint:gochecknoglobals // build-time injection target
 
 func main() {

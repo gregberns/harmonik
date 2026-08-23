@@ -1,67 +1,5 @@
 package runloop
 
-// scenariogate.go — pre-merge gate that runs //go:build scenario tests when the
-// committed changes touch scenario-tagged files.
-//
-// SUPERSEDED, AND UNREACHABLE ON THE PRODUCTION PATH. Read this before you
-// change anything here, and read the reachability paragraph before you cite
-// this file as a check that runs.
-//
-// This file was written to keep the daemon in lock-step with a shell gate,
-// scripts/scenario-gate.sh, that the commit_gate node used to run. That script
-// is DELETED. commit_gate now runs `make core`, which runs the fixed package
-// list named at CORE_PKGS in the Makefile, without `-short`, and which fails
-// closed at every step. Refs D3=v3.
-//
-// THE OLD REASON TO DELETE THIS FILE DIED WITH THE GATE CHANGE. commit_gate
-// used to run `make full`, which tests every package and then runs the whole
-// tagged scenario tier through the `test-scenario` target. So the scenario
-// suite had already been run against the change, by something stricter than
-// this file, before a run reached the merge path, and this file was redundant.
-// `make core` passes no `-tags=scenario`, so every `//go:build scenario` file
-// is excluded from its build, and `./test/scenario/...` is not in CORE_PKGS at
-// all. The per-bead gate therefore runs NO scenario test. `make full` still
-// runs the tier, but that is the integration-into-main decision and it happens
-// after the bead merged.
-//
-// THIS FILE DOES NOT FILL THAT GAP, BECAUSE IT DOES NOT RUN. It is unreachable
-// on the production path. runScenarioGateIfNeededVia has exactly one non-test
-// caller, RunBridge.gateHook in runbridge.go, and that hook returns
-// EvGatePassed without ever calling it when SpineArgs.SkipGate is set. There is
-// exactly one non-test WireSpine call site, internal/daemon/workloop.go, and it
-// sets SkipGate: true with no condition on it. Both were re-checked against
-// this tree. The repo had already recorded the same finding next door, in the
-// header of scenariogate_realgotest_test.go.
-//
-// So the five approve-on-failure paths below — fail-open on a timeout, a signal
-// kill, a compile failure and an exit code it does not recognise, plus retry a
-// genuine failure once and ALLOW when the retry passes — cannot fire. They are
-// the paths the deleted shell gate had, and they are the reason it was removed,
-// but nothing reaches them here. Do NOT read this file as the last scenario
-// check in front of a merge. There is no such check.
-//
-// THE GAP IS REAL AND NOTHING FILLS IT. Closing it means putting the scenario
-// tier on the per-bead path: CORE_PKGS covers the scenario-tagged packages, or
-// `make core` carries `-tags=scenario`, or commit_gate runs `test-scenario` as
-// a second step.
-//
-// WHETHER TO DELETE THIS FILE OR TO WIRE IT UP IS A DECISION, NOT A CONCLUSION
-// OF THIS BANNER (hk-bims6). Deleting it removes no live check, and keeping it
-// costs the reader this page and the risk of the claim this banner used to
-// make. Whoever decides should say in the same breath what runs the scenario
-// tier before a merge instead. That deletion touches:
-//   - this file, scenariogate_test.go and scenariogate_realgotest_test.go
-//   - the call in runbridge.go (search for runScenarioGateIfNeededVia)
-//   - runbridge_characterization_test.go, which names it
-//   - scripts/runloop-freeze-gate.sh, which lists this file as required and
-//     lists the symbol as forbidden in internal/daemon
-//
-// Detection: a file is "scenario-touching" when it lives under test/scenario/,
-// internal/scenario/, or contains a //go:build scenario (or legacy // +build
-// scenario) line.
-//
-// Bead: hk-i2ie5.
-
 import (
 	"bytes"
 	"context"
@@ -77,12 +15,8 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// scenarioGateTimeout is the maximum time the scenario test suite may run
-// before the gate cancels it and blocks the merge.  Matches the CI budget
-// for the scenario tier (docs/foundation/project-level/testing.md §CI gates).
 const scenarioGateTimeout = 10 * time.Minute
 
-// scenarioGateResult carries the outcome of runScenarioGateIfNeededVia.
 type scenarioGateResult struct {
 	// blocked is true when scenario tests were found and at least one failed.
 	blocked bool
@@ -164,19 +98,10 @@ func runScenarioGateIfNeededVia(ctx context.Context, runner tmux.CommandRunner, 
 	})
 }
 
-// runScenarioGateOnceVia runs the scenario suite once via runner.
-//
-// LOCAL (runner nil / LocalRunner): `go test` runs on box A with cmd.Dir=wtPath,
-// byte-identical to the original. REMOTE (SSHRunner): the run is tunnelled to
-// the worker as `git -C` is — we use `go -C <wtPath> test ...` over the runner
-// so the worker's Go toolchain compiles and runs the worker-resident worktree
-// (cmd.Dir cannot set a remote cwd, so the cwd is carried via `go -C`).
 func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, pkgs []string) scenarioGateResult {
 	gateCtx, cancel := context.WithTimeout(ctx, scenarioGateTimeout)
 	defer cancel()
 
-	// -race dropped (hk-ur428) — it is the primary OOM/SIGKILL cause on the
-	// heavy suite.  Scoped to the affected package(s) only.
 	var out []byte
 	var testErr error
 	if gitprobe.RunnerIsLocalFS(runner) {
@@ -185,8 +110,6 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 		cmd.Dir = wtPath
 		out, testErr = cmd.CombinedOutput()
 	} else {
-		// `go -C <wtPath> test ...` carries the working directory as an argv token
-		// because a remote runner has no cmd.Dir handle on the worker.
 		args := append([]string{"-C", wtPath, "test", "-tags=scenario"}, pkgs...)
 		cmd := runner.Command(gateCtx, "go", args...)
 		out, testErr = cmd.CombinedOutput()
@@ -195,16 +118,6 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 	return classifyScenarioGateError(gateCtx.Err(), testErr, out, pkgs)
 }
 
-// scenarioGateWithRetry applies the retry-on-genuine-FAIL policy (hk-5em) over a
-// run-once callback.  It runs the gate; if the first run is non-block it returns
-// immediately; if the first run is a genuine RED it re-runs ONCE and only blocks
-// when the retry is ALSO a genuine RED (a deterministic regression).  A run that
-// fails once but not on retry is treated as a load-induced flake and fails open.
-//
-// runOnce is injected so this policy is unit-testable without a real `go test`;
-// the production caller supplies runScenarioGateOnce.  The shell gate it once
-// mirrored is deleted, and `make core` — the gate that replaced it — has no
-// retry at all. See the SUPERSEDED note at the top of this file.
 func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) scenarioGateResult {
 	first := runOnce()
 	if !first.blocked {
@@ -220,33 +133,9 @@ func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) sce
 			strings.Join(pkgs, " "))
 		return scenarioGateResult{} // non-block: flaky, not a real RED
 	}
-	// Genuine FAIL on both runs → deterministic regression → BLOCK.
 	return retry
 }
 
-// classifyScenarioGateError interprets the result of the gate's `go test`
-// invocation and decides whether to BLOCK the merge.
-//
-// gateErr is gateCtx.Err() (non-nil when the gate's deadline/cancel fired);
-// testErr is the error returned by CombinedOutput; out is the combined output.
-//
-// Classification (hk-ur428):
-//   - testErr == nil → tests passed → NON-block.
-//   - context.DeadlineExceeded / context.Canceled (gate timed out or was
-//     cancelled) → gate could not produce a verdict → NON-block (WARN).
-//   - signal kill (SIGKILL/SIGSEGV — ExitError carrying a signal, or output
-//     containing "signal: killed") → OOM/crash, not a verdict → NON-block (WARN).
-//   - compile/build failure (exit code 2, or output containing "[build failed]",
-//     "[setup failed]", or "build constraints exclude all Go files") → not a
-//     verdict → NON-block (WARN).
-//   - genuine test failure (exit code 1 with "--- FAIL" / "FAIL" output) → the
-//     tests RAN and some FAILED → BLOCK.
-//   - any other non-nil testErr we cannot positively classify → conservative
-//     NON-block (WARN): fail-open, since the whole point is to not false-block a
-//     reviewed bead on gate-infrastructure noise.
-//
-// It is pure (no exec / no IO) so it can be unit-tested without running a real
-// scenario suite.
 func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string) scenarioGateResult {
 	if testErr == nil {
 		return scenarioGateResult{} // tests passed
@@ -266,7 +155,6 @@ func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string
 		return scenarioGateResult{} // non-block
 	}
 
-	// Timeout / cancellation — gate ran out of budget, not a real RED.
 	if errors.Is(gateErr, context.DeadlineExceeded) || errors.Is(testErr, context.DeadlineExceeded) {
 		return warn("timeout")
 	}
@@ -274,20 +162,15 @@ func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string
 		return warn("canceled")
 	}
 
-	// Signal kill (SIGKILL on OOM, SIGSEGV on crash) — the heavy suite was
-	// killed by the OS / runtime, not a deterministic test verdict.
 	if isSignalKill(testErr) || strings.Contains(trimmed, "signal: killed") ||
 		strings.Contains(trimmed, "signal: segmentation") {
 		return warn("signal-kill")
 	}
 
-	// Compile / build / setup failure — exit code 2 from `go test`, or the
-	// telltale build-tooling markers.  Not a test verdict.
 	if isCompileFailure(testErr, trimmed) {
 		return warn("compile-fail")
 	}
 
-	// Genuine test failure: tests ran and at least one reported FAIL.
 	if isGenuineTestFailure(testErr, trimmed) {
 		return scenarioGateResult{
 			blocked: true,
@@ -298,28 +181,17 @@ func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string
 		}
 	}
 
-	// Unclassified non-nil error: fail-open (do not false-block a reviewed bead
-	// on gate-infrastructure noise we couldn't positively identify as RED).
 	return warn("unclassified")
 }
 
-// isSignalKill reports whether err is an exec.ExitError whose process was
-// terminated by a signal (SIGKILL on OOM, SIGSEGV on crash) rather than exiting
-// with a code.  Such a process produced no test verdict.
 func isSignalKill(err error) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
 		return false
 	}
-	// ProcessState.Exited() is false when the process was signalled.  When it
-	// did exit with a code, ExitCode() is >= 0; a signalled process reports -1.
 	return !exitErr.Exited() || exitErr.ExitCode() == -1
 }
 
-// isCompileFailure reports whether the go-test failure is a compile/build/setup
-// error rather than a test verdict.  `go test` returns exit code 2 for build
-// failures (vs exit 1 for test failures), and emits "[build failed]" /
-// "[setup failed]" / "build constraints exclude all Go files" markers.
 func isCompileFailure(err error, output string) bool {
 	if strings.Contains(output, "[build failed]") ||
 		strings.Contains(output, "[setup failed]") ||
@@ -333,9 +205,6 @@ func isCompileFailure(err error, output string) bool {
 	return false
 }
 
-// isGenuineTestFailure reports whether the output shows tests that RAN and
-// FAILED (exit code 1 with a "--- FAIL" / "FAIL\t" marker), as opposed to a
-// build error or signal kill.
 func isGenuineTestFailure(err error, output string) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
@@ -344,21 +213,15 @@ func isGenuineTestFailure(err error, output string) bool {
 	if exitErr.ExitCode() != 1 {
 		return false
 	}
-	// Exit 1 from `go test` with a FAIL marker = genuine RED.
 	return strings.Contains(output, "--- FAIL") ||
 		strings.Contains(output, "\nFAIL") ||
 		strings.HasPrefix(output, "FAIL")
 }
 
-// changedFilesSince returns the set of file paths (relative to wtPath) that
-// differ between headSHA and the current HEAD of the worktree.
 func changedFilesSince(ctx context.Context, wtPath, headSHA string) ([]string, error) {
 	return changedFilesSinceVia(ctx, nil, wtPath, headSHA)
 }
 
-// changedFilesSinceVia is the runner-routed form of changedFilesSince. For a
-// REMOTE run the diff runs on the worker (`git -C <wtPath>` over the SSHRunner);
-// for a LOCAL run (nil / LocalRunner) it is byte-identical to changedFilesSince.
 func changedFilesSinceVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) ([]string, error) {
 	var out []byte
 	var err error
@@ -379,17 +242,10 @@ func changedFilesSinceVia(ctx context.Context, runner tmux.CommandRunner, wtPath
 	return strings.Split(raw, "\n"), nil
 }
 
-// affectedScenarioPkgs returns the deduplicated set of Go package patterns
-// (e.g. "./internal/daemon/...") that contain scenario-tagged files among
-// changedFiles.
 func affectedScenarioPkgs(wtPath string, changedFiles []string) []string {
 	return affectedScenarioPkgsVia(context.Background(), nil, wtPath, changedFiles)
 }
 
-// affectedScenarioPkgsVia is the runner-routed form of affectedScenarioPkgs:
-// the per-file scenario-tag inspection routes file reads through runner so a
-// REMOTE run inspects the worker-resident files. LOCAL runs (nil / LocalRunner)
-// are byte-identical to affectedScenarioPkgs.
 func affectedScenarioPkgsVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, changedFiles []string) []string {
 	seen := map[string]bool{}
 	for _, f := range changedFiles {
@@ -407,17 +263,10 @@ func affectedScenarioPkgsVia(ctx context.Context, runner tmux.CommandRunner, wtP
 	return out
 }
 
-// isScenarioTouching returns true when filePath (relative to wtPath) is
-// scenario-touching: either its path prefix marks it as a scenario file or its
-// content carries a //go:build scenario (or legacy // +build scenario) tag.
 func isScenarioTouching(wtPath, filePath string) bool {
 	return isScenarioTouchingVia(context.Background(), nil, wtPath, filePath)
 }
 
-// isScenarioTouchingVia is the runner-routed form of isScenarioTouching. The
-// path-prefix check is transport-independent; the content sniff reads the file
-// via the runner (LOCAL: os.ReadFile, byte-identical; REMOTE: `cat <wtPath/f>`
-// over the SSHRunner, since the file lives on the worker).
 func isScenarioTouchingVia(ctx context.Context, runner tmux.CommandRunner, wtPath, filePath string) bool {
 	if strings.HasPrefix(filePath, "test/scenario/") ||
 		strings.HasPrefix(filePath, "internal/scenario/") {
@@ -445,13 +294,6 @@ func isScenarioTouchingVia(ctx context.Context, runner tmux.CommandRunner, wtPat
 		bytes.Contains(data, []byte("// +build scenario"))
 }
 
-// fileToGoPackagePattern converts a file path relative to the module root into
-// a recursive Go package pattern.  Non-Go files return "".
-//
-// Examples:
-//
-//	"internal/daemon/foo_test.go" → "./internal/daemon/..."
-//	"test/scenario/bar_test.go"   → "./test/scenario/..."
 func fileToGoPackagePattern(filePath string) string {
 	if !strings.HasSuffix(filePath, ".go") {
 		return ""

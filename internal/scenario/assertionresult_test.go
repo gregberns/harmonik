@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// assertionResultFixtureEventPresent returns a valid AssertionResult with
-// AssertionKind=event_present.
 func assertionResultFixtureEventPresent(t *testing.T) AssertionResult {
 	t.Helper()
 	return AssertionResult{
@@ -19,8 +17,6 @@ func assertionResultFixtureEventPresent(t *testing.T) AssertionResult {
 	}
 }
 
-// assertionResultFixtureEventAbsent returns a valid AssertionResult with
-// AssertionKind=event_absent.
 func assertionResultFixtureEventAbsent(t *testing.T) AssertionResult {
 	t.Helper()
 	return AssertionResult{
@@ -32,8 +28,6 @@ func assertionResultFixtureEventAbsent(t *testing.T) AssertionResult {
 	}
 }
 
-// assertionResultFixtureWorkspaceState returns a valid AssertionResult with
-// AssertionKind=workspace_state.
 func assertionResultFixtureWorkspaceState(t *testing.T) AssertionResult {
 	t.Helper()
 	return AssertionResult{
@@ -45,8 +39,6 @@ func assertionResultFixtureWorkspaceState(t *testing.T) AssertionResult {
 	}
 }
 
-// assertionResultFixtureExitCode returns a valid AssertionResult with
-// AssertionKind=exit_code.
 func assertionResultFixtureExitCode(t *testing.T) AssertionResult {
 	t.Helper()
 	return AssertionResult{
@@ -288,7 +280,6 @@ func TestAssertionResultJSONRoundTrip(t *testing.T) {
 func TestAssertionResultHeterogeneousValues(t *testing.T) {
 	t.Parallel()
 
-	// ActualValue and ExpectedValue can be different types and both round-trip correctly.
 	tests := []struct {
 		name          string
 		actualValue   any

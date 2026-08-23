@@ -80,7 +80,6 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 			f.Close(), os.Remove(tmpPath))
 	}
 
-	// Step 2: fsync the temp file before rename so data is durable.
 	if err := f.Sync(); err != nil {
 		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseLockAtomic: Sync (pre-rename): %w", err),
 			f.Close(), os.Remove(tmpPath))
@@ -90,9 +89,6 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 			os.Remove(tmpPath))
 	}
 
-	// Step 3: atomic test-and-set claim — link(2) fails with EEXIST when target
-	// already exists, so a second claimant on the same path fails instead of
-	// silently overwriting the holder's lease. (rename(2) would clobber.)
 	if err := os.Link(tmpPath, target); err != nil {
 		rmErr := os.Remove(tmpPath)
 		if errors.Is(err, fs.ErrExist) {
@@ -259,9 +255,6 @@ func WriteLeaseReleasedMarker(workspacePath, runID, workspaceID, reason string) 
 	return nil
 }
 
-// marshalLeaseLock encodes lock to JSON per WM-013a:
-//
-//	{"run_id":"<uuid>","pid":<int>,"created_at":"<rfc3339>","ttl_sec":<int>}
 func marshalLeaseLock(lock *core.LeaseLockFile) ([]byte, error) {
 	v := struct {
 		RunID     string `json:"run_id"`

@@ -5,21 +5,16 @@ import (
 	"testing"
 )
 
-// cadenceTagFixtureSmoke returns the smoke CadenceTag constant for use in tests.
 func cadenceTagFixtureSmoke(t *testing.T) CadenceTag {
 	t.Helper()
 	return CadenceTagSmoke
 }
 
-// cadenceTagFixtureRegression returns the regression CadenceTag constant for
-// use in tests.
 func cadenceTagFixtureRegression(t *testing.T) CadenceTag {
 	t.Helper()
 	return CadenceTagRegression
 }
 
-// cadenceTagFixtureNightly returns the nightly CadenceTag constant for use in
-// tests.
 func cadenceTagFixtureNightly(t *testing.T) CadenceTag {
 	t.Helper()
 	return CadenceTagNightly
@@ -163,7 +158,6 @@ func TestCadenceTagJSONRoundTrip(t *testing.T) {
 func TestCadenceTagJSONFieldRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Verify CadenceTag serialises correctly when embedded in a JSON struct.
 	type wrapper struct {
 		Tag CadenceTag `json:"cadence_tag"`
 	}
@@ -343,22 +337,18 @@ func TestCadenceFilterIncludes(t *testing.T) {
 		tag    CadenceTag
 		want   bool
 	}{
-		// smoke filter: only smoke-tagged scenarios
 		{CadenceFilterSmoke, CadenceTagSmoke, true},
 		{CadenceFilterSmoke, CadenceTagRegression, false},
 		{CadenceFilterSmoke, CadenceTagNightly, false},
 
-		// regression filter: smoke and regression
 		{CadenceFilterRegression, CadenceTagSmoke, true},
 		{CadenceFilterRegression, CadenceTagRegression, true},
 		{CadenceFilterRegression, CadenceTagNightly, false},
 
-		// nightly filter: all three
 		{CadenceFilterNightly, CadenceTagSmoke, true},
 		{CadenceFilterNightly, CadenceTagRegression, true},
 		{CadenceFilterNightly, CadenceTagNightly, true},
 
-		// all filter: all three (same as nightly)
 		{CadenceFilterAll, CadenceTagSmoke, true},
 		{CadenceFilterAll, CadenceTagRegression, true},
 		{CadenceFilterAll, CadenceTagNightly, true},
@@ -440,7 +430,6 @@ func TestCadenceFilterIncludes_RegressionIsSubsetOfNightly(t *testing.T) {
 func TestCadenceFilterIncludes_EmptyResultVacuouslyPass(t *testing.T) {
 	t.Parallel()
 
-	// A smoke filter against a nightly-only corpus yields zero matching scenarios.
 	nightlyOnlyCorpus := []CadenceTag{CadenceTagNightly, CadenceTagNightly}
 	matchCount := 0
 	for _, tag := range nightlyOnlyCorpus {
@@ -451,10 +440,6 @@ func TestCadenceFilterIncludes_EmptyResultVacuouslyPass(t *testing.T) {
 	if matchCount != 0 {
 		t.Errorf("smoke filter against nightly-only corpus: expected 0 matches (vacuous pass), got %d", matchCount)
 	}
-
-	// Document: when matchCount == 0 the harness MUST emit suite_verdict=pass
-	// with an empty results list per SH-029. The enforcement of that rule is at
-	// the harness runner layer, not in the Includes predicate itself.
 }
 
 // TestCadenceTagFixtures verifies that the fixture helpers return the expected

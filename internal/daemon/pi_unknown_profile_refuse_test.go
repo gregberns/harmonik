@@ -1,32 +1,5 @@
 package daemon
 
-// pi_unknown_profile_refuse_test.go — Scenario 2's REQUIRED unknown-profile
-// refuse-to-launch sub-case (pi-provider-switch C5-wiring, hk-m6uu2.6;
-// integration-review finding #1). Extends resolvePiProfile's unit-level
-// TestResolvePiProfile_UnknownProfile_FailLoud (pi_profile_resolve_test.go)
-// up to the WORKLOOP: drives a pi-resolved bead carrying an unknown
-// profile:<name> label through beadRunOne directly and asserts the workloop
-// refuses to launch — NO LaunchSpec is built and the bead is routed to
-// brAdapter.ReopenBead with the unknown profile named in the reason.
-//
-// This is an IN-PACKAGE (white-box) test: beadRunOne is unexported, so this
-// file lives in package daemon (mirroring workloop_gate_n5md3_test.go's
-// pattern of driving beadRunOne directly with a fake brAdapter) rather than
-// package daemon_test like the other C5 scenario files, which only need the
-// Exported* seams.
-//
-// The unknown-profile refuse fires at workloop.go:3099-3109, strictly BEFORE
-// resolveParentCommit / worktree creation, so this test needs no git repo and
-// no worktree factory — it observes the refuse via the fake brAdapter's
-// captured ReopenBead call and confirms no launch-spec builder was ever
-// invoked.
-//
-// Helper prefix: hkppsNoLaunch (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// Bead: hk-m6uu2.6 (pi-provider-switch C5-wiring). Guards C3 requirement 5
-// (unknown profile → fail loud, does NOT launch).
-
 import (
 	"context"
 	"strings"
@@ -44,17 +17,11 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// hkppsNoLaunchReopenCall records one ReopenBead invocation.
 type hkppsNoLaunchReopenCall struct {
 	beadID core.BeadID
 	reason string
 }
 
-// hkppsNoLaunchLedger is a capturing beadLedger: records every ReopenBead
-// call so the test can assert the workloop refused to launch and named the
-// unknown profile in the reason. Other methods are inert no-ops — beadRunOne
-// calls only ReopenBead and resolveOwningEpicFromRecord (returns early for an
-// edge-less record) on this refuse-before-launch path.
 type hkppsNoLaunchLedger struct {
 	mu      sync.Mutex
 	reopens []hkppsNoLaunchReopenCall
@@ -89,10 +56,6 @@ func (l *hkppsNoLaunchLedger) calls() []hkppsNoLaunchReopenCall {
 	return out
 }
 
-// hkppsNoLaunchSealedAdapterRegistry mirrors n5md3SealedAdapterRegistry: register
-// the real ClaudeCode adapter, then seal via ForAgent. beadRunOne's hk-d8u1y
-// precondition requires a non-nil sealed registry, even though this test's
-// refuse-before-launch path never reaches waitAgentReady.
 func hkppsNoLaunchSealedAdapterRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 	t.Helper()
 	reg := handlercontract.NewAdapterRegistry()
@@ -118,9 +81,6 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 	ledger := &hkppsNoLaunchLedger{}
 	adapterReg := hkppsNoLaunchSealedAdapterRegistry(t)
 
-	// harnesses.pi.profiles does NOT contain "does-not-exist" — only a
-	// differently-named profile, so the unknown reference is a real
-	// existence-check failure, not an accidentally-empty map.
 	projectCfg := projectconfig.ProjectConfig{
 		Harnesses: projectconfig.HarnessesConfig{
 			Pi: projectconfig.PiHarnessConfig{
@@ -160,9 +120,6 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 		Labels:   []string{"profile:" + unknownProfile},
 	}
 
-	// Drive beadRunOne DIRECTLY — the smallest seam that reaches the
-	// resolvePiProfile refuse gate at workloop.go:3099-3109, bypassing the
-	// whole work loop (mirrors workloop_gate_n5md3_test.go).
 	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", "", core.AgentType("")),
 		"", nil, false)
 

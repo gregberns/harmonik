@@ -1,22 +1,5 @@
 package daemon
 
-// export_pasteinject_timeouts_test.go — pasteInjectQuitOnCommit timeout seams.
-//
-// Split out of export_test.go (RT19.6, P2 E5 export_test.go split) so the
-// contiguous hk-trjef "pasteInjectQuitOnCommit timeout-recovery" section (the
-// watchdog / timeout / kill-delay knobs, the pasteInjectQuitOnCommit delivery
-// wrappers, and the bead-guard probes that close the section) lives in one topic
-// file. Same package (daemon), so every daemon_test caller resolves
-// daemon.ExportedX byte-identically after the move.
-//
-// HAZARD: several timing knobs are re-exported BY POINTER
-// (ExportedBriefDeliveredTimeout = &briefDeliveredTimeout, &noChangeKillDelay,
-// &postQuitKillGrace) so tests can mutate the production var. The pointer form
-// is preserved exactly — never converted to a value alias, which would silently
-// sever the mutation.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"
@@ -179,8 +162,6 @@ func ExportedPasteInjectImplementerResume(
 	return pasteInjectImplementerResume(ctx, substrate.SystemClock{}, inj, claudeSessID, iterCount, wtPath, nil)
 }
 
-// quitSenderExported is the exported alias for quitSender so the exported
-// wrapper can accept it.
 type quitSenderExported = quitSender
 
 // ExportedBeadWorkLandedOn exposes the subsumption-evidence probe for tests.
@@ -198,8 +179,5 @@ func ExportedBeadWorkLandedOn(ctx context.Context, repoDir, branch string, beadI
 // Bead: hk-rnsjs.
 func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p TestRuntimeParams, beadID core.BeadID) {
 	runtime := ExportedTestRuntime(p)
-	// ProjectDir, matching the production call in scheduler.go. The seam passed
-	// IntentLogDir here while it had no callers, so a test written through it
-	// would have probed a directory the production path never asks about.
 	autoCloseStaleBlockersOnClaimFailure(ctx, runtime.ledger, runtime.env.ProjectDir, runtime.env.TargetBranch, runtime.env.BrTimeoutCfg, testLedgerRepairPort(p), beadID)
 }

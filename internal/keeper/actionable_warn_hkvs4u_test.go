@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// hk-vs4u — R3 actionable warn → self-service restart handshake.
-//
-// These tests pin the three load-bearing contracts:
-//   1. ActionableWarnText ALWAYS contains the verbatim restart-now command and the
-//      /session-handoff step (the two-step procedure), the live token count, the
-//      band, and the session-continuity guidance.
-//   2. selectWarnText picks the actionable form ONLY when the gate holds (captain
-//      OR crew-with-crews-enabled, primary SID, CrispIdle, self_service.enabled),
-//      and a custom ActionableWarnText override that DROPS the command falls back
-//      to the compiled text (the required token can never be silently lost).
-//   3. The lighter advisory is used otherwise.
-
 const restartNowStem = "harmonik keeper restart-now"
 
 func TestActionableWarnText_ContainsTwoStepProcedureAndFigures(t *testing.T) {
@@ -88,8 +76,6 @@ func TestSelectWarnText_CaptainActionableWhenIdleAndPrimary(t *testing.T) {
 
 func TestSelectWarnText_CrewActionableWhenCrewsEnabledDefault(t *testing.T) {
 	t.Parallel()
-	// crews_enabled DEFAULT is true (operator decision); modeled here by setting
-	// SelfServiceCrewsEnabled=true (the resolver fills unset→true upstream).
 	c := WatcherConfig{
 		AgentName:               "crew-paul",
 		SelfServiceEnabled:      true,
@@ -137,9 +123,6 @@ func TestSelectWarnText_BrokenSIDFallsToLighter(t *testing.T) {
 
 func TestSelectWarnText_BusyCaptainStillGetsLighterAdvisory(t *testing.T) {
 	t.Parallel()
-	// Not CrispIdle: the actionable form is suppressed, but the lighter advisory is
-	// still returned (and the watcher injects it once gaugeQuiesced) — no session
-	// loses its warn.
 	c := WatcherConfig{
 		AgentName:          "captain",
 		SelfServiceEnabled: true,
@@ -184,8 +167,6 @@ func TestSelectWarnText_CustomActionableHonoredWhenItKeepsCommand(t *testing.T) 
 
 func TestSelectWarnText_CustomActionableDroppingCommandFallsBackToCompiled(t *testing.T) {
 	t.Parallel()
-	// A custom override that DROPS the required command token MUST NOT be used; the
-	// compiled ActionableWarnText (which always carries the command) is used instead.
 	custom := "[CUSTOM] just wrap up, no command here"
 	c := WatcherConfig{
 		AgentName:          "captain",

@@ -14,24 +14,15 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// t6probeRepoRoot returns the absolute path to the repo root by walking up from
-// this source file's location. Robust across worktrees.
 func t6probeRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("t6probeRepoRoot: runtime.Caller failed")
 	}
-	// file = .../internal/t6probe/probe_test.go → up two dirs = repo root
 	return filepath.Join(filepath.Dir(file), "..", "..")
 }
 
-// t6probeGenerateProfile runs go test -coverprofile for pkgPattern and returns
-// the path to the generated profile (inside t.TempDir()).
 func t6probeGenerateProfile(t *testing.T, pkgPattern string) string {
 	t.Helper()
 	repoRoot := t6probeRepoRoot(t)
@@ -51,8 +42,6 @@ func t6probeGenerateProfile(t *testing.T, pkgPattern string) string {
 	return profilePath
 }
 
-// t6probeReadTotalPct invokes go tool cover -func on profilePath and returns
-// the total coverage percentage without the "%" suffix (e.g. "83.1").
 func t6probeReadTotalPct(t *testing.T, profilePath string) string {
 	t.Helper()
 	repoRoot := t6probeRepoRoot(t)
@@ -75,9 +64,6 @@ func t6probeReadTotalPct(t *testing.T, profilePath string) string {
 	return ""
 }
 
-// t6probePackagePath extracts the single module-qualified package path from a
-// coverage profile (e.g. "github.com/gregberns/harmonik/internal/eventbus").
-// Returns "" if multiple packages are present or the profile is malformed.
 func t6probePackagePath(t *testing.T, profilePath string) string {
 	t.Helper()
 	//nolint:gosec // G304: profilePath is t.TempDir()-based; not user input
@@ -90,7 +76,6 @@ func t6probePackagePath(t *testing.T, profilePath string) string {
 		if line == "" || strings.HasPrefix(line, "mode:") {
 			continue
 		}
-		// Line format: pkg/file.go:row.col,row.col stmts hits
 		colon := strings.Index(line, ":")
 		if colon < 0 {
 			continue
@@ -110,19 +95,10 @@ func t6probePackagePath(t *testing.T, profilePath string) string {
 	return ""
 }
 
-// t6probeRunGate invokes a copy of scripts/coverage-gate.sh with a custom
-// baseline file. It creates a temporary copy of the gate script with
-// BASELINE_FILE hardwired to baselinePath, so the override survives the
-// script's internal REPO_ROOT derivation.
-//
-// The script is run from the repo root so `go tool cover` can resolve the module.
-// Returns combined output and exit code. Non-zero exit is NOT a test failure —
-// callers assert the expected code.
 func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output string, exitCode int) {
 	t.Helper()
 	repoRoot := t6probeRepoRoot(t)
 
-	// Write the temp baseline.
 	baselineDir := t.TempDir()
 	baselinePath := filepath.Join(baselineDir, "coverage.baseline")
 	//nolint:gosec // G306: test fixture; permissions match project baseline file
@@ -130,7 +106,6 @@ func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output s
 		t.Fatalf("t6probeRunGate: write baseline: %v", err)
 	}
 
-	// Read the real gate script.
 	origScriptPath := filepath.Join(repoRoot, "scripts", "coverage-gate.sh")
 	//nolint:gosec // G304: origScriptPath is a repo-relative constant; not user input
 	origScript, err := os.ReadFile(origScriptPath)
@@ -138,8 +113,6 @@ func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output s
 		t.Fatalf("t6probeRunGate: read gate script: %v", err)
 	}
 
-	// Patch BASELINE_FILE to point at our temp baseline. The script derives REPO_ROOT
-	// from BASH_SOURCE[0] so env-var injection is overwritten; we must patch the source.
 	patched := strings.Replace(
 		string(origScript),
 		`BASELINE_FILE="${REPO_ROOT}/coverage.baseline"`,
@@ -150,7 +123,6 @@ func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output s
 		t.Fatal("t6probeRunGate: failed to patch BASELINE_FILE in gate script — line not found")
 	}
 
-	// Write the patched script to a temp location.
 	scriptDir := t.TempDir()
 	patchedScriptPath := filepath.Join(scriptDir, "coverage-gate.sh")
 	//nolint:gosec // G306: patched script; executable permission required
@@ -173,10 +145,6 @@ func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output s
 	return string(out), exitCode
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 // TestT6_FloorFailureWithMatchingBaseline exercises T6-coverage-baseline-spec.md
 // AC3 + AC4:
 //
@@ -198,24 +166,20 @@ func TestT6_FloorFailureWithMatchingBaseline(t *testing.T) {
 		t.Fatal("TestT6_FloorFailureWithMatchingBaseline: could not determine package path from profile")
 	}
 
-	// Baseline matches actual — no regression by definition.
 	baseline := pkgPath + " " + actualPct + "\n"
 
 	output, exitCode := t6probeRunGate(t, profilePath, baseline)
 	t.Logf("gate output:\n%s", output)
 	t.Logf("exit code: %d", exitCode)
 
-	// AC3: gate must exit 1 because handlercontract at ~84.9% fails the 90% floor.
 	if exitCode == 0 {
 		t.Errorf("expected gate exit 1 (floor failure for %s at %s%%), got 0", pkgPath, actualPct)
 	}
 
-	// AC3: output must mention FLOOR (not HIGH-THRESHOLD — handlercontract is not a core sub).
 	if !strings.Contains(output, "FLOOR") {
 		t.Errorf("expected 'FLOOR' in gate output; got:\n%s", output)
 	}
 
-	// AC4: output must NOT mention REGRESSION (baseline == current coverage).
 	if strings.Contains(output, "REGRESSION") {
 		t.Errorf("unexpected 'REGRESSION' in gate output (baseline == current); got:\n%s", output)
 	}
@@ -242,7 +206,6 @@ func TestT6_RegressionDetection(t *testing.T) {
 		t.Fatalf("TestT6_RegressionDetection: parse %q: %v", actualPct, err)
 	}
 
-	// Inflate baseline by 5pp → guaranteed regression well above 0.3pp tolerance.
 	inflatedPct := fmt.Sprintf("%.1f", actualFloat+5.0)
 	baseline := pkgPath + " " + inflatedPct + "\n"
 
@@ -268,7 +231,6 @@ func TestT6_VacuousPassOnEmptyBaseline(t *testing.T) {
 	t.Parallel()
 
 	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract")
-	// Empty baseline — regression gate has nothing to compare against.
 	output, exitCode := t6probeRunGate(t, profilePath, "# empty baseline\n")
 	t.Logf("gate output:\n%s", output)
 	t.Logf("exit code: %d (floor failures may be present; regression gate must be silent)", exitCode)

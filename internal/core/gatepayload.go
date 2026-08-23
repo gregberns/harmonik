@@ -63,7 +63,6 @@ func (g GatePayload) Valid() bool {
 
 	switch g.Subtype {
 	case GateSubtypeApproval:
-		// NamedApprover required and must be non-empty; VerificationRef must be absent.
 		if g.NamedApprover == nil || *g.NamedApprover == "" {
 			return false
 		}
@@ -71,7 +70,6 @@ func (g GatePayload) Valid() bool {
 			return false
 		}
 	case GateSubtypeQuality:
-		// VerificationRef required and must be non-empty; NamedApprover must be absent.
 		if g.VerificationRef == nil || *g.VerificationRef == "" {
 			return false
 		}
@@ -79,7 +77,6 @@ func (g GatePayload) Valid() bool {
 			return false
 		}
 	case GateSubtypeGoal:
-		// Neither conditional field applies; both must be absent.
 		if g.NamedApprover != nil {
 			return false
 		}

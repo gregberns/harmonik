@@ -5,15 +5,7 @@ import (
 	"testing"
 )
 
-// i3151PlatformVerifyPdeathsig is the darwin implementation of the Pdeathsig
-// assertion helper. On darwin, SysProcAttr has no Pdeathsig field; subprocess
-// survival across daemon death is a platform reality per HC-044a.
-//
-// Spec ref: specs/handler-contract.md §4.10.HC-044 — "macOS has no equivalent
-// and subprocess survival across daemon death is a platform reality addressed
-// by §4.10.HC-044a."
 func i3151PlatformVerifyPdeathsig(_ *testing.T, _ *syscall.SysProcAttr) {
-	// darwin: no Pdeathsig field on SysProcAttr; nothing to assert.
 }
 
 // TestHC044_SpawnChildSysProcAttr_DarwinNoPdeathsig documents that on darwin
@@ -27,8 +19,6 @@ func TestHC044_SpawnChildSysProcAttr_DarwinNoPdeathsig(t *testing.T) {
 
 	attr := SpawnChildSysProcAttr(i3151PGIDValue)
 
-	// Structural: compilation of this file proves no Pdeathsig was set.
-	// Runtime: confirm the attr is non-nil and Setpgid is correct.
 	if attr == nil {
 		t.Fatal("HC-044 darwin: SpawnChildSysProcAttr returned nil")
 	}

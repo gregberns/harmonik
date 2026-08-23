@@ -24,14 +24,12 @@ type DeadLetterSink interface {
 	Close() error
 }
 
-// deadLetterRecord is the JSON shape written per entry.
 type deadLetterRecord struct {
 	RecordedAt string        `json:"recorded_at"`
 	Reason     string        `json:"reason"`
 	Envelope   EventEnvelope `json:"envelope"`
 }
 
-// jsonlDeadLetterSink is the file-backed DeadLetterSink implementation.
 type jsonlDeadLetterSink struct {
 	mu   sync.Mutex
 	file *os.File
@@ -107,5 +105,4 @@ func (NoopDeadLetterSink) Close() error {
 	return nil
 }
 
-// Compile-time check.
 var _ DeadLetterSink = NoopDeadLetterSink{}

@@ -1,38 +1,5 @@
 package daemon_test
 
-// sentinelgate_test.go — the sentinel-queue admission gate must be able to fire,
-// on BOTH dispatch paths, and it must see a trip armed on the SAME tick.
-//
-// # What this closes
-//
-// This is constraint 6 of the admission-order map in admissionorder_test.go:
-// "governor.tick before the sentinel-queue gate in the same tick". That
-// constraint was a declared gap for one reason only. The gate is
-// m.sentinelBlocksDispatch, which delegates to movementGovernor.dispatchBlocked,
-// which returns false on a nil governor. The test seam passes a governor port
-// separately from testRuntime, so tests can build a loop in which this gate
-// can fire without restoring a nil-state OFF model.
-//
-// # Why these tests need no ACT mode and no crew spawn
-//
-// dispatchBlocked reduces to decisionBlocker.IsQueueBlocked("sentinel"). A real
-// ACT-mode trip reaches that state through sentinel.EmitTrip plus
-// DecisionBlocker.AddQueueBlock. AddQueueBlock is already exported, so the trip
-// can be injected straight into the same in-memory state a real trip writes.
-// The governor only has to EXIST for the gate to read it. These fixtures
-// therefore leave the mode at the production default (observe), where the
-// governor evaluates and emits governor_signal but never trips, never halts and
-// never spawns an adversary crew.
-//
-// # How these tests are built
-//
-// Same discipline as admissionorder_test.go, and they share its fixture. Each
-// drives real ticks of runWorkLoop and asserts an observable the gate controls —
-// the bead was not claimed, the queue item is untouched. None re-states the
-// boolean the gate evaluates. Every negative assertion is paired with a positive
-// control on the SAME fixture, because a hold and a fixture that never reached
-// the gate are indistinguishable without one.
-
 import (
 	"context"
 	"sync"
@@ -45,34 +12,13 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// sentinelGateSubjectID is the reserved decision-blocker subject the governor's
-// ACT mode writes its trip under. It mirrors the daemon package's
-// sentinelSubjectIDACT and the sentinel package's sentinelSubjectID, both of
-// which are unexported, so this external test package spells it out.
-//
-// A drift between the three fails LOUDLY rather than silently: the block would
-// no longer match, the gate would not hold, and every "want 0 claims" assertion
-// below would go red.
 const sentinelGateSubjectID = "sentinel"
 
-// sentinelGateTripToken stands in for the ack_token a real sentinel.EmitTrip
-// mints. Nothing in the gate reads its value — IsQueueBlocked only asks whether
-// the token set for the subject is non-empty.
 const sentinelGateTripToken = "sentinel-gate-test-token"
 
-// sentinelGateGovernorState builds the state newGovernorPort creates in
-// production.
-//
-// DaemonStartedAt is now, which puts the evaluation inside the cold-start warmup
-// window. That is belt-and-braces: observe mode cannot trip in any case, and the
-// warmup gate means it could not trip even if the mode changed under this test.
 func sentinelGateGovernorState() *sentinel.GovernorState {
 	return &sentinel.GovernorState{DaemonStartedAt: time.Now()}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 6, part 1 — the gate fires on the QUEUE dispatch path
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending pins the sentinel
 // queue-level gate (FW3 hk-4toh) on the queue dispatch path.
@@ -95,22 +41,10 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 	const beadID core.BeadID = "hk-4toh-queue-path-bead"
 	const parkedID core.BeadID = "hk-4toh-queue-parked-bead"
 
-	// observe runs one fixture and reports what the loop did to the bead.
-	//
-	// tripPending arms the "sentinel" queue block before the loop starts, which
-	// is the same in-memory state a real ACT-mode trip leaves behind (and the
-	// same state LoadDecisionAckState restores at boot, EV-043a).
-	//
-	// governorPresent supplies an enabled governor port. False means the movement
-	// governor subsystem is absent.
 	observe := func(t *testing.T, tripPending, governorPresent bool) (claimCalls, showCalls, ticks int, item queue.Item) {
 		t.Helper()
 		ledger := newAdmissionLedger()
 
-		// The parked filler item keeps the group off all-terminal in the control
-		// subtest, where the bead is claimed, the claim fails and the item is
-		// eventually failed at the attempts bound. Without it the queue would
-		// advance out of the store and erase the snapshot read below.
 		qs := daemon.ExportedNewQueueStore()
 		qs.SetQueue(admissionQueue("main",
 			queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
@@ -125,11 +59,6 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil)
 		params.DecisionBlocker = blocker
 		governorState := sentinelGateGovernorState()
-		// tickCount rises once per tick: the disk probe's cadence is overridden
-		// below so it is always due, and it runs before the capacity gate, so it
-		// counts held ticks too. Free space is reported far above the watermark,
-		// so the probe only counts — it never latches diskLow and never runs the
-		// reclaim or `go clean -cache` subprocesses that would touch this machine.
 		var tickMu sync.Mutex
 		tickCount := 0
 		deps := daemon.ExportedTestRuntime(params)
@@ -161,8 +90,6 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		return ledger.claimCount(beadID), ledger.showCount(beadID), ticks, admissionFirstItem(t, snapshot)
 	}
 
-	// Positive control FIRST, so a failure reads as "the fixture cannot dispatch"
-	// rather than as a broken gate.
 	t.Run("with no trip pending the bead is claimed", func(t *testing.T) {
 		t.Parallel()
 		claims, _, _, _ := observe(t, false, true)
@@ -176,8 +103,6 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 	t.Run("a pending trip holds the bead without claiming it", func(t *testing.T) {
 		t.Parallel()
 		claims, shows, ticks, item := observe(t, true, true)
-		// The tick floor is what lets this subtest stand on its own. "The bead was
-		// never claimed" is also true of a window that never ran a tick.
 		if ticks < admissionMinTicks {
 			t.Fatalf("the loop completed %d tick(s) over %v, want at least %d. "+
 				"The hold claim below is empty unless the loop really ran.",
@@ -219,10 +144,6 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 6, part 2 — the gate fires on the BR-READY fallback path
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending pins the same
 // gate on the other dispatch path.
 //
@@ -254,7 +175,6 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		params.DecisionBlocker = blocker
 		governorState := sentinelGateGovernorState()
 
-		// Per-tick witness, same shape as the queue-path test above.
 		var tickMu sync.Mutex
 		tickCount := 0
 		deps := daemon.ExportedTestRuntime(params)
@@ -281,7 +201,6 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		return ledger.claimCount(beadID), ticks
 	}
 
-	// Positive control FIRST.
 	t.Run("with no trip pending the br-ready bead is claimed", func(t *testing.T) {
 		t.Parallel()
 		if claims, _ := observe(t, false); claims == 0 {
@@ -307,17 +226,6 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constraint 6, the ordering clause — the trip is visible on the SAME tick
-// ─────────────────────────────────────────────────────────────────────────────
-
-// sentinelGateLedger wraps the shared admission ledger to observe and hook
-// brAdapter.Ready.
-//
-// Ready is the attribution seam this test is built on. With NoAutoPull set, the
-// dispatch loop never polls `br ready`, so movementGovernor's own
-// governorGatherInput is the ONLY caller left. A hook on Ready therefore fires
-// at a point that is inside governor.tick and nowhere else.
 type sentinelGateLedger struct {
 	*admissionLedger
 
@@ -332,7 +240,6 @@ func (l *sentinelGateLedger) Ready(ctx context.Context) ([]core.BeadRecord, erro
 	hook := l.onReady
 	l.readyMu.Unlock()
 
-	// The hook runs with the lock released so it may reach back into the fixture.
 	if hook != nil {
 		hook()
 	}
@@ -413,8 +320,6 @@ func TestSentinelGate_GovernorTickArmsTheTripBeforeTheGateReadsIt(t *testing.T) 
 		return base.claimCount(beadID), ledger.readyCount(), admissionFirstItem(t, snapshot)
 	}
 
-	// Positive control FIRST: the governor evaluates exactly once, and with the
-	// hook inert this fixture claims.
 	t.Run("the governor evaluates once and an un-armed loop claims", func(t *testing.T) {
 		t.Parallel()
 		claims, readyCalls, _ := observe(t, false)

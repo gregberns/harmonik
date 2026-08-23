@@ -17,14 +17,8 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// writeEvent appends one JSONL event line to path.
 func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, payload []byte) {
 	t.Helper()
-	// Must be a UUIDv7 (not a random v4): computeWindowMovement derives its
-	// ScanAfter cursor from windowStart via eventIDFloorForTime, which is a
-	// lexicographic UUIDv7 floor. A random v4 ID sorts before that floor ~50%
-	// of the time regardless of ts, silently dropping the event and flaking
-	// this test's MovementScore assertion.
 	v7, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("uuid.NewV7: %v", err)
@@ -58,7 +52,6 @@ func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, 
 	}
 }
 
-// makeEventsFile creates a temporary events.jsonl file and returns its path.
 func makeEventsFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -70,8 +63,6 @@ func makeEventsFile(t *testing.T) string {
 }
 
 func TestGovernor_NoEvents_Watching(t *testing.T) {
-	// An empty events.jsonl with no git project → low movement → WATCHING
-	// (not ACTIVE because sustained gate requires 2 consecutive windows by default).
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -97,7 +88,6 @@ func TestGovernor_NoEvents_Watching(t *testing.T) {
 }
 
 func TestGovernor_SustainedLow_TripsAfterTwoWindows(t *testing.T) {
-	// Two consecutive low windows with ready beads and no warmup → ACTIVE.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -113,13 +103,11 @@ func TestGovernor_SustainedLow_TripsAfterTwoWindows(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// First evaluation → WATCHING (consecutive=1, need 2)
 	sig1 := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig1.Level != sentinel.ActivationWatching {
 		t.Errorf("first eval: expected WATCHING, got %s", sig1.Level)
 	}
 
-	// Second evaluation → ACTIVE (consecutive=2, satisfied)
 	sig2 := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig2.Level != sentinel.ActivationActive {
 		t.Errorf("second eval: expected ACTIVE, got %s (consecutive=%d)", sig2.Level, sig2.ConsecutiveLowWindows)
@@ -127,7 +115,6 @@ func TestGovernor_SustainedLow_TripsAfterTwoWindows(t *testing.T) {
 }
 
 func TestGovernor_BeadClosedEvent_Dormant(t *testing.T) {
-	// A bead_closed event within the window → high movement → DORMANT.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -155,7 +142,6 @@ func TestGovernor_BeadClosedEvent_Dormant(t *testing.T) {
 }
 
 func TestGovernor_RunCompletedEvent_Dormant(t *testing.T) {
-	// A run_completed event within the window → high movement → DORMANT.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -180,7 +166,6 @@ func TestGovernor_RunCompletedEvent_Dormant(t *testing.T) {
 }
 
 func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
-	// A reviewer_verdict{APPROVE} within the window → high movement → DORMANT.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -219,7 +204,6 @@ func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
 }
 
 func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
-	// reviewer_verdict{REQUEST_CHANGES} does NOT count as terminal progress.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -251,7 +235,6 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 		Now:           now,
 		HasReadyBeads: true,
 	}
-	// First window: REQUEST_CHANGES should not count → low → WATCHING
 	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig.Level != sentinel.ActivationWatching {
 		t.Errorf("REQUEST_CHANGES should not count; expected WATCHING, got %s (score=%d)",
@@ -263,7 +246,6 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 }
 
 func TestGovernor_NoOpportunity_Suppressed(t *testing.T) {
-	// Low movement but no ready beads and no undeployed tail → suppressed by opportunity gate.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -290,7 +272,6 @@ func TestGovernor_NoOpportunity_Suppressed(t *testing.T) {
 }
 
 func TestGovernor_UndeployedTail_CountsAsOpportunity(t *testing.T) {
-	// HasUndeployedTail=true satisfies the opportunity gate even with no ready beads.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -306,9 +287,7 @@ func TestGovernor_UndeployedTail_CountsAsOpportunity(t *testing.T) {
 		HasReadyBeads:     false,
 		HasUndeployedTail: true,
 	}
-	// First window
 	sig1 := sentinel.Evaluate(context.Background(), state, input, cfg)
-	// Second window → should trip
 	sig2 := sentinel.Evaluate(context.Background(), state, input, cfg)
 	_ = sig1
 
@@ -318,7 +297,6 @@ func TestGovernor_UndeployedTail_CountsAsOpportunity(t *testing.T) {
 }
 
 func TestGovernor_WarmupGate_Suppresses(t *testing.T) {
-	// Daemon just started; warmup window has not elapsed → suppressed.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -347,7 +325,6 @@ func TestGovernor_WarmupGate_Suppresses(t *testing.T) {
 }
 
 func TestGovernor_WarmupElapsed_DoesNotSuppress(t *testing.T) {
-	// Warmup window has elapsed → not suppressed; sustained gate satisfied → ACTIVE.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -365,7 +342,6 @@ func TestGovernor_WarmupElapsed_DoesNotSuppress(t *testing.T) {
 		Now:           now,
 		HasReadyBeads: true,
 	}
-	// The empty events.jsonl gives score=0 → low window → consecutive increments to 3.
 	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 
 	if sig.Level != sentinel.ActivationActive {
@@ -375,12 +351,10 @@ func TestGovernor_WarmupElapsed_DoesNotSuppress(t *testing.T) {
 }
 
 func TestGovernor_EventOutsideWindow_NotCounted(t *testing.T) {
-	// An event older than the window should not count toward movement.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	// bead_closed 45 minutes ago → outside a 30-minute window
 	writeEvent(t, eventsPath, core.EventTypeBeadClosed, now.Add(-45*time.Minute), json.RawMessage(`{}`))
 
 	state := &sentinel.GovernorState{}
@@ -399,14 +373,12 @@ func TestGovernor_EventOutsideWindow_NotCounted(t *testing.T) {
 	if sig.Sample.MovementScore != 0 {
 		t.Errorf("event outside window should not be counted; got score=%d", sig.Sample.MovementScore)
 	}
-	// First low window → WATCHING
 	if sig.Level != sentinel.ActivationWatching {
 		t.Errorf("expected WATCHING (event outside window), got %s", sig.Level)
 	}
 }
 
 func TestGovernor_HighMovementResetsConsecutiveCount(t *testing.T) {
-	// After two low windows, a high window should reset the consecutive count.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -424,17 +396,14 @@ func TestGovernor_HighMovementResetsConsecutiveCount(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Two low windows → would trip on the second
 	sentinel.Evaluate(context.Background(), state, input, cfg)
 	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig.Level != sentinel.ActivationActive {
 		t.Errorf("setup: expected ACTIVE, got %s", sig.Level)
 	}
 
-	// Now write a bead_closed event in the window
 	writeEvent(t, eventsPath, core.EventTypeBeadClosed, now.Add(-1*time.Minute), json.RawMessage(`{}`))
 
-	// High window → DORMANT; consecutive count resets to 0
 	sigHigh := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sigHigh.Level != sentinel.ActivationDormant {
 		t.Errorf("expected DORMANT after high window, got %s", sigHigh.Level)
@@ -462,11 +431,7 @@ func TestGovernor_ActivationLevelString(t *testing.T) {
 	}
 }
 
-// --- G-liveness self-kill gate tests (spec §6.1, bead hk-2do3) ---
-
 func TestGLiveness_Disabled_NeverHalts(t *testing.T) {
-	// LivenessNoProgressN == 0 → G-liveness gate disabled; even many zero cycles
-	// must not produce ActivationHalt.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -494,7 +459,6 @@ func TestGLiveness_Disabled_NeverHalts(t *testing.T) {
 }
 
 func TestGLiveness_TripsAfterNZeroCycles(t *testing.T) {
-	// N=3 consecutive zero-progress cycles → ActivationHalt + LivenessViolated.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -544,8 +508,6 @@ func TestGLiveness_TripsAfterNZeroCycles(t *testing.T) {
 func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
 	const n = 5
 
-	// Build the Config the way the daemon does: write a config.yaml, load it
-	// through the digest bridge.
 	projectDir := makeEventsFile(t)
 	configPath := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	configYAML := fmt.Sprintf("sentinel:\n  window: 30m\n  liveness_no_progress_n: %d\n", n)
@@ -566,8 +528,6 @@ func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
 	}
 
 	now := time.Now()
-	// Zero DaemonStartedAt → no warmup suppression; MovementScore=0 (no events);
-	// HasOpportunity=true via HasReadyBeads.
 	state := &sentinel.GovernorState{}
 	input := sentinel.GovernorInput{
 		ProjectDir:    projectDir,
@@ -592,8 +552,6 @@ func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
 }
 
 func TestGLiveness_ResetOnProgress(t *testing.T) {
-	// After N-1 zero cycles, a terminal-progress event resets the counter.
-	// Subsequent zero cycles must count from 0 again.
 	projectDir := makeEventsFile(t)
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
@@ -610,7 +568,6 @@ func TestGLiveness_ResetOnProgress(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Two zero-progress cycles (N-1 = 2; one short of tripping).
 	for i := 0; i < 2; i++ {
 		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 		if sig.Level == sentinel.ActivationHalt {
@@ -621,7 +578,6 @@ func TestGLiveness_ResetOnProgress(t *testing.T) {
 		t.Fatalf("expected ConsecutiveZeroCycles=2, got %d", state.ConsecutiveZeroCycles)
 	}
 
-	// Write a bead_closed event → progress resets the counter.
 	writeEvent(t, eventsPath, core.EventTypeBeadClosed, now.Add(-1*time.Minute), json.RawMessage(`{}`))
 	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig.Level == sentinel.ActivationHalt {
@@ -632,8 +588,6 @@ func TestGLiveness_ResetOnProgress(t *testing.T) {
 			state.ConsecutiveZeroCycles)
 	}
 
-	// Remove the event so subsequent cycles are zero again; must restart from 0.
-	// Re-use same eventsPath but write to a fresh project dir to clear events.
 	freshDir := makeEventsFile(t)
 	freshInput := sentinel.GovernorInput{
 		ProjectDir:    freshDir,
@@ -649,8 +603,6 @@ func TestGLiveness_ResetOnProgress(t *testing.T) {
 }
 
 func TestGLiveness_WarmupSuppressesHalt(t *testing.T) {
-	// G-liveness does not fire during the daemon warmup window even if N
-	// zero-progress cycles have elapsed.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -668,7 +620,6 @@ func TestGLiveness_WarmupSuppressesHalt(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Run N cycles with zero progress; warmup must suppress the halt.
 	for i := 0; i < 5; i++ {
 		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 		if sig.Level == sentinel.ActivationHalt {
@@ -681,9 +632,6 @@ func TestGLiveness_WarmupSuppressesHalt(t *testing.T) {
 }
 
 func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
-	// While the daemon is in operator-pause, zero-movement cycles must NOT
-	// accumulate ConsecutiveZeroCycles. Operator-pause quiet is expected
-	// idle — not a liveness fault (bead hk-uxyf1).
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -693,7 +641,6 @@ func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
 		WarmupWindow:        0,
 		LivenessNoProgressN: 3,
 	}
-	// Paused input — zero movement, operator has globally paused the daemon.
 	pausedInput := sentinel.GovernorInput{
 		ProjectDir:     projectDir,
 		Now:            now,
@@ -701,7 +648,6 @@ func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
 		OperatorPaused: true,
 	}
 
-	// Run well past N cycles; G-liveness must never fire while paused.
 	for i := 0; i < 10; i++ {
 		sig := sentinel.Evaluate(context.Background(), state, pausedInput, cfg)
 		if sig.Level == sentinel.ActivationHalt {
@@ -716,7 +662,6 @@ func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
 		}
 	}
 
-	// After resume (OperatorPaused=false), zero cycles should now accumulate normally.
 	resumedInput := sentinel.GovernorInput{
 		ProjectDir:     projectDir,
 		Now:            now,
@@ -740,7 +685,6 @@ func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
 }
 
 func TestGLiveness_WarmupElapsed_Halts(t *testing.T) {
-	// Once the warmup window elapses, G-liveness fires after N zero-progress cycles.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -759,7 +703,6 @@ func TestGLiveness_WarmupElapsed_Halts(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Empty events.jsonl → score=0 → ConsecutiveZeroCycles reaches 3 → halt.
 	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
 	if sig.Level != sentinel.ActivationHalt {
 		t.Errorf("warmup elapsed + ConsecutiveZeroCycles=3: expected ActivationHalt, got %s", sig.Level)
@@ -770,7 +713,6 @@ func TestGLiveness_WarmupElapsed_Halts(t *testing.T) {
 }
 
 func TestGLiveness_ZeroCyclesCounter_TrackedInSignal(t *testing.T) {
-	// ConsecutiveZeroCycles in the returned signal reflects the post-update count.
 	projectDir := makeEventsFile(t)
 	now := time.Now()
 
@@ -820,13 +762,6 @@ func TestGovernor_HasOpportunity_ReflectsInput(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// makeGitProjectFixture — helper for HEAD-advance tests
-// ---------------------------------------------------------------------------
-
-// makeGitProjectFixture initialises a local git repo with an origin remote.
-// Returns the project directory and a pushNewCommit closure that adds a new
-// commit to origin/main each time it is called.
 func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func()) {
 	t.Helper()
 	dir := t.TempDir()
@@ -856,7 +791,6 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	run("remote", "add", "origin", originDir)
 	run("push", "origin", "main")
 
-	// Create events dir so the projectDir is valid for Evaluate.
 	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("makeGitProjectFixture: mkdir events: %v", err)
 	}
@@ -874,10 +808,6 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	}
 	return dir, pushNewCommit
 }
-
-// ---------------------------------------------------------------------------
-// B4-1: G-liveness halt signal carries ConsecutiveZeroCycles
-// ---------------------------------------------------------------------------
 
 // TestGLiveness_HaltSignalHasPageArtifactFields verifies that when G-liveness
 // fires (ActivationHalt), the returned GovernorSignal carries
@@ -912,17 +842,11 @@ func TestGLiveness_HaltSignalHasPageArtifactFields(t *testing.T) {
 	if !sig.LivenessViolated {
 		t.Error("LivenessViolated should be true when ActivationHalt fires")
 	}
-	// The signal must carry the exact ConsecutiveZeroCycles count so the workloop
-	// can embed it in the liveness_halt page artifact without a second state read.
 	if sig.ConsecutiveZeroCycles != N {
 		t.Errorf("ConsecutiveZeroCycles in halt signal = %d, want %d (page artifact field)",
 			sig.ConsecutiveZeroCycles, N)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// B4-2: HEAD-advance resets ConsecutiveZeroCycles
-// ---------------------------------------------------------------------------
 
 // TestGLiveness_HeadAdvanceResetsZeroCycles verifies that a commit on
 // origin/main within the window gives MovementScore > 0 and resets
@@ -941,9 +865,6 @@ func TestGLiveness_HeadAdvanceResetsZeroCycles(t *testing.T) {
 	t.Parallel()
 	projectDir, pushNewCommit := makeGitProjectFixture(t)
 
-	// Use a "past" window for setup so the initial commit is outside it.
-	// The initial commit was created at real time; we look 2h in the future
-	// so real-time commits are 2h before `setupNow` → well outside the 30m window.
 	setupNow := time.Now().Add(2 * time.Hour)
 
 	state := &sentinel.GovernorState{}
@@ -958,8 +879,6 @@ func TestGLiveness_HeadAdvanceResetsZeroCycles(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Two zero-cycle evaluations: window is [setupNow-30m, setupNow] which is
-	// entirely in the future relative to the fixture's initial commit → score=0.
 	for i := 0; i < 2; i++ {
 		sig := sentinel.Evaluate(context.Background(), state, setupInput, cfg)
 		if sig.Level == sentinel.ActivationHalt {
@@ -970,13 +889,8 @@ func TestGLiveness_HeadAdvanceResetsZeroCycles(t *testing.T) {
 		t.Fatalf("setup: expected ConsecutiveZeroCycles=2, got %d", state.ConsecutiveZeroCycles)
 	}
 
-	// Push a new commit to origin/main. Its committer date is ~real-now.
 	pushNewCommit()
 
-	// Evaluate with setupNow as window end: [setupNow-30m, setupNow].
-	// The new commit was made at real-now which is ~2h before setupNow, so still
-	// outside the future window. We need to use real now for the final eval so
-	// the new commit falls inside the window.
 	realNow := time.Now()
 	finalInput := sentinel.GovernorInput{
 		ProjectDir:    projectDir,
@@ -984,7 +898,6 @@ func TestGLiveness_HeadAdvanceResetsZeroCycles(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Next evaluation with real now: HEAD advance gives MovementScore > 0 → counter resets.
 	sig := sentinel.Evaluate(context.Background(), state, finalInput, cfg)
 	if sig.Sample.HeadAdvanceCount == 0 {
 		t.Error("HeadAdvanceCount should be > 0 after pushing a commit within the window")

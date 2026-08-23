@@ -1,10 +1,5 @@
 package daemon_test
 
-// workloop_test.go — tests for the main work loop (hk-ecrxy).
-//
-// Helper prefix: workloopFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-ecrxy).
-
 import (
 	"bufio"
 	"context"
@@ -24,18 +19,8 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// workloopFixtureProjectDir creates a minimal project directory tree for daemon
-// integration tests: .harmonik/events/, .harmonik/beads-intents/.  Returns the
-// project dir and the JSONL log path.
 func workloopFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
-	// Resolve symlinks so that br — which rejects symlinked paths — receives the
-	// canonical path. On macOS t.TempDir() returns /var/folders/... but /var is a
-	// symlink to /private/var, which br refuses (same fix as smokeFixtureProjectDir).
 	raw := t.TempDir()
 	resolved, resolveErr := filepath.EvalSymlinks(raw)
 	if resolveErr != nil {
@@ -56,9 +41,6 @@ func workloopFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// workloopFixtureGitRepo initialises a bare git repository with a single
-// initial commit in dir.  Required because CreateWorktree calls `git worktree
-// add` and needs an existing git repo with a resolvable HEAD.
 func workloopFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -80,9 +62,6 @@ func workloopFixtureGitRepo(t *testing.T, dir string) {
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
 
-	// Create a bare clone as "origin" so that mergeRunBranchToMain's
-	// `git push origin main` step succeeds in tests that produce worktree
-	// commits (e.g. via workloopFixturePreCommitWorktreeFactory).
 	bareDir := dir + "-bare"
 	//nolint:gosec // G204: git args are test-internal literals; not user input
 	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--bare", dir, bareDir)
@@ -93,7 +72,6 @@ func workloopFixtureGitRepo(t *testing.T, dir string) {
 	run("remote", "add", "origin", bareDir)
 }
 
-// workloopFixtureReadJSONLLines reads all non-empty JSONL lines from path.
 func workloopFixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -112,19 +90,8 @@ func workloopFixtureReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stub bead ledger
-// ─────────────────────────────────────────────────────────────────────────────
-
-// workloopFixtureSingleLabels is the label set every work-loop fixture bead
-// carries. The reason it is not empty is written out on stubBeadLedger.labels:
-// an unlabelled bead selects the reviewed graph, whose commit gate runs
-// `make full` in a fixture repo that holds one README and no Makefile.
 var workloopFixtureSingleLabels = []string{"workflow:single"}
 
-// stubBeadLedger implements brcli.Adapter-compatible calls as a lightweight
-// in-memory stub for work loop tests.  Concurrency: all methods are safe to
-// call concurrently.
 type stubBeadLedger struct {
 	mu    sync.Mutex
 	ready []core.BeadID
@@ -156,18 +123,12 @@ func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	if len(s.ready) == 0 {
 		return []core.BeadRecord{}, nil
 	}
-	// Dequeue one bead per Ready call — simulates a draining queue.
 	id := s.ready[0]
 	s.ready = s.ready[1:]
 	return []core.BeadRecord{{BeadID: id, Labels: s.labels}}, nil
 }
 
 func (s *stubBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	// Stub always reports "open" — pre-claim guard passes unconditionally.
-	//
-	// The labels must be here as well as on Ready. The work loop HYDRATES from
-	// ShowBead and overwrites whatever Ready reported, because `br ready --format
-	// json` omits the labels field. A stub that labels only Ready loses them.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: s.labels}, nil
@@ -217,11 +178,6 @@ func (s *stubBeadLedger) reopenedIDs() []core.BeadID {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stub event collector
-// ─────────────────────────────────────────────────────────────────────────────
-
-// stubEventCollector is an EventEmitter that records emitted events.
 type stubEventCollector struct {
 	mu     sync.Mutex
 	events []stubEmittedEvent
@@ -247,9 +203,6 @@ func (s *stubEventCollector) Emit(_ context.Context, eventType core.EventType, p
 	return nil
 }
 
-// collect records a full core.Event envelope (including EventID) as emitted by
-// the real event bus. Used by test fixtures that wire a bus subscription instead
-// of a direct EventEmitter stub.
 func (s *stubEventCollector) collect(evt core.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,7 +231,6 @@ func (s *stubEventCollector) eventTypes() []string {
 	return out
 }
 
-// allEvents returns a snapshot of all recorded events (type + raw payload).
 func (s *stubEventCollector) allEvents() []stubEmittedEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -286,10 +238,6 @@ func (s *stubEventCollector) allEvents() []stubEmittedEvent {
 	copy(out, s.events)
 	return out
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestDaemonStart_WorkLoopSkippedWithNoBrPath
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestDaemonStart_WorkLoopSkippedWithNoBrPath confirms that daemon.Start with
 // BrPath="" skips the work loop and returns promptly, emitting daemon_started
@@ -311,7 +259,6 @@ func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// daemon.Start should return promptly (no blocking work loop).
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
 	}
@@ -333,10 +280,6 @@ func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestWorkLoop_DispatchClosesBead — unit test against injected deps
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWorkLoop_DispatchClosesBead injects stub deps directly into the work loop
 // to test the full claim → launch → wait → close cycle without requiring a real
 // br binary or Claude Code.
@@ -350,7 +293,6 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
-	// Seed one ready bead.
 	const beadID = core.BeadID("test-bead-001")
 	ledger := &stubBeadLedger{
 		ready:  []core.BeadID{beadID},
@@ -358,9 +300,6 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	}
 	collector := &stubEventCollector{}
 
-	// The handler is a shell that makes one empty commit and exits 0. The commit
-	// happens DURING the run, which is what the node's no-advance guard asks for;
-	// see workloopFixtureAdvanceHeadHandlerArgs.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -371,21 +310,15 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
-	// The loop will dispatch the bead, close it, then find the queue empty and
-	// sleep. Cancel the context a short time after to stop the loop cleanly.
 	waitDone := make(chan struct{})
 	go func() {
 		defer close(waitDone)
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until the bead is closed. The context is the one budget — a second,
-	// smaller poll deadline only adds a way to fail while the loop still works.
 	for len(ledger.closedIDs()) == 0 {
 		select {
 		case <-ctx.Done():
@@ -394,11 +327,9 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		}
 	}
 
-	// Cancel the context to stop the loop goroutine.
 	cancel()
 	awaitLoopTeardown(t, waitDone, "work loop")
 
-	// Assert bead was closed.
 	closedIDs := ledger.closedIDs()
 	if len(closedIDs) == 0 {
 		t.Fatal("no beads were closed; expected test-bead-001 to be closed")
@@ -410,7 +341,6 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		t.Errorf("unexpected ReopenBead calls: %v", ledger.reopenedIDs())
 	}
 
-	// Assert run_completed event was emitted.
 	eventTypes := collector.eventTypes()
 	foundCompleted := false
 	for _, et := range eventTypes {
@@ -423,7 +353,6 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		t.Errorf("run_completed event not found; got event types: %v", eventTypes)
 	}
 
-	// run_started must also have been emitted before run_completed.
 	foundStarted := false
 	for _, et := range eventTypes {
 		if et == string(core.EventTypeRunStarted) {
@@ -460,8 +389,6 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -471,7 +398,6 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until the bead is reopened, bounded by the context.
 	for len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-ctx.Done():
@@ -494,7 +420,6 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		t.Errorf("unexpected CloseBead calls: %v", ledger.closedIDs())
 	}
 
-	// run_failed event expected.
 	eventTypes := collector.eventTypes()
 	foundFailed := false
 	for _, et := range eventTypes {
@@ -508,17 +433,6 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestWorkLoop_TwoConcurrentBeads — hk-e61c3.2 concurrent dispatch at N=2
-// ─────────────────────────────────────────────────────────────────────────────
-
-// concurrentFixtureLedger is a stub beadLedger used by
-// TestWorkLoop_TwoConcurrentBeads to observe when two beads are simultaneously
-// claimed.  It records peak in-flight count by tracking how many CloseBead
-// calls have not yet occurred at the time each ClaimBead succeeds.
-//
-// Helper prefix: concurrentFixture (per implementer-protocol §Helper-prefix;
-// bead hk-e61c3.2).
 type concurrentFixtureLedger struct {
 	mu sync.Mutex
 
@@ -550,8 +464,6 @@ type concurrentFixtureLedger struct {
 }
 
 func (c *concurrentFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	// Stub always reports "open" — pre-claim guard passes unconditionally.
-	// workflow:single is load-bearing; see stubBeadLedger.labels for why.
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
@@ -575,7 +487,6 @@ func (c *concurrentFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli
 	peak := c.peakInFlight
 	c.mu.Unlock()
 
-	// Signal once two beads are simultaneously in-flight.
 	if peak >= 2 {
 		c.claimedOnce.Do(func() { close(c.claimedCh) })
 	}
@@ -611,9 +522,6 @@ func (c *concurrentFixtureLedger) closedCount() int {
 	return len(c.closed)
 }
 
-// distinctClosed counts the distinct beads closed, which is what "both beads
-// finished" means. closedCount counts calls and cannot tell one bead closed
-// twice from two beads closed once.
 func (c *concurrentFixtureLedger) distinctClosed() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -656,14 +564,8 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	collector := &stubEventCollector{}
 	var runEnvMu sync.Mutex
 	runEnvProjectDirs := make(map[string]string)
-	// runEnvCalls counts every trip through the worktree factory. The map keys on
-	// run ID, so it silently collapses two runs that share one — which is the
-	// defect this test exists to catch. Counting the calls separately is what
-	// makes that collapse visible.
 	runEnvCalls := 0
 
-	// Handler: sleep briefly so both goroutines are simultaneously in-flight,
-	// then exit 0 so both beads are closed.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -685,9 +587,6 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		},
 	})
 
-	// Real productionWorktreeFactory + buildClaudeLaunchSpec run concurrently for
-	// both beads; stopHookGrace (~3s) per bead runs in parallel at MaxConcurrent=2
-	// (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -697,15 +596,12 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait until both beads are simultaneously claimed, bounded by the context.
 	select {
 	case <-ledger.claimedCh:
-		// Both beads claimed — concurrency confirmed.
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for two simultaneous in-flight beads at MaxConcurrent=2")
 	}
 
-	// Wait for both beads to close.
 	for ledger.closedCount() < 2 {
 		select {
 		case <-ctx.Done():
@@ -717,66 +613,20 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	cancel()
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// Assert peak concurrency was 2.
 	if p := ledger.peak(); p < 2 {
 		t.Errorf("peakInFlight = %d; want >= 2 (two beads must be simultaneously in-flight at MaxConcurrent=2)", p)
 	}
 
-	// Assert both beads were closed (not reopened).
 	if n := ledger.closedCount(); n != 2 {
 		t.Errorf("closedCount = %d; want 2", n)
 	}
-	// closedCount counts CloseBead CALLS. Two calls against one bead would pass
-	// it while the other bead never ran, so name the beads.
 	if got := ledger.distinctClosed(); got != 2 {
 		t.Errorf("distinct beads closed = %d; want 2 (both beads, not one bead twice)", got)
 	}
 
-	// The worktree port is the first run-path consumer of ProjectDir and RunID.
-	// Both concurrent runs must keep the shared directory and distinct identities.
-	//
-	// ONE IDENTITY PER DISPATCH is the property, and it is stated without
-	// predicting how many dispatches there will be. The assertion used to be
-	// `!= 2`, which also encoded "no run is ever retried" — something the work
-	// loop never promised. Both runs push to the fixture's single shared bare
-	// repo, so under load one can lose the refs/heads/main lock race, fail, get
-	// reopened and be dispatched again; the scheduler mints a fresh run ID per
-	// dispatch, so that retry is a third distinct ID. Measured at about 2.5%
-	// under concurrent load and clean in isolation: the test failed correct
-	// behaviour. A red gate on good code teaches people to re-run until green,
-	// which is how a real failure gets re-run away too.
-	//
-	// Comparing the map size against the call count needs no theory about how
-	// many runs there should be, so no retry and no reopen can make it wrong.
-	// Two earlier candidates were worse. `>= 2` alone stops measuring identity
-	// at all. `2 + reopens` predicts the dispatch count from the ledger, and the
-	// loop does not guarantee that sum: several paths reopen a bead BEFORE the
-	// worktree port is reached (see refuseRunPlan in workloop_runplan.go, and
-	// the codesync and Submit failure paths in beadRunOne). None of them is
-	// reachable through this fixture today, so that version passed; each is a
-	// way it could have become a NEW false red later.
-	//
-	// THE PREMISE, because it is invisible and a later change could break it:
-	// the factory is entered exactly once per dispatch. rp.Worktree.Create has
-	// one call site and nothing between it and this closure retries. Wrap that
-	// call in a retry and this assertion starts failing while the comment above
-	// still reads as reassuring.
-	//
-	// What this no longer catches, honestly. A regression that reopens a run
-	// which actually succeeded and dispatches it again is invisible here,
-	// because the extra dispatch brings its own distinct identity; the old
-	// `!= 2` did catch that, at the price of failing correct code one run in
-	// forty. And neither assertion below can say that EACH bead reached the
-	// factory: one bead dispatched twice, with the other closed without ever
-	// provisioning, would satisfy both. The factory is handed a run ID and no
-	// bead ID, so the test cannot tell which bead owns a dispatch. That gap is
-	// older than this change — `!= 2` had it too, and distinctClosed narrows it.
-	// Refs hk-twoconcurrentbeads-retry-assertion-06hlw.
 	runEnvMu.Lock()
 	defer runEnvMu.Unlock()
 	if reopens := ledger.reopenedCount(); reopens > 0 {
-		// The old assertion made a retry visible by failing. Keep the signal
-		// without the false red: a retry rate that climbs is worth seeing.
 		t.Logf("a run was retried %d time(s); each retry mints one more run ID", reopens)
 	}
 	if runEnvCalls < 2 {
@@ -792,7 +642,6 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		}
 	}
 
-	// Assert run_started and run_completed events emitted for both runs.
 	eventTypes := collector.eventTypes()
 	var startedCount, completedCount int
 	for _, et := range eventTypes {
@@ -811,13 +660,6 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// closeErrFixture — stub ledger for CloseBead-error path (hk-wfbxf)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// closeErrFixtureLedger is a stub beadLedger that returns an error from
-// CloseBead.  All other methods delegate to the inner stubBeadLedger so the
-// normal claim/reopen recording is available.
 type closeErrFixtureLedger struct {
 	mu       sync.Mutex
 	inner    *stubBeadLedger
@@ -876,9 +718,6 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	workloopFixtureGitRepo(t, projectDir)
 
 	const beadID = core.BeadID("test-bead-closeerr-001")
-	// labels is load-bearing here -- see stubBeadLedger.labels. Unlabelled selects
-	// the reviewed graph, whose commit gate cannot pass in this fixture repo, so
-	// the run reopens and retries and never reaches a close (hk-vzxg5).
 	inner := &stubBeadLedger{
 		ready:  []core.BeadID{beadID},
 		labels: workloopFixtureSingleLabels,
@@ -889,8 +728,6 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	}
 	collector := &stubEventCollector{}
 
-	// Handler commits and exits 0, so the run clears its pre-close guard and the
-	// loop actually attempts CloseBead.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -902,8 +739,6 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
-	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -913,18 +748,6 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until CloseBead has been attempted AND the run has reached a terminal --
-	// EITHER terminal. Waiting only for run_failed makes a regression report as a
-	// 60-second timeout instead of as the assertion below, which says what went
-	// wrong. Waiting on the terminal alone is what let this test pass on a run that
-	// never reached CloseBead at all.
-	//
-	// The close-count gate below IS the reach check (hk-vzxg5), and it is the only
-	// one: `found` is reachable only from inside it, so leaving this loop normally
-	// proves the count is non-zero and the terminal asserted afterwards provably
-	// came from the close error rather than from a guard that failed the run before
-	// CloseBead was ever called. The timeout branch reports the count so a
-	// regression on that path names itself instead of reading as a bare hang.
 	for {
 		if ledger.getCloseCallCount() > 0 {
 			types := collector.eventTypes()
@@ -946,7 +769,6 @@ found:
 	cancel()
 	awaitLoopTeardown(t, waitDone, "work loop")
 
-	// Must have emitted run_failed, NOT run_completed.
 	types := collector.eventTypes()
 	for _, et := range types {
 		if et == string(core.EventTypeRunCompleted) {
@@ -965,16 +787,6 @@ found:
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestWorkLoop_ClaimSemaphore — hk-e61c3.3 claim semaphore bounded concurrency
-// ─────────────────────────────────────────────────────────────────────────────
-
-// claimSemFixtureLedger is a stub beadLedger for
-// TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency. It tracks the peak number
-// of simultaneously active ClaimBead calls via an atomic counter.
-//
-// Helper prefix: claimSemFixture (per implementer-protocol.md §Helper-prefix;
-// bead hk-e61c3.3).
 type claimSemFixtureLedger struct {
 	mu sync.Mutex
 
@@ -1003,12 +815,10 @@ func (c *claimSemFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, err
 }
 
 func (c *claimSemFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	// workflow:single is load-bearing; see stubBeadLedger.labels for why.
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
 func (c *claimSemFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
-	// Increment active counter and update peak before doing work.
 	current := c.activeClaims.Add(1)
 	for {
 		old := c.peakClaims.Load()
@@ -1019,9 +829,6 @@ func (c *claimSemFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.T
 			break
 		}
 	}
-	// Yield briefly to give the race detector a chance to observe concurrent
-	// access — in the sequential outer loop this never overlaps, but the
-	// instrumentation is useful when the test runs with -race.
 	time.Sleep(time.Millisecond)
 	c.activeClaims.Add(-1)
 	return nil
@@ -1035,9 +842,6 @@ func (c *claimSemFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.T
 }
 
 func (c *claimSemFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
-	// Re-enqueue the bead so transient errors (e.g. git worktree races under
-	// parallel test load) do not permanently lose beads and deadlock the poll loop
-	// (hk-kqdpf.1).
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ready = append(c.ready, beadID)
@@ -1082,8 +886,6 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	ledger := &claimSemFixtureLedger{ready: ready}
 	collector := &stubEventCollector{}
 
-	// Handler makes one empty commit and exits — we want all 10 beads to process
-	// quickly, and the commit has to land during the run for the node to pass.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -1095,9 +897,6 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		MaxConcurrent:    maxConcurrent,
 	})
 
-	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; stopHookGrace
-	// (~3s) fires per bead, and this test dispatches ten of them four at a time,
-	// so three waves of grace are a 9-second floor before any git work (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
@@ -1107,7 +906,6 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until all 10 beads are closed, bounded by the context.
 	for ledger.closedCount() < beadCount {
 		select {
 		case <-ctx.Done():
@@ -1120,14 +918,12 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	cancel()
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// Assert concurrent ClaimBead calls never exceeded MaxConcurrent.
 	peak := ledger.peakClaims.Load()
 	if peak > maxConcurrent {
 		t.Errorf("hk-e61c3.3: peakConcurrentClaims = %d; want <= %d (semaphore must bound concurrent claims)",
 			peak, maxConcurrent)
 	}
 
-	// Assert all beads were closed (not reopened due to semaphore deadlock).
 	if n := ledger.closedCount(); n != beadCount {
 		t.Errorf("closedCount = %d; want %d (all beads must close under semaphore)", n, beadCount)
 	}

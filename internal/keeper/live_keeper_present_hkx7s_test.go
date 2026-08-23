@@ -31,7 +31,6 @@ func TestLiveKeeperPresent_LockHeld(t *testing.T) {
 	if relErr := lock.Release(); relErr != nil {
 		t.Fatalf("Release: %v", relErr)
 	}
-	// Lockfile still exists but is no longer flocked → no live keeper.
 	if LiveKeeperPresent(projectDir, agent) {
 		t.Error("LiveKeeperPresent: want false after the lock is released")
 	}
@@ -53,7 +52,6 @@ func TestLiveKeeperPresent_InvalidAgent(t *testing.T) {
 func TestEffectiveBandTokens_DefaultsAndTightenOnly(t *testing.T) {
 	t.Parallel()
 
-	// windowSize 0 → abs defaults verbatim (pct applied at runtime, not yet).
 	warn, act, force := EffectiveBandTokens(0, 0, 0, 0, 0, 0)
 	if warn != DefaultWarnAbsTokens || act != DefaultActAbsTokens {
 		t.Errorf("defaults: want warn=%d act=%d, got warn=%d act=%d", DefaultWarnAbsTokens, DefaultActAbsTokens, warn, act)
@@ -62,13 +60,11 @@ func TestEffectiveBandTokens_DefaultsAndTightenOnly(t *testing.T) {
 		t.Errorf("force band should exceed act band; got force=%d act=%d", force, act)
 	}
 
-	// High act-pct on a 1M window: tighten-only means it CANNOT exceed the abs cap.
 	_, actHigh, _ := EffectiveBandTokens(0, 0, 0, 0, 0.99, 1_000_000)
 	if actHigh > DefaultActAbsTokens {
 		t.Errorf("tighten-only: act-pct 99%% on a 1M window must not exceed abs cap %d; got %d", DefaultActAbsTokens, actHigh)
 	}
 
-	// Low act-pct on a 1M window: moves the act threshold EARLIER than the abs band.
 	_, actLow, _ := EffectiveBandTokens(0, 0, 0, 0, 0.10, 1_000_000)
 	if actLow >= DefaultActAbsTokens {
 		t.Errorf("low act-pct should fire EARLIER than abs band %d; got %d", DefaultActAbsTokens, actLow)

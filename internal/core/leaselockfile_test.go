@@ -7,8 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// validLeaseLockFile returns a fully-populated LeaseLockFile with all required
-// fields set to non-zero values.
 func validLeaseLockFile(t *testing.T) LeaseLockFile {
 	t.Helper()
 	return LeaseLockFile{

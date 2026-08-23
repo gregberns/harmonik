@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// verdictdiscovery_rc026_test.go — Tests for RC-026 verdict-execution discovery
-// on restart (Cat 3b classification).
-//
-// Covers:
-//   - VerdictDiscoveryState enum validity and string values.
-//   - DiscoverVerdictExecution pure function for all three branch-evidence
-//     combinations (clean, Cat 3b, resolved).
-//   - ReconciliationClassificationGate startup-ordering shape invariants.
-//   - OQ-RC-003 fail-open escalation tracking.
-//
-// Judgment call: full integration of the startup detector (git log + trailer
-// parsing, Cat 3b re-execution, ready-transition gating) requires live daemon
-// plumbing not yet built. Tests are structured as specification anchors that
-// bind the type-level shape contracts (VerdictDiscoveryState,
-// BranchVerdictEvidence, ReconciliationClassificationGate) the daemon
-// implementation will enforce. Full integration tests belong in a future
-// integration harness once PL-005 step 7 ships.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-026;
-// specs/reconciliation/schemas.md §6.3 (Cat 3b row); OQ-RC-003.
-
-// ---- VerdictDiscoveryState ----
-
 // TestVerdictDiscoveryState_ThreeValuesAreDeclared verifies that exactly three
 // VerdictDiscoveryState constants are declared and each is valid.
 //
@@ -104,8 +81,6 @@ func TestVerdictDiscoveryState_Cat3bStringMatchesReconciliationCategory(t *testi
 			"both must represent Cat 3b consistently", discoveryStr, categoryStr)
 	}
 }
-
-// ---- DiscoverVerdictExecution ----
 
 // TestDiscoverVerdictExecution_Clean_NeitherCommit verifies that when neither
 // the verdict commit nor the verdict-executed commit is present, the result is
@@ -262,8 +237,6 @@ func TestDiscoverVerdictExecution_AllThreeStatesReturnValidCategory(t *testing.T
 func TestDiscoverVerdictExecution_Cat3b_RequiresVerdictCommit(t *testing.T) {
 	t.Parallel()
 
-	// No verdict commit → never Cat 3b, regardless of the (structurally
-	// impossible) HasVerdictExecutedCommit value.
 	evidence := BranchVerdictEvidence{
 		HasVerdictCommit:         false,
 		HasVerdictExecutedCommit: false,
@@ -292,10 +265,6 @@ func TestDiscoverVerdictExecution_Cat3b_RequiresVerdictCommit(t *testing.T) {
 func TestDiscoverVerdictExecution_StartupDetectorMustSeeVerdictExecutedToResolve(t *testing.T) {
 	t.Parallel()
 
-	// verdict-executed commit without verdict commit is structurally impossible
-	// (Cat 6a), but DiscoverVerdictExecution gates on HasVerdictCommit first:
-	// without a verdict commit, the branch is treated as clean (no verdict
-	// history at all).
 	evidence := BranchVerdictEvidence{
 		HasVerdictCommit:         false,
 		HasVerdictExecutedCommit: false,
@@ -308,8 +277,6 @@ func TestDiscoverVerdictExecution_StartupDetectorMustSeeVerdictExecutedToResolve
 			"resolved requires BOTH verdict commit AND verdict-executed commit")
 	}
 }
-
-// ---- ReconciliationClassificationGate ----
 
 // TestReconciliationClassificationGate_DefaultIsValid verifies that
 // DefaultReconciliationClassificationGate() returns a valid gate record.
@@ -425,8 +392,6 @@ func TestRC026_StartupDetectorMustRunBeforeReady(t *testing.T) {
 
 	gate := DefaultReconciliationClassificationGate()
 
-	// The gate's ClassificationPassBeforeReady field documents the rule.
-	// A non-empty value confirms the constraint is encoded.
 	if gate.ClassificationPassBeforeReady == "" {
 		t.Error("RC-026: ClassificationPassBeforeReady is empty; " +
 			"the startup ordering constraint MUST be documented in the gate record")
@@ -457,7 +422,6 @@ func TestRC026_Cat3bDetectionRuleBindsToVerdictUnexecutedCategory(t *testing.T) 
 
 	state, cat := DiscoverVerdictExecution(evidence)
 
-	// Both the discovery state and the category must agree on Cat 3b.
 	if state != VerdictDiscoveryStateCat3b {
 		t.Errorf("RC-026: Cat 3b evidence produced state %q; want %q",
 			state, VerdictDiscoveryStateCat3b)
@@ -466,7 +430,6 @@ func TestRC026_Cat3bDetectionRuleBindsToVerdictUnexecutedCategory(t *testing.T) 
 		t.Errorf("RC-026: Cat 3b evidence produced category %q; want %q",
 			cat, ReconciliationCategoryCat3b)
 	}
-	// Cross-check: the category is the same as what the taxonomy defines.
 	if !cat.Valid() {
 		t.Errorf("RC-026: Cat 3b category %q is invalid per ReconciliationCategory.Valid()", cat)
 	}
@@ -483,7 +446,6 @@ func TestRC026_Cat3bDetectionRuleBindsToVerdictUnexecutedCategory(t *testing.T) 
 func TestRC026_ResolvedStateRequiresBothCommits(t *testing.T) {
 	t.Parallel()
 
-	// Resolved requires both commits.
 	withBoth := BranchVerdictEvidence{HasVerdictCommit: true, HasVerdictExecutedCommit: true}
 	stateWithBoth, _ := DiscoverVerdictExecution(withBoth)
 	if stateWithBoth != VerdictDiscoveryStateResolved {
@@ -491,7 +453,6 @@ func TestRC026_ResolvedStateRequiresBothCommits(t *testing.T) {
 			stateWithBoth, VerdictDiscoveryStateResolved)
 	}
 
-	// Neither resolved alone nor verdict-alone produces resolved.
 	withVerdictOnly := BranchVerdictEvidence{HasVerdictCommit: true, HasVerdictExecutedCommit: false}
 	stateVerdictOnly, _ := DiscoverVerdictExecution(withVerdictOnly)
 	if stateVerdictOnly == VerdictDiscoveryStateResolved {
@@ -520,7 +481,6 @@ func TestRC026_OQRc003_ConservativeDefaultDocumented(t *testing.T) {
 
 	gate := DefaultReconciliationClassificationGate()
 
-	// The fail-open policy must reference OQ-RC-003.
 	if gate.OQRc003FailOpenPolicy == "" {
 		t.Error("OQ-RC-003: fail-open policy field is empty; " +
 			"the conservative default must be documented in the gate record")

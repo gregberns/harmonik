@@ -1,27 +1,5 @@
 package hook
 
-// sessionstore.go — pure last-received-wins dedup for outcome_emitted plus the
-// agent_ready callback registry (CHB-025 / CHB-013).
-//
-// The daemon maintains a per-session store keyed by (run_id, claude_session_id).
-// Each receipt of an outcome_emitted RelayEnvelope REPLACES the previous
-// "current outcome" (last-received-wins). On Wait-return the work loop consults
-// LatestOutcome to choose the terminal event.
-//
-// Stale arrivals (session already closed) are rejected with an unknown_session
-// typed-error ack per §6.2 CHB-025.
-//
-// # Goroutine safety
-//
-// SessionStore uses a sync.Mutex; all methods are safe for concurrent use from
-// multiple goroutines (one per accepted socket connection). The store is cheap:
-// one mutex per instance, contended only by hook-relay one-shot connections
-// which are rare relative to the bead dispatch rate.
-//
-// Spec refs:
-//   - specs/claude-hook-bridge.md §4.10 CHB-025
-//   - specs/claude-hook-bridge.md §6.2 HookRelayAck
-
 import (
 	"context"
 	"encoding/json"
@@ -67,14 +45,11 @@ type RelayAck struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// sessionKey is the compound identifier for a hook session. It matches the
-// (run_id, claude_session_id) pair in each RelayEnvelope.
 type sessionKey struct {
 	runID           string
 	claudeSessionID string
 }
 
-// session tracks the dedup state for a single open handler session window.
 type session struct {
 	// latestOutcome is the payload from the most recently received
 	// outcome_emitted message. Replaced on every arrival (last-received-wins
@@ -155,9 +130,6 @@ func (s *SessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb f
 	var replay bool
 	if sess, ok := s.sessions[key]; ok && sess != nil {
 		sess.agentReadyCallback = cb
-		// H13: if agent_ready already fired before the callback was installed,
-		// replay it now so the latched signal is not lost. Invoke outside the
-		// mutex (below) to match notifyAgentReady's lock discipline.
 		replay = sess.readyFired && cb != nil
 	}
 	s.mu.Unlock()
@@ -218,7 +190,6 @@ func (s *SessionStore) LatestOutcome(runID, claudeSessionID string) *json.RawMes
 func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionID string) (json.RawMessage, error) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 
-	// Fast path: check under the mutex before allocating a channel.
 	s.mu.Lock()
 	sess, ok := s.sessions[key]
 	if !ok || sess == nil {
@@ -231,14 +202,12 @@ func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionI
 		return result, nil
 	}
 
-	// Slow path: register a per-waiter notify channel and wait outside the mutex.
 	ch := make(chan struct{})
 	s.notifyChans[key] = append(s.notifyChans[key], ch)
 	s.mu.Unlock()
 
 	select {
 	case <-ctx.Done():
-		// Remove our channel from the notify list to avoid a memory leak.
 		s.mu.Lock()
 		chans := s.notifyChans[key]
 		filtered := chans[:0]
@@ -256,7 +225,6 @@ func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionI
 		return nil, ctx.Err()
 
 	case <-ch:
-		// Outcome arrived — read the current value under the mutex.
 		s.mu.Lock()
 		sess2, ok2 := s.sessions[key]
 		var result json.RawMessage
@@ -268,18 +236,6 @@ func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionI
 	}
 }
 
-// updateOutcome replaces the session's latestOutcome with payload
-// (last-received-wins).
-//
-// Returns (true, "") when the update succeeds.
-// Returns (false, reason) when the session is unknown (already closed and
-// removed, or never registered).
-//
-// When this is the FIRST outcome recorded for the session, all channels in
-// notifyChans[key] are closed (broadcast), waking any concurrent WaitForOutcome
-// callers. Subsequent calls update latestOutcome but do not re-signal (waiters
-// have already been released; they read the latest value under the mutex after
-// wake-up).
 func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json.RawMessage) (ok bool, ackStatus string) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
@@ -288,13 +244,11 @@ func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json
 	if !exists || sess == nil {
 		return false, "unknown_session"
 	}
-	// Last-received-wins: replace (not append) the current outcome.
 	pl := make(json.RawMessage, len(payload))
 	copy(pl, payload)
 	firstOutcome := sess.latestOutcome == nil
 	sess.latestOutcome = &pl
 
-	// Broadcast to any WaitForOutcome callers on first outcome arrival.
 	if firstOutcome {
 		for _, ch := range s.notifyChans[key] {
 			close(ch)
@@ -304,16 +258,11 @@ func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json
 	return true, "ok"
 }
 
-// notifyAgentReady invokes the agentReadyCallback for (runID, claudeSessionID)
-// if one has been registered. The callback is invoked outside the mutex to
-// avoid lock inversion; it is read under the mutex then called after unlock.
 func (s *SessionStore) notifyAgentReady(runID, claudeSessionID string) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
 	var cb func()
 	if sess, ok := s.sessions[key]; ok && sess != nil {
-		// H13: always latch that ready fired, so a callback installed LATER
-		// (SetAgentReadyCallback) can replay the signal instead of losing it.
 		sess.readyFired = true
 		cb = sess.agentReadyCallback
 	}
@@ -362,14 +311,10 @@ func (s *SessionStore) Dispatch(env RelayEnvelope) RelayAck {
 		return RelayAck{Status: "ok"}
 
 	case "agent_ready":
-		// CHB-013 (hk-p63bz): relay-synthesized agent_ready on first SessionStart
-		// receipt. Forward to the per-run event tap via the registered callback
-		// so waitAgentReady can observe it (HC-039 / HC-041).
 		s.notifyAgentReady(env.RunID, env.ClaudeSessionID)
 		return RelayAck{Status: "ok"}
 
 	default:
-		// Any other known or future message type is accepted without state update.
 		return RelayAck{Status: "ok"}
 	}
 }

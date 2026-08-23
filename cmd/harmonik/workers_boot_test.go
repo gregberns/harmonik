@@ -81,7 +81,6 @@ func TestApplyWorkerOverrides_TargetsPrimaryWorker(t *testing.T) {
 		map[string]bool{"worker-host": true, "worker-enabled": true},
 		"flag-host.local", true)
 
-	// Primary (the Registry's worker) must receive both overrides.
 	if got.Workers[idx].Host != "flag-host.local" {
 		t.Fatalf("primary host: got %q, want %q", got.Workers[idx].Host, "flag-host.local")
 	}
@@ -89,7 +88,6 @@ func TestApplyWorkerOverrides_TargetsPrimaryWorker(t *testing.T) {
 		t.Fatal("primary enabled: expected true (flag override)")
 	}
 
-	// The non-primary worker must be left exactly as configured.
 	if got.Workers[1].Host != "secondary-file.local" {
 		t.Fatalf("secondary host: got %q, want %q (untouched)", got.Workers[1].Host, "secondary-file.local")
 	}
@@ -97,7 +95,6 @@ func TestApplyWorkerOverrides_TargetsPrimaryWorker(t *testing.T) {
 		t.Fatal("secondary enabled: expected true (untouched file value)")
 	}
 
-	// The caller's Config must not be mutated.
 	if cfg.Workers[0].Host != "primary-file.local" {
 		t.Fatalf("input cfg mutated: primary host now %q", cfg.Workers[0].Host)
 	}

@@ -128,7 +128,6 @@ func TestDecideGroupCompletionIdempotencyAndErrors(t *testing.T) {
 	if err != nil || sameID.NoChangeReason != GroupCompletionNoChangeMatchingTerminalOutcome {
 		t.Fatalf("same-ID terminal replay=%+v err=%v", sameID, err)
 	}
-	// A stale identity is an expected no-change even when the stored queue has moved on.
 	input := groupCompletionInput(GroupCompletionOutcomeFailed, 0)
 	input.ExpectedQueueID = "0197c454-0000-7000-8000-000000000099"
 	stale, err := DecideGroupCompletion(terminal, input)

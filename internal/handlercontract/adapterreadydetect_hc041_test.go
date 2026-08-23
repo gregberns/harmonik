@@ -16,22 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// adapterreadydetect_hc041_test.go — sensor tests for HC-041
-// (Adapter.DetectReady is agent_ready-gated) per bead hk-8i31.48.
-//
-// Spec refs: specs/handler-contract.md §4.9.HC-041, §6.1.
-// Bead: hk-8i31.48.
-//
-// Verifies:
-//   (a) DetectReady is part of the Adapter interface signature.
-//   (b) A spec-compliant DetectReady implementation returns true ONLY for
-//       agent_ready events and false for all other event types.
-//   (c) Spec-corpus sensor: handler-contract.md contains HC-041 and the
-//       "MUST NOT synthesize" clause.
-//
-// Helper prefix: readyDetectFixture (per implementer-protocol.md).
-
-// readyDetectFixtureModuleRoot returns the module root by walking upward.
 func readyDetectFixtureModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -51,9 +35,6 @@ func readyDetectFixtureModuleRoot(t *testing.T) string {
 	}
 }
 
-// readyDetectFixtureMakeEvent builds an EventEnvelope with the given type
-// string and an empty JSON object payload. Sufficient for routing tests where
-// the payload is not decoded.
 func readyDetectFixtureMakeEvent(t *testing.T, eventType string) core.EventEnvelope {
 	t.Helper()
 	return core.EventEnvelope{
@@ -63,17 +44,9 @@ func readyDetectFixtureMakeEvent(t *testing.T, eventType string) core.EventEnvel
 	}
 }
 
-// readyDetectFixtureAdapter is a minimal spec-compliant Adapter stub that
-// implements DetectReady correctly per HC-041: returns true ONLY when the
-// event type is "agent_ready".
-//
-// A real adapter would also scope to a specific session ID. This sensor
-// omits session scoping to focus on event-type gating.
 type readyDetectFixtureAdapter struct{}
 
 func (readyDetectFixtureAdapter) DetectReady(event core.EventEnvelope) bool {
-	// Per HC-041: return true ONLY for agent_ready events.
-	// Adapters MUST NOT synthesize ready-state from other signals.
 	return event.Type == core.EventType(handlercontract.ProgressMsgTypeAgentReady)
 }
 
@@ -93,10 +66,6 @@ func (readyDetectFixtureAdapter) Diagnose(_ context.Context) (handlercontract.Di
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-041: DetectReady signature
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestReadyDetect_AdapterImplementsInterface verifies that a spec-compliant
 // DetectReady implementation satisfies the Adapter interface (compile-time).
 func TestReadyDetect_AdapterImplementsInterface(t *testing.T) {
@@ -104,10 +73,6 @@ func TestReadyDetect_AdapterImplementsInterface(t *testing.T) {
 
 	var _ handlercontract.Adapter = readyDetectFixtureAdapter{}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-041: DetectReady returns true ONLY for agent_ready
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestReadyDetect_ReturnsTrueForAgentReady verifies that a HC-041-compliant
 // adapter returns true for an agent_ready event.
@@ -153,10 +118,6 @@ func TestReadyDetect_ReturnsFalseForNonAgentReadyEvents(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-041: Spec-corpus sensor
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestReadyDetect_SpecCorpusHC041Clause verifies that handler-contract.md
 // contains HC-041 and the "MUST NOT synthesize" ready-state constraint.

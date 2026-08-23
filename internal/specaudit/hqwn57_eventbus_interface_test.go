@@ -1,36 +1,5 @@
 package specaudit_test
 
-// hk-hqwn.57 type-shape sensor — EventBus 6-method interface per §6.1.
-//
-// Spec ref: specs/event-model.md §6.1 INTERFACE EventBus.
-//
-// The EventBus interface (specs/event-model.md §6.1) declares six methods:
-//
-//   - Emit(ctx, type, payload) -> error
-//   - Subscribe(sub Subscription) -> (Subscription, error)
-//   - Seal() -> error
-//   - ReplayFrom(consumer_id, since event_id) -> error
-//   - DeadLetterReplay(consumer_name, filter?) -> error
-//   - Drain(ctx) -> error
-//
-// This sensor verifies the Go interface in internal/eventbus carries exactly
-// these six methods with the correct parameter and return types so that
-// spec and code cannot silently diverge.
-//
-// # Audit frame
-//
-// The test uses the reflect package to inspect the eventbus.EventBus interface
-// type at compile time (via interface satisfaction) and at runtime (method-set
-// walk). A private sentinel implementation forcibly satisfies the interface;
-// the compiler refuses to build this file if the method set diverges from what
-// the sentinel provides. The runtime walk then asserts that no extra or missing
-// methods are present.
-//
-// # Helper prefix
-//
-// All package-level identifiers in this file use the hqwn57Fixture prefix per
-// the implementer-protocol.md helper-prefix discipline.
-
 import (
 	"context"
 	"reflect"
@@ -41,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// hqwn57FixtureExpectedMethods is the exact set of method names the
-// specs/event-model.md §6.1 INTERFACE EventBus requires.
-// EmitWithRunID was added by hk-n9f51 (PARA-1: run_id envelope field) to
-// support run-scoped events per EM-013.
 var hqwn57FixtureExpectedMethods = []string{
 	"DeadLetterReplay",
 	"Drain",
@@ -55,12 +20,6 @@ var hqwn57FixtureExpectedMethods = []string{
 	"Subscribe",
 }
 
-// hqwn57FixtureSentinel is a compile-time check: if eventbus.EventBus gains or
-// loses methods, or any method signature changes, this struct will fail to
-// satisfy the interface and the package will not compile.
-//
-// The sentinel is never instantiated at runtime; its sole purpose is the
-// var _ = assignment below.
 type hqwn57FixtureSentinel struct{}
 
 func (hqwn57FixtureSentinel) Emit(_ context.Context, _ core.EventType, _ []byte) error {
@@ -83,10 +42,6 @@ func (hqwn57FixtureSentinel) DeadLetterReplay(_ string, _ *core.EventPattern) er
 
 func (hqwn57FixtureSentinel) Drain(_ context.Context) error { return nil }
 
-// hqwn57FixtureCompileTimeCheck asserts that hqwn57FixtureSentinel satisfies
-// eventbus.EventBus at compile time. If the interface changes in a way that
-// breaks this assignment, the package will not compile and the mismatch is
-// surfaced immediately.
 var _ eventbus.EventBus = hqwn57FixtureSentinel{}
 
 // TestHQWN57EventBusInterfaceMethodSet is the type-shape sensor for hk-hqwn.57.
@@ -136,7 +91,6 @@ func TestHQWN57EmitSignature(t *testing.T) {
 
 	mt := m.Type // func(context.Context, core.EventType, []byte) error
 
-	// 3 params, 1 return
 	if mt.NumIn() != 3 {
 		t.Errorf("Emit: want 3 params, got %d", mt.NumIn())
 	}

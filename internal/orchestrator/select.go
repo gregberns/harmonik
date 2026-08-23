@@ -6,17 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// select.go — the pure NQ-B1 cross-queue round-robin selector, ported faithfully
-// from internal/daemon/workloop.go selectNextQueue WITHOUT semantic change (M5
-// slice 3 sub-slice 3A). The daemon projects live QueueStore/RunRegistry state
-// into FleetSnapshot under the write lock (see internal/daemon snapshotFleet),
-// calls SelectNextQueue, then maps Selection back onto its queueSelection shape.
-// The per-queue LOCAL cap (LocalInFlight vs WorkerCap) is the only capacity gate
-// here; the global ceiling is enforced by the daemon caller before this runs.
-//
-// Spec ref: specs/queue-model.md §9.3 QM-062, §9.7 QM-066, §9.8 QM-067.
-// Bead ref: hk-tigaf.4 (NQ-B1).
-
 // ItemSnapshot is the minimal per-item projection the selector returns as its
 // pick. ItemIdx is the ABSOLUTE index into the group's Items slice (matching the
 // daemon's write-back index), NOT an index into the eligible sub-slice.
@@ -127,32 +116,23 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 		return Selection{}, false
 	}
 
-	// Build the candidate set: queues with eligible work under their own LOCAL cap.
 	candidates := make([]string, 0, len(f.Queues))
 	byName := make(map[string]QueueSnapshot, len(f.Queues))
 	sawNonContributing := false
 	for _, q := range f.Queues {
 		byName[q.Name] = q
 		if !q.Active {
-			// Paused-by-failure / paused-by-drain / completed queues contribute
-			// nothing but MUST NOT block sibling queues.
 			sawNonContributing = true
 			continue
 		}
 		if q.Blocked {
-			// hk-xg6rw: captain-curated queue gated by a stale dashboard.json.
 			sawNonContributing = true
 			continue
 		}
-		// Per-queue LOCAL cap (hk-4tjt6): skip when already at its ceiling.
 		if q.LocalInFlight >= q.WorkerCap {
 			sawNonContributing = true
 			continue
 		}
-		// Must have a first active group holding at least one eligible item the
-		// caller has not refused. A group whose every eligible item is refused
-		// makes this queue a non-contributor rather than a blocker, so the
-		// round-robin gives the slot to a sibling (hk-nown4).
 		if q.ActiveGroup == nil || firstOfferable(q.ActiveGroup.Eligible, f.SkipBeads) < 0 {
 			sawNonContributing = true
 			continue
@@ -165,8 +145,6 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 	}
 	sort.Strings(candidates)
 
-	// Round-robin: start at the cursor offset (mod candidate count). The caller
-	// advances RRCursor every tick so the start offset rotates.
 	n := len(candidates)
 	start := ((f.RRCursor % n) + n) % n // guard against negative cursor
 	chosen := byName[candidates[start]]
@@ -179,8 +157,6 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 		pick = firstOfferable(g.Eligible, f.SkipBeads)
 	}
 	if pick < 0 {
-		// Defensive: a candidate always has an offerable item, so this is
-		// unreachable, but mirror the daemon's non-selection fall-through.
 		return Selection{SawNonContributing: sawNonContributing}, false
 	}
 	head := g.Eligible[pick]
@@ -195,10 +171,6 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 	}, true
 }
 
-// firstOfferable returns the index of the first eligible item the caller has not
-// refused, or -1 when every eligible item is refused (an empty list included).
-// It is the whole of the fallback: without it the selector offers index 0 and
-// nothing else, so one refused item holds up every ready item behind it.
 func firstOfferable(eligible []ItemSnapshot, skip map[string]bool) int {
 	for i := range eligible {
 		if !skip[string(eligible[i].BeadID)] {

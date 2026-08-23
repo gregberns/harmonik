@@ -175,12 +175,6 @@ func BrErrorFromExit(code int, stderr []byte) BrError {
 	return base
 }
 
-// stderrIndicatesNotFound reports whether captured br stderr genuinely signals a
-// missing bead-id (as opposed to any other exit-1 failure). It matches the
-// case-insensitive substring "not found", which the pinned Beads CLI emits for
-// missing-id errors (e.g. "Error: Issue not found: <id>"). Matching is
-// deliberately conservative: a false negative degrades to BrOther (a valid,
-// investigator-dispatched classification), never to a wrong terminal state.
 func stderrIndicatesNotFound(stderr []byte) bool {
 	return bytes.Contains(bytes.ToLower(stderr), []byte("not found"))
 }

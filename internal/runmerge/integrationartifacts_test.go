@@ -1,31 +1,5 @@
 package runmerge_test
 
-// mergetomain_integrationartifacts_hkg9zz_test.go — regression test for the
-// pre-rebase integration-artifact cleanup added in hk-g9zz.
-//
-// Bug (hk-g9zz): a live DOT-mode run for bead hk-nlio
-// (TestIntegration_TwinE2E_OperatorRealEnv, 10.9s real tmux) completed with all
-// 4 reviewers APPROVE, but the daemon merge then FAILED with:
-//
-//	merge-failed (dot): rebase_conflict: exit status 1
-//	error: The following untracked working tree files would be overwritten by
-//	checkout: <file>
-//	Please move or remove them before you switch branches.
-//
-// ROOT CAUSE: the bead's //go:build integration test booths a real tmux pane
-// and may build helper binaries (e.g. go build -o harmonik-twin-session) in
-// the run worktree. These untracked files survive discardDirtyChurn (which only
-// restores tracked churn paths) and commitResidualDelta (which commits genuine
-// authored NEW files but may not commit all artifacts). When the rebase tries
-// to replay a main-branch commit that adds a file at the same path, git aborts.
-//
-// FIX: cleanUntrackedFiles runs `git clean -fd` after commitResidualDelta and
-// before the rebase, removing any remaining untracked non-gitignored files.
-// At that point all genuine authored work is already committed, so the only
-// surviving untracked files are integration-test artifacts.
-//
-// Bead: hk-g9zz.
-
 import (
 	"context"
 	"os"
@@ -37,7 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
-// integArtifactGit runs a git command in dir and fails the test on error.
 func integArtifactGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -49,16 +22,6 @@ func integArtifactGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// integArtifactSetup creates:
-//
-//	main repo  — initial commit with code.txt + tracker.txt
-//	run worktree — branched from main; agent commits code.txt change
-//	main advance  — main gains a new commit that adds artifact.bin
-//	               (simulating a file at the same path the integration test
-//	               binary might leave untracked in the worktree)
-//
-// Returns the run-worktree path. The main repo is reachable from it via git
-// and no caller needs it directly.
 func integArtifactSetup(t *testing.T) (wtPath string) {
 	t.Helper()
 
@@ -67,25 +30,19 @@ func integArtifactSetup(t *testing.T) (wtPath string) {
 	integArtifactGit(t, mainRepo, "config", "user.email", "t@t.com")
 	integArtifactGit(t, mainRepo, "config", "user.name", "t")
 
-	// Initial commit: code.txt + tracker.txt (two tracked files to make the
-	// rebase have real content to replay).
 	writeFile(t, filepath.Join(mainRepo, "code.txt"), "initial code\n")
 	writeFile(t, filepath.Join(mainRepo, "tracker.txt"), "tracker v1\n")
 	integArtifactGit(t, mainRepo, "add", "-A")
 	integArtifactGit(t, mainRepo, "commit", "-m", "init")
 	baseSHA := integArtifactGit(t, mainRepo, "rev-parse", "HEAD")
 
-	// Run worktree branched from the base commit.
 	wtPath = filepath.Join(t.TempDir(), "wt")
 	integArtifactGit(t, mainRepo, "worktree", "add", "-b", "runbranch", wtPath, baseSHA)
 
-	// Agent commit on the run branch (code-only, clean).
 	writeFile(t, filepath.Join(wtPath, "code.txt"), "initial code\nagent fix\n")
 	integArtifactGit(t, wtPath, "add", "code.txt")
 	integArtifactGit(t, wtPath, "commit", "-m", "agent: fix code.txt")
 
-	// Advance main: add artifact.bin — a file whose name collides with the
-	// integration-test artifact we will leave untracked in the run worktree.
 	writeFile(t, filepath.Join(mainRepo, "artifact.bin"), "binary content\n")
 	integArtifactGit(t, mainRepo, "add", "artifact.bin")
 	integArtifactGit(t, mainRepo, "commit", "-m", "main: add artifact.bin")
@@ -103,19 +60,13 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 
 	wtPath := integArtifactSetup(t)
 
-	// Simulate an integration-test artifact: leave artifact.bin untracked in
-	// the run worktree. This is the file that main's latest commit also adds,
-	// so rebase would overwrite it and git aborts.
 	writeFile(t, filepath.Join(wtPath, "artifact.bin"), "stale integration artifact\n")
 
-	// Sanity: the worktree has an untracked artifact.bin.
 	status := integArtifactGit(t, wtPath, "status", "--porcelain")
 	if !strings.Contains(status, "artifact.bin") {
 		t.Fatalf("precondition: expected untracked artifact.bin; got status:\n%s", status)
 	}
 
-	// Without the fix, `git rebase main` would fail because artifact.bin is
-	// untracked and would be overwritten by the main-branch commit that adds it.
 	rebaseBefore := exec.CommandContext(t.Context(), "git", "rebase", "main")
 	rebaseBefore.Dir = wtPath
 	if out, err := rebaseBefore.CombinedOutput(); err == nil {
@@ -123,12 +74,6 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 	} else if !strings.Contains(string(out), "artifact.bin") {
 		t.Fatalf("precondition: expected rebase failure to mention artifact.bin; got:\n%s", out)
 	}
-	// Defensively abort in case the worktree was left mid-rebase. In this
-	// scenario git refuses to START the rebase (untracked artifact.bin would be
-	// overwritten), so there is normally nothing to abort and git exits 128 with
-	// "no rebase in progress" — expected, not a failure. Any OTHER abort failure
-	// means the worktree really is stuck mid-rebase and the assertions below
-	// would be measuring that instead of the fix.
 	abortCmd := exec.CommandContext(t.Context(), "git", "rebase", "--abort")
 	abortCmd.Dir = wtPath
 	if out, abortErr := abortCmd.CombinedOutput(); abortErr != nil &&
@@ -136,20 +81,16 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 		t.Errorf("git rebase --abort: %v\n%s", abortErr, out)
 	}
 
-	// Apply the fix.
 	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
 
-	// After clean, artifact.bin must be gone from the worktree.
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.bin")); err == nil {
 		t.Fatal("cleanUntrackedFiles should have removed artifact.bin; it still exists")
 	}
 
-	// The worktree must now be clean (no untracked non-gitignored files).
 	if status := integArtifactGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after cleanUntrackedFiles: expected clean worktree; got:\n%s", status)
 	}
 
-	// And the rebase must now succeed.
 	rebaseCmd := exec.CommandContext(t.Context(), "git", "rebase", "main")
 	rebaseCmd.Dir = wtPath
 	if out, err := rebaseCmd.CombinedOutput(); err != nil {
@@ -165,7 +106,6 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 
 	wtPath := integArtifactSetup(t)
 
-	// Worktree has a committed agent change but no untracked files.
 	beforeStatus := integArtifactGit(t, wtPath, "status", "--porcelain")
 	if beforeStatus != "" {
 		t.Fatalf("precondition: expected clean worktree; got:\n%s", beforeStatus)
@@ -179,7 +119,6 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 			beforeStatus, afterStatus)
 	}
 
-	// Committed work must be intact.
 	content, err := os.ReadFile(filepath.Join(wtPath, "code.txt"))
 	if err != nil {
 		t.Fatalf("ReadFile code.txt: %v", err)
@@ -198,23 +137,19 @@ func TestCleanUntrackedFiles_PreservesGitignored(t *testing.T) {
 
 	wtPath := integArtifactSetup(t)
 
-	// Write a .gitignore that ignores keeper.test.
 	writeFile(t, filepath.Join(wtPath, ".gitignore"), "keeper.test\n")
 	integArtifactGit(t, wtPath, "add", ".gitignore")
 	integArtifactGit(t, wtPath, "commit", "-m", "add .gitignore")
 
-	// Leave a gitignored file keeper.test and a non-gitignored artifact.txt.
 	writeFile(t, filepath.Join(wtPath, "keeper.test"), "test binary\n")
 	writeFile(t, filepath.Join(wtPath, "artifact.txt"), "integration artifact\n")
 
 	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
 
-	// Non-gitignored artifact.txt must be removed.
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.txt")); err == nil {
 		t.Error("cleanUntrackedFiles should have removed non-gitignored artifact.txt; it still exists")
 	}
 
-	// Gitignored keeper.test must remain (git clean -fd honours .gitignore).
 	if _, err := os.Stat(filepath.Join(wtPath, "keeper.test")); err != nil {
 		t.Error("cleanUntrackedFiles must NOT remove gitignored keeper.test; it was deleted")
 	}

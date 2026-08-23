@@ -7,12 +7,7 @@ import (
 	"io"
 )
 
-// defaultBufferSize is the Twin scanner's default buffer capacity. It is 1 MB,
-// not the stdlib bufio.Scanner 64 KB default, so an oversized corpus line does
-// not truncate the replay invisibly (RS-010).
 const defaultBufferSize = 1 << 20 // 1 MB
-
-// ─── Fault injection ─────────────────────────────────────────────────────────
 
 // FaultMode selects the fault-injection behaviour of the Twin. The modes are
 // stated in vertical-neutral terms (RS-012); no transport vocabulary leaks into
@@ -48,8 +43,6 @@ type FaultConfig struct {
 	EventN int
 }
 
-// ─── ReplayCodec ─────────────────────────────────────────────────────────────
-
 // ReplayCodec is everything a vertical supplies to replay its corpus. It fuses
 // the vertical's decode, error-policy, filter, and map steps into DecodeLine
 // and supplies the two synthetic-event constructors the fault injector needs.
@@ -73,8 +66,6 @@ type ReplayCodec[E any] interface {
 	// its restart_failed-class terminal event here.
 	DisconnectEvent() E
 }
-
-// ─── Twin ────────────────────────────────────────────────────────────────────
 
 // Twin is the generic replay engine. It presents a captured corpus (an
 // io.Reader of append-only NDJSON) as an EventSource[E], applying the
@@ -149,26 +140,18 @@ func (t *Twin[E]) replay(ctx context.Context, ch chan<- E) {
 	}
 }
 
-// deliverLine decodes and delivers one non-empty corpus line, applying the
-// configured fault at the target event index. stop reports that the replay
-// must end (fatal decode error, a stream-ending fault, or ctx cancellation
-// observed by a send).
 func (t *Twin[E]) deliverLine(ctx context.Context, send func(E) bool, line []byte, evIdx *int) (stop bool) {
 	ev, emit, err := t.codec.DecodeLine(line)
 	if err != nil {
-		// Fatal transport failure: emit the transport-error terminal event
-		// and close the stream.
 		send(t.codec.ErrorEvent(err.Error()))
 		return true
 	}
 	if !emit {
-		// Skip: not reactor-relevant.
 		return false
 	}
 
 	*evIdx++
 
-	// Apply the fault when we reach the configured event index.
 	if t.fault.Mode != FaultNone && *evIdx == t.fault.EventN {
 		stop, handled := t.applyFault(ctx, send, ev)
 		if stop {
@@ -177,21 +160,14 @@ func (t *Twin[E]) deliverLine(ctx context.Context, send func(E) bool, line []byt
 		if handled {
 			return false
 		}
-		// FaultNone (unreachable — guarded above): fall through to normal
-		// delivery.
 	}
 
 	return !send(ev)
 }
 
-// applyFault applies the configured fault at the target event. stop means the
-// replay must end immediately (the stream is closed by the caller); handled
-// means the fault fully delivered the event(s) and the normal delivery must be
-// skipped. Both false ⇒ fall through to normal delivery (FaultNone only).
 func (t *Twin[E]) applyFault(ctx context.Context, send func(E) bool, ev E) (stop, handled bool) {
 	switch t.fault.Mode {
 	case FaultDropAfter:
-		// Deliver this event, then the connection-lost event, then stop.
 		if !send(ev) {
 			return true, false
 		}
@@ -199,17 +175,14 @@ func (t *Twin[E]) applyFault(ctx context.Context, send func(E) bool, ev E) (stop
 		return true, false
 
 	case FaultStall:
-		// Block before this event until ctx cancellation.
 		<-ctx.Done()
 		return true, false
 
 	case FaultTruncate:
-		// Replace this event with the transport-error event.
 		send(t.codec.ErrorEvent("substrate: truncated frame"))
 		return true, false
 
 	case FaultDup:
-		// Deliver the same event value twice.
 		if !send(ev) {
 			return true, false
 		}
@@ -219,8 +192,6 @@ func (t *Twin[E]) applyFault(ctx context.Context, send func(E) bool, ev E) (stop
 		return false, true
 
 	case FaultNone:
-		// Unreachable (guarded at the call site); fall through to normal
-		// delivery.
 	}
 	return false, false
 }

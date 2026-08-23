@@ -1,22 +1,5 @@
 package digest
 
-// blocks_all_clear_bt3_test.go — BT3 integration tests for the deterministic
-// digest projector's flywheel behaviour.
-//
-// These exercise the REAL projector (digest.Build) end-to-end against on-disk
-// surfaces written by the REAL trip emitter (sentinel.EmitTrip) and a fake br,
-// rather than stubbing the projector. They cover two of the three BT3 scenarios:
-//
-//   - blocks-all-clear (§2.1, §3.5): a PENDING sentinel-class decision makes the
-//     projector surface a non-empty PendingDecisions, so the captain CANNOT
-//     all-clear; resolving it (ClearTrip) restores the all-clear.
-//
-//   - undeployed-tail (§5.2, §5.3): a Phase-2 class with a closed bead makes the
-//     digest actionable (HasUndeployedTail=true) EVEN WHEN `br ready` is empty —
-//     the flywheel does not stall on an empty ready-beads list.
-//
-// Bead: hk-vdk4 (flywheel-BT3). Epic: hk-0oca (codename:flywheel).
-
 import (
 	"context"
 	"os"
@@ -27,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// digestIsAllClear reports whether the projector would let the captain return
-// "nothing to do". Per flywheel-motion.md §2.1/§3.5 the all-clear is structurally
-// blocked while ANY decision_required exception is pending — i.e. the all-clear
-// holds iff PendingDecisions is empty.
 func digestIsAllClear(d *DigestJSON) bool {
 	return len(d.PendingDecisions) == 0
 }
@@ -48,7 +27,6 @@ func TestBT3_BlocksAllClear_PendingSentinelDecision(t *testing.T) {
 	dir := makeMinimalProject(t)
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	// Pre-condition: with no pending decision the projector all-clears.
 	base, err := Build(context.Background(), BuildInput{
 		ProjectDir: dir,
 		Limits:     DefaultLimits(),
@@ -62,9 +40,6 @@ func TestBT3_BlocksAllClear_PendingSentinelDecision(t *testing.T) {
 			len(base.PendingDecisions))
 	}
 
-	// The sentinel trips: emit ONE real decision_required exception. This writes
-	// the durable ack-state file AND the EV-044 event — the exact machinery the
-	// projector reads. No projector stubbing.
 	ackToken, err := sentinel.EmitTrip(context.Background(), sentinel.TripInput{
 		ProjectDir:   dir,
 		ReadyBeadIDs: []string{"hk-bt3a"},
@@ -74,8 +49,6 @@ func TestBT3_BlocksAllClear_PendingSentinelDecision(t *testing.T) {
 		t.Fatalf("EmitTrip: tok=%q err=%v", ackToken, err)
 	}
 
-	// With the pending sentinel exception, the REAL projector must surface it and
-	// the all-clear must be BLOCKED.
 	blocked, err := Build(context.Background(), BuildInput{
 		ProjectDir: dir,
 		Limits:     DefaultLimits(),
@@ -89,8 +62,6 @@ func TestBT3_BlocksAllClear_PendingSentinelDecision(t *testing.T) {
 			"got %d pending decisions", len(blocked.PendingDecisions))
 	}
 
-	// The surfaced exception must be the sentinel one, carrying its ack_token so
-	// the captain has a concrete handle (it cannot be silently dropped).
 	var found bool
 	for _, pd := range blocked.PendingDecisions {
 		if pd.AckToken == ackToken {
@@ -106,8 +77,6 @@ func TestBT3_BlocksAllClear_PendingSentinelDecision(t *testing.T) {
 			ackToken, blocked.PendingDecisions)
 	}
 
-	// Resolving via real movement (ClearTrip) must restore the all-clear — the
-	// block is held by the PENDING status, not permanently.
 	if err := sentinel.ClearTrip(context.Background(), dir, ackToken, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("ClearTrip: %v", err)
 	}
@@ -140,7 +109,6 @@ func TestBT3_UndeployedTail_ActionableWhenReadyEmpty(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 
-	// Configure a Phase-2 class (done_definition != "merged").
 	cfgPath := filepath.Join(dir, ".harmonik", "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`
 sentinel:
@@ -150,8 +118,6 @@ sentinel:
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	// Fake br: `ready` (the default branch) returns {"issues":[]} (EMPTY ready
-	// list); `list --status closed --json` returns one bead with the Phase-2 label.
 	fakeBr := makeFakeBr(t, dir,
 		`{"issues":[{"id":"hk-bt3tail","title":"deploy thing","labels":["deploy-class"]}]}`)
 
@@ -165,19 +131,15 @@ sentinel:
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Precondition the scenario depends on: br ready is genuinely empty.
 	if len(d.ReadyBeads) != 0 {
 		t.Fatalf("scenario requires an empty ready list; got %d ready beads: %+v",
 			len(d.ReadyBeads), d.ReadyBeads)
 	}
 
-	// The actionable signal: the undeployed tail.
 	if !d.HasUndeployedTail {
 		t.Errorf("HasUndeployedTail must be true (Phase-2 closed bead) even with empty ready list; got false")
 	}
 
-	// Control: with NO Phase-2 class configured, the same empty-ready project is
-	// NOT actionable via the tail — proving the tail (not br) drives the signal.
 	dirNoPhase2 := makeMinimalProject(t)
 	fakeBrNoMatch := makeFakeBr(t, dirNoPhase2, `{"issues":[]}`)
 	d2, err := Build(context.Background(), BuildInput{

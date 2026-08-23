@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// startQueue spins up a Queue with a background-cancellable owner goroutine and
-// registers cleanup.
 func startQueue(t *testing.T) *Queue {
 	t.Helper()
 	q := New(nil)
@@ -31,7 +29,6 @@ func TestSubmitAfterQueueStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	q.Start(ctx)
 	cancel()
-	// Wait for the owner to observe cancellation and close done.
 	<-q.done
 
 	var ran atomic.Bool
@@ -83,7 +80,6 @@ func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 
 	const n = 200
 
-	// Gate: occupy the executor so all real submissions accumulate as pending.
 	gateReleased := make(chan struct{})
 	gateBusy := make(chan struct{})
 	go func() {
@@ -125,8 +121,6 @@ func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 	}
 	close(start)
 
-	// Wait (condition-driven, not tuned) until every racing submission has
-	// completed intake, then snapshot the intake order the seq numbers fixed.
 	var intakeOrder []string
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -169,7 +163,6 @@ func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 func TestCtxCancelBeforeExecution(t *testing.T) {
 	q := startQueue(t)
 
-	// Gate the executor so the target submission cannot start.
 	gateReleased := make(chan struct{})
 	gateBusy := make(chan struct{})
 	go func() {
@@ -240,7 +233,6 @@ func TestOnceStartedRunsToCompletion(t *testing.T) {
 	started := make(chan struct{})
 	err := q.Submit(ctx, "long", func(context.Context) error {
 		close(started)
-		// Simulate work; cancel the parent mid-flight.
 		cancel()
 		time.Sleep(5 * time.Millisecond)
 		return nil
@@ -255,17 +247,6 @@ func TestOnceStartedRunsToCompletion(t *testing.T) {
 	}
 }
 
-// --- RSM-INV-005 inventory-test harness scaffolding (RSM-014) ---------------
-//
-// recordingRunner is a fake command runner the daemon-side prepare/commit
-// closures inject in place of the real git/exec runner. It records every
-// command label and the phase ("inside"/"outside" the exclusion domain) so the
-// mechanical DoD check (merge-queue-design §5) can assert that no build-class
-// command executes between Submit-entry and Submit-exit, and that the commit
-// phase's command inventory matches the enumerated allowlist. The daemon-side
-// wiring lands with M3-4; this scaffolding fixes the harness shape so RT2 can
-// stand up the invariant test against internal/mergeq alone.
-
 type recordedCmd struct {
 	phase string // "inside" (within a Submit critical) or "outside"
 	label string // command label, e.g. "git rebase", "git push"
@@ -277,7 +258,6 @@ type recordingRunner struct {
 	commands []recordedCmd
 }
 
-// run records a command under the current phase.
 func (r *recordingRunner) run(label string) {
 	phase := "outside"
 	if r.inside.Load() {
@@ -288,7 +268,6 @@ func (r *recordingRunner) run(label string) {
 	r.mu.Unlock()
 }
 
-// insideLabels returns the labels recorded while inside the exclusion domain.
 func (r *recordingRunner) insideLabels() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -301,8 +280,6 @@ func (r *recordingRunner) insideLabels() []string {
 	return out
 }
 
-// buildClassCommands are the commands that MUST NOT run inside the exclusion
-// domain (merge-queue-design §5) — the critical-section-creep change detector.
 var buildClassCommands = map[string]bool{
 	"go build":   true,
 	"go vet":     true,
@@ -311,9 +288,6 @@ var buildClassCommands = map[string]bool{
 	"git rebase": true,
 }
 
-// commitAllowlist is the exact command inventory the commit phase may run
-// (merge-queue-design §5). The inventory test asserts equality once the daemon
-// wiring lands; the harness pins the allowlist here.
 var commitAllowlist = []string{
 	"git rev-parse",
 	"git merge-base",
@@ -336,13 +310,11 @@ func TestInventoryHarness_NoBuildClassInsideDomain(t *testing.T) {
 	q := startQueue(t)
 	rr := &recordingRunner{}
 
-	// prepare phase — OUTSIDE the domain: build-class work is expected here.
 	rr.run("git rebase")
 	rr.run("go build")
 	rr.run("go vet")
 	rr.run("gofumpt")
 
-	// commit phase — INSIDE the domain via Submit.
 	err := q.Submit(context.Background(), "commit-merge", func(context.Context) error {
 		rr.inside.Store(true)
 		defer rr.inside.Store(false)

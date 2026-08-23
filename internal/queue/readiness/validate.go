@@ -1,23 +1,5 @@
 package readiness
 
-// validate.go — the readiness validator. Pure, total, and unable to reach the
-// fleet.
-//
-// [Validate] takes plain values and returns a record. It has no port parameter,
-// no context, and no filesystem handle.
-//
-// Say what that buys, exactly. A signature constrains what a CALLER can hand
-// in, not what the body can reach: a package-level port variable would bypass
-// it, and depguard allows $gostd here, which includes os/exec. So the true
-// statement is narrower than "it cannot call the fleet" — no caller can hand
-// this function the fleet, and what stops it reaching the fleet on its own is
-// this file's import set (encoding/json, fmt, io, time) and nothing else.
-// TestValidateTakesNothingItCouldCallTheFleetWith is the ratchet on the first
-// half.
-//
-// Spec ref: specs/beads-integration.md §4.5b BI-013e; specs/operator-nfr.md
-// ON-032a. Task: T9 of the queue-dogfood-readiness work.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -77,12 +59,6 @@ type RunPlan struct {
 	ItemCount   int `json:"item_count"`
 }
 
-// isLocal reports whether the plan runs entirely on this machine.
-//
-// A named remote worker is the obvious case. The Pi harness is the other one:
-// it reaches a remote endpoint by construction, which is why it is refused
-// above. Both must be here or this file would carry two definitions of "local"
-// and the posture check would read the weaker one.
 func (p RunPlan) isLocal() bool {
 	return p.RemoteWorker == "" && p.Harness != "pi"
 }
@@ -184,9 +160,6 @@ type Validation struct {
 // validatedAt is passed in for the same reason the capture time is: a validator
 // that read the clock could not be replayed.
 func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, validatedAt time.Time) Validation {
-	// Empty and not nil: this list is written to validation.json, and a reader
-	// running `jq '.rejections | length'` over a null gets an error instead of
-	// the zero it expects.
 	rejections := []Rejection{}
 
 	if plan.Harness == "pi" {
@@ -209,10 +182,7 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 	}
 	switch plan.QueueKind {
 	case QueueKindStream:
-		// The one shape pass one runs.
 	case "":
-		// An unset field is not a wave queue, and reporting it as one would send
-		// the reader looking for a wave nobody configured.
 		rejections = append(rejections, Rejection{
 			Reason: RejectQueueKindUnset,
 			Detail: "plan does not say what kind of queue this is; pass one is a stream queue",
@@ -230,9 +200,6 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 		})
 	}
 
-	// An unstated number is a refusal and a stated one is recorded, whatever it
-	// is. That is the whole of what survives the withdrawn one-item rule: the
-	// evidence must SAY how many items ran at once, and a zero says nothing.
 	if plan.Concurrency < 1 {
 		rejections = append(rejections, Rejection{
 			Reason: RejectConcurrencyUnset,
@@ -253,9 +220,6 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 		})
 	}
 
-	// The snapshot already recorded the posture the selected items were judged
-	// against. A plan that disagrees with it means one of the two is stale, and
-	// guessing which would be worse than refusing.
 	posture := snap.Posture
 	if plan.Concurrency != posture.Concurrency ||
 		plan.ItemCount != posture.ItemCount ||
@@ -284,15 +248,9 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 	}
 }
 
-// checkHost judges the machine. A gate result from a loaded box is not
-// evidence, green or red, which is why load is a refusal and not a warning.
 func checkHost(host HostFacts, limits HostLimits) []Rejection {
 	var rejections []Rejection
 
-	// A zero-value HostLimits disables every check below: a zero load ceiling is
-	// cleared by a zero load, a zero disk floor is cleared by an empty disk, and
-	// a zero daemon ceiling is cleared by no daemon. That fails OPEN, which is
-	// the one direction a gate must never fail, so an unset bar is a refusal.
 	if limits.MaxLoadPerCPU <= 0 || limits.MinFreeDiskGB <= 0 || limits.MaxDaemons <= 0 {
 		rejections = append(rejections, Rejection{
 			Reason: RejectNoHostLimits,
@@ -301,10 +259,6 @@ func checkHost(host HostFacts, limits HostLimits) []Rejection {
 		})
 	}
 
-	// A zero CPU count means nobody measured it. Treating that as "any load is
-	// fine" would silently disable the check that exists because this machine
-	// saturates. The disk and daemon checks do not depend on it, so they still
-	// run — a record that stopped here would understate the problem.
 	if host.CPUCount <= 0 {
 		rejections = append(rejections, Rejection{
 			Reason: RejectHostLoad,
@@ -347,12 +301,6 @@ func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("readiness: decode snapshot: %w", err)
 	}
 
-	// Refuse, do not repair. newSnapshot re-stamps the schema version and the
-	// observational note from constants, which is right when CONSTRUCTING a
-	// record and wrong when reading one back: it would silently downgrade a
-	// record written by a later version, and silently correct a doctored note.
-	// This file is evidence an assessor reads. A validator that quietly rewrites
-	// the thing it is validating is worse than one that refuses.
 	if decoded.SchemaVersion <= 0 {
 		return Snapshot{}, fmt.Errorf("%w: file states schema version %d", ErrSnapshotSchemaUnreadable, decoded.SchemaVersion)
 	}
@@ -360,9 +308,6 @@ func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("%w: file states schema version %d, this build reads %d",
 			ErrSnapshotSchemaUnreadable, decoded.SchemaVersion, SchemaVersion)
 	}
-	// A version-1 file carries `selection` and no `selected`, so it decodes into
-	// a record with no selected item at all. Naming the version in the refusal is
-	// what stops the next reader chasing a missing field that was never there.
 	if decoded.SchemaVersion < SchemaVersion {
 		return Snapshot{}, fmt.Errorf("%w: file states schema version %d, this build reads %d; "+
 			"version %d named one selected item in a `selection` field and version %d names several in `selected`",

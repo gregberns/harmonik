@@ -1,29 +1,5 @@
 package main
 
-// asset_reconcile.go — the per-project LOCK file (.harmonik/assets.lock) plus the
-// PURE 3-way reconcile PLANNER that drives `harmonik sync-assets` (and the empty-
-// project case used by `init`).
-//
-// This is the CORE logic of the asset-sync update path
-// (plans/2026-06-20-doc-instruction-audit/10-asset-sync.md §"The 3-way reconcile").
-// It builds on the manifest + class model in asset_manifest.go (hk-532v): it
-// reuses AssetClass / FileEntry / Manifest and produces a typed PLAN. It does NOT
-// perform any file writes, region-merges, or scaffold-once mechanics — that is the
-// executor's job (hk-i7i3) — nor the command / supervisor wiring (hk-yqx9).
-//
-// Three inputs, one comparison per path:
-//
-//	embed_sha = Manifest[path].Sha256        # what the binary ships now
-//	lock_sha  = Lock.Files[path].Sha256      # what we last installed
-//	disk_sha  = diskHashes[path]             # what's there now ("" = absent)
-//
-// Reconcile returns one ReconcileItem per path it considered (union of manifest
-// paths and disk paths), each carrying the file's AssetClass so the executor can
-// apply the class policy (Managed=overwrite/.harmonik-new, ManagedRegion=region-
-// merge, ContentOwned=create-or-header-only, Scaffold=create-once).
-//
-// Bead ref: hk-gh1m (assets.lock + 3-way reconcile engine).
-
 import (
 	"encoding/json"
 	"fmt"
@@ -39,7 +15,6 @@ import (
 // older on-disk locks. Starts at 1.
 const LockFormatVersion = 1
 
-// lockRelPath is the project-relative location of the lock file.
 const lockRelPath = ".harmonik/assets.lock"
 
 // LockEntry records, for one asset path, the sha256 (hex) that was installed at
@@ -73,8 +48,6 @@ func LockFromManifest(m Manifest) Lock {
 	return l
 }
 
-// lockJSON is the on-disk wire shape: a sorted slice (not a map) so the JSON is
-// byte-deterministic regardless of Go's map-iteration order.
 type lockJSON struct {
 	FormatVersion int         `json:"format_version"`
 	Files         []LockEntry `json:"files"`
@@ -95,12 +68,10 @@ func WriteLock(dir string, l Lock) error {
 		Files:         make([]LockEntry, 0, len(paths)),
 	}
 	if out.FormatVersion == 0 {
-		// Never write a 0/unknown version to disk; stamp current.
 		out.FormatVersion = LockFormatVersion
 	}
 	for _, p := range paths {
 		e := l.Files[p]
-		// Keep the entry's Path in lockstep with the key.
 		e.Path = p
 		out.Files = append(out.Files, e)
 	}
@@ -217,14 +188,11 @@ type ReconcileItem struct {
 //
 // Output is sorted by path for deterministic plans.
 func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileItem {
-	// Index embed entries by path.
 	embed := make(map[string]FileEntry, len(m.Files))
 	for _, f := range m.Files {
 		embed[f.Path] = f
 	}
 
-	// Collect the union of all paths we must consider: every embed path plus
-	// every disk path (the latter surfaces project-authored Leave items).
 	considered := make(map[string]struct{}, len(embed)+len(diskHashes))
 	for p := range embed {
 		considered[p] = struct{}{}
@@ -254,13 +222,11 @@ func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileI
 
 		switch {
 		case !inEmbed:
-			// On disk (or lock) but not shipped by the binary → project-authored.
 			item.Class = Classify(p)
 			item.Action = ActionLeave
 			item.Reason = "path not in embed manifest; project-authored, left untouched"
 
 		case !inLock:
-			// New asset: shipped but never installed here.
 			item.Class = ef.Class
 			switch diskSha {
 			case "":
@@ -275,11 +241,9 @@ func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileI
 			}
 
 		default:
-			// In both embed and lock: the canonical 3-way matrix.
 			item.Class = ef.Class
 			switch {
 			case ef.Sha256 == le.Sha256:
-				// Embed already matches the lock: file is current.
 				if diskSha == "" {
 					item.Action = ActionCreate
 					item.Reason = "embed==lock but disk missing; restore current file"
@@ -288,19 +252,15 @@ func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileI
 					item.Reason = "embed==lock; already current"
 				}
 			case diskSha == ef.Sha256:
-				// Embed advanced but disk already equals the new embed: lock stale.
 				item.Action = ActionSkip
 				item.Reason = "disk already matches embed; skip (lock should be re-stamped)"
 			case diskSha == le.Sha256:
-				// Disk still at the locked version: no local edits → safe update.
 				item.Action = ActionFastForward
 				item.Reason = "embed!=lock and disk==lock; no local edits, safe to update"
 			case diskSha == "":
-				// File deleted locally: nothing to merge, write fresh embed.
 				item.Action = ActionCreate
 				item.Reason = "embed!=lock and disk missing; create from embed"
 			default:
-				// Disk diverged from both lock and embed: local edits to a managed file.
 				item.Action = ActionConflict
 				item.Reason = "embed!=lock and disk differs from both; project edited a managed file"
 			}

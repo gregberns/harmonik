@@ -9,10 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ---------------------------------------------------------------------------
-// QueueValidationReason enum (specs/queue-model.md §6.10 QM-029)
-// ---------------------------------------------------------------------------
-
 // QueueValidationReason is the set of typed failure reasons returned by
 // Validate. The string values are wire-level constants per QM-029; additions
 // require a spec amendment and a QM-029b error-code allocation.
@@ -73,10 +69,6 @@ const (
 	ReasonQueueNameInvalid QueueValidationReason = "queue_name_invalid"
 )
 
-// ---------------------------------------------------------------------------
-// ValidationError (typed error shape)
-// ---------------------------------------------------------------------------
-
 // ValidationError is a single typed validation failure from the pipeline
 // (specs/queue-model.md §6). The Reason field drives the JSON-RPC error code
 // per QM-029b; Detail carries rule-specific fields for the caller.
@@ -100,10 +92,6 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("queue validation failed: %s (%v)", e.Reason, e.Detail)
 }
 
-// ---------------------------------------------------------------------------
-// LedgerDepPair records a single QM-025 informational notice
-// ---------------------------------------------------------------------------
-
 // LedgerDepPair is one parallelism-narrowed notice: bead BeadID is blocked on
 // BlockerBeadID within the same group per QM-025. These are collected and
 // returned alongside a nil error when validation passes.
@@ -112,10 +100,6 @@ type LedgerDepPair struct {
 	BlockerBeadID core.BeadID
 	GroupIndex    int
 }
-
-// ---------------------------------------------------------------------------
-// BeadLedger interface — minimal seam for QM-020, QM-021, QM-022, QM-025
-// ---------------------------------------------------------------------------
 
 // BeadStatus is the ledger-reported lifecycle state of a bead.
 // Only the values "open", "in_progress", and "not_found" are consumed by the
@@ -153,10 +137,6 @@ type BeadLedger interface {
 	BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error)
 }
 
-// ---------------------------------------------------------------------------
-// HandlerPauseChecker — minimal seam for QM-052a handler-pause validation
-// ---------------------------------------------------------------------------
-
 // HandlerPauseChecker is the minimal seam between the validation pipeline and
 // the daemon's handler-pause controller (specs/handler-pause.md §7).
 //
@@ -177,20 +157,8 @@ type HandlerPauseChecker interface {
 	IsHandlerPaused(ctx context.Context, agentType core.AgentType) (bool, error)
 }
 
-// ---------------------------------------------------------------------------
-// ValidationRequest — input shape for Validate
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Queue-naming rule constants (QM-002/2.1, hk-tigaf.2)
-// ---------------------------------------------------------------------------
-
-// maxQueueNameLen is the maximum allowed byte length for a queue name per the
-// QM-002/2.1 naming rule. Charset is [a-z0-9-]; min length is 1.
 const maxQueueNameLen = 64
 
-// queueNameRE is the compiled pattern for the queue-naming rule charset.
-// Matches one or more lowercase ASCII letters, digits, or hyphens.
 var queueNameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // NormaliseQueueName returns name if non-empty, else QueueNameMain ("main").
@@ -274,11 +242,6 @@ type ValidationRequest struct {
 	PauseChecker HandlerPauseChecker
 }
 
-// ---------------------------------------------------------------------------
-// Validate — 9-rule pipeline (QM-029a order + QM-052a)
-// ---------------------------------------------------------------------------
-
-// maxQueueJSON is the persisted-size limit per QM-026 / QM-004: 1 MiB.
 const maxQueueJSON = 1048576
 
 // Validate runs the validation rules in QM-029a order against req. It
@@ -296,12 +259,6 @@ const maxQueueJSON = 1048576
 // Spec ref: queue-model.md §6 QM-020..QM-027, QM-029, QM-029a;
 // specs/handler-pause.md §6 HP-025 (QM-052a).
 func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]ValidationError, []LedgerDepPair, error) {
-	// --- QM-002/2.1 queue-naming rule (submit-only, pre-QM-027) -------------
-	// Validate the queue name before the single-active-per-name guard so that
-	// callers get a typed name-invalid error rather than a misleading
-	// queue_already_active for a bogus name. Append requests carry no name.
-	// When QueueName is empty the caller did not specify a name; the implicit
-	// default "main" is always valid — skip the check for backward compat.
 	if !req.IsAppend && req.QueueName != "" {
 		if ok, detail := ValidateQueueName(req.QueueName); !ok {
 			return []ValidationError{
@@ -316,21 +273,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-027: single active queue PER NAME (submit-only) ------------------
-	// ActiveQueue is the queue already stored under req.QueueName. The guard
-	// is now per-name: a submit that targets a name with an existing
-	// non-completed queue is rejected; other names are unaffected.
-	//
-	// A queue parked at paused-by-failure (§8.3 QM-052) is NOT advancing and
-	// holds no in-flight work — the §A.3 recovery story for a failed queue is to
-	// resubmit to the same name after addressing the failed beads. Treat it like
-	// a completed queue for this guard so a stuck failure-pause does not wedge
-	// the name (hk-fkpb7); the fresh submit overwrites it with a new queue_id.
-	// paused-by-drain still blocks resubmit: it is a transient operator hold with
-	// its own active↔drain resume path, not a terminal failure to recover from.
-	// A zero-value/empty status ("") means the file is a corrupt stub left by a
-	// half-completed prior session — treat it as recoverable so submit can
-	// overwrite it (hk-9ztth).
 	if !req.IsAppend {
 		if req.ActiveQueue != nil &&
 			req.ActiveQueue.Status != QueueStatusCompleted &&
@@ -348,7 +290,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-024: append target validity (append-only) -----------------------
 	if req.IsAppend {
 		if req.ActiveQueue == nil {
 			return []ValidationError{
@@ -362,7 +303,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 				},
 			}, nil, nil
 		}
-		// Check queue advancing status first.
 		if req.ActiveQueue.Status == QueueStatusPausedByFailure ||
 			req.ActiveQueue.Status == QueueStatusPausedByDrain {
 			return []ValidationError{
@@ -374,7 +314,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 				},
 			}, nil, nil
 		}
-		// Validate the target group.
 		idx := req.AppendGroupIndex
 		if idx < 0 || idx >= len(req.ActiveQueue.Groups) {
 			return []ValidationError{
@@ -415,9 +354,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// Collect all bead IDs across groups for existence/status/duplicate checks.
-	// For append, the groups slice contains only the appended items; for submit
-	// it contains all submitted groups.
 	var allBeadIDs []core.BeadID
 	for _, g := range req.Groups {
 		for _, item := range g.Items {
@@ -425,7 +361,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-020: bead existence ---------------------------------------------
 	for _, id := range allBeadIDs {
 		status, err := ledger.LookupStatus(ctx, id)
 		if err != nil {
@@ -443,12 +378,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-021: bead status (must be open) ---------------------------------
-	// Per QM-029a, QM-021 runs before QM-022. To preserve distinct reason codes,
-	// QM-021 rejects beads whose status is neither open nor in_progress
-	// (in_progress is reserved for QM-022's bead_already_dispatched reason).
-	// Any other non-open status (closed, blocked, deferred, draft, etc.) surfaces
-	// here as bead_not_open.
 	for _, id := range allBeadIDs {
 		status, err := ledger.LookupStatus(ctx, id)
 		if err != nil {
@@ -467,10 +396,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-022: no double dispatch (must not be in_progress) ---------------
-	// QM-022 fires after QM-021; at this point every bead is either open or
-	// in_progress. Reject in_progress beads with the distinct bead_already_dispatched
-	// reason per QM-022.
 	for _, id := range allBeadIDs {
 		status, err := ledger.LookupStatus(ctx, id)
 		if err != nil {
@@ -488,25 +413,9 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- EM-065: cross-queue / cross-group double-queue guard ----------------
-	// Extends QM-022 (Beads-ledger in_progress check) to the pre-claim window:
-	// a bead that is non-terminally present in any active queue slot is already
-	// "claimed by the queue" even before the Beads atomic claim fires. Accepting
-	// it again would cause duplicate runs.
-	//
-	// Two sub-cases:
-	//   (a) Cross-group (append only): a bead in a group OTHER than the append
-	//       target is non-terminal. QM-023 already guards the target group.
-	//   (b) Cross-queue (submit and append): a bead appears non-terminally in a
-	//       named queue other than the one being targeted.
-	//
-	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
 	{
 		em065Queued := make(map[core.BeadID]string)
 
-		// (a) Cross-group scan — append path only: check all groups of the active
-		// queue except the append target. The target group is already checked by
-		// QM-023; duplicating it here would be redundant.
 		if req.IsAppend && req.ActiveQueue != nil {
 			for gi, g := range req.ActiveQueue.Groups {
 				if gi == req.AppendGroupIndex {
@@ -520,8 +429,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 			}
 		}
 
-		// (b) Cross-queue scan — both submit and append: check non-terminal items
-		// in every other named queue supplied by the caller.
 		for _, oq := range req.OtherQueues {
 			if oq == nil {
 				continue
@@ -550,18 +457,7 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-052a: handler-pause check (optional seam) -----------------------
-	// When PauseChecker is wired (hk-9hwbw HandlerPauseController), reject any
-	// bead whose resolved agent_type maps to a currently-paused handler.
-	// Orthogonal to paused-by-failure: the queue status is NOT changed here.
-	// Per Appendix A.1, this is a submit-time gate — the bead never enters the
-	// queue; the caller must retry after the handler is resumed.
-	//
-	// Spec ref: specs/handler-pause.md §6 HP-025; queue-model.md §8.3a QM-052a.
 	if req.PauseChecker != nil {
-		// Walk beads in order; stop at the first paused agent_type (first-failure
-		// short-circuit per QM-029a). Collect all bead_ids for that agent_type
-		// in the detail map for operator diagnostics.
 		type pauseHit struct {
 			agentType core.AgentType
 			beadIDs   []string
@@ -578,8 +474,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 			}
 			if paused {
 				if hit == nil {
-					// First paused agent_type found; collect all beads in the submission
-					// that resolve to this same paused handler for the detail map.
 					h := &pauseHit{agentType: at}
 					for _, id2 := range allBeadIDs {
 						at2, at2Err := req.PauseChecker.ResolvedAgentType(ctx, id2)
@@ -608,16 +502,10 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-023: no duplicates (cross-group or intra-group) -----------------
-	// For submit: bead_id MUST NOT appear in more than one group AND not more
-	// than once within a group.
-	// For append: bead_id MUST NOT appear more than once in the appended set
-	// AND MUST NOT already appear as a non-terminal item in the target group.
 	seen := make(map[core.BeadID]struct{})
 	for _, g := range req.Groups {
 		intraGroupSeen := make(map[core.BeadID]struct{})
 		for _, item := range g.Items {
-			// Intra-group duplicate check.
 			if _, dup := intraGroupSeen[item.BeadID]; dup {
 				return []ValidationError{
 					{
@@ -630,8 +518,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 			}
 			intraGroupSeen[item.BeadID] = struct{}{}
 
-			// Cross-group duplicate check (submit only — for append the outer
-			// loop has a single group so this catches the intra-append case).
 			if _, dup := seen[item.BeadID]; dup {
 				return []ValidationError{
 					{
@@ -646,8 +532,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// For append: check that no submitted bead already exists as a non-terminal
-	// item in the target group.
 	if req.IsAppend && req.ActiveQueue != nil {
 		idx := req.AppendGroupIndex
 		if idx >= 0 && idx < len(req.ActiveQueue.Groups) {
@@ -673,8 +557,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}
 	}
 
-	// --- QM-026: persisted-size bound (1 MiB) --------------------------------
-	// Build the would-be Queue envelope in memory and check its marshalled size.
 	proposedQueue := buildProposedQueue(req)
 	data, err := json.Marshal(proposedQueue)
 	if err != nil {
@@ -692,9 +574,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 		}, nil, nil
 	}
 
-	// --- QM-025: parallelism-narrowed (informational, last) -----------------
-	// Collect blocks edges within each submitted group. This pass never fails
-	// validation; it returns informational LedgerDepPairs to the caller.
 	var notices []LedgerDepPair
 	for gi, g := range req.Groups {
 		groupIndex := gi
@@ -715,11 +594,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 				if !blocks {
 					continue
 				}
-				// hk-gf59k S2-F-S2-1: re-read blocker status at defer-decision time.
-				// The blocking edge may persist in the Beads dep-graph even after a is
-				// closed; deferring b against an already-closed blocker causes a
-				// false-defer that requires a re-submit to recover (stuck-defer if no
-				// re-submit follows). Only defer b when a is still open or in_progress.
 				blockerStatus, bsErr := ledger.LookupStatus(ctx, a)
 				if bsErr != nil {
 					return nil, nil, fmt.Errorf("QM-025 ledger status %q: %w", a, bsErr)
@@ -727,7 +601,6 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 				if blockerStatus != BeadStatusOpen && blockerStatus != BeadStatusInProgress {
 					continue // blocker already resolved — b does not need deferral
 				}
-				// a blocks b: b is the blocked item.
 				notices = append(notices, LedgerDepPair{
 					BeadID:        b,
 					BlockerBeadID: a,
@@ -740,16 +613,8 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 	return nil, notices, nil
 }
 
-// ---------------------------------------------------------------------------
-// buildProposedQueue — construct the would-be Queue for QM-026
-// ---------------------------------------------------------------------------
-
-// buildProposedQueue assembles the Queue envelope that would result if req
-// were accepted, for the purpose of the QM-026 size check. It does NOT
-// persist anything.
 func buildProposedQueue(req ValidationRequest) Queue {
 	if !req.IsAppend {
-		// Submit: the proposed queue is entirely from the request.
 		proposed := NewActiveQueue(Queue{
 			SchemaVersion: 1,
 			QueueID:       "00000000-0000-0000-0000-000000000000",
@@ -757,7 +622,6 @@ func buildProposedQueue(req ValidationRequest) Queue {
 		})
 		return *CloneQueue(&proposed)
 	}
-	// Append: clone the active queue and append to the target group.
 	if req.ActiveQueue == nil {
 		return Queue{}
 	}

@@ -2,51 +2,24 @@ package keeper
 
 import "time"
 
-// thresholds.go is the SINGLE source of truth for the keeper warn/act/force
-// context-band. Both WatcherConfig.applyDefaults and CyclerConfig.applyDefaults
-// reference the constants below, and every effective-threshold computation routes
-// through minAbsOrPctCeil — so the two configs can never drift out of sync, and
-// the min(abs, pctCeil*window) formula exists in exactly one place.
-//
-// Changing any value here is a deliberate band-retune: an operator decision (the
-// operator HARD-NO on widening the band stands — see codename:keeper-redesign),
-// never a side effect of a refactor. The thresholds_test.go defaults-PIN locks
-// these values. Refs: hk-bpkv, hk-lhu2, hk-odhh, hk-8hr1.
-//
-// INVARIANT: warn < act < force_act (asserted in thresholds_test.go).
-// TA1 band-retune (hk-8hr1): warn=200K / act=215K / force_act=240K — restart
-// EARLIER to cap cache-read token spend. On a 1M window the abs values win
-// (~20-24% of window); on a 200K window the pctCeil caps fire first (~70-95%).
-// The first trial uses NOTICE at 170K, WARN at 200K, and HARD at 220K.
-
 const (
-	// Pct-based fallbacks (used when CtxFile.Tokens==0 or WindowSize==0 — older
-	// Claude Code versions without absolute-token counts).
 	defaultWarnPct = 80.0
 	defaultActPct  = 90.0
 	// defaultForceActPctOffset derives ForceActPct from ActPct so a custom
 	// --act-pct never opens a dead zone above act but below force-clear (hk-6el).
 	defaultForceActPctOffset = 5.0 // ForceActPct = ActPct + this
 
-	// Absolute-token thresholds (preferred when Tokens + WindowSize are present).
-	// Checkpoint-handshake trial: the compatibility names map WARN to NOTICE and
-	// ACT to WARN until the public config migration lands.
 	defaultWarnAbsTokens = 170_000
 	defaultActAbsTokens  = 200_000
 	// defaultForceActAbsOffset derives ForceActAbsTokens from ActAbsTokens.
 	// force_act = 200K + 20K = 220K. Satisfies notice<warn<hard.
 	defaultForceActAbsOffset = 20_000 // ForceActAbsTokens = ActAbsTokens + this
 
-	// Pct-of-window caps. The effective threshold is min(abs, pctCeil*window),
-	// so the gate fires early enough on both 200k and 1M windows.
 	defaultWarnPctCeil = 0.70
 	defaultActPctCeil  = 0.85
 	// defaultForceActPctCeilOffset derives ForceActPctCeil from ActPctCeil.
 	defaultForceActPctCeilOffset = 0.10 // ForceActPctCeil = ActPctCeil + this
 
-	// defaultFallbackWindowSize is the assumed context-window size used for the
-	// pct-ceil cap when the gauge reports WindowSize==0 (e.g. [1m]-class models
-	// whose window size cannot be inferred). Set via --window-size.
 	defaultFallbackWindowSize = 200_000
 )
 
@@ -215,10 +188,6 @@ const (
 	DefaultReapDecisionsCadence = 90 * time.Second
 )
 
-// minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:
-// min(abs, int64(pctCeil*windowSize)) when windowSize>0 AND pctCeil>0, otherwise
-// abs. This is the one shared implementation of the keeper band formula; the
-// pctCeil>0 guard preserves the watcher's historical behaviour for a zero ceil.
 func minAbsOrPctCeil(abs int64, pctCeil float64, windowSize int64) int64 {
 	if windowSize > 0 && pctCeil > 0 {
 		pctBased := int64(pctCeil * float64(windowSize))

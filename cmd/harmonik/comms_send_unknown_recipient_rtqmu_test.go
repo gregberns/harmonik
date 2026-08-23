@@ -1,34 +1,5 @@
 package main
 
-// comms_send_unknown_recipient_rtqmu_test.go — a directed `comms send` to a
-// name nobody uses must not look like a delivered message.
-//
-// The reproduction was one line of output and no signal at all:
-//
-//	harmonik comms send --to nosuchlane --from alpha --no-wake --topic status "epic complete"
-//	rc=0
-//	019fef4e-9fbd-7ed0-9184-646377e53d07
-//
-// This is the channel a captain mails epics on. A directed send to a mistyped
-// crew name was a silent black hole: the captain saw success, the crew never
-// heard, and the only symptom was an epic that never completed — which reads as
-// a stalled crew, not a misaddressed message. The failure was indistinguishable
-// from the thing everybody was already hunting.
-//
-// THE SEND IS STILL ACCEPTED. comms-recv scans from the start of the event log
-// when an agent has no stored cursor, so a message sent to a crew that boots an
-// hour later is delivered in full on its first recv. Refusing an unknown name
-// would break that. The repair is to stop the send from LOOKING delivered.
-//
-// The first repair changed the stderr text and left the exit code at 0, which
-// only reached a human who was reading stderr. A script or an agent branching
-// on the exit code was still told the epic was delivered. The exit code is now
-// 1, matching `harmonik wake --agent <name>` for the same question — a name
-// that matches nothing (hk-zj9nw). Accepting the send and reporting success are
-// separate acts: the message stays durable and a later recv still gets it.
-//
-// Bead ref: hk-rtqmu, hk-zj9nw.
-
 import (
 	"encoding/json"
 	"os"
@@ -40,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 )
 
-// commsServeSendingDaemon accepts comms-send requests and answers each one with
-// a fixed event id, the way a healthy daemon does for any recipient at all.
 func commsServeSendingDaemon(t *testing.T, projectDir string) string {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
@@ -56,7 +25,6 @@ func commsServeSendingDaemon(t *testing.T, projectDir string) string {
 	return sockPath
 }
 
-// commsSendTo runs one directed send through the fake daemon.
 func commsSendTo(t *testing.T, projectDir, sockPath, to string) (stdout, stderr string, code int) {
 	t.Helper()
 	stdout, stderr = captureStd(t, func() {
@@ -68,8 +36,6 @@ func commsSendTo(t *testing.T, projectDir, sockPath, to string) (stdout, stderr 
 	return stdout, stderr, code
 }
 
-// commsSendProject builds a project holding one crew record and one agent
-// manifest folder, which are two of the three ways a name becomes legitimate.
 func commsSendProject(t *testing.T) string {
 	t.Helper()
 	dir := shortProjectDir(t)
@@ -115,8 +81,6 @@ func TestCommsSend_KnownRecipientsStaySilent(t *testing.T) {
 	dir := commsSendProject(t)
 	sock := commsServeSendingDaemon(t, dir)
 
-	// bravo: a crew registry record. captain: an agent manifest folder.
-	// operator: a person who never registers on the bus.
 	for _, to := range []string{"bravo", "captain", "operator"} {
 		t.Run(to, func(t *testing.T) {
 			_, stderr, code := commsSendTo(t, dir, sock, to)
@@ -157,7 +121,6 @@ func TestCommsSend_BroadcastNeverWarns(t *testing.T) {
 func TestCommsRecipientKnown_SourcesAreIndependent(t *testing.T) {
 	dir := commsSendProject(t)
 
-	// The presence registry: a name that only ever emitted a beat.
 	ts := time.Now().UTC().Format(time.RFC3339)
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
 	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
@@ -208,8 +171,6 @@ func TestCommsSend_UnknownRecipientExitsLikeWake(t *testing.T) {
 		t.Errorf("comms send --to %s exited %d but wake --agent %s exits %d: two surfaces disagree about whether reaching nobody succeeded\nstdout=%q\nstderr=%q",
 			nobody, sendCode, nobody, wakeCode, stdout, stderr)
 	}
-	// The send is still accepted: the event id is on stdout and the message is
-	// durable. Only the answer to the caller changed.
 	if !strings.Contains(stdout, "019fef4e") {
 		t.Errorf("comms send stopped recording the message when it started reporting failure: stdout=%q", stdout)
 	}

@@ -84,9 +84,6 @@ func removeEventIDHWMTemp(path string) error {
 	return nil
 }
 
-// hwmClockRegressionThreshold is the minimum lag between the HWM embedded
-// timestamp and the wall clock before IsHWMClockRegression returns true,
-// per EV-002c ("more than 1 second").
 const hwmClockRegressionThreshold = time.Second
 
 // ExtractUUIDv7Timestamp extracts the 48-bit millisecond-precision wall-clock

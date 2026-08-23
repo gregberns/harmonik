@@ -10,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// showBeadFixtureVerifyBrSchemaMismatch is a helper that asserts err wraps
-// BrSchemaMismatch per BI-025b (parse failure classification).
 func showBeadFixtureVerifyBrSchemaMismatch(t *testing.T, err error, context string) {
 	t.Helper()
 	if !errors.Is(err, brcli.BrSchemaMismatch) {
@@ -19,30 +17,18 @@ func showBeadFixtureVerifyBrSchemaMismatch(t *testing.T, err error, context stri
 	}
 }
 
-// showBeadFixtureValidJSON returns canonical JSON for a br show response
-// with the given bead ID. The JSON includes:
-//   - one outgoing dependency (parent-child to hk-872)
-//   - one outgoing dependency (waits-for to hk-872.45)
-//   - one incoming dependent (blocks from hk-872.22)
-//
-// This covers both dependency (outgoing) and dependents (incoming) edge paths.
-// Only EdgeKind values declared in core.EdgeKind constants are used.
 func showBeadFixtureValidJSON(id string) string {
 	return `[{"id":"` + id + `","title":"Implement bead-detail query","description":"Build ShowBead method on top of Run.","status":"in_progress","issue_type":"task","dependencies":[{"id":"hk-872","title":"Parent bead","status":"open","priority":2,"dependency_type":"parent-child"},{"id":"hk-872.45","title":"Sibling bead","status":"closed","priority":2,"dependency_type":"waits-for"}],"dependents":[{"id":"hk-872.22","title":"Downstream bead","status":"open","priority":2,"dependency_type":"blocks"}],"parent":"hk-872"}]`
 }
 
-// showBeadFixtureWithLabelsJSON returns a br show response where the bead
-// carries workflow:<mode> and area: labels per BI-009a.
 func showBeadFixtureWithLabelsJSON(id string) string {
 	return `[{"id":"` + id + `","title":"Label-bearing bead","description":"","status":"open","issue_type":"task","labels":["area:brcli","workflow:review-loop"],"dependencies":[],"dependents":[],"parent":""}]`
 }
 
-// showBeadFixtureNotFoundJSON returns the br error envelope for ISSUE_NOT_FOUND.
 func showBeadFixtureNotFoundJSON(searchedID string) string {
 	return `{"error":{"code":"ISSUE_NOT_FOUND","message":"Issue not found: ` + searchedID + `","hint":"Check the bead ID and try again.","retryable":false,"context":{"searched_id":"` + searchedID + `"}}}`
 }
 
-// showBeadFixtureOtherErrorJSON returns a br error envelope for a non-NOT_FOUND error.
 func showBeadFixtureOtherErrorJSON() string {
 	return `{"error":{"code":"INTERNAL_ERROR","message":"something went wrong internally","hint":"","retryable":true,"context":{}}}`
 }
@@ -62,7 +48,6 @@ func TestShowBeadSuccess(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// Verify all fields.
 	if record.BeadID != id {
 		t.Errorf("BeadID = %q; want %q", record.BeadID, id)
 	}
@@ -82,7 +67,6 @@ func TestShowBeadSuccess(t *testing.T) {
 		t.Errorf("AuditTrailRef = %q; want %q", record.AuditTrailRef, string(id))
 	}
 
-	// Verify the record passes the Valid() check.
 	if !record.Valid() {
 		t.Error("record.Valid() = false; want true")
 	}
@@ -103,12 +87,10 @@ func TestShowBeadEdgesOutgoingAndIncoming(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// Fixture has 2 outgoing (dependencies) + 1 incoming (dependents) = 3 edges total.
 	if len(record.Edges) != 3 {
 		t.Fatalf("len(Edges) = %d; want 3", len(record.Edges))
 	}
 
-	// Verify at least one outgoing edge: FromBeadID == id.
 	var hasOutgoing bool
 	for _, e := range record.Edges {
 		if e.FromBeadID == id {
@@ -120,7 +102,6 @@ func TestShowBeadEdgesOutgoingAndIncoming(t *testing.T) {
 		t.Error("no outgoing edge found (FromBeadID == id); want at least one")
 	}
 
-	// Verify at least one incoming edge: ToBeadID == id.
 	var hasIncoming bool
 	for _, e := range record.Edges {
 		if e.ToBeadID == id {
@@ -134,8 +115,6 @@ func TestShowBeadEdgesOutgoingAndIncoming(t *testing.T) {
 }
 
 func TestShowBeadParentNotDoubleAdded(t *testing.T) {
-	// The fixture has the parent-child entry in dependencies[] and sets parent="hk-872".
-	// We must NOT add a second parent-child edge from the parent field.
 	id := core.BeadID("hk-872.15")
 	jsonStr := showBeadFixtureValidJSON(string(id))
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
@@ -176,7 +155,6 @@ func TestShowBeadEdgeDirectionsCorrect(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// Outgoing (dependency): From=id, To=hk-872, kind=parent-child.
 	var foundOutgoing bool
 	for _, e := range record.Edges {
 		if e.FromBeadID == id && e.ToBeadID == "hk-872" && e.EdgeKind == core.EdgeKindParentChild {
@@ -188,7 +166,6 @@ func TestShowBeadEdgeDirectionsCorrect(t *testing.T) {
 		t.Error("expected outgoing parent-child edge (id -> hk-872) not found")
 	}
 
-	// Incoming (dependent): From=hk-872.22, To=id, kind=blocks.
 	var foundIncoming bool
 	for _, e := range record.Edges {
 		if e.FromBeadID == "hk-872.22" && e.ToBeadID == id && e.EdgeKind == core.EdgeKindBlocks {
@@ -204,7 +181,6 @@ func TestShowBeadEdgeDirectionsCorrect(t *testing.T) {
 func TestShowBeadNotFound(t *testing.T) {
 	searchedID := "nonexistent-bead"
 	jsonStr := showBeadFixtureNotFoundJSON(searchedID)
-	// br exits 3 on ISSUE_NOT_FOUND.
 	path := brcliFixtureMockBinary(t, jsonStr, "", 3)
 
 	adapter, err := brcli.New(path)
@@ -256,9 +232,7 @@ func TestShowBeadEmptyArray(t *testing.T) {
 
 func TestShowBeadMultiElementArray(t *testing.T) {
 	id := "hk-872.15"
-	// Two elements — should be rejected.
 	jsonStr := showBeadFixtureValidJSON(id)
-	// Insert a second element by replacing the closing bracket.
 	twoElements := jsonStr[:len(jsonStr)-1] + `,` + jsonStr[1:]
 	path := brcliFixtureMockBinary(t, twoElements, "", 0)
 
@@ -286,12 +260,10 @@ func TestShowBeadMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
-	// Per BI-025b: parse failures MUST classify as BrSchemaMismatch.
 	showBeadFixtureVerifyBrSchemaMismatch(t, err, "TestShowBeadMalformedJSON")
 }
 
 func TestShowBeadUnknownCoarseStatus(t *testing.T) {
-	// Replace "in_progress" with an unknown status value.
 	jsonStr := `[{"id":"hk-872.15","title":"Some bead","description":"","status":"weirdstatus","issue_type":"task","dependencies":[],"dependents":[],"parent":""}]`
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
@@ -307,11 +279,6 @@ func TestShowBeadUnknownCoarseStatus(t *testing.T) {
 }
 
 func TestShowBeadUnknownEdgeKind(t *testing.T) {
-	// Read-surface tolerance (hk-872.55): ShowBead MUST NOT error on edge kinds
-	// that Beads exposes but harmonik's spec has not yet declared.  The unknown
-	// kind is stored verbatim; Valid() returns false for it, guarding the write
-	// surface.  Concrete Beads value "related" is used here — it appears in
-	// orchestrator dep graphs and was the original motivator for this bead.
 	jsonStr := `[{"id":"hk-872.15","title":"Some bead","description":"","status":"open","issue_type":"task","dependencies":[{"id":"hk-872","title":"Parent","status":"open","priority":2,"dependency_type":"related"}],"dependents":[],"parent":"hk-872"}]`
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
@@ -337,7 +304,6 @@ func TestShowBeadUnknownEdgeKind(t *testing.T) {
 }
 
 func TestShowBeadExecFailure(t *testing.T) {
-	// Use a non-existent binary to trigger exec failure.
 	adapter, err := brcli.New("/nonexistent/path/to/br")
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -405,22 +371,18 @@ func TestShowBeadDesignFieldSurfaced(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// Description must contain the original description text.
 	if !strings.Contains(record.Description, desc) {
 		t.Errorf("Description does not contain original description %q; got %q", desc, record.Description)
 	}
 
-	// Description must contain the design field text.
 	if !strings.Contains(record.Description, design) {
 		t.Errorf("Description does not contain design field %q; got %q", design, record.Description)
 	}
 
-	// Must contain the section header.
 	if !strings.Contains(record.Description, "## Implementation Notes") {
 		t.Errorf("Description does not contain '## Implementation Notes' header; got %q", record.Description)
 	}
 
-	// Description must appear before design in the combined string.
 	descIdx := strings.Index(record.Description, desc)
 	designIdx := strings.Index(record.Description, design)
 	if descIdx >= designIdx {
@@ -432,7 +394,6 @@ func TestShowBeadDesignFieldSurfaced(t *testing.T) {
 // Description when the design field is absent (empty string or missing from JSON).
 func TestShowBeadDesignFieldAbsent(t *testing.T) {
 	wantDesc := "Build ShowBead method on top of Run."
-	// JSON without a design field — standard fixture.
 	jsonStr := `[{"id":"hk-872.15","title":"Implement bead-detail query","description":"` + wantDesc + `","status":"in_progress","issue_type":"task","dependencies":[],"dependents":[],"parent":""}]`
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
@@ -446,7 +407,6 @@ func TestShowBeadDesignFieldAbsent(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// Description must equal the original description exactly when design is absent.
 	if record.Description != wantDesc {
 		t.Errorf("Description = %q; want %q (design absent — must not alter Description)", record.Description, wantDesc)
 	}
@@ -473,8 +433,6 @@ func TestShowBeadDescriptionFieldName(t *testing.T) {
 		t.Fatalf("ShowBead: unexpected error: %v", err)
 	}
 
-	// BeadRecord.Description MUST carry the JSON "description" field value.
-	// br show JSON never emits a "body" key; only "description" is present.
 	if record.Description != wantBody {
 		t.Errorf("Description = %q; want %q (hk-nmiww: check JSON field is \"description\", not \"body\")", record.Description, wantBody)
 	}

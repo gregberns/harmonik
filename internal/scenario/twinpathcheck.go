@@ -71,13 +71,9 @@ func CheckTwinBinaryPath(resolvedBinary string, twinSearchPaths []string) error 
 		cleanPrefix := filepath.Clean(searchPath)
 		rel, err := filepath.Rel(cleanPrefix, cleanBinary)
 		if err != nil {
-			// Paths on different volumes or other OS-level errors — not under
-			// this prefix.
 			continue
 		}
 		if !strings.HasPrefix(rel, "..") {
-			// rel is "." (binary == prefix) or a sub-path without a leading
-			// "..": the binary is under this search-path prefix.
 			return nil
 		}
 	}

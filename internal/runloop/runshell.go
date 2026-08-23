@@ -1,24 +1,3 @@
-// runshell.go — the imperative SHELL around the two pure runexec reactors
-// (RSM-003/006/007, RSM-019; runexec-design §5). It is the composition root that
-// owns the runexec Dispatch + Run machines for a SINGLE bead run: it samples I/O
-// into Events, executes reactor Actions through the effector table, arms/cancels
-// the reactor timers on the ClockPort, and pumps each machine to its terminal
-// with a nearest-deadline wake and a ctx-cancel → phase-timeout mapping.
-//
-// It mirrors internal/keeper/shell.go structure exactly (execute switch / drive
-// loop / nearestDeadline / fireOnCancel). The pure machines (internal/runexec)
-// read no clock, mint no ids, and perform no I/O; every timestamp on a fed Event
-// is shell-stamped from the ClockPort (RSM-001).
-//
-// RT7 status (single-mode migration): this file lands the shell scaffold — the
-// effector table (per-action failure policy) and the two drive loops — composed
-// over the RT4 RunPorts and a bundle of per-run effector hooks. The production
-// hook bundle is assembled at the composition root inside beadRunOne; the
-// single-mode P11–P18 re-drive that replaces the imperative block with
-// shell.RunDispatch + driveRun, and the deferred WorktreePort/LaunchPort/
-// BudgetPort per-run wiring, are threaded in the RT7→RT9 sequence. The shell is
-// exercised end-to-end by a FakeClock ready-timeout→reopen test.
-
 package runloop
 
 import (
@@ -30,9 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// runReactor is the shared surface of both pure machines the shell drives
-// (runexec.Dispatch and runexec.Run). Both expose Step + InFlight verbatim
-// (runexec dispatch.go / run.go), so one drive loop pumps either.
 type runReactor interface {
 	Step(ev runexec.Event) []runexec.Action
 	InFlight() bool
@@ -103,8 +79,6 @@ func NewRunShell(clock substrate.ClockPort, eff RunEffectors, events <-chan rune
 	}
 }
 
-// normalize fills any nil hook with a no-op, so the effector switch needs no
-// per-arm nil guard (best-effort failure policy: a missing binding is a no-op).
 func (e *RunEffectors) normalize() {
 	noEvents := func(context.Context) []runexec.Event { return nil }
 	if e.LaunchAgent == nil {
@@ -151,11 +125,6 @@ func (e *RunEffectors) normalize() {
 	}
 }
 
-// execute is the reactor's effector: it maps one Action onto the per-run hooks
-// with today's per-action failure policy (runexec-design §2/§5). Every side
-// effect is best-effort — a nil hook is a no-op, and the only "fatal" run
-// operations (worktree create, launch) FEED FAILURE EVENTS rather than erroring
-// the drive loop (design §5), so execute never returns an error to substrate.Run.
 func (sh *RunShell) execute(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActLaunchAgent, runexec.ActDeliverInput, runexec.ActKillAgent,
@@ -169,8 +138,6 @@ func (sh *RunShell) execute(ctx context.Context, a runexec.Action) {
 	}
 }
 
-// executeAgentAction maps the Dispatch (agent-session) actions onto their hooks
-// (all fire-and-forget; results arrive on the tap).
 func (sh *RunShell) executeAgentAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActLaunchAgent:
@@ -185,8 +152,6 @@ func (sh *RunShell) executeAgentAction(ctx context.Context, a runexec.Action) {
 	}
 }
 
-// executeRunAction maps the Run actions; the synchronous port ops (worktree
-// create, gate, escape, merge submit, bead close) enqueue their follow-up events.
 func (sh *RunShell) executeRunAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActCreateWorktree:
@@ -209,9 +174,6 @@ func (sh *RunShell) executeRunAction(ctx context.Context, a runexec.Action) {
 	}
 }
 
-// executeEmitOrTimer maps the emission and shared timer actions. Timer arms are
-// anchored at execution time (after any preceding actions in the batch), like
-// keeper shell.go:145.
 func (sh *RunShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActEmit:
@@ -226,19 +188,12 @@ func (sh *RunShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 	}
 }
 
-// Feed steps the machine on one event and executes the resulting actions in
-// order (which may enqueue synchronous follow-ups into sh.pending).
 func (sh *RunShell) feed(ctx context.Context, m runReactor, ev runexec.Event) {
 	for _, a := range m.Step(ev) {
 		sh.execute(ctx, a)
 	}
 }
 
-// drive pumps a reactor to its terminal (keeper shell.go:225 pattern). Each
-// outer generation drains any synchronous port follow-ups, then blocks on the
-// per-run event tap, a nearest-deadline wake (so a timer fires punctually even
-// under a delayed scheduler), or ctx cancellation (mapped onto the live phase
-// timeout edge — never a silent wait, RSM-INV-002).
 func (sh *RunShell) drive(ctx context.Context, m runReactor) {
 	for m.InFlight() {
 		if sh.drainPending(ctx, m) {
@@ -251,8 +206,6 @@ func (sh *RunShell) drive(ctx context.Context, m runReactor) {
 	}
 }
 
-// DrainPending feeds all queued synchronous follow-up events; returns true when
-// it fed at least one (so drive re-checks InFlight before blocking).
 func (sh *RunShell) drainPending(ctx context.Context, m runReactor) bool {
 	if len(sh.pending) == 0 {
 		return false
@@ -265,7 +218,6 @@ func (sh *RunShell) drainPending(ctx context.Context, m runReactor) bool {
 	return true
 }
 
-// driveOnce blocks for one external signal and feeds it.
 func (sh *RunShell) driveOnce(ctx context.Context, m runReactor) {
 	var deadlineC <-chan time.Time
 	var deadlineTicker substrate.Ticker
@@ -284,8 +236,6 @@ func (sh *RunShell) driveOnce(ctx context.Context, m runReactor) {
 		sh.fireOnCancel(ctx, m)
 	case ev, ok := <-sh.events:
 		if !ok {
-			// Tap closed with the machine still in flight: cancel-equivalent so
-			// the run terminates on its phase edge rather than spinning.
 			sh.fireOnCancel(ctx, m)
 			return
 		}
@@ -298,9 +248,6 @@ func (sh *RunShell) driveOnce(ctx context.Context, m runReactor) {
 	}
 }
 
-// nearestDeadline returns the remaining duration to the earliest armed reactor
-// deadline (keeper shell.go:262 mechanics), clamped to 1ns (NewTicker needs
-// d>0). ok is false when no timer is armed.
 func (sh *RunShell) nearestDeadline() (time.Duration, bool) {
 	var best time.Time
 	var ok bool
@@ -319,10 +266,6 @@ func (sh *RunShell) nearestDeadline() (time.Duration, bool) {
 	return remaining, true
 }
 
-// fireElapsedTimers feeds an EvTimerFired for every timer whose deadline has
-// elapsed (the reactor's timer edge; RSM-INV-002 guarantees each is an outgoing
-// action, never silence). The timer is disarmed before feeding so its edge is
-// not re-fired.
 func (sh *RunShell) fireElapsedTimers(ctx context.Context, m runReactor) {
 	now := sh.clock.Now()
 	for kind, dl := range sh.timers {
@@ -334,11 +277,6 @@ func (sh *RunShell) fireElapsedTimers(ctx context.Context, m runReactor) {
 	}
 }
 
-// fireOnCancel maps a parent-ctx cancellation onto the live phase-timeout edge
-// (keeper shell.go:370): it fires the nearest armed timer so a cancelled run
-// rides the same fail-closed edge as its natural timeout (kill + reopen), never
-// stranding a machine mid-flight. With no timer armed there is no phase edge to
-// take; the caller's outer InFlight loop exits when the tap closes.
 func (sh *RunShell) fireOnCancel(ctx context.Context, m runReactor) {
 	var bestKind runexec.TimerKind
 	var best time.Time
@@ -387,16 +325,10 @@ func (sh *RunShell) RunDispatch(ctx context.Context, m *runexec.Dispatch, sess r
 	return m.State()
 }
 
-// dispatchSegmentActive reports whether the RunDispatch segment loop must keep
-// pumping: the machine is in flight and has not yet reached Working (the RT8
-// segment boundary).
 func dispatchSegmentActive(m *runexec.Dispatch) bool {
 	return m.InFlight() && m.State().Phase != runexec.DispatchWorking
 }
 
-// driveDispatchOnce blocks for one external signal and feeds it — driveOnce's
-// dispatch-segment variant: ctx cancellation (and a closed tap) map onto the
-// machine's EvAborted edge instead of fireOnCancel (see RunDispatch).
 func (sh *RunShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) {
 	var deadlineC <-chan time.Time
 	var deadlineTicker substrate.Ticker

@@ -47,7 +47,6 @@ func TestTransitionIDGenerator_EM018a_SameMillisecondMonotonic(t *testing.T) {
 		t.Fatalf("uuid.NewV7(): %v", err)
 	}
 
-	// newV7 always returns the same UUID — simulates same-millisecond clock.
 	callCount := 0
 	g := &TransitionIDGenerator{
 		newV7: func() (uuid.UUID, error) {
@@ -71,7 +70,6 @@ func TestTransitionIDGenerator_EM018a_SameMillisecondMonotonic(t *testing.T) {
 		t.Errorf("EM-018a: same-millisecond: id1 (%v) >= id2 (%v); must be strictly less", id1, id2)
 	}
 
-	// Confirm the second value is exactly id1 + 1.
 	expected := increment128(u1)
 	if u2 != expected {
 		t.Errorf("EM-018a: same-millisecond: id2 = %v, want %v (id1+1)", id2, TransitionID(expected))
@@ -90,7 +88,6 @@ func TestTransitionIDGenerator_EM018a_ConcurrentMonotonic(t *testing.T) {
 
 	g := NewTransitionIDGenerator()
 
-	// errCh carries the first Next() error from any goroutine back to the test.
 	errCh := make(chan error, goroutines)
 
 	var (
@@ -107,8 +104,6 @@ func TestTransitionIDGenerator_EM018a_ConcurrentMonotonic(t *testing.T) {
 			for j := 0; j < callsEach; j++ {
 				id, err := g.Next()
 				if err != nil {
-					// t.Fatal cannot be called from a non-test goroutine;
-					// send the error to the main goroutine via errCh.
 					errCh <- fmt.Errorf("EM-018a: goroutine Next() call %d: %w", j, err)
 					return
 				}
@@ -130,7 +125,6 @@ func TestTransitionIDGenerator_EM018a_ConcurrentMonotonic(t *testing.T) {
 		t.Fatalf("EM-018a: concurrent: got %d results, want %d", len(all), total)
 	}
 
-	// Sort lexicographically to check for duplicates across all goroutines.
 	sort.Slice(all, func(i, j int) bool {
 		ui := uuid.UUID(all[i])
 		uj := uuid.UUID(all[j])
@@ -172,7 +166,6 @@ func TestTransitionIDGenerator_EM018a_ClockRollbackMonotonic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uuid.NewV7() hi: %v", err)
 	}
-	// lo is hi - 1: guaranteed to be strictly less than hi.
 	lo := hi
 	for i := 15; i >= 0; i-- {
 		if lo[i] > 0 {
@@ -182,7 +175,6 @@ func TestTransitionIDGenerator_EM018a_ClockRollbackMonotonic(t *testing.T) {
 		lo[i] = 0xff
 	}
 
-	// First call returns hi; second call returns lo (simulated clock rollback).
 	seq := []uuid.UUID{hi, lo}
 	idx := 0
 	g := &TransitionIDGenerator{

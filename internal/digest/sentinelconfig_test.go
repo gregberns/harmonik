@@ -94,8 +94,6 @@ func TestParseSentinelConfig_GovernorDefaults(t *testing.T) {
 	if weights := cfg.GovernorMovementWeights(); weights != nil {
 		t.Errorf("GovernorMovementWeights default: expected nil (use compiled defaults), got %v", weights)
 	}
-	// liveness_no_progress_n has NO compiled default under FIX-B (hk-drygf):
-	// an absent key must fail loud at GovernorConfig(), not fall back to a literal.
 	if _, gerr := cfg.GovernorConfig(); gerr == nil {
 		t.Error("GovernorConfig with no liveness_no_progress_n: expected fail-loud error, got nil")
 	}
@@ -155,7 +153,6 @@ sentinel:
 func TestSentinelConfig_Phase2Classes_Empty(t *testing.T) {
 	t.Parallel()
 
-	// No done_definition configured.
 	cfg, err := parseSentinelConfig([]byte(`sentinel: {}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,7 +161,6 @@ func TestSentinelConfig_Phase2Classes_Empty(t *testing.T) {
 		t.Errorf("Phase2Classes with no config: got %v, want empty", got)
 	}
 
-	// All classes are "merged".
 	cfg2, err := parseSentinelConfig([]byte(`
 sentinel:
   done_definition:
@@ -235,8 +231,6 @@ sentinel:
 func TestSentinelConfig_GovernorConfig_NilWeights(t *testing.T) {
 	t.Parallel()
 
-	// liveness_no_progress_n must be present (any explicit value) for GovernorConfig
-	// to succeed under FIX-B; an explicit 0 is the minimal valid form here.
 	cfg, err := parseSentinelConfig([]byte("sentinel:\n  liveness_no_progress_n: 0\n"))
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
@@ -259,8 +253,6 @@ func TestSentinelConfig_GovernorConfig_NilWeights(t *testing.T) {
 func TestSentinelConfig_GovernorConfig_MissingLivenessN_FailsLoud(t *testing.T) {
 	t.Parallel()
 
-	// A sentinel block WITHOUT liveness_no_progress_n (mirrors the live config:
-	// the key commented out, other keys like mode present).
 	cfg, err := parseSentinelConfig([]byte("sentinel:\n  mode: observe\n"))
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)

@@ -1,10 +1,5 @@
 package daemon
 
-// pi_profile_resolve_test.go — unit tests for resolvePiProfile and
-// hasSingleModelLabel (pi-provider-switch, hk-m6uu2 C3).
-//
-// Helper prefix: piProfFixture (implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"errors"
@@ -15,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// piProfFixtureBus is a minimal event collector for testing label-conflict events.
 type piProfFixtureBus struct {
 	mu     sync.Mutex
 	events []core.EventType
@@ -187,8 +181,6 @@ func TestResolvePiProfile_ModelLabelOverridesProfileModelOnly(t *testing.T) {
 	if profile != want {
 		t.Errorf("resolvePiProfile = %+v; want %+v (triple stays atomic)", profile, want)
 	}
-	// The model: label is not resolvePiProfile's concern (caller coalesces via
-	// hasSingleModelLabel); assert the coalesce helper agrees exactly one is present.
 	if !hasSingleModelLabel(labels) {
 		t.Error("hasSingleModelLabel should be true for exactly one model: label")
 	}

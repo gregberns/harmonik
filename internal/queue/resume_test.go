@@ -1,15 +1,5 @@
 package queue_test
 
-// resume_test.go — coverage for the paused-by-failure recovery transitions
-// (ResumeFromFailure / RearmFailedItems) and the QM-027 resubmit relaxation
-// that together unwedge a queue parked at paused-by-failure.
-//
-// Bead ref: hk-fkpb7. Spec ref: specs/queue-model.md §8.3 QM-052, §6.8 QM-027,
-// §A.3.
-//
-// Helper prefix: resumeFixture (derived from "resume.go" per
-// implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"testing"
@@ -18,9 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// resumeFixtureFailedItem returns a failed Item that has burned its retry
-// budget (Attempts at MaxItemAttempts), mirroring the workloop's hk-6pspu
-// fail-on-max-attempts path.
 func resumeFixtureFailedItem(beadID string) queue.Item {
 	runID := "run-" + beadID
 	return queue.Item{
@@ -32,15 +19,10 @@ func resumeFixtureFailedItem(beadID string) queue.Item {
 	}
 }
 
-// resumeFixtureItem returns an Item with the given BeadID and status.
 func resumeFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	return queue.Item{BeadID: core.BeadID(beadID), Status: status}
 }
 
-// resumeFixtureFailedQueue builds a single-group queue parked at
-// paused-by-failure: the group is complete-with-failures with one completed and
-// one failed item (the hk-fkpb7 repro shape — one bead merged, a sibling lost
-// the merge race and failed).
 func resumeFixtureFailedQueue(kind queue.GroupKind) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
@@ -60,10 +42,6 @@ func resumeFixtureFailedQueue(kind queue.GroupKind) *queue.Queue {
 		},
 	}
 }
-
-// -----------------------------------------------------------------------
-// (a) resume clears paused-by-failure
-// -----------------------------------------------------------------------
 
 // TestResumeFromFailure_ClearsPausedByFailure verifies that ResumeFromFailure
 // flips a queue parked at paused-by-failure back to active, re-opens the
@@ -186,10 +164,6 @@ func TestResumeFromFailure_LeavesNonTerminalGroupsAlone(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
-// (b) the retry / re-arm path
-// -----------------------------------------------------------------------
-
 // TestRearmFailedItems_ResetsFailedToPending verifies the retry primitive:
 // failed items go failed → pending with Attempts reset to 0, failure data
 // cleared, and RunID cleared. Non-failed siblings are untouched.
@@ -245,7 +219,6 @@ func TestRearmFailedItems_ResetsFailedToPending(t *testing.T) {
 			}
 		}
 	}
-	// The group status is the queue-level resume's concern, not RearmFailedItems'.
 	if g.Status != queue.GroupStatusCompleteWithFailures {
 		t.Errorf("RearmFailedItems must not touch group status; got %q", g.Status)
 	}
@@ -280,8 +253,6 @@ func TestRearmedItemBecomesEligible(t *testing.T) {
 	t.Parallel()
 
 	q := resumeFixtureFailedQueue(queue.GroupKindStream)
-	// Before resume: the only non-terminal candidate is the failed item, and the
-	// group is terminal, so nothing is eligible.
 	if got := queue.EligibleItems(&q.Groups[0]); got != nil {
 		t.Fatalf("pre-resume EligibleItems = %v, want nil (group terminal)", got)
 	}
@@ -298,10 +269,6 @@ func TestRearmedItemBecomesEligible(t *testing.T) {
 		t.Errorf("eligible item = %q, want hk-kzqml", eligible[0].BeadID)
 	}
 }
-
-// -----------------------------------------------------------------------
-// (c) re-submit to a previously-stuck (paused-by-failure) name succeeds
-// -----------------------------------------------------------------------
 
 // TestValidate_ResubmitToPausedByFailureName verifies the QM-027 relaxation:
 // a queue-submit targeting a name whose queue is parked at paused-by-failure is

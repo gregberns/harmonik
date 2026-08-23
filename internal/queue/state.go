@@ -1,20 +1,5 @@
 package queue
 
-// state.go — group state machine for the queue subsystem.
-//
-// Implements the per-group transition table from specs/queue-model.md §5
-// (QM-030..QM-036) and the associated queue-level lifecycle transitions from
-// §8 (QM-050..QM-055).
-//
-// Exported surface:
-//   - AdvanceGroup — evaluate one group's readiness to transition; returns new
-//     GroupStatus and the ordered event list to emit.
-//   - EligibleItems — return dispatch-eligible items for an active group,
-//     respecting wave (QM-036) vs. stream (QM-035) head-of-line semantics.
-//
-// Spec ref: specs/queue-model.md §5, §8.
-// Bead ref: hk-e4s70.
-
 import (
 	"context"
 	"fmt"
@@ -74,7 +59,6 @@ func AdvanceGroup(
 		return "", nil, err
 	}
 
-	// QM-032 — no re-entry of terminal states.
 	if groupIsTerminal(g.Status) {
 		return g.Status, nil, nil
 	}
@@ -85,8 +69,6 @@ func AdvanceGroup(
 	case GroupStatusActive:
 		return advanceActive(g, queueID, now)
 	default:
-		// Unknown status — leave unchanged, surface as an error so callers
-		// can detect corrupt group records without silently swallowing them.
 		return g.Status, nil, fmt.Errorf("queue: AdvanceGroup: unrecognised GroupStatus %q", g.Status)
 	}
 }
@@ -120,31 +102,20 @@ func EligibleItems(g *Group) []*Item {
 	}
 }
 
-// -----------------------------------------------------------------------
-// internal helpers
-// -----------------------------------------------------------------------
-
-// groupIsTerminal reports whether s is one of the two terminal GroupStatus
-// values per specs/queue-model.md §2.5.
 func groupIsTerminal(s GroupStatus) bool {
 	return s == GroupStatusCompleteSuccess || s == GroupStatusCompleteWithFailures
 }
 
-// itemIsTerminal reports whether s is a terminal ItemStatus per §2.7.
-// deferred-for-ledger-dep is NOT terminal (per §2.8 normative sentence).
 func itemIsTerminal(s ItemStatus) bool {
 	return s == ItemStatusCompleted || s == ItemStatusFailed
 }
 
-// advancePending applies the pending → active transition per QM-031.
-// Guard: queueStatus MUST be active.
 func advancePending(
 	g *Group,
 	queueStatus QueueStatus,
 	queueID string,
 	now time.Time,
 ) (GroupStatus, []EventIntent, error) {
-	// QM-031 guard: only advance when queue is active.
 	if queueStatus != QueueStatusActive {
 		return GroupStatusPending, nil, nil
 	}
@@ -165,14 +136,11 @@ func advancePending(
 	return GroupStatusActive, []EventIntent{evt}, nil
 }
 
-// advanceActive applies the active → terminal transition per QM-030.
-// Guard: every item MUST be terminal (QM-034 — failed siblings don't interrupt).
 func advanceActive(
 	g *Group,
 	queueID string,
 	now time.Time,
 ) (GroupStatus, []EventIntent, error) {
-	// QM-030 — all-terminal gate.
 	if !allItemsTerminal(g) {
 		return GroupStatusActive, nil, nil
 	}
@@ -181,7 +149,6 @@ func advanceActive(
 	nowStr := now.UTC().Format(time.RFC3339Nano)
 
 	if failCount == 0 {
-		// active → complete-success (§5.1 row 3)
 		evt, err := NewEventIntent(core.EventTypeQueueGroupCompleted, &core.QueueGroupCompletedPayload{
 			QueueID:      queueID,
 			GroupIndex:   g.GroupIndex,
@@ -196,8 +163,6 @@ func advanceActive(
 		return GroupStatusCompleteSuccess, []EventIntent{evt}, nil
 	}
 
-	// active → complete-with-failures (§5.1 row 4)
-	// Emit queue_group_completed, then queue_paused{group_failure}.
 	evtCompleted, err := NewEventIntent(core.EventTypeQueueGroupCompleted, &core.QueueGroupCompletedPayload{
 		QueueID:      queueID,
 		GroupIndex:   g.GroupIndex,
@@ -224,9 +189,6 @@ func advanceActive(
 	return GroupStatusCompleteWithFailures, []EventIntent{evtCompleted, evtPaused}, nil
 }
 
-// allItemsTerminal reports whether every item in g has reached a terminal
-// ItemStatus per QM-030. An empty items list is considered all-terminal
-// (vacuously true).
 func allItemsTerminal(g *Group) bool {
 	for i := range g.Items {
 		if !itemIsTerminal(g.Items[i].Status) {
@@ -236,7 +198,6 @@ func allItemsTerminal(g *Group) bool {
 	return true
 }
 
-// countOutcomes counts completed vs. failed items in g.
 func countOutcomes(g *Group) (successCount, failCount int) {
 	for i := range g.Items {
 		switch g.Items[i].Status {
@@ -245,17 +206,11 @@ func countOutcomes(g *Group) (successCount, failCount int) {
 		case ItemStatusFailed:
 			failCount++
 		case ItemStatusPending, ItemStatusDispatched, ItemStatusDeferredForLedgerDep:
-			// Non-terminal: not yet an outcome. Listed explicitly so that adding
-			// a new ItemStatus fails the exhaustive check here rather than being
-			// silently counted as neither.
 		}
 	}
 	return successCount, failCount
 }
 
-// waveEligible returns all pending (non-deferred) items in a wave group per
-// QM-036: wave admission is unordered; deferred-for-ledger-dep siblings are
-// skipped while non-deferred siblings proceed.
 func waveEligible(g *Group) []*Item {
 	var out []*Item
 	for i := range g.Items {
@@ -266,35 +221,7 @@ func waveEligible(g *Group) []*Item {
 	return out
 }
 
-// streamEligible returns at most the earliest-indexed eligible item in a
-// stream group (QM-035).
-//
-// Scanning skips terminal items (completed, failed), in-flight items
-// (dispatched), and deferred-for-ledger-dep items. The first pending item
-// found after skipping those is returned:
-//   - pending, within attempt limit → return it (eligible for dispatch).
-//   - deferred-for-ledger-dep → skip; its own blocker is unresolved, but
-//     dep-free items later in the stream are not affected (hk-cb5ow).
-//   - dispatched / completed / failed → skip; EXCEPTION: if a terminal item's
-//     bead_id has a later pending entry in the same group (re-appended after
-//     failure), that later pending entry is returned at the terminal item's
-//     stream position (hk-wifef). This preserves original stream ordering: the
-//     re-appended bead is dispatched before items that were queued after it.
-//
-// This out-of-order skipping of deferred items means a tail item whose own
-// ledger deps are clear can be dispatched before a deferred predecessor
-// resolves. The ordering guarantee ("after all earlier items have at least
-// entered dispatched") applies only to non-deferred peers.
-//
-// Spec ref: specs/queue-model.md §5.6 QM-035.
-// Bead ref: hk-9a27q, hk-cb5ow, hk-wifef.
 func streamEligible(g *Group) []*Item {
-	// Pre-scan: record the last index at which each bead_id appears as an
-	// eligible-pending entry (Attempts < MaxItemAttempts). This map is used
-	// below to implement re-append ordering: when a terminal entry for beadX
-	// exists at position p and a later pending entry for beadX exists at
-	// position q > p, the pending entry is returned at position p (preserving
-	// the bead's original stream order). Bead ref: hk-wifef.
 	lastEligiblePending := make(map[core.BeadID]int)
 	for i := range g.Items {
 		if g.Items[i].Status == ItemStatusPending && g.Items[i].Attempts < MaxItemAttempts {
@@ -306,19 +233,12 @@ func streamEligible(g *Group) []*Item {
 		switch g.Items[i].Status {
 		case ItemStatusPending:
 			if g.Items[i].Attempts >= MaxItemAttempts {
-				// Over-limit: skip as if terminal (defense-in-depth; hk-6pspu).
 				continue
 			}
 			return []*Item{&g.Items[i]}
 		case ItemStatusDeferredForLedgerDep:
-			// Deferred items are skipped: their own ledger dep is unresolved,
-			// but they do not block dep-free tail items (hk-cb5ow).
 			continue
 		case ItemStatusDispatched, ItemStatusCompleted, ItemStatusFailed:
-			// In-flight or terminal: skip and scan for the next pending item.
-			// Exception (hk-wifef): if this bead_id was re-appended after
-			// reaching terminal status, a later pending entry exists — return
-			// it now so the bead dispatches at its original stream position.
 			if idx, ok := lastEligiblePending[g.Items[i].BeadID]; ok && idx > i {
 				return []*Item{&g.Items[idx]}
 			}
@@ -372,10 +292,6 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 		}
 		blocked := g.Items[i].BeadID
 
-		// Find this item's blockers among its in-group siblings and check
-		// whether every one is resolved. The deferral at submit time was keyed
-		// on intra-group BlocksEdge pairs (validation.go §QM-025), so the
-		// un-defer check scans the same sibling set.
 		allResolved := true
 		dependencyFailed := false
 		for j := range g.Items {
@@ -397,8 +313,6 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 				dependencyFailed = true
 				break
 			}
-			// The blocker is resolved when it completed in the queue or is no
-			// longer open in the ledger. The failed case was handled above.
 			if g.Items[j].Status == ItemStatusCompleted {
 				continue
 			}
@@ -407,7 +321,6 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 				return undeferred, fmt.Errorf("queue: ReevaluateDeferred: LookupStatus %q: %w", blocker, err)
 			}
 			if status == BeadStatusOpen || status == BeadStatusInProgress {
-				// Blocker still open → item stays deferred.
 				allResolved = false
 				break
 			}

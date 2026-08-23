@@ -8,9 +8,6 @@ import (
 	"sync"
 )
 
-// retryKey is the composite key used to identify a per-node retry count within
-// one run. The key is (RunID, NodeID) per execution-model.md §4.10.EM-046b:
-// attempt count is tracked per-node within a run.
 type retryKey struct {
 	runID  RunID
 	nodeID NodeID
@@ -118,7 +115,6 @@ func (r *RetryCounter) ReconcileFromTransitions(runID RunID, transitions []Trans
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Build fresh counts from the supplied slice.
 	fresh := make(map[retryKey]uint64)
 	for i := range transitions {
 		tr := &transitions[i]
@@ -135,14 +131,12 @@ func (r *RetryCounter) ReconcileFromTransitions(runID RunID, transitions []Trans
 		fresh[k]++
 	}
 
-	// Remove stale in-memory entries for this run.
 	for k := range r.counters {
 		if k.runID == runID {
 			delete(r.counters, k)
 		}
 	}
 
-	// Install reconciled counts.
 	for k, v := range fresh {
 		r.counters[k] = v
 	}

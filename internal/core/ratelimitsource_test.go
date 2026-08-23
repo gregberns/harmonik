@@ -14,20 +14,16 @@ func TestRateLimitSourceValid(t *testing.T) {
 		input RateLimitSource
 		want  bool
 	}{
-		// Declared constants — all must pass.
 		{"anthropic", RateLimitSourceAnthropic, true},
 		{"openai", RateLimitSourceOpenAI, true},
 
-		// Additional valid identifiers (open vocabulary).
 		{"vertex-ai", "vertex-ai", true},
 		{"anthropic-tier-1", "anthropic-tier-1", true},
 		{"single-char (a)", "a", true},
 		{"alphanumeric with hyphen", "abc123-def", true},
 
-		// Boundary: starts with letter followed by digits.
 		{"a0", "a0", true},
 
-		// Negatives.
 		{"empty string", "", false},
 		{"starts with digit", "1provider", false},
 		{"starts with hyphen", "-provider", false},
@@ -196,7 +192,6 @@ func TestRateLimitSourceRoundTrip(t *testing.T) {
 func TestRateLimitSourceUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an invalid value must mention the regex shape.
 	var s RateLimitSource
 	err := s.UnmarshalText([]byte("Invalid!Value"))
 	if err == nil {

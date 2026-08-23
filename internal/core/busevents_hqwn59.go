@@ -2,32 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// busevents_hqwn59.go — event-bus payload types for §8.8 observability and
-// bus-internal events:
-//   - metric               (§8.8.1)
-//   - consumer_failed      (§8.8.2)
-//   - dead_letter_enqueued (§8.8.3)
-//   - bus_overflow         (§8.8.4)
-//   - redaction_failed     (§8.8.5)
-//
-// Spec ref: specs/event-model.md §8.8, §6.3.
-// Bead refs: hk-hqwn.59.74, hk-hqwn.59.75, hk-hqwn.59.76, hk-hqwn.59.77, hk-hqwn.59.78.
-
-// ---------------------------------------------------------------------------
-// Enum types for §8.8 payload discriminators
-// ---------------------------------------------------------------------------
-
-// ShedPolicy and BusOverflowShedPolicy are declared in shedpolicy.go.
-// The ShedPolicy constants (ShedPolicyFsyncSpilled, ShedPolicyOrdinaryDropped,
-// ShedPolicyLossyDropped) are canonical; BusOverflowShedPolicy is a type alias
-// for backward compatibility. The BusOverflowShedPolicyFsyncSpilled /
-// BusOverflowShedPolicyOrdinaryDropped / BusOverflowShedPolicyLossyDropped
-// names are superseded by their ShedPolicy* equivalents declared in shedpolicy.go.
-
-// ---------------------------------------------------------------------------
-// Payload structs for §8.8 events
-// ---------------------------------------------------------------------------
-
 // MetricPayload is the typed event payload for the metric event
 // (event-model.md §8.8.1).
 //

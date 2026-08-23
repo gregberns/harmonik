@@ -1,12 +1,5 @@
 package main
 
-// queue_readiness_test.go — the claims the readiness command makes.
-//
-// The command is the only way in to the readiness gate from a terminal, and its
-// reader is an assessor with none of the capturing session's context. So the
-// tests that matter here are the refusals: a required input that is quietly
-// defaulted is a gate that judges a run nobody described.
-
 import (
 	"bytes"
 	"context"
@@ -26,8 +19,6 @@ import (
 
 var readinessNow = time.Date(2026, 8, 4, 18, 30, 0, 0, time.UTC)
 
-// fakeLedger answers ShowBead from a fixed map. It records what it was asked
-// for, so a test can say the command read every candidate rather than assuming.
 type fakeLedger struct {
 	beads map[core.BeadID]core.BeadRecord
 	asked []string
@@ -51,8 +42,6 @@ func openLedger() *fakeLedger {
 	}}
 }
 
-// projectWithEventLog builds the smallest project a capture can read: a
-// .harmonik directory with an event log in it.
 func projectWithEventLog(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -75,8 +64,6 @@ func TestParseCaptureArgs_RefusesEveryInputItWouldOtherwiseHaveToGuess(t *testin
 		"--out", "/tmp/readiness.json",
 	}
 
-	// Positive evidence first: the whole argument list parses, so each removal
-	// below is the missing flag and not a fixture that never worked.
 	if _, err := parseCaptureArgs(whole, io.Discard); err != nil {
 		t.Fatalf("the whole argument list did not parse: %v", err)
 	}
@@ -184,7 +171,6 @@ func TestRunQueueReadinessCapture_WritesARecordThatNamesEverySelectedItem(t *tes
 	if code != readinessExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
 	}
-	// Every candidate's status came from its own live read.
 	if strings.Join(ledger.asked, ",") != "hk-one,hk-two,hk-shut" {
 		t.Errorf("ledger reads = %v, want the selected items then the excluded one", ledger.asked)
 	}
@@ -203,8 +189,6 @@ func TestRunQueueReadinessCapture_WritesARecordThatNamesEverySelectedItem(t *tes
 	if snap.Posture.ItemCount != 2 || snap.Posture.Concurrency != 2 {
 		t.Errorf("posture = %+v, want two items at concurrency two", snap.Posture)
 	}
-	// The commands that produced the evidence are named, so the reader does not
-	// have to assume which ones ran.
 	if len(snap.Commands) != 3 {
 		t.Errorf("commands = %+v, want one ledger read per candidate", snap.Commands)
 	}
@@ -340,7 +324,6 @@ func TestParseValidateArgs_RefusesAnUnmeasuredHostFactRatherThanReadingItAsZero(
 	}
 }
 
-// dropFlag removes a `--name value` pair from an argument list.
 func dropFlag(args []string, name string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -475,9 +458,6 @@ func TestRunQueueReadiness_NamesItsTwoVerbsAndRefusesAnythingElse(t *testing.T) 
 	}
 }
 
-// captureForTest writes a real readiness record with n selected items, so the
-// validate tests judge a record the capture half actually produced rather than
-// a hand-built fixture that may not match it.
 func captureForTest(t *testing.T, n int) string {
 	t.Helper()
 	project := projectWithEventLog(t)

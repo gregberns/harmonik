@@ -1,23 +1,5 @@
 package projectconfig
 
-// projectconfig_ru06_test.go — regression tests for the RU-06 empty-file
-// sentinel fix. The prior hand-maintained per-block field list only checked a
-// couple of fields per block (e.g. watch: only status_target / opsmonitor_target),
-// so a config carrying ONLY a "minor" field (watch.absent_thresh_s) was mistaken
-// for an empty file and SILENTLY DISCARDED — the daemon booted on defaults and
-// the operator's tuning was lost. The sentinel is now a structural
-// reflect.DeepEqual against a zero rawProjectConfig, so ANY set field defeats it.
-//
-// Covers:
-//   - A partial block with only watch.absent_thresh_s and NO schema_version is no
-//     longer swallowed: it falls through to the version check and FAILS LOUD with
-//     *ErrUnsupportedConfigVersion (it is not treated as an empty file).
-//   - A partial block with schema_version: 1 is HONORED end-to-end (the field
-//     survives into ProjectConfig, not dropped).
-//   - A genuinely empty file (and `agents: {}`) still reads as absent → zero value.
-//
-// Helper prefix: ru06 (implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"errors"
 	"testing"

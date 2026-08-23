@@ -2,10 +2,6 @@ package core
 
 import "testing"
 
-// failureclassFixture107gz is the test helper prefix for this bead.
-
-// failureclassFixture107gzTaxonomyRow holds one row from the closed
-// handler-fatal taxonomy table under test.
 type failureclassFixture107gzTaxonomyRow struct {
 	desc      string
 	class     FailureClass
@@ -14,11 +10,8 @@ type failureclassFixture107gzTaxonomyRow struct {
 	wantOK    bool
 }
 
-// failureclassFixture107gzRows returns the full set of §8 class × sub-reason
-// rows that must be classified correctly per HC-020a.
 func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 	return []failureclassFixture107gzTaxonomyRow{
-		// ── Handler-fatal entries (wantOK = true) ────────────────────────
 		{
 			desc:      "transient/rate_limit is handler-fatal",
 			class:     FailureClassTransient,
@@ -34,9 +27,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    true,
 		},
 
-		// ── Non-handler-fatal entries (wantOK = false) ───────────────────
-
-		// transient without a handler-fatal sub-reason is per-bead.
 		{
 			desc:      "transient/generic is not handler-fatal",
 			class:     FailureClassTransient,
@@ -50,8 +40,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    false,
 		},
 
-		// structural is always per-bead (different beads fail for different
-		// reasons; one structural failure does not predict the next).
 		{
 			desc:      "structural is not handler-fatal",
 			class:     FailureClassStructural,
@@ -65,7 +53,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    false,
 		},
 
-		// deterministic is single-bead by definition.
 		{
 			desc:      "deterministic is not handler-fatal",
 			class:     FailureClassDeterministic,
@@ -73,7 +60,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    false,
 		},
 
-		// canceled is an operator action; not a handler problem.
 		{
 			desc:      "canceled is not handler-fatal",
 			class:     FailureClassCanceled,
@@ -81,7 +67,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    false,
 		},
 
-		// budget_exhausted with a per-run (non-account) scope is per-bead.
 		{
 			desc:      "budget_exhausted/per-run is not handler-fatal",
 			class:     FailureClassBudgetExhausted,
@@ -95,8 +80,6 @@ func failureclassFixture107gzRows() []failureclassFixture107gzTaxonomyRow {
 			wantOK:    false,
 		},
 
-		// compilation_loop is a daemon-observed traversal cap; the handler is
-		// fine.
 		{
 			desc:      "compilation_loop is not handler-fatal",
 			class:     FailureClassCompilationLoop,

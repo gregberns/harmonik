@@ -1,24 +1,5 @@
 package main
 
-// ops_monitor_cmd.go — `harmonik ops-monitor` CLI subcommand (hk-qpzsv).
-//
-// Installs/uninstalls a launchd LaunchAgent plist so ops-monitor-check.sh
-// runs every 5 minutes independent of any Claude or captain session.
-//
-// Verbs:
-//
-//	install   [--project DIR] [--no-load]  — write plist + launchctl load
-//	uninstall [--project DIR]              — launchctl unload + remove plist
-//	status    [--project DIR]              — show plist + load state
-//
-// The plist label is com.harmonik.ops-monitor.<project-hash> (12-char SHA-256
-// prefix of realpath(project-dir)), so one machine can host multiple projects
-// without conflict.
-//
-// Plist location: ~/Library/LaunchAgents/<label>.plist
-//
-// Spec ref: hk-qpzsv.
-
 import (
 	"context"
 	"fmt"
@@ -180,8 +161,6 @@ func buildOpsMonitorPlistData(projectDir string) opsMonitorPlistData {
 	scriptPath := filepath.Join(projectDir, "scripts", "ops-monitor-check.sh")
 	logDir := filepath.Join(projectDir, ".harmonik", "ops-monitor")
 
-	// Determine bin directory: prefer the directory containing the running binary,
-	// fall back to exec.LookPath("harmonik") so the plist PATH can find it at runtime.
 	binDir := ""
 	if exe, err := os.Executable(); err == nil {
 		binDir = filepath.Dir(exe)
@@ -225,7 +204,6 @@ func runOpsMonitorInstall(args []string) int {
 		return 1
 	}
 
-	// Verify the script exists.
 	scriptPath := filepath.Join(projectDir, "scripts", "ops-monitor-check.sh")
 	if _, serr := os.Stat(scriptPath); serr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: script not found at %s\n", scriptPath)
@@ -241,27 +219,23 @@ func runOpsMonitorInstall(args []string) int {
 		return 1
 	}
 
-	// Ensure log directory exists.
 	if merr := os.MkdirAll(data.LogDir, core.HarmonikDirMode); merr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: cannot create log dir %s: %v\n", data.LogDir, merr)
 		return 1
 	}
 
-	// Render plist.
 	var buf strings.Builder
 	if terr := opsMonitorPlistTmpl.Execute(&buf, data); terr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: render plist: %v\n", terr)
 		return 1
 	}
 
-	// If a plist already exists, unload it first so the reload picks up changes.
 	if _, existErr := os.Stat(plistPath); existErr == nil {
 		if unloadErr := exec.CommandContext(context.Background(), "launchctl", "unload", "-w", plistPath).Run(); unloadErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: warning: unload existing plist: %v\n", unloadErr)
 		}
 	}
 
-	// Write plist.
 	if werr := os.WriteFile(plistPath, []byte(buf.String()), 0o600); werr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: write plist: %v\n", werr)
 		return 1
@@ -313,7 +287,6 @@ func runOpsMonitorUninstall(args []string) int {
 	out, lerr := exec.CommandContext(context.Background(), "launchctl", "unload", "-w", plistPath).CombinedOutput()
 	if lerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor uninstall: launchctl unload: %v\n%s\n", lerr, out)
-		// Continue to remove the plist even if unload fails (e.g., already unloaded).
 	} else {
 		fmt.Println("ops-monitor: unloaded from launchd")
 	}
@@ -353,7 +326,6 @@ func runOpsMonitorStatus(args []string) int {
 		fmt.Println(" (not installed)")
 	}
 
-	// Check launchctl list for the label.
 	loaded := false
 	if plistExists {
 		out, listErr := exec.CommandContext(context.Background(), "launchctl", "list", label).CombinedOutput()
@@ -367,7 +339,6 @@ func runOpsMonitorStatus(args []string) int {
 		}
 	}
 
-	// Show latest.json timestamp.
 	latestPath := filepath.Join(projectDir, ".harmonik", "ops-monitor", "latest.json")
 	if info, serr := os.Stat(latestPath); serr == nil {
 		fmt.Printf("latest.json: %s (mtime %s)\n", latestPath, info.ModTime().Format("2006-01-02T15:04:05Z07:00"))

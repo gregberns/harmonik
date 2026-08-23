@@ -1,14 +1,5 @@
 package daemon_test
 
-// run_w3cp1_boiwe_hiqrl_test.go — happy-path tests for:
-//
-//	hk-w3cp1  harmonik run --beads id1,id2 --max-concurrent N
-//	hk-boiwe  harmonik run --context <inline|@file>
-//	hk-hiqrl  queue.Item.WorkflowMode (tier-0 per-item mode override)
-//
-// These tests exercise the workloop-level behaviour that the three CLI flags
-// produce via queue.Item.Context and queue.Item.WorkflowMode fields.
-
 import (
 	"context"
 	"encoding/json"
@@ -22,56 +13,10 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// workLoopDrainBudget is how long the work loop gets to drain its queue, and it
-// is the timeout on the loop's own context.
-//
-// It used to be shadowed by a second, shorter deadline. Each wait in this file
-// selected on a time.After nested inside a context that outlived it — four at
-// 25s inside 30s, one at 15s inside 20s — so the inner timer always won and the
-// context budget was decorative. That made
-// every one of these tests a bet on a wall clock, and the bet loses under this
-// package's parallel load: three different tests here —
-// TestMultiBead_MaxConcurrentOne, TestMultiBead_TwoBeadsCompleteBothClose and
-// TestSmoke_MultiBead_MaxConcurrent2_BothComplete — failed at ~25.2s on trees
-// whose code was fine, while passing 20 out of 20 in isolation (hk-33e6p).
-//
-// Both budgets here are deliberately generous. They are backstops for a genuine
-// hang, not measurements of how fast a drain ought to be. This one is still a
-// bet — a real drain that runs past 90s fails, and it fails with a message that
-// says the drain did not happen — but 90s is 3.6x the budget that was losing,
-// and it is no longer shadowed by a shorter timer that always won first.
 const workLoopDrainBudget = 90 * time.Second
 
-// workLoopExitGrace is how long the loop then gets to actually RETURN once its
-// context has been cancelled. Separate from the drain budget on purpose: a loop
-// that drains and unwinds slowly is a different failure from one that never
-// drains, and only the second is what these tests are about.
 const workLoopExitGrace = 30 * time.Second
 
-// awaitWorkLoopExit waits for the work loop to return and proves it returned for
-// the RIGHT REASON.
-//
-// The discriminator is the subtle part, and the obvious version of it is wrong.
-// These tests build testCtx as a child of workDone, and production signals a
-// completed drain BY CANCELLING workDone. So a successful drain necessarily
-// leaves testCtx.Err() non-nil, and "did the context get cancelled?" cannot tell
-// success from failure — it is true either way. The parent tells them apart.
-// A drain cancels workDone, so workDone.Err() is context.Canceled. A blown
-// budget expires testCtx, the CHILD, and a child's deadline never propagates
-// upward — so workDone.Err() stays nil. Both parents are WithCancel(Background),
-// so context.DeadlineExceeded never appears on them at all: nil is the
-// blown-budget signature, and a check written against DeadlineExceeded would
-// pass on nil and restore the exact false pass this helper removes. Canceled is
-// a fact about the work, not a reading of a clock, which is the point here.
-//
-// For the same reason the wait cannot select on testCtx.Done(): that fires the
-// instant the drain cancels, which is exactly when the loop is being given the
-// news and has not returned yet. One wall clock is still load-bearing —
-// workLoopDrainBudget decides the verdict for a drain that runs past it — but it
-// sits far above any plausible drain instead of below every one of them.
-//
-// workDone is the context production cancels when the work finishes (drainCtx or
-// exitCtx). drained describes what the caller was waiting for.
 func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan error, drained string) {
 	t.Helper()
 	select {
@@ -79,60 +24,22 @@ func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan e
 		if err != nil {
 			t.Errorf("runWorkLoop returned non-nil error: %v", err)
 		}
-		// A loop whose budget simply expired also returns cleanly here. Without
-		// this check that would read as success and the test would pass without
-		// the queue ever draining.
 		if !errors.Is(workDone.Err(), context.Canceled) {
 			t.Fatalf("runWorkLoop exited, but %s did not happen (cancel context err = %v)",
 				drained, workDone.Err())
 		}
 	case <-time.After(workLoopDrainBudget + workLoopExitGrace):
-		// Report, then JOIN before unwinding. t.Fatalf here would leave the loop
-		// running while this test unwinds. The deletion is the t.TempDir cleanup,
-		// which testing runs after this Goexit — so without the join it lands under
-		// a live loop.
-		//
-		// The loop's shutdown then writes into the vanished tree via queue.Persist.
-		// If that write fails, drainQueuesForRestart prints the error to os.Stderr
-		// rather than t.Log, so it is attributed to no test: a reader meets it
-		// beside whatever test runs next and reads it as a queue defect. Grep
-		// drainQueuesForRestart to find it. Do NOT grep CancelQueueOnShutdown —
-		// hk-33e6p records the symptom under that name, but 2881c0c41 deleted that
-		// path. hk-33e6p also says this has misdirected readers more than once
-		// without recording one instance; treat that as unevidenced.
-		//
-		// The write usually does NOT fail. queue.Persist calls os.MkdirAll before
-		// it writes, so it recreates the tree and succeeds silently: expect a stray
-		// directory under TMPDIR. Only a narrow race with RemoveAll gives ENOENT or
-		// a TempDir cleanup failure.
-		//
-		// The join exists only because this arm fires at workLoopDrainBudget +
-		// workLoopExitGrace while testCtx expired at workLoopDrainBudget. Shrink
-		// this timer to the drain budget and the join gets no grace.
 		t.Errorf("runWorkLoop did not return within %s after %s",
 			workLoopDrainBudget+workLoopExitGrace, drained)
 		select {
 		case <-loopDone:
-			// Late but joined. Not proof the tree is quiet: exitClean waits only
-			// shutdownDrainTimeout (10s) for in-flight runs, then returns anyway,
-			// so a run it abandoned can still write. The failure to report is
-			// still the one above.
 		case <-time.After(workLoopExitGrace):
-			// The helper stopped waiting. That is not proof the loop is wedged.
-			// Either way the join is unavailable and the deletion cannot be made
-			// safe. Say so here, because the next reader's alternative is to blame
-			// the package that reports the I/O error rather than the test that
-			// caused it.
 			t.Errorf("runWorkLoop still had not returned %s later; the project dir is about to be deleted under a running loop, so treat any persist or no-such-file error in a LATER test in this package as fallout from THIS failure, not as a defect of its own",
 				workLoopExitGrace)
 		}
 		t.FailNow()
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-w3cp1 — multi-bead one-shot
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestMultiBead_TwoBeadsCompleteBothClose verifies that a two-item wave queue
 // with max-concurrent=2 dispatches both beads and closes them both, then fires
@@ -142,10 +49,6 @@ func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan e
 // concurrently up to max_concurrent=2); §4.11 EM-051 (max_concurrent configuration).
 // Bead ref: hk-w3cp1.
 func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
-	// This is the normal-completion durability gate. Keep it serial so package
-	// scenario load cannot consume its wall-clock backstop before the drain path
-	// runs.
-
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
@@ -180,9 +83,6 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	// The fake agent commits during its run rather than in the worktree factory,
-	// and the bead carries workflow:single. Both are load-bearing — see
-	// workloopFixtureAdvanceHeadHandlerArgs and stubBeadLedger.labels.
 	handlerArgs := workloopFixtureAdvanceHeadHandlerArgs(t)
 	ledger := &stubBeadLedger{labels: workloopFixtureSingleLabels}
 
@@ -210,13 +110,11 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 
 	awaitWorkLoopExit(t, drainCtx, loopDone, "the two-bead queue drained (cancelOnQueueDrain not invoked)")
 
-	// Both beads must have been closed.
 	closed := ledger.closedIDs()
 	if len(closed) < 2 {
 		t.Errorf("expected 2 beads closed; got %d: %v", len(closed), closed)
 	}
 
-	// QueueStore must be nil after successful drain.
 	if qs.Queue() != nil {
 		t.Error("QueueStore.Queue() is non-nil after drain; expected ClearQueue to have run")
 	}
@@ -264,9 +162,6 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	// The fake agent commits during its run rather than in the worktree factory,
-	// and the bead carries workflow:single. Both are load-bearing — see
-	// workloopFixtureAdvanceHeadHandlerArgs and stubBeadLedger.labels.
 	handlerArgs := workloopFixtureAdvanceHeadHandlerArgs(t)
 	ledger := &stubBeadLedger{labels: workloopFixtureSingleLabels}
 
@@ -300,10 +195,6 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-boiwe — per-item context injection
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestExtraContext_ItemFieldRoundTrip verifies that queue.Item.Context survives
 // a JSON marshal/unmarshal round-trip and is preserved in the queue struct.
 //
@@ -319,7 +210,6 @@ func TestExtraContext_ItemFieldRoundTrip(t *testing.T) {
 		Context: extraCtx,
 	}
 
-	// JSON round-trip.
 	data, err := json.Marshal(item)
 	if err != nil {
 		t.Fatalf("marshal queue.Item: %v", err)
@@ -380,9 +270,6 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	// The fake agent commits during its run rather than in the worktree factory,
-	// and the bead carries workflow:single. Both are load-bearing — see
-	// workloopFixtureAdvanceHeadHandlerArgs and stubBeadLedger.labels.
 	handlerArgs := workloopFixtureAdvanceHeadHandlerArgs(t)
 	ledger := &stubBeadLedger{labels: workloopFixtureSingleLabels}
 
@@ -418,15 +305,6 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-hiqrl — the tier-0 per-item queue.Item.WorkflowMode override
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// These tests were written for the --review-loop flag, which set
-// queue.Item.WorkflowMode = "review-loop". Both flag and mode are retired
-// (EM-015d), but the field they exercised — the tier-0 per-item mode override —
-// is live, so the tests carry a valid mode now instead of being deleted.
-
 // TestQueueItemWorkflowMode_Field verifies that queue.Item.WorkflowMode carries a
 // declared WorkflowMode and survives a JSON round-trip, and that the retired
 // "review-loop" value is NOT accepted as a tier-0 override (beadRunOne applies
@@ -447,18 +325,14 @@ func TestQueueItemWorkflowMode_Field(t *testing.T) {
 		t.Errorf("WorkflowMode = %q; want %q", item.WorkflowMode, "dot")
 	}
 
-	// Validate it is a recognised WorkflowMode constant.
 	if mode := core.WorkflowMode(item.WorkflowMode); !mode.Valid() {
 		t.Errorf("WorkflowMode %q is not a valid core.WorkflowMode", item.WorkflowMode)
 	}
 
-	// A queue file written before the retirement must not pass the tier-0
-	// validity gate.
 	if core.WorkflowMode(core.WorkflowModeRetiredReviewLoop).Valid() {
 		t.Error("retired review-loop is still a valid tier-0 per-item override; want rejected")
 	}
 
-	// JSON round-trip.
 	data, err := json.Marshal(item)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -514,19 +388,12 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 
 	bus := &stubEventCollector{}
 
-	// Wire both cancel funcs: the bead may succeed (drain) or fail
-	// (exit/error path). Either cancels exitCtx so the loop exits promptly.
 	exitCtx, cancelExit := context.WithCancel(context.Background())
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	// The real hookSessionStore installed by ExportedTestRuntime will wait up
-	// to stopHookGrace (3s) in WaitForOutcome. The handler exits 0; without a
-	// real verdict file the run exits via its error path and reopens
-	// the bead. Either closed or reopened is acceptable: both confirm the bead
-	// reached a terminal state via per-item-mode dispatch (hk-ngw3d).
 	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
@@ -551,19 +418,12 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 
 	awaitWorkLoopExit(t, exitCtx, loopDone, "the per-item-mode bead drained")
 
-	// Bead must be in a terminal state (closed or reopened). This ran inside the
-	// select's success case before; it belongs after the wait, because the wait
-	// now fails the test outright on every other path.
 	closed := ledger.closedIDs()
 	reopened := ledger.reopenedIDs()
 	if len(closed) == 0 && len(reopened) == 0 {
 		t.Error("bead neither closed nor reopened; expected at least one terminal transition")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Smoke: harmonik run --beads X,Y --max-concurrent 2 completes both
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSmoke_MultiBead_MaxConcurrent2_BothComplete is the smoke test from the
 // bead brief: run --beads X,Y --max-concurrent 2 and verify both items complete.
@@ -607,9 +467,6 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	// The fake agent commits during its run rather than in the worktree factory,
-	// and the bead carries workflow:single. Both are load-bearing — see
-	// workloopFixtureAdvanceHeadHandlerArgs and stubBeadLedger.labels.
 	handlerArgs := workloopFixtureAdvanceHeadHandlerArgs(t)
 	ledger := &stubBeadLedger{labels: workloopFixtureSingleLabels}
 
@@ -642,7 +499,6 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 		t.Errorf("smoke: expected 2 beads closed; got %d: %v", len(closed), closed)
 	}
 
-	// QueueStore must be nil (CompleteAndUnlink ran).
 	if qs.Queue() != nil {
 		t.Error("smoke: QueueStore.Queue() is non-nil after all-success drain")
 	}

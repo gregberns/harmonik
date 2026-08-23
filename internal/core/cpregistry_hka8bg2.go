@@ -1,27 +1,5 @@
 package core
 
-// cpregistry_hka8bg2.go — Concrete MapRegistry implementation
-//
-// Implements specs/control-points.md §6.1.7 INTERFACE Registry with the
-// name-uniqueness contract of CP-002 and the registration semantics of
-// §4.9.CP-043 through CP-046.
-//
-// # Design
-//
-// The registry is a single in-process map keyed by ControlPoint.Name (CP-043).
-// Name uniqueness (CP-002) is enforced by Register: a second registration of
-// the same name with a divergent body fails (CP-044); an identical body
-// succeeds silently (idempotent re-registration).
-//
-// Body equality (§4.9.CP-044) is computed over the canonical JSON serialisation
-// of (Kind, Trigger, Evaluator, Payload). Name, Axes, and SchemaVersion are
-// excluded from the body per the spec.
-//
-// List-returning methods sort by Name ascending (CP-046). LookupByAttachPoint
-// sorts by declaration order (registration order) per CP-007.
-//
-// Refs: hk-a8bg.2
-
 import (
 	"encoding/json"
 	"errors"
@@ -29,9 +7,6 @@ import (
 	"sort"
 )
 
-// cpBodyKey is the canonical body tuple for equality comparison per CP-044.
-// Fields: (Kind, Trigger, Evaluator, Payload). Name, Axes, and SchemaVersion
-// are intentionally excluded.
 type cpBodyKey struct {
 	Kind      Kind        `json:"kind"`
 	Trigger   Trigger     `json:"trigger"`
@@ -39,9 +14,6 @@ type cpBodyKey struct {
 	Payload   KindPayload `json:"payload"`
 }
 
-// cpRegistryEntry records a ControlPoint along with its registration order index.
-// The order index is used by LookupByAttachPoint to honour declaration order
-// per §4.1.CP-007.
 type cpRegistryEntry struct {
 	cp    ControlPoint
 	order int // registration insertion index; monotonically increasing
@@ -111,27 +83,21 @@ func NewMapRegistry() *MapRegistry {
 // Re-registration with an identical body (same name + same body) succeeds
 // silently per CP-044.
 func (r *MapRegistry) Register(cp ControlPoint) error {
-	// CP-001: structural validity.
 	if !cp.Valid() {
 		return fmt.Errorf("%w: name=%q", ErrInvalidControlPoint, cp.Name)
 	}
 
-	// CP-005 boundary-classification: Guard and Budget MUST be mechanism-tagged.
-	// Gate and Hook allow both mechanism and cognition per AllowsCognition().
 	if !cp.Kind.AllowsCognition() && cp.Evaluator.Mode == ModeTagCognition {
 		switch cp.Kind {
 		case KindGuard:
-			// CP-020: cognition-tagged Guards are forbidden.
 			return fmt.Errorf("%w: name=%q", ErrCognitionGuard, cp.Name)
 		case KindBudget:
-			// CP-005 boundary rule: cognition-tagged Budgets are forbidden.
 			return fmt.Errorf("%w: name=%q", ErrCognitionBudget, cp.Name)
 		}
 	}
 
 	existing, exists := r.entries[cp.Name]
 	if exists {
-		// CP-044: re-registration-safe on identical body; divergent body fails.
 		existingHash, err := cpCanonicalBody(existing.cp)
 		if err != nil {
 			return fmt.Errorf("cpregistry: body serialisation of existing entry %q: %w", cp.Name, err)
@@ -141,13 +107,11 @@ func (r *MapRegistry) Register(cp ControlPoint) error {
 			return fmt.Errorf("cpregistry: body serialisation of incoming entry %q: %w", cp.Name, err)
 		}
 		if string(existingHash) == string(incomingHash) {
-			// Identical body: idempotent success.
 			return nil
 		}
 		return fmt.Errorf("%w: name=%q", ErrDivergentBody, cp.Name)
 	}
 
-	// New name: stamp declaration order and register.
 	cp.DeclarationIndex = r.nextOrder
 	r.entries[cp.Name] = cpRegistryEntry{cp: cp, order: r.nextOrder}
 	r.nextOrder++
@@ -200,7 +164,6 @@ func (r *MapRegistry) LookupByAttachPoint(attachPoint AttachPoint) []ControlPoin
 			}
 		}
 	}
-	// Sort by declaration order per CP-007.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].order < entries[j].order })
 	out := make([]ControlPoint, len(entries))
 	for i, e := range entries {
@@ -221,9 +184,6 @@ func (r *MapRegistry) All() []ControlPoint {
 	return out
 }
 
-// cpCanonicalBody returns the canonical JSON serialisation of the ControlPoint
-// body tuple (Kind, Trigger, Evaluator, Payload) for body-equality per CP-044.
-// Name, Axes, and SchemaVersion are excluded.
 func cpCanonicalBody(cp ControlPoint) ([]byte, error) {
 	key := cpBodyKey{
 		Kind:      cp.Kind,

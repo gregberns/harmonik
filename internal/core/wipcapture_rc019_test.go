@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// ---- RC-019: WIPCapture type ----
-
 func TestRC019_WIPCapture_Valid_RequiresNonEmptyWorktreePath(t *testing.T) {
 	t.Parallel()
 
@@ -56,8 +54,6 @@ func TestRC019_WIPCapture_HasWIP_UntrackedFilesReturnsTrue(t *testing.T) {
 func TestRC019_WIPCapture_FileNameConstants(t *testing.T) {
 	t.Parallel()
 
-	// The canonical file names in the wip-capture/ directory must match the
-	// names documented in the spec (RC-019).
 	if WIPCaptureStatusFile == "" {
 		t.Error("RC-019: WIPCaptureStatusFile constant must be non-empty")
 	}
@@ -68,7 +64,6 @@ func TestRC019_WIPCapture_FileNameConstants(t *testing.T) {
 		t.Error("RC-019: WIPCaptureUntrackedFile constant must be non-empty")
 	}
 
-	// File names must be distinct.
 	names := []string{WIPCaptureStatusFile, WIPCaptureDiffFile, WIPCaptureUntrackedFile}
 	seen := make(map[string]bool)
 	for _, n := range names {

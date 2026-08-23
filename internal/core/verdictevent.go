@@ -91,7 +91,6 @@ func (e VerdictEvent) Valid() bool {
 		return false
 	}
 
-	// RC-022a: context non-empty iff verdict=resume-with-context.
 	contextPresent := e.Context != nil && *e.Context != ""
 	if e.Verdict == VerdictResumeWithContext && !contextPresent {
 		return false
@@ -100,7 +99,6 @@ func (e VerdictEvent) Valid() bool {
 		return false
 	}
 
-	// checkpoint_ref non-nil iff verdict=reset-to-checkpoint.
 	if e.Verdict == VerdictResetToCheckpoint && e.CheckpointRef == nil {
 		return false
 	}

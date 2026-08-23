@@ -1,16 +1,5 @@
 package projectconfig
 
-// subsystems_test.go — the subsystems: block, driven through the real
-// LoadProjectConfig edge (a .harmonik/config.yaml on disk), never through a
-// hand-built SubsystemsConfig.
-//
-// Covers the three states an operator can land in:
-//   - absent block / absent entry / absent enabled: → ENABLED (unchanged behaviour)
-//   - explicit enabled: false                      → DISABLED (subsystem is absent)
-//   - unknown subsystem name                       → FAIL LOUD (*ErrUnknownSubsystem)
-//
-// Helper prefix: subsys (implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"errors"
 	"strings"
@@ -94,7 +83,6 @@ subsystems:
 	if uerr.Name != "reconcilliation_scheduler" {
 		t.Errorf("ErrUnknownSubsystem.Name = %q; want %q", uerr.Name, "reconcilliation_scheduler")
 	}
-	// The message must name the accepted set, or the operator cannot fix the typo.
 	if !strings.Contains(uerr.Error(), string(SubsystemReconciliationScheduler)) {
 		t.Errorf("error message %q does not list the known subsystem names", uerr.Error())
 	}
@@ -123,9 +111,6 @@ subsystems:
 	if want := "subsystems.reconciliation_scheduler.enbaled"; kerr.KeyPath != want {
 		t.Errorf("ErrUnknownConfigKey.KeyPath = %q; want %q", kerr.KeyPath, want)
 	}
-	// The message must name the subsystems: block. ErrUnknownConfigKey was
-	// originally keeper-only and hardcoded "keeper:", which would send the
-	// operator to the wrong block.
 	if msg := kerr.Error(); !strings.Contains(msg, "under subsystems:") || strings.Contains(msg, "keeper") {
 		t.Errorf("error message = %q; want it to name the subsystems: block and not mention keeper", msg)
 	}

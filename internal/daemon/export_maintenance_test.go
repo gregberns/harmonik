@@ -1,11 +1,5 @@
 package daemon
 
-// export_maintenance_test.go — test-seam exports for the internal/daemon
-// periodic-maintenance loop (RT19.17 split of export_test.go): the
-// loopMaintenanceState handle, disk-check and stale-worktree-reclaim seams.
-// package daemon test file; see export_test.go header for the seam rationale.
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"
@@ -69,9 +63,6 @@ func ExportedDiskReclaimPortForTesting(deps testRuntime, interval time.Duration,
 	return port
 }
 
-// newTestDiskReclaimPort keeps broad work-loop tests independent of the host
-// filesystem. Disk-specific tests use ExportedDiskReclaimPortForTesting to
-// select their own probe result and cleanup seams.
 func newTestDiskReclaimPort(deps testRuntime) diskReclaimPort {
 	port := deps.diskReclaim()
 	port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }

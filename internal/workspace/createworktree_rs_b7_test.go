@@ -39,7 +39,6 @@ func TestRSB7_CreateWorktreeRunner(t *testing.T) {
 			t.Fatalf("RSB7: CreateWorktree: %v", err)
 		}
 
-		// After hk-eodo fix: call[0]=mkdir -p, call[1]=git worktree add.
 		if len(rr.Calls) < 2 {
 			t.Fatalf("RSB7: expected ≥2 calls (mkdir + git), got %d: %v", len(rr.Calls), rr.Calls)
 		}
@@ -48,7 +47,6 @@ func TestRSB7_CreateWorktreeRunner(t *testing.T) {
 		}
 		git := rr.Calls[1]
 
-		// Must be `git -C <repo> worktree add -b <branch> <path> <sha>`
 		if git.Name != "git" {
 			t.Errorf("RSB7: call[1] name = %q, want git", git.Name)
 		}
@@ -65,8 +63,6 @@ func TestRSB7_CreateWorktreeRunner(t *testing.T) {
 	t.Run("no-runner-default-is-local-and-creates-worktree", func(t *testing.T) {
 		t.Parallel()
 
-		// Zero-value WorktreeRootConfig (no runner set) must behave identically
-		// to passing tmux.LocalRunner{} — the worktree is actually created.
 		repo, sha := tempRepo(t)
 		runID := "019ec83c-rsb7-7001-0001-000000000003"
 
@@ -98,8 +94,6 @@ func TestRSB7_CreateWorktreeRunner(t *testing.T) {
 func TestRSB7_SSHRunnerArgvShape(t *testing.T) {
 	t.Parallel()
 
-	// Use a real temp git repo so the runner's Commands are reached.
-	// We use a bogus SHA so git fails after the mkdir succeeds — which is all we need.
 	repo, _ := tempRepo(t)
 	runID := "019ec83c-rsb7-7001-0001-000000000004"
 	branch := TaskBranchName(runID)
@@ -112,19 +106,14 @@ func TestRSB7_SSHRunnerArgvShape(t *testing.T) {
 	rr := &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			if name == "mkdir" {
-				// Run mkdir locally so it succeeds and we reach the git call.
 				return exec.CommandContext(ctx, name, args...)
 			}
-			// For git: produce the ssh Cmd shape for argv validation.
-			// We never actually run it over the network.
 			return ssh.Command(ctx, name, args...)
 		},
 	}
 
 	cfg := NoWorktreeRootOverride().WithRunner(rr)
 
-	// Bogus SHA → git worktree add (via SSH) fails, but mkdir and the first git
-	// Command are both called — which is all we need for argv validation.
 	bogus := strings.Repeat("0", 40)
 	if err := CreateWorktree(context.Background(), repo, runID, bogus, cfg); err == nil {
 		t.Fatal("RSB7/argv: CreateWorktree with a bogus SHA returned nil; expected the add to fail")
@@ -134,7 +123,6 @@ func TestRSB7_SSHRunnerArgvShape(t *testing.T) {
 		t.Fatalf("RSB7/argv: expected ≥2 calls (mkdir + git), got %d: %v", len(rr.Calls), rr.Calls)
 	}
 
-	// Call 0: mkdir -p <parentDir> — the hk-eodo fix ensures remote mkdir.
 	mkdir := rr.Calls[0]
 	if mkdir.Name != "mkdir" {
 		t.Errorf("RSB7/argv: call[0] name=%q, want mkdir", mkdir.Name)
@@ -143,10 +131,7 @@ func TestRSB7_SSHRunnerArgvShape(t *testing.T) {
 		t.Errorf("RSB7/argv: call[0] args=%v, want [-p %q]", mkdir.Args, wantParentDir)
 	}
 
-	// Call 1: git -C <repo> worktree add -b <branch> <path> <sha>
 	call := rr.Calls[1]
-	// RecordingRunner records (name, args) as passed to it — before SSHRunner
-	// wraps them.  name="git", args=["-C", repo, "worktree", "add", "-b", ...]
 	if call.Name != "git" {
 		t.Errorf("RSB7/argv: call[1] name=%q, want git", call.Name)
 	}
@@ -186,9 +171,6 @@ func TestRSB7_RemoteMkdirCreatesParentOnWorker(t *testing.T) {
 
 	var mkdirCalls []tmux.RecordingCall
 	rr := &tmux.RecordingRunner{
-		// Every command runs for real: mkdir via /bin/mkdir so the parent is
-		// created, git via the real binary (the sha is valid, so the worktree
-		// is created).
 		CmdFunc: exec.CommandContext,
 	}
 
@@ -198,7 +180,6 @@ func TestRSB7_RemoteMkdirCreatesParentOnWorker(t *testing.T) {
 		t.Fatalf("RSB7/eodo: CreateWorktree: %v", err)
 	}
 
-	// Collect mkdir calls.
 	for _, c := range rr.Calls {
 		if c.Name == "mkdir" {
 			mkdirCalls = append(mkdirCalls, c)

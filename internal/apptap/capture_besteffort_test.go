@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// besteffortErrWriter fails every Write after the first `okWrites` successful
-// ones, recording what it did receive. It models a capture sink that goes bad
-// mid-stream (full disk / slow-then-broken sink) for AIS-INV-002.
 type besteffortErrWriter struct {
 	okWrites int
 	got      bytes.Buffer
@@ -54,7 +51,6 @@ func TestBestEffortCaptureWriterDegradeDoesNotAbort(t *testing.T) {
 	if got, want := dst.String(), strings.Join(chunks, ""); got != want {
 		t.Fatalf("primary stream corrupted by capture fault: got %q want %q", got, want)
 	}
-	// Capture got the first chunk verbatim, then degraded.
 	if got := capW.got.String(); got != "first\n" {
 		t.Fatalf("capture before fault not verbatim: got %q want %q", got, "first\n")
 	}

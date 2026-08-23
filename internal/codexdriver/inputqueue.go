@@ -8,24 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// hk-160yb G3: bounded FIFO input queue in front of the resident app-server
-// client.
-//
-// The underlying handler.InputPort already enforces ONE turn in flight —
-// SubmitInput serializes on submitMu and blocks to the turn's terminal
-// (session.go). What it does NOT bound is the BACKLOG: concurrent SubmitInput
-// callers pile up as goroutines parked on submitMu, with no cap and no FIFO
-// ordering guarantee. For a persistent supervised sidecar that a resident owner
-// feeds from comms/queue wakes, that unbounded pile-up is the missing
-// backpressure the residual-gap audit flagged.
-//
-// BoundedInputQueue closes that gap: a fixed-capacity buffered channel bounds the
-// number of QUEUED submissions, a single drainer goroutine delivers them to the
-// port in strict FIFO order (one at a time, so the port's one-in-flight
-// invariant is preserved), and Enqueue past capacity returns ErrQueueFull rather
-// than growing without bound. It wraps any handler.InputPort, so it is testable
-// against a fake port with no live codex child.
-
 // ErrQueueFull is returned by Enqueue when the bounded backlog is at capacity.
 // The caller decides how to shed load (drop, retry-later, escalate) — the queue
 // never grows past its cap.
@@ -43,9 +25,6 @@ type QueuedResult struct {
 	Err error
 }
 
-// queuedItem is one buffered submission: the request, the caller's context
-// (threaded through to SubmitInput so a caller can still cancel its own park),
-// and the single-slot channel the drainer resolves.
 type queuedItem struct {
 	//nolint:containedctx // per-submission caller ctx carried through the async FIFO to SubmitInput so the caller can cancel its own park (queued-work-item pattern)
 	ctx   context.Context
@@ -91,8 +70,6 @@ func (q *BoundedInputQueue) Enqueue(ctx context.Context, req handler.InputReques
 	resCh := make(chan QueuedResult, 1)
 	item := queuedItem{ctx: ctx, req: req, resCh: resCh}
 
-	// Hold the read lock across the send so Close (write lock) cannot close
-	// q.items between the closed-check and the send — send-on-closed would panic.
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 	if q.closed {
@@ -106,15 +83,9 @@ func (q *BoundedInputQueue) Enqueue(ctx context.Context, req handler.InputReques
 	}
 }
 
-// drain is the single serialized consumer: pull FIFO, deliver to the port one at
-// a time, resolve the item's result channel. It exits when items is closed and
-// fully drained; items still buffered at Close are delivered to the port
-// normally (graceful FIFO drain), NOT rejected.
 func (q *BoundedInputQueue) drain() {
 	defer close(q.drainDone)
 	for item := range q.items {
-		// A caller that cancelled before its turn was dispatched short-circuits:
-		// resolve with its ctx error rather than opening a turn it abandoned.
 		if err := item.ctx.Err(); err != nil {
 			item.resCh <- QueuedResult{Err: err}
 			continue

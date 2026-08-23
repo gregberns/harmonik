@@ -68,7 +68,6 @@ func TestConsumerClassMarshalText(t *testing.T) {
 func TestConsumerClassUnmarshalText(t *testing.T) {
 	t.Parallel()
 
-	// hqwn65FixtureWrapper is a test-local wrapper for table-driven JSON round-trip tests.
 	type hqwn65FixtureWrapper struct {
 		Class ConsumerClass `json:"consumer_class"`
 	}

@@ -2,17 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// guardevents_hqwn59.go — event-bus payload types for §8.2.7-§8.2.8 guard-lifecycle
-// events: guard_reordered, guard_failed.
-//
-// These are DISTINCT from GuardPayload (specs/control-points.md §6.1.3), which
-// is the configuration payload embedded in a ControlPoint. The types in this
-// file are the event-bus wire payloads emitted on the cross-subsystem bus when
-// guard evaluation produces a reorder or failure outcome.
-//
-// Spec ref: specs/event-model.md §8.2.7, §8.2.8.
-// Bead refs: hk-hqwn.59.18, hk-hqwn.59.19.
-
 // GuardReorderedPayload is the typed event payload for the guard_reordered event
 // (event-model.md §8.2.7).
 //

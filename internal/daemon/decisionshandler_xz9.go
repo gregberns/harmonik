@@ -1,33 +1,5 @@
 package daemon
 
-// decisionshandler_xz9.go — DecisionsHandler interface and implementation for
-// the hitl-decisions agent-side emit ops (hitl-decisions SPEC §2, component K2,
-// bead hk-xz9):
-//
-//   - decisions-raise    → emit decision_needed, RETURN the minted decision_id
-//                          (the decision_needed event's OWN event_id — SPEC §1).
-//   - decisions-withdraw → emit decision_withdrawn(reason=self_obsoleted, by=<agent>).
-//
-// Both ops mirror the comms-send emit handler (commshandler_nbrmf.go): validate
-// the request, emit the typed event via the bus's TypedEmitter (which fsyncs
-// before returning for F-class events — the three decision_* types are F-class
-// per SPEC §6 N1 / Risk R1), and return the minted event_id.
-//
-// The methods are implemented on *commsSendHandlerImpl (the same value the
-// daemon already passes to RunSocketListener as its CommsSendHandler), following
-// the CommsPresenceHandler / CommsRecvHandler pattern — socket.go type-asserts
-// ch.(DecisionsHandler) for the decisions-* ops, so NO socket-listener signature
-// change is needed.
-//
-// The OPERATOR-side ops (decisions-list, decisions-answer — components K4) and
-// the orphan reaper (K5) are SEPARATE later beads. They will live in their own
-// files; K2 deliberately implements only the two agent-side emit ops here. The
-// client-side `wait` / `raise --wait` blocked-wait is a PURE CLIENT subscribe
-// stream (SPEC §4 N8 arm-then-check) with NO daemon op — see cmd/harmonik/decisions.go.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §2, §1, §6 N6.
-// Bead ref: hk-xz9 (component K2).
-
 import (
 	"context"
 	"encoding/json"
@@ -176,9 +148,6 @@ func (h *commsSendHandlerImpl) HandleDecisionsRaise(ctx context.Context, payload
 		return nil, fmt.Errorf("decisions-raise: emit decision_needed: %w", err)
 	}
 
-	// The decision_id IS the decision_needed event's own event_id (SPEC §1) in
-	// canonical hyphenated string form — the two terminals match on this exact
-	// string (K3 key).
 	result := DecisionsRaiseResult{DecisionID: eventID.String()}
 	resultBytes, marshalErr := json.Marshal(result)
 	if marshalErr != nil {

@@ -1,63 +1,5 @@
 package daemon_test
 
-// workloop_shutdowncompletion_test.go — what happens to a queue item whose run
-// SUCCEEDS while the daemon context is already cancelled.
-//
-// The run's terminal event is emitted inside beadRunOne. The queue write that
-// records the item's outcome happens one level up, in runDispatchedBead, AFTER
-// beadRunOne returns. Everything else the run does on the way out already
-// detaches from the cancelled context — the run branch is merged under
-// context.WithoutCancel, the bead is closed under it, and the terminal event
-// swaps a cancelled context for a live one. Only the queue write did not, and
-// the queue writer refuses a cancelled context outright.
-//
-// So a run that reached success as the daemon stopped left its work merged, its
-// bead closed, its completion announced — and its queue item still recorded as
-// dispatched. A dispatched item is never re-selected, and its group cannot reach
-// all-terminal, so that queue does not advance again inside this daemon's life.
-//
-// # Why this test drives the shutdown drain rather than racing it
-//
-// The reported reproduction is a race: the run finishes at the same instant the
-// daemon stops. A race is the wrong shape for a merge-gate test. The drain gives
-// the same ordering by construction — the handler commits real work and then
-// refuses to finish, so the run CANNOT reach its own terminal, and the only exit
-// is the drain, which merges the commit and closes the bead. The run reaches
-// success with the daemon context already cancelled every time, which is the
-// exact state the repair is about.
-//
-// # Why the queue has two groups
-//
-// A one-group, one-item queue that completes successfully is a COMPLETED queue:
-// the final-completion path unlinks the canonical file. The assertion would then
-// have to read an ABSENT file as success, and the neighbouring
-// workloop_reservationwindow_test.go calls that same disk state the operator's
-// submitted work deleted without a receipt. The second group keeps the queue
-// alive so the item's own recorded status is what this test reads.
-//
-// # Why it reads the file immediately, and does not run the next start
-//
-// assertNoStrandedDispatchedItem in workloop_reservationwindow_test.go runs a
-// fresh daemon start before it judges. That start's reconcile pass advances a
-// dispatched item whose bead is closed straight to completed — which is exactly
-// this defect's state, and exactly the masking that would let this test pass
-// against the unrepaired code. This file reads the canonical queue file itself,
-// once, as soon as the loop returns. Do not reach for that helper here.
-//
-// Mutation that must turn this red: in runDispatchedBead in scheduler.go, take
-// the detached completion context back out, so completionCtx stays the cancelled
-// daemonCtx. The item is then left dispatched.
-//
-// The sibling mutation — dropping the `runOK &&` guard so every run detaches —
-// is caught by TestWorkLoop_ARunTheShutdownCutShortIsNotRecordedAsFailed, the
-// second test in THIS file, and by nothing else. Do not read the two tests as
-// redundant. TestScenario_ConcurrentMultiQueue_N2_MidRunKill looks like the
-// guard and is not one: it asserts on events and on br's view of the bead but
-// never reads the queue file, so it stays green under that mutation, and it
-// carries //go:build scenario, so it does not exist in the default gate at all.
-// Each mutation above was measured to redden exactly one of these two tests and
-// leave the other green.
-
 import (
 	"context"
 	"os"
@@ -91,9 +33,6 @@ func TestWorkLoop_ASuccessfulRunRecordsItsOutcomeWhenTheDaemonContextIsCancelled
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
 
-	// The handler commits, announces the commit, and then refuses to finish. The
-	// cancellation therefore always lands on a run that has work worth keeping
-	// and no terminal of its own.
 	marker := filepath.Join(t.TempDir(), "commit-ready")
 	handlerScript := dotFixtureHandlerScript(t, "shutdown-completion-implementer.sh",
 		dotFixtureCommitLines(beadID)+"touch "+marker+"\nwhile :; do sleep 1; done\n")
@@ -122,9 +61,6 @@ func TestWorkLoop_ASuccessfulRunRecordsItsOutcomeWhenTheDaemonContextIsCancelled
 	}()
 	awaitLoopTeardown(t, loopDone, "shutdown-completion work loop")
 
-	// Two preconditions before the claim itself. Without them a red result here
-	// says nothing about the completion write: a run that never committed, or one
-	// that failed, has no successful outcome to record in the first place.
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("the handler never committed, so the cancellation did not land on a run holding work: %v", err)
 	}
@@ -151,18 +87,12 @@ func TestWorkLoop_ASuccessfulRunRecordsItsOutcomeWhenTheDaemonContextIsCancelled
 			beadID, got, queue.ItemStatusCompleted)
 	}
 
-	// Recording the outcome must not have resumed the queue. The exit still owes
-	// the next start a parked queue carrying the one-shot restart intent.
 	if persisted.Status != queue.QueueStatusPausedByDrain || !persisted.ResumeOnStart {
 		t.Errorf("persisted queue status = %q (resume_on_start=%v), want %q with the restart intent: recording an outcome must not cost the drain its park",
 			persisted.Status, persisted.ResumeOnStart, queue.QueueStatusPausedByDrain)
 	}
 }
 
-// shutdownCompletionQueue builds a two-group queue: one active group holding the
-// bead the run drains, and one pending successor. The successor exists only to
-// keep the queue from completing itself out of existence when the first group
-// succeeds — see the file header.
 func shutdownCompletionQueue(t *testing.T, active, successor core.BeadID) *queue.Queue {
 	t.Helper()
 	now := time.Now()
@@ -229,9 +159,6 @@ func TestWorkLoop_ARunTheShutdownCutShortIsNotRecordedAsFailed(t *testing.T) {
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
 
-	// The same handler as the sibling test WITHOUT the commit: it announces that
-	// it is running and then refuses to finish. The drain therefore finds no work
-	// to keep and takes the reopen ladder instead of the merge one.
 	marker := filepath.Join(t.TempDir(), "run-live")
 	handlerScript := dotFixtureHandlerScript(t, "shutdown-park-implementer.sh",
 		"touch "+marker+"\nwhile :; do sleep 1; done\n")
@@ -287,7 +214,5 @@ func TestWorkLoop_ARunTheShutdownCutShortIsNotRecordedAsFailed(t *testing.T) {
 		t.Fatalf("persisted item for %s = %q: the run committed nothing and closed no bead, so there was no success to record",
 			beadID, got)
 	default:
-		// Left for the next start, which reverts a dispatched item whose bead is
-		// open back to pending. That is the disposition this path owes.
 	}
 }

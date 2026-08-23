@@ -10,30 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// verdictretrycap_rc026a.go — I/O layer for the Cat 3b retry attempt counter
-// (RC-026a).
-//
-// RC-026a requires the durable attempt counter to live at
-// .harmonik/reconciliation-attempts/<target_run_id>.json, written with the
-// atomic temp+rename+fsync discipline mandated by workspace-model.md §4.7
-// WM-026.
-//
-// This file provides:
-//
-//   - WriteVerdictAttemptAtomic — write a VerdictExecutionAttemptRecord to
-//     its canonical path using WM-026 atomicity.
-//   - ReadVerdictAttempt — read and parse the record; returns (nil, nil) when
-//     absent (no previous retries recorded for this run).
-//
-// The pure logic (CheckVerdictRetryCap, VerdictRetryDecision) lives in
-// internal/core/verdictretrycap_rc026a.go; the daemon's auto-resolver calls
-// CheckVerdictRetryCap with the record returned by ReadVerdictAttempt, writes
-// the updated record via WriteVerdictAttemptAtomic, and then emits the retry
-// event.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-026a;
-// specs/workspace-model.md §4.7 WM-026 (atomic write discipline).
-
 // WriteVerdictAttemptAtomic writes record to the canonical path for targetRunID
 // within projectDir, using the WM-026 atomic-write discipline:
 //
@@ -85,7 +61,6 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 		)
 	}
 
-	// Step 4: fsync the temp file before rename so data is durable.
 	if err := f.Sync(); err != nil {
 		return withCleanupErrs(
 			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Sync (pre-rename): %w", err),
@@ -100,7 +75,6 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 		)
 	}
 
-	// Step 5: atomic rename — POSIX rename(2) is atomic within the same filesystem.
 	if err := os.Rename(tmpPath, target); err != nil {
 		return withCleanupErrs(
 			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Rename %q → %q: %w", tmpPath, target, err),
@@ -108,11 +82,6 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 		)
 	}
 
-	// Step 6: fsync the parent directory to durably record the rename.
-	// Best-effort on macOS/APFS per WM-026: APFS can reject a directory fsync,
-	// and the rename has already landed, so a Sync failure must not fail a write
-	// whose record is readable. It is carried onto the Close failure path rather
-	// than dropped, so a filesystem that fails both is not silent about either.
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Open dir %q for fsync: %w", dir, err)
@@ -128,11 +97,6 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 	return nil
 }
 
-// removeTempFile removes a temp file left behind on a write error path.
-//
-// An already-absent temp file is not a failure — the interesting case is a
-// leftover that the next O_EXCL create trips over, which is precisely the
-// symptom that discarding this error used to hide.
 func removeTempFile(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("lifecycle: remove temp file %q: %w", path, err)
@@ -140,13 +104,6 @@ func removeTempFile(path string) error {
 	return nil
 }
 
-// withCleanupErrs annotates cause with any failures reported by the cleanup
-// steps that ran on an error path (temp-file Close, temp-file Remove, …).
-//
-// cause is returned unchanged when every cleanup step succeeded, so the common
-// path preserves the original error's message and identity verbatim. When a
-// cleanup step did fail, the result is an [errors.Join] of cause first and the
-// failures after it — errors.Is/As still find every sentinel cause wraps.
 func withCleanupErrs(cause error, cleanup ...error) error {
 	joined := make([]error, 0, len(cleanup)+1)
 	joined = append(joined, cause)

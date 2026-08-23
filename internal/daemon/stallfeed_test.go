@@ -1,32 +1,5 @@
 package daemon
 
-// stallfeed_test.go — the acceptance tests for the stall feeder.
-//
-// Two protections in this tree read a signal that nothing writes.
-//
-//  1. The dashboard active-stall panel reads stall_detected. Nothing emitted
-//     it, so readActiveStalls always returned an empty set and a hung run was
-//     displayed as healthy.
-//  2. internal/runexec stepDispatchWorking turns EvNoChangeTimeout or
-//     EvHeartbeatStale into ActKillAgent. Nothing produced either event, so a
-//     hung agent was never killed.
-//
-// Both tests below drive the REAL stale-watch scan against a REAL run registry
-// and a REAL durable event log. Neither hand-writes a stall_detected record,
-// because a hand-written record makes the panel test pass while production
-// still shows a hung run as healthy — which is how the defect survived.
-//
-// # Why every test carries a healthy run
-//
-// A feeder that emits a stall for every run satisfies "the hung run is
-// reported" and is worse than no feeder at all, because it reaps working
-// agents. So each test registers TWO runs of the same shape — same registry,
-// same scan pass, same bead labels — that differ only in whether they are
-// making progress. The healthy assertion is what rejects a producer that emits
-// unconditionally.
-//
-// Helper prefix: stallFeed.
-
 import (
 	"context"
 	"encoding/json"
@@ -43,7 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// stallFeedRunID returns a UUIDv7-based RunID.
 func stallFeedRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -53,8 +25,6 @@ func stallFeedRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// stallFeedFixture is one scan-driving harness: a durable bus writing to a real
-// events.jsonl, a run registry, and the stale watcher that scans it.
 type stallFeedFixture struct {
 	jsonlPath string
 	writer    *eventbus.JSONLWriter
@@ -71,23 +41,18 @@ type stallFeedFixture struct {
 	now time.Time
 }
 
-// setNow moves the virtual clock.
 func (f *stallFeedFixture) setNow(at time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.now = at
 }
 
-// clock is the watcher's Now hook.
 func (f *stallFeedFixture) clock() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.now
 }
 
-// flush makes every emitted line readable on disk. The JSONL writer batches
-// asynchronously, so Close is the only durable barrier it offers. Call it after
-// the last emit of a test.
 func (f *stallFeedFixture) flush(t *testing.T) {
 	t.Helper()
 	if f.closed {
@@ -99,9 +64,6 @@ func (f *stallFeedFixture) flush(t *testing.T) {
 	}
 }
 
-// stallFeedNewFixture builds the harness with a virtual clock anchored at now
-// and the given absolute run-age ceiling. The clock is a var the caller advances
-// between scans.
 func stallFeedNewFixture(t *testing.T, now time.Time, runMaxAge time.Duration) *stallFeedFixture {
 	t.Helper()
 	f := &stallFeedFixture{
@@ -147,7 +109,6 @@ func stallFeedNewFixture(t *testing.T, now time.Time, runMaxAge time.Duration) *
 	return f
 }
 
-// register puts a run in the registry with the given start time.
 func (f *stallFeedFixture) register(t *testing.T, beadID string, startedAt time.Time) core.RunID {
 	t.Helper()
 	runID := stallFeedRunID(t)
@@ -159,15 +120,11 @@ func (f *stallFeedFixture) register(t *testing.T, beadID string, startedAt time.
 	return runID
 }
 
-// beat emits one run-scoped daemon heartbeat for runID, which is what a live
-// run's own launch does every five minutes while its agent is up.
 func (f *stallFeedFixture) beat(t *testing.T, runID core.RunID) {
 	t.Helper()
 	f.emit(t, runID, core.EventTypeAgentHeartbeat)
 }
 
-// emit puts one run-scoped event of the given type on the bus and waits for the
-// watcher to fold it in.
 func (f *stallFeedFixture) emit(t *testing.T, runID core.RunID, evType core.EventType) {
 	t.Helper()
 	if err := f.bus.EmitWithRunID(context.Background(), runID, evType, nil); err != nil {
@@ -176,14 +133,6 @@ func (f *stallFeedFixture) emit(t *testing.T, runID core.RunID, evType core.Even
 	f.awaitObserved(t, runID)
 }
 
-// awaitObserved blocks until the watcher has folded a beat stamped at the
-// fixture's current clock reading into runID's liveness clock.
-//
-// The bus dispatches observers off the emitting goroutine, so a beat emitted
-// immediately before a scan may not have been seen yet. Without this the
-// healthy control run looks silent for its whole life whenever the race lands
-// the wrong way, and the test that guards against reaping a working agent
-// becomes the flakiest test in the file.
 func (f *stallFeedFixture) awaitObserved(t *testing.T, runID core.RunID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -202,8 +151,6 @@ func (f *stallFeedFixture) awaitObserved(t *testing.T, runID core.RunID) {
 	}
 }
 
-// stalls reads the dashboard's active-stall panel over the same durable log the
-// daemon writes, for the given active runs.
 func (f *stallFeedFixture) stalls(t *testing.T, active ...core.RunID) []DashStall {
 	t.Helper()
 	f.flush(t)
@@ -226,13 +173,9 @@ func TestStallFeeder_AHungRunShowsAsHungOnTheDashboardAndAHealthyOneDoesNot(t *t
 	start := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	f := stallFeedNewFixture(t, start, 24*time.Hour)
 
-	// Both runs started at the same instant and are the same shape. The only
-	// difference is what happens to them over the next three hours.
 	hung := f.register(t, "hk-hung", start)
 	healthy := f.register(t, "hk-healthy", start)
 
-	// Three hours pass. The healthy run is still beating; the hung one went
-	// silent right after it started.
 	for elapsed := 5 * time.Minute; elapsed <= 3*time.Hour; elapsed += 5 * time.Minute {
 		f.setNow(start.Add(elapsed))
 		f.beat(t, healthy)
@@ -283,7 +226,6 @@ func TestStallFeeder_TheAgeBackstopFiresOnlyPastTheCeiling(t *testing.T) {
 	overBudget := f.register(t, "hk-over", start)
 	inBudget := f.register(t, "hk-inside", start.Add(2*time.Hour))
 
-	// Both beat all the way through, so neither can trip the silence signature.
 	for elapsed := 5 * time.Minute; elapsed <= 3*time.Hour; elapsed += 5 * time.Minute {
 		f.setNow(start.Add(elapsed))
 		f.beat(t, overBudget)
@@ -361,8 +303,6 @@ func TestStallFeeder_AVerdictThatNeverFinalizesIsReported(t *testing.T) {
 	f.setNow(start.Add(20 * time.Minute))
 	f.emit(t, wedged, core.EventTypeReviewerVerdict)
 
-	// Twenty more minutes of beats, so the run is demonstrably ALIVE and only
-	// the review-stall signature can explain a report.
 	for elapsed := 25 * time.Minute; elapsed <= 40*time.Minute; elapsed += 5 * time.Minute {
 		f.setNow(start.Add(elapsed))
 		f.beat(t, wedged)
@@ -405,8 +345,6 @@ func TestStallFeeder_AReworkingRunIsNotAReviewStall(t *testing.T) {
 	f.setNow(start.Add(20 * time.Minute))
 	f.emit(t, reworking, core.EventTypeReviewerVerdict)
 
-	// The request-changes back-edge: the implementer is launched again, and then
-	// works for well over the review-finalize window.
 	f.setNow(start.Add(21 * time.Minute))
 	f.emit(t, reworking, core.EventTypeLaunchInitiated)
 	for elapsed := 26 * time.Minute; elapsed <= 60*time.Minute; elapsed += 5 * time.Minute {
@@ -438,13 +376,11 @@ func TestStallFeeder_ALaterNodeCanStillBeReported(t *testing.T) {
 	f := stallFeedNewFixture(t, start, 24*time.Hour)
 	runID := f.register(t, "hk-graph", start)
 
-	// Node one goes silent and is reported.
 	f.setNow(start.Add(time.Minute))
 	f.emit(t, runID, core.EventTypeLaunchInitiated)
 	f.setNow(start.Add(time.Hour))
 	f.watcher.scan(context.Background())
 
-	// Node two starts, goes silent in its turn, and must be reported again.
 	f.setNow(start.Add(time.Hour + time.Minute))
 	f.emit(t, runID, core.EventTypeLaunchInitiated)
 	f.setNow(start.Add(2 * time.Hour))
@@ -480,7 +416,6 @@ func TestStallFeeder_TheWatchersOwnAlarmIsNotASignOfLife(t *testing.T) {
 
 	f.setNow(start.Add(3 * time.Hour))
 
-	// An alarm about this run, landing before the detector runs.
 	if err := f.bus.EmitWithRunID(context.Background(), hung, core.EventTypeRunStale, nil); err != nil {
 		t.Fatalf("emit run_stale: %v", err)
 	}

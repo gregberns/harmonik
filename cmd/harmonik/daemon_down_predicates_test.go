@@ -1,29 +1,5 @@
 package main
 
-// daemon_down_predicates_test.go — table-driven coverage for every "is the
-// daemon down?" predicate family in package main.
-//
-// cmd/harmonik carries FOUR independent implementations of the same question
-// (run_via_daemon.go, sleepwake.go, comms.go, confirm_verdict.go), each feeding
-// the same operator-visible decision: exit 17 "daemon not running" versus a
-// hard error. They are duplicated, so they can — and did — drift: two of them
-// matched on err.Error() substrings until this lane converted them to error
-// identity.
-//
-// These tests pin the shared contract across all four so a future edit to one
-// cannot silently disagree with the others:
-//
-//	absent(ENOENT dial)      == true      for every family
-//	absent(ECONNREFUSED)     == false     for every family
-//	refused(ECONNREFUSED)    == true      for every family
-//	refused(ENOENT dial)     == false     for every family
-//	neither predicate fires on an unrelated error whose *message text*
-//	contains "no such file or directory" or "connection refused"
-//
-// That last case is the regression that matters: under substring matching an
-// error merely quoting those words mapped to "daemon is down", which tells the
-// operator to start a daemon that is already running.
-
 import (
 	"errors"
 	"fmt"
@@ -33,9 +9,6 @@ import (
 	"testing"
 )
 
-// dialErr builds the *net.OpError chain net.Dial returns for a failed
-// unix-socket connect: errno wrapped in *os.SyscallError wrapped in
-// *net.OpError.
 func dialErr(errno syscall.Errno) error {
 	return &net.OpError{
 		Op:   "dial",
@@ -45,7 +18,6 @@ func dialErr(errno syscall.Errno) error {
 	}
 }
 
-// daemonDownFamily names one package-main implementation of the pair.
 type daemonDownFamily struct {
 	name    string
 	absent  func(error) bool

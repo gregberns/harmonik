@@ -8,13 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// versionNegoFixture — per-bead helper prefix for test helpers in this file
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.10).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-009 — HandlerCapabilitiesTimeout value
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestVersionNego_HandlerCapabilitiesTimeoutValue verifies that
 // HandlerCapabilitiesTimeout equals 5 seconds as required by
 // specs/handler-contract.md §7.2 and §8.7.
@@ -40,10 +33,6 @@ func TestVersionNego_HandlerCapabilitiesTimeoutPositive(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-009 — HandlerCapabilitiesMsg type field
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestVersionNego_HandlerCapabilitiesMsgTypeField verifies that the Type field
 // of HandlerCapabilitiesMsg matches ProgressMsgTypeHandlerCapabilities.
 //
@@ -62,10 +51,6 @@ func TestVersionNego_HandlerCapabilitiesMsgTypeField(t *testing.T) {
 			msg.Type, handlercontract.ProgressMsgTypeHandlerCapabilities)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-009 — HandlerCapabilitiesMsg JSON round-trip
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestVersionNego_HandlerCapabilitiesMsgRoundTrip verifies that
 // HandlerCapabilitiesMsg encodes and decodes its fields faithfully.
@@ -145,15 +130,10 @@ func TestVersionNego_HandlerCapabilitiesMsgEmptySupportedVersions(t *testing.T) 
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// Length 0 is valid at the struct level; watcher classifies it as failure.
 	if len(got.SupportedVersions) != 0 {
 		t.Errorf("SupportedVersions: got len %d, want 0", len(got.SupportedVersions))
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-009 — VersionSelectedControlMsgType value
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestVersionNego_VersionSelectedControlMsgTypeValue verifies the literal string
 // value of VersionSelectedControlMsgType matches the spec's control message

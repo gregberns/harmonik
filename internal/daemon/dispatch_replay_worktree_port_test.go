@@ -297,20 +297,6 @@ func TestDispatchWorktreeObserverResolverRejectsUnsupportedTransportBeforeRunner
 	}
 }
 
-// worktreePortWorkers returns the trusted worker configuration and the process
-// registry the daemon builds from it.
-//
-// It takes ONE worker, not a list, because workers.NewRegistry keeps one:
-// workers.PrimaryWorkerIndex returns index 0 or -1, so a second worker in the
-// configuration would be dropped without a word. Give the helper a list and the
-// next writer learns that only after a test asserts on a route the registry
-// never held.
-//
-// The helper overwrites Enabled and MaxSlots. The resolver takes a slot before
-// it hands out a runner, and workers.Registry.AcquireBoundWorker returns no
-// worker and no error when the worker is disabled or has no slot. A caller that
-// wants a disabled worker or a full registry is asking a different question and
-// must build the configuration itself.
 func worktreePortWorkers(worker workers.Worker) (workers.Config, *workers.Registry) {
 	worker.Enabled, worker.MaxSlots = true, 1
 	cfg := workers.Config{Workers: []workers.Worker{worker}}

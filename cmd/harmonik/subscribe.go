@@ -1,38 +1,5 @@
 package main
 
-// subscribe.go — `harmonik subscribe` CLI subcommand (hk-6ynv4).
-//
-// Opens the daemon's Unix-domain socket, sends a single "subscribe" JSON
-// request, and copies the NDJSON stream to stdout until EOF or signal.
-// Replaces the brittle "tail .harmonik/events/events.jsonl" pattern with a
-// first-class subscriber interface (operator-nfr.md §4.9 ON-055).
-//
-// Flag reference:
-//
-//	--types t1,t2,...      Comma-separated event-type filter (default: all).
-//	                        An unknown type is refused before the dial — see
-//	                        subscribetypes.go for why silence is not an option.
-//	--list-types           Print every accepted --types value and exit
-//	--heartbeat <dur>      Idle heartbeat cadence (default 60s; clamped 10s..600s)
-//	--since-event-id <id>  Resume cursor: replay events strictly after this event_id before delivering live stream
-//	--follow               Auto-reconnect on daemon-restart/EOF (hk-5hs5b); resumes from last cursor
-//	--to <name>            Agent-message addressing filter: only deliver agent_message events addressed to <name> or "*"
-//	--from <name>          Agent-message addressing filter: only deliver agent_message events sent by <name>
-//	--topic <topic>        Agent-message addressing filter: only deliver agent_message events with matching topic
-//	--socket <path>        Override socket path (default: <project>/.harmonik/daemon.sock)
-//	--project <dir>        Project directory (default: cwd)
-//	--heartbeat-file <path> With --follow: touch this file's mtime on every decoded
-//	                        line (events AND idle heartbeats), so an external health
-//	                        checker can tell the stream is alive without depending on
-//	                        whether THIS process ever emits output of its own (hk-q6yrw).
-//
-// Exit codes:
-//
-//	0   Stream closed cleanly (EOF from daemon, signal)
-//	1   Argument error, write to stdout failed, or the daemon refused the
-//	    subscription (it is up and declined — see subscriberefusal.go)
-//	17  Daemon socket missing or ECONNREFUSED
-
 import (
 	"bufio"
 	"context"
@@ -49,16 +16,11 @@ import (
 	"time"
 )
 
-// subscribeFollowReconnectInitialBackoff / Max mirror the comms-recv follow
-// constants (hk-5hs5b): start at 1 s, double up to 10 s so an agent is never
-// more than ~10 s away from picking up the live stream after a daemon revive.
 const (
 	subscribeFollowReconnectInitialBackoff = time.Second
 	subscribeFollowReconnectMaxBackoff     = 10 * time.Second
 )
 
-// runSubscribeSubcommand implements `harmonik subscribe [flags]`.
-// subArgs is os.Args[2:].
 func runSubscribeSubcommand(subArgs []string) int {
 	typesFlag := ""
 	heartbeatFlag := 60 * time.Second
@@ -139,16 +101,13 @@ func runSubscribeSubcommand(subArgs []string) int {
 				fmt.Println(t)
 			}
 			return 0
-		// Accept --json as a no-op alias (output is already NDJSON).
 		case arg == "--json":
-			// no-op
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik subscribe: unknown argument %q\n", arg)
 			return 1
 		}
 	}
 
-	// Resolve socket path.
 	sockPath := socketFlag
 	if sockPath == "" {
 		projectDir := projectFlag
@@ -168,7 +127,6 @@ func runSubscribeSubcommand(subArgs []string) int {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
 	}
 
-	// Parse types list.
 	var types []string
 	if typesFlag != "" {
 		for _, t := range strings.Split(typesFlag, ",") {
@@ -179,18 +137,11 @@ func runSubscribeSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Refuse a filter that can never match. A --types value that is not an
-	// event type produces a stream that heartbeats on cadence and delivers
-	// nothing, which the observer reads as "the work is still running"
-	// (hk-subscribe-accepts-unknown-type-rd07b). Check it here, before the
-	// dial, so the refusal does not depend on a running daemon and both the
-	// follow and the non-follow path are covered.
 	if err := validateSubscribeTypes(types); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: %v\n", err)
 		return 1
 	}
 
-	// Build the base request body (without since_event_id, which may advance on reconnect).
 	reqBodyBase := map[string]any{
 		"op":                "subscribe",
 		"heartbeat_seconds": int(heartbeatFlag.Seconds()),
@@ -212,7 +163,6 @@ func runSubscribeSubcommand(subArgs []string) int {
 		return runSubscribeFollowIO(context.Background(), reqBodyBase, sockPath, sinceFlag, os.Stdout, heartbeatFileFlag)
 	}
 
-	// Non-follow: single connection, stream to stdout until EOF or signal.
 	if sinceFlag != "" {
 		reqBodyBase["since_event_id"] = sinceFlag
 	}
@@ -222,16 +172,10 @@ func runSubscribeSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Dial.
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelDial()
 	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	if err != nil {
-		// Distinguish "socket missing" / ECONNREFUSED from other errors.
-		// Use the shared daemon-down predicates: net.Dial to a missing unix
-		// socket returns *net.OpError wrapping *os.SyscallError (errno ENOENT on
-		// Linux, EINVAL on macOS), which an *os.PathError type-assert never
-		// matches — that was the hk-y49eu bug that leaked exit 1.
 		if commsIsSocketAbsent(err) || commsIsConnRefused(err) {
 			fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon not running (socket %s missing or refused)\n", sockPath)
 			return 17
@@ -241,13 +185,11 @@ func runSubscribeSubcommand(subArgs []string) int {
 	}
 	defer func() { closeSubscribeConn(conn) }()
 
-	// Send the subscribe request as a single JSON object.
 	if _, err := conn.Write(reqBytes); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: write request: %v\n", err)
 		return 1
 	}
 
-	// On signal, close conn so io.Copy returns and we exit cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -255,16 +197,6 @@ func runSubscribeSubcommand(subArgs []string) int {
 		closeSubscribeConn(conn)
 	}()
 
-	// Inspect the FIRST line before forwarding anything. A refused subscription
-	// is a single SocketResponse object with no "type", so a plain copy would
-	// put it on stdout as though it were an event and exit 0 — every consumer
-	// folding this stream then reads a refusal as "no events" (hk-1dwk2).
-	// Everything after that first line is forwarded verbatim, as before.
-	//
-	// Checking ONLY the first line is sufficient because the daemon writes a
-	// refusal in place of the stream, never in the middle of one — a refused
-	// subscribe is answered and closed before any event is sent. If a
-	// mid-stream error line is ever added, this check must move into the copy.
 	buffered := bufio.NewReader(conn)
 	first, readErr := buffered.ReadBytes('\n')
 	if reason, refused := subscribeRefusalReason(first); refused {
@@ -278,8 +210,6 @@ func runSubscribeSubcommand(subArgs []string) int {
 		}
 	}
 	if readErr != nil {
-		// A stream that ends on its first line is a clean, empty finish; the
-		// error conditions below are the same set the copy applies.
 		if !errors.Is(readErr, io.EOF) && !strings.Contains(readErr.Error(), "use of closed") {
 			fmt.Fprintf(os.Stderr, "harmonik subscribe: stream read: %v\n", readErr)
 			return 1
@@ -287,9 +217,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 		return 0
 	}
 
-	// Copy the rest of the NDJSON stream to stdout until EOF.
 	if _, err := io.Copy(os.Stdout, buffered); err != nil {
-		// EOF and "use of closed connection" are clean-exit conditions.
 		if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "use of closed") {
 			fmt.Fprintf(os.Stderr, "harmonik subscribe: stream copy: %v\n", err)
 			return 1
@@ -298,33 +226,10 @@ func runSubscribeSubcommand(subArgs []string) int {
 	return 0
 }
 
-// runSubscribeFollowIO is the testable core of `harmonik subscribe --follow`
-// (hk-5hs5b). It streams events to w, auto-reconnecting on daemon-restart or
-// EOF with exponential backoff (1 s → 2 s → … → 10 s). It resumes from the
-// last seen event_id so no events are missed or duplicated across reconnects.
-//
-// Reconnect behaviour mirrors runCommsRecvFollowIO:
-//   - First dial failure (socket absent / ECONNREFUSED) → return 17.
-//   - Subsequent dial failures → wait backoff, retry (daemon is restarting).
-//   - Connection drop (EOF / "use of closed") → wait backoff, reconnect.
-//   - SIGINT / SIGTERM → exit 0.
-//
-// Watermark: lastSeen advances from event_id on each received event and from
-// heartbeat.last_event_id (EV-037a) so reconnects in quiet periods do not
-// replay events already delivered.
-// heartbeatFilePath, when non-empty, is touched (mtime updated) on every
-// decoded line — events AND idle heartbeats alike — so an external health
-// checker (ops-monitor) can distinguish "stream is alive but nothing to
-// escalate" from "stream is dead" without relying on this process's own
-// output (hk-q6yrw: a healthy idle watch was mis-read as stalled because the
-// prior liveness proxy only tracked messages THIS process chose to send).
 func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer, heartbeatFilePath string) int {
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// lastSeen is the watermark: highest event_id delivered so far. It is
-	// forwarded as since_event_id on every reconnect so the daemon replays
-	// only events strictly after the last delivered one.
 	lastSeen := sinceEventID
 	backoff := subscribeFollowReconnectInitialBackoff
 	firstDial := true
@@ -334,7 +239,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			return 0
 		}
 
-		// Build subscribe request anchored at lastSeen.
 		req := make(map[string]any, len(reqBodyBase)+1)
 		for k, v := range reqBodyBase {
 			req[k] = v
@@ -348,7 +252,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			return 1
 		}
 
-		// Dial — use sigCtx so the dial itself is cancelled on signal.
 		dialCtx, cancelDial := context.WithTimeout(sigCtx, 5*time.Second)
 		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 		cancelDial()
@@ -381,7 +284,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			return 1
 		}
 
-		// Successful connection — reset backoff.
 		backoff = subscribeFollowReconnectInitialBackoff
 		firstDial = false
 
@@ -391,7 +293,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			return 1
 		}
 
-		// Close conn on signal so the decode loop exits cleanly.
 		connCloseOnce := make(chan struct{})
 		go func() {
 			select {
@@ -401,9 +302,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			}
 		}()
 
-		// Stream events: decode each as a raw JSON message (preserving bytes
-		// for forwarding), extract event_id / heartbeat watermark fields, then
-		// write the raw JSON line to w.
 		reconnect := false
 		dec := json.NewDecoder(conn)
 		for {
@@ -434,12 +332,8 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 				return 1
 			}
 
-			// hk-q6yrw: touch the heartbeat file for every decoded line,
-			// including idle heartbeats — this is stream liveness, not
-			// activity, so it must not depend on the line's contents.
 			touchSubscribeHeartbeatFile(heartbeatFilePath)
 
-			// Extract watermark fields without re-marshaling the full event.
 			var env struct {
 				Type        string `json:"type"`
 				EventID     string `json:"event_id"`
@@ -450,9 +344,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			}
 			_ = json.Unmarshal(rawMsg, &env) //nolint:errcheck // envelope extraction is best-effort — a line that does not fit the envelope is still forwarded verbatim
 
-			// hk-62r8w: SocketResponse error — server rejected the subscribe request
-			// permanently. Exit with error instead of forwarding the rejection to the
-			// writer and reconnecting in an ~1s loop.
 			if subscribeRefused(env.Ok) {
 				close(connCloseOnce)
 				closeSubscribeConn(conn)
@@ -460,8 +351,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 				return 1
 			}
 
-			// EV-037a: advance watermark from heartbeat.last_event_id so reconnects
-			// in quiet periods do not re-replay already-delivered events.
 			if env.Type == "heartbeat" && env.LastEventID != "" {
 				if lastSeen == "" || env.LastEventID > lastSeen {
 					lastSeen = env.LastEventID
@@ -470,9 +359,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 				lastSeen = env.EventID
 			}
 
-			// Forward the raw event line to the caller's writer.
 			if _, writeErr := fmt.Fprintln(w, string(rawMsg)); writeErr != nil {
-				// Writer closed (e.g. pipe broken) — exit cleanly.
 				close(connCloseOnce)
 				closeSubscribeConn(conn)
 				return 0
@@ -485,9 +372,6 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 	}
 }
 
-// touchSubscribeHeartbeatFile best-effort-updates path's mtime (creating it
-// and any parent directory if needed). Errors are swallowed: the heartbeat
-// file is an observability aid, never allowed to interrupt the stream.
 func touchSubscribeHeartbeatFile(path string) {
 	if path == "" {
 		return
@@ -511,8 +395,6 @@ func touchSubscribeHeartbeatFile(path string) {
 	}
 }
 
-// closeSubscribeConn reports unexpected close failures while allowing callers
-// that are already handling a stream shutdown to keep their control flow.
 func closeSubscribeConn(conn net.Conn) {
 	if err := conn.Close(); err != nil && !strings.Contains(err.Error(), "use of closed") {
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: close connection: %v\n", err)

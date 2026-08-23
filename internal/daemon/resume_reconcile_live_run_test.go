@@ -1,26 +1,5 @@
 package daemon
 
-// resume_reconcile_live_run_test.go — the resume reconcile has three passes that
-// reset a bead, and all three have to agree about what "live" means.
-//
-// A run that outlives the daemon leaves a shape the reconcile reads as damage:
-// a run_started in the durable log and no terminal event after it. That is what
-// an orphan of a crash looks like, and it is also what a run that is STILL GOING
-// looks like, because a run that has not ended has not emitted its ending.
-//
-// The registry is the only thing that tells the two apart. The boot lists it,
-// hands the reconcile the set of beads with a live run on them, and every pass
-// that resets a bead has to consult that set. Two of the three did. The primary
-// loop — the one that walks run_started without a terminal event, which is the
-// one a surviving run always lands in — did not, so it reset the bead of an
-// agent that was still working it whatever the registry held.
-//
-// Helper prefix: liveResume.
-//
-// The ledger here is noWriterLedger from run_registry_has_no_writer_test.go: it
-// records every reset and answers every status query with in_progress, which is
-// what a bead has while an agent works it.
-
 import (
 	"context"
 	"path/filepath"
@@ -32,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// liveResumeLog writes one run_started per (runID, beadID) into a fresh event
-// log and returns its path. No terminal event follows any of them, which is the
-// shape the primary loop reads as an orphan.
 func liveResumeLog(t *testing.T, runs map[core.RunID]core.BeadID) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "events.jsonl")
@@ -88,8 +64,6 @@ func TestResumeReconcile_ThePrimaryLoopLeavesABeadWithALiveRunAlone(t *testing.T
 	})
 
 	ledger := &noWriterLedger{}
-	// What the boot reads out of .harmonik/runs/ and hands down: the beads with a
-	// run this daemon did not start and did not kill.
 	liveRunBeadIDs := map[core.BeadID]struct{}{liveBead: {}}
 
 	reconciled := reconcileOrphanedRunsOnResume(

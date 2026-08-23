@@ -8,15 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// retryRedispatchFixtureRunID allocates a fresh RunID for retry-counter tests.
-// Helper prefix: retryRedispatch per implementer-protocol.md (bead hk-b3f.62).
 func retryRedispatchFixtureRunID() RunID {
 	return RunID(uuid.Must(uuid.NewV7()))
 }
 
-// retryRedispatchFixtureTransition builds a minimal valid Transition for use in
-// retry-counter reconciliation tests. outcomeStatus controls which status is
-// recorded; only RETRY transitions are counted by ReconcileFromTransitions.
 func retryRedispatchFixtureTransition(runID RunID, nodeID NodeID, outcomeStatus OutcomeStatus) Transition {
 	now := time.Now()
 	fromState := State{
@@ -55,8 +50,6 @@ func retryRedispatchFixtureTransition(runID RunID, nodeID NodeID, outcomeStatus 
 	}
 }
 
-// --- Basic increment / get ---
-
 // TestRetryCounterEM046b_IncrementGet verifies that a fresh counter starts at
 // zero and each Increment call returns the incremented value, per EM-046b.
 func TestRetryCounterEM046b_IncrementGet(t *testing.T) {
@@ -90,8 +83,6 @@ func TestRetryCounterEM046b_IncrementGet(t *testing.T) {
 	}
 }
 
-// --- Per-run isolation ---
-
 // TestRetryCounterEM046b_PerRunIsolation verifies that counters for different
 // run_ids are independent: incrementing a node in run-A does not affect the
 // counter for the same node in run-B. Spec reference: EM-046b.
@@ -116,8 +107,6 @@ func TestRetryCounterEM046b_PerRunIsolation(t *testing.T) {
 		t.Errorf("runA counter = %d, want 3", got)
 	}
 }
-
-// --- Per-node isolation within a run ---
 
 // TestRetryCounterEM046b_PerNodeIsolation verifies that counters for different
 // nodes within the same run are independent per EM-046b (attempt count is
@@ -144,8 +133,6 @@ func TestRetryCounterEM046b_PerNodeIsolation(t *testing.T) {
 	}
 }
 
-// --- Cap-reached → ErrRetryCapExhausted → FailureClassTransient ---
-
 // TestRetryCounterEM046b_CapReached verifies that Increment returns an error
 // wrapping ErrRetryCapExhausted when the retry count reaches the cap, and that
 // the counter is NOT incremented beyond the cap. On cap exhaustion the failure
@@ -169,7 +156,6 @@ func TestRetryCounterEM046b_CapReached(t *testing.T) {
 		}
 	}
 
-	// Next increment must fail with ErrRetryCapExhausted.
 	n, err := rc.Increment(runID, nodeID, &retryCap)
 	if err == nil {
 		t.Fatal("Increment at cap returned nil error, want ErrRetryCapExhausted")
@@ -177,7 +163,6 @@ func TestRetryCounterEM046b_CapReached(t *testing.T) {
 	if !errors.Is(err, ErrRetryCapExhausted) {
 		t.Errorf("Increment at cap returned %v, want error wrapping ErrRetryCapExhausted", err)
 	}
-	// Counter must not have advanced.
 	wantCap := uint64(retryCap)
 	if n != wantCap {
 		t.Errorf("counter returned alongside ErrRetryCapExhausted = %d, want %d (counter must not advance past cap)", n, wantCap)
@@ -211,8 +196,6 @@ func TestRetryCounterEM046b_CapOne(t *testing.T) {
 	}
 }
 
-// --- Reset ---
-
 // TestRetryCounterEM046b_Reset verifies that Reset clears all counters for the
 // target run and does not affect counters for other runs.
 func TestRetryCounterEM046b_Reset(t *testing.T) {
@@ -241,8 +224,6 @@ func TestRetryCounterEM046b_Reset(t *testing.T) {
 		t.Errorf("after Reset(runA), runB counter = %d, want 2 (must be unaffected)", got)
 	}
 }
-
-// --- Recovery from transition slice ---
 
 // TestRetryCounterEM046b_ReconcileFromTransitions verifies that
 // ReconcileFromTransitions counts only RETRY-status transitions and derives the
@@ -342,14 +323,12 @@ func TestRetryCounterEM046b_ReconcileReplacesExistingInMemory(t *testing.T) {
 	runID := retryRedispatchFixtureRunID()
 	nodeID := NodeID("node-m")
 
-	// Pre-populate in-memory counter with a stale value.
 	for range 5 {
 		if _, err := rc.Increment(runID, nodeID, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Reconcile with a smaller authoritative count.
 	transitions := []Transition{
 		retryRedispatchFixtureTransition(runID, nodeID, OutcomeStatusRetry),
 		retryRedispatchFixtureTransition(runID, nodeID, OutcomeStatusRetry),
@@ -368,12 +347,10 @@ func TestRetryCounterEM046b_ReconcileReplacesExistingInMemory(t *testing.T) {
 func TestRetryCounterEM046b_ErrSentinelFailureClassTransient(t *testing.T) {
 	t.Parallel()
 
-	// The sentinel must be non-nil.
 	if ErrRetryCapExhausted == nil {
 		t.Fatal("ErrRetryCapExhausted is nil")
 	}
 
-	// Verify the sentinel wraps the transient failure class string.
 	rc := NewRetryCounter()
 	runID := retryRedispatchFixtureRunID()
 	nodeID := NodeID("node-cap")

@@ -1,8 +1,5 @@
 package main
 
-// eval_guardrails_lygpp_test.go
-// Tests for WS3e guardrail feeders (hk-eval-prog-quality-guardrails-lygpp).
-
 import (
 	"os"
 	"os/exec"
@@ -78,8 +75,6 @@ func TestEvalDiffTouchesTestFile_False(t *testing.T) {
 }
 
 func TestEvalDiffTouchesTestFile_AddedFileFalse(t *testing.T) {
-	// A net-new test file (new file mode) is a legitimate addition, not the
-	// disallowed edit/delete of a shipped test, so G5 must not flag it.
 	diff := `diff --git a/lru.go b/lru.go
 +++ b/lru.go
 +func Foo() {}
@@ -97,8 +92,6 @@ index 0000000..abc1234
 }
 
 func TestEvalDiffTouchesTestFile_AddedPlusModified(t *testing.T) {
-	// A net-new test file alongside an edit to a shipped test still flags:
-	// the shipped-test edit is the disallowed touch.
 	diff := `diff --git a/new_test.go b/new_test.go
 new file mode 100644
 --- /dev/null

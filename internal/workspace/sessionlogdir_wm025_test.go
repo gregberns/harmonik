@@ -24,21 +24,16 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0025"
 	sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000002501"
 
-	// Construct the canonical worktree path per WM-002.
-	// No real git worktree add needed — these are filesystem-shape tests.
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 		t.Fatalf("MkdirAll worktree: %v", err)
 	}
 
-	// Simulate the workspace manager pre-creating the session-log directory
-	// before the handler launches.
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
-	// Assert: canonical path exists and is a directory.
 	info, err := os.Stat(sessionDir)
 	if err != nil {
 		t.Fatalf("WM-025: session-log directory missing: %v", err)
@@ -47,8 +42,6 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 		t.Errorf("WM-025: %q exists but is not a directory", sessionDir)
 	}
 
-	// Assert: the path follows the exact canonical pattern
-	// ${workspace_path}/.harmonik/sessions/${session_id}/
 	wantDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
 	if sessionDir != wantDir {
 		t.Errorf("WM-025: session-log dir path = %q, want %q", sessionDir, wantDir)
@@ -57,8 +50,6 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 	t.Run("multiple-sessions-no-collision", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-025: session-log directories for distinct sessions within a workspace
-		// never collide because session_id is unique per launch.
 		sessionID2 := "sess-0196a1b2-c3d4-7ef0-8a1b-000000002502"
 		sessionDir2 := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID2)
 		if err := os.MkdirAll(sessionDir2, 0o700); err != nil {
@@ -69,7 +60,6 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 			t.Errorf("WM-025: distinct session IDs produced the same directory path %q", sessionDir)
 		}
 
-		// Both must exist independently.
 		for _, dir := range []string{sessionDir, sessionDir2} {
 			if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 				t.Errorf("WM-025: session dir %q not present or not a directory", dir)

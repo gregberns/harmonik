@@ -6,10 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// checkpointFixtureValid returns a fully-populated Checkpoint with all required
-// fields non-zero, BeadID set to a non-nil non-empty value, and
-// TransitionRecordPath set to the canonical EM-018 path matching RunID and
-// TransitionID (hk-b3f.19-impl).
 func checkpointFixtureValid(t *testing.T) Checkpoint {
 	t.Helper()
 
@@ -114,7 +110,6 @@ func TestCheckpointValid_PathMismatchRunID(t *testing.T) {
 	t.Parallel()
 
 	c := checkpointFixtureValid(t)
-	// Replace run_id in the path with a different UUID while keeping transition_id correct.
 	otherRunID := RunID(uuid.Must(uuid.NewV7()))
 	c.TransitionRecordPath = TransitionRecordPath(otherRunID, c.TransitionID)
 	if c.Valid() {
@@ -129,7 +124,6 @@ func TestCheckpointValid_PathMismatchTransitionID(t *testing.T) {
 	t.Parallel()
 
 	c := checkpointFixtureValid(t)
-	// Replace transition_id in the path with a different UUID while keeping run_id correct.
 	otherTransitionID := TransitionID(uuid.Must(uuid.NewV7()))
 	c.TransitionRecordPath = TransitionRecordPath(c.RunID, otherTransitionID)
 	if c.Valid() {

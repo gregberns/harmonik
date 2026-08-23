@@ -1,12 +1,5 @@
 package keeper_test
 
-// watcher_warn_only_test.go — tests for WatcherConfig.WarnOnly (hk-yfcc).
-//
-// WarnOnly=true restricts the keeper to warn-only mode: warn events are emitted
-// and the wrap-up advisory is injected into the pane, but neither maybeRespawn
-// nor maybeLivePaneRecover ever fires. This is the correct mode for crew-session
-// keepers where the captain decides when to restart a crew.
-
 import (
 	"context"
 	"sync"
@@ -17,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// warnOnlyRespawnRecorder is a thread-safe spy for the respawn path in
-// warn-only tests. It records calls so tests can assert zero invocations.
 type warnOnlyRespawnRecorder struct {
 	mu    sync.Mutex
 	calls int
@@ -47,13 +38,6 @@ func TestWatcher_WarnOnly_EmitsWarnButNoRespawn(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "crew-warn-only-respawn-test"
 
-	// Write a gauge above the warn threshold (pct ≥ 85 > WarnPct 80). The gauge
-	// is written ONCE and never refreshed. With Staleness=40ms the early ticks
-	// see a FRESH gauge (warn crosses + fires) and the later ticks see it as
-	// STALE — and a stale gauge + idle pane + non-empty RespawnCmd makes the
-	// respawn path FULLY ELIGIBLE. The ONLY thing suppressing respawn is
-	// WarnOnly=true, so a regression that drops the WarnOnly gate in maybeRespawn
-	// makes a respawn_attempted event appear and FAILS this test.
 	writeCtxFile(t, projectDir, agent, 85.0, "sess-crew-01")
 
 	cfg := keeper.WatcherConfig{
@@ -80,17 +64,11 @@ func TestWatcher_WarnOnly_EmitsWarnButNoRespawn(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
 
-	// Warn MUST have fired (warn-only does not suppress warn events).
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
 	if len(warns) == 0 {
 		t.Error("want at least one session_keeper_warn in warn-only mode; got 0")
 	}
 
-	// The real signal: with a stale gauge + idle pane + RespawnCmd set, the
-	// respawn path is eligible on every tick. WarnOnly MUST suppress it, so NO
-	// session_keeper_respawn_attempted event may exist. (This replaces a dead
-	// spy assertion — the respawn path execs "sh -c <RespawnCmd>" and never
-	// calls a Go callback, so a spy recorder could never observe it.)
 	respawnEvts := em.EventsOfType(core.EventTypeSessionKeeperRespawnAttempted)
 	if len(respawnEvts) != 0 {
 		t.Errorf("want 0 session_keeper_respawn_attempted events in warn-only mode; got %d", len(respawnEvts))
@@ -130,12 +108,10 @@ func TestWatcher_WarnOnly_NoLivePaneRecover(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	runWatcherFor(context.Background(), cfg, em, 500*time.Millisecond)
 
-	// LiveRecoverFn must NOT have been called.
 	if rec.count() != 0 {
 		t.Errorf("want 0 live-pane recover calls in warn-only mode; got %d", rec.count())
 	}
 
-	// No live_pane_recover events should exist.
 	lprEvts := em.EventsOfType(core.EventTypeSessionKeeperLivePaneRecover)
 	if len(lprEvts) != 0 {
 		t.Errorf("want 0 session_keeper_live_pane_recover events in warn-only mode; got %d", len(lprEvts))
@@ -182,7 +158,6 @@ func TestWatcher_WarnOnly_False_RespawnStillFires(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	runWatcherFor(context.Background(), cfg, em, 500*time.Millisecond)
 
-	// With WarnOnly=false, live-pane recovery MUST fire.
 	if rec.count() == 0 {
 		t.Error("want LiveRecoverFn to fire at least once when WarnOnly=false; got 0 calls")
 	}

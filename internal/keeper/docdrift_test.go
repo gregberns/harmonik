@@ -1,13 +1,5 @@
 package keeper
 
-// docdrift_test.go is the ANTI-DRIFT LOCK for the keeper configuration-surface
-// table in docs/components/internal/keeper.md and the reconciled band comments in
-// the keeper source. It parses the doc's `default` column and the band numbers and
-// FAILS if any diverge from the Default* constants in thresholds.go — so the doc
-// (and the in-code default comments) cannot silently rot away from the real band
-// again (the bug hk-fgnk reconciled: docs/comments still said 270k/300k/340k after
-// the TA1 retune to 200k/215k/240k). Refs: hk-fgnk, hk-8hr1.
-
 import (
 	"os"
 	"path/filepath"
@@ -18,8 +10,6 @@ import (
 	"testing"
 )
 
-// repoRootFromTest walks up from this test file to the repo root (internal/keeper
-// → internal → repo). Mirrors statusline_test.go's locator.
 func repoRootFromTest(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -29,9 +19,6 @@ func repoRootFromTest(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 }
 
-// normalizeTokenLiteral strips separators/suffixes so 280k / 280000 / 280_000 / "280 000"
-// all compare equal as an int64. Returns (value, true) when the input is a pure
-// (optionally k-suffixed) integer literal; (0, false) otherwise.
 func normalizeTokenLiteral(s string) (int64, bool) {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "_", "")
@@ -52,11 +39,6 @@ func normalizeTokenLiteral(s string) (int64, bool) {
 	return n * mult, true
 }
 
-// docDefaultExpect maps a dotted config key (as it appears in the doc table's first
-// column) to the token value its `default` column MUST encode. Only token-valued
-// rows are pinned here; duration/bool/pct/text rows are not numeric-token-checked.
-// Each expected value is the live Default* constant — so editing the constant forces
-// editing the doc (and vice-versa) or this test fails.
 var docDefaultExpect = map[string]int64{
 	"keeper.context_thresholds.warn_abs_tokens":       DefaultWarnAbsTokens,
 	"keeper.context_thresholds.act_abs_tokens":        DefaultActAbsTokens,
@@ -68,16 +50,10 @@ var docDefaultExpect = map[string]int64{
 	"keeper.budgets.max_handoff_timeouts":             DefaultMaxHandoffTimeouts,
 }
 
-// docTableRowRe matches a markdown table row whose first cell is a backticked dotted
-// key and captures the key (cell 1) and the default cell (cell 3).
-//
-//	| `keeper.context_thresholds.warn_abs_tokens` | `--warn-abs-tokens` | `200000` (...) | ... |
 var docTableRowRe = regexp.MustCompile(
 	"^\\|\\s*`([a-z0-9_.]+)`\\s*\\|[^|]*\\|([^|]*)\\|",
 )
 
-// leadingTokenRe pulls the first integer-ish literal out of a default cell, e.g.
-// "`200000` (`DefaultWarnAbsTokens`)" → "200000"; "`280k` ..." → "280k".
 var leadingTokenRe = regexp.MustCompile(`\x60?(\d[0-9_, ]*[kK]?)\x60?`)
 
 // TestKeeperDocDefaultsNoDrift parses docs/components/internal/keeper.md and asserts
@@ -126,14 +102,8 @@ func TestKeeperDocDefaultsNoDrift(t *testing.T) {
 	}
 }
 
-// staleBandLiterals are the post-TA1-retune-OBSOLETE band numbers. After hk-fgnk no
-// keeper source comment or keeper doc may mention them as a default/threshold; their
-// presence means a comment rotted back to the pre-retune band.
 var staleBandLiterals = []string{"270000", "300000", "340000", "270k", "300k", "340k", "270_000", "300_000", "340_000"}
 
-// reconciledSources are the files whose band comments hk-fgnk reconciled; they must
-// stay free of the stale literals. (Test fixtures elsewhere legitimately set override
-// values like force_act_abs_tokens: 340000 and are intentionally excluded.)
 var reconciledSources = []string{
 	filepath.Join("internal", "keeper", "cycle.go"),
 	filepath.Join("internal", "keeper", "watcher.go"),

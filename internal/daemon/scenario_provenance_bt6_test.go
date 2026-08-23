@@ -2,50 +2,6 @@
 
 package daemon
 
-// scenario_provenance_bt6_test.go — BT6 scenario test for the own-merged
-// provenance gate of the work-generates-work positive loop (flywheel-motion.md
-// §6.2, AC3 / bead hk-zlwq).
-//
-// # What is tested (BT6 — own-merged provenance)
-//
-// The staged-bead generator (§5.4 B) must only enqueue a deploy+verify follow-up
-// for ONE of its OWN merged commits — i.e. when the completed bead's "Refs: <id>"
-// trailer is verifiably present on origin/<targetBranch>. A run that "succeeded
-// but is NOT on origin/main" (the daemon thinks the run is done, but the commit
-// never landed on the remote) MUST spawn NO follow-up work.
-//
-// This is the negative assertion the bead asks for: not-on-origin/main → no
-// follow-up. A positive control (Refs: present on origin/main → exactly one
-// follow-up) is included so the negative is not vacuously passing because the
-// generator is wedged.
-//
-// # Why this is the REAL provenance path (no stubs)
-//
-//   - stagedBeadGeneratorEval is the production §5.4 B generator (eagerfill_em063.go).
-//   - beadOnOriginMain is the production §6.2 provenance guard it calls (hk-zlwq):
-//     it runs `git log origin/<targetBranch> --grep "Refs: <id>"` against a real
-//     git repo, fail-closed.
-//   - The scenario drives a REAL git repo (init + bare origin + push) so the
-//     provenance check executes a real `git log` against a real remote tracking
-//     branch — not a stub.
-//   - `br create` is a fake executable script whose INVOCATION (or non-invocation)
-//     is the observable: a created follow-up means br was called; a no-op means it
-//     was not. This matches the BT4 / EM-063 unit-test idiom already on main.
-//
-// # Why //go:build scenario
-//
-// The test shells out to a real `git` binary and performs real filesystem I/O
-// (init/commit/push to a bare origin). It is tagged scenario so the daemon's
-// 30-min commit-gate skips it; only the explicit scenario run covers it.
-//
-// Run independently:
-//
-//	go test -tags=scenario -run BT6 ./internal/daemon/...
-//
-// Spec ref: flywheel-motion.md §6.2 (provenance gate), §5.4 B (staged-bead
-// generator). Bead: hk-rsje (flywheel-BT6). AC3 bead: hk-zlwq. Epic: hk-0oca
-// (codename:flywheel).
-
 import (
 	"context"
 	"os"
@@ -59,14 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// ---------------------------------------------------------------------------
-// helpers (prefix "bt6" per the helper-prefix discipline)
-// ---------------------------------------------------------------------------
-
-// bt6Phase2Project lays out a project dir with a Phase-2 sentinel class so the
-// staged-bead generator is rule-eligible (guardrail 1), and returns the dir.
-//
-//	<dir>/.harmonik/config.yaml  (sentinel.done_definition.<class>: <verifyCmd>)
 func bt6Phase2Project(t *testing.T, class, verifyCmd string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -81,12 +29,6 @@ func bt6Phase2Project(t *testing.T, class, verifyCmd string) string {
 	return dir
 }
 
-// bt6GitWithOrigin initialises a real git repo in dir with a bare origin remote.
-// When refBeadID is non-empty, a commit carrying a "Refs: <refBeadID>" trailer is
-// added to main and PUSHED to origin (so beadOnOriginMain finds it on
-// origin/main). When refBeadID is empty, origin/main exists but carries NO such
-// trailer — modelling "the run succeeded locally but its commit is NOT on
-// origin/main".
 func bt6GitWithOrigin(t *testing.T, dir, refBeadID string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -125,9 +67,6 @@ func bt6GitWithOrigin(t *testing.T, dir, refBeadID string) {
 	run("push", "origin", "main")
 }
 
-// bt6FakeBr writes an executable shell script at scriptPath that records every
-// invocation (one "CALL" line per call) into argsFile and exits 0. The presence
-// or absence of argsFile is the observable: a follow-up bead created ⇔ br called.
 func bt6FakeBr(t *testing.T, scriptPath, argsFile string) {
 	t.Helper()
 	script := "#!/bin/sh\nprintf 'CALL %s %s\\n' \"$1\" \"$2\" >> " + argsFile + "\n"
@@ -139,9 +78,6 @@ func bt6FakeBr(t *testing.T, scriptPath, argsFile string) {
 	}
 }
 
-// bt6Deps builds a testRuntime wired for stagedBeadGeneratorEval against a real
-// git project and a fake br, with targetBranch="main" so the §6.2 provenance
-// guard is ACTIVE (the guard is skipped only when targetBranch is empty).
 func bt6Deps(t *testing.T, projectDir, brPath string) (testRuntime, eagerRefillPort) {
 	t.Helper()
 	return testRuntime{
@@ -156,8 +92,6 @@ func bt6Deps(t *testing.T, projectDir, brPath string) (testRuntime, eagerRefillP
 		}
 }
 
-// bt6BrCallCount counts CALL lines in argsFile; returns 0 when the file is absent
-// (br never invoked).
 func bt6BrCallCount(t *testing.T, argsFile string) int {
 	t.Helper()
 	data, err := os.ReadFile(argsFile)
@@ -176,10 +110,6 @@ func bt6BrCallCount(t *testing.T, argsFile string) int {
 	return n
 }
 
-// ---------------------------------------------------------------------------
-// BT6 — own-merged provenance
-// ---------------------------------------------------------------------------
-
 // TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp is the core
 // negative assertion (flywheel-motion.md §6.2, hk-zlwq): a run whose completed
 // bead is a rule-eligible Phase-2 class, is below the WIP ceiling, and would
@@ -194,8 +124,6 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 
 	const class = "deploy"
 	projectDir := bt6Phase2Project(t, class, "make deploy-verify")
-	// origin/main exists, but carries NO "Refs: hk-bt6-merged" trailer:
-	// the run "succeeded" locally but its commit never landed on origin/main.
 	bt6GitWithOrigin(t, projectDir, "")
 
 	tmp := t.TempDir()
@@ -205,25 +133,19 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 
 	deps, eagerRefill := bt6Deps(t, projectDir, brPath)
 
-	// Sanity: the provenance gate itself reports "not landed" for this bead, so
-	// we know the no-op is the gate firing (not some unrelated guardrail).
 	if beadOnOriginMain(context.Background(), projectDir, core.BeadID("hk-bt6-merged"), "main") {
 		t.Fatal("precondition failed: beadOnOriginMain reported the bead landed, " +
 			"but no Refs: trailer was pushed to origin/main")
 	}
 
-	// Drive the REAL §5.4 B generator with a rule-eligible class label.
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill,
 		core.BeadID("hk-bt6-merged"), []string{class})
 
-	// NEGATIVE assertion: no follow-up bead created.
 	if n := bt6BrCallCount(t, argsFile); n != 0 {
 		t.Errorf("provenance gate breached: br create called %d time(s) for a bead "+
 			"absent from origin/main; want 0 (§6.2 own-merged provenance)", n)
 	}
 
-	// And the at-most-once ledger must NOT have recorded the follow-up — the gate
-	// returns before the ledger write, so no key should be present.
 	eagerRefill.followUpLedgerMu.Lock()
 	_, recorded := eagerRefill.followUpLedger["hk-bt6-merged:"+class]
 	eagerRefill.followUpLedgerMu.Unlock()
@@ -244,7 +166,6 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 	const class = "deploy"
 	const beadID = "hk-bt6-landed"
 	projectDir := bt6Phase2Project(t, class, "make deploy-verify")
-	// origin/main DOES carry "Refs: hk-bt6-landed".
 	bt6GitWithOrigin(t, projectDir, beadID)
 
 	tmp := t.TempDir()
@@ -254,7 +175,6 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 
 	deps, eagerRefill := bt6Deps(t, projectDir, brPath)
 
-	// Sanity: provenance gate confirms the landing before we drive the generator.
 	if !beadOnOriginMain(context.Background(), projectDir, core.BeadID(beadID), "main") {
 		t.Fatal("precondition failed: beadOnOriginMain did not find the Refs: trailer " +
 			"that was pushed to origin/main")
@@ -263,7 +183,6 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill,
 		core.BeadID(beadID), []string{class})
 
-	// POSITIVE assertion: exactly one follow-up bead created.
 	if n := bt6BrCallCount(t, argsFile); n != 1 {
 		t.Errorf("provenance-present path: br create called %d time(s); want exactly 1 "+
 			"(§5.4 B staged-bead generator)", n)

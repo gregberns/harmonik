@@ -1,26 +1,5 @@
 package main
 
-// main_test.go — unit tests for the run() composition root (hk-kqdpf.4).
-//
-// Helper prefix: mainFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-kqdpf.4).
-//
-// Tests cover the $TMUX fail-fast path and the substrate wiring contract
-// (acceptance criteria per hk-kqdpf.4).  They exercise run() directly in
-// package main so that the composition-root guard can be observed without a
-// real tmux server.
-//
-// Also covers the commitHash → daemon.Config.BinaryCommitHash wiring
-// (acceptance criteria per hk-mz0x4).
-//
-// NOTE: run() registers flags against flag.CommandLine. Calling run() more
-// than once in the same test binary would re-define those flags (a panic).
-// Each test that calls run() MUST reset flag.CommandLine beforehand via
-// mainFixtureResetFlags.  Tests that call run() must NOT be parallel (flag
-// reset is not concurrent-safe).
-//
-// Bead: hk-kqdpf.4, hk-mz0x4.
-
 import (
 	"bytes"
 	"context"
@@ -38,11 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// mainFixtureResetFlags resets flag.CommandLine to a fresh FlagSet so that
-// calling run() multiple times in the same test binary does not panic with
-// "flag redefined".  Must be called before each run() invocation.
-//
-// flag.CommandLine is restored to a new default-equivalent FlagSet on cleanup.
 func mainFixtureResetFlags(t *testing.T) {
 	t.Helper()
 	orig := flag.CommandLine
@@ -50,8 +24,6 @@ func mainFixtureResetFlags(t *testing.T) {
 	t.Cleanup(func() { flag.CommandLine = orig })
 }
 
-// mainFixtureSaveRestoreArgs saves os.Args and restores it via t.Cleanup.
-// Called before run() so that flag parsing sees only the minimal argv.
 func mainFixtureSaveRestoreArgs(t *testing.T, args []string) {
 	t.Helper()
 	orig := os.Args
@@ -59,8 +31,6 @@ func mainFixtureSaveRestoreArgs(t *testing.T, args []string) {
 	os.Args = args
 }
 
-// mainFixtureSaveRestoreEnv saves the value of key and restores it on cleanup.
-// When unset is true the variable is unset during the test.
 func mainFixtureSaveRestoreEnv(t *testing.T, key, val string, unset bool) {
 	t.Helper()
 	orig, wasSet := os.LookupEnv(key)
@@ -122,9 +92,6 @@ func TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop(t *testing.T) {
 		_ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", "="+sessionName).Run()
 	})
 
-	// Same SIGTERM safety net as TestRunTmuxEnvSet_ProceedsToSubstratePath
-	// (hk-llizq): absorb a mistimed signal rather than letting Go's default
-	// disposition terminate the whole test binary.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM)
 	t.Cleanup(func() { signal.Stop(sigCh) })
@@ -132,7 +99,6 @@ func TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop(t *testing.T) {
 	exitCh := make(chan int, 1)
 	go func() { exitCh <- run() }()
 
-	// Let run() install its signal.NotifyContext handler and enter daemon.Start.
 	time.Sleep(2 * time.Second)
 
 	select {
@@ -177,9 +143,7 @@ func TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop(t *testing.T) {
 func TestRunTmuxUnusable_TmuxSubstrateStillRefuses(t *testing.T) {
 	mainFixtureResetFlags(t)
 	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
-	// Default (unset) leaves the tmux substrate selected — the fatal combination.
 	mainFixtureSaveRestoreEnv(t, "HARMONIK_SUBSTRATE", "", true /* unset */)
-	// Empty PATH → exec.LookPath("tmux") fails → ProbeTmux returns ErrTmuxMissing.
 	mainFixtureSaveRestoreEnv(t, "PATH", "", false /* set */)
 
 	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "start", "daemon", "--project", t.TempDir()})
@@ -235,54 +199,26 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	mainFixtureResetFlags(t)
 	mainFixtureSaveRestoreEnv(t, "TMUX", "/tmp/tmux-fake/fake,0,0", false /* set */)
 
-	// Point --project at a fresh temp dir.  This keeps the daemon's .harmonik/
-	// state out of the source tree AND guarantees an empty restart-record so the
-	// boot-backoff preflight (internal/daemon/restartbackoff.go) computes a
-	// zero delay — the test must not inherit accumulated rapid-boot penalties
-	// from earlier runs.
 	projectDir := t.TempDir()
 	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "start", "daemon", "--project", projectDir})
 
-	// A panic here would indicate the substrate path has a nil-pointer bug.
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("run() with TMUX set panicked: %v", r)
 		}
 	}()
 
-	// Safety net (hk-llizq): install the test's OWN SIGTERM handler for the whole
-	// life of the test.  The self-SIGTERM below is only meaningful while run()'s
-	// signal.NotifyContext handler is active; but on a runner where the tmux
-	// binary is ABSENT (e.g. GitHub Actions), run() fails in ProbeTmux and returns
-	// exit 1 EARLY — its `defer stop()` uninstalls the NotifyContext handler before
-	// our signal lands.  Without this net the SIGTERM would then hit Go's default
-	// disposition and terminate the whole test process ("signal: terminated"),
-	// cascade-failing the entire cmd/harmonik package.  With signal.Notify active
-	// here, a mistimed SIGTERM is always absorbed by the test (both handlers
-	// receive it when run()'s is active; only ours when it is not), never the
-	// default disposition.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM)
 	t.Cleanup(func() { signal.Stop(sigCh) })
 
-	// run() blocks in the daemon work loop until its SIGINT/SIGTERM signal
-	// context is cancelled, so call it in a goroutine and report the exit code
-	// back over a channel.
 	exitCh := make(chan int, 1)
 	go func() {
 		exitCh <- run()
 	}()
 
-	// Give run() a moment to install its signal.NotifyContext handler and enter
-	// daemon.Start before we deliver the signal.  While NotifyContext is active
-	// the SIGTERM is delivered to that handler (cancelling the daemon context)
-	// rather than killing the test process via the default disposition.
 	time.Sleep(250 * time.Millisecond)
 
-	// If run() already returned (the tmux-absent fast path returns exit 1 well
-	// before 250ms), do NOT deliver a signal — there is no NotifyContext handler
-	// left to absorb it and nothing to shut down.  The bounded-return + no-panic
-	// contract is already satisfied; assert it and finish.
 	select {
 	case exitCode := <-exitCh:
 		t.Logf("run() returned exit code %d before signal delivery (tmux-absent fast path)", exitCode)
@@ -290,28 +226,17 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	default:
 	}
 
-	// run() is still executing, so its NotifyContext handler is installed: deliver
-	// a single SIGTERM to drive the production shutdown path.  Our safety-net
-	// handler also receives it, harmlessly.
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatalf("failed to deliver SIGTERM to self: %v", err)
 	}
 
 	select {
 	case exitCode := <-exitCh:
-		// A clean signal-driven shutdown returns 0 (daemon.Start returns nil on
-		// ctx-cancel).  Any non-zero code means run() failed earlier in the
-		// substrate path, which is also an acceptable terminal outcome — the
-		// contract is "no panic and bounded return", not a specific code.
 		t.Logf("run() returned exit code %d after SIGTERM", exitCode)
 	case <-time.After(30 * time.Second):
 		t.Fatal("run() did not return within 30s of SIGTERM — the substrate/work-loop shutdown path is hung (hk-9ruez regression)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// harmonik run <bead-id> unit tests (hk-icecw)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunBeadSubcommand_MissingBeadID verifies that `harmonik run` with no
 // positional arguments returns exit code 1 and does not panic.
@@ -323,7 +248,6 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 func TestRunBeadSubcommand_MissingBeadID(t *testing.T) {
 	t.Parallel()
 
-	// Call with no args — missing bead-id.
 	got := runBeadSubcommand([]string{})
 	if got == 0 {
 		t.Errorf("runBeadSubcommand with no args returned 0; want non-zero")
@@ -378,7 +302,6 @@ func TestRunBeadSubcommand_NoBrOnPath(t *testing.T) {
 // Acceptance: hk-w92me — graceful degradation when tmux binary is absent.
 func TestRunBeadSubcmd_TmuxUnset_NoTmuxBinary(t *testing.T) {
 	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
-	// Point PATH at an empty temp dir so neither tmux nor br can be found.
 	mainFixtureSaveRestoreEnv(t, "PATH", t.TempDir(), false /* set */)
 
 	got := runBeadSubcommand([]string{"hk-test-bead"})
@@ -398,7 +321,6 @@ func TestRunBeadSubcmd_TmuxUnset_NoTmuxBinary(t *testing.T) {
 func TestRunBeadSubcmd_TmuxUnset_SelfWraps(t *testing.T) {
 	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
 
-	// Write a minimal fake tmux script and prepend its dir to PATH.
 	binDir := t.TempDir()
 	fakeTmux := filepath.Join(binDir, "tmux")
 	//nolint:gosec // G306: executable mode is required for the fake tmux script fixture
@@ -407,7 +329,6 @@ func TestRunBeadSubcmd_TmuxUnset_SelfWraps(t *testing.T) {
 	}
 	mainFixtureSaveRestoreEnv(t, "PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"), false)
 
-	// Replace exec with a recorder so the test process is not replaced.
 	var gotArgv []string
 	origExec := runBeadSelfWrapExec
 	runBeadSelfWrapExec = func(_ string, argv []string, _ []string) error {
@@ -477,9 +398,6 @@ func TestCommitHashVar_DefaultIsUnknown(t *testing.T) {
 
 	const want = "unknown"
 	if commitHash != want {
-		// In a stamped build the value will be a real SHA (40 hex chars).
-		// In an unstamped test build it must be the sentinel "unknown".
-		// A blank string here means version.go lost its initialiser.
 		t.Errorf("commitHash = %q; want %q (unstamped build sentinel)", commitHash, want)
 	}
 }
@@ -496,9 +414,6 @@ func TestVersionVar_DefaultIsDev(t *testing.T) {
 
 	const want = "dev"
 	if version != want {
-		// In a stamped build the value will be a semver string (e.g. "v0.2.0").
-		// In an unstamped test build it must be the sentinel "dev".
-		// A blank string here means version.go lost its initialiser.
 		t.Errorf("version = %q; want %q (unstamped build sentinel)", version, want)
 	}
 }
@@ -517,7 +432,6 @@ func TestVersionVar_DefaultIsDev(t *testing.T) {
 func TestVersionSubcommand_ExitsZeroAndPrintsVersionLine(t *testing.T) {
 	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "version"})
 
-	// Capture stdout by replacing os.Stdout with a pipe.
 	origStdout := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -528,7 +442,6 @@ func TestVersionSubcommand_ExitsZeroAndPrintsVersionLine(t *testing.T) {
 
 	exitCode := run()
 
-	// Close the write-end so the reader sees EOF.
 	if err := w.Close(); err != nil {
 		t.Fatalf("close stdout writer: %v", err)
 	}
@@ -569,12 +482,6 @@ func TestVersionFlagLong_ExitsZero(t *testing.T) {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	os.Stdout = w
-	// Keep BOTH ends and drain the read end. The read end used to be discarded,
-	// which leaked a descriptor for the lifetime of this test binary and left
-	// nobody reading the pipe: if `--version` ever grew past the 64 KiB pipe
-	// buffer, run() would block on the write with no reader and this test would
-	// hang rather than fail. Draining on a goroutine started BEFORE run() is the
-	// shape that cannot wedge.
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)

@@ -6,9 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// malformedVerdictPayloadFixture returns a fully-populated MalformedVerdictPayload
-// with all required fields set to valid values. Tests mutate individual fields
-// to probe Valid().
 func malformedVerdictPayloadFixture(t *testing.T) MalformedVerdictPayload {
 	t.Helper()
 	return MalformedVerdictPayload{

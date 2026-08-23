@@ -1,28 +1,5 @@
 package main
 
-// sentinel_cmd.go — `harmonik sentinel` CLI subcommand block (flywheel V4, hk-9mr2).
-//
-// Exposes the sentinel's governor-trip and exception-write surface to the
-// adversary crew session and to operators.
-//
-// Verbs:
-//
-//	emit-trip   Write ONE decision_required exception for a governor trip.
-//	            Called by the sentinel-adversary crew after reviewing the
-//	            captain's comms/commits and confirming the trip is legitimate.
-//
-// Exit codes:
-//
-//	0   Success (exception written or already pending — idempotent).
-//	1   Argument / file-system error.
-//	2   Unrecognised verb.
-//
-// The command is intentionally LLM-free — it only writes a file. The judgment
-// (whether to call emit-trip) belongs to the adversary crew session.
-//
-// Spec ref: flywheel-motion.md §2.1 (bindingness is deterministic), §2.3.
-// Bead ref: hk-9mr2. Epic: hk-0oca (codename:flywheel).
-
 import (
 	"context"
 	"fmt"
@@ -34,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// runSentinelSubcommand routes `harmonik sentinel <verb> [args]`.
-// subArgs is os.Args[2:].
 func runSentinelSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -63,24 +38,6 @@ func runSentinelSubcommand(subArgs []string) int {
 	}
 }
 
-// runSentinelEmitTrip implements `harmonik sentinel emit-trip`.
-//
-// Writes ONE decision_required exception for a sentinel governor trip.
-// Idempotent: if a pending sentinel exception already exists, returns the
-// existing ack_token without writing again.
-//
-// Usage:
-//
-//	harmonik sentinel emit-trip [--project DIR] [--bead ID,...] [--undeployed-tail]
-//
-// Flags:
-//
-//	--project DIR           Project directory (default: cwd).
-//	--bead ID[,ID,...]      Comma-separated list of ready bead IDs to name in the
-//	                        exception reason. Multiple --bead flags are additive.
-//	--undeployed-tail       Include "undeployed tail exists" in the exception reason.
-//
-// Prints the ack_token on stdout. No output when the exception was already pending.
 func runSentinelEmitTrip(args []string) int {
 	var (
 		projectFlag       string
@@ -121,7 +78,6 @@ func runSentinelEmitTrip(args []string) int {
 		}
 	}
 
-	// Resolve project directory.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -152,22 +108,6 @@ func runSentinelEmitTrip(args []string) int {
 	return 0
 }
 
-// runSentinelClearTrip implements `harmonik sentinel clear-trip`.
-//
-// Operator escape hatch: scans .harmonik/decision_acks/ for the current pending
-// sentinel exception and marks it acknowledged with ack_method="operator".
-// Prints the cleared ack_token on stdout. Exits 0 with no output when no
-// pending trip exists (idempotent).
-//
-// Usage:
-//
-//	harmonik sentinel clear-trip [--project DIR]
-//
-// Flags:
-//
-//	--project DIR   Project directory (default: cwd).
-//
-// Spec ref: flywheel-motion.md §2.2 (legitimate-halt clear path), bead hk-kgwv.
 func runSentinelClearTrip(args []string) int {
 	var projectFlag string
 
@@ -214,28 +154,6 @@ func runSentinelClearTrip(args []string) int {
 	return 0
 }
 
-// runSentinelRecordHalt implements `harmonik sentinel record-halt`.
-//
-// Captain escape hatch (§2.2 clause 2): records a legitimate-halt reason for
-// the current pending sentinel exception and clears it, subject to re-adjudication
-// on the next governor pass. Requires a non-empty --reason flag — an empty reason
-// is indistinguishable from a bare self-ack, which the spec forbids.
-//
-// Usage:
-//
-//	harmonik sentinel record-halt --reason TEXT [--project DIR] [--token ACK_TOKEN]
-//
-// Flags:
-//
-//	--reason TEXT         Human-readable halt reason (required).
-//	                      E.g. "ENOSPC: disk full on /dev/sda1" or
-//	                           "infra: gb-mbp SSH unreachable".
-//	--project DIR         Project directory (default: cwd).
-//	--token ACK_TOKEN     Explicit ack_token to clear (default: scan for pending).
-//
-// Prints the cleared ack_token on stdout. Exits 0 with no output when no pending
-// trip exists. The governor will re-evaluate on the next tick and emit a fresh
-// trip if movement is still low (next-pass re-adjudication).
 func runSentinelRecordHalt(args []string) int {
 	var (
 		projectFlag string

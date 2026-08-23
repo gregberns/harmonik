@@ -2,16 +2,10 @@ package core
 
 import "testing"
 
-// subwfNamespaceFixtureParent returns the NodeID of a sub-workflow node in a
-// parent workflow, used as the parentNodeID argument in NamespaceNodeID tests
-// (EM-034a).
 func subwfNamespaceFixtureParent() NodeID {
 	return NodeID("dispatch")
 }
 
-// subwfNamespaceFixtureSub returns a source-level NodeID from inside a
-// sub-workflow definition, used as the subNodeID argument in NamespaceNodeID
-// tests (EM-034a).
 func subwfNamespaceFixtureSub() NodeID {
 	return NodeID("step-one")
 }
@@ -37,9 +31,6 @@ func TestNamespaceNodeID_Basic(t *testing.T) {
 func TestNamespaceNodeID_Nested(t *testing.T) {
 	t.Parallel()
 
-	// Grandparent node "A" expands sub-workflow node "B".
-	// The already-namespaced ID of B within the parent expansion is "A/B".
-	// Expanding B further for sub-node "C" must yield "A/B/C".
 	grandparentSub := NamespaceNodeID(NodeID("A"), NodeID("B")) // "A/B"
 	got := NamespaceNodeID(grandparentSub, NodeID("C"))         // "A/B/C"
 	want := NodeID("A/B/C")
@@ -87,13 +78,11 @@ func TestNamespaceNodeID_MultipleSubNodes(t *testing.T) {
 func TestNamespaceNodeID_SpecExample(t *testing.T) {
 	t.Parallel()
 
-	// Step 1: expand grandparent A's sub-workflow node B.
 	ab := NamespaceNodeID(NodeID("A"), NodeID("B"))
 	if ab != NodeID("A/B") {
 		t.Fatalf("step 1: got %q, want %q", ab, "A/B")
 	}
 
-	// Step 2: within that expansion, expand B's sub-workflow node C.
 	abc := NamespaceNodeID(ab, NodeID("C"))
 	if abc != NodeID("A/B/C") {
 		t.Fatalf("step 2: got %q, want %q", abc, "A/B/C")

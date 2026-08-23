@@ -15,25 +15,16 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// scenarioFileSizeLimitBytes is the per-file size ceiling per SH-003 (default 1 MiB).
-// A file that exceeds this limit MUST be rejected as scenario-load-failure.
 const scenarioFileSizeLimitBytes = 1 << 20 // 1 MiB
 
-// scenarioFileNodeLimit is the parsed-node count ceiling per SH-003 (default 100 000).
-// A file whose YAML document exceeds this node count MUST be rejected as scenario-load-failure.
 const scenarioFileNodeLimit = 100_000
 
-// scenarioYAMLForbiddenTags is the deny-list of YAML tags that MUST be rejected
-// at parse time per SH-003 and SH-INV-005. These tags would execute or deserialize
-// code during YAML parsing and are forbidden at v0.1.
 var scenarioYAMLForbiddenTags = []string{
 	"!!python/object",
 	"!eval",
 	"!!binary", // reject !!binary carrying executable content per SH-INV-005
 }
 
-// utf8BOM is the three-byte byte-order mark for UTF-8 encoding.
-// Per SH-003, files with a BOM MUST be rejected as scenario-load-failure.
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // ParseScenarioFile reads a scenario YAML file from the given path and returns
@@ -59,7 +50,6 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 //
 // Spec ref: specs/scenario-harness.md SH-001, SH-002, SH-003, SH-004, SH-INV-005.
 func ParseScenarioFile(path string) (ScenarioFile, error) {
-	// SH-002: extension MUST be ".yaml" (lower-case, byte-exact).
 	if filepath.Ext(path) != ".yaml" {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: file extension must be .yaml, got %q", filepath.Ext(path))
 	}
@@ -70,8 +60,6 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 	if err != nil {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: open %q: %w", path, err)
 	}
-	// Read at most scenarioFileSizeLimitBytes + 1 so we can detect over-size
-	// files without slurping an unbounded stream into memory.
 	limited := io.LimitReader(f, int64(scenarioFileSizeLimitBytes)+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
@@ -87,14 +75,10 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: file %q exceeds 1 MiB size ceiling (SH-003)", path)
 	}
 
-	// SH-003: reject UTF-8 BOM.
 	if bytes.HasPrefix(raw, utf8BOM) {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: file %q must not begin with a UTF-8 BOM (SH-003)", path)
 	}
 
-	// SH-003 / SH-INV-005: scan the raw YAML bytes for forbidden tag prefixes
-	// before decoding. gopkg.in/yaml.v3 decodes !!binary silently; we must
-	// reject it textually so no node is decoded before we check.
 	rawStr := string(raw)
 	for _, tag := range scenarioYAMLForbiddenTags {
 		if strings.Contains(rawStr, tag) {
@@ -102,23 +86,16 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 		}
 	}
 
-	// Parse the YAML document into a generic node tree so we can:
-	//   (a) count nodes for the 100 000-node ceiling (SH-003), and
-	//   (b) later decode with KnownFields strict mode (SH-INV-005).
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: YAML parse error in %q: %w", path, err)
 	}
 
-	// Count nodes in the parsed document tree (SH-003 ceiling: 100 000).
 	nodeCount := countYAMLNodes(&doc)
 	if nodeCount > scenarioFileNodeLimit {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: file %q exceeds 100 000-node ceiling (%d nodes) (SH-003)", path, nodeCount)
 	}
 
-	// SH-INV-005: decode with KnownFields(true) to reject unknown fields.
-	// We re-decode from bytes (not from the node tree) to engage the strict
-	// decoder path; this is a second pass over already-validated bytes.
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	var sf ScenarioFile
@@ -126,7 +103,6 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: schema check failed for %q: %w", path, err)
 	}
 
-	// SH-004: schema validation via ScenarioFile.Valid().
 	if !sf.Valid() {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: schema check failed for %q: ScenarioFile.Valid() returned false", path)
 	}
@@ -134,9 +110,6 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 	return sf, nil
 }
 
-// countYAMLNodes returns the total number of nodes in a yaml.Node tree.
-// The empty/nil document yields 0. Used to enforce SH-003's 100 000-node
-// ceiling without allocating additional data structures.
 func countYAMLNodes(n *yaml.Node) int {
 	if n == nil {
 		return 0
@@ -148,14 +121,8 @@ func countYAMLNodes(n *yaml.Node) int {
 	return count
 }
 
-// scenarioNameRe is the regular expression every scenario name MUST match per
-// SH-005: ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$
-// Names that do not match MUST fail with scenario-load-failure at suite-load.
 var scenarioNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
-// scenarioMatrixMaxCells is the maximum number of cartesian-product cells
-// allowed in a scenario's matrix field per SH-030. A matrix that would expand
-// beyond this count MUST fail at scenario-load time as scenario-load-failure.
 const scenarioMatrixMaxCells = 1024
 
 // ScenarioFile is the top-level record parsed from a scenario YAML file. It
@@ -263,61 +230,50 @@ type ScenarioFile struct {
 // SH-003), and agent-role verification against the resolved workflow (§6.1)
 // are caller responsibilities at suite-load time and are NOT checked here.
 func (s ScenarioFile) Valid() bool {
-	// Name must be non-empty and match the SH-005 regex.
 	if !scenarioNameRe.MatchString(s.Name) {
 		return false
 	}
 
-	// Exactly one of WorkflowPath / WorkflowID must be set.
 	workflowPathSet := s.WorkflowPath != nil && *s.WorkflowPath != ""
 	workflowIDSet := s.WorkflowID != nil
 	if workflowPathSet == workflowIDSet {
-		// Both set or neither set — mutual exclusivity violated.
 		return false
 	}
 
-	// Each AgentOverride value must be valid.
 	for _, ao := range s.AgentOverrides {
 		if !ao.Valid() {
 			return false
 		}
 	}
 
-	// FixtureSetup must be valid.
 	if !s.FixtureSetup.Valid() {
 		return false
 	}
 
-	// Each EventExpectation must be valid.
 	for _, ee := range s.ExpectedEvents {
 		if !ee.Valid() {
 			return false
 		}
 	}
 
-	// Each WorkspacePredicate must be valid.
 	for _, wp := range s.ExpectedWorkspace {
 		if !wp.Valid() {
 			return false
 		}
 	}
 
-	// ExpectedOutcome, if present, must be valid.
 	if s.ExpectedOutcome != nil && !s.ExpectedOutcome.Valid() {
 		return false
 	}
 
-	// TimeoutSecs must be in [1, 7200] per SH-025.
 	if s.TimeoutSecs < 1 || s.TimeoutSecs > 7200 {
 		return false
 	}
 
-	// CadenceTag must be a declared constant per SH-029.
 	if !s.CadenceTag.Valid() {
 		return false
 	}
 
-	// Matrix cell count must not exceed 1024 per SH-030.
 	if s.Matrix != nil {
 		cells := matrixCellCount(s.Matrix)
 		if cells > scenarioMatrixMaxCells {
@@ -328,10 +284,6 @@ func (s ScenarioFile) Valid() bool {
 	return true
 }
 
-// matrixCellCount returns the number of cartesian-product cells for the given
-// matrix map. An empty map or a map with any zero-length value list has 0 cells
-// (no expansion is possible). Otherwise the cell count is the product of the
-// lengths of all value lists.
 func matrixCellCount(matrix map[string][]string) int {
 	if len(matrix) == 0 {
 		return 0

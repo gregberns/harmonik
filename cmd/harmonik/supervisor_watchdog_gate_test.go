@@ -1,23 +1,5 @@
 package main
 
-// supervisor_watchdog_gate_test.go — the supervisor_watchdog subsystem switch.
-//
-// The claim under test is the one the delete-and-rewrite program states for
-// every entry in projectconfig knownSubsystems: OFF means NEVER CONSTRUCTED,
-// not constructed-and-inert.
-//
-// Construction of a supervise.SupervisorWatchdog has no side effect of its own
-// — NewSupervisorWatchdog fills in defaults and returns a struct. So the only
-// honest evidence that the object was not built is the seam's return value.
-// startSupervisorWatchdogIfEnabled returns the watchdog it built, or nil. A
-// bool derived from the switch would report "off" even in a build that
-// constructed the watchdog and hid it, so these tests read the pointer.
-//
-// The tests reach the switch through the real config edge (a written
-// .harmonik/config.yaml plus projectconfig.LoadProjectConfig), not through a
-// hand-built SubsystemsConfig. That way a name that compiles but that the
-// config loader rejects fails here too.
-
 import (
 	"context"
 	"io"
@@ -31,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
-// writeSubsystemsConfig writes .harmonik/config.yaml with the given body and
-// returns the project directory.
 func writeSubsystemsConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,10 +25,6 @@ func writeSubsystemsConfig(t *testing.T, body string) string {
 	return dir
 }
 
-// probeSpec builds a watchdog spec whose only effect is to call OnAlarm. The
-// pidfile path does not exist, so every tick reads the supervisor as dead, and
-// ReviveCmd is nil, so a running watchdog alarms and spawns NOTHING. No test
-// here may start a real supervisor.
 func probeSpec(t *testing.T, alarm chan<- struct{}) supervise.SupervisorWatchdogSpec {
 	t.Helper()
 	return supervise.SupervisorWatchdogSpec{
@@ -93,9 +69,6 @@ func TestSupervisorWatchdog_DisabledSubsystemIsNeverConstructed(t *testing.T) {
 			projectconfig.SubsystemSupervisorWatchdog)
 	}
 
-	// Second, independent evidence: nothing is running either. The probe spec
-	// ticks every 5 ms against a pidfile that does not exist, so a started loop
-	// alarms well inside this window.
 	select {
 	case <-alarm:
 		t.Fatalf("watchdog loop RAN with subsystem %s disabled", projectconfig.SubsystemSupervisorWatchdog)

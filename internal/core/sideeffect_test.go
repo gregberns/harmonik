@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// sideEffectFixture returns a fully-populated SideEffect with all fields set
-// to valid non-zero values, suitable for structural and round-trip tests
-// (hk-a8bg.74).
 func sideEffectFixture(t *testing.T) SideEffect {
 	t.Helper()
 

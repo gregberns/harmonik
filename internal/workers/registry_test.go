@@ -90,7 +90,6 @@ func TestRegistry_SetEnabledByName_UnknownName(t *testing.T) {
 	if _, err := r.SetEnabledByName("ghost", false); err == nil {
 		t.Fatal("SetEnabledByName(ghost): expected an error for an unknown name, got nil")
 	}
-	// The real worker is untouched (still selectable).
 	if w := r.SelectWorker(); w == nil {
 		t.Fatal("SelectWorker: the configured worker must be unaffected by a rejected unknown-name toggle")
 	} else {
@@ -165,7 +164,6 @@ func TestRegistry_ReleaseSlotDecrementsInFlight(t *testing.T) {
 	if r.InFlight() != 0 {
 		t.Fatalf("after ReleaseSlot: InFlight got %d, want 0", r.InFlight())
 	}
-	// slot freed — SelectWorker should succeed again
 	if r.SelectWorker() == nil {
 		t.Fatal("after release: expected slot available again")
 	}

@@ -1,23 +1,5 @@
 package daemon
 
-// queuerecover.go — the `queue-recover` socket op.
-//
-// A queue that reaches `paused-by-failure` (QM-052) stops dispatching. Before
-// this op the only exit was a daemon restart plus a fresh submit, so a single
-// failed item ended a whole pass. `queue-recover` is the operator's way out: it
-// re-arms the failed items and returns the queue to active through the QM-052b
-// transaction.
-//
-// It is a DISTINCT verb from `operator-resume`, not a mode of it. The two touch
-// different state. `operator-resume` releases a drain pause and only flips
-// Queue.status. Recovery rewrites per-item status, attempt counts, and failure
-// reasons, and it reopens groups. Keeping them apart is what lets
-// `harmonik queue resume` refuse a failure-parked queue with a typed error
-// instead of reporting a success that dispatches nothing.
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b; specs/process-lifecycle.md
-// §4.4 PL-003a (method registry).
-
 import (
 	"context"
 	"encoding/json"
@@ -110,9 +92,6 @@ func (c *QueueRecoveryController) HandleQueueRecover(ctx context.Context, queueN
 	}, nil
 }
 
-// queueRecover is the socket adapter for the `queue-recover` op. It puts the
-// QM-052b code from a *queue.RecoveryError onto the wire so a caller can tell
-// the seven refusal causes apart without parsing the message.
 func (d *socketDispatch) queueRecover(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.recoverh == nil {
 		return socketrouter.Result{OK: false, Err: "daemon: QueueRecoveryHandler not registered"}

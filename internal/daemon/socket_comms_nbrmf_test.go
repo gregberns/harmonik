@@ -1,18 +1,5 @@
 package daemon_test
 
-// socket_comms_nbrmf_test.go — socket-level tests for the "comms-send" op
-// (agent-comms spec §2.1 C2, bead hk-nbrmf T4).
-//
-// Acceptance criteria verified here:
-//   - comms-send op routes to CommsSendHandler when registered.
-//   - A well-formed request emits an agent_message event to the bus.
-//   - The response carries the minted event_id (non-empty UUIDv7 string).
-//   - Validation errors (missing from/to/body, oversized body) return Ok=false.
-//   - nil CommsSendHandler → Ok=false, error response (not registered).
-//
-// Spec ref: agent-comms spec §2.1 C2.
-// Bead ref: hk-nbrmf.
-
 import (
 	"context"
 	"encoding/json"
@@ -25,12 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
-
-// commsFixtureBuildBus constructs a sealed in-memory EventBus with a
-// synchronous consumer that captures all agent_message events into *captured.
 func commsFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync.Mutex) {
 	t.Helper()
 
@@ -61,8 +42,6 @@ func commsFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync
 	return bus, &captured, &mu
 }
 
-// commsFixtureStartListener starts RunSocketListenerFull with a CommsSendHandler
-// wired from the given bus. Returns the socket path; cleanup is registered.
 func commsFixtureStartListener(t *testing.T, bus eventbus.EventBus) string {
 	t.Helper()
 
@@ -84,8 +63,6 @@ func commsFixtureStartListener(t *testing.T, bus eventbus.EventBus) string {
 	return sockPath
 }
 
-// commsFixtureSendRequest dials sockPath, sends a comms-send SocketRequest with
-// the given JSON payload, and returns the SocketResponse.
 func commsFixtureSendRequest(t *testing.T, sockPath string, payload json.RawMessage) daemon.SocketResponse {
 	t.Helper()
 
@@ -96,10 +73,6 @@ func commsFixtureSendRequest(t *testing.T, sockPath string, payload json.RawMess
 		Payload: payload,
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 // TestCommsSend_HappyPath verifies that a valid comms-send request emits an
 // agent_message event and returns Ok=true with a non-empty event_id.
@@ -116,7 +89,6 @@ func TestCommsSend_HappyPath(t *testing.T) {
 		t.Fatalf("comms-send happy path: Ok=false, error=%q", resp.Error)
 	}
 
-	// Result must contain a non-empty event_id.
 	var result daemon.CommsSendResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		t.Fatalf("comms-send happy path: unmarshal result: %v", err)
@@ -124,14 +96,11 @@ func TestCommsSend_HappyPath(t *testing.T) {
 	if result.EventID == "" {
 		t.Fatal("comms-send happy path: result.event_id is empty")
 	}
-	// UUIDv7 is 36 characters in canonical form.
 	if len(result.EventID) != 36 {
 		t.Errorf("comms-send happy path: event_id length=%d, want 36 (UUID form); got %q",
 			len(result.EventID), result.EventID)
 	}
 
-	// Drain the bus so synchronous consumer has finished (it runs inline, but
-	// let's verify the captured event after the response).
 	if err := bus.Drain(context.Background()); err != nil {
 		t.Fatalf("comms-send happy path: bus.Drain: %v", err)
 	}
@@ -151,7 +120,6 @@ func TestCommsSend_HappyPath(t *testing.T) {
 		t.Errorf("comms-send happy path: event.Type=%q, want %q", evt.Type, "agent_message")
 	}
 
-	// Verify payload fields.
 	var msgPayload core.AgentMessagePayload
 	if err := json.Unmarshal(evt.Payload, &msgPayload); err != nil {
 		t.Fatalf("comms-send happy path: unmarshal event payload: %v", err)
@@ -166,7 +134,6 @@ func TestCommsSend_HappyPath(t *testing.T) {
 		t.Errorf("comms-send happy path: payload.body=%q, want %q", msgPayload.Body, "hello world")
 	}
 
-	// event_id in the response MUST match the one stamped on the emitted event.
 	if evt.EventID.String() != result.EventID {
 		t.Errorf("comms-send happy path: response event_id=%q does not match emitted event_id=%q",
 			result.EventID, evt.EventID.String())
@@ -295,7 +262,6 @@ func TestCommsSend_NilHandler(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		// ch=nil: CommsSendHandler not registered.
 		done <- daemon.RunSocketListenerFull(ctx, sockPath, nil, nil, nil, nil, nil)
 	}()
 	t.Cleanup(func() {

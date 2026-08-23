@@ -1,29 +1,5 @@
 package daemon_test
 
-// pi_toolcalls_per_provider_test.go — Scenario 1 of the pi-provider-switch
-// C5 two-provider e2e harness corpus (hk-m6uu2.6, C5-wiring): an
-// OpenRouter-profile bead and an ornith/DGX-profile bead, dispatched
-// TOGETHER through the same harness registry, each produce the correct argv
-// AND models.json for THEIR wire format.
-//
-// Drives the REAL claim-time → launch-spec seam (mirrors
-// hk_pkugu_pi_launch_e2e_test.go): resolveHarnessAgentTypeQuiet →
-// resolvePiProfile (C3) → routedLaunchSpecBuilder → PiHarness.LaunchSpec →
-// buildPiLaunchSpec. The per-bead profile tuple (provider/apiKeyEnv/
-// apiKeyFile/baseURL/api) is threaded via ExportedClaudeRunCtx's Provider/
-// APIKeyEnv/APIKeyFile/BaseURL/API fields (added by this bead — see
-// export_test.go) exactly as shared.LaunchCtx.Provider/... carries it in
-// production (workloop.go:4079-4083).
-//
-// Hermetic: no network. PI-040 billing guard is satisfied per-profile via a
-// dummy key file (ornith) or a dummy ambient env value (openrouter); PI-042 is
-// a no-op via t.Setenv("HOME", t.TempDir()).
-//
-// Helper prefix: hkppsToolcalls (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// Bead: hk-m6uu2.6 (pi-provider-switch C5-wiring).
-
 import (
 	"context"
 	"encoding/json"
@@ -48,8 +24,6 @@ const (
 	hkppsToolcallsOrnithAPI         = "openai-completions"
 )
 
-// hkppsToolcallsArgFlagValue returns the token following the first occurrence
-// of flag in args, or "" if flag is absent or has no following token.
 func hkppsToolcallsArgFlagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
@@ -59,9 +33,6 @@ func hkppsToolcallsArgFlagValue(args []string, flag string) string {
 	return ""
 }
 
-// hkppsToolcallsKeyFile writes a dummy provider key to a temp file so the
-// PI-040 billing guard passes hermetically for the ornith profile (which
-// declares an api_key_file).
 func hkppsToolcallsKeyFile(t *testing.T) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "pi.key")
@@ -71,10 +42,6 @@ func hkppsToolcallsKeyFile(t *testing.T) string {
 	return f
 }
 
-// hkppsToolcallsRunCtx builds an ExportedClaudeRunCtx carrying the resolved
-// per-bead profile tuple (model + provider + apiKeyEnv + apiKeyFile + baseURL
-// + api), mirroring the claim-time rc fields workloop.go:4077-4083 threads
-// from resolvedProfile.
 func hkppsToolcallsRunCtx(t *testing.T, ws, beadID string, profile projectconfig.PiProfileConfig) daemon.ExportedClaudeRunCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
@@ -98,11 +65,6 @@ func hkppsToolcallsRunCtx(t *testing.T, ws, beadID string, profile projectconfig
 	}
 }
 
-// hkppsToolcallsPiCfg builds the shared PiHarnessConfig carrying BOTH named
-// profiles. Top-level fields are left zero: neither bead names a bare
-// harness-global model, so each bead's resolved profile tuple must arrive
-// entirely via the per-run override (rc.Provider/etc), proving the two beads
-// are routed independently through the SAME harness registry.
 func hkppsToolcallsPiCfg(t *testing.T) projectconfig.PiHarnessConfig {
 	t.Helper()
 	return projectconfig.PiHarnessConfig{
@@ -111,7 +73,6 @@ func hkppsToolcallsPiCfg(t *testing.T) projectconfig.PiHarnessConfig {
 				Provider:  "openrouter",
 				Model:     "openrouter/qwen/qwen3-coder",
 				APIKeyEnv: hkppsToolcallsOpenRouterEnv,
-				// NO base_url, NO api — bare cloud OpenRouter wire format.
 			},
 			hkppsToolcallsOrnithProfile: {
 				Provider:   "ornith-provider",
@@ -132,8 +93,6 @@ func hkppsToolcallsPiCfg(t *testing.T) projectconfig.PiHarnessConfig {
 // work completely" success criterion made executable at the hermetic
 // launch-spec/models.json layer (C5-spec.md Scenario 1).
 func TestPiToolcallsPerProvider_TwoBeadsSameRegistry(t *testing.T) {
-	// Not t.Parallel: t.Setenv (HOME + the OpenRouter dummy key) mutates
-	// process env, matching hk_pkugu_pi_launch_e2e_test.go's discipline.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(hkppsToolcallsOpenRouterEnv, "dummy-openrouter-key-for-hk-m6uu2")
 
@@ -146,7 +105,6 @@ func TestPiToolcallsPerProvider_TwoBeadsSameRegistry(t *testing.T) {
 		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
 	}
 
-	// ── OpenRouter bead ─────────────────────────────────────────────────────
 	orBead := core.BeadRecord{
 		BeadID: "hk-m6uu2-toolcalls-or-bead",
 		Title:  "pi-provider-switch toolcalls e2e: openrouter",
@@ -179,13 +137,10 @@ func TestPiToolcallsPerProvider_TwoBeadsSameRegistry(t *testing.T) {
 	if got := hkppsToolcallsArgFlagValue(orSpec.Args, "--model"); got != orProfile.Model {
 		t.Errorf("openrouter argv --model = %q; want %q\nargv=%v", got, orProfile.Model, orSpec.Args)
 	}
-	// NO models.json: the openrouter profile has no base_url (bare cloud wire
-	// format — template: TestPiHarness_BaseURL_ProductionPath_Absent).
 	if _, statErr := os.Stat(filepath.Join(orWS, ".harmonik", "pi-agent", "models.json")); statErr == nil {
 		t.Errorf("openrouter bead wrote models.json; want absent (no base_url in profile)")
 	}
 
-	// ── ornith/DGX bead ─────────────────────────────────────────────────────
 	ornithBead := core.BeadRecord{
 		BeadID: "hk-m6uu2-toolcalls-ornith-bead",
 		Title:  "pi-provider-switch toolcalls e2e: ornith",
@@ -219,8 +174,6 @@ func TestPiToolcallsPerProvider_TwoBeadsSameRegistry(t *testing.T) {
 		t.Errorf("ornith argv --model = %q; want %q\nargv=%v", got, ornithProfile.Model, ornithSpec.Args)
 	}
 
-	// models.json MUST be generated with the loopback baseUrl + openai-completions
-	// wire format (template: TestPiHarness_BaseURL_ProductionPath_Present).
 	modelsPath := filepath.Join(ornithWS, ".harmonik", "pi-agent", "models.json")
 	modelsBytes, readErr := os.ReadFile(modelsPath)
 	if readErr != nil {
@@ -246,9 +199,6 @@ func TestPiToolcallsPerProvider_TwoBeadsSameRegistry(t *testing.T) {
 		t.Errorf("ornith bead: models.json api = %q; want %q", prov.API, hkppsToolcallsOrnithAPI)
 	}
 
-	// ── Cross-contamination guard: openrouter argv must never leak ornith's
-	// provider/model, and vice versa — proving the SAME registry routed each
-	// bead to its OWN profile tuple independently.
 	if hkppsToolcallsArgFlagValue(orSpec.Args, "--provider") == hkppsToolcallsArgFlagValue(ornithSpec.Args, "--provider") {
 		t.Fatalf("openrouter and ornith argv --provider are identical (%q) — per-bead profile routing is not independent",
 			hkppsToolcallsArgFlagValue(orSpec.Args, "--provider"))

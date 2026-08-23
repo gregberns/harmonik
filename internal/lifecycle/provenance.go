@@ -199,7 +199,6 @@ func ReadProcessEnviron(pid int) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// /proc/<pid>/environ is NUL-separated.
 	var entries []string
 	for _, entry := range splitNul(data) {
 		if entry != "" {
@@ -209,8 +208,6 @@ func ReadProcessEnviron(pid int) ([]string, error) {
 	return entries, nil
 }
 
-// splitNul splits a NUL-terminated byte slice into strings. Adjacent NUL bytes
-// produce empty entries that callers filter.
 func splitNul(data []byte) []string {
 	var result []string
 	start := 0

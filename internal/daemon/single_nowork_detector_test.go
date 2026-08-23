@@ -1,20 +1,5 @@
 package daemon_test
 
-// single_nowork_detector_test.go — no-work detection must cover every
-// process-exit harness in the no-review DOT graph, not just codex.
-//
-// The detector answers the question an operator asks when a run fails with no
-// explanation: did the agent do nothing at all? It fires when the commit
-// fallback found nothing to commit AND the phase finished faster than the floor.
-// It sat inside the codex leg of the fallback's harness branch, so a no-review
-// DOT Pi run — same shape, same clean worktree, same seconds-long phase — produced
-// no such record.
-//
-// The two harness legs are the only difference between these tests. Same
-// implementer, same fixture, same timing.
-//
-// Bead: hk-3ywqv.
-
 import (
 	"testing"
 
@@ -23,9 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// singleFixtureProcessExitOpts builds a legacy single input that resolves to
-// no-review DOT on a process-exit harness. The launch-spec port stamps the
-// resolved agent type, which is what the commit fallback branches on.
 func singleFixtureProcessExitOpts(t *testing.T, agent core.AgentType, script string) dotFixtureOpts {
 	t.Helper()
 

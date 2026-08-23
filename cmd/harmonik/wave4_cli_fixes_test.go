@@ -1,15 +1,5 @@
 package main
 
-// wave4_cli_fixes_test.go — regression tests for the Wave-4 mega-review §c
-// CLI correctness fixes:
-//
-//   - >64KB valid event lines must not abort NDJSON scans (scanner buffer).
-//   - smoke Signal 3 must pass on the commit the smoke task actually writes.
-//   - queue-already-active append fallback attributes exit to the CALLER's beads.
-//   - init / gc branches reject unknown flags (fail closed).
-//   - eval collect re-run does not double-count (run_id dedup).
-//   - SH-002 rejects uppercase .YML too; digest short-ID does not panic.
-
 import (
 	"bytes"
 	"fmt"
@@ -23,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// injectAndWatchBeads mirrors injectAndWatch but passes a watchBeads set
-// (append-fallback attribution mode).
 func injectAndWatchBeads(t *testing.T, ndjsonLines []string, queueID string, beads []core.BeadID) int {
 	t.Helper()
 	server, client := net.Pipe()
@@ -64,7 +52,6 @@ func TestViaWatchGroupCompletion_LargeEventLine(t *testing.T) {
 func TestViaWatchGroupCompletion_AppendFallbackAttribution(t *testing.T) {
 	t.Parallel()
 
-	// Our bead succeeds; an unrelated bead in the same group fails.
 	lines := []string{
 		`{"type":"run_started","payload":{"run_id":"r-ours","bead_id":"hk-ours"}}`,
 		`{"type":"run_started","payload":{"run_id":"r-other","bead_id":"hk-other"}}`,
@@ -75,7 +62,6 @@ func TestViaWatchGroupCompletion_AppendFallbackAttribution(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0 (unrelated bead's failure must not be attributed to us)", code)
 	}
 
-	// Converse: our bead fails while the rest of the group succeeds.
 	lines = []string{
 		`{"type":"run_started","payload":{"run_id":"r-ours","bead_id":"hk-ours"}}`,
 		`{"type":"run_failed","payload":{"run_id":"r-ours"}}`,
@@ -85,7 +71,6 @@ func TestViaWatchGroupCompletion_AppendFallbackAttribution(t *testing.T) {
 		t.Fatalf("exit code = %d, want 1 (our bead failed)", code)
 	}
 
-	// No run events for our bead at all: fall back to group outcome.
 	lines = []string{
 		`{"type":"queue_group_completed","payload":{"queue_id":"q1","group_index":0,"final_status":"complete-success"}}`,
 	}
@@ -117,7 +102,6 @@ func TestSmokeCheckCommitOnBranch_MatchesActualSmokeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	run("add", ".")
-	// The commit the smoke task actually writes: subject only, no Refs trailer.
 	run("commit", "-m", "smoke(hk-smoke1): 5-signal verification")
 
 	var stderr bytes.Buffer
@@ -127,13 +111,11 @@ func TestSmokeCheckCommitOnBranch_MatchesActualSmokeCommit(t *testing.T) {
 			ok, sha, stderr.String())
 	}
 
-	// A commit that only carries the Refs: trailer must also match.
 	run("commit", "--allow-empty", "-m", "chore: something\n\nRefs: hk-smoke2")
 	if ok, _ := smokeCheckCommitOnBranch(dir, "main", "hk-smoke2", &stderr); !ok {
 		t.Fatal("smokeCheckCommitOnBranch: want match on Refs:-trailer commit")
 	}
 
-	// And an absent bead must not match.
 	if ok, _ := smokeCheckCommitOnBranch(dir, "main", "hk-absent", &stderr); ok {
 		t.Fatal("smokeCheckCommitOnBranch: matched a bead with no commit")
 	}

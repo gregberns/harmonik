@@ -7,29 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// resolve_watch_config.go — watch routing target resolver + single-source carrier.
-//
-// Introduces requiredWatchValue{KeyPath, Description string, satisfied bool},
-// which extends the requiredKeeperValue pattern (resolve_keeper_config.go) with
-// a Description field. The Description feeds BOTH the missing-key error
-// (rendered "KeyPath — Description") AND watchConfigExampleYAML() so the two
-// cannot drift (parity-tested by TestWatchConfigParityWE7).
-//
-// WE7 §7 exception: the two TARGET keys (status_target, opsmonitor_target)
-// default to "captain" and are NOT fail-loud. Behavioral keys (e.g.
-// escalation_target, WE9+) will use satisfied=cfg.KeyPresent and will
-// fail-loud when absent.
-//
-// ROLLOUT GATE: merging WE7 is inert — defaults preserve existing captain-
-// directed behavior. Flip to "watch" ONLY after MVP-standup AND
-// 'keeper doctor watch' is green.
-//
-// Bead ref: hk-we7-sender-redirect-clhh8.
-
-// requiredWatchValue describes one watch config value: its dotted yaml key path,
-// a human description that is the SINGLE source of truth for BOTH the missing-key
-// error (rendered "KeyPath — Description") and the --example output (parity-tested
-// by TestWatchConfigParityWE7). Extends requiredKeeperValue with Description.
 type requiredWatchValue struct {
 	keyPath     string
 	description string
@@ -63,13 +40,6 @@ func (e *WatchConfigMissingError) Error() string {
 		dir, strings.Join(parts, "; "), dir)
 }
 
-// allWatchValues returns the canonical list of ALL watch config values.
-// The Description field is the SINGLE source of truth shared by
-// checkMissingWatchValues (error path) and watchConfigExampleYAML (--example).
-//
-// TARGET KEYS (WE7): satisfied=true always (default "captain", NOT fail-loud).
-// BEHAVIORAL KEYS (WE9+): satisfied based on config presence (fail-loud when absent).
-// SCHEDULE INTERVAL KEYS (WE6): satisfied based on config presence (fail-loud when absent).
 func allWatchValues(cfg projectconfig.WatchConfig) []requiredWatchValue {
 	return []requiredWatchValue{
 		{
@@ -110,10 +80,6 @@ func allWatchValues(cfg projectconfig.WatchConfig) []requiredWatchValue {
 	}
 }
 
-// checkMissingWatchValues returns every requiredWatchValue where satisfied=false.
-// For WE7 (target keys only), this is always empty — target keys default to
-// "captain" and are never fail-loud. Future behavioral keys (WE9+) will populate
-// this slice when absent from config.
 func checkMissingWatchValues(cfg projectconfig.WatchConfig) []requiredWatchValue {
 	var missing []requiredWatchValue
 	for _, v := range allWatchValues(cfg) {
@@ -143,10 +109,6 @@ func ResolveWatchTargets(cfg projectconfig.WatchConfig) (statusTarget, opsmonito
 	return statusTarget, opsmonitorTarget
 }
 
-// watchConfigExampleBlock is the complete, commented watch: block template.
-// The comment text for each key MUST appear verbatim in the corresponding
-// Description field of allWatchValues() — TestWatchConfigParityWE7 enforces
-// this single-source-of-truth invariant.
 const watchConfigExampleBlock = `watch:
   # Target routing — both default to 'captain' when absent (LOAD-BEARING default).
   # Flip to 'watch' ONLY after MVP-standup AND 'keeper doctor watch' is green (WE7 §11).
@@ -169,8 +131,6 @@ const watchConfigExampleBlock = `watch:
   staffing_starvation_grace: 3
 `
 
-// watchConfigExampleYAML returns the complete watch: example block.
-// Single source of truth for 'harmonik watch config --example'.
 func watchConfigExampleYAML() string {
 	return watchConfigExampleBlock
 }

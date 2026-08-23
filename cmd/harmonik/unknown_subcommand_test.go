@@ -1,36 +1,5 @@
 package main
 
-// unknown_subcommand_test.go — a mistyped verb must be refused, not read as a
-// request to start a daemon.
-//
-// The defect: run dispatches by comparing os.Args[1] against about 48 verb
-// strings in a chain of if statements. The chain had no final else. An argument
-// that matched none of them fell through to flag.Parse, and the process started
-// a daemon against the current working directory.
-//
-// Proved on a built binary on 2026-08-05, in an empty directory:
-//
-//	$ harmonik statu
-//	harmonik daemon starting in /tmp/verbprobe
-//	...
-//	supervisor-watchdog: supervisor not running
-//	supervisor-watchdog: spawning supervisor
-//
-// The typo created .harmonik/events, .harmonik/beads-intents and
-// .harmonik/cognition in that directory, and after one minute it spawned a
-// supervisor to revive itself. The process had to be killed by hand. The
-// refusal is not a cosmetic message. It is the only thing that stops a typo
-// from leaving a self-reviving process behind.
-//
-// These tests call run in this process. That is safe only because the refusal
-// returns before run registers its flags and reads the working directory. The
-// ordering was proved by moving the refusal below the daemon's directory setup:
-// the suite then panicked with "flag redefined: project" on the second call to
-// run, and TestRefusedSubcommandTouchesNothing went red. So a "flag redefined"
-// panic from this file means somebody moved the refusal down.
-//
-// Bead ref: hk-j7yo0.
-
 import (
 	"bytes"
 	"io"
@@ -39,18 +8,11 @@ import (
 	"testing"
 )
 
-// capture carries the stderr text back from the reader goroutine, with the
-// error that ended the read.
 type capture struct {
 	text string
 	err  error
 }
 
-// runWithArgs calls run with os.Args set to argv. It returns the exit code and
-// everything run wrote to stderr.
-//
-// The read runs on its own goroutine so that a usage block larger than the pipe
-// buffer cannot wedge run mid-write.
 func runWithArgs(t *testing.T, argv ...string) (exitCode int, stderr string) {
 	t.Helper()
 

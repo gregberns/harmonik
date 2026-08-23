@@ -9,11 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Tests for ReadAutoStatusMarker per handler-contract.md §4.2a HC-068.
-// Refs: hk-cq1.
-
-// autoStatusFixtureWrite writes JSON data to an auto_status.json file inside
-// a fresh temp workspace and returns the workspace path.
 func autoStatusFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	workspacePath := t.TempDir()
@@ -28,8 +23,6 @@ func autoStatusFixtureWrite(t *testing.T, data []byte) string {
 	return workspacePath
 }
 
-// autoStatusValidJSON returns a minimal valid auto_status.json payload for the
-// given failure_class.
 func autoStatusValidJSON(t *testing.T, failureClass string) []byte {
 	t.Helper()
 	payload := map[string]interface{}{
@@ -43,10 +36,6 @@ func autoStatusValidJSON(t *testing.T, failureClass string) []byte {
 	}
 	return data
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// AutoStatusMarkerPath — path helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_AutoStatusMarkerPathShape verifies that AutoStatusMarkerPath
 // returns ${workspace_path}/.harmonik/auto_status.json per HC-068.
@@ -72,10 +61,6 @@ func TestHC068_AutoStatusMarkerPathFilename(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — absent file
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC068_ReadAutoStatusMarkerAbsentReturnsNilNil verifies that (nil, nil)
 // is returned when auto_status.json does not exist per HC-068 Optionality.
 func TestHC068_ReadAutoStatusMarkerAbsentReturnsNilNil(t *testing.T) {
@@ -90,10 +75,6 @@ func TestHC068_ReadAutoStatusMarkerAbsentReturnsNilNil(t *testing.T) {
 		t.Errorf("HC-068: ReadAutoStatusMarker(absent) returned non-nil marker; want nil")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — malformed JSON → treat as absent
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_ReadAutoStatusMarkerMalformedJSONTreatedAbsent verifies that a
 // non-JSON file is treated as absent per HC-068 Validation.
@@ -124,10 +105,6 @@ func TestHC068_ReadAutoStatusMarkerEmptyFileTreatedAbsent(t *testing.T) {
 		t.Errorf("HC-068: ReadAutoStatusMarker(empty) returned non-nil; want nil (treat-as-absent)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — non-FAIL status → treat as absent (HC-068 D1)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_ReadAutoStatusMarkerNonFailStatusTreatedAbsent verifies that
 // markers with status != "FAIL" are treated as absent per HC-068 D1.
@@ -169,10 +146,6 @@ func TestHC068_ReadAutoStatusMarkerNonFailStatusTreatedAbsent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — FAIL + each of six failure classes
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC068_ReadAutoStatusMarkerAcceptsFAILWithEachClass verifies that a
 // valid FAIL marker with each of the six failure_class values is accepted.
 func TestHC068_ReadAutoStatusMarkerAcceptsFAILWithEachClass(t *testing.T) {
@@ -205,10 +178,6 @@ func TestHC068_ReadAutoStatusMarkerAcceptsFAILWithEachClass(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — compilation_loop → structural override (HC-059)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC068_ReadAutoStatusMarkerCompilationLoopOverriddenToStructural verifies
 // that failure_class=compilation_loop is overridden to structural per HC-059.
 func TestHC068_ReadAutoStatusMarkerCompilationLoopOverriddenToStructural(t *testing.T) {
@@ -226,10 +195,6 @@ func TestHC068_ReadAutoStatusMarkerCompilationLoopOverriddenToStructural(t *test
 		t.Errorf("HC-068: FailureClass = %q; want %q (HC-059 override)", m.FailureClass, core.FailureClassStructural)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — out-of-set failure_class → hint dropped
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_ReadAutoStatusMarkerOutOfSetClassHintDropped verifies that a
 // failure_class value outside the six valid values causes the hint to be
@@ -286,10 +251,6 @@ func TestHC068_ReadAutoStatusMarkerMissingClassHintDropped(t *testing.T) {
 		t.Errorf("HC-068: FailureClass = %q; want \"\" (hint dropped)", m.FailureClass)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — optional notes and signals
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_ReadAutoStatusMarkerNotesOptional verifies that notes is optional:
 // both present and absent are accepted.
@@ -386,13 +347,8 @@ func TestHC068_ReadAutoStatusMarkerSignalsOptional(t *testing.T) {
 		if m == nil {
 			t.Fatal("HC-068: ReadAutoStatusMarker(signals=absent) returned nil")
 		}
-		// Signals may be nil when not present; that's fine.
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadAutoStatusMarker — happy path with all valid failure classes
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC068_ReadAutoStatusMarkerHappyPathAllClasses is a table-driven test
 // covering all six failure classes with expected post-read FailureClass values.

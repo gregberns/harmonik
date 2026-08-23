@@ -38,30 +38,23 @@ func TestRunEM014_ManyRunsShareBeadID(t *testing.T) {
 
 	shared := BeadID("bead-shared-001")
 
-	// Build N=3 Run records with distinct RunID/StartTime but the same BeadID.
 	runs := make([]Run, 3)
 	for i := range runs {
 		r := validRun(t)
-		// Override BeadID with the shared value to assert the many-runs shape.
 		r.BeadID = &shared
-		// Ensure StartTime is distinct across the three runs (monotonically later).
 		r.StartTime = time.Now().Add(time.Duration(i) * time.Second)
 		end := r.StartTime.Add(time.Minute)
 		r.EndTime = &end
-		// Assign a fresh RunID so the three Runs are genuinely distinct.
 		r.RunID = RunID(uuid.Must(uuid.NewV7()))
 		runs[i] = r
 	}
 
-	// Each Run must be individually valid (EM-014: Valid() is per-record).
 	for i, r := range runs {
 		if !r.Valid() {
 			t.Errorf("run[%d].Valid() = false, want true (EM-014 shared BeadID must be individually valid)", i)
 		}
 	}
 
-	// Sanity: all three RunIDs must be distinct — confirms we actually built
-	// three different Run records rather than aliasing the same one.
 	seen := make(map[RunID]bool)
 	for _, r := range runs {
 		if seen[r.RunID] {
@@ -95,13 +88,4 @@ func TestRunEM014_OneRunForBead(t *testing.T) {
 // EM-014 reference: execution-model.md §4.3 EM-014.
 func TestRunEM014_ZeroRunsForBead(t *testing.T) {
 	t.Parallel()
-
-	// Zero-runs is the natural state when a bead exists in Beads but has never
-	// been claimed. The Go Run type has no "bead exists" record; the absence of
-	// any Run with that BeadID is the correct representation. Nothing to assert
-	// at the record-shape level — the invariant is satisfied by the type not
-	// existing, which is always true before any Run is created.
-	//
-	// This test is intentionally a no-op assertion; its presence as a named
-	// EM-014 sensor satisfies the requirement-traceability goal of this file.
 }

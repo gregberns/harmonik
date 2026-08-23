@@ -8,13 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Fake Adapter for session-sweep tests (orphanSessionFixture prefix)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// orphanSessionFixtureAdapter is a deterministic in-memory fake of the [Adapter]
-// interface used in orphan-session-sweep tests. It holds session→windows maps,
-// per-session pane PIDs, and records which sessions were killed.
 type orphanSessionFixtureAdapter struct {
 	// sessions maps session name → slice of window names.
 	sessions map[string][]string
@@ -82,7 +75,6 @@ func (a *orphanSessionFixtureAdapter) KillWindow(_ context.Context, _ WindowHand
 // session name by stripping the trailing colon.
 func (a *orphanSessionFixtureAdapter) WindowPanePID(_ context.Context, handle WindowHandle) (int, error) {
 	target := string(handle)
-	// Strip trailing ":" to get the session name.
 	session := strings.TrimSuffix(target, ":")
 
 	if a.panePIDErr != nil {
@@ -139,24 +131,15 @@ func (a *orphanSessionFixtureAdapter) WindowPaneID(_ context.Context, _ WindowHa
 	return "", nil
 }
 
-// orphanSessionFixtureNewAdapter constructs a fresh fake adapter.
 func orphanSessionFixtureNewAdapter(sessions map[string][]string) *orphanSessionFixtureAdapter {
 	return &orphanSessionFixtureAdapter{sessions: sessions}
 }
 
-// orphanSessionFixtureProjectHash returns a core.ProjectHash of exactly 12
-// lowercase hex chars, used across session-sweep tests.
 func orphanSessionFixtureProjectHash() core.ProjectHash {
 	return core.ProjectHash("abcdef012345")
 }
 
-// orphanSessionFixtureSessionPrefix is the expected "harmonik-<hash>-" prefix
-// for the fixture project hash.
 const orphanSessionFixtureSessionPrefix = "harmonik-abcdef012345-"
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SweepOrphanTmuxSessions tests (hk-kqdpf.3)
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestSweepOrphanTmuxSessions_NilAdapterReturnsZero verifies that a nil adapter
 // produces (0, nil) — no-op sweep.
@@ -231,10 +214,8 @@ func TestSweepOrphanTmuxSessions_DeadPIDKilled(t *testing.T) {
 	sessionName := orphanSessionFixtureSessionPrefix + "default"
 
 	adapter := orphanSessionFixtureNewAdapter(map[string][]string{
-		// Non-zsh window so condition 1 doesn't trigger.
 		sessionName: {"claude-agent"},
 	})
-	// PID 0 is invalid — treated as dead.
 	adapter.panePIDs = map[string]int{sessionName: 0}
 
 	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
@@ -256,7 +237,6 @@ func TestSweepOrphanTmuxSessions_OtherProjectHashUntouched(t *testing.T) {
 	otherSession := "harmonik-999999abcdef-default"
 
 	adapter := orphanSessionFixtureNewAdapter(map[string][]string{
-		// All-zsh windows — would normally trigger a kill.
 		otherSession: {"zsh"},
 	})
 
@@ -304,8 +284,6 @@ func TestSweepOrphanTmuxSessions_LiveSessionNotKilled(t *testing.T) {
 	adapter := orphanSessionFixtureNewAdapter(map[string][]string{
 		sessionName: {"claude-agent", "zsh"},
 	})
-	// Use PID 1 (init/launchd) which is always alive so kill(1, 0) succeeds.
-	// This simulates a live workload session.
 	adapter.panePIDs = map[string]int{sessionName: 1}
 
 	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
@@ -336,7 +314,6 @@ func TestSweepOrphanTmuxSessions_MultipleSessions(t *testing.T) {
 		orphan2: {"zsh", "zsh"},
 		live:    {"claude-agent"},
 	})
-	// Live session has PID 1 (always alive).
 	adapter.panePIDs = map[string]int{live: 1}
 
 	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
@@ -409,7 +386,6 @@ func TestSweepOrphanTmuxSessions_ListWindowsErrorSkipsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// errorSession is skipped; goodSession (all-zsh) is killed.
 	if killed != 1 {
 		t.Errorf("killed = %d, want 1 (error session skipped, orphan session killed)", killed)
 	}

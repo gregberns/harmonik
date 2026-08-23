@@ -17,10 +17,6 @@ func (e EventType) Valid() bool {
 	return e != ""
 }
 
-// ---------------------------------------------------------------------------
-// §8.1 Run lifecycle event types
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeRunStarted is the run_started event type (§8.1.1).
 	// Durability class: F.
@@ -123,10 +119,6 @@ const (
 	EventTypeMergeBuildFailed EventType = "merge_build_failed"
 )
 
-// ---------------------------------------------------------------------------
-// §8.2 Control-point lifecycle event types
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeHookFired is the hook_fired event type (§8.2.1).
 	// Durability class: O.
@@ -201,10 +193,6 @@ const (
 	// Bead ref: hk-u3q6o.
 	EventTypeGateRedefinedUnderCat6 EventType = "gate_redefined_under_cat_6"
 )
-
-// ---------------------------------------------------------------------------
-// §8.3 Agent/handler event types
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeAgentMessage is a durable directed or broadcast agent message.
@@ -452,10 +440,6 @@ const (
 	EventTypeReviewerBudgetExceeded EventType = "reviewer_budget_exceeded"
 )
 
-// ---------------------------------------------------------------------------
-// §8.4 Budget event types
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeBudgetWarning is the budget_warning event type (§8.4.1).
 	// Durability class: O.
@@ -469,10 +453,6 @@ const (
 	// Durability class: F.
 	EventTypeBudgetExhausted EventType = "budget_exhausted"
 )
-
-// ---------------------------------------------------------------------------
-// §8.5 Workspace event types
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeWorkspaceCreated is the workspace_created event type (§8.5.1).
@@ -499,10 +479,6 @@ const (
 	// Durability class: F.
 	EventTypeMergeConflictEscalation EventType = "merge_conflict_escalation"
 )
-
-// ---------------------------------------------------------------------------
-// §8.6 Reconciliation event types
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeReconciliationStarted is the reconciliation_started event type (§8.6.1).
@@ -584,10 +560,6 @@ const (
 	//   - bead_closed_queue_inprogress — queue item completed/failed but ledger in_progress
 	EventTypeReconciliationMismatchObserved EventType = "reconciliation_mismatch_observed"
 )
-
-// ---------------------------------------------------------------------------
-// §8.7 Operator-control and daemon lifecycle event types
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeDaemonStarted is the daemon_started event type (§8.7.1).
@@ -707,10 +679,6 @@ const (
 	EventTypeDashboardRefreshed EventType = "dashboard_refreshed"
 )
 
-// ---------------------------------------------------------------------------
-// §8.1a Review-loop cycle event types (only when workflow_mode = review-loop)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeImplementerResumed is the implementer_resumed event type (§8.1a.1).
 	// Durability class: O. Emitted before each implementer dispatch from iteration 2+.
@@ -756,10 +724,6 @@ const (
 	// Bead ref: hk-m1wqp.
 	EventTypeReviewFixupStalled EventType = "review_fixup_stalled"
 )
-
-// ---------------------------------------------------------------------------
-// §8.8 Observability and bus-internal event types
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeMetric is the metric event type (§8.8.1).
@@ -839,10 +803,6 @@ const (
 	EventTypeProviderSelected EventType = "provider_selected"
 )
 
-// ---------------------------------------------------------------------------
-// §8.11 Handler-pause lifecycle event types (handler-pause work, hk-ifqnj)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeHandlerPaused is the handler_paused event type (§8.11.1).
 	// Durability class: F (fsync-boundary — pause-state landmark for restart recovery).
@@ -857,10 +817,6 @@ const (
 	// Dedup: at-most-once per (bead_id, paused_epoch) per §8.11.3 dedup contract.
 	EventTypeQueueItemHeldForHandlerPause EventType = "queue_item_held_for_handler_pause"
 )
-
-// ---------------------------------------------------------------------------
-// §8.10 Queue lifecycle event types (extqueue v0.1)
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeQueueSubmitted is the queue_submitted event type (§8.10.1).
@@ -907,10 +863,6 @@ const (
 	EventTypeCrossQueueCollision EventType = "cross_queue_collision"
 )
 
-// ---------------------------------------------------------------------------
-// §8.12 Staleness-detection event types (hk-wkzlc)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeRunStale is the run_stale event type (§8.12.1).
 	// Emitted by the stale-watch goroutine when an active run has produced no
@@ -920,22 +872,6 @@ const (
 	// Refs: hk-wkzlc.
 	EventTypeRunStale EventType = "run_stale"
 )
-
-// ---------------------------------------------------------------------------
-// §8.12 Decision-required lifecycle event types (event-model.md §8.12, v0.6.0)
-// ---------------------------------------------------------------------------
-//
-// These are the daemon-core escalation pair emitted when the daemon hits a
-// condition that requires operator intervention before dispatch can continue.
-// Both are F-class (fsync-boundary): loss of decision_required silently leaves
-// a double-failed bead eligible for re-dispatch; loss of decision_acknowledged
-// breaks JSONL observability for the ACK (ack-state file remains authoritative
-// per EV-043a). Dispatch-blocking rule: EV-042/EV-043.
-//
-// DISTINCT from the §8.14 HITL-decisions family (decision_needed/resolved/
-// withdrawn) — different emitter, different purpose, different payload shape.
-//
-// Bead ref: hk-u3q6o.
 
 const (
 	// EventTypeDecisionRequired is the decision_required event type (§8.12.1).
@@ -957,10 +893,6 @@ const (
 	EventTypeDecisionAcknowledged EventType = "decision_acknowledged"
 )
 
-// ---------------------------------------------------------------------------
-// §8.2a Gate-node dispatch event types (hk-jtxnr)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeGateDecisionRecorded is the gate_decision_recorded event type.
 	// Emitted by the gate-node dispatch module after a gate evaluator produces
@@ -970,10 +902,6 @@ const (
 	// Refs: hk-jtxnr (T-IMPL-010).
 	EventTypeGateDecisionRecorded EventType = "gate_decision_recorded"
 )
-
-// ---------------------------------------------------------------------------
-// §8.16 Session-keeper event types (codename:session-keeper, hk-ekap1)
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeSessionKeeperWarn is the session_keeper_warn event type.
@@ -1138,10 +1066,6 @@ const (
 	EventTypeSessionKeeperWatcherDead EventType = "session_keeper_watcher_dead"
 )
 
-// ---------------------------------------------------------------------------
-// §8.17 Alarm / self-check event types (hk-tnmjy)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeReviewGateAnomaly is the review_gate_anomaly event type.
 	// Emitted by the daemon's ReviewGateAnomalyWatcher when N consecutive
@@ -1160,10 +1084,6 @@ const (
 	EventTypeReviewGateAnomaly EventType = "review_gate_anomaly"
 )
 
-// ---------------------------------------------------------------------------
-// §4.13 Eager-refill provenance event types (hk-9321v)
-// ---------------------------------------------------------------------------
-
 const (
 	// EventTypeStaleOpenBeadDetected is the stale_open_bead_detected event type.
 	// Emitted by the daemon's eager-refill pre-screen (EM-063 Phase 2) when
@@ -1180,10 +1100,6 @@ const (
 	// Bead ref: hk-9321v.
 	EventTypeStaleOpenBeadDetected EventType = "stale_open_bead_detected"
 )
-
-// ---------------------------------------------------------------------------
-// §8.18 Remote-substrate worker event types (remote-substrate B6, hk-rs-b6-healthcheck-isda)
-// ---------------------------------------------------------------------------
 
 const (
 	// EventTypeWorkerUnhealthy is the worker_unhealthy event type.
@@ -1316,19 +1232,6 @@ const (
 	EventTypeGovernorSignal EventType = "governor_signal"
 )
 
-// ---------------------------------------------------------------------------
-// §8.15 Bead-ledger merge lifecycle event types (event-model.md §8.15, v0.6.4)
-// ---------------------------------------------------------------------------
-//
-// Two event types emitted during the bead-ledger union-merge path
-// (normative: beads-integration.md §4.8b BL-MRG-003/BL-MRG-004).
-// bead_sync_failed is F-class: its loss silences the Cat-BL2 routing
-// obligation; bead_ledger_conflict_audit is O-class because the conflict log
-// is the authoritative source and the investigator can re-emit on recovery.
-// NOT a paired-phase per §8.9(h).
-//
-// Bead ref: hk-u3q6o.
-
 const (
 	// EventTypeBeadSyncFailed is the bead_sync_failed event type (§8.15.1).
 	// Emitted by the daemon (beads-adapter, post-merge) when `br sync
@@ -1396,21 +1299,6 @@ const (
 	EventTypeLivenessHalt EventType = "liveness_halt"
 )
 
-// ---------------------------------------------------------------------------
-// §8.19 Stall-sentinel Layer A detection event types (hk-l087e)
-// ---------------------------------------------------------------------------
-//
-// stall_detected is emitted by the Layer A per-run stall detector when one of
-// three signatures fires: heartbeat_gap (class-2 silent hang), review_stall
-// (class-3 review-loop wedge), or run_age (backstop for novel hangs). Carries
-// run_id, bead_id, signature, and elapsed_ms so consumers (watch tier,
-// ops-monitor) can triage without re-reading events.jsonl.
-//
-// Durability class: O (ordinary — reconstructible by re-running DetectLayerA
-// over a fresh Snapshot; loss of one tick does not affect correctness).
-//
-// Bead ref: hk-l087e (Layer A detectors). Signal library: hk-mxxsl.
-
 const (
 	// EventTypeStallDetected is emitted by the Layer A per-run stall detector
 	// (DetectLayerA in the sentinel package) when a heartbeat_gap, review_stall,
@@ -1420,20 +1308,6 @@ const (
 	// Refs: hk-l087e.
 	EventTypeStallDetected EventType = "stall_detected"
 )
-
-// ---------------------------------------------------------------------------
-// §8.20 Session-keeper interior cycle events (codename:session-restart-substrate)
-// ---------------------------------------------------------------------------
-//
-// Fine-grained restart-cycle milestones, durable on the bus and joinable by the
-// composite (agent_name, cycle_id) key (EV-046). Emitted by internal/keeper;
-// consumed by the internal/replay invariant harness (EV-048). Durability class: O.
-//
-// This is a SEPARATE cohort from the coarse §8.16 watcher/lifecycle keeper
-// signals: §8.16 = the watcher/lifecycle signals shipped today; §8.20 = the
-// fine-grained interior milestones this change adds.
-//
-// Bead ref: codename:session-restart-substrate.
 
 const (
 	// EventTypeSessionKeeperHandoffWritten is the session_keeper_handoff_written

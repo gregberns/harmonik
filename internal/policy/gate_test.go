@@ -1,18 +1,5 @@
 package policy
 
-// gate_test.go — pure truth-table tests for the DOT-gate DECISION predicates:
-// ParseGateVerdict (gate-verdict.json schema+enum validation),
-// MechanismDecision (bool→GateAction per §6.4), and
-// GateEvalFailureOutcome (the structural pre-eval FAIL Outcome).
-//
-// These assert the DECISION over raw bytes / scalars — no subprocess, no
-// verdict-file I/O, no paste-inject, no runner. The daemon-side effect coverage
-// (readGateVerdictVia, gateVerdictExistsVia, cognition dispatch, paste-inject)
-// stays in package daemon.
-//
-// Spec ref: specs/control-points.md §6.4 (mechanism Bool → allow/deny), §7.2
-// (gate-verdict.json schema: schema_version:1, decision enum).
-
 import (
 	"testing"
 

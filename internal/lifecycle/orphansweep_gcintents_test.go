@@ -1,10 +1,5 @@
 package lifecycle
 
-// orphansweep_gcintents_test.go — unit tests for GCRetiredIntents.
-//
-// Bead ref: hk-cizvu — orphan-sweep stale_intents_observed GC.
-// Bead ref: hk-hf9i8 — retain/remove compare fix + per-boot cap.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,10 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// fakeIntentGCLedger is a deterministic IntentGCLedger fake for tests.
-// It returns a pre-configured BeadRecord for each bead ID; unknown bead IDs
-// return errForUnknown (if set) or fakeShowBeadNotFoundError (a generic
-// transient-style error — NOT brcli.ErrBeadNotFound) by default.
 type fakeIntentGCLedger struct {
 	records       map[core.BeadID]core.BeadRecord
 	errForUnknown error // if non-nil, returned for unrecognised bead IDs
@@ -44,9 +35,6 @@ func (e *fakeShowBeadNotFoundError) Error() string {
 	return "fakeIntentGCLedger: bead " + string(e.id) + " not found"
 }
 
-// gcIntentsFixtureWriteResetIntent writes a valid TerminalOpReset IntentLogEntry
-// to intentsDir/<key>.json with mtime set to past (before daemonStartTime).
-// Returns the path of the created file.
 func gcIntentsFixtureWriteResetIntent(t *testing.T, intentsDir, key string, beadID core.BeadID) string {
 	t.Helper()
 
@@ -75,7 +63,6 @@ func gcIntentsFixtureWriteResetIntent(t *testing.T, intentsDir, key string, bead
 		t.Fatalf("gcIntentsFixture: WriteFile: %v", err)
 	}
 
-	// Set mtime to past so file is stale relative to daemonStartTime.
 	past := time.Now().Add(-30 * time.Minute)
 	if err := os.Chtimes(path, past, past); err != nil {
 		t.Fatalf("gcIntentsFixture: Chtimes: %v", err)
@@ -112,7 +99,6 @@ func TestGCRetiredIntents_RemovesWhenLanded(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteResetIntent(t, intentsDir, "proj_hk-test-remove_reset_1", beadID)
 
-	// Ledger reports bead as "open" (== IntendedPostState "open" for reset).
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
@@ -131,7 +117,6 @@ func TestGCRetiredIntents_RemovesWhenLanded(t *testing.T) {
 		t.Errorf("GCRetiredIntents remove: Retained = %d, want 0", result.Retained)
 	}
 
-	// File must have been deleted.
 	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
 		t.Errorf("GCRetiredIntents remove: intent file still exists at %q; should have been deleted", intentPath)
 	}
@@ -154,9 +139,6 @@ func TestGCRetiredIntents_RetainsWhenPending(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteResetIntent(t, intentsDir, "proj_hk-test-retain_reset_1", beadID)
 
-	// Ledger reports bead as "closed" — the reset (→ open) has NOT landed yet
-	// (or it ran and the bead was re-closed, which is ambiguous).  Either way,
-	// the conservative path retains the file for Cat 3a.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusClosed},
@@ -175,7 +157,6 @@ func TestGCRetiredIntents_RetainsWhenPending(t *testing.T) {
 		t.Errorf("GCRetiredIntents retain: Retained = %d, want 1", result.Retained)
 	}
 
-	// File must still exist.
 	if _, statErr := os.Stat(intentPath); os.IsNotExist(statErr) {
 		t.Errorf("GCRetiredIntents retain: intent file was removed at %q; must be retained for Cat 3a", intentPath)
 	}
@@ -190,10 +171,8 @@ func TestGCRetiredIntents_SkipsNewFiles(t *testing.T) {
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 	beadID := core.BeadID("hk-test-new")
 
-	// Record daemon start BEFORE creating the file — so file is NOT stale.
 	daemonStart := time.Now()
 
-	// Write the intent file AFTER daemonStart.
 	if err := os.MkdirAll(intentsDir, 0o750); err != nil { // G301
 		t.Fatalf("GCRetiredIntents new: MkdirAll: %v", err)
 	}
@@ -215,7 +194,6 @@ func TestGCRetiredIntents_SkipsNewFiles(t *testing.T) {
 	if err := os.WriteFile(newPath, data, 0o600); err != nil {
 		t.Fatalf("GCRetiredIntents new: WriteFile: %v", err)
 	}
-	// mtime is "now" which is >= daemonStart.
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
@@ -227,7 +205,6 @@ func TestGCRetiredIntents_SkipsNewFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GCRetiredIntents new: unexpected error: %v", err)
 	}
-	// New file: not stale, must not be touched.
 	if result.Removed != 0 || result.Retained != 0 {
 		t.Errorf("GCRetiredIntents new: want {0,0}, got {%d,%d}", result.Removed, result.Retained)
 	}
@@ -287,8 +264,6 @@ func TestGCRetiredIntents_RetainsOnShowBeadError(t *testing.T) {
 
 	gcIntentsFixtureWriteResetIntent(t, intentsDir, "proj_hk-test-showbead-err_reset_1", beadID)
 
-	// Explicit transient error — distinct from brcli.ErrBeadNotFound so the
-	// not-found special-case is NOT triggered and the intent is retained.
 	ledger := &fakeIntentGCLedger{
 		records:       map[core.BeadID]core.BeadRecord{},
 		errForUnknown: errors.New("transient-br-error"),
@@ -320,10 +295,8 @@ func TestGCRetiredIntents_RemovesWhenBeadNotFound(t *testing.T) {
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 	beadID := core.BeadID("hk-purged-bead")
 
-	// Use a close intent to match the real on-disk cohort (all op=close, bead purged).
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-purged", beadID, "close", "closed")
 
-	// Ledger returns the production sentinel for a missing bead.
 	ledger := &fakeIntentGCLedger{
 		records:       map[core.BeadID]core.BeadRecord{},
 		errForUnknown: brcli.ErrBeadNotFound,
@@ -353,12 +326,9 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	// landed-a and landed-b: bead already in IntendedPostState → removed.
 	landedA := core.BeadID("hk-landed-a")
 	landedB := core.BeadID("hk-landed-b")
-	// pending-c: bead NOT in IntendedPostState → retained.
 	pendingC := core.BeadID("hk-pending-c")
-	// no-ledger-d: ShowBead fails → retained.
 	noLedgerD := core.BeadID("hk-no-ledger-d")
 
 	gcIntentsFixtureWriteResetIntent(t, intentsDir, "key-a", landedA)
@@ -373,7 +343,6 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 			// pendingC: reset (→ open) with bead "closed" — ambiguous/not-landed;
 			// "in_progress" would now be treated as landed (hk-hf9i8).
 			pendingC: {BeadID: pendingC, Status: core.CoarseStatusClosed},
-			// noLedgerD intentionally absent → ShowBead error → retained
 		},
 	}
 
@@ -390,9 +359,6 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 	}
 }
 
-// gcIntentsFixtureWriteIntent writes a valid IntentLogEntry of the given op
-// to intentsDir/<key>.json with mtime set to past (before daemonStartTime).
-// Returns the path of the created file.
 func gcIntentsFixtureWriteIntent(t *testing.T, intentsDir, key string, beadID core.BeadID, op, intendedPostState string) string {
 	t.Helper()
 
@@ -400,8 +366,6 @@ func gcIntentsFixtureWriteIntent(t *testing.T, intentsDir, key string, beadID co
 		t.Fatalf("gcIntentsFixtureWriteIntent: MkdirAll: %v", err)
 	}
 
-	// For reset op, run_id and transition_id must be zero-valued per BI-010d.
-	// For other ops, use non-nil UUIDs.
 	runID := "01900000-0000-7000-0000-000000000001"
 	transID := "01900000-0000-7000-0000-000000000002"
 	if op == "reset" {
@@ -450,7 +414,6 @@ func TestGCRetiredIntents_ClaimBeadAdvancedToClosed(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-claim-closed", beadID, "claim", "in_progress")
 
-	// Ledger reports bead as "closed" — it was claimed then closed.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusClosed},
@@ -514,9 +477,6 @@ func TestGCRetiredIntents_Cap(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	// Create gcRetiredIntentsMaxScan + 5 stale intent files, all "landed"
-	// (claim op, bead = closed).  The first gcRetiredIntentsMaxScan must be
-	// removed; the remaining 5 must be skipped (deferred to next boot).
 	total := gcRetiredIntentsMaxScan + 5
 	ledgerRecords := make(map[core.BeadID]core.BeadRecord, total)
 	for i := 0; i < total; i++ {
@@ -553,7 +513,6 @@ func TestGcIntentOpLanded(t *testing.T) {
 		intendedPostState core.CoarseStatus
 		wantLanded        bool
 	}{
-		// claim (→ in_progress): landed if bead ≠ open
 		{"claim", core.CoarseStatusInProgress, core.CoarseStatusInProgress, true}, // exact match
 		{"claim", core.CoarseStatusClosed, core.CoarseStatusInProgress, true},     // advanced past
 		{"claim", core.CoarseStatusTombstone, core.CoarseStatusInProgress, true},  // advanced past
@@ -600,8 +559,6 @@ func TestGCRetiredIntents_CloseBeadResetToOpen(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-reset", beadID, "close", "closed")
 
-	// Ledger reports bead as "open" — it was reset from in_progress back to open
-	// after the close intent was written (the run was abandoned).
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
@@ -636,7 +593,6 @@ func TestGCRetiredIntents_CloseBeadReopenedToOpen(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-reopened", beadID, "close", "closed")
 
-	// Ledger reports bead as "open" — it was closed (close landed) then reopened.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},

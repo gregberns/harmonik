@@ -48,7 +48,6 @@ func TestHasMergeCommitForBead_B2FalseClose(t *testing.T) {
 	runGit("init", "-b", "main")
 	runGit("config", "commit.gpgsign", "false")
 
-	// Baseline commit so the branch exists.
 	writeFile("README.md", "seed\n")
 	runGit("add", "-A")
 	runGit("commit", "-m", "chore: seed")
@@ -59,18 +58,14 @@ func TestHasMergeCommitForBead_B2FalseClose(t *testing.T) {
 		realBead    = core.BeadID("hk-real")
 	)
 
-	// Case 1: docs-only commit that MENTIONS the bead id in the body but carries
-	// no Harmonik-Bead-ID trailer. Must NOT match.
 	writeFile("docs/notes.md", "note about "+string(mentionBead)+"\n")
 	runGit("add", "-A")
 	runGit("commit", "-m", "docs: discussing "+string(mentionBead)+" in prose")
 
-	// Case 2: genuine trailer but diff touches only *.md.
 	writeFile("docs/changelog.md", "changelog\n")
 	runGit("add", "-A")
 	runGit("commit", "-m", "docs: changelog\n\nHarmonik-Bead-ID: "+string(docsBead))
 
-	// Case 3: genuine trailer + a real source (non-docs) file.
 	writeFile("internal/feature/feature.go", "package feature\n")
 	runGit("add", "-A")
 	runGit("commit", "-m", "feat: implement feature\n\nHarmonik-Bead-ID: "+string(realBead))

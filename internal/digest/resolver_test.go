@@ -14,7 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// writeResolverEvent appends a minimal event envelope to eventsPath.
 func writeResolverEvent(t *testing.T, eventsPath, evType string, payload interface{}, ts time.Time) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
@@ -84,7 +83,6 @@ func TestResolveSuppressionState_OperatorAttachedActive(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Write a session_keeper_operator_attached event 1 minute ago (within 5m default TTL).
 	writeResolverEvent(t, eventsPath, string(core.EventTypeSessionKeeperOperatorAttached),
 		core.SessionKeeperOperatorAttachedPayload{AgentName: "captain", Phase: "cycle"},
 		now.Add(-1*time.Minute))
@@ -115,7 +113,6 @@ func TestResolveSuppressionState_OperatorAttachedExpired(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Write an event 10 minutes ago — outside the 5m attached_inactive_timeout.
 	writeResolverEvent(t, eventsPath, string(core.EventTypeSessionKeeperOperatorAttached),
 		core.SessionKeeperOperatorAttachedPayload{AgentName: "captain", Phase: "cycle"},
 		now.Add(-10*time.Minute))
@@ -145,7 +142,6 @@ func TestResolveSuppressionState_OperatorDialogueActive(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Write an agent_message from "operator" 2 minutes ago (within 10m TTL).
 	writeResolverEvent(t, eventsPath, eventTypeAgentMessage,
 		map[string]string{"from": "operator", "to": "captain", "body": "hold"},
 		now.Add(-2*time.Minute))
@@ -172,7 +168,6 @@ func TestResolveSuppressionState_OperatorDialogueNotOperator(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Message from "captain", not "operator".
 	writeResolverEvent(t, eventsPath, eventTypeAgentMessage,
 		map[string]string{"from": "captain", "to": "crew1", "body": "status"},
 		now.Add(-1*time.Minute))
@@ -241,7 +236,6 @@ func TestResolveSuppressionState_PhaseFlagMissingExpiry(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// PhaseFlag set but PhaseFlagExpiry is zero — invalid config.
 	cfg := SentinelConfig{PhaseFlag: "design"}
 	state := ResolveSuppressionState(eventsPath, now, cfg)
 	if state.Suppressed {
@@ -323,7 +317,6 @@ sentinel:
 	}
 }
 
-// findSource returns the SuppressionSourceState with the given name, or nil.
 func findSource(sources []SuppressionSourceState, name string) *SuppressionSourceState {
 	for i := range sources {
 		if sources[i].Name == name {
@@ -332,8 +325,6 @@ func findSource(sources []SuppressionSourceState, name string) *SuppressionSourc
 	}
 	return nil
 }
-
-// --- BT1 unit-gap tests (hk-tbg8) ---
 
 // TestResolveSuppressionState_OperatorDialogueExpired verifies that an operator
 // dialogue event (agent_message from "operator") older than suppression_ttl does
@@ -345,7 +336,6 @@ func TestResolveSuppressionState_OperatorDialogueExpired(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Write a dialogue event 12 minutes ago — beyond the 10m suppression_ttl.
 	writeResolverEvent(t, eventsPath, eventTypeAgentMessage,
 		map[string]string{"from": "operator", "to": "captain", "body": "continue"},
 		now.Add(-12*time.Minute))
@@ -386,7 +376,6 @@ func TestResolveSuppressionState_IssueClearing_NotAMode(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 
-	// Write several bead_closed events (active issue-clearing progress).
 	for i := 0; i < 5; i++ {
 		writeResolverEvent(t, eventsPath, string(core.EventTypeBeadClosed),
 			map[string]interface{}{"bead_id": fmt.Sprintf("hk-x%04d", i)},

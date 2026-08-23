@@ -115,7 +115,6 @@ func NewPolicyExprEvaluator(cfg PolicyExprEvaluatorConfig) *PolicyExprEvaluator 
 func (e *PolicyExprEvaluator) Compile(expression string, env any) (*vm.Program, BoundFired, error) {
 	prog, err := expr.Compile(expression, expr.Env(env), expr.MaxNodes(e.Config.MaxASTNodes))
 	if err != nil {
-		// Check if the error is from the MaxNodes ceiling.
 		if isMaxNodesError(err) {
 			return nil, BoundFiredASTSteps, fmt.Errorf("%w: %w", ErrCostCeiling, err)
 		}
@@ -191,9 +190,6 @@ type CostCeilingEvent struct {
 	IODeterminism IODeterminism `json:"io_determinism"`
 }
 
-// isMaxNodesError heuristically detects whether err is an expr-lang/expr
-// MaxNodes compile-time ceiling error. The expr library does not expose a typed
-// error for this; we inspect the error string.
 func isMaxNodesError(err error) bool {
 	if err == nil {
 		return false
@@ -201,7 +197,6 @@ func isMaxNodesError(err error) bool {
 	return contains(err.Error(), "exceeds maximum allowed nodes")
 }
 
-// contains reports whether s contains substr (avoids strings import).
 func contains(s, substr string) bool {
 	if substr == "" {
 		return true

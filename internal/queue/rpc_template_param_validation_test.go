@@ -1,12 +1,5 @@
 package queue_test
 
-// rpc_template_param_validation_test.go — WG-045 ingestion-boundary validation.
-//
-// HandleQueueSubmit MUST reject malformed template-param keys and control-char /
-// over-length values BEFORE persist, so a poison value never reaches the
-// substitution path. This is the primary fail-fast chokepoint (the substitution
-// backstop in internal/workflow covers the daemon-down local-persist path).
-
 import (
 	"strings"
 	"testing"
@@ -87,9 +80,6 @@ func TestHandleQueueSubmit_AcceptsValidShellMetacharParamValue(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(bead)
 
-	// Shell metacharacters in a value are NOT rejected here — neutralising them is
-	// the substitution shell-quoting close's job. Validation only blocks control
-	// chars / bad keys / over-length, so this must be accepted.
 	req := submitReqWithParams(bead, "SID", "x; touch /tmp/pwned #")
 	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
 	if rpcErr != nil {

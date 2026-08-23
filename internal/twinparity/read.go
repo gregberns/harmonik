@@ -45,8 +45,6 @@ func LoadStream(path string) (Stream, error) {
 func LoadStreamLines(lines []string) (Stream, error) {
 	var stream Stream
 
-	// First pass: find the earliest parseable envelope timestamp so elapsed
-	// is measured relative to the stream's first record.
 	var firstTS time.Time
 	decoded := make([]map[string]json.RawMessage, 0, len(lines))
 	for i, line := range lines {

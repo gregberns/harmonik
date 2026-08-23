@@ -1,22 +1,5 @@
 package runlaunch_test
 
-// teardown_characterization_test.go — characterization of the TEARDOWN step of
-// the shared launch → dispatch → wait → probe → teardown sequence.
-//
-// ForceTeardownSession is registered as a deferred backstop by every dispatch
-// site immediately after Launch, and it is the guard that keeps the run-level
-// worktree removal from deleting a directory a live agent is still working in
-// (hk-68pvl: the race produced false `no_commit_during_implementer ... exit=0`
-// records). It had no tests.
-//
-// Three properties are load-bearing and pinned here:
-//   - it tears down on a context that CANNOT be cancelled, so the teardown
-//     still happens on the shutdown path where the run context is already dead;
-//   - it BLOCKS until the kill returns, because the ordering guarantee against
-//     worktree removal comes from blocking, not from the return value;
-//   - it tolerates a nil session and a failing kill, because it runs from a
-//     defer with nowhere to report an error.
-
 import (
 	"context"
 	"errors"
@@ -30,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runlaunch"
 )
 
-// teardownSession records what ForceTeardownSession did to it. Only Kill is in
-// the teardown contract; every other method fails the test if reached.
 type teardownSession struct {
 	t *testing.T
 
@@ -124,10 +105,6 @@ func TestForceTeardownSession_KillsOnAnUncancellableContext(t *testing.T) {
 	if _, hasDeadline := ctx.Deadline(); hasDeadline {
 		t.Error("the teardown context carries a deadline — the reap could be abandoned mid-kill")
 	}
-	// A nil Done channel is the observable form of "nothing can cancel this":
-	// it holds for context.Background() and for context.WithoutCancel alike, so
-	// it survives a decomposition that switches between them, and it fails for
-	// any context derived from the run's own.
 	if ctx.Done() != nil {
 		t.Error("the teardown context is cancellable — a cancelled run would skip its own teardown")
 	}
@@ -146,7 +123,6 @@ func TestForceTeardownSession_BlocksUntilTheKillReturns(t *testing.T) {
 		close(returned)
 	}()
 
-	// While the kill is in flight the teardown must NOT have returned.
 	select {
 	case <-returned:
 		t.Fatal("teardown returned while the kill was still in flight — the worktree removal could race a live agent")

@@ -1,18 +1,5 @@
 package gitprobe_test
 
-// This is the guard for the largest of the three host couplings, and it lives
-// here because internal/gitprobe is in the core package set. The helper that
-// installs the isolation has its own tests, but that package is in neither
-// CORE_PKGS nor FAST_PKGS, so those tests do not run in the gate an assessor's
-// sign-off rests on. A guard that only runs under `make full` cannot stop the
-// gate from quietly going back to reading the machine.
-//
-// The measurement that made this necessary: with commit.gpgsign=true in a global
-// gitconfig — a common and sane operator setting — 440 tests failed across six
-// core packages, 4 of them in this one. Not one git fixture in the tree turned
-// signing off. internal/testhelpers/hermetic carries the method that produced
-// those counts, and the reason the total depends on which tree you measure.
-
 import (
 	"os"
 	"os/exec"

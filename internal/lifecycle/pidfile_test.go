@@ -35,7 +35,6 @@ func TestPidfileAcquire_Success(t *testing.T) {
 		t.Errorf("Path() = %q, want %q", pf.Path(), wantPath)
 	}
 
-	// Verify file content is exactly three lines.
 	wantContent := fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID)
 	//nolint:gosec // G304: pidfilePath derived from t.TempDir() via plFixtureTempProjectDir; not user input
 	data, err := os.ReadFile(wantPath)
@@ -46,7 +45,6 @@ func TestPidfileAcquire_Success(t *testing.T) {
 		t.Errorf("pidfile content = %q, want %q", string(data), wantContent)
 	}
 
-	// Verify parseable via production reader.
 	gotPID, gotPGID, gotInstanceID, err := ReadPidfile(projectDir)
 	if err != nil {
 		t.Fatalf("ReadPidfile: %v", err)
@@ -109,7 +107,6 @@ func TestPidfileAcquire_ConcurrentLock(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pf.Release() }) //nolint:errcheck // cleanup error unactionable
 
-	// Second acquire on the same file must fail with ErrPidfileLocked.
 	_, err2 := AcquirePidfile(projectDir, pid, pgid, "01950000-0000-7001-8000-000000000011")
 	if err2 == nil {
 		t.Fatal("second AcquirePidfile: expected ErrPidfileLocked, got nil")
@@ -140,11 +137,6 @@ func TestPidfileRelease_AllowsReacquire(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	// After release, re-acquire must succeed. Retry briefly: a concurrent
-	// exec.Command fork(2) elsewhere in this parallel test binary can
-	// transiently keep the just-released flock alive via an inherited fd
-	// copy until that child's exec(2) closes it — see
-	// plFixtureEventuallyNoErr.
 	var pf2 *Pidfile
 	err = plFixtureEventuallyNoErr(t, func() error {
 		var acquireErr error
@@ -224,11 +216,7 @@ func TestPidfileAcquire_OCloexec(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pf.Release() }) //nolint:errcheck // cleanup error unactionable
 
-	// Access the raw fd via the unexported field — same package, so accessible.
 	rawFD := pf.fd.Fd()
-	// Use SYS_FCNTL directly; syscall.FcntlInt is not available on all
-	// platforms in the standard library. SYS_FCNTL + F_GETFD is the portable
-	// POSIX path on Linux and macOS.
 	r1, _, errno := syscall.Syscall(syscall.SYS_FCNTL, rawFD, syscall.F_GETFD, 0)
 	if errno != 0 {
 		t.Fatalf("F_GETFD: errno %v", errno)
@@ -251,7 +239,6 @@ func TestPidfileAcquire_InodePreserved(t *testing.T) {
 	projectDir := plFixtureTempProjectDir(t)
 	pidfilePath := pidfileFixturePath(projectDir)
 
-	// Pre-populate the pidfile with garbage content to establish an inode.
 	garbage := make([]byte, 100)
 	for i := range garbage {
 		garbage[i] = 'X'
@@ -260,7 +247,6 @@ func TestPidfileAcquire_InodePreserved(t *testing.T) {
 		t.Fatalf("WriteFile (pre-populate): %v", err)
 	}
 
-	// Capture the inode before acquire.
 	var preStat syscall.Stat_t
 	if err := syscall.Stat(pidfilePath, &preStat); err != nil {
 		t.Fatalf("Stat (pre-acquire): %v", err)
@@ -276,7 +262,6 @@ func TestPidfileAcquire_InodePreserved(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pf.Release() }) //nolint:errcheck // cleanup error unactionable
 
-	// Capture the inode after acquire.
 	var postStat syscall.Stat_t
 	if err := syscall.Stat(pidfilePath, &postStat); err != nil {
 		t.Fatalf("Stat (post-acquire): %v", err)
@@ -299,7 +284,6 @@ func TestPidfileAcquire_TruncatesGarbage(t *testing.T) {
 	projectDir := plFixtureTempProjectDir(t)
 	pidfilePath := pidfileFixturePath(projectDir)
 
-	// Write 100 bytes of garbage so any residual bytes would be detectable.
 	garbage := make([]byte, 100)
 	for i := range garbage {
 		garbage[i] = 'Z'
@@ -493,9 +477,6 @@ func TestReadPidfile_UnparsablePGID(t *testing.T) {
 	}
 }
 
-// pidfileFixturePath returns the canonical pidfile path for a project. This is
-// the per-bead helper (prefix: pidfileFixture) used internally within
-// pidfile_test.go.
 func pidfileFixturePath(projectDir string) string {
 	return plFixturePidfilePath(projectDir)
 }

@@ -57,8 +57,6 @@ func ShellJoinArgv(argv []string) string {
 	return strings.Join(quoted, " ")
 }
 
-// shellQuoteArg single-quotes s so it survives `sh -c` word-splitting as a
-// single token. Identical to the daemon's shellQuoteArg (hk-rpr6).
 func shellQuoteArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

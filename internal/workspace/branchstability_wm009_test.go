@@ -5,14 +5,8 @@ import (
 	"testing"
 )
 
-// branchNameFixtureRunPrefix is the normative task-branch prefix per WM-005.
-// Any change to this constant requires a migration release per WM-009.
-// Prefixed branchNameFixture to avoid collision with sibling bead fixtures.
 const branchNameFixtureRunPrefix = "run/"
 
-// branchNameFixtureIntegrationDefault is the normative default integration branch
-// name per WM-006. Any change to this constant requires a migration release per WM-009.
-// Prefixed branchNameFixture to avoid collision with sibling bead fixtures.
 const branchNameFixtureIntegrationDefault = "harmonik/integration"
 
 // TestWM009_BranchNamingStableAcrossVersion asserts that the task-branch prefix and
@@ -26,7 +20,6 @@ const branchNameFixtureIntegrationDefault = "harmonik/integration"
 func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 	t.Parallel()
 
-	// Task-branch prefix: frozen at "run/".
 	t.Run("task-branch-prefix-frozen", func(t *testing.T) {
 		t.Parallel()
 
@@ -37,7 +30,6 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		}
 	})
 
-	// Default integration branch: frozen at "harmonik/integration".
 	t.Run("default-integration-branch-frozen", func(t *testing.T) {
 		t.Parallel()
 
@@ -47,7 +39,6 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 				branchNameFixtureIntegrationDefault, specMandatedDefault)
 		}
 
-		// Also verify consistency with the function used in WM-006 tests.
 		fromFunc := branchNameFixtureDefaultIntegrationBranch()
 		if fromFunc != specMandatedDefault {
 			t.Errorf("WM-009: branchNameFixtureDefaultIntegrationBranch() = %q, want %q",
@@ -55,9 +46,6 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		}
 	})
 
-	// Cross-check: production TaskBranchPrefix constant must equal the frozen test value.
-	// This is the load-bearing sensor: if TaskBranchPrefix changes in taskbranch.go, this
-	// sub-test fails, signalling that a migration release is required per WM-009 / ON-018.
 	t.Run("production-task-branch-prefix-matches-frozen-constant", func(t *testing.T) {
 		t.Parallel()
 
@@ -68,9 +56,6 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		}
 	})
 
-	// Cross-check: IntegrationBranchName with no parent bead must return the frozen default.
-	// This is the load-bearing sensor for the integration-branch naming path: if the
-	// defaultIntegrationBranch literal in integrationbranch.go changes, this sub-test fails.
 	t.Run("production-default-integration-branch-matches-frozen-constant", func(t *testing.T) {
 		t.Parallel()
 
@@ -85,11 +70,9 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		}
 	})
 
-	// Verify both constants are ref-safe (valid git branch names).
 	t.Run("task-branch-prefix-component-is-ref-safe", func(t *testing.T) {
 		t.Parallel()
 
-		// A task branch with a sample run_id using the frozen prefix must be ref-safe.
 		sampleRunID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0060"
 		taskBranch := branchNameFixtureRunPrefix + sampleRunID
 		branchNameFixtureAssertRefSafe(t, "WM-009", taskBranch)
@@ -101,7 +84,6 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		branchNameFixtureAssertRefSafe(t, "WM-009", branchNameFixtureIntegrationDefault)
 	})
 
-	// Parent-bead-derived integration branch template is also stable per WM-006 + WM-009.
 	t.Run("parent-bead-integration-branch-template-frozen", func(t *testing.T) {
 		t.Parallel()
 
@@ -131,10 +113,8 @@ func TestWM009_BranchPrefixUsedConsistentlyWithWM005(t *testing.T) {
 
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0061"
 
-	// The task branch produced by WM-005's naming convention...
 	wm005Branch := "run/" + runID
 
-	// ...must equal what we get using the frozen constant from this (WM-009) file.
 	wm009Branch := branchNameFixtureRunPrefix + runID
 
 	if wm005Branch != wm009Branch {

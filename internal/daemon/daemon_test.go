@@ -74,7 +74,6 @@ func TestDaemonStartCompiles(t *testing.T) {
 	t.Run("start-with-nil-log-writer-does-not-panic", func(t *testing.T) {
 		t.Parallel()
 
-		// Config.LogWriter is nil → silences log output; must not panic.
 		cfg := daemon.Config{LogWriter: nil, WorkflowModeDefault: core.WorkflowModeDot}
 		if err := daemon.Start(context.Background(), cfg); err != nil {
 			t.Errorf("daemon.Start with nil LogWriter returned error: %v", err)
@@ -82,14 +81,6 @@ func TestDaemonStartCompiles(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-iarcy: pidfile acquisition + daemon_started emission
-// ─────────────────────────────────────────────────────────────────────────────
-
-// pidfileFixtureProjectDir creates a temporary directory tree suitable for
-// daemon.Start: .harmonik/ is created and a JSONL log path within it is
-// returned.  The caller receives the project dir; JSONL path is at
-// <dir>/.harmonik/events/events.jsonl.
 func pidfileFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -102,7 +93,6 @@ func pidfileFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// pidfileFixtureReadJSONLLines reads all non-empty lines from a JSONL file.
 func pidfileFixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
@@ -137,14 +127,12 @@ func TestDaemonStart_PidfileBlocksSecondInvocation(t *testing.T) {
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
 
-	// Acquire the pidfile from this goroutine to simulate a running daemon.
 	pf, err := lifecycle.AcquirePidfile(projectDir, os.Getpid(), os.Getpid(), "test-instance-holder")
 	if err != nil {
 		t.Fatalf("pidfileFixture: AcquirePidfile: %v", err)
 	}
 	defer func() { _ = pf.Release() }()
 
-	// Start with the same ProjectDir must fail because the lock is held.
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
@@ -187,7 +175,6 @@ func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("JSONL log has 0 lines after Start; want at least 1 (daemon_started F-class event)")
 	}
-	// The daemon_started event must be present somewhere in the log.
 	found := false
 	for _, line := range lines {
 		if strings.Contains(line, `"started_at"`) || strings.Contains(line, `"pid"`) {
@@ -217,12 +204,10 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
 
-	// Build a JSONLWriter manually to read back events after Start.
 	writer, err := eventbus.OpenJSONLWriter(jsonlPath)
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	// Pre-write a sentinel line so we know Start's line is additive.
 	sentinel := []byte(`{"sentinel":true}`)
 	if appendErr := writer.Append(sentinel, false); appendErr != nil {
 		t.Fatalf("Append sentinel: %v", appendErr)
@@ -241,12 +226,10 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 	}
 
 	lines := pidfileFixtureReadJSONLLines(t, jsonlPath)
-	// Expect at least 2 lines: our sentinel + daemon_started.
 	if len(lines) < 2 {
 		t.Fatalf("JSONL log has %d lines, want ≥ 2 (sentinel + daemon_started)", len(lines))
 	}
 
-	// Verify daemon_started appears after the sentinel.
 	foundDaemonStarted := false
 	for _, line := range lines[1:] {
 		if strings.Contains(line, string(core.EventTypeDaemonStarted)) ||
@@ -259,10 +242,6 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 		t.Errorf("daemon_started event not found in JSONL lines after sentinel: %v", lines[1:])
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-60uvn: orphan sweep wired into Start
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestDaemonStart_OrphanSweepEventEmitted asserts that Start emits a
 // daemon_orphan_sweep_completed event (§8.7.14, O-class) when ProjectDir is
@@ -290,13 +269,11 @@ func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
 	}
 
 	lines := pidfileFixtureReadJSONLLines(t, jsonlPath)
-	// Expect at least 2 lines: daemon_started (F-class) + daemon_orphan_sweep_completed (O-class).
 	if len(lines) < 2 {
 		t.Fatalf("JSONL log has %d lines after Start, want ≥ 2 (daemon_started + daemon_orphan_sweep_completed)",
 			len(lines))
 	}
 
-	// Verify daemon_orphan_sweep_completed appears.
 	foundSweep := false
 	for _, line := range lines {
 		if strings.Contains(line, string(core.EventTypeDaemonOrphanSweepCompleted)) ||
@@ -328,20 +305,12 @@ func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
-	// Start MUST succeed even in a fresh directory with no orphans.
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Errorf("daemon.Start with empty project dir returned error: %v; "+
 			"sweep errors MUST NOT abort Start (PL-006)", err)
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-7om2q.8: workflow_mode_default daemon config field (PL-004a)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wmdFixtureProjectDir creates a temporary project directory for workflow-mode
-// default tests.  It reuses the pidfileFixtureProjectDir setup so the daemon
-// can start successfully.
 func wmdFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	return pidfileFixtureProjectDir(t)
@@ -453,10 +422,6 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-tjl40: daemon.Start binds Unix socket (PL-003 / CHB-025)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestDaemonStart_BindsSocket asserts that daemon.Start binds a Unix-domain
 // socket at <ProjectDir>/.harmonik/daemon.sock with mode 0600, and that Start
 // returns nil after ctx is cancelled.
@@ -476,7 +441,6 @@ func TestDaemonStart_BindsSocket(t *testing.T) {
 	const sunPathMax = 104
 	const harmonikRelSock = "/.harmonik/daemon.sock"
 
-	// Choose a project dir short enough to fit in sun_path.
 	candidate := t.TempDir()
 	var projectDir string
 	if len(candidate)+len(harmonikRelSock) <= sunPathMax {
@@ -510,7 +474,6 @@ func TestDaemonStart_BindsSocket(t *testing.T) {
 
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
 
-	// Poll for the socket file with mode 0600.
 	deadline := time.Now().Add(5 * time.Second)
 	var sockFound bool
 	for time.Now().Before(deadline) {
@@ -555,18 +518,11 @@ func TestWorkflowModeDefault_UnknownValueRejectedAtStartup(t *testing.T) {
 	if err == nil {
 		t.Fatal("daemon.Start with unknown WorkflowModeDefault returned nil; want non-nil error (PL-004a)")
 	}
-	// Verify the error message names the bad value so the operator can diagnose.
 	if !strings.Contains(err.Error(), "unknown-mode") {
 		t.Errorf("error = %q; want it to contain the invalid value %q", err.Error(), "unknown-mode")
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// wmd* stub helpers (bead hk-7om2q.8)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wmdStubLedger is a no-op beadLedger for workflow-mode-default tests that
-// exercise ExportedTestRuntime without running the work loop.
 type wmdStubLedger struct{}
 
 func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) { return nil, nil }
@@ -586,7 +542,6 @@ func (s *wmdStubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutC
 	return nil
 }
 
-// wmdNoopBus is a no-op EventEmitter for workflow-mode-default tests.
 type wmdNoopBus struct{}
 
 func (b *wmdNoopBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }

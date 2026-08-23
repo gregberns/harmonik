@@ -49,22 +49,8 @@ import (
 	"testing"
 )
 
-// cloexecWaiver marks a raw call site that cannot name a close-on-exec flag.
-//
-// Some creators have no flag argument to name: syscall.Pipe, Dup, Accept and
-// Creat take none, and on darwin SOCK_CLOEXEC does not exist at all, so
-// syscall.Socket cannot be fixed by adding an argument. For those the correct
-// repair is an fcntl(F_SETFD, FD_CLOEXEC) immediately after creation, which this
-// sensor cannot verify from syntax.
-//
-// Rather than exempt those creators silently — which would leave the sensor
-// quiet about the exact sites most likely to leak — each one must carry this
-// comment and a reason. The exemption then survives as a decision someone wrote
-// down, not as a gap in a matcher.
 const cloexecWaiver = "//cloexec:waived"
 
-// cloexecFlagged lists the raw creators that accept a flags argument, with the
-// index of that argument and the constant that must appear inside it.
 var cloexecFlagged = map[string]struct {
 	argIndex int
 	want     string
@@ -77,8 +63,6 @@ var cloexecFlagged = map[string]struct {
 	"Dup3":    {argIndex: 2, want: "O_CLOEXEC"},
 }
 
-// cloexecUnflagged lists the raw creators with no flags argument at all. These
-// can only ever be waived, never satisfied by naming a constant.
 var cloexecUnflagged = map[string]bool{
 	"Pipe":   true,
 	"Dup":    true,
@@ -87,8 +71,6 @@ var cloexecUnflagged = map[string]bool{
 	"Creat":  true,
 }
 
-// cloexecRawPackages are the import names whose calls bypass the runtime's
-// automatic O_CLOEXEC. os and net are absent on purpose: they set it for free.
 var cloexecRawPackages = map[string]bool{
 	"syscall": true,
 	"unix":    true,
@@ -119,8 +101,6 @@ func TestRawDescriptorCreatorsNameCloexec(t *testing.T) {
 				return walkErr
 			}
 			if d.IsDir() {
-				// testdata/ holds fixtures deliberately outside the build;
-				// assets/ holds embedded skill text, not compiled Go.
 				if d.Name() == "testdata" || d.Name() == "assets" {
 					return filepath.SkipDir
 				}
@@ -142,8 +122,6 @@ func TestRawDescriptorCreatorsNameCloexec(t *testing.T) {
 		}
 	}
 
-	// A sensor that parsed nothing reports clean for the wrong reason. This
-	// codebase is thousands of files; a handful means the walk broke.
 	if scanned < 100 {
 		t.Fatalf("scanned only %d Go files — the walk is measuring nothing, not passing", scanned)
 	}
@@ -165,7 +143,6 @@ func TestRawDescriptorCreatorsNameCloexec(t *testing.T) {
 	}
 }
 
-// cloexecScanFile returns one finding per offending call site in f.
 func cloexecScanFile(fset *token.FileSet, f *ast.File, root string) []cloexecFinding {
 	waived := cloexecWaivedLines(fset, f)
 
@@ -230,9 +207,6 @@ func cloexecScanFile(fset *token.FileSet, f *ast.File, root string) []cloexecFin
 	return out
 }
 
-// cloexecWaivedLines returns the source lines carrying a waiver comment. A
-// waiver covers its own line and the line after it, so it can sit trailing on
-// the call or on the line above it.
 func cloexecWaivedLines(fset *token.FileSet, f *ast.File) map[int]bool {
 	waived := map[int]bool{}
 	for _, group := range f.Comments {
@@ -248,9 +222,6 @@ func cloexecWaivedLines(fset *token.FileSet, f *ast.File) map[int]bool {
 	return waived
 }
 
-// cloexecArgNames reports whether the flags expression mentions want anywhere
-// inside it. The argument is normally an OR of constants, so a subtree walk is
-// what is needed rather than a match on the top node.
 func cloexecArgNames(arg ast.Expr, want string) bool {
 	found := false
 	ast.Inspect(arg, func(n ast.Node) bool {

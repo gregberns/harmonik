@@ -1,22 +1,5 @@
 package brcli_test
 
-// BI-026 enforcement tests — Harmonik absorbs breakage rather than forking Beads.
-//
-// Spec ref: specs/beads-integration.md §4.8 BI-026.
-//
-// Tests in this file assert the structural and behavioral properties of the
-// breakage-absorption policy:
-//
-//  1. TestBreakageAdapterIsSoleExecImporter — release-engineering test: verifies
-//     that internal/brcli is the ONLY harmonik package that imports os/exec for
-//     the purpose of spawning `br` subprocesses. Any other harmonik package
-//     importing os/exec for br invocations is a structural violation of BI-025.
-//
-//  2. TestBreakageSchemaChangeSurfacedThroughAdapter — mock-Beads test: simulates
-//     a backwards-incompatible Beads schema change (unexpected JSON shape returned
-//     by `br`) and verifies that the error surfaces through the adapter boundary,
-//     not through a scattered call site.
-
 import (
 	"context"
 	"encoding/json"
@@ -29,16 +12,11 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// breakageFixtureGoListPackage is the subset of "go list -json" output relevant
-// to the sole-importer enforcement test. Only ImportPath and Imports are needed.
 type breakageFixtureGoListPackage struct {
 	ImportPath string   `json:"ImportPath"`
 	Imports    []string `json:"Imports"`
 }
 
-// breakageFixtureListHarmonikPackages runs "go list -json ./..." from the module
-// root and returns the parsed package list. The test helper fails the test on
-// any exec or parse error.
 func breakageFixtureListHarmonikPackages(t *testing.T) []breakageFixtureGoListPackage {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-json", "./...")
@@ -59,22 +37,10 @@ func breakageFixtureListHarmonikPackages(t *testing.T) []breakageFixtureGoListPa
 	return pkgs
 }
 
-// breakageFixtureChangedSchemaJSON returns `br show` JSON output that simulates a
-// backwards-incompatible Beads schema change: the top-level response is no longer
-// an array of objects but a single object (a breaking reshape). The adapter's JSON
-// parser will reject this and return an error.
 func breakageFixtureChangedSchemaJSON(id string) string {
-	// Simulate Beads v-next renaming the array wrapper to a map with a "beads"
-	// key — a breaking schema change. The adapter expects a JSON array at the
-	// top level; this shape is not parseable as []brShowItem.
 	return `{"beads":[{"id":"` + id + `","title":"t","description":"d","status":"open","issue_type":"task","dependencies":[],"dependents":[]}]}`
 }
 
-// breakageFixtureListResponseChangedSchemaJSON simulates a breaking Beads schema
-// change for the `br list` surface: the envelope object is gone and br now
-// returns a bare JSON array of bead summaries. The adapter expects a JSON object
-// at the top level ({issues: [...]}); a bare array is a type mismatch that
-// causes json.Unmarshal to fail.
 func breakageFixtureListResponseChangedSchemaJSON() string {
 	return `[{"id":"hk-1","title":"T","status":"open","issue_type":"task"}]`
 }
@@ -101,14 +67,6 @@ func TestBreakageAdapterIsSoleExecImporter(t *testing.T) {
 		selfPrefix = "github.com/gregberns/harmonik"
 	)
 
-	// handlerCarveout is the set of harmonik packages that legitimately import
-	// os/exec for purposes OTHER than invoking `br`. Each entry here must have
-	// a documented justification.
-	//
-	// internal/handler — uses exec.LookPath for system-handler path resolution
-	//   per HC-042. This is NOT a br subprocess invocation.
-	// tools/forbid-import — uses exec.Command("go", ...) for module inspection.
-	//   This is a build tool, not daemon code.
 	handlerCarveout := map[string]string{
 		handlerPkg: "exec.LookPath for system-handler path resolution (HC-042); no br invocation",
 		toolPkg:    "exec.Command(\"go\", ...) for module import inspection (build tool, not daemon)",
@@ -118,7 +76,6 @@ func TestBreakageAdapterIsSoleExecImporter(t *testing.T) {
 
 	var violations []string
 	for _, pkg := range pkgs {
-		// Only inspect harmonik packages.
 		if !strings.HasPrefix(pkg.ImportPath, selfPrefix) {
 			continue
 		}
@@ -134,17 +91,14 @@ func TestBreakageAdapterIsSoleExecImporter(t *testing.T) {
 			continue
 		}
 
-		// The adapter package itself is expected to import os/exec.
 		if pkg.ImportPath == adapterPkg {
 			continue
 		}
 
-		// Check the known carve-out list.
 		if _, ok := handlerCarveout[pkg.ImportPath]; ok {
 			continue
 		}
 
-		// Any other harmonik package importing os/exec is a BI-025 / BI-026 violation.
 		violations = append(violations, pkg.ImportPath)
 	}
 
@@ -170,8 +124,6 @@ func TestBreakageAdapterIsSoleExecImporter(t *testing.T) {
 // (parse failures of structured output MUST classify as BrSchemaMismatch per BI-025b).
 func TestBreakageSchemaChangeSurfacedThroughAdapter(t *testing.T) {
 	id := core.BeadID("hk-872.99")
-	// Simulate a backwards-incompatible Beads schema change: br show now returns
-	// a wrapped object instead of a bare array.
 	changedJSON := breakageFixtureChangedSchemaJSON(string(id))
 	path := brcliFixtureMockBinary(t, changedJSON, "", 0)
 
@@ -185,8 +137,6 @@ func TestBreakageSchemaChangeSurfacedThroughAdapter(t *testing.T) {
 		t.Fatal("TestBreakageSchemaChangeSurfacedThroughAdapter: expected error for changed schema, got nil")
 	}
 
-	// The error MUST originate from within brcli (adapter boundary) and MUST
-	// wrap BrSchemaMismatch per BI-025b. It must NOT wrap ErrBeadNotFound.
 	if errors.Is(showErr, brcli.ErrBeadNotFound) {
 		t.Errorf("schema-change error incorrectly wrapped ErrBeadNotFound; got: %v", showErr)
 	}
@@ -217,7 +167,6 @@ func TestBreakageSchemaChangeListSurfacedThroughAdapter(t *testing.T) {
 		t.Fatal("TestBreakageSchemaChangeListSurfacedThroughAdapter: expected error for changed schema, got nil")
 	}
 
-	// Verify the error originates from the adapter boundary and wraps BrSchemaMismatch per BI-025b.
 	if !strings.Contains(listErr.Error(), "brcli.") {
 		t.Errorf("list schema-change error does not originate from brcli adapter; got: %v", listErr)
 	}

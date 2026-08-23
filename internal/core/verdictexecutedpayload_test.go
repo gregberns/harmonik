@@ -6,9 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// verdictExecutedPayloadFixture returns a fully-populated VerdictExecutedPayload
-// with all required fields set to valid non-empty values. Tests mutate
-// individual fields to probe Valid().
 func verdictExecutedPayloadFixture(t *testing.T) VerdictExecutedPayload {
 	t.Helper()
 	return VerdictExecutedPayload{

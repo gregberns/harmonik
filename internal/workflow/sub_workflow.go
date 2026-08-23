@@ -40,9 +40,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// subWorkflowEmitter is the minimal event-emission interface required by
-// DispatchSubWorkflow. Both handlercontract.EventEmitter and eventbus.EventBus
-// satisfy this interface, so callers may pass either.
 type subWorkflowEmitter interface {
 	EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error
 }
@@ -111,9 +108,6 @@ func ExpandSubWorkflowGraph(
 		return nil, &ErrSubWorkflowExpand{Reason: "expansion pin is not valid"}
 	}
 
-	// Namespace all node IDs per EM-034a. The expansion record carries only
-	// NodeID and Type; detailed attributes (HandlerRef etc.) are read from
-	// the sub-graph directly at dispatch time.
 	expandedNodes := make([]core.Node, 0, len(subGraph.Nodes))
 	for _, n := range subGraph.Nodes {
 		expandedNodes = append(expandedNodes, core.Node{
@@ -122,7 +116,6 @@ func ExpandSubWorkflowGraph(
 		})
 	}
 
-	// Namespace all edge endpoints per EM-034a.
 	expandedEdges := make([]core.Edge, 0, len(subGraph.Edges))
 	for _, e := range subGraph.Edges {
 		from := core.NamespaceNodeID(parentNodeID, core.NodeID(e.FromNodeID))
@@ -133,7 +126,6 @@ func ExpandSubWorkflowGraph(
 		expandedEdges = append(expandedEdges, ce)
 	}
 
-	// Namespace start and terminal node IDs.
 	startNodeID := core.NamespaceNodeID(parentNodeID, core.NodeID(subGraph.StartNodeID))
 	terminalNodeIDs := make([]core.NodeID, 0, len(subGraph.TerminalNodeIDs))
 	for _, tid := range subGraph.TerminalNodeIDs {
@@ -202,7 +194,6 @@ func DispatchSubWorkflow(
 	nodeRunner SubWorkflowNodeRunner,
 	emitter subWorkflowEmitter,
 ) (core.Outcome, error) {
-	// Step 1 — emit sub_workflow_entered (EM-036).
 	entered := core.SubWorkflowEnteredPayload{
 		RunID:              run.RunID,
 		ParentNodeID:       expansion.ParentNodeID,
@@ -213,25 +204,19 @@ func DispatchSubWorkflow(
 		return core.Outcome{}, fmt.Errorf("DispatchSubWorkflow: emit sub_workflow_entered: %w", err)
 	}
 
-	// Build a synthetic dot.Graph with namespaced node IDs for DecideNextNode.
-	// The graph carries the original edge conditions (unchanged — they evaluate
-	// against Outcomes, not node IDs).
 	expandedGraph := buildNamespacedDotGraph(expansion.ParentNodeID, expansion, subGraph)
 
-	// Step 2–3 — execute nodes and advance the cascade until terminal.
 	currentNodeID := string(expansion.StartNodeID)
 	var terminalOutcome core.Outcome
 
 	for {
 		nodeType := subWorkflowLookupNodeType(expansion, core.NodeID(currentNodeID))
 
-		// Dispatch the current node via the daemon-provided runner.
 		outcome, runErr := nodeRunner(ctx, core.NodeID(currentNodeID), nodeType)
 		if runErr != nil {
 			return core.Outcome{}, fmt.Errorf("DispatchSubWorkflow: nodeRunner(%q): %w", currentNodeID, runErr)
 		}
 
-		// Advance the cascade.
 		decision := DecideNextNode(expandedGraph, currentNodeID, outcome, run, cycles)
 		if decision.IsTerminal {
 			terminalOutcome = outcome
@@ -244,7 +229,6 @@ func DispatchSubWorkflow(
 		currentNodeID = decision.NextNodeID
 	}
 
-	// Step 4 — emit sub_workflow_exited with the terminal Outcome status (EM-036 / EM-036a).
 	exited := core.SubWorkflowExitedPayload{
 		RunID:                 run.RunID,
 		ParentNodeID:          expansion.ParentNodeID,
@@ -256,17 +240,9 @@ func DispatchSubWorkflow(
 		return core.Outcome{}, fmt.Errorf("DispatchSubWorkflow: emit sub_workflow_exited: %w", err)
 	}
 
-	// Step 5 — return terminal Outcome for parent cascade observation (EM-036a).
 	return terminalOutcome, nil
 }
 
-// buildNamespacedDotGraph constructs a synthetic *dot.Graph whose edges have
-// namespaced node IDs (already computed in expansion.ExpandedEdges) but carry
-// the original conditions and routing attributes from subGraph.Edges.
-//
-// The edges are correlated by position: ExpandSubWorkflowGraph preserves the
-// original subGraph.Edges order, so expansion.ExpandedEdges[i] corresponds to
-// subGraph.Edges[i].
 func buildNamespacedDotGraph(parentNodeID core.NodeID, expansion *core.SubWorkflowExpansion, subGraph *dot.Graph) *dot.Graph {
 	dotEdges := make([]*dot.Edge, 0, len(subGraph.Edges))
 	for i, orig := range subGraph.Edges {
@@ -276,7 +252,6 @@ func buildNamespacedDotGraph(parentNodeID core.NodeID, expansion *core.SubWorkfl
 		if orderingKey == "" {
 			orderingKey = toID
 		}
-		// Use the expanded edge's namespaced IDs if available (bounds-safe).
 		if i < len(expansion.ExpandedEdges) {
 			fromID = string(expansion.ExpandedEdges[i].FromNode)
 			toID = string(expansion.ExpandedEdges[i].ToNode)
@@ -305,9 +280,6 @@ func buildNamespacedDotGraph(parentNodeID core.NodeID, expansion *core.SubWorkfl
 	}
 }
 
-// subWorkflowLookupNodeType returns the NodeType of nodeID from
-// expansion.ExpandedNodes. Returns an empty NodeType if nodeID is not found
-// (caller's precondition violation).
 func subWorkflowLookupNodeType(expansion *core.SubWorkflowExpansion, nodeID core.NodeID) core.NodeType {
 	for _, n := range expansion.ExpandedNodes {
 		if n.NodeID == nodeID {
@@ -317,8 +289,6 @@ func subWorkflowLookupNodeType(expansion *core.SubWorkflowExpansion, nodeID core
 	return ""
 }
 
-// emitSubWfJSON marshals payload to JSON and calls emitter.EmitWithRunID.
-// Used internally by DispatchSubWorkflow for sub_workflow_entered / sub_workflow_exited.
 func emitSubWfJSON(ctx context.Context, emitter subWorkflowEmitter, runID core.RunID, eventType core.EventType, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {

@@ -1,15 +1,5 @@
 package codexdriver
 
-// White-box tests for the hk-daegv writable-roots stamp: when Options.WritableRoots
-// is wired, the driver must stamp the returned paths as `runtimeWorkspaceRoots` on
-// every thread/start AND thread/resume handshake, computing them from the session's
-// worktree cwd (SubstrateSpawn.Cwd — NOT cmd.Dir, which is unset on the remote
-// path). This makes codex's OWN `git commit` land under 0.142.0's effective
-// workspace-write seatbelt, where the worktree's out-of-root git common dir is
-// otherwise denied. The twin echoes the received roots as a stderr marker
-// (emitWritableRootsMarker); these ride the same twin re-exec harness as
-// posture_internal_test.go.
-
 import (
 	"context"
 	"os"
@@ -20,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// driveWritableRoots spawns a twin with the given Options, worktree cwd, and resume
-// id, drives one submission to force the handshake, winds the session down, and
-// returns the twin's stderr tail (which carries the writable-roots marker).
 func driveWritableRoots(t *testing.T, opts Options, cwd, resumeID string) string {
 	t.Helper()
 	sub, ok := NewCodexSubstrate(opts).(*codexSubstrate)

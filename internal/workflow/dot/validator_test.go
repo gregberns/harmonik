@@ -23,14 +23,9 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-// mustParse parses src and fatals if Parse returns an error.
 func mustParse(t *testing.T, src, filename string) *Graph {
 	t.Helper()
 	if !strings.Contains(src, "workflow_id=") {
-		// These fixtures isolate other validator rules. Give them a valid
-		// identity so WG-055 does not hide the diagnostic under test.
 		src = strings.Replace(src, "{", "{\n  workflow_id=\"validator-fixture\";", 1)
 	}
 	g, err := Parse(src, filename)
@@ -40,7 +35,6 @@ func mustParse(t *testing.T, src, filename string) *Graph {
 	return g
 }
 
-// diagErrors returns only the error-severity diagnostics.
 func diagErrors(diags []Diagnostic) []Diagnostic {
 	var out []Diagnostic
 	for _, d := range diags {
@@ -51,7 +45,6 @@ func diagErrors(diags []Diagnostic) []Diagnostic {
 	return out
 }
 
-// hasCode returns true if any diagnostic has Code == code.
 func hasCode(diags []Diagnostic, code string) bool {
 	for _, d := range diags {
 		if d.Code == code {
@@ -61,9 +54,6 @@ func hasCode(diags []Diagnostic, code string) bool {
 	return false
 }
 
-// ── fixtures ──────────────────────────────────────────────────────────────────
-
-// valFixtureMinimal is the minimal well-formed three-node graph.
 func valFixtureMinimal() string {
 	return `digraph minimal {
   schema_version="1";
@@ -84,7 +74,6 @@ func valFixtureMinimal() string {
 }`
 }
 
-// valFixtureGate is a well-formed graph with a gate node.
 func valFixtureGate() string {
 	return `digraph gate_wf {
   schema_version="1";
@@ -106,7 +95,6 @@ func valFixtureGate() string {
 }`
 }
 
-// valFixtureSubWorkflow is a well-formed graph with a sub-workflow node.
 func valFixtureSubWorkflow() string {
 	return `digraph sw_wf {
   schema_version="1";
@@ -122,7 +110,6 @@ func valFixtureSubWorkflow() string {
 }`
 }
 
-// valFixtureCycleWithCap has a cycle whose back-edge carries traversal_cap.
 func valFixtureCycleWithCap() string {
 	return `digraph cycle_wf {
   schema_version="1";
@@ -144,8 +131,6 @@ func valFixtureCycleWithCap() string {
   review -> close;
 }`
 }
-
-// ── clean-graph tests ─────────────────────────────────────────────────────────
 
 func TestValFixtureMinimalClean(t *testing.T) {
 	g := mustParse(t, valFixtureMinimal(), "minimal.dot")
@@ -179,8 +164,6 @@ func TestValFixtureCycleWithCapClean(t *testing.T) {
 	}
 }
 
-// ── specs/examples/review-loop.dot validates clean (acceptance criterion) ─────
-
 func TestValFixtureSpecsExamplesReviewLoopClean(t *testing.T) {
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
@@ -199,8 +182,6 @@ func TestValFixtureSpecsExamplesReviewLoopClean(t *testing.T) {
 	}
 }
 
-// ── WG-035: version required ──────────────────────────────────────────────────
-
 func TestValFixtureWG035MissingVersion(t *testing.T) {
 	src := `digraph bad {
   schema_version="1";
@@ -214,8 +195,6 @@ func TestValFixtureWG035MissingVersion(t *testing.T) {
 		t.Errorf("expected WG-035 diagnostic, got: %v", diags)
 	}
 }
-
-// ── WG-033/034: schema_version checks ────────────────────────────────────────
 
 func TestValFixtureWG033MissingSchemaVersion(t *testing.T) {
 	src := `digraph bad {
@@ -232,9 +211,6 @@ func TestValFixtureWG033MissingSchemaVersion(t *testing.T) {
 }
 
 func TestValFixtureWG034SchemaVersionTooOld(t *testing.T) {
-	// schema_version=0 is older than N-1 (currentSchemaVersion-1 = 0 when current=1,
-	// so 0 is exactly the minimum boundary; test with -1-style value using a string).
-	// Actually current=1, N-1=0, so 0 is accepted. We use a future version to test:
 	src := `digraph bad {
   schema_version="99";
   version="1.0";
@@ -248,8 +224,6 @@ func TestValFixtureWG034SchemaVersionTooOld(t *testing.T) {
 		t.Errorf("expected WG-034 diagnostic for future schema_version=99, got: %v", diags)
 	}
 }
-
-// ── WG-024: missing required attributes ──────────────────────────────────────
 
 func TestValFixtureWG024AgenticMissingAgentType(t *testing.T) {
 	src := `digraph bad {
@@ -371,8 +345,6 @@ func TestValFixtureWG024SubWorkflowMissingWorkflowVersion(t *testing.T) {
 	}
 }
 
-// ── WG-024: forbidden attributes ─────────────────────────────────────────────
-
 func TestValFixtureWG024GateForbiddenIdempotencyClass(t *testing.T) {
 	src := `digraph bad {
   schema_version="1";
@@ -406,8 +378,6 @@ func TestValFixtureWG024NonAgenticForbiddenAgentType(t *testing.T) {
 		t.Errorf("expected WG-024 for forbidden agent_type on non-agentic, got: %v", diags)
 	}
 }
-
-// ── WG-027: well-formedness ───────────────────────────────────────────────────
 
 func TestValFixtureWG027MissingStartNode(t *testing.T) {
 	src := `digraph bad {
@@ -485,8 +455,6 @@ func TestValFixtureWG027UnreachableNode(t *testing.T) {
 	}
 }
 
-// ── WG-023: terminal nodes must not have outgoing edges ───────────────────────
-
 func TestValFixtureWG023TerminalWithOutgoingEdge(t *testing.T) {
 	src := `digraph bad {
   schema_version="1";
@@ -505,8 +473,6 @@ func TestValFixtureWG023TerminalWithOutgoingEdge(t *testing.T) {
 		t.Errorf("expected WG-023 for terminal node with outgoing edge, got: %v", diags)
 	}
 }
-
-// ── WG-028: cycle bounding ────────────────────────────────────────────────────
 
 func TestValFixtureWG028CycleNoCap(t *testing.T) {
 	src := `digraph bad {
@@ -549,8 +515,6 @@ func TestValFixtureWG028SelfLoopNoCap(t *testing.T) {
 		t.Errorf("expected WG-028 for self-loop without traversal_cap, got: %v", diags)
 	}
 }
-
-// ── CP-056: policy_ref rejection ─────────────────────────────────────────────
 
 // TestValFixtureCP056PolicyRefRejected verifies CP-056: any node with policy_ref
 // in UnknownAttrs produces a Diagnostic with code CP-056 and SeverityError.
@@ -619,8 +583,6 @@ func TestValFixtureCP056PolicyRefMessageSuggestions(t *testing.T) {
 		}
 	}
 }
-
-// ── Diagnostic.String() formatting ───────────────────────────────────────────
 
 func TestValDiagnosticStringWithLine(t *testing.T) {
 	d := Diagnostic{Severity: SeverityError, Line: 5, Code: "WG-027", Message: "test"}

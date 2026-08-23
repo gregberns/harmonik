@@ -1,26 +1,5 @@
 package daemon
 
-// bandwidthtuner.go — rolling-5h token-rate auto-tuner for --max-concurrent.
-//
-// The tuner reads ~/.claude/projects/*/*.jsonl (the transcript files that Claude
-// Code writes per-message) every 60 s, sums the tokens consumed over the
-// trailing 5 h window, and adjusts the runtime concurrency ceiling so that
-// harmonik doesn't overshoot the operator's subscription bandwidth.
-//
-// Formula: effectiveMax = clamp(round(N_max * (ceiling − used) / ceiling), 1, N_max)
-//
-// where:
-//   N_max   = the user-configured --max-concurrent value (the static ceiling)
-//   ceiling = --subscription-token-ceiling (tokens per 5 h; operator-supplied)
-//   used    = sum of (input + output + cache_creation) tokens across ALL
-//             ~/.claude/projects over the trailing 5 h window
-//             (cache_read is excluded: it may not count toward the subscription cap)
-//
-// Emergency backstop: NotifyRateLimit() snaps maxConcurrent to 1 and suppresses
-// further upward adjustment until the retry-after window expires.
-//
-// Bead ref: hk-ymav1.
-
 import (
 	"bufio"
 	"context"
@@ -41,14 +20,6 @@ const (
 	bandwidthTunerInterval = 60 * time.Second
 )
 
-// bandwidthTunerBackstop bridges the pre-Seal bus subscription to the
-// post-Seal BandwidthTuner construction.  Subscribe must be called before
-// bus.Seal (EV-009); SetTuner wires the live tuner after it is constructed.
-// This two-phase wiring avoids restructuring the daemon init order: the tuner
-// depends on concurrencyCtrl, which is built after Seal.
-//
-// PI-073: reg (optional) lets handle() look up the run's agent type so that
-// Pi rate-limit events are isolated from the global tuner.
 type bandwidthTunerBackstop struct {
 	tuner atomic.Pointer[BandwidthTuner]
 	reg   atomic.Pointer[RunRegistry]
@@ -93,8 +64,6 @@ func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// handle is the bus event handler for agent_rate_limit_status events.
-// Only status=active events trigger NotifyRateLimit; cleared events are ignored.
 func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error {
 	t := b.tuner.Load()
 	if t == nil {
@@ -107,11 +76,6 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 	if pl.Status != core.AgentRateLimitStatusActive {
 		return nil // only act on the active (rate-limited) transition
 	}
-	// PI-073: Pi rate-limit events MUST NOT reach the global tuner — a
-	// free-tier Pi 429 must never throttle the paid Claude fleet.
-	// Look up the agent type via the run registry. If the registry is not yet
-	// wired (nil) or the run is not found (race window before registration),
-	// fall through to the tuner — safe default for non-Pi harnesses.
 	if r := b.reg.Load(); r != nil && pl.RunID != (core.RunID{}) {
 		if h, ok := r.Get(pl.RunID); ok && h != nil {
 			if h.GetAgentType() == core.AgentTypePi {
@@ -127,8 +91,6 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 	return nil
 }
 
-// transcriptRecord is a minimal parse target for a single line in a
-// ~/.claude/projects/*/*.jsonl transcript file.
 type transcriptRecord struct {
 	Timestamp string             `json:"timestamp"`
 	Message   *transcriptMessage `json:"message"`
@@ -142,7 +104,6 @@ type transcriptUsage struct {
 	InputTokens              int64 `json:"input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-	// CacheReadInputTokens intentionally excluded per bead spec.
 }
 
 // BandwidthTuner adjusts the ConcurrencyController ceiling every 60 s based on
@@ -191,8 +152,6 @@ func (t *BandwidthTuner) Run(ctx context.Context) {
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 
-	// Run one tick immediately on startup so the ceiling is set before the first
-	// dispatch rather than waiting 60 s.
 	t.tick()
 
 	for {
@@ -219,35 +178,25 @@ func (t *BandwidthTuner) NotifyRateLimit(retryAfter time.Duration) {
 	}
 	until := time.Now().Add(retryAfter).UnixNano()
 	t.rateLimitUntilNanos.Store(until)
-	// Snap to 1 immediately regardless of the normal tuning formula.
 	if _, setErr := t.ctrl.Set(1); setErr != nil {
-		// The ceiling did not move, so the fleet keeps dispatching into a
-		// rate-limited API while the backoff window says it backed off.
 		fmt.Fprintf(os.Stderr, "daemon: bandwidth tuner: snap concurrency ceiling to 1 after rate limit: %v\n", setErr)
 	}
 }
 
-// tick is a single tuner evaluation.  It reads transcript usage, computes the
-// adjusted ceiling, and calls ctrl.Set if the value changed.
 func (t *BandwidthTuner) tick() {
-	// SS-007: BandwidthTuner is OFF at INACTIVE — skip when the fleet is idle.
 	if t.gate != nil && t.gate.IsInactive() {
 		return
 	}
 	now := time.Now()
 
-	// Respect rate-limit backoff: if we're still in the suppression window, do
-	// not raise the ceiling (it was already snapped to 1 by NotifyRateLimit).
 	if until := t.rateLimitUntilNanos.Load(); until > 0 && now.UnixNano() < until {
 		return
 	}
-	// Clear the backoff once we're past it.
 	t.rateLimitUntilNanos.Store(0)
 
 	since := now.Add(-t.window)
 	used, err := transcriptTokensUsed(t.projectsDir, since)
 	if err != nil || t.ceiling <= 0 {
-		// If we can't read transcripts, leave ceiling unchanged.
 		return
 	}
 
@@ -256,7 +205,6 @@ func (t *BandwidthTuner) tick() {
 		headroom = 0
 	}
 
-	// effectiveMax = clamp(round(N_max * headroom / ceiling), 1, N_max)
 	ratio := float64(headroom) / float64(t.ceiling)
 	target := int(math.Round(float64(t.maxN) * ratio))
 	if target < 1 {
@@ -274,12 +222,6 @@ func (t *BandwidthTuner) tick() {
 	}
 }
 
-// transcriptTokensUsed walks ~/.claude/projects/*/*.jsonl and sums
-// input_tokens + output_tokens + cache_creation_input_tokens for all
-// assistant messages with a timestamp after `since`.
-//
-// Files not modified since `since` are skipped to avoid reading large
-// historical transcripts.
 func transcriptTokensUsed(projectsDir string, since time.Time) (int64, error) {
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -297,7 +239,6 @@ func transcriptTokensUsed(projectsDir string, since time.Time) (int64, error) {
 		projDir := filepath.Join(projectsDir, entry.Name())
 		sum, scanErr := scanProjectDir(projDir, since)
 		if scanErr != nil {
-			// Non-fatal: one corrupt project dir should not block the tuner.
 			continue
 		}
 		total += sum
@@ -305,7 +246,6 @@ func transcriptTokensUsed(projectsDir string, since time.Time) (int64, error) {
 	return total, nil
 }
 
-// scanProjectDir scans a single ~/.claude/projects/<name>/ directory.
 func scanProjectDir(dir string, since time.Time) (int64, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -317,7 +257,6 @@ func scanProjectDir(dir string, since time.Time) (int64, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
 			continue
 		}
-		// Skip files not modified within the window; mtime is a cheap gate.
 		info, infoErr := entry.Info()
 		if infoErr != nil || !info.ModTime().After(since) {
 			continue
@@ -331,8 +270,6 @@ func scanProjectDir(dir string, since time.Time) (int64, error) {
 	return total, nil
 }
 
-// scanJSONLFile scans a single JSONL transcript file and sums tokens for
-// records within the time window.
 func scanJSONLFile(path string, since time.Time) (int64, error) {
 	f, err := os.Open(path) //nolint:gosec // path is constructed from os.ReadDir, not user input
 	if err != nil {
@@ -342,7 +279,6 @@ func scanJSONLFile(path string, since time.Time) (int64, error) {
 
 	var total int64
 	scanner := bufio.NewScanner(f)
-	// Increase the scanner buffer for long lines (large model outputs).
 	scanner.Buffer(make([]byte, 256*1024), 2*1024*1024)
 
 	for scanner.Scan() {
@@ -361,7 +297,6 @@ func scanJSONLFile(path string, since time.Time) (int64, error) {
 
 		ts, tsErr := time.Parse(time.RFC3339Nano, rec.Timestamp)
 		if tsErr != nil {
-			// Try without sub-second precision (some entries use millisecond suffix)
 			ts, tsErr = time.Parse("2006-01-02T15:04:05.000Z", rec.Timestamp)
 			if tsErr != nil {
 				continue

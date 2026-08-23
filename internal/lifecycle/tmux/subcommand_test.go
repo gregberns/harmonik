@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Test fixtures (tmuxStart prefix per bead hk-gql20.10)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// tmuxStartFixtureEnv returns a minimal env slice that does NOT set $TMUX, but
-// does have the fake binDir prepended to PATH so RunTmuxStart can locate tmux.
 func tmuxStartFixtureEnv(t *testing.T, binDir string) []string {
 	t.Helper()
 	orig := os.Getenv("PATH")
@@ -22,8 +16,6 @@ func tmuxStartFixtureEnv(t *testing.T, binDir string) []string {
 	return []string{"PATH=" + newPath}
 }
 
-// tmuxStartFixtureTmuxEnv returns an env slice with $TMUX set to simulate the
-// caller already being inside a tmux session.
 func tmuxStartFixtureTmuxEnv(t *testing.T, tmuxVal string) []string {
 	t.Helper()
 	return []string{
@@ -32,20 +24,11 @@ func tmuxStartFixtureTmuxEnv(t *testing.T, tmuxVal string) []string {
 	}
 }
 
-// tmuxStartFixtureProjectDir creates a temporary directory representing the
-// project root and returns its absolute path.
 func tmuxStartFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
 }
 
-// tmuxStartFixtureFakeTmuxScript writes a fake tmux script to binDir that
-// handles the subcommands needed by RunTmuxStart tests.
-//
-// The script behaviour:
-//   - `tmux -V`           → prints "tmux 3.4", exit 0
-//   - `tmux new-session`  → exits with newSessionExit; prints newSessionOut to stdout
-//   - any other invocation → exits 0 silently
 func tmuxStartFixtureFakeTmuxScript(
 	t *testing.T,
 	binDir string,
@@ -72,10 +55,6 @@ func tmuxStartFixtureFakeTmuxScript(
 		t.Fatalf("tmuxStartFixtureFakeTmuxScript: WriteFile: %v", err)
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// RunTmuxStart tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestRunTmuxStart_TMUXAlreadySet verifies that RunTmuxStart exits 0 with a
 // friendly message when $TMUX is already set (operator is inside tmux).
@@ -138,7 +117,6 @@ func TestRunTmuxStart_CreateAndExec(t *testing.T) {
 	if len(execCalled) == 0 {
 		t.Fatal("RunTmuxStart create+exec: exec was not called")
 	}
-	// argv[0] is the binary path, argv[1] should be "tmux", argv[2] "attach-session".
 	if len(execCalled) < 4 {
 		t.Fatalf("RunTmuxStart create+exec: exec argv too short: %v", execCalled)
 	}
@@ -148,11 +126,9 @@ func TestRunTmuxStart_CreateAndExec(t *testing.T) {
 	if execCalled[2] != "attach-session" {
 		t.Errorf("RunTmuxStart create+exec: exec argv[2] = %q, want \"attach-session\"", execCalled[2])
 	}
-	// Session name must follow -t flag.
 	if execCalled[3] != "-t" {
 		t.Errorf("RunTmuxStart create+exec: exec argv[3] = %q, want \"-t\"", execCalled[3])
 	}
-	// Session name must start with harmonik- prefix.
 	if len(execCalled) < 5 || !strings.HasPrefix(execCalled[4], "harmonik-") {
 		t.Errorf("RunTmuxStart create+exec: session name missing harmonik- prefix: %v", execCalled)
 	}
@@ -164,7 +140,6 @@ func TestRunTmuxStart_CreateAndExec(t *testing.T) {
 // Spec ref: process-lifecycle.md §4.10 PL-028 refinement §5 exit code 22.
 // NOTE: uses t.Setenv — not parallel.
 func TestRunTmuxStart_TmuxProbeFails(t *testing.T) {
-	// Override PATH with an empty dir so OSAdapter.ProbeTmux cannot find tmux.
 	emptyBinDir := osAdapterFixtureBinDir(t)
 	t.Setenv("PATH", emptyBinDir)
 
@@ -230,7 +205,6 @@ func TestRunTmuxStart_SessionNameBadPrefix(t *testing.T) {
 // NOTE: uses t.Setenv — not parallel.
 func TestRunTmuxStart_EnsureSessionFails(t *testing.T) {
 	binDir := osAdapterFixtureBinDir(t)
-	// Fake tmux: -V returns 3.4, new-session fails with unexpected error (exit 2).
 	tmuxStartFixtureFakeTmuxScript(t, binDir, 2, "unexpected internal error")
 	osAdapterFixtureWithFakeTmux(t, binDir) // sets PATH via t.Setenv for OSAdapter calls
 
@@ -294,7 +268,6 @@ func TestRunTmuxStart_DefaultSessionName(t *testing.T) {
 	if !strings.HasSuffix(sessionName, "-default") {
 		t.Errorf("RunTmuxStart default-name: session %q missing -default suffix", sessionName)
 	}
-	// Hash part must be exactly 12 hex chars.
 	parts := strings.SplitN(sessionName, "-", 3)
 	if len(parts) != 3 {
 		t.Fatalf("RunTmuxStart default-name: cannot split session name %q into 3 parts", sessionName)
@@ -326,7 +299,6 @@ func TestSupervisorSessionName(t *testing.T) {
 	if strings.Contains(name, "daemon-supervise") {
 		t.Errorf("SupervisorSessionName(%q) = %q; must not contain legacy daemon-supervise", dir, name)
 	}
-	// hash part must be exactly 12 hex chars: hk-<hash>-supervise.
 	parts := strings.SplitN(name, "-", 3)
 	if len(parts) != 3 {
 		t.Fatalf("SupervisorSessionName: cannot split %q into 3 parts", name)
@@ -334,7 +306,6 @@ func TestSupervisorSessionName(t *testing.T) {
 	if hash := parts[1]; len(hash) != 12 {
 		t.Errorf("SupervisorSessionName: hash part %q has len %d, want 12", hash, len(hash))
 	}
-	// Same hash as the DefaultSessionName family (same project), different prefix.
 	if want := tmuxStartHashDir(dir); parts[1] != want {
 		t.Errorf("SupervisorSessionName: hash %q != project hash %q", parts[1], want)
 	}

@@ -1,35 +1,5 @@
 package brcli
 
-// intentlogwrite.go — BI-030 steps 1–4 and step 6: write IntentLogEntry to a
-// temp file, fsync(temp_fd), rename(2) to canonical <key>.json,
-// fsync(parent_dir_fd) on create, and unlink + fsync(parent_dir_fd) on delete.
-//
-// This file implements the full helper surface for BI-030 on both the create
-// side (steps 1–4) and the delete side (step 6):
-//
-//   - Step 1: encode the IntentLogEntry as JSON and write it to a temp file
-//     named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
-//   - Step 2: fsync(temp_fd) — flush the file data to durable storage before
-//     the file descriptor is closed (BI-030 step 2; hk-872.37.2).
-//   - Step 3: rename(2) the temp file to the canonical "<encoded_key>.json"
-//     path in the same directory (BI-030 step 3; hk-872.37.3).
-//   - Step 4: fsync(parent_directory_fd) — ensure the directory entry for the
-//     renamed file is durable on APFS / ext4-data=ordered (BI-030 step 4;
-//     hk-872.37.4).
-//   - Step 5: invoke `br` — handled by the adapter layer (not in this file).
-//   - Step 6: on successful `br` return, unlink(intent_file) then
-//     fsync(parent_directory_fd) — ensures the deletion is durable so that a
-//     power-loss after unlink cannot leave the file visible on remount and
-//     trigger a false-positive Cat 3a in BI-031 crash-recovery (hk-872.37.6).
-//
-// The BI-030 atomic-write + delete protocol is now complete on the
-// helper-surface side. Steps 1–4 are exposed via WriteIntentLogTmp,
-// RenameIntentLogTmpToFinal, and FsyncIntentLogParentDir; step 6 is exposed
-// via DeleteIntentLogAndSyncParent.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–6; §6.1 RECORD
-// IntentLogEntry; §6.2 on-disk layout.
-
 import (
 	"crypto/rand"
 	"encoding/json"
@@ -44,13 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// intentLogEntryWire is the on-disk JSON shape for an IntentLogEntry.
-// It mirrors core.IntentLogEntry using the snake_case field names from
-// the spec's RECORD definition (specs/beads-integration.md §6.1).
-//
-// The core.IntentLogEntry struct carries no JSON tags; this separate wire
-// type ensures the on-disk representation is spec-compliant regardless of
-// any future changes to the Go struct's exported field names.
 type intentLogEntryWire struct {
 	IdempotencyKey    string    `json:"idempotency_key"`
 	RunID             string    `json:"run_id"`
@@ -62,10 +25,6 @@ type intentLogEntryWire struct {
 	SchemaVersion     int       `json:"schema_version"`
 }
 
-// intentLogSyncFile is the fsync hook called on the open temp-file fd in
-// WriteIntentLogTmp (BI-030 step 2).  Tests may replace this with a counting
-// stub to assert the call was made; production code always uses the real
-// (*os.File).Sync path.
 var intentLogSyncFile = func(f *os.File) error { return f.Sync() }
 
 // WriteIntentLogTmp encodes entry as JSON, writes it to a temp file in dir,
@@ -119,8 +78,6 @@ func WriteIntentLogTmp(dir string, entry core.IntentLogEntry) (tmpPath string, e
 		return "", fmt.Errorf("brcli.WriteIntentLogTmp: json.Marshal: %w", err)
 	}
 
-	// Encode colons in the idempotency key to underscores for filesystem
-	// portability (OQ-BI-003 — colons are forbidden on macOS HFS+).
 	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
 
 	randSuffix, err := intentLogRandHex(8)
@@ -143,10 +100,6 @@ func WriteIntentLogTmp(dir string, entry core.IntentLogEntry) (tmpPath string, e
 			closeAndRemoveIntentLogTmp(f, path),
 		)
 	}
-	// BI-030 step 2: fsync(temp_fd) — ensure data is durable before the
-	// caller proceeds to rename(2) in step 3.  A Sync failure means the data
-	// may not have reached stable storage; treat it the same as a write
-	// failure: remove the partial temp file and return an error.
 	if err := intentLogSyncFile(f); err != nil {
 		return "", errors.Join(
 			fmt.Errorf("brcli.WriteIntentLogTmp: fsync temp file %q: %w", path, err),
@@ -174,9 +127,6 @@ func removeIntentLogTmp(path string) error {
 	return nil
 }
 
-// intentLogRandHex returns n cryptographically random lowercase hex characters
-// using crypto/rand. Used to generate the random suffix of intent-log temp
-// files (BI-030: "random suffix prevents collision under concurrent recovery").
 func intentLogRandHex(n int) (string, error) {
 	const hexChars = "0123456789abcdef"
 	out := make([]byte, n)
@@ -190,15 +140,8 @@ func intentLogRandHex(n int) (string, error) {
 	return string(out), nil
 }
 
-// intentLogRenameFile is the rename hook used by RenameIntentLogTmpToFinal
-// (BI-030 step 3). Tests may replace this with an injected stub to simulate
-// rename failures; production code always uses os.Rename.
 var intentLogRenameFile = os.Rename
 
-// intentLogSyncDir is the fsync hook called on the open directory fd in
-// FsyncIntentLogParentDir (BI-030 step 4). Tests may replace this with a
-// counting stub to assert the call was made; production code always uses the
-// real (*os.File).Sync path.
 var intentLogSyncDir = func(f *os.File) error { return f.Sync() }
 
 // FsyncIntentLogParentDir opens the intent-log directory at dir read-only,
@@ -287,9 +230,6 @@ func RenameIntentLogTmpToFinal(tmpPath, dir, idempotencyKey string) (finalPath s
 	return finalPath, nil
 }
 
-// intentLogUnlinkFile is the unlink hook used by DeleteIntentLogAndSyncParent
-// (BI-030 step 6). Tests may replace this with an injected stub to simulate
-// unlink failures; production code always uses os.Remove.
 var intentLogUnlinkFile = os.Remove
 
 // DeleteIntentLogAndSyncParent unlinks the canonical intent-log file for

@@ -1,42 +1,5 @@
 package daemon_test
 
-// mergetomain_runbranchmissing_hc1jr_test.go — regression test for the silent
-// no-merge success (bead hk-no-merge-silent-success-hc1jr).
-//
-// INCIDENT SHAPE (reported 2026-08-09): a run reached its terminal node, closed
-// its bead, and emitted run_completed{success:true} while the implementer's
-// commit never reached the target branch. The event stream carried no merge
-// event of any kind — not a success, not a failure — so nothing in the record
-// said the work had not landed.
-//
-// MECHANISM: resolveMergeTips resolves the run branch with
-// `git rev-parse refs/heads/run/<runID>` in the repo the merge runs in. When
-// that ref did not resolve it returned Outcome{NoChange:true}, meaning "the
-// agent made no commits". The Run machine treats no-change exactly like a
-// successful merge — runexec stepRunMerging routes MergeSuccess and
-// MergeNoChange down the same close ladder — so the bead closed and the run
-// reported success. But a missing branch is not evidence of a missing commit:
-// CreateWorktree always cuts refs/heads/run/<id>, so the branch missing at
-// merge time means it never reached this repository (a remote run whose
-// code-sync did not deliver it, a cross-repo run pointed at the wrong repo) or
-// was deleted under the run. In each of those cases a real commit exists and is
-// stranded.
-//
-// FIX: an unresolvable run branch is now a fail-closed merge outcome
-// (`merge_run_branch_missing`), which reopens the bead and fails the run.
-//
-// Test assertions:
-//
-//	(i)   CloseBead NOT called — the bead must not close when nothing merged.
-//	(ii)  ReopenBead called exactly once.
-//	(iii) The reopen reason names merge_run_branch_missing.
-//	(iv)  run_failed is emitted and no run_completed{success:true} exists.
-//	(v)   The target branch did not advance — the work really is stranded.
-//
-// Bead: hk-no-merge-silent-success-hc1jr. Refs: hk-cwxow (the no-change
-// short-circuits this carves the missing-branch case out of), hk-zmpd (the
-// neighbouring fail-closed rebase-drop guard this mirrors).
-
 import (
 	"context"
 	"encoding/json"
@@ -107,22 +70,18 @@ func TestMergeToMain_RunBranchMissingIsNotSilentSuccess(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── Assertion (i): the bead must NOT be closed. ───────────────────────────
 	if got := ledger.getClosedCount(); got != 0 {
 		t.Errorf("CloseBead call count = %d; want 0 — a run whose work never merged must not close its bead (hk-no-merge-silent-success-hc1jr)", got)
 	}
 
-	// ── Assertion (ii): the bead is reopened exactly once. ────────────────────
 	if got := ledger.getReopenedCount(); got != 1 {
 		t.Errorf("ReopenBead call count = %d; want 1 — an unresolvable run branch must fail closed (hk-no-merge-silent-success-hc1jr)", got)
 	}
 
-	// ── Assertion (iii): the reopen reason names the mechanism. ───────────────
 	if reason := ledger.getReopenReason(); !strings.Contains(reason, "merge_run_branch_missing") {
 		t.Errorf("ReopenBead reason = %q; want it to contain \"merge_run_branch_missing\" (hk-no-merge-silent-success-hc1jr)", reason)
 	}
 
-	// ── Assertion (iv): run_failed, and no successful run_completed. ──────────
 	if evs := mergeToMainFindEvents(collector, "run_failed"); len(evs) == 0 {
 		t.Errorf("no run_failed event found; want one — a missing merge must be loud (hk-no-merge-silent-success-hc1jr); events: %v",
 			mergeToMainEventOrder(collector))
@@ -134,17 +93,11 @@ func TestMergeToMain_RunBranchMissingIsNotSilentSuccess(t *testing.T) {
 		}
 	}
 
-	// ── Assertion (v): the target branch really did not advance. ──────────────
 	if after := mergeToMainFixtureHeadSHA(t, projectDir, "main"); after != mainSHABefore {
 		t.Errorf("main advanced to %s (was %s); the fixture is not reproducing the stranded-work condition", after, mainSHABefore)
 	}
 }
 
-// mergeToMainDetachedWorktreeFactory builds a run worktree at the canonical
-// run-worktree path but checks it out DETACHED, so no refs/heads/run/<runID>
-// exists in projectDir. The agent handler still commits inside it during the
-// run, so the daemon's post-exit guards see HEAD advance past headSHA while the
-// merge cannot reach that commit through the run branch.
 func mergeToMainDetachedWorktreeFactory(t *testing.T) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	t.Helper()
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
@@ -170,8 +123,6 @@ func mergeToMainDetachedWorktreeFactory(t *testing.T) func(ctx context.Context, 
 	}
 }
 
-// mergeToMainRunCompletedSuccess reports the "success" field of a run_completed
-// payload.
 func mergeToMainRunCompletedSuccess(t *testing.T, ev stubEmittedEvent) bool {
 	t.Helper()
 	var m map[string]any

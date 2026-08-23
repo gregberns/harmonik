@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// subReasonFixtureAll returns every SubReason constant declared in
-// subreason_u5c5i.go so table-driven tests can validate the full set.
 func subReasonFixtureAll() []struct {
 	name   string
 	value  SubReason
@@ -16,7 +14,6 @@ func subReasonFixtureAll() []struct {
 		value  SubReason
 		strVal string
 	}{
-		// bridge_* constants
 		{"BridgeDialFailed", SubReasonBridgeDialFailed, "bridge_dial_failed"},
 		{"BridgeDaemonStartupWindowExceeded", SubReasonBridgeDaemonStartupWindowExceeded, "bridge_daemon_startup_window_exceeded"},
 		{"BridgeMalformedHookPayload", SubReasonBridgeMalformedHookPayload, "bridge_malformed_hook_payload"},
@@ -135,8 +132,6 @@ func TestSubReasonBridgePrefixConvention(t *testing.T) {
 func TestSubReasonCHB013StopFailureMapping(t *testing.T) {
 	t.Parallel()
 
-	// The CHB-013 table maps StopFailure.error_type to sub_reason by
-	// prepending "claude_".  These are the seven concrete error_types.
 	tests := []struct {
 		errorType string
 		want      SubReason

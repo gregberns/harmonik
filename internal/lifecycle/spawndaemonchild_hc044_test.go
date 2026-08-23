@@ -6,7 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// i3151PGIDValue is the canonical test PGID used by hk-8i31.51 test helpers.
 const i3151PGIDValue = core.PGID(42000)
 
 // TestHC044_SpawnChildSysProcAttr_SetpgidTrue verifies that SpawnChildSysProcAttr
@@ -90,7 +89,6 @@ func TestHC044_SpawnChildSysProcAttr_DistinctFromSpawnSysProcAttr(t *testing.T) 
 	if plAttr == nil {
 		t.Fatal("PL-006a: SpawnSysProcAttr returned nil")
 	}
-	// Both must set Setpgid and Pgid identically.
 	if childAttr.Setpgid != plAttr.Setpgid {
 		t.Errorf("HC-044 vs PL-006a: Setpgid mismatch: child=%v pl=%v", childAttr.Setpgid, plAttr.Setpgid)
 	}

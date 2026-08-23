@@ -1,13 +1,5 @@
 package queue_test
 
-// w4_regression_test.go — regressions for the Wave-4 mega-review §c queue fixes.
-//
-// Coverage:
-//   - Concurrent Persist for the SAME queue must not collide on the temp
-//     filename (previously keyed only on PID → O_EXCL clash → ErrPersistFailed).
-//   - AppendItems / HandleQueueAppend must return a typed error, never panic,
-//     when GroupIndex is out of range (untrusted decoded JSON).
-
 import (
 	"context"
 	"sync"
@@ -53,7 +45,6 @@ func TestPersistConcurrentSameQueueNoTempCollision(t *testing.T) {
 		t.Fatalf("concurrent Persist collided: %v", err)
 	}
 
-	// The final file must be present and loadable.
 	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after concurrent Persist: %v", err)

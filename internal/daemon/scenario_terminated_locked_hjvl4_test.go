@@ -2,65 +2,6 @@
 
 package daemon_test
 
-// scenario_terminated_locked_hjvl4_test.go — GATE-0 isolation e2e for the
-// hk-hjvl4 fix: reconcileOrphanedRunsOnResume's "terminated-but-locked" pass
-// (runinflightreconcile_hkr73qr.go).
-//
-// # What is tested
-//
-// TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock reproduces
-// the hk-thbbv-class repro end-to-end through TWO successive daemon.Start
-// composition-root boots against the SAME project directory (a genuine
-// restart, not a single-boot fixture load):
-//
-//  1. Boot 1 comes up with a bead already at CoarseStatus=in_progress (a stale
-//     claim, as if left behind by a prior crashed run) and an EMPTY event log.
-//     Because reconcileOrphanedRunsOnResume only scans the durable event log at
-//     its OWN startup, and no terminal event exists yet at boot-1 startup, this
-//     bead is invisible to every reconcile pass at boot 1 — it stays wedged.
-//  2. While boot 1 is alive, `queue submit` / `queue dry-run` against its LIVE
-//     socket are asserted to reject the bead with QM-022's bead_already_dispatched
-//     (-32015) — the bead's ledger status alone (in_progress) is enough to prove
-//     the live daemon considers it dispatched.
-//  3. Still while boot 1 is alive, a run_started + run_failed pair for this bead
-//     is appended directly to the durable event log — modelling "a historical
-//     queue-run whose terminal event WAS recorded but whose bead-status /
-//     queue-item update never fully landed" (the hk-hjvl4 gap). This models the
-//     durable fact independently of the live daemon's own bookkeeping — sibling
-//     scenario tests (hk-iwu8a's dtOrphan, hk-ivzsl's rrRecov) pre-seed the exact
-//     same class of durable-but-unreconciled state via direct fixture writes.
-//  4. Boot 1 is cancelled (RESTART). Boot 2 starts fresh against the SAME
-//     project directory. Its OWN reconcileOrphanedRunsOnResume now scans the
-//     event log at ITS startup and finds: the run terminated (run_failed
-//     present — the primary orphan loop does NOT touch it), the bead is NOT a
-//     dispatchedBeads member (no "main" queue item ever existed for it — the
-//     hk-iwu8a pass does NOT touch it either), and it is NOT live. Only the
-//     hk-hjvl4 "terminated-but-locked" pass resets it — FAILS before hk-hjvl4
-//     (bead stays in_progress forever, -32015 wedged across every restart),
-//     PASSES after (bead reset to open before QM-002a runs).
-//  5. Once boot 2 is up, `queue submit` for the SAME bead is asserted to
-//     SUCCEED, and a fresh run_started fires — the bead re-dispatches cleanly.
-//
-// # Production composition root
-//
-// daemon.Start is used directly for BOTH boots (a genuinely isolated,
-// standalone daemon instance per boot — no internal seams below daemon.Start
-// are used). The queue submit / dry-run calls go through the REAL client-side
-// CLI package (internal/queue/cli), over the REAL unix socket, exactly as the
-// `harmonik queue submit` / `harmonik queue dry-run` commands do.
-//
-// # Helper prefix
-//
-// Helpers in this file use the prefix "tlLock" (terminated-locked).
-// Per implementer-protocol.md §Helper-prefix discipline.
-//
-// # Spec refs
-//
-//   - specs/process-lifecycle.md §4.5 PL-006 (hk-r73qr).
-//   - specs/queue-model.md §3.2a QM-002a (hk-mdus1); §6.10 QM-022 / QM-029b (-32015).
-//
-// Bead: hk-nxcvi (GATE-0 for hk-hjvl4).
-
 import (
 	"bytes"
 	"context"
@@ -81,13 +22,6 @@ import (
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// tlLock fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// tlLockEvalSymlinks resolves all symlinks in path so that br — which rejects
-// paths containing symlinks outside the beads directory — receives a
-// canonical path.
 func tlLockEvalSymlinks(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -97,12 +31,6 @@ func tlLockEvalSymlinks(t *testing.T, path string) string {
 	return resolved
 }
 
-// tlLockShortTempDir creates a SHORT-prefixed temp directory (unlike
-// t.TempDir(), which embeds the full (long) test name into the path) and
-// registers its removal via t.Cleanup. The project directory MUST stay short
-// enough that <projectDir>/.harmonik/daemon.sock fits the AF_UNIX sun_path
-// limit (104 bytes, 103 usable) — a long t.TempDir()-derived path here is a
-// known landmine (scripts/scratch-daemon.sh hits the same limit).
 func tlLockShortTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "tll")
@@ -115,8 +43,6 @@ func tlLockShortTempDir(t *testing.T) string {
 	return dir
 }
 
-// tlLockProjectDir creates the minimal project directory for the scenario and
-// a one-commit git repo (required for real worktree-based dispatch in boot 2).
 func tlLockProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = tlLockEvalSymlinks(t, tlLockShortTempDir(t))
@@ -130,8 +56,6 @@ func tlLockProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 		}
 	}
 	jsonlPath = filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	// Create an empty events.jsonl — boot 1 must start with NO record of any
-	// run for the target bead; that absence is the crux of the crash window.
 	if err := os.WriteFile(jsonlPath, nil, 0o600); err != nil {
 		t.Fatalf("tlLockProjectDir: create empty events.jsonl: %v", err)
 	}
@@ -158,8 +82,6 @@ func tlLockProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// tlLockBrPath returns the path to the real `br` binary, skipping the test
-// when br is not on PATH.
 func tlLockBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -169,8 +91,6 @@ func tlLockBrPath(t *testing.T) string {
 	return brPath
 }
 
-// tlLockBrWrapperScript writes a /bin/sh wrapper that invokes realBrPath with
-// --db <dbPath> prepended to all args.
 func tlLockBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := tlLockEvalSymlinks(t, t.TempDir())
@@ -183,10 +103,6 @@ func tlLockBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// tlLockInitBrWithInProgress initialises a beads workspace in projectDir,
-// creates one bead, and sets it to in_progress status — a stale claim as if
-// left behind by a prior crashed run, BEFORE boot 1 ever starts. Returns the
-// bead ID.
 func tlLockInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
 
@@ -221,9 +137,6 @@ func tlLockInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper 
 	return beadID
 }
 
-// tlLockTwinWrapperScript writes a /bin/sh wrapper that invokes the twin
-// binary with --scenario handler-fatal (fast, deterministic run_started +
-// run_failed), ignoring all other flags appended by the daemon.
 func tlLockTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := tlLockEvalSymlinks(t, t.TempDir())
@@ -236,9 +149,6 @@ func tlLockTwinWrapperScript(t *testing.T, twinPath string) string {
 	return path
 }
 
-// tlLockWaitForSocket polls for the daemon's unix socket to appear, mirroring
-// scripts/scratch-daemon.sh's own `[ -S "$sock" ]` readiness check. Fails the
-// test if the socket does not appear within budget.
 func tlLockWaitForSocket(t *testing.T, projectDir string, budget time.Duration) {
 	t.Helper()
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
@@ -252,15 +162,10 @@ func tlLockWaitForSocket(t *testing.T, projectDir string, budget time.Duration) 
 	t.Fatalf("tlLock: daemon socket %s not ready within %s", sockPath, budget)
 }
 
-// tlLockRunStartedBead decodes only the bead_id out of a run_started payload.
-// The reader side needs nothing else, and a mirror of the full payload would
-// drift away from core.RunStartedPayload the moment the payload changes shape.
 type tlLockRunStartedBead struct {
 	BeadID string `json:"bead_id"`
 }
 
-// tlLockRunCompletedPayload mirrors the wire shape of the (unexported)
-// workloopRunCompletedPayload for a run_failed event.
 type tlLockRunCompletedPayload struct {
 	RunID   string `json:"run_id"`
 	BeadID  string `json:"bead_id"`
@@ -269,22 +174,6 @@ type tlLockRunCompletedPayload struct {
 	EndedAt string `json:"ended_at"`
 }
 
-// tlLockAppendTerminatedRun appends a run_started + run_failed pair for
-// beadID directly to the durable event log at jsonlPath, using a REAL
-// eventbus writer (O_APPEND — safe to open independently of the live
-// daemon's own writer on the same path; each line stays well under
-// PIPE_BUF). Models the "durable event log recorded the terminal event, but
-// the queue-item / bead-status update never landed" crash window (hk-hjvl4)
-// as an independently-verifiable durable fact, not something the live daemon
-// process itself needs to have produced. Returns the synthetic run's ID.
-//
-// The run_started payload is built from core.RunStartedPayload itself, not a
-// local mirror struct. The bus stamps the envelope with the registered current
-// schema version for run_started (version 2), so the payload MUST be a complete
-// version-2 record. A version-1 payload under a version-2 envelope is a shape
-// that no producer can write, and the boot reconcile drops it on decode — the
-// run then never enters the started map and the terminated-but-locked pass
-// never sees this bead. Using the real payload type keeps the two in step.
 func tlLockAppendTerminatedRun(t *testing.T, jsonlPath, beadID string) string {
 	t.Helper()
 
@@ -320,9 +209,6 @@ func tlLockAppendTerminatedRun(t *testing.T, jsonlPath, beadID string) string {
 	if err != nil {
 		t.Fatalf("tlLockAppendTerminatedRun: marshal run_started: %v", err)
 	}
-	// Positive evidence that the fixture is readable by the production decoder.
-	// Without this the fixture can go stale silently: the boot reconcile drops
-	// an undecodable run_started and the test then measures nothing.
 	var startedRoundTrip core.RunStartedPayload
 	if rtErr := json.Unmarshal(startedPl, &startedRoundTrip); rtErr != nil {
 		t.Fatalf("tlLockAppendTerminatedRun: fixture run_started payload is not a valid version-2 record: %v", rtErr)
@@ -352,8 +238,6 @@ func tlLockAppendTerminatedRun(t *testing.T, jsonlPath, beadID string) string {
 	return runID.String()
 }
 
-// tlLockRPCResult is the decoded outcome of a `queue submit` / `queue
-// dry-run` CLI call against a live daemon socket.
 type tlLockRPCResult struct {
 	ExitCode  int
 	OK        bool
@@ -362,16 +246,11 @@ type tlLockRPCResult struct {
 	Raw       string
 }
 
-// tlLockErrorBody mirrors internal/queue/cli's (unexported) errorBody JSON
-// shape — only the JSON tags matter here.
 type tlLockErrorBody struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-// tlLockParseResult decodes a CLI exit code + --json stdout body into a
-// tlLockRPCResult. exitCode 0 = success (OK=true); exitCode 1 = validation
-// error (ErrorCode / Message decoded from the errorBody JSON).
 func tlLockParseResult(t *testing.T, exitCode int, out string) tlLockRPCResult {
 	t.Helper()
 	res := tlLockRPCResult{ExitCode: exitCode, Raw: out}
@@ -391,9 +270,6 @@ func tlLockParseResult(t *testing.T, exitCode int, out string) tlLockRPCResult {
 	return res
 }
 
-// tlLockSubmit calls `harmonik queue submit --beads <beadID> --json` against
-// the live daemon socket under projectDir, via the REAL client-side CLI
-// package (the same code path `harmonik queue submit` runs).
 func tlLockSubmit(t *testing.T, projectDir, beadID string) tlLockRPCResult {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -405,8 +281,6 @@ func tlLockSubmit(t *testing.T, projectDir, beadID string) tlLockRPCResult {
 	return tlLockParseResult(t, code, out.String())
 }
 
-// tlLockDryRun calls `harmonik queue dry-run --beads <beadID> --json` against
-// the live daemon socket under projectDir.
 func tlLockDryRun(t *testing.T, projectDir, beadID string) tlLockRPCResult {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -418,9 +292,6 @@ func tlLockDryRun(t *testing.T, projectDir, beadID string) tlLockRPCResult {
 	return tlLockParseResult(t, code, out.String())
 }
 
-// tlLockWaitForFreshRunStarted polls jsonlPath for a run_started event for
-// beadID whose run_id differs from excludeRunID (the synthetic historical
-// run injected by tlLockAppendTerminatedRun). Returns the fresh run_id.
 func tlLockWaitForFreshRunStarted(t *testing.T, jsonlPath, beadID, excludeRunID string, budget time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -456,10 +327,6 @@ func tlLockWaitForFreshRunStarted(t *testing.T, jsonlPath, beadID, excludeRunID 
 	return "" // unreachable
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock is the
 // GATE-0 isolation e2e for hk-hjvl4. See the file doc comment for the full
 // scenario. FAILS on 0cb9529a (lock not released across restart); PASSES on
@@ -475,8 +342,6 @@ func tlLockWaitForFreshRunStarted(t *testing.T, jsonlPath, beadID, excludeRunID 
 // Bead: hk-nxcvi (GATE-0 for hk-hjvl4).
 func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) — same
-	// rationale as every other scenario test in this package.
 
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
@@ -507,12 +372,6 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 		}
 	})
 
-	// ═══════════════════════════════════════════════════════════════════════
-	// BOOT 1 — the "crashed" daemon. Comes up with an empty event log (no
-	// terminal event recorded YET for this bead), so no reconcile pass touches
-	// it at boot-1 startup. It stays wedged in_progress.
-	// ═══════════════════════════════════════════════════════════════════════
-
 	boot1Ctx, boot1Cancel := context.WithCancel(context.Background())
 	defer boot1Cancel() // safety net; explicitly cancelled below at RESTART (idempotent)
 
@@ -536,9 +395,6 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 	tlLockWaitForSocket(t, projectDir, socketBudget)
 	t.Logf("tlLock: boot 1 socket live")
 
-	// ── Step 2: confirm the LIVE daemon rejects submit/dry-run for the
-	// stale in_progress bead with -32015 (QM-022 bead_already_dispatched). ──
-
 	submit1 := tlLockSubmit(t, projectDir, beadID)
 	if submit1.OK {
 		t.Fatalf("tlLock: boot-1 queue submit unexpectedly succeeded for in_progress bead %s (raw=%s)", beadID, submit1.Raw)
@@ -557,20 +413,10 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 	}
 	t.Logf("tlLock: boot-1 queue dry-run correctly rejected: %s", dryrun1.Raw)
 
-	// ── Step 3: append the historical run's terminal event to the durable
-	// log WHILE boot 1 is still alive. The bead's ledger status remains
-	// in_progress (boot 1's own startup already ran; nothing re-scans this
-	// mid-lifetime) — this is exactly the "terminal event recorded, but the
-	// bead-status / queue-item update never landed" gap hk-hjvl4 targets. ──
-
 	historicalRunID := tlLockAppendTerminatedRun(t, jsonlPath, beadID)
 	t.Logf("tlLock: appended historical terminated run %s for bead %s", historicalRunID, beadID)
 
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "in_progress")
-
-	// ═══════════════════════════════════════════════════════════════════════
-	// RESTART — stop boot 1, start boot 2 fresh against the SAME project dir.
-	// ═══════════════════════════════════════════════════════════════════════
 
 	boot1Cancel()
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {
@@ -604,22 +450,10 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 	tlLockWaitForSocket(t, projectDir, socketBudget)
 	t.Logf("tlLock: boot 2 socket live")
 
-	// ── Step 4: boot-reconcile must have released the dispatch-lock. ──
-	//
-	// reconcileOrphanedRunsOnResume's terminated-but-locked pass (hk-hjvl4)
-	// runs synchronously before the socket is bound, so by the time the
-	// socket exists, the bead has already been reset to open (if the fix is
-	// present) — or is still stuck in_progress (if it is not).
-
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "open")
-	// AssertBeadStatus reports with Errorf, so the run continues. Log the claim
-	// only when it held — a success line next to a failure misleads the reader.
 	if !t.Failed() {
 		t.Logf("tlLock: boot-2 reconcile released the bead — status is now open")
 	}
-
-	// ── Step 5: the bead re-dispatches cleanly — submit succeeds, run_started
-	// fires, no -32015. ──
 
 	submit2 := tlLockSubmit(t, projectDir, beadID)
 	if !submit2.OK {
@@ -631,8 +465,6 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 	const runStartedBudget = 20 * time.Second
 	freshRunID := tlLockWaitForFreshRunStarted(t, jsonlPath, beadID, historicalRunID, runStartedBudget)
 	t.Logf("tlLock: fresh run_started observed: run_id=%s (bead=%s)", freshRunID, beadID)
-
-	// ── Cleanup: stop boot 2 ──
 
 	boot2Cancel()
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {

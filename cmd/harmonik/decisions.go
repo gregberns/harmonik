@@ -1,46 +1,5 @@
 package main
 
-// decisions.go — `harmonik decisions` CLI subcommand block (hitl-decisions
-// SPEC §2, component K2, bead hk-xz9).
-//
-// K2 implements the AGENT-side verbs only:
-//   - raise    → decisions-raise daemon op (emit decision_needed, print the
-//                minted decision_id). With --wait, also runs the §4 blocked-wait.
-//   - wait      → NO daemon op; a pure client-side subscribe stream with the
-//                §4 / N8 arm-then-check ordering. Prints chosen_option (resolved)
-//                or the withdrawal reason.
-//   - withdraw → decisions-withdraw daemon op (emit decision_withdrawn,
-//                reason=self_obsoleted by default).
-//
-// The OPERATOR-side verbs (list / show / answer — component K4, bead hk-kba)
-// live in decisions_k4.go and are routed from runDecisionsSubcommand below. The
-// orphan reaper (K5) is keeper-resident and does not live here.
-//
-// §4 blocked-wait contract (NORMATIVE — N8 arm-then-check, the #1 footgun):
-// a subscribe stream only delivers events that arrive AFTER it is armed, so the
-// wait MUST, in this exact order:
-//  1. ARM a `subscribe --types decision_resolved,decision_withdrawn` stream FIRST;
-//  2. THEN re-project §3 (a client-side fold over events.jsonl) for this decision_id;
-//  3. if already terminal in the log, return IMMEDIATELY with the logged result
-//     (do NOT block) — this catches an answer that landed before the arm;
-//  4. else BLOCK on the armed stream, apply the FIRST matching terminal (N3
-//     first-writer-wins), dedupe on event_id (N2), print the result, exit.
-//
-// Getting arm-BEFORE-reproject wrong is the answer-lands-between-read-and-arm
-// race → the agent waits forever. That ordering is the whole point of N8.
-//
-// Client-side re-project: cmd/harmonik CANNOT import internal/daemon (K3's
-// decisionsProjection lives there, and the package boundary is load-bearing).
-// We therefore re-implement the SAME open-set fold here over eventbus.ScanAfter
-// (decisionsClientProjection below), matching K3's semantics exactly: ADD on
-// decision_needed keyed by the event's own event_id; REMOVE on
-// decision_resolved/decision_withdrawn keyed by payload.decision_id; dedupe on
-// event_id. For `wait` we only need this decision's terminal state, so the fold
-// is specialised to one decision_id (decisionTerminalInLog).
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §2, §3, §4, §6.
-// Bead ref: hk-xz9 (component K2).
-
 import (
 	"bufio"
 	"context"
@@ -60,8 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// runDecisionsSubcommand routes `harmonik decisions <verb> [args]`.
-// subArgs is os.Args[2:].
 func runDecisionsSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -78,7 +35,6 @@ func runDecisionsSubcommand(subArgs []string) int {
 		return runDecisionsWaitSubcommand(subArgs[1:])
 	case "withdraw":
 		return runDecisionsWithdrawSubcommand(subArgs[1:])
-	// list / show / answer are the OPERATOR side (component K4, bead hk-kba).
 	case "list":
 		return runDecisionsListSubcommand(subArgs[1:])
 	case "show":
@@ -91,12 +47,6 @@ func runDecisionsSubcommand(subArgs []string) int {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// raise
-// -----------------------------------------------------------------------------
-
-// runDecisionsRaiseSubcommand implements `harmonik decisions raise`.
-// subArgs is os.Args[3:].
 func runDecisionsRaiseSubcommand(subArgs []string) int {
 	questionFlag := ""
 	var optionFlags []string
@@ -165,7 +115,6 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Validate: --question required, ≥1 --option required (N7-checkability).
 	if questionFlag == "" {
 		fmt.Fprintf(os.Stderr, "harmonik decisions raise: --question is required\n")
 		return 1
@@ -179,8 +128,6 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve emitting agent: --from > $HARMONIK_AGENT (may be empty — blocked_agent
-	// is optional per SPEC §1.1, but a wait without a known agent still works).
 	from := fromFlag
 	if from == "" {
 		from = os.Getenv("HARMONIK_AGENT")
@@ -191,7 +138,6 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 		return rc
 	}
 
-	// Build the decisions-raise request payload.
 	raisePayload := map[string]any{
 		"question": questionFlag,
 		"options":  optionFlags,
@@ -226,22 +172,14 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Print the minted decision_id (the value the agent waits on).
 	fmt.Println(result.DecisionID)
 
-	// --wait: hold the §4 blocked-wait and print the chosen_option (or withdrawal).
 	if waitFlag {
 		return decisionsBlockedWait(absProject, sockPath, result.DecisionID)
 	}
 	return 0
 }
 
-// -----------------------------------------------------------------------------
-// wait
-// -----------------------------------------------------------------------------
-
-// runDecisionsWaitSubcommand implements `harmonik decisions wait <decision_id>`.
-// subArgs is os.Args[3:].
 func runDecisionsWaitSubcommand(subArgs []string) int {
 	socketFlag := ""
 	projectFlag := ""
@@ -285,12 +223,6 @@ func runDecisionsWaitSubcommand(subArgs []string) int {
 	return decisionsBlockedWait(absProject, sockPath, decisionID)
 }
 
-// -----------------------------------------------------------------------------
-// withdraw
-// -----------------------------------------------------------------------------
-
-// runDecisionsWithdrawSubcommand implements `harmonik decisions withdraw <id>`.
-// subArgs is os.Args[3:].
 func runDecisionsWithdrawSubcommand(subArgs []string) int {
 	reasonFlag := string(core.DecisionWithdrawnReasonSelfObsoleted) // default
 	fromFlag := ""
@@ -338,10 +270,6 @@ func runDecisionsWithdrawSubcommand(subArgs []string) int {
 	}
 	decisionID := positional[0]
 
-	// Validate the reason against the K1 enum (mirrors DecisionWithdrawnReason.Valid).
-	// The agent-side default and intended use is self_obsoleted; the keeper-only
-	// "orphaned" reason (N9) is not the agent's to emit, but we accept any valid
-	// enum value and let the daemon's Valid() be the single gate.
 	if !core.DecisionWithdrawnReason(reasonFlag).Valid() {
 		fmt.Fprintf(os.Stderr, "harmonik decisions withdraw: --reason %q is invalid (must be self_obsoleted or orphaned)\n", reasonFlag)
 		return 1
@@ -381,27 +309,9 @@ func runDecisionsWithdrawSubcommand(subArgs []string) int {
 	return 0
 }
 
-// -----------------------------------------------------------------------------
-// §4 blocked-wait — N8 arm-then-check
-// -----------------------------------------------------------------------------
-
-// decisionsBlockedWait runs the §4 blocked-wait for decisionID with the N8
-// arm-then-check ordering:
-//
-//  1. ARM a subscribe stream (types decision_resolved,decision_withdrawn) FIRST.
-//  2. THEN re-project the durable log for this decision_id.
-//  3. If already terminal, print the logged result and return immediately.
-//  4. Else block on the armed stream, apply the first matching terminal (N3),
-//     dedupe on event_id (N2), print, and return.
-//
-// Prints `chosen_option` on resolve, or `withdrawn: <reason>` on withdrawal.
-// Returns exit 0 on a terminal, 17 if the daemon socket is absent, 1 on error.
 func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 
-	// Step 1: ARM the subscribe stream FIRST (live-only — no since_event_id, so
-	// it delivers only events that arrive AFTER this arm). Connecting here, before
-	// the re-project below, is the load-bearing N8 ordering.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -409,18 +319,12 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 	if rc != 0 {
 		return rc
 	}
-	// closeConn is the ONLY closer, and it joins the signal goroutine before it
-	// returns. Both properties are load-bearing — see decisionsArmSubscribe.
 	defer closeConn()
 
-	// Step 2 + 3: re-project the durable log for this decision_id. If a terminal
-	// is already logged (the answer landed before/at our arm), return immediately.
 	if term, ok := decisionTerminalInLog(eventsPath, decisionID); ok {
 		return decisionsPrintTerminal(term)
 	}
 
-	// Step 4: block on the armed stream until the matching terminal arrives.
-	// Dedupe on event_id (N2); apply the first matching terminal (N3).
 	seen := make(map[string]struct{})
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -429,17 +333,10 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 		if len(line) == 0 {
 			continue
 		}
-		// A refused subscription must never read as "no answer yet, then the
-		// stream ended" — that returns 0 and unblocks an agent nobody answered,
-		// which breaks the §4 / N5 requirement that a blocked agent wait on an
-		// OPEN stream. The refusal carries no "type", so the core.Event decode
-		// below would skip it silently (hk-1dwk2).
 		if reason, refused := subscribeRefusalReason(line); refused {
 			fmt.Fprintf(os.Stderr, "harmonik decisions wait: daemon refused the subscription: %s\n", reason)
 			return 1
 		}
-		// Heartbeat lines carry "type":"heartbeat" and no decision payload; the
-		// core.Event decode below yields a non-terminal type and is skipped.
 		var evt core.Event
 		if err := json.Unmarshal(line, &evt); err != nil {
 			continue
@@ -457,19 +354,15 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 		return decisionsPrintTerminal(term)
 	}
 	if err := sc.Err(); err != nil {
-		// A closed connection (signal / daemon exit) is a clean stop; otherwise error.
 		if errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed") {
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "harmonik decisions wait: stream read: %v\n", err)
 		return 1
 	}
-	// Stream closed (EOF) without a terminal — daemon went away or signalled.
 	return 0
 }
 
-// decisionTerminal is the resolved/withdrawn outcome of one decision, as read
-// either from the durable log (re-project) or from a live stream event.
 type decisionTerminal struct {
 	// Resolved is true for a decision_resolved terminal, false for withdrawn.
 	Resolved bool
@@ -479,7 +372,6 @@ type decisionTerminal struct {
 	Reason string
 }
 
-// decisionsPrintTerminal prints a terminal and returns exit 0.
 func decisionsPrintTerminal(t decisionTerminal) int {
 	if t.Resolved {
 		fmt.Println(t.ChosenOption)
@@ -489,8 +381,6 @@ func decisionsPrintTerminal(t decisionTerminal) int {
 	return 0
 }
 
-// decisionTerminalFromEvent reports whether evt is a terminal (decision_resolved
-// or decision_withdrawn) for decisionID, and if so returns its outcome.
 func decisionTerminalFromEvent(evt core.Event, decisionID string) (decisionTerminal, bool) {
 	switch evt.Type {
 	case core.EventTypeDecisionResolved:
@@ -512,26 +402,10 @@ func decisionTerminalFromEvent(evt core.Event, decisionID string) (decisionTermi
 		}
 		return decisionTerminal{Resolved: false, Reason: string(p.Reason)}, true
 	default:
-		// Every other event type carries no decision terminal.
 	}
 	return decisionTerminal{}, false
 }
 
-// decisionTerminalInLog folds events.jsonl (a single forward ScanAfter scan) to
-// find whether decisionID has already reached a terminal, returning the FIRST
-// terminal for it (N3 first-writer-wins) if so.
-//
-// This is the client-side re-project for the §4 step-2 check. It is a
-// specialised form of K3's decisionsProjection (internal/daemon —
-// un-importable here): it tracks only the one decision_id rather than the full
-// open set, but applies the SAME semantics — terminals key on payload.decision_id,
-// dedupe on event_id (N2), first-writer-wins (N3). It returns as soon as the
-// first matching terminal is seen.
-//
-// The decision_needed event for decisionID need not be scanned for the wait
-// check: we only care whether a terminal exists. (decisionsClientProjection
-// below carries the full open-set fold for any future K2-side use; the wait
-// path uses this lighter scan.)
 func decisionTerminalInLog(eventsPath, decisionID string) (decisionTerminal, bool) {
 	var zeroID core.EventID
 	seen := make(map[string]struct{})
@@ -548,13 +422,6 @@ func decisionTerminalInLog(eventsPath, decisionID string) (decisionTerminal, boo
 	return decisionTerminal{}, false
 }
 
-// -----------------------------------------------------------------------------
-// socket helpers
-// -----------------------------------------------------------------------------
-
-// decisionsResolvePaths resolves the project dir (absolute) and the socket path
-// from the --project / --socket flags, defaulting to cwd and
-// <project>/.harmonik/daemon.sock. verb is used only for error messages.
 func decisionsResolvePaths(projectFlag, socketFlag, verb string) (absProject, sockPath string, rc int) {
 	projectDir := projectFlag
 	if projectDir == "" {
@@ -577,9 +444,6 @@ func decisionsResolvePaths(projectFlag, socketFlag, verb string) (absProject, so
 	return abs, sock, 0
 }
 
-// decisionsDialOp dials the daemon socket, sends a {op,payload} request, reads
-// the SocketResponse, and returns the raw Result on success. Returns exit 17 if
-// the socket is absent/refused (mirrors comms.go), 1 on any other error.
 func decisionsDialOp(sockPath, op string, payload map[string]any, verb string) (json.RawMessage, int) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -641,29 +505,6 @@ func decisionsDialOp(sockPath, op string, payload map[string]any, verb string) (
 	return resp.Result, 0
 }
 
-// decisionsArmSubscribe dials the daemon and sends a live-only subscribe request
-// for the two decision terminals. It returns the open connection (the caller
-// reads NDJSON event lines from it) and the func that closes it. No
-// since_event_id is set — the stream is deliberately live-only so the N8
-// re-project below catches anything already logged.
-//
-// The server-side heartbeat (default 60s) keeps the stream — and thus the
-// agent's keeper gauge — fresh while blocked (SPEC §4 keeper-alive).
-//
-// ONE OWNER CLOSES THE CONNECTION, AND THE CALLER JOINS THE CLOSER. Both halves
-// of that were wrong before (hk-ibp5y) and each half caused its own defect. The
-// caller used to close conn in its own defer WHILE the signal goroutine below
-// also closed it; the ctx comes from signal.NotifyContext, whose stop() cancels
-// on EVERY return and not only on SIGINT, so both closers ran on every normal
-// exit and the loser printed "use of closed network connection" — a connection
-// error on a SUCCESSFUL wait, at the one moment a blocked agent is reading for
-// exactly that. And because the goroutine was never joined, it could write to
-// os.Stderr after the caller had returned: a data race that the merge decision
-// caught under -race when a test harness swapped os.Stderr underneath it.
-//
-// So the goroutine is the only closer, it stops on either a signal or the
-// returned func, and that func waits for it to finish. Nothing this function
-// starts can outlive the caller.
 func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, func(), int) {
 	reqBytes, err := json.Marshal(map[string]any{
 		"op":                "subscribe",
@@ -695,9 +536,6 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, func
 		return nil, nil, 1
 	}
 
-	// Close conn on a signal so the caller's blocking scan unblocks, or when the
-	// caller is done. Whichever comes first, this goroutine closes exactly once
-	// and then exits.
 	closed := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
@@ -711,8 +549,6 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, func
 		}
 	}()
 
-	// Idempotent so a caller that closes early and also defers cannot panic on a
-	// second close of the channel.
 	var once sync.Once
 	closeConn := func() {
 		once.Do(func() { close(closed) })
@@ -721,10 +557,6 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, func
 
 	return conn, closeConn, 0
 }
-
-// -----------------------------------------------------------------------------
-// usage
-// -----------------------------------------------------------------------------
 
 func decisionsUsage() {
 	fmt.Print(`harmonik decisions — agent→human decision surface

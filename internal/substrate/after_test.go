@@ -19,25 +19,14 @@ import (
 func TestClockAfterAgentReadyReapTimeout_FakeClock(t *testing.T) {
 	t.Parallel()
 
-	// reapTimeout mirrors the run path's agent-ready kill-reap bound (10s, HC-056,
-	// now internal/runlaunch.KillReapTimeout). Restated as a local constant so this
-	// substrate test stays a stdlib-only leaf — importing runlaunch would violate
-	// the substrate depguard allow-list. The test is about After's CONTRACT (fires
-	// at exactly d, never before), not about the specific bound, so the duplication
-	// carries no drift risk worth widening the fence for.
 	const reapTimeout = 10 * time.Second
 
 	fc := substrate.NewFakeClock(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC))
 
-	// watcherDone stands in for a hung watcher after SIGKILL — it never closes,
-	// so the select must resolve on the clock deadline, exactly as the run-path
-	// reap guard intends.
 	watcherDone := make(chan struct{})
 
 	after := substrate.After(fc, reapTimeout)
 
-	// The substrate.After goroutine registers a FakeClock sleeper; wait for it so
-	// the advance cannot race ahead of the arm (deterministic, no wall-clock sleep).
 	fc.BlockUntil(1)
 
 	timedOut := make(chan bool, 1)
@@ -50,7 +39,6 @@ func TestClockAfterAgentReadyReapTimeout_FakeClock(t *testing.T) {
 		}
 	}()
 
-	// Just short of the deadline: the timeout branch must NOT fire yet.
 	fc.Advance(reapTimeout - time.Nanosecond)
 	select {
 	case fired := <-timedOut:
@@ -58,8 +46,6 @@ func TestClockAfterAgentReadyReapTimeout_FakeClock(t *testing.T) {
 	default:
 	}
 
-	// Cross the deadline: FakeClock.Advance wakes the sleeper, substrate.After sends,
-	// and the timeout branch is taken — all in virtual time.
 	fc.Advance(time.Nanosecond)
 
 	select {

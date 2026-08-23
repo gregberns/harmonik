@@ -1,50 +1,5 @@
 package daemon_test
 
-// tmuxsubstrate_terminaloversub_test.go — regression tests for an ordinary spawn
-// killed by an assertion that was not true
-// (hk-terminal-reserve-unbounded-wyy6y).
-//
-// # The bug
-//
-// The reserve added by hk-x882o gives spawnSem cap+1 slots and lets terminal
-// spawns take one without holding a non-terminal ticket. The non-terminal path
-// then read its own success on nonTerminalSem as proof that spawnSem had room,
-// took the slot with a fast-path-only TryAcquire, and reported a miss as a
-// STRUCTURAL error, killing the spawn at once.
-//
-// The proof was wrong. Nothing bounds terminal holders, so cap+1 of them can
-// hold every slot. One consolidate node exists per in-flight run, so two
-// parallel runs reach it. An ordinary spawn then died for a condition that
-// would have cleared on its own.
-//
-// # What these tests hold
-//
-// The miss is now a bounded wait on what is left of the SAME acquire budget:
-//
-//   - the spawn waits instead of failing, and succeeds if a terminal spawn
-//     releases in time;
-//   - when the budget runs out it reports ErrSpawnCapTimeout, which is what
-//     makes the failure observable through the spawn_cap_blocked event, and its
-//     message names the terminal holders that are the actual cause. The bead
-//     disposition is unchanged: both the old and the new error wrap
-//     ErrStructural and the reopen does not read either sentinel;
-//   - the nonTerminalSem ticket it is holding goes back exactly once, so a
-//     spawn that times out does not take a slot away from the next one;
-//   - a spent budget is never passed to Acquire, which reads a non-positive
-//     timeout as "no timeout".
-//
-// This is a safety net, not the repair. It deletes a wrong assertion rather
-// than restoring the property the assertion asserted. The reserve is mis-sized:
-// "+1" assumes one terminal at a time when the population is one per in-flight
-// run.
-//
-// Helpers and the fake adapter are shared with the terminal-reserve tests
-// (terminalReserveFixture*), which is the topic these extend.
-//
-// # Bead
-//
-//   - hk-terminal-reserve-unbounded-wyy6y
-
 import (
 	"context"
 	"errors"
@@ -56,19 +11,8 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// terminalOversubCap is the non-terminal cap every test in this file runs at.
-// Two is not the smallest cap that reproduces the bug — a cap of 1 gives
-// spawnSem two slots, two terminal spawns fill them, and the fast path misses
-// exactly the same way. Two is chosen because it is the reported scenario: one
-// consolidate node per in-flight run for two parallel runs, plus the single
-// reserve they were both drawing on.
 const terminalOversubCap = 2
 
-// terminalOversubFixtureSubstrate returns a substrate whose spawnSem is fully
-// held by terminal spawns: capN+1 of them, which is spawnSem's whole capacity,
-// while nonTerminalSem is untouched. That is the state two parallel runs reach
-// when both hit their consolidate node, and it is the state in which the old
-// fast-path assertion was false.
 func terminalOversubFixtureSubstrate(t *testing.T, acquireTimeout time.Duration) (handler.Substrate, []handler.SubstrateSession) {
 	t.Helper()
 
@@ -124,15 +68,9 @@ func TestSpawnCapTerminalOversub_OrdinarySpawnTimesOutInsteadOfFailingStructural
 		if !errors.Is(got.err, handler.ErrStructural) {
 			t.Errorf("want the error to wrap ErrStructural like every other spawn failure, got: %v", got.err)
 		}
-		// The failure has to be a wait that ran out, not an assertion that fired.
-		// A structural refusal returns in microseconds; only the budget can take
-		// this long.
 		if got.elapsed < acquireTimeout {
 			t.Errorf("spawn gave up after %s, which is inside its %s budget — it refused rather than waited", got.elapsed, acquireTimeout)
 		}
-		// The message names each semaphore under its own name. Reusing the
-		// non-terminal timeout arm's message here would read "cap=2 in_use=3"
-		// every single time (hk-spawncap-timeout-mismatched-counters-ve2nk).
 		for _, want := range []string{"spawn_sem_cap=3", "spawn_sem_in_use=3", "non_terminal_in_use=0"} {
 			if !strings.Contains(got.err.Error(), want) {
 				t.Errorf("error does not report %s, so the cause is not legible from it: %v", want, got.err)
@@ -160,9 +98,6 @@ func TestSpawnCapTerminalOversub_OrdinarySpawnSucceedsWhenATerminalReleases(t *t
 	}()
 
 	<-started
-	// Give the spawn time to reach the wait before a slot frees up. Under load
-	// the Kill can still land first and the spawn then takes the fast path, so
-	// read this as usually exercising a woken waiter, not as a guarantee.
 	time.Sleep(50 * time.Millisecond)
 	if err := held[0].Kill(context.Background()); err != nil {
 		t.Fatalf("killing a terminal session failed: %v", err)
@@ -213,8 +148,6 @@ func TestSpawnCapTerminalOversub_TicketGoesBackOnTimeout(t *testing.T) {
 		t.Fatalf("slots still held after every session was killed: %d — the timed-out spawn leaked one", got)
 	}
 
-	// capN ordinary spawns must fit. One short means the ticket was never
-	// returned.
 	for i := 0; i < capN; i++ {
 		if _, err := terminalReserveFixtureSpawnNonTerminal(context.Background(), sub); err != nil {
 			t.Fatalf("ordinary spawn %d of %d failed on an idle substrate: %v (the timed-out spawn kept its ticket)", i+1, capN, err)
@@ -292,7 +225,6 @@ func TestSpawnCapTerminalOversub_CancelledContextReturnsTheTicket(t *testing.T) 
 		done <- err
 	}()
 
-	// Long enough for the spawn to be waiting rather than still starting.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
@@ -315,17 +247,11 @@ func TestSpawnCapTerminalOversub_CancelledContextReturnsTheTicket(t *testing.T) 
 		t.Fatal("spawn did not return when its context was cancelled")
 	}
 
-	// The ticket has to come back, exactly as on the timeout arm.
 	for i, sess := range held {
 		if err := sess.Kill(context.Background()); err != nil {
 			t.Fatalf("killing terminal session %d failed: %v", i, err)
 		}
 	}
-	// Bound the recovery spawns with a context rather than the substrate's own
-	// budget. This fixture runs a minute-long budget so the cancelled spawn was
-	// waiting rather than timing out, and a leaked ticket would otherwise park
-	// the check on it for that whole minute and report as a package timeout
-	// instead of as this test failing.
 	recoverCtx, cancelRecover := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelRecover()
 	for i := 0; i < terminalOversubCap; i++ {

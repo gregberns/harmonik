@@ -27,7 +27,6 @@ const (
 	LedgerFileName = "release-ledger.json"
 )
 
-// ledgerEnvelope is the top-level JSON structure for the on-disk ledger.
 type ledgerEnvelope struct {
 	SchemaVersion int            `json:"schema_version"`
 	Entries       []ReleaseEntry `json:"entries"`

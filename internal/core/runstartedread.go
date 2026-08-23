@@ -61,9 +61,6 @@ func beadIDString(id *BeadID) string {
 	return string(*id)
 }
 
-// runStartedPayloadV1 is deliberately private. It exists only so readers can
-// recover records written before RunStartedPayload became the durable start
-// contract.
 type runStartedPayloadV1 struct {
 	RunID           RunID   `json:"run_id"`
 	BeadID          string  `json:"bead_id"`

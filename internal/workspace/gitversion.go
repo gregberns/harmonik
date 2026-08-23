@@ -8,15 +8,6 @@ import (
 	"strings"
 )
 
-// minGitMajor and minGitMinor are the minimum git version required by the
-// workspace manager per WM-ENV-002. The pin derives from three mechanical
-// dependencies:
-//
-//   - git merge --strategy=ort is the default merge algorithm only from 2.34
-//     onward (WM-019 requires --strategy=ort explicitly).
-//   - git for-each-ref --format '%(trailers:key=X,valueonly=true)' requires
-//     2.34's expanded trailers format token.
-//   - git worktree repair (introduced in 2.30) stabilized in 2.34.
 const (
 	minGitMajor = 2
 	minGitMinor = 34
@@ -36,7 +27,6 @@ func (v GitVersion) String() string {
 	return fmt.Sprintf("%d.%d", v.Major, v.Minor)
 }
 
-// meetsMinimum reports whether v satisfies the WM-ENV-002 floor (≥ 2.34).
 func (v GitVersion) meetsMinimum() bool {
 	if v.Major != minGitMajor {
 		return v.Major > minGitMajor
@@ -55,7 +45,6 @@ func (v GitVersion) meetsMinimum() bool {
 // after "git version ". It tolerates arbitrary patch/platform suffixes.
 // Returns an error if the output does not contain a recognisable version token.
 func ParseGitVersion(output string) (GitVersion, error) {
-	// Strip leading/trailing whitespace and find "git version " prefix.
 	s := strings.TrimSpace(output)
 	const prefix = "git version "
 	idx := strings.Index(s, prefix)
@@ -64,8 +53,6 @@ func ParseGitVersion(output string) (GitVersion, error) {
 	}
 	s = s[idx+len(prefix):]
 
-	// s is now "2.34.1" or "2.34.1.windows.1" or similar.
-	// Split on "." and parse the first two numeric fields.
 	parts := strings.SplitN(s, ".", 3)
 	if len(parts) < 2 {
 		return GitVersion{}, fmt.Errorf("gitversion: version token %q has fewer than two dot-separated fields", s)
@@ -76,8 +63,6 @@ func ParseGitVersion(output string) (GitVersion, error) {
 		return GitVersion{}, fmt.Errorf("gitversion: parse major from %q: %w", parts[0], err)
 	}
 
-	// minor may have trailing non-numeric content if patch is absent; take
-	// only the leading numeric run.
 	minorStr := strings.TrimSpace(parts[1])
 	minor, err := strconv.Atoi(minorStr)
 	if err != nil {

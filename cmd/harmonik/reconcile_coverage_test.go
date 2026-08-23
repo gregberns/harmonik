@@ -1,13 +1,5 @@
 package main
 
-// reconcile_coverage_test.go — behavior tests for the pure-logic slices of
-// `harmonik reconcile`: the usage renderer, the flag/arg validation exit-code
-// truth table (paths that return before any `br` / git shell-out), and the
-// filterBeadsByRunID queue-scoping helper driven against a temp project.
-//
-// Paths that require a live `br` binary or git-log scan are intentionally NOT
-// exercised here — see the report for the skipped-with-reason list.
-
 import (
 	"bytes"
 	"context"
@@ -43,7 +35,6 @@ func TestReconcileUsage_RendersFlagsAndExitCodes(t *testing.T) {
 // TestRunReconcileSubcommandIO_ParseExitCodes covers the argument/validation
 // truth table for every path that returns before the `br` lookup or git scan.
 func TestRunReconcileSubcommandIO_ParseExitCodes(t *testing.T) {
-	// A directory guaranteed not to exist, to drive the os.Stat failure branch.
 	missingDir := filepath.Join(t.TempDir(), "does-not-exist")
 
 	tests := []struct {
@@ -71,8 +62,6 @@ func TestRunReconcileSubcommandIO_ParseExitCodes(t *testing.T) {
 	}
 }
 
-// seedRunIDQueue writes a minimal main.json queue with the given (beadID→runID)
-// item pairs so filterBeadsByRunID has a real ledger to scope against.
 func seedRunIDQueue(t *testing.T, projectDir string, items map[string]string) {
 	t.Helper()
 	qDir := filepath.Join(projectDir, ".harmonik", "queues")
@@ -125,7 +114,6 @@ func TestFilterBeadsByRunID(t *testing.T) {
 
 	t.Run("run_id present in queue but bead not in_progress set", func(t *testing.T) {
 		dir := t.TempDir()
-		// run-match maps to hk-zzz, which is NOT in the supplied in-progress beads.
 		seedRunIDQueue(t, dir, map[string]string{"hk-zzz": "run-match"})
 		got := filterBeadsByRunID(ctx, dir, "run-match", beads)
 		if len(got) != 0 {

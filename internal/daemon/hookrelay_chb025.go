@@ -1,27 +1,5 @@
 package daemon
 
-// hookrelay_chb025.go — daemon shell over the pure internal/hook state machine.
-//
-// The pure last-received-wins dedup + agent_ready callback registry moved to
-// internal/hook (M5 slice 1). What remains here is the daemon-only composition:
-// the bus-emitting rate-limit routing path (agent_rate_limited /
-// agent_rate_limit_cleared), which needs handlercontract.EventEmitter,
-// uuid.Parse, and time.Now — all impure effects the hook package cannot carry.
-//
-// hookSessionStore embeds *hook.SessionStore and adds those effects. It routes
-// the rate-limit types locally (option (a)) and delegates every other type to
-// the pure store's Dispatch, so the socket wire protocol is byte-identical.
-//
-// # Watcher-goroutine discipline (CHB-025)
-//
-// UpdateOutcome / notifyAgentReady are called from the socket-acceptor goroutine
-// for each incoming relay connection. The pure store's sync.Mutex is the only
-// locking surface needed.
-//
-// Spec refs:
-//   - specs/claude-hook-bridge.md §4.10 CHB-025
-//   - specs/claude-hook-bridge.md §6.2 HookRelayAck
-
 import (
 	"context"
 	"encoding/json"
@@ -36,29 +14,13 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// hookRelayEnvelope / hookRelayAckMsg are the daemon-local names for the pure
-// wire types. Kept as aliases so socket.go, the HookRelayHandler contract, and
-// the existing daemon test suite continue to compile unchanged.
 type (
 	hookRelayEnvelope = hook.RelayEnvelope
 	hookRelayAckMsg   = hook.RelayAck
 )
 
-// hookStoreIface is the interface over hook-session state used by the work loop
-// and waitWithSocketGrace. The concrete *hookSessionStore implements it (its
-// embedded *hook.SessionStore promotes every method). The interface itself moved
-// to internal/runloop (LIFT L0) because SharedHandles — which carries it — now
-// lives there; this alias keeps the daemon's uses (the legacy aggregate.hookStore
-// field, direct composition, waitWithSocketGrace, the test stubs) spelled with the
-// local name. See internal/runloop/ports.go (bead ref hk-kqdpf.1).
 type hookStoreIface = runloop.HookStore
 
-// hookSessionStore is the daemon-side composition of the pure hook.SessionStore
-// plus the bus emitter used by the rate-limit routing path (hk-lqtzq).
-//
-// The embedded *hook.SessionStore promotes RegisterHookSession, CloseHookSession,
-// LatestOutcome, WaitForOutcome, and SetAgentReadyCallback, so *hookSessionStore
-// satisfies hookStoreIface directly.
 type hookSessionStore struct {
 	*hook.SessionStore
 
@@ -68,8 +30,6 @@ type hookSessionStore struct {
 	emitter handlercontract.EventEmitter
 }
 
-// newHookSessionStore constructs a daemon hook store wrapping a fresh pure
-// SessionStore (no emitter wired yet; call SetEmitter before beads dispatch).
 func newHookSessionStore() *hookSessionStore {
 	return &hookSessionStore{SessionStore: hook.NewSessionStore()}
 }
@@ -86,14 +46,6 @@ func (s *hookSessionStore) HandleHookRelay(env hookRelayEnvelope) hookRelayAckMs
 	return s.dispatchHookRelayEnvelope(env)
 }
 
-// dispatchHookRelayEnvelope routes an incoming envelope. The daemon owns the
-// rate-limit types (they emit onto the bus); every other type — including
-// bad-envelope validation, outcome_emitted dedup, and agent_ready — is delegated
-// to the pure hook.SessionStore so the ack is byte-identical to pre-extraction.
-//
-// The top-level envelope validation mirrors the pure store so a rate-limit
-// message missing type/run_id/claude_session_id still returns bad_envelope
-// exactly as before (rather than silently no-op'ing in emitRateLimitStatus).
 func (s *hookSessionStore) dispatchHookRelayEnvelope(env hookRelayEnvelope) hookRelayAckMsg {
 	if env.Type == "" {
 		return hookRelayAckMsg{Status: "bad_envelope", Reason: "missing type field"}
@@ -104,27 +56,18 @@ func (s *hookSessionStore) dispatchHookRelayEnvelope(env hookRelayEnvelope) hook
 
 	switch env.Type {
 	case "agent_rate_limited":
-		// hk-lqtzq: StopFailure{error_type: "rate_limit"} arrives here as
-		// agent_rate_limited. Forward to the bus as agent_rate_limit_status{active}
-		// so HandlerPausePolicyGoroutine and bandwidthTunerBackstop can react.
 		s.emitRateLimitStatus(env, core.AgentRateLimitStatusActive)
 		return hookRelayAckMsg{Status: "ok"}
 
 	case "agent_rate_limit_cleared":
-		// hk-lqtzq: paired clearance event. Forward as agent_rate_limit_status{cleared}.
 		s.emitRateLimitStatus(env, core.AgentRateLimitStatusCleared)
 		return hookRelayAckMsg{Status: "ok"}
 
 	default:
-		// outcome_emitted, agent_ready, and every other type are pure — the hook
-		// state machine owns them.
 		return s.Dispatch(env)
 	}
 }
 
-// emitRateLimitStatus emits an agent_rate_limit_status bus event.
-// No-op when emitter is nil (unit-test callers that don't wire the bus) or when
-// env.RunID is not a valid UUID (payload would be invalid per spec).
 func (s *hookSessionStore) emitRateLimitStatus(env hookRelayEnvelope, status core.AgentRateLimitStatus) {
 	if s.emitter == nil {
 		return
@@ -134,11 +77,9 @@ func (s *hookSessionStore) emitRateLimitStatus(env hookRelayEnvelope, status cor
 		return // RunID is required and must be a valid UUID per AgentRateLimitStatusPayload.Valid()
 	}
 
-	// Parse retry_after_seconds from the relay payload (present only on active).
 	var relayPl struct {
 		RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
 	}
-	// A malformed relay payload only costs the optional retry-after hint.
 	if unmarshalErr := json.Unmarshal(env.Payload, &relayPl); unmarshalErr != nil {
 		relayPl.RetryAfterSeconds = nil
 	}

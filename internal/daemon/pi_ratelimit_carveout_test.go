@@ -1,27 +1,5 @@
 package daemon
 
-// pi_ratelimit_carveout_test.go — the carve-out that keeps a free-tier Pi rate
-// limit off the paid fleet, tested through the thing that has to feed it.
-//
-// When an agent reports it is rate limited, the daemon's backstop snaps the
-// global concurrency ceiling to one. That is right for a paid harness, where a
-// 429 means the whole account is throttled, and wrong for a free-tier Pi run,
-// where it means only that one provider said no. So the backstop asks the run's
-// handle which harness the run resolved to and skips the global snap for Pi.
-//
-// The two tests already covering that decision set the agent type on the handle
-// themselves. Both stayed green for three days while NOTHING in production set
-// it: the launch site that used to was deleted, GetAgentType returned the empty
-// type for every run, the carve-out matched nothing, and every free-tier Pi 429
-// throttled the paid Claude fleet. A test that supplies the input cannot see the
-// producer go away — that is the same shape as a durable store with no writer.
-//
-// So these two drive the real launch and let it set the type, then hand the
-// backstop a real rate-limit event for that run. Delete the SetAgentType call in
-// runAgentLaunch and the first one fails.
-//
-// Helper prefix: piCarve.
-
 import (
 	"context"
 	"encoding/json"
@@ -35,24 +13,12 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// piCarveLaunchThenRateLimit runs one launch of agentType through the real
-// runAgentLaunch, then delivers a status=active rate-limit event for that run to
-// a real backstop wired to the same registry. It returns the global concurrency
-// ceiling afterwards, which started at four.
-//
-// The launch's substrate refuses the spawn, so the launch fails. That is fine
-// and deliberate: the agent type is resolved from the built spec before any
-// agent starts, which is exactly when a rate limit can first arrive.
 func piCarveLaunchThenRateLimit(t *testing.T, agentType core.AgentType) int {
 	t.Helper()
 
 	in := alaunchInput(t, &alaunchSpySubstrate{}, false, []string{"PATH=/usr/bin"})
 	in.Artifacts = shared.LaunchArtifacts{ResolvedAgentType: agentType}
 
-	// The registry the launch reaches, and the same one the backstop reads. A run
-	// with no handle is a different case (the backstop falls through to the tuner
-	// by design), so the handle has to be there and has to start with no agent
-	// type on it — the run path is what puts one there.
 	registry := NewRunRegistry()
 	registry.Register(in.RunID, &RunHandle{BeadID: core.BeadID("hk-pi-carve-out")})
 	in.Handles.RunRegistry = daemonRunRegistry{reg: registry}
@@ -157,6 +123,4 @@ func TestPiRateLimit_TheLaunchIsWhatRecordsTheHarness(t *testing.T) {
 	}
 }
 
-// piCarveHandlePortIsSatisfied keeps the compile-time link between the port the
-// launch writes through and the handle the backstop reads.
 var _ runloop.RunHandlePort = (*RunHandle)(nil)

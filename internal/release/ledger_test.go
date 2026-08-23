@@ -10,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/release"
 )
 
-// fixture returns a minimal ledger with one pre-release entry for v0.2.0.
 func fixture() []release.ReleaseEntry {
 	return []release.ReleaseEntry{
 		{
@@ -22,7 +21,6 @@ func fixture() []release.ReleaseEntry {
 	}
 }
 
-// certifiedFixture returns a ledger where v0.2.0 has already been certified.
 func certifiedFixture(t testing.TB) []release.ReleaseEntry {
 	t.Helper()
 	entries := fixture()
@@ -32,8 +30,6 @@ func certifiedFixture(t testing.TB) []release.ReleaseEntry {
 	}
 	return entries
 }
-
-// --- Certify tests ---
 
 func TestRecordCreate_AppendsPrereleaseEntry(t *testing.T) {
 	entries := []release.ReleaseEntry{}
@@ -135,8 +131,6 @@ func TestCertify_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
-// --- Yank tests ---
-
 func TestYank_CertifiedToYanked(t *testing.T) {
 	entries := certifiedFixture(t)
 	result, err := release.Yank(entries, "v0.2.0", "critical regression in merge logic")
@@ -199,8 +193,6 @@ func TestYank_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
-// --- CurrentStable tests ---
-
 func TestCurrentStable_Empty(t *testing.T) {
 	if s := release.CurrentStable([]release.ReleaseEntry{}); s != nil {
 		t.Errorf("expected nil for empty ledger, got %+v", s)
@@ -235,8 +227,6 @@ func TestCurrentStable_AfterYank(t *testing.T) {
 		t.Errorf("expected nil after yank, got %+v", s)
 	}
 }
-
-// --- LedgerFile round-trip tests ---
 
 func TestLedgerFile_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -278,7 +268,6 @@ func TestLedgerFile_SchemaVersionMismatch(t *testing.T) {
 	dir := t.TempDir()
 	path := release.LedgerPath(dir)
 
-	// Write a file with a future schema version.
 	badEnv := map[string]interface{}{
 		"schema_version": 99,
 		"entries":        []interface{}{},

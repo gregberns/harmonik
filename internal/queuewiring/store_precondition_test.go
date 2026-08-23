@@ -13,11 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// The generation guard covers one queue name, so it cannot see a different
-// queue change. Precondition is how a caller reaches evidence outside its own
-// queue while still inside the write lock that guards its write — the
-// dispatcher's duplicate-bead guard is why it exists.
-
 func preconditionProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

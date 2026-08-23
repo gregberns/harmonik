@@ -5,27 +5,6 @@ import (
 	"strings"
 )
 
-// workflowlabelwrite_bi010c.go — BI-010c workflow-mode label write discipline.
-//
-// Spec ref: specs/beads-integration.md §4.3 BI-010c.
-//
-// BI-010c: Agents MUST NOT add, remove, or modify workflow:<mode> labels via
-// br update (or any equivalent label-mutation surface) from inside a workflow
-// run. The label is operator-set or set at bead-creation time only. A
-// daemon-side or reconciliation-side label write is permitted only where a
-// workflow's design intent explicitly so dictates.
-//
-// This file provides:
-//   - CallerKind — the two-value enum distinguishing agent paths from daemon paths.
-//   - ErrWorkflowLabelWriteForbidden — typed sentinel returned when an agent
-//     path attempts a workflow:<mode> label mutation.
-//   - CheckWorkflowLabelWrite — the guard function that inspects br argv for
-//     workflow:<mode> labels and rejects writes from agent-context callers.
-//
-// Callers on the daemon write path (CallerKindDaemon) bypass the guard and
-// receive nil unconditionally, satisfying the "daemon-context write succeeds"
-// acceptance criterion.
-
 // CallerKind distinguishes the two harmonik write-path contexts for purposes
 // of the BI-010c workflow-label write discipline.
 //
@@ -59,8 +38,6 @@ const (
 // Spec ref: specs/beads-integration.md §4.3 BI-010c; §4.9 BI-027.
 var ErrWorkflowLabelWriteForbidden = errors.New("brcli: workflow label write forbidden for agent-context caller (BI-010c)")
 
-// workflowLabelPrefix is the label namespace prefix whose presence in br argv
-// triggers the BI-010c guard when the caller kind is CallerKindAgent.
 const workflowLabelPrefix = "workflow:"
 
 // CheckWorkflowLabelWrite inspects brArgs for any argument that begins with
@@ -82,17 +59,9 @@ const workflowLabelPrefix = "workflow:"
 // Spec ref: specs/beads-integration.md §4.3 BI-010c.
 func CheckWorkflowLabelWrite(kind CallerKind, brArgs []string) error {
 	if kind == CallerKindDaemon {
-		// Daemon path: permitted unconditionally per BI-010c.
 		return nil
 	}
 
-	// Agent path: scan argv for any workflow:<mode> label VALUE.
-	//
-	// A label can reach br argv in either form: split ("--label" "workflow:dot")
-	// or joined ("--label=workflow:dot"). The joined form has the prefix
-	// "--label=", not "workflow:", so matching the raw token would miss it and
-	// let the forbidden mutation through (BI-INV-001). Normalize by splitting
-	// any "--flag=value" token into its value, then match the value.
 	for _, arg := range brArgs {
 		if strings.HasPrefix(labelValue(arg), workflowLabelPrefix) {
 			return ErrWorkflowLabelWriteForbidden
@@ -101,11 +70,6 @@ func CheckWorkflowLabelWrite(kind CallerKind, brArgs []string) error {
 	return nil
 }
 
-// labelValue extracts the value an argv token carries for prefix matching. A
-// joined flag ("--flag=value") yields its value ("value"); any other token
-// (a bare "--flag", or a standalone value in the split "--flag" "value" form)
-// yields the token unchanged. Only tokens shaped like a long/short flag are
-// split, so a literal value that happens to contain "=" is left intact.
 func labelValue(arg string) string {
 	if strings.HasPrefix(arg, "-") {
 		if _, value, found := strings.Cut(arg, "="); found {

@@ -1,26 +1,5 @@
 package workspace
 
-// conflictresolution_wm024.go — conflict-resolver dispatch mechanism (WM-024).
-//
-// Implements the deterministic (mechanism-tagged) aspects of the conflict-resolution
-// re-dispatch harness per workspace-model.md §4.6 WM-024:
-//
-//   - Attempt-cap constants (default 3, operator-configurable [1, 10]).
-//   - ValidateConflictResolutionAttemptCap — daemon-startup guard (WM-024 terminal clause).
-//   - EffectiveConflictResolutionAttemptCap — resolves operator override or default.
-//   - ShouldDispatchConflictResolver — dispatch-or-escalate decision per WM-022a, WM-023, WM-024.
-//   - BuildConflictResolverLaunchSpec — fresh LaunchSpec construction for the re-dispatch.
-//
-// Cognition (handler reasoning during resolution) is delegated to the implementer's
-// handler per handler-contract.md §4.1 and is NOT owned here.
-//
-// Spec refs:
-//   - specs/workspace-model.md §4.6 WM-022, WM-022a, WM-023, WM-024.
-//   - specs/handler-contract.md §6.1 HC-006 (LaunchSpec field rules).
-//   - specs/operator-nfr.md §4.3 (operator-configurable attempt cap).
-//
-// Bead ref: hk-8mwo.36.
-
 import (
 	"errors"
 	"fmt"
@@ -151,22 +130,18 @@ func ShouldDispatchConflictResolver(
 	attemptCap int,
 	isRetired func(core.HandlerRef) bool,
 ) ConflictResolveDecision {
-	// Priority 1: null ref — all-mechanical task branch (WM-022a).
 	if ref == nil {
 		return ConflictResolveEscalateNullRef
 	}
 
-	// Priority 2: retired handler class (WM-024 terminal clause).
 	if isRetired != nil && isRetired(*ref) {
 		return ConflictResolveEscalateRetiredHandler
 	}
 
-	// Priority 3: attempt cap exhausted (WM-024 / WM-023).
 	if attemptCount >= attemptCap {
 		return ConflictResolveEscalateCapExhausted
 	}
 
-	// Priority 4: dispatch.
 	return ConflictResolveDispatch
 }
 
@@ -305,9 +280,6 @@ func BuildConflictResolverLaunchSpec(params ConflictResolverLaunchSpecParams) (h
 		)
 	}
 
-	// Build RequiredSkills: conflict-resolution skill first, then caller-supplied skills.
-	// Per OQ-WM-007: if the skill name is unresolved downstream, the handler falls back
-	// to the workspace_path's staged conflict markers + transition history.
 	skills := make([]string, 0, 1+len(params.AdditionalSkills))
 	skills = append(skills, ConflictResolutionSkillName)
 	skills = append(skills, params.AdditionalSkills...)
@@ -342,7 +314,6 @@ func BuildConflictResolverLaunchSpec(params ConflictResolverLaunchSpecParams) (h
 		SchemaVersion: handlercontract.LaunchSpecSchemaVersion,
 	}
 
-	// Validate before returning so callers get early feedback.
 	if err := spec.Valid(); err != nil {
 		return handlercontract.LaunchSpec{}, fmt.Errorf(
 			"workspace: BuildConflictResolverLaunchSpec: produced invalid LaunchSpec: %w", err,

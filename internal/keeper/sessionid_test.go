@@ -1,15 +1,5 @@
 package keeper_test
 
-// sessionid_test.go — unit tests for the single-writer session-id channel
-// (hk-8prq). The keeper reads <agent>.sid as its PRIMARY identity source and
-// falls back to the gauge's session_id when .sid is absent or malformed.
-//
-// These tests drive the behavior through the real read path keeper.ReadCtxFile —
-// the same function the watcher loop and the cycler's waitForNewSessionID use —
-// so they exercise the production override, not a test-only shim. They FAIL on
-// main (ReadCtxFile ignores .sid there); the GREEN implementation makes them
-// pass.
-
 import (
 	"os"
 	"path/filepath"
@@ -18,7 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// writeGauge writes a minimal <agent>.ctx carrying gaugeSID as its session_id.
 func writeGauge(t *testing.T, projectDir, agent string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -31,9 +20,6 @@ func writeGauge(t *testing.T, projectDir, agent string) {
 	}
 }
 
-// writeSidFile writes <agent>.sid directly (modeling what the SessionStart hook
-// produces). The path is hardcoded so this test compiles on main and FAILS only
-// on the assertion — a clean RED.
 func writeSidFile(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -122,7 +108,6 @@ func TestReadSessionIDFile_LowercasesAndTrims(t *testing.T) {
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Trailing newline + surrounding whitespace; the value itself is lowercase v4.
 	if err := os.WriteFile(filepath.Join(keeperDir, "captain.sid"), []byte("  "+primarySID+"  \n"), 0o600); err != nil {
 		t.Fatalf("write sid: %v", err)
 	}

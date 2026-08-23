@@ -1,11 +1,5 @@
 package daemon_test
 
-// branching_hk3r3_test.go — unit tests for target_repo parsing and
-// CrossRepoUnsupportedError (hk-3r3: cross-repo dispatch guard).
-//
-// Helper prefix: crossRepo3r3 (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-3r3).
-
 import (
 	"strings"
 	"testing"
@@ -13,8 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// crossRepo3r3Body builds a bead description with a ## Branching section
-// containing the given YAML content.
 func crossRepo3r3Body(yamlContent string) string {
 	return "## Summary\n\nSome work.\n\n## Branching\n\n```yaml\n" + yamlContent + "\n```\n"
 }

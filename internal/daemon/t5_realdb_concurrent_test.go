@@ -1,31 +1,5 @@
 package daemon_test
 
-// t5_realdb_concurrent_test.go — T5 real-DB concurrent ClaimBead integration test.
-//
-// Bead: hk-5wbzj — "Test gap: concurrent work-loop stub does not enforce
-// ClaimBead exclusion — production SQLite atomics unverified by test"
-//
-// Scope: exercise two concurrent work loops against a real beads SQLite DB to
-// verify the harmonik-side pre-claim guard (hk-p4xbw) prevents double-dispatch
-// when two loops race on the same bead.
-//
-// Guard: Before calling ClaimBead, the work loop calls ShowBead and skips
-// dispatch if the bead's status is not "open".  This catches the common case
-// where loop A has already claimed the bead before loop B reaches the guard.
-//
-// Test structure (sequential claim → guard):
-//   1. Loop A is started alone and allowed to claim and process the bead.
-//   2. Only after the bead is observed as "in_progress" (claimed by A) is
-//      loop B started.
-//   3. Loop B calls ShowBead, sees "in_progress", and skips dispatch via the
-//      bead_claim_skipped log line (no run_started emitted by B).
-//   4. Assertion: exactly one run_started event total across both collectors.
-//
-// This eliminates the TOCTOU window from the test: by the time B starts, the
-// bead is already in_progress so ShowBead returns in_progress reliably.
-//
-// Helper prefix: t5RealDB (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"os/exec"
@@ -39,22 +13,11 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T5 fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t5RealDBFixtureSetup initialises a full fixture for the real-DB concurrent
-// test: git repo, .harmonik dirs, br init, one seeded bead, br wrapper script.
-// Returns projectDir, brWrapperPath, seededBeadID.
-//
-// The br wrapper script pins --db so that brcli.Adapter subprocess calls
-// find the test-local .beads/beads.db regardless of CWD.
 func t5RealDBFixtureSetup(t *testing.T) (projectDir, brWrapper, beadID string) {
 	t.Helper()
 
 	realBrPath := t5RealDBLocateBr(t)
 
-	// Create project directory and standard sub-trees.
 	projectDir, _ = workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
@@ -70,22 +33,6 @@ func t5RealDBFixtureSetup(t *testing.T) (projectDir, brWrapper, beadID string) {
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper = smokeFixtureBrWrapperScript(t, realBrPath, dbPath)
 
-	// Seed exactly one ready bead.
-	//
-	// The workflow:single label is load-bearing. An UNLABELLED bead resolves to
-	// the REVIEWED graph, whose commit_gate node shells out to a Go build inside
-	// the run worktree. This fixture builds a bare git repo holding one README
-	// and no Makefile, so that gate can only fail. The run then reopens the bead,
-	// the loop picks it up again, and the test sees three run_started events from
-	// ONE loop and reads them as a claim-exclusion failure. Measured before this
-	// label was added: commit_gate failed three times with exit 2, run_started=3,
-	// run_failed=2, and loop B recorded no events at all.
-	//
-	// workflow:single is the sanctioned selector for the no-review graph
-	// (implement then close), which is the shape this test's own header
-	// describes. Commit 13223b56d repaired eight fixtures the same way; this file
-	// was missed because it seeds through a real `br create` rather than a stub
-	// ledger, so it fell outside that sweep.
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"T5 concurrent claim integration bead", "--status", "open",
 		"--labels", "workflow:single", "--silent")
@@ -101,8 +48,6 @@ func t5RealDBFixtureSetup(t *testing.T) (projectDir, brWrapper, beadID string) {
 	return projectDir, brWrapper, beadID
 }
 
-// t5RealDBLocateBr finds the real `br` binary via exec.LookPath.
-// Skips the test if br is not available (same pattern as smokeFixtureBrPath).
 func t5RealDBLocateBr(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -112,8 +57,6 @@ func t5RealDBLocateBr(t *testing.T) string {
 	return brPath
 }
 
-// t5RealDBPollBeadStatus polls `br show <id>` at 20 ms intervals for up to
-// budget and returns true once the bead's status JSON contains the target status.
 func t5RealDBPollBeadStatus(t *testing.T, brWrapper, beadID, targetStatus string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -127,10 +70,6 @@ func t5RealDBPollBeadStatus(t *testing.T, brWrapper, beadID, targetStatus string
 	}
 	return false
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestT4RealDB_ConcurrentClaimExclusion
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT4RealDB_ConcurrentClaimExclusion verifies that the harmonik-side pre-claim
 // guard prevents double-dispatch when two work loops race on the same bead.
@@ -151,7 +90,6 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 
 	projectDir, brWrapper, beadID := t5RealDBFixtureSetup(t)
 
-	// Build two independent brcli.Adapter instances pointing at the same DB.
 	adapterA, err := brcli.NewForProject(brWrapper, projectDir)
 	if err != nil {
 		t.Fatalf("t5: brcli.NewForProject (A): %v", err)
@@ -161,7 +99,6 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		t.Fatalf("t5: brcli.NewForProject (B): %v", err)
 	}
 
-	// Each loop gets its own event collector and a handler that exits 0 immediately.
 	handlerScript := smokeFixtureHandlerScript(t)
 	collectorA := &stubEventCollector{}
 	collectorB := &stubEventCollector{}
@@ -188,9 +125,6 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	ctxA, cancelA := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelA()
 
-	// Start loop A alone and wait until the bead is claimed (in_progress).
-	// This ensures that when loop B starts, ShowBead returns "in_progress"
-	// and the pre-claim guard fires, preventing double-dispatch.
 	doneA := make(chan error, 1)
 	go func() { doneA <- daemon.ExportedRunWorkLoop(ctxA, depsA) }()
 
@@ -200,26 +134,20 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		t.Fatalf("t5: bead %s did not reach in_progress within %s; loop A failed to claim", beadID, claimPollBudget)
 	}
 
-	// Now start loop B. The bead is in_progress; ShowBead will return "in_progress"
-	// and the pre-claim guard will skip dispatch (bead_claim_skipped path).
 	ctxB, cancelB := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelB()
 
 	doneB := make(chan error, 1)
 	go func() { doneB <- daemon.ExportedRunWorkLoop(ctxB, depsB) }()
 
-	// Wait for loop A to finish processing (bead closed or context cancelled).
-	// Give loop B a moment to run its poll-and-skip cycle.
 	const pollBudget = 20 * time.Second
 	closed := t5RealDBPollBeadStatus(t, brWrapper, beadID, "closed", pollBudget)
 	if !closed {
 		t.Logf("t5: bead %s was not closed within %s", beadID, pollBudget)
 	}
 
-	// Give loop B a moment to observe the bead and attempt (then skip) dispatch.
 	time.Sleep(500 * time.Millisecond)
 
-	// Cancel both loops and wait for clean exit.
 	cancelA()
 	cancelB()
 	for loopName, ch := range map[string]chan error{"A": doneA, "B": doneB} {
@@ -228,11 +156,6 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		}
 	}
 
-	// ─── Assert claim exclusion ───────────────────────────────────────────────
-	//
-	// The pre-claim guard (hk-p4xbw) must ensure exactly one run_started event
-	// is emitted across both loops.  Loop B's ShowBead must have seen
-	// "in_progress" and skipped dispatch via the bead_claim_skipped path.
 	runStartedCount := 0
 	runCompletedCount := 0
 	runFailedCount := 0
@@ -262,8 +185,6 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	t.Logf("t5: loop B events: %v", collectorB.eventTypes())
 	t.Logf("t5: run_started=%d run_completed=%d run_failed=%d", runStartedCount, runCompletedCount, runFailedCount)
 
-	// CLAIM_EXCLUSIVE: exactly one loop dispatched the bead.
-	// The pre-claim guard must have prevented loop B from dispatching.
 	if runStartedCount != 1 {
 		t.Errorf("t5: CLAIM_GUARD_FAILED — expected exactly 1 run_started event (pre-claim guard should have blocked loop B); got %d", runStartedCount)
 	}

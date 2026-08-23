@@ -49,8 +49,6 @@ func TestScheduleAwareIdleWait_UsesSeparateScheduleAndQueueWakes(t *testing.T) {
 		t.Fatalf("schedule wake: %v", err)
 	}
 
-	// Consume the mutation wake from Add. The schedule remains armed, so this
-	// next wait proves the independent queue submit channel still wakes it.
 	queueWake := make(chan struct{}, 1)
 	queueWake <- struct{}{}
 	if err := scheduleAwareIdleWait(context.Background(), port, queueWake); err != nil {

@@ -38,10 +38,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 var namedQueuesPauseNow = time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 
 const (
@@ -49,8 +45,6 @@ const (
 	namedQueuesPauseMainQueueID        = "01906000-0002-7000-8000-000000000002"
 )
 
-// namedQueuesPauseProjectDir creates a temporary project root pre-populated
-// with .harmonik/ for queue.Persist / queue.Load.
 func namedQueuesPauseProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -61,9 +55,6 @@ func namedQueuesPauseProjectDir(t *testing.T) string {
 	return dir
 }
 
-// namedQueuesPauseInvestigateQueue returns the "investigate" fixture queue:
-//   - group0 active: item-a dispatched (in-flight at pause time), item-b pending
-//   - group1 pending: item-c pending (awaiting group0 complete-success)
 func namedQueuesPauseInvestigateQueue() queue.Queue {
 	runID := "00000000-0000-0000-0000-00000000aa01"
 	return queue.Queue{
@@ -106,8 +97,6 @@ func namedQueuesPauseInvestigateQueue() queue.Queue {
 	}
 }
 
-// namedQueuesPauseMainQueue returns the "main" fixture queue:
-//   - group0 active: item-x and item-y both pending (eligible for dispatch)
 func namedQueuesPauseMainQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion: 1,
@@ -130,8 +119,6 @@ func namedQueuesPauseMainQueue() queue.Queue {
 	}
 }
 
-// namedQueuesPauseAdvanceGroup calls queue.AdvanceGroup and fails the test on
-// any unexpected error.
 func namedQueuesPauseAdvanceGroup(
 	t *testing.T,
 	g *queue.Group,
@@ -152,10 +139,6 @@ func namedQueuesPauseAdvanceGroup(
 	return newStatus, events
 }
 
-// ---------------------------------------------------------------------------
-// SC3.1 — main keeps dispatching when investigate is paused
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesPause_MainKeepsDispatchingWhenInvestigatePaused verifies that
 // after pausing the "investigate" queue (status → paused-by-drain), the "main"
 // queue remains active and its EligibleItems return pending items for dispatch.
@@ -168,16 +151,13 @@ func TestNamedQueuesPause_MainKeepsDispatchingWhenInvestigatePaused(t *testing.T
 	investigateQ := namedQueuesPauseInvestigateQueue()
 	mainQ := namedQueuesPauseMainQueue()
 
-	// Simulate operator pause scoped to "investigate".
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 
-	// main must remain active — pause is scoped to investigate only.
 	if mainQ.Status != queue.QueueStatusActive {
 		t.Errorf("main.Status = %q after investigate pause, want active (named pause must not affect other queues)",
 			mainQ.Status)
 	}
 
-	// EligibleItems on main's active group must still return both pending items.
 	eligible := queue.EligibleItems(&mainQ.Groups[0])
 	if len(eligible) != 2 {
 		t.Errorf("EligibleItems(main.group0) = %d items after investigate pause, want 2",
@@ -202,7 +182,6 @@ func TestNamedQueuesPause_MainAdvancesGroupWhileInvestigatePaused(t *testing.T) 
 
 	mainQ := namedQueuesPauseMainQueue()
 
-	// Build a successor pending group for main to advance.
 	pendingGroup := queue.Group{
 		GroupIndex: 1,
 		Kind:       queue.GroupKindWave,
@@ -213,7 +192,6 @@ func TestNamedQueuesPause_MainAdvancesGroupWhileInvestigatePaused(t *testing.T) 
 		CreatedAt: namedQueuesPauseNow,
 	}
 
-	// Advance with main queue active (investigate is paused but main is not).
 	newStatus, _ := namedQueuesPauseAdvanceGroup(t, &pendingGroup, mainQ.Status, mainQ.QueueID)
 
 	if newStatus != queue.GroupStatusActive {
@@ -221,10 +199,6 @@ func TestNamedQueuesPause_MainAdvancesGroupWhileInvestigatePaused(t *testing.T) 
 			newStatus)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC3.2 — in-flight investigate run reaches terminal while queue is paused
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesPause_InFlightRunReachesTerminalWhilePaused verifies that an
 // "investigate" item that was dispatched before the pause can complete (reach
@@ -244,11 +218,8 @@ func TestNamedQueuesPause_InFlightRunReachesTerminalWhilePaused(t *testing.T) {
 	investigateQ := namedQueuesPauseInvestigateQueue()
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 
-	// Simulate the in-flight run (item-a, dispatched) completing while paused.
 	investigateQ.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 
-	// item-b is still pending — AdvanceGroup must NOT complete the group yet
-	// (QM-030: all-terminal gate; item-b is non-terminal).
 	newStatus, events := namedQueuesPauseAdvanceGroup(
 		t,
 		&investigateQ.Groups[0],
@@ -264,7 +235,6 @@ func TestNamedQueuesPause_InFlightRunReachesTerminalWhilePaused(t *testing.T) {
 		t.Errorf("event count = %d, want 0 (group not yet terminal; item-b still pending)", len(events))
 	}
 
-	// The in-flight item must now be terminal — verify the state is accepted.
 	if investigateQ.Groups[0].Items[0].Status != queue.ItemStatusCompleted {
 		t.Errorf("item-a status = %q after completion, want completed", investigateQ.Groups[0].Items[0].Status)
 	}
@@ -286,7 +256,6 @@ func TestNamedQueuesPause_BothInvestigateItemsTerminalWhilePaused(t *testing.T) 
 	investigateQ := namedQueuesPauseInvestigateQueue()
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 
-	// Both items complete while the queue is paused.
 	investigateQ.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	investigateQ.Groups[0].Items[1].Status = queue.ItemStatusCompleted
 
@@ -308,10 +277,6 @@ func TestNamedQueuesPause_BothInvestigateItemsTerminalWhilePaused(t *testing.T) 
 		t.Errorf("events[0].Type = %q, want %q", events[0].Type, "queue_group_completed")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC3.3 — paused investigate blocks successor pending group (QM-031)
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesPause_PausedInvestigatePendingGroupStaysPending verifies that
 // group1 (pending) in the "investigate" queue does NOT advance to active while
@@ -341,10 +306,6 @@ func TestNamedQueuesPause_PausedInvestigatePendingGroupStaysPending(t *testing.T
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SC3.4 — resume restores dispatch for investigate
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesPause_ResumeRestoresPendingGroupAdvance verifies that after
 // resuming "investigate" (status → active), the successor pending group can
 // advance to active (QM-031 gate satisfied).
@@ -355,7 +316,6 @@ func TestNamedQueuesPause_ResumeRestoresPendingGroupAdvance(t *testing.T) {
 
 	investigateQ := namedQueuesPauseInvestigateQueue()
 
-	// Simulate pause then resume.
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 	investigateQ.Status = queue.QueueStatusActive // resume
 
@@ -391,7 +351,6 @@ func TestNamedQueuesPause_ResumeRestoresEligibleItems(t *testing.T) {
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 	investigateQ.Status = queue.QueueStatusActive // resume
 
-	// item-a was dispatched; item-b is pending — wave group: only pending items eligible.
 	eligible := queue.EligibleItems(&investigateQ.Groups[0])
 	if len(eligible) != 1 {
 		t.Fatalf("EligibleItems(investigate.group0) after resume = %d items, want 1 (item-b pending)",
@@ -401,10 +360,6 @@ func TestNamedQueuesPause_ResumeRestoresEligibleItems(t *testing.T) {
 		t.Errorf("eligible item = %q, want hk-sc3-inv-b", eligible[0].BeadID)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC3.5 — persist round-trip: paused status survives restart (QM-055)
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesPause_PersistRoundTrip_InvestigatePausedSurvivesRestart
 // verifies that the "investigate" queue with status=paused-by-drain survives a
@@ -433,7 +388,6 @@ func TestNamedQueuesPause_PersistRoundTrip_InvestigatePausedSurvivesRestart(t *t
 		t.Fatal("Load(investigate): returned nil; want paused investigate queue")
 	}
 
-	// QM-055: pause status must survive restart unchanged.
 	if loaded.Status != queue.QueueStatusPausedByDrain {
 		t.Errorf("loaded investigate.Status = %q, want paused-by-drain (QM-055: persisted pause survives restart)",
 			loaded.Status)
@@ -466,7 +420,6 @@ func TestNamedQueuesPause_PersistRoundTrip_BothQueuesCoexistOnDisk(t *testing.T)
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 
 	mainQ := namedQueuesPauseMainQueue()
-	// main remains active — the pause is scoped to investigate only.
 
 	if err := queue.Persist(ctx, projectDir, &investigateQ); err != nil {
 		t.Fatalf("Persist(investigate): %v", err)
@@ -475,7 +428,6 @@ func TestNamedQueuesPause_PersistRoundTrip_BothQueuesCoexistOnDisk(t *testing.T)
 		t.Fatalf("Persist(main): %v", err)
 	}
 
-	// Load investigate — must be paused-by-drain.
 	loadedInvestigate, err := queue.Load(ctx, projectDir, "investigate")
 	if err != nil {
 		t.Fatalf("Load(investigate): %v", err)
@@ -487,7 +439,6 @@ func TestNamedQueuesPause_PersistRoundTrip_BothQueuesCoexistOnDisk(t *testing.T)
 		t.Errorf("investigate.Status = %q, want paused-by-drain", loadedInvestigate.Status)
 	}
 
-	// Load main — must remain active.
 	loadedMain, err := queue.Load(ctx, projectDir, "main")
 	if err != nil {
 		t.Fatalf("Load(main): %v", err)
@@ -514,7 +465,6 @@ func TestNamedQueuesPause_PersistRoundTrip_ResumedStatusSurvivesRestart(t *testi
 
 	investigateQ := namedQueuesPauseInvestigateQueue()
 
-	// Simulate pause → resume cycle.
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 	if err := queue.Persist(ctx, projectDir, &investigateQ); err != nil {
 		t.Fatalf("Persist(investigate, paused): %v", err)

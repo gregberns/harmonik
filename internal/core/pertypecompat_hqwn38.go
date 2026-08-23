@@ -2,50 +2,6 @@ package core
 
 import "fmt"
 
-// pertypecompat_hqwn38.go — Per-type N-1 compatibility window declarations
-// per EV-029 (event-model.md §4.8 EV-029).
-//
-// EV-029 states: "Readers of events MUST accept the immediately prior schema
-// version (N-1) for every event type AND for the envelope. Per-type independence
-// means harmonik maintains up to 71+ independent compatibility contracts."
-//
-// This file provides:
-//
-//  1. PayloadCompatEntry — the struct declaring the N-1 compatibility contract
-//     for one event type.
-//  2. allPayloadCompatEntries — the exhaustive per-type compat table. Tests in
-//     pertypecompat_hqwn38_test.go assert this table covers every registered type
-//     and that every entry with a prior version (PreviousVersion != 0) declares
-//     CompatWindowHolds = true.
-//  3. LookupPayloadCompatEntry — lookup helper.
-//  4. AllPayloadCompatEntries — slice accessor used by tests.
-//
-// ## How to evolve a type's schema version
-//
-// When a payload type advances from version N to N+1:
-//   1. Update the payload struct (additive-only changes require no migration
-//      release per §6.4; breaking changes require a migration release).
-//   2. Register the type at the new version via RegisterEventTypeAtVersion(
-//      typeName, ctor, N+1) in the appropriate eventreg_*.go init path.
-//   3. Update or add the PayloadCompatEntry in allPayloadCompatEntries:
-//      - Set CurrentVersion = N+1, PreviousVersion = N.
-//      - Set CompatWindowHolds = true (additive-only changes) or false (breaking
-//        change — which requires a migration release per operator-nfr.md §4.3
-//        ON-018/ON-019).
-//      - Set AdditiveOnly = true when the delta is additive-only (non-breaking
-//        per §6.4).
-//   4. Run tests — pertypecompat_hqwn38_test.go will catch any omission.
-//
-// ## Initial state (all types at v1)
-//
-// All event types start at schema version 1. At v1 there is no prior version
-// (PreviousVersion = 0), so the N-1 compat window is vacuously satisfied. The
-// CompatWindowHolds field is true for all v1 entries.
-//
-// Spec ref: event-model.md §4.8 EV-028, EV-029; §6.4 breaking-change table;
-// operator-nfr.md §4.5 ON-018, ON-019.
-// Bead ref: hk-hqwn.38.
-
 // PayloadCompatEntry declares the N-1 compatibility window for one registered
 // event type. It is the per-type analogue of the cross-artifact compatibility
 // matrix described in specs/control-points.md §6.3.
@@ -75,16 +31,6 @@ type PayloadCompatEntry struct {
 	AdditiveOnly bool
 }
 
-// allPayloadCompatEntries is the authoritative per-type N-1 compatibility table.
-// It must cover every registered event type (tests enforce this).
-//
-// At initial state all types are at version 1 with PreviousVersion = 0.
-// Entries are grouped by §8 section for readability and exactly match the
-// registered type names from eventreg_hqwn59.go and its companion files.
-//
-// Amendment rule: any addition or modification to this table requires the
-// reviewer to verify §6.4 classification (additive vs. breaking) and, for
-// breaking changes, a migration release per ON-018/ON-019.
 var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeLivenessHalt, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeStaleOpenBeadDetected, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -111,7 +57,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-o68j3: post-merge build gate event.
 	{TypeName: EventTypeMergeBuildFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.1a Review-loop cycle ─────────────────────────────────────────────
 	{TypeName: EventTypeImplementerResumed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReviewerLaunched, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReviewerVerdict, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -121,7 +66,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeReviewBypassed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReviewFixupStalled, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.2 Control-point lifecycle ───────────────────────────────────────
 	{TypeName: EventTypeHookFired, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeHookFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeHookVerdictPersisted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -137,7 +81,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeVerdictEnvelopeMismatch, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypePolicyExpressionExceededCost, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.3 Agent/handler lifecycle ───────────────────────────────────────
 	{TypeName: EventTypeAgentStarted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeAgentReady, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeAgentOutputChunk, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -190,19 +133,16 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeDecisionResolved, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeDecisionWithdrawn, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.4 Budget lifecycle ───────────────────────────────────────────────
 	{TypeName: EventTypeBudgetAccrual, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeBudgetWarning, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeBudgetExhausted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.5 Workspace lifecycle ────────────────────────────────────────────
 	{TypeName: EventTypeWorkspaceCreated, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeWorkspaceLeased, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeWorkspaceDiscarded, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeWorkspaceInterrupted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeWorkspaceMergeStatus, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.6 Reconciliation lifecycle ──────────────────────────────────────
 	{TypeName: EventTypeReconciliationStarted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReconciliationCompleted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReconciliationMismatchObserved, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -220,7 +160,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeDivergenceInconclusive, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeStoreDivergenceDetected, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.7 Operator-control and daemon lifecycle ──────────────────────────
 	{TypeName: EventTypeDaemonStarted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeDaemonReady, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeDaemonShutdown, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -244,7 +183,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// prior session ended without daemon_shutdown (SIGKILL, OOM, panic).
 	{TypeName: EventTypeSupervisorRevival, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.8 Observability and bus-internal ────────────────────────────────
 	{TypeName: EventTypeConsumerFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeDeadLetterEnqueued, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeBusOverflow, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -253,7 +191,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeBeadLabelConflict, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeBeadClaimSkipped, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.10 Queue lifecycle ───────────────────────────────────────────────
 	{TypeName: EventTypeQueueSubmitted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeQueueGroupStarted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeQueueGroupCompleted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -264,14 +201,11 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeQueueItemHeldForHandlerPause, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeCrossQueueCollision, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.11 Handler-pause lifecycle ──────────────────────────────────────
 	{TypeName: EventTypeHandlerPaused, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeHandlerResumed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.12 Staleness-detection ───────────────────────────────────────────
 	{TypeName: EventTypeRunStale, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.16 Session-keeper (codename:session-keeper, hk-ekap1) ───────────
 	{TypeName: EventTypeSessionKeeperWarn, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperNoGauge, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// Phase-2 cycle events (hk-22i70):
@@ -293,8 +227,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// SK-030: successful agent-run restart-now, nonce carried for audit.
 	{TypeName: EventTypeSessionKeeperRestartNow, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.16 Keeper backstops + idle-restart (hk-34ac, hk-ee81) ─────────
-	// hk-34ac: session_keeper_blind — fired after 5min continuous foreign_session (latched per episode).
 	{TypeName: EventTypeSessionKeeperBlind, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-34ac: session_keeper_hard_ceiling — SID-independent restart at 280K tokens.
 	{TypeName: EventTypeSessionKeeperHardCeiling, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -309,58 +241,31 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-wqdc: session_keeper_ack_timeout — ack timeout when keeper sent a clear but received no confirmation.
 	{TypeName: EventTypeSessionKeeperAckTimeout, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.20 Session-keeper interior cycle events (codename:session-restart-substrate) ──
 	{TypeName: EventTypeSessionKeeperHandoffWritten, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperModelDone, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperClearSent, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperNewSessionUp, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.21 Agent-input acceptance events (codename:agent-input-substrate) ──
-	// Registered + compat-tabled but carved out of allEventTypeCohort / the EV-027
-	// count guard per EV-050 (async-observer cohort; §8.16/§8.20 precedent).
 	{TypeName: "agent_input_acked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_input_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.17 Alarm / self-check ───────────────────────────────────────────
-	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.
 	{TypeName: EventTypeReviewGateAnomaly, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.7.19 Disk-watermark (hk-sxlb) ──────────────────────────────────
-	// hk-sxlb: disk_low — emitted when free disk falls below the 10 GiB watermark;
-	// daemon pauses dispatch and attempts go clean -cache.
 	{TypeName: EventTypeDiskLow, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.2.13–14 Gate-definition drift (hk-u3q6o, v0.3.4) ───────────────
-	// gate_definition_drift (§8.2.13, F): mechanism-tagged Gate envelope drift
-	// at replay time (CP-038a). Payload: run_id, gate_name,
-	// prior_envelope_hash, current_envelope_hash, changed_inputs.
 	{TypeName: EventTypeGateDefinitionDrift, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// gate_redefined_under_cat_6 (§8.2.14, F): Cat 6 authorized Gate
 	// re-evaluation under a drifted definition (CP-038a). Payload: run_id,
 	// gate_name, prior_decision, new_decision, cat_6_verdict_id.
 	{TypeName: EventTypeGateRedefinedUnderCat6, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.12 Decision-required lifecycle (hk-u3q6o, v0.6.0) ──────────────
-	// decision_required (§8.12.1, F): daemon dispatch-blocking escalation on
-	// 4 canonical conditions (bead double-failure, iteration_cap_hit,
-	// merge_conflict_escalation, queue_group_failure). Idempotency-keyed on
-	// triggering_event_id; dispatch-blocking per EV-043. Payload: subject,
-	// reason, suggested_action, ack_required, ack_token, triggering_event_id.
 	{TypeName: EventTypeDecisionRequired, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// decision_acknowledged (§8.12.2, F): ACK for a decision_required; unblocks
 	// dispatch atomically. Payload: ack_token, subject, ack_method, acked_at.
 	{TypeName: EventTypeDecisionAcknowledged, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.19 Stall-sentinel Layer A detection (hk-l087e) ────────────────
-	// stall_detected (§8.19, O): per-run stall detector emits this when a
-	// heartbeat_gap, review_stall, or run_age signature fires. Payload:
-	// run_id, bead_id, signature, elapsed_ms.
 	{TypeName: EventTypeStallDetected, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.15 Bead-ledger merge lifecycle (hk-u3q6o, v0.6.4) ─────────────
-	// bead_sync_failed (§8.15.1, F): `br sync --import-only` failure after
-	// a rebase/merge touching .beads/issues.jsonl; must precede Cat-BL2 routing
-	// per BL-MRG-004. Payload: run_id, error, timestamp.
 	{TypeName: EventTypeBeadSyncFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// bead_ledger_recovered (§8.BL2, O): Cat-BL2 retry succeeded; ledger back
 	// in sync after a bead_sync_failed event per reconciliation/spec.md §8.BL2.
@@ -379,25 +284,11 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// main (reconciliation/spec.md §8.BL1). Payload: bead_id, parent_id.
 	{TypeName: EventTypeOrphanedChildBead, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.7.21–22 Dashboard forcing gate (hk-xg6rw) ──────────────────────
-	// dashboard_stale: emitted when dashboard.json's updated timestamp exceeds
-	// dashboard.max_staleness; the daemon staffs no new work on captain-curated
-	// queues until refreshed or unlocked. Payload: max_staleness_secs,
-	// stale_secs, updated_at, blocked_queues, detected_at.
 	{TypeName: EventTypeDashboardStale, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// dashboard_refreshed: emitted on the transition out of dashboard_stale
 	// (captain refreshed dashboard.json, or operator applied the unlock
 	// override). Payload: reason, updated_at, detected_at.
 	{TypeName: EventTypeDashboardRefreshed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-
-	// The six leaf-owned worker and governor payloads are NOT listed here.
-	// internal/workers and internal/daemon register their constructors during
-	// startup, and this table is compiled into core, which those packages
-	// import. A static entry here therefore declares a contract for a type that
-	// core's own test binary never registers, and
-	// TestEV029_CompatTableCoversAllRegisteredTypes reads that — correctly — as
-	// a stale entry. Each owner calls RegisterPayloadCompatEntry next to its
-	// RegisterEventType instead, so both contracts arrive together.
 }
 
 // RegisterPayloadCompatEntry adds the compatibility contract for an event

@@ -1,23 +1,5 @@
 package daemon_test
 
-// stranded_bead_run_guard_test.go — what the stranded-bead guard does when it
-// cannot read the run registry at all.
-//
-// The stranded-bead auto-reset takes a bead back when nothing is working it. The
-// guard is the one question it asks first: is there a run on this bead? A "yes"
-// means an adoption goroutine is watching a live tmux session, and resetting then
-// races an agent that is mid-flight.
-//
-// The interesting answer is the third one. A filesystem error is not an empty
-// registry — it is an UNKNOWN registry — and the guard reports "a run may exist"
-// so the caller skips the reset rather than racing a session it failed to see.
-// That branch had a test seam written for it and no test behind the seam, so it
-// had never run. It is also the branch that is hardest to reason about from the
-// source, because it looks like a defect: a function that returns true on error
-// reads as fail-open until you know what the true means.
-//
-// Helper prefix: strandedGuard.
-
 import (
 	"os"
 	"path/filepath"
@@ -31,12 +13,6 @@ import (
 
 const strandedGuardBead = core.BeadID("hk-stranded-guard")
 
-// strandedGuardRunID names the seeded record. The version nibble is
-// load-bearing: runpkg.ScanRegistry is the only reader production has for the
-// run registry, and it refuses a basename that carries no UUID version. A run
-// id with a zero version makes the seeded record unreadable, the guard then
-// answers yes through its error branch, and the positive control below passes
-// for the wrong reason.
 const strandedGuardRunID = "0f0e0d0c-0b0a-7908-8706-050403020177"
 
 // TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone drives the
@@ -73,10 +49,6 @@ func TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone(t *test
 		}); err != nil {
 			t.Fatalf("strandedGuard: write the record: %v", err)
 		}
-		// The guard also answers yes when it cannot read the registry at all, so a
-		// record production refuses would pass the check below through the error
-		// branch and prove nothing about the record. Read the registry with the
-		// production reader first and require the record in it.
 		snapshot, err := runpkg.ScanRegistry(projectDir)
 		if err != nil {
 			t.Fatalf("strandedGuard: the production reader refused the seeded record: %v", err)
@@ -97,10 +69,6 @@ func TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone(t *test
 	t.Run("the registry cannot be read", func(t *testing.T) {
 		t.Parallel()
 		projectDir := t.TempDir()
-		// .harmonik/runs/ is where the records live. A plain file in its place makes
-		// every directory read fail with a real operating-system error, which is the
-		// closest a test can get to the disk problem this branch is for without
-		// depending on permissions the test runner may or may not have.
 		if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("strandedGuard: make .harmonik: %v", err)
 		}

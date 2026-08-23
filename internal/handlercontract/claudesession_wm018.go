@@ -6,15 +6,6 @@ import (
 	"io"
 )
 
-// claudeOutputJSON is the minimal shape of `claude -p ... --output-format json`
-// output that handlercontract needs to inspect.  Only the fields consumed by
-// ParseClaudeSessionID are declared; additional Claude-emitted fields are
-// silently ignored via `json:",omitempty"` / unknown-field tolerance.
-//
-// The `session_id` field is the Claude Code session identifier per
-// [execution-model.md §3 Glossary] and [execution-model.md §4.3.EM-015d].  It
-// is distinct from harmonik's own `session_id` UUIDv7 (minted by the handler
-// watcher per [handler-contract.md §4.1]).  The two MUST NOT be conflated.
 type claudeOutputJSON struct {
 	// SessionID is the Claude Code session identifier emitted by
 	// `claude --output-format json`.  Present on every successful completion.

@@ -1,11 +1,5 @@
 package daemon_test
 
-// reconciliationcadence_rc020a_test.go — tests for the RC-020a scheduled
-// detector cadence (dispatch point (c) per reconciliation/spec.md §4.3).
-//
-// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a — "Scheduled cadence."
-// Bead ref: hk-63oh.21.
-
 import (
 	"bufio"
 	"context"
@@ -21,7 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// rc020aStubEmitter is a minimal Emitter implementation for RC-020a cadence testing.
 type rc020aStubEmitter struct {
 	mu     sync.Mutex
 	events []rc020aEmittedEvent
@@ -92,7 +85,6 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationStarted(t *testi
 		LogWriter:  nil,
 	})
 
-	// Wait until at least one reconciliation_started event is emitted or timeout.
 	deadline := time.After(3 * time.Second)
 	for emitter.count(core.EventTypeReconciliationStarted) == 0 {
 		select {
@@ -103,7 +95,6 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationStarted(t *testi
 		}
 	}
 
-	// Verify the payload contains trigger="scheduled-hourly".
 	emitter.mu.Lock()
 	var payloadRaw []byte
 	for _, ev := range emitter.events {
@@ -148,7 +139,6 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted(t *tes
 		LogWriter:  nil,
 	})
 
-	// Wait until at least one reconciliation_completed event is emitted or timeout.
 	deadline := time.After(3 * time.Second)
 	for emitter.count(core.EventTypeReconciliationCompleted) == 0 {
 		select {
@@ -160,7 +150,6 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted(t *tes
 		}
 	}
 
-	// Verify paired: each started should have a matching completed.
 	startedCount := emitter.count(core.EventTypeReconciliationStarted)
 	completedCount := emitter.count(core.EventTypeReconciliationCompleted)
 	if completedCount == 0 {
@@ -181,7 +170,6 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted(t *tes
 func TestRC020a_DaemonStartEmitsStartupReconciliationStarted(t *testing.T) {
 	t.Parallel()
 
-	// Use a temp project dir with .harmonik/events/ so the JSONL writer can open.
 	projectDir := t.TempDir()
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
 	//nolint:gosec // G301: test-only temp directory
@@ -207,7 +195,6 @@ func TestRC020a_DaemonStartEmitsStartupReconciliationStarted(t *testing.T) {
 		errCh <- daemon.Start(ctx, cfg)
 	}()
 
-	// Allow the daemon startup path (pre-work-loop) to run and emit events.
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 
@@ -238,7 +225,6 @@ func TestRC020a_DaemonStartEmitsStartupReconciliationStarted(t *testing.T) {
 		if !strings.Contains(line, string(core.EventTypeReconciliationStarted)) {
 			continue
 		}
-		// Parse the envelope to check the trigger field.
 		var env struct {
 			Type    string          `json:"type"`
 			Payload json.RawMessage `json:"payload"`

@@ -1,14 +1,5 @@
 package main
 
-// crew_start_args_test.go — unit tests for the ES4 (hk-sn4n) crew-start arg
-// resolution layer: --queue defaulting and the D3 mission-split rule.
-//
-// resolveCrewStartArgs is the PURE arg/defaulting helper — it dials no daemon,
-// touches no network, and (critically) reads no disk. That is what makes the
-// "fresh start never reads the stale on-disk default mission" invariant testable
-// daemon-down: there is simply no code path in the fresh-start resolver that
-// could ever surface the on-disk default, so a planted stale mission cannot leak.
-
 import (
 	"os"
 	"path/filepath"
@@ -166,7 +157,6 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 	projectDir := t.TempDir()
 	name := "alpha"
 
-	// Plant a stale on-disk default mission from a hypothetical prior agent.
 	missionsDir := filepath.Join(projectDir, ".harmonik", "crew", "missions")
 	if err := os.MkdirAll(missionsDir, 0o750); err != nil {
 		t.Fatalf("mkdir missions: %v", err)
@@ -176,7 +166,6 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 		t.Fatalf("write stale mission: %v", err)
 	}
 
-	// Fresh start with no --mission, pointed at the project that has the stale file.
 	args, help, usageErr := resolveCrewStartArgs([]string{name, "--project", projectDir})
 	if help {
 		t.Fatalf("unexpected help=true")
@@ -188,7 +177,6 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 	if args.MissionPath != "" {
 		t.Errorf("fresh start picked up a mission path %q; want \"\" (stale on-disk default must be ignored)", args.MissionPath)
 	}
-	// Belt-and-suspenders: it must specifically not be the on-disk default path.
 	if args.MissionPath == stalePath {
 		t.Errorf("fresh start resolved to the stale on-disk default %q — exactly the reuse D3 forbids", stalePath)
 	}
@@ -213,7 +201,6 @@ func TestCrewRestartRehydrationReadsOnDiskMission(t *testing.T) {
 	projectDir := t.TempDir()
 	name := "alpha"
 
-	// The on-disk default mission path the restart re-hydration re-reads.
 	onDiskDefault := filepath.Join(projectDir, ".harmonik", "crew", "missions", name+".md")
 
 	missionsDir := filepath.Dir(onDiskDefault)
@@ -236,8 +223,6 @@ func TestCrewRestartRehydrationReadsOnDiskMission(t *testing.T) {
 		t.Errorf("on-disk mission content = %q; want %q", string(got), want)
 	}
 
-	// And confirm the fresh-start resolver, given the SAME project, still refuses
-	// to surface that on-disk path — the two paths diverge as designed.
 	args, _, usageErr := resolveCrewStartArgs([]string{name, "--project", projectDir})
 	if usageErr != "" {
 		t.Fatalf("unexpected usage error: %s", usageErr)

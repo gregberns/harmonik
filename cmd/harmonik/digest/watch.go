@@ -39,7 +39,6 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 		interval = time.Second
 	}
 
-	// Render immediately before the first tick so the screen is never blank.
 	if err := renderWatchFrame(ctx, w, in.Build); err != nil {
 		return err
 	}
@@ -50,7 +49,6 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// Clear the status line and exit without leaving stale output.
 			if _, err := fmt.Fprintln(w, "\033[H\033[2J"); err != nil {
 				return fmt.Errorf("clear watch display: %w", err)
 			}
@@ -66,18 +64,13 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 	}
 }
 
-// renderWatchFrame clears the terminal and emits one full digest snapshot.
-// ctx is propagated to digest.Build so that br/kerf subprocesses are
-// cancelled when the user hits Ctrl-C (CTX_PROPAGATION fix).
 func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) error {
 	now := time.Now()
 	d, buildErr := digest.Build(ctx, in)
 	frame := watchFrame{}
 
-	// Move cursor to top-left, then clear to end of screen.
 	frame.print("\033[H\033[2J")
 
-	// Header ─────────────────────────────────────────────────────────────────
 	frame.printf("harmonik digest --watch   %s   [file-poll]   Ctrl-C to exit\n",
 		now.Format("2006-01-02 15:04:05"))
 	frame.println(strings.Repeat("─", 68))
@@ -91,11 +84,9 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 		return frame.writeTo(w)
 	}
 
-	// Metadata row.
 	refreshLag := now.Sub(d.GeneratedAt).Truncate(time.Millisecond)
 	frame.printf("schema_version: %d   refresh lag: %s\n", d.SchemaVersion, refreshLag)
 
-	// Watermark age: age of the most recent event (UUIDv7 timestamp).
 	watermarkAge := "(no events)"
 	if len(d.RecentEvents) > 0 {
 		watermarkAge = uuidv7Age(d.RecentEvents[0].EventID, now)
@@ -103,7 +94,6 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 	frame.printf("watermark age:  %s\n", watermarkAge)
 	frame.println()
 
-	// In-flight runs ─────────────────────────────────────────────────────────
 	activeCount := d.Queue.ActiveRunCount
 	pendingCount := d.Queue.PendingCount
 	if !d.Queue.Present {
@@ -129,7 +119,6 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 	}
 	frame.println()
 
-	// Recent completions ──────────────────────────────────────────────────────
 	completions := filterEventsByType(d.RecentEvents, "run_completed", "run_failed")
 	frame.printf("=== Recent completions (%d) ===\n", len(completions))
 	if len(completions) == 0 {
@@ -149,7 +138,6 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 	}
 	frame.println()
 
-	// Open notes ──────────────────────────────────────────────────────────────
 	frame.printf("=== Open notes (%d) ===\n", len(d.OpenNotes))
 	if len(d.OpenNotes) == 0 {
 		frame.println("  (none)")
@@ -167,7 +155,6 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 	}
 	frame.println()
 
-	// Non-fatal collection errors ─────────────────────────────────────────────
 	if len(d.Errors) > 0 {
 		frame.println("=== Collection errors ===")
 		for _, e := range d.Errors {
@@ -178,8 +165,6 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) er
 	return frame.writeTo(w)
 }
 
-// watchFrame accumulates a complete screen refresh and retains the first
-// formatting failure so it can be propagated to the caller.
 type watchFrame struct {
 	strings.Builder
 	err error
@@ -216,7 +201,6 @@ func (f *watchFrame) writeTo(w io.Writer) error {
 	return nil
 }
 
-// filterEventsByType returns events whose Type is one of the supplied types.
 func filterEventsByType(events []digest.EventSummary, types ...string) []digest.EventSummary {
 	typeSet := make(map[string]bool, len(types))
 	for _, t := range types {
@@ -231,9 +215,6 @@ func filterEventsByType(events []digest.EventSummary, types ...string) []digest.
 	return out
 }
 
-// uuidv7Age extracts the embedded Unix-millisecond timestamp from a UUIDv7
-// string and returns the age relative to now as a human-readable string.
-// Returns "?" on any parse or version error.
 func uuidv7Age(eventID string, now time.Time) string {
 	if len(eventID) < 8 {
 		return "?"
@@ -242,7 +223,6 @@ func uuidv7Age(eventID string, now time.Time) string {
 	if err != nil {
 		return "?"
 	}
-	// UUIDv7 layout: first 48 bits are Unix epoch milliseconds.
 	msec := int64(u[0])<<40 | int64(u[1])<<32 | int64(u[2])<<24 |
 		int64(u[3])<<16 | int64(u[4])<<8 | int64(u[5])
 	if msec <= 0 {
@@ -256,8 +236,6 @@ func uuidv7Age(eventID string, now time.Time) string {
 	return formatDuration(age)
 }
 
-// formatDuration formats d as a compact human-readable age string.
-// Examples: "3s", "2m05s", "1h15m".
 func formatDuration(d time.Duration) string {
 	d = d.Truncate(time.Second)
 	if d < time.Minute {

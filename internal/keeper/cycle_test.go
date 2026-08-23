@@ -13,17 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// steppingAdvanceClock is a test ClockPort for deflaking the Cycler
-// interval/timeout tests (hk-h0twl, follow-up to hk-3dn16). Now() auto-steps
-// virtual time by `step` on each call, so a drive-loop timeout trips after a
-// DETERMINISTIC number of polls (independent of real -race scheduling), exactly
-// like the awaitack fakeClock. NewTicker returns a REAL ticker so the drive loop
-// still iterates (the real ticker only paces WHEN polls happen; the virtual
-// stepping governs HOW MANY polls reach a timeout). Advance jumps virtual time
-// explicitly, replacing a real time.Sleep for "interval elapsed" transitions —
-// so an interval window can be made arbitrarily large in VIRTUAL time (huge
-// deterministic margin) without slowing the test. Sleep is a no-op that respects
-// ctx.
 type steppingAdvanceClock struct {
 	mu   sync.Mutex
 	now  time.Time
@@ -64,7 +53,6 @@ func (c *steppingAdvanceClock) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
-// cycleSpyInjector records inject calls (target + text) without spawning tmux.
 type cycleSpyInjector struct {
 	mu    sync.Mutex
 	calls []cycleInjectCall
@@ -92,7 +80,6 @@ func (s *cycleSpyInjector) texts() []string {
 	return out
 }
 
-// journalCapture records journal phases in order (replaces disk writes).
 type journalCapture struct {
 	mu     sync.Mutex
 	phases []string
@@ -122,7 +109,6 @@ func (jc *journalCapture) lastJournal() *keeper.CycleJournal {
 	return jc.last
 }
 
-// journalStore is a read-write fake journal store used for crash recovery tests.
 type journalStore struct {
 	mu sync.Mutex
 	j  *keeper.CycleJournal
@@ -160,8 +146,6 @@ func (js *journalStore) lastJournal() *keeper.CycleJournal {
 	return &cp
 }
 
-// handoffReturnsNonceAfter returns a ReadHandoff fake that returns an error on
-// the first n calls, then returns a handoff body containing the nonce.
 func handoffReturnsNonceAfter(n int, nonce string) func(path string) (string, error) {
 	var count int
 	var mu sync.Mutex
@@ -176,13 +160,10 @@ func handoffReturnsNonceAfter(n int, nonce string) func(path string) (string, er
 	}
 }
 
-// handoffNeverReturnsNonce always fails — simulates a timeout.
 func handoffNeverReturnsNonce(_ string) (string, error) {
 	return "", context.DeadlineExceeded
 }
 
-// gaugeReturnsNewSIDAfter returns a ReadGaugeFn fake that returns prevSID for
-// the first n calls, then switches to newSID.
 func gaugeReturnsNewSIDAfter(n int, prevSID, newSID string) func(string, string) (*keeper.CtxFile, time.Time, error) {
 	var count int
 	var mu sync.Mutex
@@ -199,8 +180,6 @@ func gaugeReturnsNewSIDAfter(n int, prevSID, newSID string) func(string, string)
 	}
 }
 
-// newTestCycler builds a Cycler wired with test fakes.
-// isManaged controls the managed-state probe result.
 func newTestCycler(
 	agentName string,
 	projectDir string,
@@ -247,11 +226,6 @@ func newTestCyclerManaged(
 		HandoffTimeout: handoffTimeout,
 		ClearSettle:    clearSettle,
 		PollInterval:   10 * time.Millisecond,
-
-		// Stop hook wired and freshly fired (T8, SK-014): the .idle marker
-		// reads as "await-input boundary now", so ModelDone{idle_marker} lands
-		// on the first AwaitModelDone detection tick — the real primary path,
-		// with no added wait (the pre-T8 clear-right-after-confirm cadence).
 	}
 	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Managed = testManagedProbe(isManaged)
@@ -282,10 +256,8 @@ func TestCycler_HappyPath(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 
-	// ReadHandoff: first 2 calls return error; call 3+ returns content with nonce.
 	readHandoff := handoffReturnsNonceAfter(2, nonce)
 
-	// ReadGaugeFn: first 2 calls return prevSID; call 3+ returns newSID.
 	readGaugeFn := gaugeReturnsNewSIDAfter(2, prevSID, newSID)
 
 	cycler := newTestCycler(
@@ -302,7 +274,6 @@ func TestCycler_HappyPath(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) Journal phase sequence.
 	phases := jc.snapshot()
 	want := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
 	if len(phases) != len(want) {
@@ -315,7 +286,6 @@ func TestCycler_HappyPath(t *testing.T) {
 		}
 	}
 
-	// (b) Injection ordering: handoff text, /clear, agent brief.
 	texts := spy.texts()
 	if len(texts) < 3 {
 		t.Fatalf("want ≥3 inject calls; got %d: %v", len(texts), texts)
@@ -326,15 +296,9 @@ func TestCycler_HappyPath(t *testing.T) {
 	if !containsSubstr(texts[0], nonce) {
 		t.Errorf("inject[0] should contain nonce %q; got %q", nonce, texts[0])
 	}
-	// hk-pgtt6: the directive must be ONE line with a VISIBLE separator. Claude
-	// Code collapses a pasted "\n\n" away entirely, fusing the handoff path onto
-	// the instruction; a trailing space is not enough. See
-	// inject_directive_shape_hkpgtt6_test.go for the full collapse assertion.
 	if containsSubstr(texts[0], "\n") {
 		t.Errorf("inject[0] must be a single line (hk-pgtt6); got %q", texts[0])
 	}
-	// hk-4tjyj: the reboot command must be self-describing, not dependent on
-	// $HARMONIK_AGENT and the pane's CWD.
 	if !containsSubstr(texts[2], "--agent ") || !containsSubstr(texts[2], "--project ") {
 		t.Errorf("inject[2] should pin --agent and --project (hk-4tjyj); got %q", texts[2])
 	}
@@ -348,7 +312,6 @@ func TestCycler_HappyPath(t *testing.T) {
 		t.Errorf("inject[2] should contain 'keeper-restart'; got %q", texts[2])
 	}
 
-	// (c) Events: handoff_started then cycle_complete; no cycle_aborted.
 	handoffEvts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)
 	if len(handoffEvts) != 1 {
 		t.Errorf("want 1 handoff_started; got %d", len(handoffEvts))
@@ -397,7 +360,6 @@ func TestCycler_AbortOnNonceTimeout(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// ReadGaugeFn is unused in the abort path (never reaches settle step).
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 	}
@@ -416,7 +378,6 @@ func TestCycler_AbortOnNonceTimeout(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) Journal must end in "aborted".
 	phases := jc.snapshot()
 	if len(phases) == 0 {
 		t.Fatal("no journal phases recorded")
@@ -426,14 +387,12 @@ func TestCycler_AbortOnNonceTimeout(t *testing.T) {
 		t.Errorf("last journal phase = %q; want \"aborted\"", last)
 	}
 
-	// (b) /clear must NEVER have been injected.
 	for i, text := range spy.texts() {
 		if text == "/clear" {
 			t.Errorf("inject[%d] = %q: /clear must NEVER be issued on abort", i, text)
 		}
 	}
 
-	// (c) cycle_aborted emitted; cycle_complete NOT emitted.
 	abortedEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
 	if len(abortedEvts) != 1 {
 		t.Errorf("want 1 cycle_aborted; got %d", len(abortedEvts))
@@ -497,7 +456,6 @@ func TestCycler_Gating(t *testing.T) {
 				t.Fatalf("MaybeRun: %v", err)
 			}
 
-			// No injection and no events when gated.
 			if n := len(spy.texts()); n != 0 {
 				t.Errorf("gate %q: want 0 inject calls; got %d", tc.name, n)
 			}
@@ -526,7 +484,6 @@ func TestCycler_NoRefireWithinSameSessionID(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce available immediately
 
-	// Gauge always returns the same session_id (no /clear effect in fakes).
 	stableGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 	}
@@ -540,7 +497,6 @@ func TestCycler_NoRefireWithinSameSessionID(t *testing.T) {
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 
-	// First call — should fire.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("first MaybeRun: %v", err)
 	}
@@ -549,7 +505,6 @@ func TestCycler_NoRefireWithinSameSessionID(t *testing.T) {
 		t.Fatalf("want 1 handoff_started after first run; got %d", firstCount)
 	}
 
-	// Second call with SAME session_id — must NOT re-fire.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("second MaybeRun: %v", err)
 	}
@@ -582,7 +537,6 @@ func TestCycler_EmptySessionIDNeverFires(t *testing.T) {
 		100*time.Millisecond, 30*time.Millisecond,
 	)
 
-	// session_id is "" — must not fire even at pct >= act_pct.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: ""}
 	for i := 0; i < 5; i++ {
 		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -622,7 +576,6 @@ func TestCycler_NilCtxFileNoPanic(t *testing.T) {
 		100*time.Millisecond, 30*time.Millisecond,
 	)
 
-	// nil cf must not panic and must not fire.
 	if err := cycler.MaybeRun(context.Background(), nil); err != nil {
 		t.Fatalf("MaybeRun(nil): %v", err)
 	}
@@ -661,7 +614,6 @@ func TestCycler_AbortDoesNotRefire(t *testing.T) {
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 
-	// First call: fires but aborts (nonce never appears).
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("first MaybeRun: %v", err)
 	}
@@ -670,14 +622,10 @@ func TestCycler_AbortDoesNotRefire(t *testing.T) {
 		t.Fatalf("want 1 cycle_aborted after first run; got %d", abortedAfterFirst)
 	}
 
-	// Second call: same session_id at high pct — must NOT re-fire (DEFECT-4 fix).
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("second MaybeRun: %v", err)
 	}
-	// No new handoff_started events — suppressed by abort.
 	handoffEvts := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
-	// handoff_started is emitted right after journal open, before the abort.
-	// There should be exactly 1 (from the first run, not a second).
 	abortedAfterSecond := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
 	if abortedAfterSecond != abortedAfterFirst {
 		t.Errorf("want no new cycle_aborted after second call; got %d total (was %d)", abortedAfterSecond, abortedAfterFirst)
@@ -701,7 +649,6 @@ func TestCycler_ManagedGuardInsideMaybeRun(t *testing.T) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-managed"}, time.Now(), nil
 	}
 
-	// isManaged = false: managed guard should prevent firing.
 	cycler := newTestCyclerManaged(
 		"unmanaged-agent", t.TempDir(), em, spy, jc, "cyc-managed-001",
 		alwaysNonce, noopGauge,
@@ -760,7 +707,6 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// Step 1: fire the cycle on prevSID at high pct.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("first MaybeRun: %v", err)
@@ -769,7 +715,6 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 		t.Fatalf("want 1 handoff_started after first fire; got %d", n)
 	}
 
-	// Step 2: new session_id but pct still above WarnPct — must still be suppressed.
 	cfNewHighPct := &keeper.CtxFile{Pct: 95.0, SessionID: newSID}
 	if err := cycler.MaybeRun(context.Background(), cfNewHighPct); err != nil {
 		t.Fatalf("second MaybeRun (new SID, high pct): %v", err)
@@ -778,17 +723,14 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 		t.Errorf("want still 1 handoff_started before low-pct seen; got %d (re-fired prematurely)", n)
 	}
 
-	// Step 3: observe pct below WarnPct on newSID — re-arms the cycler.
 	cfLowPct := &keeper.CtxFile{Pct: 70.0, SessionID: newSID} // below 80 = warnPct
 	if err := cycler.MaybeRun(context.Background(), cfLowPct); err != nil {
 		t.Fatalf("MaybeRun (low pct): %v", err)
 	}
-	// pct < actPct → still gated; but re-arm flag should now be set.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
 		t.Errorf("want 1 handoff_started (not re-fired at low pct); got %d", n)
 	}
 
-	// Step 4: now pct crosses actPct on newSID — should fire.
 	cfNewHighPct2 := &keeper.CtxFile{Pct: 95.0, SessionID: newSID}
 	if err := cycler.MaybeRun(context.Background(), cfNewHighPct2); err != nil {
 		t.Fatalf("MaybeRun (new SID, high pct, armed): %v", err)
@@ -833,7 +775,6 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		t.Fatalf("RecoverFromCrash: %v", err)
 	}
 
-	// agent brief must have been injected (not /session-resume — T8 / I1).
 	texts := spy.texts()
 	if len(texts) != 1 {
 		t.Fatalf("want 1 inject call; got %d: %v", len(texts), texts)
@@ -845,7 +786,6 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		t.Errorf("inject[0] should contain 'keeper-restart'; got %q", texts[0])
 	}
 
-	// Journal must be closed (phase = "complete").
 	j := js.lastJournal()
 	if j == nil {
 		t.Fatal("want journal written; got nil")
@@ -854,7 +794,6 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		t.Errorf("journal phase = %q; want \"complete\"", j.Phase)
 	}
 
-	// session_keeper_cycle_recovered must be emitted.
 	recoveredEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
 	if len(recoveredEvts) != 1 {
 		t.Fatalf("want 1 cycle_recovered; got %d", len(recoveredEvts))
@@ -903,12 +842,10 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		t.Fatalf("RecoverFromCrash: %v", err)
 	}
 
-	// No injection — /clear was never issued.
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls for handoff_injected phase; got %d: %v", n, spy.texts())
 	}
 
-	// Journal must be aborted.
 	j := js.lastJournal()
 	if j == nil {
 		t.Fatal("want journal written; got nil")
@@ -917,7 +854,6 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		t.Errorf("journal phase = %q; want \"aborted\"", j.Phase)
 	}
 
-	// No cycle_recovered event (no action taken).
 	recoveredEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
 	if len(recoveredEvts) != 0 {
 		t.Errorf("want 0 cycle_recovered for handoff phase; got %d", len(recoveredEvts))
@@ -988,7 +924,6 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
 	js := &journalStore{}
-	// j == nil makes the journal port report not found.
 	cfgOverrides := testCycleOverrides{
 		HandoffPath:  func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		HandoffScrub: func(_ string) error { return nil },
@@ -1065,14 +1000,11 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 		pollCount      int
 	)
 
-	// ReadHandoff: before truncation, return a stale nonce (wrong cycle ID).
-	// After truncation, return empty until a threshold, then return new nonce.
 	readHandoff := func(_ string) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		pollCount++
 		if !truncateCalled {
-			// Stale content with an old nonce — must NOT match newNonce.
 			return "# Handoff\n\n<!-- KEEPER:cyc-OLD-stale -->\n", nil
 		}
 		if pollCount > 5 {
@@ -1121,7 +1053,6 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 		t.Error("want TruncateHandoffFn called before poll; was not called")
 	}
 
-	// Cycle must complete (stale nonce did not pre-satisfy).
 	phases := jc.snapshot()
 	if len(phases) == 0 {
 		t.Fatal("no journal phases recorded")
@@ -1200,19 +1131,16 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// HARMONIK_AGENT must still be set before /clear (step 3b).
 	if envKey != "HARMONIK_AGENT" {
 		t.Errorf("pane env key = %q; want %q", envKey, "HARMONIK_AGENT")
 	}
 	if envVal != agent {
 		t.Errorf("pane env value = %q; want %q", envVal, agent)
 	}
-	// env must be set before /clear (inject call #2).
 	if envOrder >= 2 {
 		t.Errorf("pane env set after /clear (inject count was %d; /clear is call 2)", envOrder)
 	}
 
-	// Step 6 inject must be briefRestartCmd, not /session-resume (T8 / I1).
 	texts := spy.texts()
 	if len(texts) < 3 {
 		t.Fatalf("want ≥3 inject calls; got %d: %v", len(texts), texts)
@@ -1224,7 +1152,6 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		t.Errorf("inject[2] = %q; want --wake keeper-restart", texts[2])
 	}
 
-	// Cycle must complete cleanly.
 	phases := jc.snapshot()
 	if len(phases) == 0 {
 		t.Fatal("no journal phases recorded")
@@ -1292,7 +1219,6 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Cycle must have fired despite low pct.
 	handoffEvts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)
 	if len(handoffEvts) != 1 {
 		t.Errorf("want 1 handoff_started (absolute-token gate fired); got %d", len(handoffEvts))
@@ -1454,7 +1380,6 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// managed-session port must be called once with the new session_id.
 	if setManagedCalled != 1 {
 		t.Errorf("managed-session port called %d times; want 1", setManagedCalled)
 	}
@@ -1484,7 +1409,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 
-	// Gauge always returns prevSID — new session_id never arrives; ClearSettle times out.
 	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}, time.Now(), nil
 	}
@@ -1521,7 +1445,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// managed-session port must be called once, with empty string (timeout case).
 	if setManagedCalled != 1 {
 		t.Errorf("managed-session port called %d times; want 1", setManagedCalled)
 	}
@@ -1551,7 +1474,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce present immediately
 
-	// Gauge always returns the same SID (timeout path), starting at high pct.
 	gaugePct := 95.0
 	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: gaugePct, SessionID: sid}, time.Now(), nil
@@ -1572,7 +1494,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// Step 1: first MaybeRun at high pct → cycle fires; lastFiredSID = sid.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun (step 1): %v", err)
@@ -1582,7 +1503,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		t.Errorf("after step 1: cycle_complete events = %d; want %d", got, want1)
 	}
 
-	// Step 2: same session, same high pct → anti-loop suppresses.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun (step 2): %v", err)
 	}
@@ -1590,20 +1510,15 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		t.Errorf("after step 2: cycle_complete events = %d; want %d (anti-loop suppressed)", got, want1)
 	}
 
-	// Step 3: same session, but pct drops below WarnPct — escape hatch fires.
-	// At low pct the act gate rejects the cycle, but lastFiredSID is now reset.
 	gaugePct = 70.0
 	lowCF := &keeper.CtxFile{Pct: 70.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), lowCF); err != nil {
 		t.Fatalf("MaybeRun (step 3): %v", err)
 	}
-	// Still no new cycle (below ActPct).
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
 		t.Errorf("after step 3: cycle_complete events = %d; want %d (below ActPct)", got, want1)
 	}
 
-	// Step 4: pct climbs back above ActPct on the same session — should fire again
-	// because the escape hatch reset lastFiredSID in step 3.
 	gaugePct = 95.0
 	cf2 := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf2); err != nil {
@@ -1615,7 +1530,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 	}
 }
 
-// containsSubstr is a helper to check substring presence.
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && func() bool {
 		for i := 0; i <= len(s)-len(sub); i++ {
@@ -1667,7 +1581,6 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// Context at exactly the force threshold — cycle MUST fire despite CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
@@ -1684,7 +1597,6 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		}
 	}
 
-	// Inject sequence: [0] /session-handoff, [1] /clear, [2] agent brief.
 	texts := spy.texts()
 	if len(texts) < 3 {
 		t.Fatalf("inject calls = %d; want >=3 (/session-handoff + /clear + agent brief)", len(texts))
@@ -1731,13 +1643,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 	}
 
-	// hk-h0twl deflake: virtual-time clock. ForceRetryInterval is large in
-	// VIRTUAL time so it dwarfs the deterministic virtual time consumed by call
-	// 1's abort drive loop (a few polls of Now()-stepping) — call 2's "interval
-	// not elapsed" then holds with an enormous margin, and the previously-flaky
-	// dependence on real wall-clock between MaybeRun calls is gone. Call 3 crosses
-	// the interval via clock.Advance (no real sleep). The auto-stepping Now() also
-	// makes the HandoffTimeout abort trip after a deterministic number of polls.
 	const forceRetryInterval = 5 * time.Second
 	clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
 	cfgOverrides := testCycleOverrides{CycleIDs:
@@ -1763,7 +1668,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// Call 1: fires (above force), aborts (nonce timeout).
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun #1: %v", err)
@@ -1773,7 +1677,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		t.Fatalf("want 1 cycle_aborted after first call; got %d", abortedAfter1)
 	}
 
-	// Call 2 (immediately): Gate 6 must suppress — ForceRetryInterval not elapsed.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun #2 (immediate): %v", err)
 	}
@@ -1782,10 +1685,8 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		t.Errorf("want no new cycle_aborted immediately after abort; got %d total", abortedAfter2)
 	}
 
-	// Cross ForceRetryInterval deterministically in virtual time (no real sleep).
 	clock.Advance(forceRetryInterval + 10*time.Millisecond)
 
-	// Call 3 (after interval): must retry the forced-clear, abort again.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun #3 (after interval): %v", err)
 	}
@@ -1849,7 +1750,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		deps.Idle = testIdleProbe(false)
 	})
 
-	// Context at force threshold with CrispIdle=false → forced-clear fires.
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
@@ -1860,7 +1760,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 	copy(order, callOrder)
 	mu.Unlock()
 
-	// There must be at least one "escape" entry.
 	foundEscape := false
 	firstHandoffIdx := -1
 	for i, e := range order {
@@ -1874,7 +1773,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 	if !foundEscape {
 		t.Errorf("want pane port to receive Escape; callOrder = %v", order)
 	}
-	// Escape must appear before the /session-handoff inject.
 	firstEscapeIdx := -1
 	for i, e := range order {
 		if e == "escape" {
@@ -1915,7 +1813,6 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 	}
 
 	const maxTimeouts = 3
-	// ForceRetryInterval very short so each retry fires immediately in test.
 	const forceRetryInterval = 20 * time.Millisecond
 	cfgOverrides := testCycleOverrides{CycleIDs:
 
@@ -1946,8 +1843,6 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
 
-	// Fire maxTimeouts cycles; each aborts (nonce never arrives).
-	// Between each we sleep forceRetryInterval so Gate 6 allows re-fire.
 	for i := 0; i < maxTimeouts; i++ {
 		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 			t.Fatalf("MaybeRun #%d: %v", i+1, err)
@@ -1998,8 +1893,6 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce)
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		// pct=92: above ActPct (90) but below ForceActPct (95) → grace suppresses;
-		// after grace the cycle fires via the normal CrispIdle path.
 		return &keeper.CtxFile{Pct: 92.0, SessionID: bootSID}, time.Now(), nil
 	}
 
@@ -2019,25 +1912,14 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// ── Part 1: first-boot does NOT trigger grace (no prior session evicted) ──
-
-	// Observe prevSID at low pct (below ActPct): Gate 3 blocks the cycle but
-	// establishes prevSID as currentSessionID WITHOUT starting the grace timer
-	// (grace only starts on eviction of a non-empty prior session_id).
 	cfLow := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfLow); err != nil {
 		t.Fatalf("MaybeRun (prevSID low pct): %v", err)
 	}
-	// No cycle at low pct.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
 		t.Errorf("prevSID low pct: want 0 handoff_started; got %d", n)
 	}
 
-	// ── Part 2: session_id changes → grace starts; cycle suppressed during grace ──
-
-	// Switch to bootSID at 92% (above ActPct, below ForceActPct). Because prevSID
-	// was the prior session, the boot-grace timer starts NOW. Cycle must be
-	// suppressed by grace (force-path exemption does not apply below ForceActPct).
 	cfBoot := &keeper.CtxFile{Pct: 92.0, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfBoot); err != nil {
 		t.Fatalf("MaybeRun (during boot grace): %v", err)
@@ -2047,10 +1929,8 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		t.Errorf("during boot grace: want 0 handoff_started (suppressed); got %d", duringGrace)
 	}
 
-	// Wait for the boot grace to expire.
 	time.Sleep(bootGrace + 20*time.Millisecond)
 
-	// ── Part 3: after grace expires, cycle fires normally ──
 	if err := cycler.MaybeRun(context.Background(), cfBoot); err != nil {
 		t.Fatalf("MaybeRun (after boot grace): %v", err)
 	}
@@ -2086,7 +1966,6 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce)
 
-	// Long grace so the young session stays within it for the whole test (no sleep).
 	const bootGrace = 30 * time.Second
 	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite:
 	// Use the default abs-token band (WARN=200K / HARD=220K); do not override.
@@ -2102,15 +1981,11 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// Establish prevSID below the WARN threshold — no grace armed yet.
 	cfPrev := &keeper.CtxFile{Pct: 5.0, Tokens: 50_000, WindowSize: window, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// Switch to bootSID at 210K — above WARN but below HARD.
-	// The session_id change arms the boot grace; the young-session guard must
-	// suppress the restart even though context is past the aggressive act gate.
 	cfYoung := &keeper.CtxFile{Pct: 21.0, Tokens: 210_000, WindowSize: window, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfYoung); err != nil {
 		t.Fatalf("MaybeRun (young, above act below force): %v", err)
@@ -2119,8 +1994,6 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		t.Errorf("young session above WARN below HARD: want 0 handoff_started (guard suppresses); got %d", n)
 	}
 
-	// Same young session now crosses the HARD ceiling (225K >= 220K). The
-	// force exemption bypasses the young-session guard — pane-overflow risk wins.
 	cfForce := &keeper.CtxFile{Pct: 22.5, Tokens: 225_000, WindowSize: window, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfForce); err != nil {
 		t.Fatalf("MaybeRun (young, above force): %v", err)
@@ -2173,7 +2046,6 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		deps.Idle = testIdleProbe(false)
 	})
 
-	// Mark in-flight dispatch, then drive context ABOVE the force ceiling (245K).
 	if err := keeper.SetDispatching(projectDir, agent); err != nil {
 		t.Fatalf("SetDispatching: %v", err)
 	}
@@ -2185,7 +2057,6 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		t.Errorf("dispatching marker present above force(240K): want 0 handoff_started (clean-handoff guard holds); got %d", n)
 	}
 
-	// Clear the marker: with no in-flight work, the force-path cycle now fires.
 	if err := keeper.ClearDispatching(projectDir, agent); err != nil {
 		t.Fatalf("ClearDispatching: %v", err)
 	}
@@ -2254,8 +2125,6 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
-	// Step 1: observe prevSID at low pct — establishes currentSessionID=prevSID
-	// without starting the grace timer (first SID, currentSessionIDSince stays Zero).
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID low pct): %v", err)
@@ -2264,15 +2133,11 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		t.Fatalf("prevSID low pct: want 0 handoff_started; got %d", n)
 	}
 
-	// Step 2: switch to abortSID at 95% — session change arms currentSessionIDSince.
-	// Force-path exemption (hk-ibb fix 1) bypasses boot-grace at 95%, so the cycle
-	// fires immediately even though grace was just armed.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Verify the cycle aborted (nonce never arrived).
 	abortedEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
 	if len(abortedEvts) != 1 {
 		t.Fatalf("want 1 cycle_aborted; got %d", len(abortedEvts))
@@ -2285,9 +2150,6 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		t.Errorf("cycle_aborted.reason = %q; want \"handoff_timeout\"", abortPayload.Reason)
 	}
 
-	// managed-session port must have been called once with empty string: a real
-	// session change was observed (currentSessionIDSince != zero) so managed is
-	// cleared to allow the .sid channel to rebind the post-resume session.
 	managedMu.Lock()
 	count := managedCallCount
 	last := managedLastValue
@@ -2334,8 +2196,6 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// Context above ActPct (90) but below ForceActPct (95) with CrispIdle=false.
-	// Cycle must NOT fire.
 	cf := &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
@@ -2371,8 +2231,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-	// ForceActPct stays unset and resolves to ActPct+5. The busy session at 41%
-	// must therefore pass the 40% force threshold.
 	cfgOverrides := testCycleOverrides{
 		CycleIDs:     func() string { return cycleID },
 		HandoffPath:  func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
@@ -2395,8 +2253,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// pct=41: above ActPct (35) and above derived ForceActPct (40). CrispIdle=false
-	// must be bypassed so the cycle fires — verifies dead zone is eliminated.
 	cf := &keeper.CtxFile{Pct: 41.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
@@ -2413,8 +2269,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		}
 	}
 
-	// Also verify that pct=37 (in the old dead zone 35-40, but now just above ActPct)
-	// is still blocked by CrispIdle since it's below the new ForceActPct=40.
 	em2 := &keeper.RecordingEmitter{}
 	spy2 := &cycleSpyInjector{}
 	jc2 := &journalCapture{}
@@ -2481,21 +2335,16 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// Establish prevSID (first session, no grace armed).
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// Switch to bootSID at 95% (above ForceActPct=95). Grace timer starts for
-	// bootSID, but force-path exemption must bypass the grace immediately.
 	cfBoot := &keeper.CtxFile{Pct: 95.0, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfBoot); err != nil {
 		t.Fatalf("MaybeRun (bootSID force-path): %v", err)
 	}
 
-	// The cycle must have fired (force-path bypassed grace) — handoff_started should
-	// appear before the bootGrace duration elapses.
 	phases := jc.snapshot()
 	if len(phases) == 0 {
 		t.Fatalf("force-path during boot grace: want cycle to fire (journal phases non-empty); got none")
@@ -2557,22 +2406,16 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
-	// Directly observe sid as the first (and only) session — no prior session change,
-	// so currentSessionIDSince stays Zero.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Verify the cycle aborted.
 	abortedEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
 	if len(abortedEvts) != 1 {
 		t.Fatalf("want 1 cycle_aborted; got %d", len(abortedEvts))
 	}
 
-	// managed-session port must NOT have been called: no real session change was
-	// observed before this abort (currentSessionIDSince.IsZero()), so clearing
-	// .managed would prematurely allow a new SID to latch (hk-ibb fix 3).
 	managedMu.Lock()
 	count := managedCallCount
 	managedMu.Unlock()
@@ -2622,13 +2465,11 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// ── Step 1: establish prevSID at low pct (no grace armed) ──
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// ── Step 2: novelSID first appears at 92% — grace arms ──
 	cfNovel := &keeper.CtxFile{Pct: 92.0, SessionID: novelSID}
 	if err := cycler.MaybeRun(context.Background(), cfNovel); err != nil {
 		t.Fatalf("MaybeRun (novelSID first, during grace): %v", err)
@@ -2637,12 +2478,10 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		t.Errorf("novelSID first appearance: want 0 handoff_started (grace suppresses); got %d", n)
 	}
 
-	// ── Step 3: SID flaps back to prevSID — already seen, no grace re-arm ──
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID flap): %v", err)
 	}
 
-	// ── Step 4: novelSID appears again — already seen, no re-arm ──
 	if err := cycler.MaybeRun(context.Background(), cfNovel); err != nil {
 		t.Fatalf("MaybeRun (novelSID second, during grace): %v", err)
 	}
@@ -2650,10 +2489,8 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		t.Errorf("novelSID second appearance (during grace): want 0 handoff_started; got %d", n)
 	}
 
-	// ── Step 5: wait for original grace to expire (only one bootGrace from step 2) ──
 	time.Sleep(bootGrace + 30*time.Millisecond)
 
-	// ── Step 6: novelSID fires after grace — SID already seen, no new grace ──
 	if err := cycler.MaybeRun(context.Background(), cfNovel); err != nil {
 		t.Fatalf("MaybeRun (novelSID after grace): %v", err)
 	}
@@ -2684,7 +2521,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
 
-	// Two separate journal captures — one for each cycle.
 	jcAbort := &journalCapture{}
 	jcResume := &journalCapture{}
 	cycleCount := 0
@@ -2716,7 +2552,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	}
 
 	nonce2 := "<!-- KEEPER:" + cycleID2 + " -->"
-	// First cycle (abortSID): always timeout. Second cycle (resumeSID): nonce available.
 	readHandoff := func(path string) (string, error) {
 		if cycleCount == 0 {
 			return "", nil // abort: no nonce
@@ -2726,7 +2561,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 
 	const bootGrace = 150 * time.Millisecond
 
-	// ReadGaugeFn returns a new SID after 1 call (for the resume cycle settle).
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, resumeSID, resumeSID+"_post")
 	cfgOverrides := testCycleOverrides{CycleIDs:
 
@@ -2749,17 +2583,11 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
-	// ── Phase A: establish prevSID → change to abortSID → abort ──
-
-	// 1. Observe prevSID at low pct — establishes currentSessionIDSince as Zero.
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// 2. abortSID at 95% — session change arms currentSessionIDSince; force-path
-	//    (fix 1) bypasses the new grace and fires the cycle immediately. The cycle
-	//    emits handoff_started before aborting at the nonce-poll step.
 	cfAbort := &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}
 	if err := cycler.MaybeRun(context.Background(), cfAbort); err != nil {
 		t.Fatalf("MaybeRun (abortSID): %v", err)
@@ -2767,14 +2595,11 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 1 {
 		t.Fatalf("Phase A abort: want 1 cycle_aborted; got %d", n)
 	}
-	// Record how many handoff_started events Phase A produced (should be 1: the
-	// cycle fired via force-path but aborted before completing).
 	handoffAfterPhaseA := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
 	if handoffAfterPhaseA != 1 {
 		t.Fatalf("Phase A: want 1 handoff_started (fire+abort); got %d", handoffAfterPhaseA)
 	}
 
-	// 3. Fix 3: managed must have been cleared (currentSessionIDSince was non-zero).
 	managedMu.Lock()
 	abortManagedCalls := managedCallCount
 	abortManagedLast := managedLastValue
@@ -2784,34 +2609,24 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 			abortManagedCalls, abortManagedLast)
 	}
 
-	// ── Phase B: observe resumeSID; grace fires; cycle re-fires ──
 	cycleCount = 1 // advance to second cycle so IDs and handoff behavior change
 
-	// 4. resumeSID at 92% (below ForceActPct) — novel SID, grace arms (fix 2).
-	//    Grace suppresses the cycle. (Gate 6 with lastFiredSID=abortSID and
-	//    resumeSID≠abortSID would also suppress due to !seenLowPctAfterLastFire,
-	//    but the grace gate fires first.)
 	cfResume92 := &keeper.CtxFile{Pct: 92.0, SessionID: resumeSID}
 	if err := cycler.MaybeRun(context.Background(), cfResume92); err != nil {
 		t.Fatalf("MaybeRun (resumeSID during grace): %v", err)
 	}
-	// No additional handoff_started events during grace.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != handoffAfterPhaseA {
 		t.Errorf("resumeSID during grace: want %d handoff_started (no new fires); got %d",
 			handoffAfterPhaseA, n)
 	}
 
-	// 5. Wait for grace to expire.
 	time.Sleep(bootGrace + 30*time.Millisecond)
 
-	// 6. Observe resumeSID at low pct — unlocks Gate-6 seenLowPctAfterLastFire so
-	//    the cycle can re-fire on the next high-pct tick.
 	cfResumeLow := &keeper.CtxFile{Pct: 70.0, SessionID: resumeSID}
 	if err := cycler.MaybeRun(context.Background(), cfResumeLow); err != nil {
 		t.Fatalf("MaybeRun (resumeSID low pct for Gate-6 re-arm): %v", err)
 	}
 
-	// 7. Now resumeSID at 92% — grace expired, Gate-6 re-armed → cycle fires!
 	cfResume := &keeper.CtxFile{Pct: 92.0, SessionID: resumeSID}
 	if err := cycler.MaybeRun(context.Background(), cfResume); err != nil {
 		t.Fatalf("MaybeRun (resumeSID refire): %v", err)
@@ -2845,12 +2660,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 	t.Skip("keeper-checkpoint-handshake: timeout abort and force retry are retired")
 	t.Parallel()
 
-	// hk-h0twl deflake: forceRetryInterval is large in VIRTUAL time (see the
-	// per-subtest steppingAdvanceClock) so it dwarfs the deterministic virtual
-	// time consumed by the abort drive loop — the "interval not elapsed" checks
-	// hold with a huge margin instead of racing real wall-clock between MaybeRun
-	// calls. abortHandoffTimeout stays short so the abort trips after a
-	// deterministic handful of virtual-stepped polls.
 	const forceRetryInterval = 5 * time.Second
 	const abortHandoffTimeout = 25 * time.Millisecond
 
@@ -2917,19 +2726,13 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 			cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 			ctx := context.Background()
 
-			// ── Phase A: establish prevSID (if any) then abort on abortSID ──
-
 			if tc.prevSID != "" {
-				// Observe prevSID at low pct to establish currentSessionID without
-				// arming boot-grace (currentSessionID was "" so the inner block skips).
 				cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: tc.prevSID}
 				if err := cycler.MaybeRun(ctx, cfPrev); err != nil {
 					t.Fatalf("MaybeRun (prevSID): %v", err)
 				}
 			}
 
-			// abortSID at 97% (above ForceActPct) — fires immediately (no boot-grace,
-			// force-path bypasses Gate 3). Nonce poll times out → abort.
 			cfAbort := &keeper.CtxFile{Pct: 97.0, SessionID: tc.abortSID}
 			if err := cycler.MaybeRun(ctx, cfAbort); err != nil {
 				t.Fatalf("MaybeRun (abortSID): %v", err)
@@ -2937,13 +2740,9 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 			if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 1 {
 				t.Fatalf("Phase A: want 1 cycle_aborted; got %d", n)
 			}
-			// lastFiredSID = abortSID, lastForcedAttemptAt = now, seenLowPctAfterLastFire = false.
 
-			// ── Phase B: novelSID appears above WarnPct — must be suppressed ──
 			cycleCount = 1
 
-			// novelSID at 85% (WarnPct < 85 < ForceActPct=95): Gate-6 cross-SID
-			// suppresses because seenLowPctAfterLastFire=false AND not above force.
 			cfNovelMid := &keeper.CtxFile{Pct: 85.0, SessionID: tc.novelSID}
 			if err := cycler.MaybeRun(ctx, cfNovelMid); err != nil {
 				t.Fatalf("MaybeRun (novelSID Warn<pct<Force): %v", err)
@@ -2952,8 +2751,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				t.Errorf("novelSID mid-band: want still-1 handoff_started; got %d", n)
 			}
 
-			// novelSID at 97% (above ForceActPct), immediately after abort:
-			// lastForcedAttemptAt just set → interval not elapsed → still suppressed.
 			cfNovelForce := &keeper.CtxFile{Pct: 97.0, SessionID: tc.novelSID}
 			if err := cycler.MaybeRun(ctx, cfNovelForce); err != nil {
 				t.Fatalf("MaybeRun (novelSID force, interval not elapsed): %v", err)
@@ -2962,10 +2759,8 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				t.Errorf("novelSID force, interval not elapsed: want still-1 handoff_started; got %d (force-retry fired too early)", n)
 			}
 
-			// Cross ForceRetryInterval deterministically in virtual time (no sleep).
 			clock.Advance(forceRetryInterval + 15*time.Millisecond)
 
-			// novelSID at 97% after interval: Gate-6 cross-SID force-retry escape fires.
 			if err := cycler.MaybeRun(ctx, cfNovelForce); err != nil {
 				t.Fatalf("MaybeRun (novelSID force, after interval): %v", err)
 			}
@@ -2995,7 +2790,6 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Set MaxBootGraceTotal very short so we can observe it elapsing.
 	const bootGrace = 80 * time.Millisecond
 	const maxBootGraceTotal = 60 * time.Millisecond
 	cfgOverrides := testCycleOverrides{
@@ -3025,28 +2819,21 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 	ctx := context.Background()
 
-	// 1. Observe prevSID at low pct — no grace armed (first SID seen, currentSessionID "").
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(ctx, cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// 2. firstSID at 92%: session change from prevSID → firstSID arms bootGraceFirstArmAt.
 	cfFirst := &keeper.CtxFile{Pct: 92.0, SessionID: firstSID}
 	if err := cycler.MaybeRun(ctx, cfFirst); err != nil {
 		t.Fatalf("MaybeRun (firstSID grace-arm): %v", err)
 	}
-	// Grace must suppress.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
 		t.Fatalf("firstSID during grace: want 0 handoff_started; got %d", n)
 	}
 
-	// 3. Wait for MaxBootGraceTotal to elapse — the OLD first burst is now expired.
 	time.Sleep(maxBootGraceTotal + 15*time.Millisecond)
 
-	// 4. nextSID at 92%: this is a novel SID. With the fix, bootGraceFirstArmAt
-	//    resets because MaxBootGraceTotal has elapsed → a new burst window starts
-	//    → boot-grace suppresses the cycle for this new SID.
 	cfNext := &keeper.CtxFile{Pct: 92.0, SessionID: nextSID}
 	if err := cycler.MaybeRun(ctx, cfNext); err != nil {
 		t.Fatalf("MaybeRun (nextSID, should be grace-protected): %v", err)
@@ -3055,16 +2842,13 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		t.Errorf("nextSID after old burst expired: want 0 handoff_started (grace reset for new burst); got %d", n)
 	}
 
-	// 5. Wait for the new burst's BootGracePeriod to elapse.
 	time.Sleep(bootGrace + 15*time.Millisecond)
 
-	// 6. Observe nextSID at low pct to set seenLowPctAfterLastFire (lastFiredSID="" so this is a no-op).
 	cfNextLow := &keeper.CtxFile{Pct: 70.0, SessionID: nextSID}
 	if err := cycler.MaybeRun(ctx, cfNextLow); err != nil {
 		t.Fatalf("MaybeRun (nextSID low): %v", err)
 	}
 
-	// 7. nextSID at 92% after new burst grace expires → cycle fires (gate-3 act, gate-4 crisp).
 	if err := cycler.MaybeRun(ctx, cfNext); err != nil {
 		t.Fatalf("MaybeRun (nextSID after grace): %v", err)
 	}

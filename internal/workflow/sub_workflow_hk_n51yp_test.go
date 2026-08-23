@@ -1,24 +1,5 @@
 package workflow
 
-// sub_workflow_hk_n51yp_test.go — requirement-traceable sensors for T-IMPL-011.
-//
-// Acceptance criteria coverage (hk-n51yp):
-//  1. ExpandSubWorkflowGraph: namespace node IDs and edges under parentNodeID.
-//  2. ValidateSubWorkflowAcyclicity: detect direct and transitive cycles.
-//  3. DispatchSubWorkflow: cascades through expanded nodes, emits
-//     sub_workflow_entered and sub_workflow_exited, returns terminal Outcome.
-//  4. Terminal Outcome surfaces to parent cascade unchanged (EM-036a).
-//
-// Spec refs:
-//
-//	specs/workflow-graph.md §4 WG-006   — sub-workflow node attributes.
-//	specs/workflow-graph.md §9 WG-029   — sub-workflow acyclicity.
-//	specs/execution-model.md §4.8.EM-034  — expansion in place.
-//	specs/execution-model.md §4.8.EM-034a — node-ID namespacing.
-//	specs/execution-model.md §4.8.EM-034b — acyclicity obligation.
-//	specs/execution-model.md §4.8.EM-036  — lifecycle events.
-//	specs/execution-model.md §4.8.EM-036a — terminal outcome escapes.
-
 import (
 	"context"
 	"encoding/json"
@@ -32,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// ── fixtures ─────────────────────────────────────────────────────────────────
-
-// subwfFixturePin builds a valid SubWorkflowExpansionPin. Every caller pins the
-// same sub-workflow at the same version, so both are fixed rather than passed.
 const (
 	subwfFixtureRef     = "sub-wf"
 	subwfFixtureVersion = "1.0"
@@ -53,9 +30,6 @@ func subwfFixturePin() core.SubWorkflowExpansionPin {
 	}
 }
 
-// subwfFixtureSubGraph builds a minimal two-node sub-workflow dot.Graph:
-//
-//	start → end (unconditional, no condition).
 func subwfFixtureSubGraph() *dot.Graph {
 	return &dot.Graph{
 		StartNodeID:     "start",
@@ -74,7 +48,6 @@ func subwfFixtureSubGraph() *dot.Graph {
 	}
 }
 
-// subwfFixtureRun returns a minimal *core.Run suitable for cascade testing.
 func subwfFixtureRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
@@ -89,7 +62,6 @@ func subwfFixtureRun(t *testing.T) *core.Run {
 	}
 }
 
-// recordingBus is a minimal in-memory event bus for test assertions.
 type recordingBus struct {
 	events []recordedEvent
 }
@@ -116,8 +88,6 @@ func (b *recordingBus) Seal() error                                           { 
 func (b *recordingBus) ReplayFrom(_ string, _ core.EventID) error             { return nil }
 func (b *recordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
 func (b *recordingBus) Drain(_ context.Context) error                         { return nil }
-
-// ── ExpandSubWorkflowGraph ────────────────────────────────────────────────────
 
 // TestExpandSubWorkflowGraph_NodeIDsNamespaced verifies that all expanded
 // node IDs carry the <parentNodeID>/<subNodeID> form per EM-034a.
@@ -213,8 +183,6 @@ func TestExpandSubWorkflowGraph_InvalidPin(t *testing.T) {
 	}
 }
 
-// ── ValidateSubWorkflowAcyclicity ────────────────────────────────────────────
-
 // TestValidateSubWorkflowAcyclicity_DirectCycle detects a direct self-reference
 // (A → A) per WG-029 / EM-034b.
 func TestValidateSubWorkflowAcyclicity_DirectCycle(t *testing.T) {
@@ -236,11 +204,9 @@ func TestValidateSubWorkflowAcyclicity_TransitiveCycle(t *testing.T) {
 	t.Parallel()
 
 	refGraph := core.NewSubWorkflowRefGraph()
-	// A→B is acyclic.
 	if err := ValidateSubWorkflowAcyclicity(refGraph, "wf-A", "wf-B"); err != nil {
 		t.Fatalf("A→B should not be cyclic: %v", err)
 	}
-	// B→A closes the cycle.
 	err := ValidateSubWorkflowAcyclicity(refGraph, "wf-B", "wf-A")
 	if err == nil {
 		t.Error("want cycle error for A→B→A, got nil")
@@ -262,8 +228,6 @@ func TestValidateSubWorkflowAcyclicity_Acyclic(t *testing.T) {
 		t.Errorf("B→C: unexpected cycle error: %v", err)
 	}
 }
-
-// ── DispatchSubWorkflow ───────────────────────────────────────────────────────
 
 // TestDispatchSubWorkflow_EmitsEnteredAndExited verifies that sub_workflow_entered
 // and sub_workflow_exited events are emitted in order per EM-036.
@@ -295,7 +259,6 @@ func TestDispatchSubWorkflow_EmitsEnteredAndExited(t *testing.T) {
 	if bus.events[0].EventType != core.EventTypeSubWorkflowEntered {
 		t.Errorf("events[0] type = %q, want %q (EM-036)", bus.events[0].EventType, core.EventTypeSubWorkflowEntered)
 	}
-	// sub_workflow_exited is the last event emitted.
 	last := bus.events[len(bus.events)-1]
 	if last.EventType != core.EventTypeSubWorkflowExited {
 		t.Errorf("last event type = %q, want %q (EM-036)", last.EventType, core.EventTypeSubWorkflowExited)
@@ -320,7 +283,6 @@ func TestDispatchSubWorkflow_TerminalOutcomeEscapes(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	label := "approved"
-	// The "end" node is terminal; its outcome escapes.
 	nodeRunner := func(_ context.Context, nodeID core.NodeID, _ core.NodeType) (core.Outcome, error) {
 		if string(nodeID) == "review/end" {
 			return core.Outcome{
@@ -404,7 +366,6 @@ func TestDispatchSubWorkflow_ExitedPayloadCarriesTerminalStatus(t *testing.T) {
 		t.Fatalf("DispatchSubWorkflow: %v", err)
 	}
 
-	// Find the exited event and unmarshal its payload.
 	var exitedPayload core.SubWorkflowExitedPayload
 	for _, ev := range bus.events {
 		if ev.EventType == core.EventTypeSubWorkflowExited {

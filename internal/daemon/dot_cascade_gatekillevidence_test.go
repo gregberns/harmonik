@@ -1,129 +1,5 @@
 package daemon
 
-// dot_cascade_gatekillevidence_test.go — WHICH lines of a gate log are evidence
-// about how the gate ended.
-//
-// The kill detector was wrong in both directions at once, found live on
-// 2026-08-12 by lane bravo driving a real bead end to end:
-//
-//   - hk-gate-selftest-fakes-a-kill-0hj0i — the gate log is a verbose replay of
-//     the whole suite, so it contains the very strings the detector matches. It
-//     found the daemon's OWN earlier diagnostic 13,000 lines from the end of a
-//     gate that had genuinely failed, called it a kill, and told the operator
-//     that NOTHING was known to be wrong with the change.
-//   - hk-gate-error-143-still-deterministic-rhske — a signal that reaches only a
-//     descendant is reported by the recipe shell as exit 128+N, so make prints
-//     `Error 143` and never names the signal, and the top-level shell exits 2
-//     cleanly. Neither detector fired and the implementer was sent to fix a
-//     fault that does not exist. That is the OOM and SIGTERM shape, i.e. the one
-//     a loaded box actually produces.
-//
-// The two repairs pull against each other: "prefer the recipe failure at the end
-// over a kill signature earlier" and "an Error 143 recipe failure IS a kill".
-// The precedence rule that holds both is REGIONAL:
-//
-//	only make's TERMINAL recipe-failure cascade is evidence, and within it a
-//	signal WORD or a 128+N exit CODE means killed.
-//
-// Each test below pins one part of that rule, and they fail in opposite
-// directions if it is replaced with either half on its own.
-//
-// # This file's own output is part of its subject
-//
-// A message this file writes lands in the next gate's log, where the classifier
-// reads it. Two separate things keep that from re-arming the bug, and neither
-// one is a claim that the other is unnecessary:
-//
-//   - gateReportf / gateFatalf put every message through gateEvidenceQuote,
-//     which rewrites every string the classifier keys on.
-//     TestNoMessageInThisFileReachesTheLogUnsanitized checks structurally that
-//     no write bypasses them, and TestTheOutputGuardCatchesTheWaysItWasDefeated
-//     measures what that check can and cannot see.
-//   - TestNoStringLiteralInThisFileCanRelabelTheNextGate takes the file's own
-//     string literals — the fixtures, which are what carries make's shapes into
-//     a message — and plants each one, sanitized, ahead of a red cascade.
-//
-// The guard is not a proof that nothing escapes. It follows writes through
-// testing handles, fmt, os.Stdout / os.Stderr, log and the print builtins, named
-// by a dotted path of plain identifiers. A write through a value it cannot name
-// that way — an io.Writer held in a variable, a handle reached through a method
-// call, a helper in another file of this package — is outside it, and so is
-// every other file.
-//
-// Sibling files in this package DO still put the classifier's own strings into
-// a failed test's output, and all of them reach a real gate log. `make full`
-// runs this package TWICE — `go test -short ./...`, then the scenario tier as
-// `go test -v -race -tags=scenario ./internal/daemon` with no -short — and the
-// scenario log is cat'd whole with no suppression. Measured 2026-08-12:
-// TestDeterministicGateFail_TellsTheImplementerToFixTheFailure, which SKIPs
-// under -short, runs and PASSes in that second tier.
-//
-// The frame that matters: every one of these escapes is failure-conditional.
-// Measured over both green tiers of this package on 2026-08-12 — 1381 -short
-// tests and 1441 scenario tests, all passing — the log contains ZERO occurrences
-// of `*** [`, `] Error 127`, `: command not found` or `is not in std`. The gate
-// ToolCommand echoes stay inside CombinedOutput and never reach test stdout, and
-// the daemon's own column-0 stderr diagnostic is already sanitized. So the hole
-// was armed and silent while the suite was green. It fires when a test FAILS,
-// which is exactly when a gate is red and when the classifier's answer is the
-// thing that matters. A reviewer reproduced it end to end from one of the sites
-// below: the text `go test` writes when that test fails, planted ahead of a real
-// red cascade, classified STRUCTURAL, and structural is what tells an
-// implementer whose gate is genuinely red that NOTHING is known to be wrong with
-// the change.
-//
-// Which half was covered, and what closed the rest:
-//
-//   - The `*** [` anchor is covered by position. A raw anchor printed by
-//     t.Errorf always lands INDENTED, and gateLineIsIndented keeps an indented
-//     line out of make's cascade. That is a reading-end repair; the limit on it
-//     is stated on gateLineIsIndented and it is not zero-cost.
-//   - The UNSCOPED signatures had no such cover. Their detectors scan the whole
-//     log, so no position protects them. Both sites are now CLOSED at the
-//     writing end — the t.Errorf in dot_cascade_gatecannotrun_hk2f3v4_test.go
-//     (which carried `] Error 127` AND `: command not found`) and the one in
-//     dot_cascade_gatekilled_test.go (`] Error 127`, out of a fixture five lines
-//     above it) both route their message through gateEvidenceQuote. What keeps
-//     them closed is TestNoSignatureInThisPackageReachesTheLogUnsanitized, which
-//     reads every test file in this package rather than this one; a third such
-//     site fails it by file and line.
-//
-//   - The PRODUCTION paths that carry gate output verbatim are the larger half,
-//     and they are not a test's own message. gateBackEdgeMessage quotes the
-//     gate's last output back to the implementer and gateFailureTail folds it
-//     onto one line for the stranded-commit reason; both now run it through
-//     gateEvidenceQuote first. The fold is the worse of the two — it puts make's
-//     anchor in the middle of one unindented line, where no position rule can
-//     see it. Routing a test's own message through a sanitizer does not touch
-//     either one, and neither does the package guard, which reads writes and not
-//     data flow out of a production helper. What covers them is
-//     TestAMessageQuotingGateOutputCannotRelabelTheNextGate, by behaviour: render
-//     each message over gate output carrying every trigger, plant it in a red
-//     gate's log both far from and hard against make's cascade, and require the
-//     class to stay deterministic. Six cases: three renders — the two
-//     gateBackEdgeMessage wordings and the stranded-commit note — at two plant
-//     positions each. Re-measured in a scratch copy with each rewrite removed on
-//     its own: without gateBackEdgeMessage's call 4 of the 6 fail (both back-edge
-//     wordings, at both positions); without gateFailureTail's, 2 of 6 (the
-//     stranded-commit note, at both positions); with both removed, 6 of 6. The
-//     far-from-the-cascade plant is not dead weight — the unscoped-signature
-//     detectors read the WHOLE log with no position scoping, so a message
-//     thousands of lines from make's cascade reaches them.
-//
-// These run under -short. Most call the classifier with values; the ones that
-// need a real *exec.ExitError get it from `/bin/sh -c 'exit N'` (shellExit), and
-// TestTheRemoteReadingOfExit255FollowsTheRunner drives the real
-// dispatchDotToolNode over a gate whose whole job is to exit.
-//
-// One test is heavier on purpose.
-// TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages builds a
-// throwaway Go module in a temp dir and runs a real `make full` over it, because
-// the chain this unit exists to break — a failing test prints a message, the
-// message lands in the next gate's log, the classifier reads it, the implementer
-// is told nothing is wrong — had only ever been confirmed one link at a time. It
-// costs well under a second and skips when make is absent. No worktree, no
-// agent, no network.
-
 import (
 	"fmt"
 	"go/ast"
@@ -143,18 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// gateReportf reports a test failure with every string the gate classifier keys
-// on rewritten, and gateFatalf does the same and stops the test.
-//
-// What they buy: `go test -v` replays a failure message into the log of the gate
-// that ran the suite, and this package's detectors read that log. A message that
-// carries make's recipe anchor is a line make never wrote, sitting where only
-// make's own report belongs; a message that carries `] Error 127` is read by a
-// detector that scans the whole log and has no position rule to save it. There
-// is no margin to spend: a failure message is followed by `--- FAIL`, `FAIL`,
-// the package line and `FAIL`, which is exactly gateCascadeGapLines of slack, so
-// the message can still be inside the cascade window when make's real cascade
-// follows.
 func gateReportf(t *testing.T, format string, args ...any) {
 	t.Helper()
 	t.Error(gateEvidenceQuote(fmt.Sprintf(format, args...)))
@@ -165,54 +29,16 @@ func gateFatalf(t *testing.T, format string, args ...any) {
 	t.Fatal(gateEvidenceQuote(fmt.Sprintf(format, args...)))
 }
 
-// retiredKillDiagnostic is the SHAPE of the message the classifier used to write
-// to stderr for a killed gate: it quoted make's matched line word for word,
-// anchor and all. `go test -v` replays stderr, so a line like this one reached
-// the next gate's log, and the detector matched it there instead of the real
-// failure at the end of the file.
-//
-// It is a FIXTURE, not a copy, and the wording below is close to but not
-// identical to what that run wrote. The 2026-08-12 gate log IS kept, and this
-// comment used to say it was gone — an assertion made without looking, in the
-// one file whose whole subject is a comment that overran its code. Recover it
-// and read the line for yourself. The commit is reachable from branch
-// work/bravo-reachability, which is what to check out first if git ever answers
-// `bad object` — the log is kept, but nothing here makes that permanent:
-//
-//	git show 6c0454eab:assessments/2026-08-12-1400-alpha-fixes-and-second-live-run/evidence/commit_gate.log.gz |
-//	  gunzip | sed -n 3869p
-//
-// That is 17,214 lines, with the diagnostic at line 3869 and so 13,345 lines
-// SHORT of the end. Short of, not past: the old detector scanned FORWARD from
-// the top and returned on its first match, so it answered from this line and
-// never read the real cascade 13,345 lines further down. The scan that replaced
-// it starts at the end for exactly that reason.
-//
-// The fixture differs from that line only inside the gate-log path, in two
-// places — the $TMPDIR hash segment, and the run id, cut to its first field.
-//
-// The test needs only one property from it — that it matches the detector BY
-// CONTENT, a raw anchor and a signal word on one line — and it asserts that
-// property rather than trusting the fixture, which is why nothing below changed
-// when the artifact was found.
-//
-// The message the classifier writes TODAY is a separate question, and
-// TestGateKillDiagnosticIsNotItselfAKillSignature derives that one from the
-// producer instead of hand-copying it, so it cannot drift.
 const retiredKillDiagnostic = `daemon: dot tool node "commit_gate" was KILLED mid-flight ` +
 	`(gate output reports a signal kill: make[1]: *** [test-scenario] Terminated: 15) — ` +
 	`it reached no verdict, so this is NOT a test failure; canceled, routed to ` +
 	`close-needs-attention for triage; gate log: ` +
 	`/var/folders/s9/T/TestGateKilledBySignal_MakeOutput294346514/001/.harmonik/gate-logs/019ff7c2/commit_gate.log`
 
-// redGateCascade is the terminal cascade of a gate that RAN and found a fault:
-// a test tier that failed, and make giving up above it.
 const redGateCascade = "FAIL\nscenario skips: 2\n" +
 	"make[1]: *** [test-scenario] Error 1\n" +
 	"make: *** [full] Error 2\n"
 
-// gateLogWithTranscript builds a gate log shaped like the live one: a long
-// verbose transcript containing transcriptLine, then the terminal cascade.
 func gateLogWithTranscript(transcriptLine, cascade string) []byte {
 	var b strings.Builder
 	b.WriteString("=== RUN   TestGateKilledBySignal_MakeOutput\n")
@@ -226,8 +52,6 @@ func gateLogWithTranscript(transcriptLine, cascade string) []byte {
 	return []byte(b.String())
 }
 
-// shellExit runs `/bin/sh -c 'exit N'` and returns the *exec.ExitError. The gate
-// is a shell command, so this is the exact error shape the classifier sees.
 func shellExit(t *testing.T, code int) error {
 	t.Helper()
 	//nolint:gosec // G204: the exit code is an int this test chose; no external input reaches it
@@ -238,9 +62,6 @@ func shellExit(t *testing.T, code int) error {
 	return err
 }
 
-// classifyGateLog runs the real classifier over a LOCAL gate that exited 2 —
-// what make itself exits when a recipe failed — and returns the class and the
-// description the daemon would log.
 func classifyGateLog(t *testing.T, log []byte) (class core.FailureClass, logDesc string) {
 	t.Helper()
 	return classifyDotToolNodeFailure(shellExit(t, 2), nil, nil, log, "commit_gate", 3600, false)
@@ -255,16 +76,12 @@ func TestRedGateStaysDeterministicWhenTheTranscriptReplaysAKill(t *testing.T) {
 	t.Parallel()
 
 	for name, transcript := range map[string]string{
-		// The message the classifier used to write for a killed gate.
 		"daemon diagnostic": retiredKillDiagnostic,
 		// A gate step that echoes make's kill output as its own fixture. No go
 		// test log prefix on it, so POSITION is the only thing that can rule it
 		// out — which is the property this test is for.
 		"echoed fixture": "make[1]: *** [test-scenario] Terminated: 15",
 	} {
-		// Positive evidence first: each of these lines DOES match the detector by
-		// content, so the claim below is about WHERE it sits and nothing else. A
-		// fixture that stopped matching would make the rest of this test vacuous.
 		if _, ok := gateSignalKillOutputLine([]byte(transcript + "\n")); !ok {
 			gateFatalf(t, "%s: the fixture no longer reads as a kill even when it IS the whole cascade, so this test can no longer fail", name)
 		}
@@ -289,7 +106,6 @@ func TestGateKilledThroughADescendantClassifiesCanceled(t *testing.T) {
 	t.Parallel()
 
 	for name, cascade := range map[string]string{
-		// SIGTERM to a child: what a loaded box or an operator stop produces.
 		"SIGTERM (143)": "FAIL\tgithub.com/gregberns/harmonik/internal/daemon\t120.0s\n" +
 			"make[1]: *** [test-scenario] Error 143\nmake: *** [full] Error 2\n",
 		// SIGKILL from the OOM killer.
@@ -305,7 +121,6 @@ func TestGateKilledThroughADescendantClassifiesCanceled(t *testing.T) {
 			gateReportf(t, "%s: a gate killed through a descendant is classified %q; the gate reached NO verdict, and deterministic is what tells the implementer to fix a fault nobody observed", name, class)
 		}
 
-		// Positive evidence that the class reached the reader, not just the log.
 		msg := gateBackEdgeMessage(class, desc)
 		if strings.Contains(msg, "Fix the failure") {
 			gateReportf(t, "%s: the implementer is told to fix a failure the gate never observed:\n%s", name, msg)
@@ -323,9 +138,6 @@ func TestGateKilledThroughADescendantClassifiesCanceled(t *testing.T) {
 func TestTerminalCascadeIsFoundBehindTrailingBlankLines(t *testing.T) {
 	t.Parallel()
 
-	// One more blank line than the gap tolerance allows, so the trim is the only
-	// thing that can keep the cascade reachable. Tied to the constant, so it
-	// still crosses the line if the tolerance changes.
 	padding := strings.Repeat("\n", gateCascadeGapLines+1)
 	log := gateLogWithTranscript("--- PASS: TestUnrelated (0.01s)",
 		"make[1]: *** [test-scenario] Error 143\nmake: *** [full] Error 2\n"+padding)
@@ -355,20 +167,13 @@ func TestGateKillDiagnosticIsNotItselfAKillSignature(t *testing.T) {
 	if strings.Contains(desc, gateRecipeFailureAnchor) {
 		gateReportf(t, "the kill diagnostic reproduces make's recipe anchor, so a later gate log that quotes it matches this detector:\n%s", desc)
 	}
-	// The anchor is only one of the strings the classifier keys on. The rest are
-	// read anywhere in the log, so a diagnostic carrying one needs no position at
-	// all to be believed. (BLOCKING 1, round 2)
 	if isGateCannotRunError([]byte(desc)) || isGateBuildCacheInfraError([]byte(desc)) {
 		gateReportf(t, "the kill diagnostic carries a string an UNSCOPED detector matches, so quoting it in a later gate log relabels that gate wherever the line lands:\n%s", desc)
 	}
-	// It must still name the recipe and the signal — a diagnostic that cannot
-	// trip the detector is only useful if it still tells the reader what died.
 	if !strings.Contains(desc, "test-scenario") || !strings.Contains(desc, "Terminated: 15") {
 		gateReportf(t, "the kill diagnostic no longer says which recipe died or how:\n%s", desc)
 	}
 
-	// Feed the diagnostic back in as transcript, ahead of a real red cascade —
-	// which is exactly what happened live.
 	replayed := gateLogWithTranscript("daemon: "+desc, redGateCascade)
 	if class, _ := classifyGateLog(t, replayed); class != core.FailureClassDeterministic {
 		gateReportf(t, "a red gate whose log replays the daemon's own kill diagnostic is classified %q; the detector is matching itself again", class)
@@ -403,8 +208,6 @@ func TestExitCodeInSignalRangeIsAKillAndBelowItIsAVerdict(t *testing.T) {
 		}
 	}
 
-	// The structural branch still owns a missing tool, ahead of deterministic and
-	// behind the kill branch.
 	log := []byte("go: gofumpt not found\nmake[2]: *** [fmt-check] Error 127\nmake: *** [full] Error 2\n")
 	if class, _ := classifyGateLog(t, log); class != core.FailureClassStructural {
 		gateReportf(t, "a gate that could not RUN is classified %q, not structural", class)
@@ -445,7 +248,6 @@ func TestRemoteKillIsStillSeenBehindSSHTrailerLines(t *testing.T) {
 func TestRemoteGateWhoseSSHFailedClassifiesCanceled(t *testing.T) {
 	t.Parallel()
 
-	// A killed remote gate whose output carries no make recipe line at all.
 	log := []byte("go: downloading github.com/foo/bar v1.2.3\n")
 	sshErr := shellExit(t, 255)
 
@@ -460,19 +262,6 @@ func TestRemoteGateWhoseSSHFailedClassifiesCanceled(t *testing.T) {
 	}
 }
 
-// dispatchGateThatExits255 drives the REAL dispatchDotToolNode over a gate whose
-// only act is to exit 255, and returns the failure class it produced.
-//
-// runner is the only thing that differs between the two calls in
-// TestTheRemoteReadingOfExit255FollowsTheRunner, so the class this returns is
-// derived from runner exactly the way production derives it. Calling the
-// classifier with a bool literal proves nothing about that wiring: the
-// production call site is what turns a runner into `remote`, and a test that
-// passes the bool itself never touches it.
-//
-// A RecordingRunner with no CmdFunc runs the command locally, which is enough —
-// dispatchDotToolNode only asks the runner for an *exec.Cmd, and a shell that
-// exits 255 is the error shape ssh produces when the transport drops.
 func dispatchGateThatExits255(t *testing.T, runner tmux.CommandRunner) core.FailureClass {
 	t.Helper()
 	node := &dot.Node{
@@ -507,8 +296,6 @@ func TestTheRemoteReadingOfExit255FollowsTheRunner(t *testing.T) {
 	if class := dispatchGateThatExits255(t, rr); class != core.FailureClassCanceled {
 		gateReportf(t, "a gate a runner ran is classified %q for exit 255; that is ssh reporting a dropped transport or a signalled remote gate, and neither is a verdict about the code", class)
 	}
-	// Positive evidence that the runner path was the one taken, rather than the
-	// class arriving for some other reason.
 	if len(rr.Calls) == 0 {
 		gateReportf(t, "the runner was never asked for a command, so the remote branch never ran")
 	}
@@ -547,8 +334,6 @@ func TestTheSanitizerCoversEveryStringTheClassifierKeysOn(t *testing.T) {
 			gateReportf(t, "signature %q rewrites to %q, which still contains it", sig.text, sig.quoted)
 		}
 
-		// The line a diagnostic would carry: make's own report about a recipe,
-		// with this signature on it.
 		raw := "make[2]: *** [fmt-check] " + sig.text
 		clean := gateEvidenceQuote(raw)
 
@@ -559,8 +344,6 @@ func TestTheSanitizerCoversEveryStringTheClassifierKeysOn(t *testing.T) {
 			gateReportf(t, "a sanitized message still trips an unscoped detector: %q", clean)
 		}
 
-		// NEGATIVE CONTROL. The raw line must change the class, or the assertion
-		// below measures nothing at all.
 		if class, _ := classifyGateLog(t, gateLogWithTranscript(raw, redGateCascade)); class == core.FailureClassDeterministic {
 			gateFatalf(t, "signature %q planted RAW in a red gate's transcript leaves the class deterministic, so this test cannot fail and proves nothing", sig.text)
 		}
@@ -569,10 +352,6 @@ func TestTheSanitizerCoversEveryStringTheClassifierKeysOn(t *testing.T) {
 		}
 	}
 
-	// The cascade-scoped words are NOT rewritten, on purpose: naming the signal
-	// is the value of the diagnostic. What makes that safe is that losing the
-	// anchor puts the line outside the only region that reads them. Assert it
-	// rather than assume it.
 	if len(gateCascadeKillWords) == 0 {
 		gateFatalf(t, "the cascade kill-word table is empty, so the loop below is vacuous")
 	}
@@ -585,7 +364,6 @@ func TestTheSanitizerCoversEveryStringTheClassifierKeysOn(t *testing.T) {
 		if n := len(gateTerminalRecipeFailures([]byte(clean))); n != 0 {
 			gateReportf(t, "a sanitized line naming %q is still admitted to make's cascade (%d member(s)), so position no longer protects it: %q", word, n, clean)
 		}
-		// NEGATIVE CONTROL for the same claim.
 		if n := len(gateTerminalRecipeFailures([]byte(raw))); n == 0 {
 			gateFatalf(t, "the RAW line naming %q is not a cascade member either, so the check above proves nothing: %q", word, raw)
 		}
@@ -607,12 +385,6 @@ func TestTheSanitizerCoversEveryStringTheClassifierKeysOn(t *testing.T) {
 func TestALineAGoTestWroteIsNeverMakesOwnReport(t *testing.T) {
 	t.Parallel()
 
-	// Two shapes, both live in this package today. go test renders a one-line
-	// message with the source position on it, and a message written as
-	// "…:\n%s" as an indented continuation line with no position at all. The
-	// second is why the rule is INDENTATION and not go test's `file.go:NN: `
-	// prefix: only the first line of a message carries that prefix, and the
-	// anchor in this package's sibling files sits on the second.
 	for name, escaped := range map[string]string{
 		"one-line message":  "    dot_cascade_gatekilled_test.go:41: a gate that was killed reads as a clean exit: make[1]: *** [test-scenario] Terminated: 15",
 		"continuation line": "        make[1]: *** [test-scenario] Terminated: 15",
@@ -621,9 +393,6 @@ func TestALineAGoTestWroteIsNeverMakesOwnReport(t *testing.T) {
 	}
 }
 
-// gateAssertEscapedAnchorIsNotEvidence plants one line a TEST wrote, carrying a
-// raw recipe anchor, inside the cascade gap window right ahead of make's real
-// red cascade, and requires the gate to stay deterministic.
 func gateAssertEscapedAnchorIsNotEvidence(t *testing.T, name, escaped string) {
 	t.Helper()
 
@@ -633,8 +402,6 @@ func gateAssertEscapedAnchorIsNotEvidence(t *testing.T, name, escaped string) {
 		"FAIL\tgithub.com/gregberns/harmonik/internal/daemon\t1.0s",
 		"FAIL",
 	}
-	// The trailer being exactly the tolerance is WHY the escaped line is in
-	// reach. Tie the claim to the constant so it stays true if either changes.
 	if len(trailer) != gateCascadeGapLines {
 		gateFatalf(t, "go test's failure trailer is %d lines and the cascade gap tolerance is %d; this test no longer sets up the case it describes", len(trailer), gateCascadeGapLines)
 	}
@@ -644,11 +411,7 @@ func gateAssertEscapedAnchorIsNotEvidence(t *testing.T, name, escaped string) {
 		"make[1]: *** [test-unit] Error 1\n" +
 		"make: *** [full] Error 2\n")
 
-	// Positive evidence about the mechanism: the rule holds for the line go test
-	// wrote and not for the lines make wrote.
 	if !gateLineIsIndented(escaped) {
-		// Reported, not fatal: the classification assertion below is the
-		// consequence, and both cases in the caller's table still run.
 		gateReportf(t, "%s: a line go test wrote does not read as indented, so nothing keeps it out of make's cascade: %q", name, escaped)
 	}
 	for _, made := range []string{"make[1]: *** [test-unit] Error 1", "make: *** [full] Error 2"} {
@@ -704,9 +467,6 @@ func TestNoStringLiteralInThisFileCanRelabelTheNextGate(t *testing.T) {
 				fset.Position(lit.Pos()).Line, class, clean)
 		}
 
-		// NEGATIVE CONTROL, for the literals that carry an unscoped signature:
-		// the RAW form must flip the class, or the check above is vacuous for
-		// exactly the case that broke live.
 		if gateOutputHasAnySignature(text, gateUnscopedSignatures) {
 			unscoped++
 			if class, _ := classifyGateLog(t, gateLogWithTranscript(text, redGateCascade)); class == core.FailureClassDeterministic {
@@ -724,9 +484,6 @@ func TestNoStringLiteralInThisFileCanRelabelTheNextGate(t *testing.T) {
 	}
 }
 
-// gateLiteralIsClassifierBait reports whether a string is something the gate
-// classifier reacts to at all: make's recipe anchor, a cascade kill word, or any
-// unscoped signature.
 func gateLiteralIsClassifierBait(text string) bool {
 	if strings.Contains(text, gateRecipeFailureAnchor) || gateOutputHasAnySignature(text, gateUnscopedSignatures) {
 		return true
@@ -739,61 +496,13 @@ func gateLiteralIsClassifierBait(text string) bool {
 	return false
 }
 
-// gateTestOutputMethods are the testing-handle methods that put text in the test
-// log. -v replays all of them, including the ones that do not fail.
 var gateTestOutputMethods = map[string]bool{
 	"Error": true, "Errorf": true, "Fatal": true, "Fatalf": true,
 	"Log": true, "Logf": true, "Skip": true, "Skipf": true,
 }
 
-// gateSanitizerName is the one function that makes a string safe to write from
-// this package. A write is exempt because the guard SAW this call on it, not
-// because the enclosing function is on a list of approved names — a name list
-// exempts a third helper that strips nothing.
 const gateSanitizerName = "gateEvidenceQuote"
 
-// gateOutputSites reports every call in file that puts text into the test log or
-// onto a standard stream, split by whether the guard could see the message go
-// through gateEvidenceQuote first.
-//
-// WHAT IT FOLLOWS. A call is a write when it is one of:
-//
-//   - a method in gateTestOutputMethods on a testing handle. Handles are found
-//     by type — *testing.T / *testing.B / *testing.F / testing.TB — over every
-//     parameter list in the file, function literals included, so a `t.Run`
-//     closure whose parameter is not called `t` is covered and so is a helper
-//     that takes testing.TB;
-//   - fmt.Print* / fmt.Fprint*, log.*, slog's level functions (Debug / Info /
-//     Warn / Error, their Context spellings, Log and LogAttrs), a method on
-//     os.Stdout / os.Stderr, or the print / println builtins.
-//
-// The receiver is resolved as a dotted path of plain identifiers, so
-// `os.Stderr.WriteString` is followed and not just `os.Stderr`. A path whose
-// last element is a handle name counts too, which covers a handle reached
-// through a field.
-//
-// WHAT IT DOES NOT FOLLOW, stated because a guard that overstates its reach is
-// the defect this file exists to repair: a write through a value the guard
-// cannot name as a dotted path of identifiers — an io.Writer in a variable, a
-// handle returned by a method call, a handle in a slice or a map — and any write
-// made by a helper in ANOTHER file of this package. It reads one file; the
-// package-wide tier is gateSignatureWriteSites, which trades this one's "every
-// write" reach for "every file".
-//
-// A dotted path is NECESSARY and not sufficient, and the list above is the whole
-// set of receivers. `slog.ErrorContext(ctx, …)` reads like a dotted path that
-// must therefore be covered — it is, now, and it was not until this was written.
-// The one still outside is testify: 197 `require.*` / `assert.*` calls in this
-// package. They are test-only and their text reaches the log through the testing
-// handle, so it arrives INDENTED — which is cover for make's anchor and is NOT
-// cover for an unscoped signature, whose detector reads the whole log. So a
-// testify call that interpolates a detector string is invisible here. That is a
-// stated limit, not a covered case, and the reason it is tolerable is that the
-// package writes no such call today, not that one would be harmless.
-//
-// A write is SANITIZED only when its message is exactly one argument and that
-// argument is a direct call to gateEvidenceQuote. Anything looser lets a raw
-// format string travel next to a sanitized value.
 func gateOutputSites(fset *token.FileSet, file *ast.File) (unsanitized, sanitized []string) {
 	handles := gateTestingHandleNames(file)
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -816,17 +525,6 @@ func gateOutputSites(fset *token.FileSet, file *ast.File) (unsanitized, sanitize
 	return unsanitized, sanitized
 }
 
-// gateTestingHandleNames collects the name of every parameter in file whose type
-// is one of testing's handles, from function declarations and function literals
-// alike.
-//
-// It keys on names and ignores scope. Measured on this file, that adds checked
-// sites rather than removing them: a name bound to a testing handle anywhere makes
-// every write through that name a checked site everywhere, including where it is
-// not a handle. That is not a proof that scope-blindness can only ever over-report,
-// and it is not what keeps the guard honest — the miss to know about is a handle the
-// collector never sees at all, such as one held in a local variable rather than
-// taken as a parameter. The header comment on the guard states that limit.
 func gateTestingHandleNames(file *ast.File) map[string]bool {
 	names := map[string]bool{}
 	collect := func(params *ast.FieldList) {
@@ -854,8 +552,6 @@ func gateTestingHandleNames(file *ast.File) map[string]bool {
 	return names
 }
 
-// gateTypeIsTestingHandle reports whether an AST type is a testing handle:
-// *testing.T, *testing.B, *testing.F, or the testing.TB interface.
 func gateTypeIsTestingHandle(expr ast.Expr) bool {
 	if star, isStar := expr.(*ast.StarExpr); isStar {
 		expr = star.X
@@ -875,11 +571,7 @@ func gateTypeIsTestingHandle(expr ast.Expr) bool {
 	return false
 }
 
-// gateOutputChannel classifies a call as a write to the test log or a standard
-// stream, and returns the channel's name and the arguments that carry the
-// message.
 func gateOutputChannel(call *ast.CallExpr, handles map[string]bool) (channel string, msgArgs []ast.Expr, ok bool) {
-	// The builtins take no package qualifier and write straight to stderr.
 	if id, isIdent := call.Fun.(*ast.Ident); isIdent {
 		if id.Name == "print" || id.Name == "println" {
 			return id.Name, call.Args, true
@@ -904,7 +596,6 @@ func gateOutputChannel(call *ast.CallExpr, handles map[string]bool) (channel str
 		}
 	case recv == "fmt":
 		if strings.HasPrefix(method, "Fprint") {
-			// The writer is the first argument; the message follows it.
 			return path, call.Args[1:], true
 		}
 		if strings.HasPrefix(method, "Print") {
@@ -913,29 +604,18 @@ func gateOutputChannel(call *ast.CallExpr, handles map[string]bool) (channel str
 	case recv == "log", recv == "os.Stdout", recv == "os.Stderr":
 		return path, call.Args, true
 	case recv == "slog":
-		// slog reaches stderr through the default handler, at column 0 — the
-		// position that matters here — and this package makes 58 such calls in
-		// its production files (46 WarnContext, 12 InfoContext). An earlier
-		// count of 59 came from a text grep, which also caught a slog.Default()
-		// mention inside a // comment in daemon.go; this guard walks the AST and
-		// never sees a comment. The ctx-taking spellings put the message after
-		// the arguments the guard has no interest in, so skip those and keep the
-		// rest: over-including an argument only ever adds a checked expression.
 		switch method {
 		case "Debug", "Info", "Warn", "Error":
 			return path, call.Args, true
 		case "DebugContext", "InfoContext", "WarnContext", "ErrorContext":
 			return path, gateArgsAfter(call.Args, 1), true
 		case "Log", "LogAttrs":
-			// Log(ctx, level, msg, …) and LogAttrs(ctx, level, msg, …).
 			return path, gateArgsAfter(call.Args, 2), true
 		}
 	}
 	return "", nil, false
 }
 
-// gateArgsAfter drops the first n arguments of a call, and returns nothing
-// rather than panicking on a call that has fewer.
 func gateArgsAfter(args []ast.Expr, n int) []ast.Expr {
 	if len(args) <= n {
 		return nil
@@ -943,8 +623,6 @@ func gateArgsAfter(args []ast.Expr, n int) []ast.Expr {
 	return args[n:]
 }
 
-// gateReceiverIsTestingHandle reports whether a dotted receiver path names a
-// testing handle, either outright (`t`) or as its last element (`fixture.t`).
 func gateReceiverIsTestingHandle(recv string, handles map[string]bool) bool {
 	if handles[recv] {
 		return true
@@ -955,10 +633,6 @@ func gateReceiverIsTestingHandle(recv string, handles map[string]bool) bool {
 	return false
 }
 
-// gateSelectorPath renders a selector as a dotted path when every element of it
-// is a plain identifier — `t.Errorf`, `os.Stderr.WriteString`. It returns "" for
-// anything else, which the guard cannot follow; the doc on gateOutputSites says
-// so.
 func gateSelectorPath(sel *ast.SelectorExpr) string {
 	switch base := sel.X.(type) {
 	case *ast.Ident:
@@ -973,8 +647,6 @@ func gateSelectorPath(sel *ast.SelectorExpr) string {
 	return ""
 }
 
-// gateArgsAreSanitized reports whether a write's message is exactly one call to
-// the sanitizer.
 func gateArgsAreSanitized(args []ast.Expr) bool {
 	if len(args) != 1 {
 		return false
@@ -987,7 +659,6 @@ func gateArgsAreSanitized(args []ast.Expr) bool {
 	return isIdent && id.Name == gateSanitizerName
 }
 
-// gateParseThisFile parses the source file this call sits in.
 func gateParseThisFile(t *testing.T, fset *token.FileSet) *ast.File {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -1013,7 +684,6 @@ func gateParseThisFile(t *testing.T, fset *token.FileSet) *ast.File {
 func TestNoMessageInThisFileReachesTheLogUnsanitized(t *testing.T) {
 	t.Parallel()
 
-	// The guard is worth nothing if the strip does not strip.
 	if q := gateEvidenceQuote("make[1]: " + gateRecipeFailureAnchor + "test-scenario] Error 143"); strings.Contains(q, gateRecipeFailureAnchor) {
 		gateReportf(t, "gateEvidenceQuote leaves make's recipe anchor in place, so every message in this file carries it")
 	}
@@ -1025,8 +695,6 @@ func TestNoMessageInThisFileReachesTheLogUnsanitized(t *testing.T) {
 		gateReportf(t, "these write to the test log without passing the text through %s, so it can be read as make's own report — or as a missing tool — in the next gate's log: %s",
 			gateSanitizerName, strings.Join(unsanitized, ", "))
 	}
-	// Positive evidence that the walk found call sites at all. An empty result
-	// from a broken walk looks exactly like a clean file.
 	if len(sanitized) < 2 {
 		gateFatalf(t, "the guard found %d sanitized write(s) (%s); this file has at least two, so the walk is not reading the file it thinks it is", len(sanitized), strings.Join(sanitized, ", "))
 	}
@@ -1042,7 +710,6 @@ func TestTheOutputGuardCatchesTheWaysItWasDefeated(t *testing.T) {
 	t.Parallel()
 
 	for name, body := range map[string]string{
-		// The four the reviewer got through.
 		"helper taking testing.TB":    `func h(tb testing.TB) { tb.Errorf("x") }`,
 		"t.Run closure param not `t`": `func A(t *testing.T) { t.Run("s", func(u *testing.T) { u.Errorf("x") }) }`,
 		"println builtin":             `func B(t *testing.T) { println("x") }`,
@@ -1087,8 +754,6 @@ func TestTheOutputGuardCatchesTheWaysItWasDefeated(t *testing.T) {
 	}
 }
 
-// gateScanSnippet runs the guard over one synthetic declaration and returns the
-// unsanitized writes it found.
 func gateScanSnippet(t *testing.T, body string) []string {
 	t.Helper()
 	src := "package p\n\nimport (\n\t\"fmt\"\n\t\"log\"\n\t\"os\"\n\t\"testing\"\n)\n\ntype fixture struct{ t *testing.T }\n\n" + body + "\n"
@@ -1101,9 +766,6 @@ func gateScanSnippet(t *testing.T, body string) []string {
 	return unsanitized
 }
 
-// gateSkipf skips the test with the message sanitized, the same way gateReportf
-// reports one. It exists because the guard checks the CALL, not the name of the
-// function around it, so a third helper needs no permission to be added.
 func gateSkipf(t *testing.T, format string, args ...any) {
 	t.Helper()
 	t.Skip(gateEvidenceQuote(fmt.Sprintf(format, args...)))
@@ -1141,7 +803,6 @@ func TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages(t *testi
 		bait.WriteString(sig.text)
 		bait.WriteString(";")
 	}
-	// What this file's own gateReportf would put in the next gate's log.
 	message := gateEvidenceQuote(bait.String())
 
 	wt := t.TempDir()
@@ -1153,7 +814,6 @@ func TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages(t *testi
 			gateFatalf(t, "write %s: %v", name, err)
 		}
 	}
-	// .harmonik exists so the gate's own log write has somewhere to land.
 	if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 		gateFatalf(t, "mkdir .harmonik: %v", err)
 	}
@@ -1173,9 +833,6 @@ func TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages(t *testi
 		gateFatalf(t, "a make gate whose suite FAILED did not fail: status=%q class=%v\n%s", outcome.Status, outcome.FailureClass, outcome.Notes)
 	}
 
-	// Positive evidence that the bait really travelled: the message the suite
-	// printed has to be in the gate log the classifier read, or this test is
-	// asserting about a log that never carried it.
 	if !strings.Contains(outcome.Notes, message) {
 		gateFatalf(t, "the suite's own failure message never reached the gate log, so nothing here was exercised; got:\n%s", outcome.Notes)
 	}
@@ -1192,15 +849,6 @@ func TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages(t *testi
 	}
 }
 
-// gateOutputCarryingEveryTrigger builds gate output that carries every string
-// the classifier reads: make's recipe anchor, every unscoped signature, and a
-// recipe line that names a signal. It is built FROM the detector tables, so a
-// signature added tomorrow is carried by this fixture without anyone editing it.
-//
-// The lines read oddly — a signature is pasted onto a recipe line that would not
-// really carry it — because the fixture's only job is to hold every trigger at
-// once. TestARealMakeGateStaysRedWhenTheSuitePrintsThisPackagesOwnMessages
-// builds its bait the same way and for the same reason.
 func gateOutputCarryingEveryTrigger() string {
 	var b strings.Builder
 	b.WriteString("--- FAIL: TestSomething (0.02s)\n    x_test.go:41: want 3, got 4\n")
@@ -1212,9 +860,6 @@ func gateOutputCarryingEveryTrigger() string {
 	return b.String()
 }
 
-// gateLogWithMessageAgainstTheCascade puts message at column 0 immediately above
-// make's terminal cascade — the position a daemon diagnostic on stderr lands in,
-// and the one gateLineIsIndented cannot rule out.
 func gateLogWithMessageAgainstTheCascade(message, cascade string) []byte {
 	return []byte("--- PASS: TestUnrelated (0.01s)\n" +
 		strings.TrimRight(message, "\n") + "\n" + cascade)
@@ -1264,8 +909,6 @@ func TestAMessageQuotingGateOutputCannotRelabelTheNextGate(t *testing.T) {
 	notes := gateOutputCarryingEveryTrigger()
 
 	plant := map[string]func(string) []byte{
-		// Far above the cascade, where the daemon's 2026-08-12 diagnostic sat.
-		// Only an UNSCOPED signature reaches the classifier from here.
 		"far from the cascade": func(msg string) []byte {
 			return gateLogWithTranscript(msg, redGateCascade)
 		},
@@ -1276,8 +919,6 @@ func TestAMessageQuotingGateOutputCannotRelabelTheNextGate(t *testing.T) {
 		},
 	}
 
-	// NEGATIVE CONTROL FIRST. The raw output must flip the class in BOTH
-	// placements, or the checks below prove nothing about either rule.
 	for where, build := range plant {
 		if class, _ := classifyGateLog(t, build(notes)); class == core.FailureClassDeterministic {
 			gateFatalf(t, "%s: the raw gate output leaves a red gate deterministic, so this test cannot fail", where)
@@ -1324,9 +965,6 @@ func TestAMessageQuotingGateOutputCannotRelabelTheNextGate(t *testing.T) {
 			}
 		}
 
-		// The message still has to SAY what died and how. Removing make's anchor
-		// is what disarms the cascade-scoped detectors; the signal name is the
-		// value of the diagnostic and must survive.
 		if !strings.Contains(msg, "test-scenario") || !strings.Contains(msg, "Terminated: 15") {
 			gateReportf(t, "%s no longer names the recipe that died or the signal that ended it:\n%s", name, msg)
 		}
@@ -1356,7 +994,6 @@ func TestAMessageQuotingGateOutputCannotRelabelTheNextGate(t *testing.T) {
 func TestTheStrandedCommitExcerptCannotBuildOrRegrowASignature(t *testing.T) {
 	t.Parallel()
 
-	// THE JOIN. Neither line carries a signature; the fold makes one.
 	const split = "/bin/sh: gofumpt:\ncommand not found\n"
 	if gateOutputHasAnySignature(split, gateUnscopedSignatures) {
 		gateFatalf(t, "the fixture already carries a signature before it is folded, so the join is not what this measures")
@@ -1368,8 +1005,6 @@ func TestTheStrandedCommitExcerptCannotBuildOrRegrowASignature(t *testing.T) {
 		gateReportf(t, "the excerpt built a detector signature out of two harmless lines, so a red gate whose log replays it reads as structural:%s", joined)
 	}
 
-	// THE REGROWTH. Long output, every line a signature, so every line grows
-	// under the rewrite. The bound has to hold on what actually goes out.
 	var long strings.Builder
 	for range 40 {
 		for _, sig := range gateUnscopedSignatures {
@@ -1447,8 +1082,6 @@ func TestTheStrandedCommitExcerptCannotBuildOrRegrowASignature(t *testing.T) {
 func TestTheGateOutputClauseCannotBuildASignatureAtTheSeam(t *testing.T) {
 	t.Parallel()
 
-	// EVERY writer that pastes a daemon-authored constant onto sanitized gate
-	// output, not just the one that was caught doing it wrong.
 	writers := map[string]func(string) string{
 		"gateFailureTail": gateFailureTail,
 		// The kill path pastes gateKillOutputPrefix onto a line the extractor
@@ -1471,49 +1104,24 @@ func TestTheGateOutputClauseCannotBuildASignatureAtTheSeam(t *testing.T) {
 		},
 	}
 
-	// NEGATIVE CONTROL. The hazard has to be real TODAY, or every check below
-	// runs over a seam that could not have built anything.
 	if !gateOutputHasAnySignature(gateFailureTailPrefix+"command not found", gateUnscopedSignatures) {
 		gateFatalf(t, "pasting %q straight onto an excerpt that begins `command not found` no longer builds a signature. If the prefix was made safe on its own, this control is what says so — replace it deliberately rather than leaving a check that cannot fail.", gateFailureTailPrefix)
 	}
 
-	// THE FIXTURE the defect was found on. Short enough to escape the cut, so
-	// it reaches the join with no `…` already in front of it.
 	if got := gateFailureTail("command not found"); gateOutputHasAnySignature(got, gateUnscopedSignatures) {
 		gateReportf(t, "the clause built a detector signature at the join with its own prefix, so a red gate whose log replays this reason reads as structural:%s", got)
 	}
 
-	// DERIVED. Every signature, split at every byte: the message starts with the
-	// REST of one, and the front of it is whatever the constant happens to end
-	// with.
 	for _, sig := range gateUnscopedSignatures {
 		for i := 1; i < len(sig.text); i++ {
 			notes := sig.text[i:] + " (while running the fmt-check recipe)"
 
-			// The probe must reach the join CLEAN, or it measures the sanitizer
-			// instead of the seam. Trimming and folding only ever REMOVE bytes
-			// or swap one for one, so a probe clean here is clean in whatever
-			// each writer does to it.
 			if gateOutputHasAnySignature(gateEvidenceQuote(notes), gateUnscopedSignatures) {
 				gateFatalf(t, "the probe still carries a whole signature after sanitizing, so splitting %q after %d byte(s) measures nothing about the join", sig.text, i)
 			}
 
 			for writer, render := range writers {
 				got := render(notes)
-				// A writer that renders NOTHING passes the check below without
-				// measuring anything. One empty render is legitimate and only
-				// one: the kill path quotes a line from make's cascade, and a
-				// probe that begins with a SPACE cannot start a column-0 line,
-				// so gateTerminalRecipeFailures drops it as indented and there
-				// is no seam to reach. Any other empty render is a broken probe
-				// reading as a clean result.
-				//
-				// The exception names the WRITER as well as the probe. Keyed on
-				// the probe alone it would also excuse an empty render from
-				// gateFailureTail or either gateBackEdgeMessage branch on those
-				// same probes — writers that build a sentence and cannot
-				// legitimately render nothing — which is wider than the claim
-				// above and would go unnoticed while the suite stayed green.
 				legitimatelyEmpty := writer == "gateKilledBySignal" && strings.HasPrefix(notes, " ")
 				if got == "" && !legitimatelyEmpty {
 					gateFatalf(t, "%s rendered nothing for the probe built from %q at %d byte(s), so this writer measures no seam at all", writer, sig.text, i)
@@ -1562,9 +1170,6 @@ func TestTheCutAndTheSeamMarkerCannotBothLandOnOneExcerpt(t *testing.T) {
 
 	bound := gateFailureTailMaxBytes + len(gateFailureTailPrefix) + len("…")
 
-	// The filler only has to be long enough to force the cut and to carry no
-	// trigger of its own. It folds to spaces, so its bytes survive one for one
-	// and the cut lands where the arithmetic below puts it.
 	filler := strings.Repeat("go downloading something irrelevant\n", 8)
 
 	var straddling int
@@ -1574,9 +1179,6 @@ func TestTheCutAndTheSeamMarkerCannotBothLandOnOneExcerpt(t *testing.T) {
 			if len(head) > gateFailureTailMaxBytes {
 				continue
 			}
-			// The surviving tail is exactly gateFailureTailMaxBytes bytes and
-			// starts with the REST of a signature, so the cut hands the seam the
-			// one excerpt that would bite it.
 			tail := head + strings.Repeat("x", gateFailureTailMaxBytes-len(head))
 			notes := filler + tail
 
@@ -1584,9 +1186,6 @@ func TestTheCutAndTheSeamMarkerCannotBothLandOnOneExcerpt(t *testing.T) {
 				straddling++
 			}
 
-			// PREMISE. Nothing in the probe is rewritten, so the sanitizer does
-			// not move the bytes and the cut really does land on head. Without
-			// this the arithmetic above is an assumption.
 			folded := strings.ReplaceAll(strings.TrimSpace(notes), "\n", " ")
 			if gateEvidenceQuote(folded) != folded {
 				gateFatalf(t, "the probe built from %q split after %d byte(s) is rewritten by the sanitizer, so the cut no longer lands where this test places it", sig.text, i)
@@ -1594,7 +1193,6 @@ func TestTheCutAndTheSeamMarkerCannotBothLandOnOneExcerpt(t *testing.T) {
 
 			got := gateFailureTail(notes)
 
-			// The probe is worthless if it did not truncate.
 			if !strings.Contains(got, "…") {
 				gateFatalf(t, "the probe is %d bytes and did not truncate, so it never exercised the cut and the seam together", len(notes))
 			}
@@ -1610,18 +1208,11 @@ func TestTheCutAndTheSeamMarkerCannotBothLandOnOneExcerpt(t *testing.T) {
 		}
 	}
 
-	// NEGATIVE CONTROL. At least one probe has to be one the seam would really
-	// have bitten, or the sweep above never put the two steps in contact.
 	if straddling == 0 {
 		gateFatalf(t, "no probe here begins with a phrase that %q could build a signature with, so nothing in this test exercises the cut and the seam at once", gateFailureTailPrefix)
 	}
 }
 
-// gateSanitizerExemptTables names every []gateOutputSignature table that is
-// deliberately NOT reachable from gateEvidenceQuote, with the reason. It is
-// empty: today every such table is unscoped, so every one is sanitized. An entry
-// here is a written decision, which is the point — the test below fails on a new
-// table until somebody either wires it into the sanitizer or says here why not.
 var gateSanitizerExemptTables = map[string]string{}
 
 // TestEveryDetectorTableIsReachableFromTheSanitizer holds the convention that
@@ -1662,8 +1253,6 @@ func TestEveryDetectorTableIsReachableFromTheSanitizer(t *testing.T) {
 		gateCollectSignatureTables(file, name, declared, sanitized)
 	}
 
-	// Positive evidence: the shapes this test looks for still exist. Without
-	// this the test passes loudly on a file it failed to understand.
 	if len(declared) == 0 {
 		gateFatalf(t, "no package-level []gateOutputSignature table was found in this package; this test is reading source it no longer understands")
 	}
@@ -1683,7 +1272,6 @@ func TestEveryDetectorTableIsReachableFromTheSanitizer(t *testing.T) {
 	}
 }
 
-// gatePackageDir returns the directory of this package's source.
 func gatePackageDir(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -1693,9 +1281,6 @@ func gatePackageDir(t *testing.T) string {
 	return filepath.Dir(thisFile)
 }
 
-// gateParsePackage parses every .go file in this package's directory, keyed by
-// base name. It is what lets the guards below see a SIBLING file — the reach the
-// single-file versions do not have, and the reach the defect needed.
 func gateParsePackage(t *testing.T, fset *token.FileSet, testFiles bool) map[string]*ast.File {
 	t.Helper()
 	dir := gatePackageDir(t)
@@ -1720,8 +1305,6 @@ func gateParsePackage(t *testing.T, fset *token.FileSet, testFiles bool) map[str
 	return files
 }
 
-// gateSignatureInText reports whether text carries an UNSCOPED signature — one
-// whose detector reads the whole gate log, so no line position protects it.
 func gateSignatureInText(text string) bool {
 	for _, sig := range gateUnscopedSignatures {
 		if strings.Contains(text, sig.text) {
@@ -1731,38 +1314,18 @@ func gateSignatureInText(text string) bool {
 	return false
 }
 
-// gateAnchorInText reports whether text carries make's recipe anchor — the
-// prefix that lets a line be read as a member of make's terminal cascade.
-//
-// It is a SEPARATE class from an unscoped signature, and the difference is
-// position. An anchor is read only inside the cascade window and only on a line
-// that is not indented, so a write through a testing handle cannot build one:
-// go test indents it and gateLineIsIndented throws it out. A write that lands
-// at column 0 has no such cover, so this class is asked only about those
-// channels.
 func gateAnchorInText(text string) bool {
 	return strings.Contains(text, gateRecipeFailureAnchor)
 }
 
-// gateChannelLandsAtColumnZero reports whether text written through this
-// channel reaches the gate log with nothing in front of it.
-//
-// go test indents everything a testing handle prints. Every other channel
-// gateOutputChannel recognises — the standard streams, log, slog, the print
-// builtins — writes straight out at column 0, which is the position make's own
-// report occupies and the one no indentation rule can rule out.
 func gateChannelLandsAtColumnZero(channel string, handles map[string]bool) bool {
 	i := strings.LastIndex(channel, ".")
 	if i < 0 {
-		// The print / println builtins take no qualifier and go to stderr.
 		return true
 	}
 	return !gateReceiverIsTestingHandle(channel[:i], handles)
 }
 
-// gateExprCarriesText reports whether an expression subtree contains a string
-// literal that match recognises, or names a variable that holds one at that
-// point in the source.
 func gateExprCarriesText(expr ast.Expr, match func(string) bool, spans []gateTaintSpan) bool {
 	found := false
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -1788,60 +1351,11 @@ func gateExprCarriesText(expr ast.Expr, match func(string) bool, spans []gateTai
 	return found
 }
 
-// gateTaintSpan is one variable that holds text a matcher recognises, and the
-// span of source over which it does. A span, not a file-wide name: `out` is the
-// obvious name for a loop variable, both of the files this guard has to read use
-// it twice in ONE function, and only one of the two loops carries a signature.
-// Keying on the name alone reported the safe loop as well and turned 2 real
-// findings into 12.
 type gateTaintSpan struct {
 	name     string
 	from, to token.Pos
 }
 
-// gateTaintSpans finds the variables in file that hold text match recognises,
-// each scoped to the source span where they hold it.
-//
-// It is a deliberately SHALLOW pass, and naming its limits is the point. It
-// follows a range over a signature-bearing expression (scoped to that loop's
-// body) and a var / const / := whose right-hand side is signature-bearing. It
-// does NOT follow a value through a function call, a struct field, a map, a
-// channel, or another file.
-//
-// The SPAN of a declaration is where the name can be read, not where it was
-// written, and the two differ at package scope. A local holds its signature
-// from the assignment to the end of the enclosing function, because a local
-// really cannot be read before it exists. A package-level var holds one over
-// the WHOLE file: Go has no forward-declaration rule at package scope, so a
-// function declared above a detector table reads it exactly as well as one
-// declared below it. Measured: with the span starting at the declaration
-// instead, a `fmt.Fprintf(os.Stderr, …)` in dispatchDotToolNode that
-// interpolated gateCannotRunSignatures was reported by NOTHING — the table is
-// declared 250 lines further down the same file.
-//
-// The span is half of that repair. The other half is the second walk at the
-// bottom of this function, which is what puts the span in hand before the
-// reader is visited, and NEITHER half reports that write on its own. Both are
-// pinned by a plant above the table in gateProductionSnippetSource.
-//
-// The span is a widening, and it widens in the over-report direction: spans are
-// keyed by NAME and blind to scope (see gateTestingHandleNames for the same
-// trade), so a local that shares a name with a package-level detector table is
-// now treated as carrying a signature everywhere in its file. Measured over
-// this package with both halves in place: 102 non-test files, 280 test files,
-// ZERO findings. For THIS guard that direction is the safe one — its failure
-// mode is a false clean.
-//
-// Not following CALL RESULTS is deliberate rather than a gap left open. A node
-// built with a signature in its ToolCommand is passed to a dispatch helper, and
-// treating everything that call returns as tainted reported eight `t.Fatalf("
-// dispatch: %v", err)` sites whose text cannot carry a signature. Sanitizing
-// those would have made real diagnostics worse and taught the next author that
-// the guard cries wolf.
-//
-// It exists at all because both real sites interpolate a loop variable rather
-// than a literal — `for _, out := range cannotRun { t.Errorf("...%s", out) }` —
-// so a literals-only scan reports neither.
 func gateTaintSpans(file *ast.File, match func(string) bool) []gateTaintSpan {
 	var spans []gateTaintSpan
 	add := func(target ast.Expr, from, to token.Pos) {
@@ -1849,8 +1363,6 @@ func gateTaintSpans(file *ast.File, match func(string) bool) []gateTaintSpan {
 			spans = append(spans, gateTaintSpan{name: id.Name, from: from, to: to})
 		}
 	}
-	// A stack of enclosing function ends, so an assignment taints only the rest
-	// of its own function.
 	var funcEnds []token.Pos
 	var walk func(n ast.Node) bool
 	walk = func(n ast.Node) bool {
@@ -1893,9 +1405,6 @@ func gateTaintSpans(file *ast.File, match func(string) bool) []gateTaintSpan {
 				}
 			}
 		case *ast.ValueSpec:
-			// A package-level var has no enclosing function, so it holds a
-			// signature over the whole file — from the first line, not from its
-			// own declaration, because a function above it can read it.
 			from, end := node.End(), file.End()
 			if len(funcEnds) > 0 {
 				end = funcEnds[len(funcEnds)-1]
@@ -1915,33 +1424,12 @@ func gateTaintSpans(file *ast.File, match func(string) bool) []gateTaintSpan {
 		}
 		return true
 	}
-	// TWO passes, and the second one KEEPS what the first learned. Reading a
-	// name above its own declaration is legal at package scope and the walk is
-	// source-order, so the first pass reaches the reader before the span it
-	// needs exists. Only the second pass has it in hand.
-	//
-	// Both halves are load-bearing and each is useless alone. The span has to
-	// cover the whole file (see above) or the reader is outside it; the second
-	// pass has to inherit the spans or the reader is visited before they exist.
-	// This loop used to clear `spans` at the top of every pass, which made the
-	// second one a pure re-execution of the first — it delivered nothing, and
-	// the comment on it claimed it delivered exactly this.
-	//
-	// Two passes and not a fixed point: a chain of package-level vars N deep
-	// needs N of them, and this resolves one hop. That is the depth every shape
-	// in this package has today — a table read by a function — and it is a
-	// stopping point chosen for those shapes, not a closed one.
 	for range 2 {
 		ast.Inspect(file, walk)
 	}
-	// The same span is found once per pass. Dedupe, so a count of spans means
-	// what it says.
 	return gateDedupeSpans(spans)
 }
 
-// gateDedupeSpans collapses spans that repeat. Two passes over the same file
-// find the same span twice, and a duplicate would make a COUNT of spans wrong
-// while changing no answer about any single position.
 func gateDedupeSpans(spans []gateTaintSpan) []gateTaintSpan {
 	seen := map[gateTaintSpan]bool{}
 	out := spans[:0]
@@ -1955,7 +1443,6 @@ func gateDedupeSpans(spans []gateTaintSpan) []gateTaintSpan {
 	return out
 }
 
-// gateTaintedAt reports whether name holds matched text at pos.
 func gateTaintedAt(spans []gateTaintSpan, name string, pos token.Pos) bool {
 	for _, span := range spans {
 		if span.name == name && pos >= span.from && pos <= span.to {
@@ -1965,24 +1452,6 @@ func gateTaintedAt(spans []gateTaintSpan, name string, pos token.Pos) bool {
 	return false
 }
 
-// gateSignatureWriteSites reports every write in file whose message reaches the
-// gate log carrying something the classifier keys on, without going through
-// gateEvidenceQuote. Two classes, and they differ in which channels they apply
-// to, because they differ in what protects them:
-//
-//   - an UNSCOPED signature, on ANY channel. Its detector reads the whole log,
-//     so no line position protects it and an indent buys nothing.
-//   - make's RECIPE ANCHOR, on the channels that land at COLUMN 0 only. The
-//     anchor is read only inside make's terminal cascade and only on a line
-//     that is not indented, so go test's indent really is cover for a testing
-//     handle — and it is no cover at all for a write straight to stderr, which
-//     is the class this guard was named after and did not have.
-//
-// The anchor class is why this tier reads the whole package rather than one
-// file. Its predecessor (gateOutputSites) reports every unsanitized write, and
-// so it can only afford to read the single file it is kept clean in; a sibling
-// file writing an anchor at column 0 was invisible to both tiers, and a planted
-// one left the whole gate suite green (hk-gate-anchor-guard-one-file-x6t5k).
 func gateSignatureWriteSites(fset *token.FileSet, name string, file *ast.File) []string {
 	handles := gateTestingHandleNames(file)
 	signatureSpans := gateTaintSpans(file, gateSignatureInText)
@@ -2009,8 +1478,6 @@ func gateSignatureWriteSites(fset *token.FileSet, name string, file *ast.File) [
 	return sites
 }
 
-// gateArgsCarry reports whether any of a write's message arguments carries text
-// the matcher recognises.
 func gateArgsCarry(args []ast.Expr, match func(string) bool, spans []gateTaintSpan) bool {
 	for _, arg := range args {
 		if gateExprCarriesText(arg, match, spans) {
@@ -2020,39 +1487,11 @@ func gateArgsCarry(args []ast.Expr, match func(string) bool, spans []gateTaintSp
 	return false
 }
 
-// gateSnippetName is the file name the synthetic production file is parsed
-// under, and gateSnippetPlantMarker marks each write in it that MUST be
-// reported. The marker is a comment, so the parser ignores it and the line it
-// sits on is the expected finding.
 const (
 	gateSnippetName        = "synthetic_production.go"
 	gateSnippetPlantMarker = "// PLANTED"
 )
 
-// gateProductionSnippetSource is a production file in miniature, shaped like the
-// daemon's own stderr diagnostic: no testing handle anywhere, a package-level
-// detector table, and a loop variable that carries one of its strings into a
-// write that lands at column 0.
-//
-// It is planted HERE and never in a real file of this package. A plant in a
-// tracked file is a signature this daemon really can write into the next gate's
-// log, which is the defect itself.
-//
-// The table is declared BETWEEN the two functions that read it, on purpose. That
-// is the shape of the real file — dispatchDotToolNode writes its diagnostic 250
-// lines above gateCannotRunSignatures — and a taint span that starts at the
-// declaration reports the second write and misses the first, silently. Marking
-// both plants is what makes that miss a failure.
-//
-// Six writes and three plants. The third plant carries make's recipe anchor and
-// nothing else, and it is what pins the ANCHOR class: this same source with the
-// anchor plant unreported is what the guard looked like when a column-0 anchor
-// in a sibling file left the whole gate suite green.
-//
-// The other three writes are what keeps the guard usable: one sanitizes its
-// message, one carries no signature at all, and one is an ordinary line beside
-// the anchor plant. A pass that reported those would be one nobody could keep
-// green.
 const gateProductionSnippetSource = `package daemon
 
 import (
@@ -2084,10 +1523,6 @@ func snippetKilled(node string) {
 }
 `
 
-// gateScanProductionSnippet runs the package-wide scan over one synthetic
-// production-shaped source. It returns the sites the scan reported and the sites
-// the source MARKED, both in source order, so the caller compares one list with
-// the other and never with a number it wrote down.
 func gateScanProductionSnippet(t *testing.T, src string) (got, want []string) {
 	t.Helper()
 	for i, line := range strings.Split(src, "\n") {
@@ -2166,21 +1601,12 @@ func TestNoSignatureInThisPackageReachesTheLogUnsanitized(t *testing.T) {
 			gateSanitizerName, strings.Join(offenders, ", "))
 	}
 
-	// Positive evidence: the scan reached sibling files and understood them. If
-	// the taint pass silently stops working, every file looks clean.
 	if len(files) < 2 {
 		gateFatalf(t, "the scan parsed %d file(s) in this package; it is not reading the directory it thinks it is", len(files))
 	}
-	// And that it reached the PRODUCTION half. Both halves come from the same
-	// glob, so a widening that silently reverts leaves the rest of this test
-	// looking exactly as clean as it does now.
 	if files["dot_cascade_helpers.go"] == nil {
 		gateFatalf(t, "the scan did not read the file the classifier lives in, so nothing here covers a diagnostic the daemon writes itself")
 	}
-	// Positive evidence that the taint pass still does the one thing the real
-	// findings need: follow a range over a signature-bearing slice, and scope it
-	// to that loop. Without this a pass that silently stopped resolving names
-	// would report a clean package.
 	probe := gateTaintSpans(files["dot_cascade_gatecannotrun_hk2f3v4_test.go"], gateSignatureInText)
 	var outSpans int
 	for _, span := range probe {
@@ -2191,26 +1617,12 @@ func TestNoSignatureInThisPackageReachesTheLogUnsanitized(t *testing.T) {
 	if outSpans != 1 {
 		gateFatalf(t, "the taint pass found %d tainted span(s) for the loop variable `out` in dot_cascade_gatecannotrun_hk2f3v4_test.go; that file has exactly one signature-bearing loop, so this test is reading a file it no longer understands", outSpans)
 	}
-	// Positive evidence for the WIDENING itself. Everything above proves the
-	// production files were parsed and that nothing in them was reported; none
-	// of it proves the pass can still produce a finding in one, and a scan that
-	// quietly stopped finding things looks exactly like a clean package. So run
-	// the same pass over a production-shaped source with writes planted in it,
-	// and require exactly those writes back — by file and line.
-	//
-	// One plant sits ABOVE the detector table it reads. That one pins the span
-	// rule: a package-level table taints its whole file, and the day it taints
-	// only the source below its own declaration, this is what says so. The real
-	// file has that shape and the miss is silent.
 	sites, plants := gateScanProductionSnippet(t, gateProductionSnippetSource)
 	if got, want := strings.Join(sites, ", "), strings.Join(plants, ", "); got != want {
 		gateFatalf(t, "the scan over a synthetic production file reported %q; it must report exactly the planted writes, %q. A missing site means the guard no longer sees a signature the daemon writes to stderr at column 0 — and the plant above the table goes missing on its own if a package-level detector table stops tainting the whole file. An extra site means it now flags the sanitized write beside them.", got, want)
 	}
 }
 
-// gateCollectSignatureTables records every package-level []gateOutputSignature
-// table declared in file, and every identifier the gateUnscopedSignatures
-// expression is built from.
 func gateCollectSignatureTables(file *ast.File, name string, declared map[string]string, sanitized map[string]bool) {
 	for _, decl := range file.Decls {
 		gd, isGen := decl.(*ast.GenDecl)
@@ -2224,7 +1636,6 @@ func gateCollectSignatureTables(file *ast.File, name string, declared map[string
 			}
 			varName := vs.Names[0].Name
 
-			// var X = []gateOutputSignature{…} — a detector table.
 			if lit, isLit := vs.Values[0].(*ast.CompositeLit); isLit {
 				if at, isArray := lit.Type.(*ast.ArrayType); isArray {
 					if id, isIdent := at.Elt.(*ast.Ident); isIdent && id.Name == "gateOutputSignature" {
@@ -2233,8 +1644,6 @@ func gateCollectSignatureTables(file *ast.File, name string, declared map[string
 				}
 			}
 
-			// var gateUnscopedSignatures = <expr over table names> — every
-			// identifier in it is a table the sanitizer reaches.
 			if varName == "gateUnscopedSignatures" {
 				ast.Inspect(vs.Values[0], func(n ast.Node) bool {
 					if id, isIdent := n.(*ast.Ident); isIdent {

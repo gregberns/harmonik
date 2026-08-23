@@ -40,9 +40,6 @@ var ErrDuplicateEventType = errors.New("core: event type already registered")
 // the registry per EV-028 (event-model.md §4.7).
 var ErrSchemaVersionMismatch = errors.New("core: envelope schema_version does not match registered per-type schema version")
 
-// typeEntry holds the constructor and per-type schema version for one
-// registered event type. Per-type versions evolve independently per EV-028 /
-// §6.4; bumping one type's version requires an EV-027 foundation amendment.
 type typeEntry struct {
 	constructor   func() EventPayload
 	schemaVersion int // declared schema version for this type's payload; >= 1
@@ -301,15 +298,6 @@ func (e Event) DecodePayloadStrict() (EventPayload, error) {
 // to fail with a typed configuration error."
 var ErrSecretPrefixField = errors.New("core: registered payload type has secret-prefix field name")
 
-// scanConstructors is the core implementation of the EV-036 structural check.
-// It scans every constructor in ctors, instantiates each payload via reflection,
-// and returns the first ErrSecretPrefixField violation found, or nil when clean.
-//
-// Non-struct payloads (e.g., map types) are skipped. Unexported fields are
-// skipped (they cannot be set via JSON unmarshaling and carry no JSON key name).
-//
-// Separated from ScanRegisteredPayloadsForSecretFields so that tests can supply
-// a local constructor map without touching the global registry.
 func scanConstructors(ctors map[string]func() EventPayload) error {
 	for typeName, ctor := range ctors {
 		instance := ctor()
@@ -317,7 +305,6 @@ func scanConstructors(ctors map[string]func() EventPayload) error {
 			continue
 		}
 		rt := reflect.TypeOf(instance)
-		// Dereference pointer to get the underlying struct type.
 		for rt.Kind() == reflect.Ptr {
 			rt = rt.Elem()
 		}

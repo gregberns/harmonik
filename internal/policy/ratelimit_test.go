@@ -1,15 +1,5 @@
 package policy
 
-// ratelimit_test.go — pure truth-table tests for the rate-limit hysteresis
-// reducer (StepRateLimit) and the budget-exhausted predicate. These
-// migrate the pure decision logic out of the daemon's handlerpause_policy_37zy8
-// tests: no controller, no bus, no RunRegistry — value-in / value-out.
-//
-// The daemon-side effect coverage (Cause stamping, IsPaused, epoch idempotence,
-// the RunRegistry freeze-list) stays in package daemon.
-//
-// Spec ref: specs/handler-pause.md §5.
-
 import (
 	"testing"
 )

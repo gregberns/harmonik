@@ -15,15 +15,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// b3f22ValidTransition builds a fully-populated forward Transition suitable for
-// transitionrecord tests. The schema version defaults to 1.
 func b3f22ValidTransition(t *testing.T) Transition {
 	t.Helper()
 	return b3f77ValidTransition(t)
 }
 
-// b3f22UnmarshalWire decodes raw JSON bytes into a map[string]any for field
-// inspection in tests.
 func b3f22UnmarshalWire(t *testing.T, data []byte) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -32,8 +28,6 @@ func b3f22UnmarshalWire(t *testing.T, data []byte) map[string]any {
 	}
 	return m
 }
-
-// --- MarshalTransitionRecord: happy path ---
 
 // TestMarshalTransitionRecord_HappyPath verifies that a valid Transition
 // marshals to JSON without error and that the output is a non-empty JSON object.
@@ -129,7 +123,6 @@ func TestMarshalTransitionRecord_SchemaVersionPresent(t *testing.T) {
 	if !ok {
 		t.Fatal("MarshalTransitionRecord: schema_version field missing from output")
 	}
-	// json.Unmarshal decodes numbers as float64 by default.
 	svFloat, ok := sv.(float64)
 	if !ok {
 		t.Fatalf("MarshalTransitionRecord: schema_version type unexpected: %T", sv)
@@ -187,7 +180,6 @@ func TestMarshalTransitionRecord_RollbackStateIDOmittedForForward(t *testing.T) 
 	t.Parallel()
 
 	tr := b3f22ValidTransition(t)
-	// b3f22ValidTransition returns a forward transition with nil RollbackToStateID.
 	if tr.RollbackToStateID != nil {
 		t.Skip("fixture unexpectedly has non-nil RollbackToStateID")
 	}
@@ -206,15 +198,12 @@ func TestMarshalTransitionRecord_RollbackStateIDOmittedForForward(t *testing.T) 
 	}
 }
 
-// --- ValidateTransitionSchemaVersion: happy path ---
-
 // TestValidateTransitionSchemaVersion_Match verifies that matching versions
 // produce a nil error.
 func TestValidateTransitionSchemaVersion_Match(t *testing.T) {
 	t.Parallel()
 
 	tr := b3f22ValidTransition(t)
-	// tr.SchemaVersion == 1 from the fixture.
 	if err := ValidateTransitionSchemaVersion(tr, tr.SchemaVersion); err != nil {
 		t.Errorf("ValidateTransitionSchemaVersion: unexpected error: %v", err)
 	}
@@ -226,7 +215,6 @@ func TestValidateTransitionSchemaVersion_Mismatch(t *testing.T) {
 	t.Parallel()
 
 	tr := b3f22ValidTransition(t)
-	// tr.SchemaVersion == 1; supply a different commit version.
 	err := ValidateTransitionSchemaVersion(tr, tr.SchemaVersion+1)
 	if err == nil {
 		t.Fatal("ValidateTransitionSchemaVersion: expected error for mismatched versions, got nil")
@@ -261,17 +249,12 @@ func TestValidateTransitionSchemaVersion_ZeroCommitVersion(t *testing.T) {
 	t.Parallel()
 
 	tr := b3f22ValidTransition(t)
-	// tr.SchemaVersion == 1, commit claims 0 — mismatch.
 	err := ValidateTransitionSchemaVersion(tr, 0)
 	if err == nil {
 		t.Fatal("ValidateTransitionSchemaVersion: expected error for zero commitSchemaVersion, got nil")
 	}
 }
 
-// --- EM-020 immutability structural invariant ---
-
-// hkb3f25PathForTransition is a helper that returns TransitionRecordPath for a
-// Transition value. Used by hk-b3f.25 immutability tests.
 func hkb3f25PathForTransition(tr Transition) string {
 	return TransitionRecordPath(tr.RunID, tr.TransitionID)
 }
@@ -291,8 +274,6 @@ func TestTransitionRecord_ImmutabilityDistinctPaths(t *testing.T) {
 
 	tr1 := b3f22ValidTransition(t)
 	tr2 := b3f22ValidTransition(t)
-	// b3f22ValidTransition generates fresh UUIDs each call, so TransitionIDs
-	// should already differ. Force distinct IDs to make the invariant explicit.
 	tr2.TransitionID = TransitionID(uuid.Must(uuid.NewV7()))
 
 	p1 := hkb3f25PathForTransition(tr1)

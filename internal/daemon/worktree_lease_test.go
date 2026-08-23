@@ -1,26 +1,5 @@
 package daemon
 
-// worktree_lease_test.go — a run's worktree says who holds it, and the boot
-// sweep believes it.
-//
-// The lease file under a worktree's .harmonik/ is what separates "an agent is
-// working in here" from "a crash left this behind". The sweep asks whether the
-// process named in the lease is still running: alive means keep, dead means the
-// directory is reclaimable and the step after force-removes it.
-//
-// Nothing wrote that file. Every worktree therefore classified as unleased, the
-// sweep's primary protection had no input, and the only thing left between a
-// run's checkout and `git worktree remove --force --force` was the age proxy —
-// which was written as a backstop and had quietly become the whole guard.
-//
-// The second test here is the one that has to exist because of the first. A run
-// that outlives the daemon holds a lease naming the daemon's process, and that
-// process is gone. Read literally the lease then says "reclaim me" about a
-// directory a live agent is working in. Writing the lease without that guard
-// would have traded a slow leak for destroyed work.
-//
-// Helper prefix: wtLease.
-
 import (
 	"os"
 	"path/filepath"
@@ -35,23 +14,10 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// wtLeaseNoSuchProcess is a process id no host has. It is above every
-// configurable PID ceiling on the platforms this runs on, so kill(pid, 0)
-// answers "no such process" without the test having to create and reap one and
-// hope the number is not reused.
 const wtLeaseNoSuchProcess = 2147483646
 
-// wtLeaseRunID is the run every worktree in this file belongs to. A worktree
-// directory is named after its run, which is how the sweep matches one to the
-// other.
 const wtLeaseRunID = "0f0e0d0c-0b0a-0908-0706-0504030201ff"
 
-// wtLeaseWorktree makes a real git repository, creates the run's worktree
-// through the PRODUCTION factory, and returns the repository and worktree paths.
-//
-// It goes through the factory rather than through git directly because the claim
-// under test is about what the factory leaves behind, not about what a lease file
-// looks like.
 func wtLeaseWorktree(t *testing.T) (repo, wtPath string) {
 	t.Helper()
 	repo = surviveRunRepo(t)
@@ -170,18 +136,14 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 		t.Fatalf("wtLease: resolve HEAD: %v", headErr)
 	}
 
-	// The run whose agent kept working after the daemon died.
 	const liveRun = "0f0e0d0c-0b0a-4908-8706-05040302aa01"
 	liveWT, liveCleanup, err := productionWorktreeFactory(t.Context(), repo, liveRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the live run's worktree: %v", err)
 	}
 	defer liveCleanup()
-	// Both leases name a process that is gone, which is what a daemon restart
-	// leaves behind. The registry is the only thing that tells the two runs apart.
 	wtLeaseOverwriteHolderDead(t, liveWT)
 
-	// The run whose agent went with the daemon. Nothing is working in here.
 	const abandonedRun = "0f0e0d0c-0b0a-4908-8706-05040302aa02"
 	abandonedWT, abandonedCleanup, err := productionWorktreeFactory(t.Context(), repo, abandonedRun, headSHA)
 	if err != nil {
@@ -232,16 +194,6 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 	}
 }
 
-// wtLeaseOverwriteHolderDead rewrites the worktree's lease so it names a pid no
-// process has, which is the state every caller wants: a lease whose holder is
-// gone.
-//
-// The file is replaced rather than edited, because the write path refuses to
-// take a lease a second time — that refusal is what stops two runs claiming one
-// worktree, and it is not what this file is testing.
-//
-// The pid was a parameter until 2026-08-07, and all five call sites passed the
-// same constant. The signature said "any pid" and every use meant "a dead one".
 func wtLeaseOverwriteHolderDead(t *testing.T, wtPath string) {
 	t.Helper()
 	const pid = wtLeaseNoSuchProcess
@@ -312,18 +264,14 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 		t.Fatalf("wtLease: resolve HEAD: %v", headErr)
 	}
 
-	// The run whose agent kept working after the daemon died.
 	const liveRun = "0f0e0d0c-0b0a-4908-8706-05040302cc01"
 	liveWT, liveCleanup, err := productionWorktreeFactory(t.Context(), repo, liveRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the live run's worktree: %v", err)
 	}
 	defer liveCleanup()
-	// Both leases name the daemon that took them, and that daemon is gone. The
-	// registry is the only thing that tells the two runs apart.
 	wtLeaseOverwriteHolderDead(t, liveWT)
 
-	// The run whose agent went with the daemon. Nothing is working in here.
 	const abandonedRun = "0f0e0d0c-0b0a-4908-8706-05040302cc02"
 	abandonedWT, abandonedCleanup, err := productionWorktreeFactory(t.Context(), repo, abandonedRun, headSHA)
 	if err != nil {
@@ -394,7 +342,6 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 // control: it goes through the same call and IS removed, so the live one
 // surviving is the exemption rather than a prune that did nothing.
 func TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon(t *testing.T) {
-	// t.Setenv, so this test cannot be parallel.
 	t.Setenv(EnvHarmonikWorktreeMaxAgeDays, "1")
 
 	repo := surviveRunRepo(t)
@@ -448,12 +395,6 @@ func TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon(t *testing.T) 
 	}
 }
 
-// wtLeaseAgedUnleasedWorktree makes a run's worktree, removes its lease, and
-// backdates every file in it so the age prune sees an old directory.
-//
-// The lease is removed rather than never written because the production factory
-// takes one — this is the state the LEASE SWEEP leaves behind after it releases a
-// lease it judged stale, which is the case the caller is about.
 func wtLeaseAgedUnleasedWorktree(t *testing.T, repo, headSHA, runID string) string {
 	t.Helper()
 	wtPath, cleanup, err := productionWorktreeFactory(t.Context(), repo, runID, headSHA)

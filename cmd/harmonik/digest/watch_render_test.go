@@ -1,12 +1,5 @@
 package digestcmd
 
-// watch_render_test.go — behaviour tests for the --watch render/loop plumbing:
-// the watchFrame accumulator, renderWatchFrame's degrade + formatting branches,
-// and RunWatch's immediate-render + context-cancel shutdown path.
-//
-// These complement watch_test.go (which already covers formatDuration,
-// filterEventsByType, and uuidv7Age).
-
 import (
 	"bytes"
 	"context"
@@ -20,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 )
 
-// failingWriter always errors, so writeTo's write-error branch is exercised.
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("boom") }
@@ -51,7 +43,6 @@ func TestWatchFrame_StickyError(t *testing.T) {
 	var f watchFrame
 	f.print("before")
 	f.err = errors.New("seeded")
-	// These must all no-op now (sticky-error guard).
 	f.print("x")
 	f.printf("%d", 1)
 	f.println("y")
@@ -152,7 +143,6 @@ func TestRenderWatchFrame_WithActiveQueue(t *testing.T) {
 	if !strings.Contains(s, "hk-alpha") || !strings.Contains(s, "hk-beta") {
 		t.Errorf("expected both dispatched bead ids; got:\n%s", s)
 	}
-	// run_id "0123456789..." truncates to first 8 hex chars.
 	if !strings.Contains(s, "run=01234567") {
 		t.Errorf("expected truncated run id; got:\n%s", s)
 	}
@@ -181,14 +171,11 @@ func TestRunWatch_CancelledContextStops(t *testing.T) {
 	if !strings.Contains(s, "harmonik digest --watch: stopped.") {
 		t.Errorf("expected shutdown line; got:\n%s", s)
 	}
-	// The immediate pre-tick frame rendered before shutdown (no .harmonik/).
 	if !strings.Contains(s, ".harmonik/ directory not found") {
 		t.Errorf("expected immediate frame before shutdown; got:\n%s", s)
 	}
 }
 
-// writeActiveQueue writes .harmonik/queues/main.json with two dispatched items
-// (one with a long run_id, exercising truncation) and one pending item.
 func writeActiveQueue(t *testing.T, dir string) {
 	t.Helper()
 	type itemJSON struct {

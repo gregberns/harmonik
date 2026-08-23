@@ -36,21 +36,17 @@ func BeadIDToRefSafe(ctx context.Context, proposedBeadID string) (string, error)
 	const integrationPrefix = "harmonik/integration/"
 	proposed := integrationPrefix + proposedBeadID
 
-	// Step 2: first git check-ref-format invocation.
 	if refNameCheckRefFormat(ctx, proposed) {
 		return proposedBeadID, nil
 	}
 
-	// Step 3: apply canonical fallback to the bead ID portion only.
 	fallback := refNameHexEncodeFallback(proposedBeadID)
 
-	// Step 3(iii): fast-fail rejections before the second git invocation.
 	if fallback == "" || fallback == "@" || fallback == "." {
 		return "", fmt.Errorf("%w: bead ID %q produces empty/bare ref component after fallback",
 			ErrRefNameInvalid, proposedBeadID)
 	}
 
-	// Step 4: re-validate the fallback form.
 	fallbackFull := integrationPrefix + fallback
 	if !refNameCheckRefFormat(ctx, fallbackFull) {
 		return "", fmt.Errorf("%w: bead ID %q still fails git check-ref-format after fallback (encoded: %q)",
@@ -60,9 +56,6 @@ func BeadIDToRefSafe(ctx context.Context, proposedBeadID string) (string, error)
 	return fallback, nil
 }
 
-// refNameCheckRefFormat returns true iff "git check-ref-format
-// refs/heads/<branch>" exits 0. git is the single source of truth per
-// WM-006a; this function MUST NOT substitute independent ref-name logic.
 func refNameCheckRefFormat(ctx context.Context, branch string) bool {
 	refPath := "refs/heads/" + branch
 	//nolint:gosec // G204: refPath is constructed from internal constants + bead ID; git is a fixed binary
@@ -70,11 +63,6 @@ func refNameCheckRefFormat(ctx context.Context, branch string) bool {
 	return cmd.Run() == nil
 }
 
-// refNameHexEncodeFallback applies the two-step canonical fallback
-// transformation to a bead ID per workspace-model.md §4.2 WM-006a:
-//
-//	(i)  hex-encode every byte NOT in [a-zA-Z0-9/_-] as %HH (uppercase).
-//	(ii) collapse every run of '/' longer than one into a single '/'.
 func refNameHexEncodeFallback(beadID string) string {
 	var sb strings.Builder
 	for i := 0; i < len(beadID); i++ {
@@ -86,11 +74,9 @@ func refNameHexEncodeFallback(beadID string) string {
 			b == '/' || b == '_' || b == '-':
 			sb.WriteByte(b)
 		default:
-			// Encode as uppercase %HH per WM-006a step (i).
 			sb.WriteString("%" + strings.ToUpper(hex.EncodeToString([]byte{b})))
 		}
 	}
-	// Step (ii): collapse runs of '/' longer than one into a single '/'.
 	result := sb.String()
 	for strings.Contains(result, "//") {
 		result = strings.ReplaceAll(result, "//", "/")

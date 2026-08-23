@@ -89,26 +89,6 @@ import (
 	"testing"
 )
 
-// gitConfigContents is the controlled global gitconfig every test fixture sees.
-//
-// Each entry answers a host setting that changes what `git` does:
-//
-//	user.*             a fresh machine has no identity, and `git commit` refuses
-//	                   without one.
-//	commit/tag.gpgsign signing is a common operator setting and fails in a test
-//	                   fixture, which has no key and no agent.
-//	init.defaultBranch the operator's default branch name leaks into fixtures
-//	                   that do not pass --initial-branch.
-//	init.templateDir   a global template directory installs hooks into every
-//	                   fixture repository.
-//	core.hooksPath     a global hooks path runs the operator's hooks in every
-//	                   fixture repository.
-//	core.excludesFile  a global ignore file can hide a file the fixture just
-//	                   added, so `git add` silently stages nothing.
-//	core.autocrlf      line-ending rewriting changes file content and therefore
-//	                   every content hash the fixtures assert on.
-//	gc.auto            background repacking races the assertions.
-//	advice.*           advice text on stderr is noise the fixtures may match on.
 const gitConfigContents = `[user]
 	name = Harmonik Test
 	email = test@harmonik.local
@@ -129,28 +109,7 @@ const gitConfigContents = `[user]
 	detachedHead = false
 `
 
-// clearedEnv is the set of variables a test binary must never inherit.
-//
-// Each one is read by production code that the tests drive, and each one changes
-// what that code does. They are exported in a live harmonik agent pane and unset
-// on an assessor's machine, so leaving them in place is the same defect as
-// reading the operator's home: the suite answers a different question depending
-// on where it runs.
-//
-// Held back deliberately: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN and
-// HARMONIK_REQUIRE_REMOTE_E2E. Those gate opt-in end-to-end tests that cost money
-// or need a remote worker. Clearing them would silently disable a test an
-// operator asked for. They are host-coupled and they are reported as such; the
-// answer there is a decision about what the core gate should run, not an env
-// var this helper may take away.
 var clearedEnv = []string{
-	// git, and this group is the sharpest of the list: several of these OUTRANK
-	// GIT_CONFIG_GLOBAL, so leaving one in place defeats the gitconfig redirect
-	// on its own.
-	//
-	// GIT_CONFIG_COUNT is the head of the GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n
-	// family. git ignores the numbered pairs when the count is absent, so
-	// clearing the one variable disables all of them.
 	"GIT_CONFIG_COUNT",
 	// A fixed author or committer date makes every commit hash host-dependent,
 	// and the fixtures assert on hashes.
@@ -201,8 +160,6 @@ var clearedEnv = []string{
 func Setup() (cleanup func()) {
 	root, err := os.MkdirTemp("", "harmonik-hermetic-")
 	if err != nil {
-		// A test binary that cannot isolate itself must not run: it would write
-		// into the operator's real home and report a result that depends on it.
 		die("MkdirTemp", err)
 	}
 
@@ -221,34 +178,13 @@ func Setup() (cleanup func()) {
 	}
 }
 
-// installEnv points every host seam at root and returns a function that puts the
-// environment back exactly as it was found.
-//
-// The restore half matters less than it looks: a TestMain calls Setup once and
-// the process then exits. It is here because a helper that leaves a half-changed
-// environment behind cannot be called twice, and the tests for this package have
-// to call it more than once to test it at all.
 func installEnv(root, gitConfig string) (restoreEnv func()) {
 	env := newEnvSnapshot()
 
-	// git. GIT_CONFIG_GLOBAL replaces ~/.gitconfig and ~/.config/git/config.
-	// GIT_CONFIG_SYSTEM replaces /etc/gitconfig; GIT_CONFIG_NOSYSTEM covers the
-	// git versions that predate GIT_CONFIG_SYSTEM (before 2.32).
-	//
-	// SET UNCONDITIONALLY, unlike everything below. Deferring to an outer value
-	// here does not hand control to the outer harness, it removes the protection
-	// entirely: a CI runner that exports GIT_CONFIG_GLOBAL for its own reasons
-	// turns git isolation off for every package at once, and the failures then
-	// read as product regressions rather than as host contamination. Measured at
-	// 179 failing tests across four packages. There is no version of "the outer
-	// value wins" that leaves the fixtures isolated, so it does not win.
 	env.set("GIT_CONFIG_GLOBAL", gitConfig)
 	env.set("GIT_CONFIG_SYSTEM", os.DevNull)
 	env.set("GIT_CONFIG_NOSYSTEM", "1")
 
-	// Claude state. Both variables are read by production code:
-	// internal/workspace.defaultClaudeGlobalConfigPath reads the first, and
-	// internal/workspace.DefaultClaudeProjectsDir reads the second.
 	env.setIfUnset("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(root, ".claude.json"))
 	env.setIfUnset("HARMONIK_CLAUDE_PROJECTS_DIR", filepath.Join(root, "claude-projects"))
 
@@ -259,8 +195,6 @@ func installEnv(root, gitConfig string) (restoreEnv func()) {
 	return env.restore
 }
 
-// envSnapshot records each variable's value the first time it is touched, so
-// restore can put the environment back exactly as it was found.
 type envSnapshot struct {
 	// prior maps a variable name to its original value, or to nil when the
 	// variable was not set at all.
@@ -271,8 +205,6 @@ func newEnvSnapshot() *envSnapshot {
 	return &envSnapshot{prior: map[string]*string{}}
 }
 
-// remember records the current value of key, once. A second call is a no-op, so
-// the first observation is the one restore puts back.
 func (s *envSnapshot) remember(key string) {
 	if _, seen := s.prior[key]; seen {
 		return
@@ -284,8 +216,6 @@ func (s *envSnapshot) remember(key string) {
 	s.prior[key] = nil
 }
 
-// set assigns value whether or not key is already present. Used where an
-// inherited value would defeat the isolation rather than redirect it.
 func (s *envSnapshot) set(key, value string) {
 	s.remember(key)
 	if err := os.Setenv(key, value); err != nil {
@@ -293,8 +223,6 @@ func (s *envSnapshot) set(key, value string) {
 	}
 }
 
-// setIfUnset assigns value only when key is absent, so an outer harness that has
-// already chosen a path keeps it.
 func (s *envSnapshot) setIfUnset(key, value string) {
 	if _, present := os.LookupEnv(key); present {
 		s.remember(key)
@@ -303,8 +231,6 @@ func (s *envSnapshot) setIfUnset(key, value string) {
 	s.set(key, value)
 }
 
-// clear removes key unconditionally. Used for the variables in clearedEnv, where
-// inheriting any value at all is the defect.
 func (s *envSnapshot) clear(key string) {
 	s.remember(key)
 	if err := os.Unsetenv(key); err != nil {
@@ -326,9 +252,6 @@ func (s *envSnapshot) restore() {
 	}
 }
 
-// die aborts the test binary. Every caller is a step that must succeed for the
-// binary to be isolated at all; continuing would run the suite against the
-// operator's real home and report the result as if it meant something.
 func die(what string, err error) {
 	fmt.Fprintf(os.Stderr, "hermetic: %s: %v\n", what, err)
 	os.Exit(1)

@@ -1,22 +1,5 @@
 package core
 
-// codexbillingguard_hktu48u.go — event-bus payload for the codex_billing_guard
-// event type (codex-harness C3/T11, hk-tu48u).
-//
-// This is the POSITIVE half of the codex billing guard. The negative half
-// (C3/T10, hk-jxgnp) strips OPENAI_API_KEY / CODEX_API_KEY from the codex child
-// env so an inherited key cannot silently bill the API credit pool. T11 forces
-// and asserts the wanted path: ChatGPT-subscription login.
-//
-// The launch path:
-//  1. materializes forced_login_method = "chatgpt" into $CODEX_HOME/config.toml,
-//  2. runs a fail-closed pre-flight assert (assertChatGPTPlan) that refuses to
-//     launch codex unless the ChatGPT plan can be confirmed, and
-//  3. emits this event at each observable step (materialized / allowed / denied).
-//
-// Spec ref: specs/event-model.md §8.3 (agent/handler lifecycle).
-// Bead ref: hk-tu48u [C3/T11].
-
 // CodexBillingGuardOutcome is the typed outcome of a codex billing-guard step.
 type CodexBillingGuardOutcome string
 

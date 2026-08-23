@@ -9,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// keeperDir ensures the .harmonik/keeper directory exists under projectDir.
 func keeperDir(t *testing.T, projectDir string) string {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -19,7 +18,6 @@ func keeperDir(t *testing.T, projectDir string) string {
 	return dir
 }
 
-// touchFile creates or updates mtime of a file.
 func touchFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
@@ -27,7 +25,6 @@ func touchFile(t *testing.T, path string) {
 	}
 }
 
-// writeFileWithMtime writes a file then backdates its mtime.
 func writeFileWithMtime(t *testing.T, path string, mtime time.Time) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte{}, 0o600); err != nil {
@@ -37,8 +34,6 @@ func writeFileWithMtime(t *testing.T, path string, mtime time.Time) {
 		t.Fatalf("Chtimes %q: %v", path, err)
 	}
 }
-
-// ── CrispIdle ────────────────────────────────────────────────────────────────
 
 // TestCrispIdle_TrueWhenIdleNewerThanCtx verifies the primary contract: .idle
 // newer than .ctx → CrispIdle = true.
@@ -52,7 +47,6 @@ func TestCrispIdle_TrueWhenIdleNewerThanCtx(t *testing.T) {
 	past := time.Now().Add(-2 * time.Second)
 	writeFileWithMtime(t, filepath.Join(dir, agent+".ctx"), past)
 
-	// Touch .idle now (after .ctx).
 	touchFile(t, filepath.Join(dir, agent+".idle"))
 
 	if !keeper.CrispIdle(projectDir, agent) {
@@ -70,11 +64,9 @@ func TestCrispIdle_FalseWhenCtxMuchNewerThanIdle(t *testing.T) {
 	dir := keeperDir(t, projectDir)
 	agent := "ctx-much-newer-agent"
 
-	// .idle is 30s in the past — well outside the 10s tolerance.
 	past := time.Now().Add(-30 * time.Second)
 	writeFileWithMtime(t, filepath.Join(dir, agent+".idle"), past)
 
-	// Touch .ctx now (30s newer than .idle).
 	touchFile(t, filepath.Join(dir, agent+".ctx"))
 
 	if keeper.CrispIdle(projectDir, agent) {
@@ -92,11 +84,9 @@ func TestCrispIdle_TrueWhenCtxWithinTolerance(t *testing.T) {
 	dir := keeperDir(t, projectDir)
 	agent := "ctx-within-tolerance-agent"
 
-	// .idle is 5s in the past — within the 10s tolerance.
 	past := time.Now().Add(-5 * time.Second)
 	writeFileWithMtime(t, filepath.Join(dir, agent+".idle"), past)
 
-	// Touch .ctx now (5s newer than .idle — a statusLine poll, not tool activity).
 	touchFile(t, filepath.Join(dir, agent+".ctx"))
 
 	if !keeper.CrispIdle(projectDir, agent) {
@@ -112,7 +102,6 @@ func TestCrispIdle_FalseWhenIdleAbsent(t *testing.T) {
 	dir := keeperDir(t, projectDir)
 	agent := "no-idle-agent"
 
-	// Write .ctx but no .idle.
 	touchFile(t, filepath.Join(dir, agent+".ctx"))
 
 	if keeper.CrispIdle(projectDir, agent) {
@@ -129,15 +118,12 @@ func TestCrispIdle_FalseWhenCtxAbsent(t *testing.T) {
 	dir := keeperDir(t, projectDir)
 	agent := "no-ctx-agent"
 
-	// Write .idle but no .ctx.
 	touchFile(t, filepath.Join(dir, agent+".idle"))
 
 	if keeper.CrispIdle(projectDir, agent) {
 		t.Error("CrispIdle: want false when .ctx is absent")
 	}
 }
-
-// ── HoldingDispatch ───────────────────────────────────────────────────────────
 
 // TestHoldingDispatch_TrueWhenMarkerPresent verifies the marker-present case.
 func TestHoldingDispatch_TrueWhenMarkerPresent(t *testing.T) {
@@ -166,8 +152,6 @@ func TestHoldingDispatch_FalseWhenMarkerAbsent(t *testing.T) {
 		t.Error("HoldingDispatch: want false when .dispatching marker is absent")
 	}
 }
-
-// ── SetDispatching / ClearDispatching ────────────────────────────────────────
 
 // TestSetDispatching_CreatesMarker verifies that SetDispatching creates the
 // .dispatching file and that HoldingDispatch subsequently returns true.
@@ -224,8 +208,6 @@ func TestClearDispatching_IdempotentWhenAbsent(t *testing.T) {
 	}
 }
 
-// ── Stop-hook script path validation ─────────────────────────────────────────
-
 // TestStopHookScript_Exists verifies that the stop-hook script is present and
 // executable at scripts/keeper-stop-hook.sh relative to the repo root.
 // This test uses a sentinel env var to locate the repo root.
@@ -237,7 +219,6 @@ func TestStopHookScript_Touches_IdleMarker(t *testing.T) {
 	agent := "hook-agent"
 	idlePath := filepath.Join(dir, agent+".idle")
 
-	// Simulate what the stop-hook script does: touch the .idle marker.
 	if err := os.WriteFile(idlePath, []byte{}, 0o600); err != nil {
 		t.Fatalf("simulate stop-hook touch: %v", err)
 	}

@@ -11,20 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// greenlight_fallback_test.go — the greenlight gate's half of the head-of-line
-// fallback (hk-nown4).
-//
-// The claim cooldown and the greenlight gate held a bead the same wrong way:
-// each refused the ITEM and then spent the whole TICK, so every ready item
-// behind the refused one waited. The cooldown made that a five-minute stall.
-// Greenlight made it unbounded — the bead is held until a captain runs
-// `harmonik greenlight`, and until then the queue dispatched nothing at all.
-//
-// This test pins the daemon half. The selector half — stepping over a refused
-// item rather than stopping at the head — is pinned in
-// internal/orchestrator/select_skip_fallback_test.go. Both are needed: the
-// selector cannot step over an item the loop never told it to refuse.
-
 // TestGreenlightHoldDoesNotBlockTheQueue proves a bead held for greenlight does
 // not hold up the ready bead behind it.
 //
@@ -141,11 +127,6 @@ func TestGreenlightWalkTerminates(t *testing.T) {
 			"The walk did not cross them, so the fallback steps over one refused item and then gives up.")
 	}
 
-	// The spin guard. The ceiling here is the harness's 2 ms wake pump, NOT the
-	// CPU: the loop only ticks as fast as it is woken, so a fast box does not
-	// inflate this count and the bound does not flake. Measured at roughly 494
-	// reads per held bead, so the bound carries about 4x headroom — against a
-	// spin that produces five orders of magnitude more.
 	const spinBound = 2000
 	for _, id := range held {
 		if got := ledger.showCount(id); got > spinBound {
@@ -185,8 +166,6 @@ func TestGreenlightHoldDoesNotParkTheLoop(t *testing.T) {
 		heldID: {orchestrator.LabelNeedsGreenlight},
 	}
 
-	// ONE item, and it is held. That is what makes the queue a non-contributor
-	// and routes the tick into the idle branch under test.
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(admissionQueue("main", queue.Item{BeadID: heldID, Status: queue.ItemStatusPending}))
 	deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
@@ -200,8 +179,6 @@ func TestGreenlightHoldDoesNotParkTheLoop(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Let the loop settle into the idle branch, then sample across several poll
-	// intervals. workloopPollInterval is 2 s, so this window holds a handful.
 	time.Sleep(3 * time.Second)
 	early := ledger.showCount(heldID)
 	time.Sleep(6 * time.Second)
@@ -210,9 +187,6 @@ func TestGreenlightHoldDoesNotParkTheLoop(t *testing.T) {
 	cancel()
 	awaitLoopTeardown(t, loopDone, "greenlight-fallback work loop")
 
-	// Positive control: the loop must have reached the bead at all. A count of
-	// zero would mean the fixture never dispatched, and the growth assertion
-	// below would then be measuring nothing.
 	if early == 0 {
 		t.Fatal("ShowBead was never called for the held bead, so the loop never reached the " +
 			"greenlight gate and this fixture cannot see the wedge either way.")

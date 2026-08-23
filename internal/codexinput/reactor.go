@@ -56,8 +56,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Emitted event names (durable bus events; owned by event-model §8.21) ─────
-
 // EmitType is the cross-bus event name an ActionTypeEmit forwards. The payload
 // STRUCTURES are owned by event-model §8.21 / §6.3; this reactor owns the WHEN.
 type EmitType string
@@ -77,8 +75,6 @@ const (
 	EmitLaunchFailure EmitType = "agent_launch_failure"
 )
 
-// ─── Timer kinds ──────────────────────────────────────────────────────────────
-
 // TimerKind names a bounded-liveness timer the Step arms. Every kind has a
 // TimerFired edge that lands in a state with an outgoing action (AIS-INV-001).
 type TimerKind string
@@ -89,8 +85,6 @@ const (
 	// TimerInputAck bounds one input submission's acceptance (AIS-INV-001).
 	TimerInputAck TimerKind = "input_ack_timeout"
 )
-
-// ─── Driver states ────────────────────────────────────────────────────────────
 
 // DriverState is the input reactor's lifecycle state (spec §7.2, extended with
 // the spawn/handshake/drain lifecycle the driver needs).
@@ -135,8 +129,6 @@ func (s DriverState) String() string {
 		return "DriverState(?)"
 	}
 }
-
-// ─── Event ────────────────────────────────────────────────────────────────────
 
 // EventType classifies a typed input-direction event fed to the reactor.
 type EventType string
@@ -194,8 +186,6 @@ type Event struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ─── Action ───────────────────────────────────────────────────────────────────
-
 // ActionType classifies a side-effect request produced by the reactor.
 type ActionType string
 
@@ -244,8 +234,6 @@ type Action struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// ─── Seam aliases (RS-021 type-alias re-instantiation) ────────────────────────
-
 // Effector is the codex-input instantiation of the generic substrate effector
 // (substrate.Effector[Action]). It is a type ALIAS (=), not a defined type, so
 // the generic substrate doubles satisfy it unchanged and existing/parallel call
@@ -256,8 +244,6 @@ type Effector = substrate.Effector[Action]
 // source (substrate.EventSource[Event]). It is a type ALIAS (=) for the same
 // RS-021 reason as Effector above.
 type EventSource = substrate.EventSource[Event]
-
-// ─── Config ───────────────────────────────────────────────────────────────────
 
 // Config holds the bounded-liveness windows the Step arms (measured via
 // ClockPort by the driver; never wall-clock). Zero values fall back to the
@@ -288,8 +274,6 @@ func (c Config) inputAckTimeout() time.Duration {
 	return defaultInputAckTimeout
 }
 
-// ─── State ────────────────────────────────────────────────────────────────────
-
 // State is the reactor's mutable state, inspectable between Steps in tests.
 type State struct {
 	// Phase is the current lifecycle state.
@@ -301,8 +285,6 @@ type State struct {
 	// on TurnCompleted).
 	TurnID string
 }
-
-// ─── Reactor ──────────────────────────────────────────────────────────────────
 
 // Reactor is the pure input-direction state machine. Step is deterministic given
 // (state, event) with no IO, no goroutines, no clock reads. Construct with New.
@@ -378,9 +360,6 @@ func (r *Reactor) stepHandshakeOK() []Action {
 }
 
 func (r *Reactor) stepInputSubmitted(ev Event) []Action {
-	// A submission is accepted only from Ready or InTurn (mid-turn steer).
-	// From any other phase it cannot be delivered; drop (the driver's port
-	// front-stop rejects before submitting in those phases).
 	if r.state.Phase != Ready && r.state.Phase != InTurn {
 		return nil
 	}
@@ -401,8 +380,6 @@ func (r *Reactor) stepInputAcked(ev Event) []Action {
 	r.state.PendingSeq = 0
 	r.state.TurnID = ev.TurnID
 	r.state.Phase = InTurn
-	// The positive ack: its existence IS the acceptance (no class). Token is
-	// the turn id the input opened (AIS-003c).
 	return []Action{
 		{Type: ActionTypeCancelTimer, Kind: TimerInputAck},
 		{Type: ActionTypeEmit, Emit: EmitInputAcked, InputSeq: seq, TurnID: ev.TurnID},
@@ -413,7 +390,6 @@ func (r *Reactor) stepInputRejected(ev Event) []Action {
 	if r.state.Phase != AwaitingAck || ev.InputSeq != r.state.PendingSeq {
 		return nil
 	}
-	// Resolves the synchronous Ack{Rejected}; no positive event (spec §7.2).
 	r.state.PendingSeq = 0
 	r.state.Phase = Ready
 	return []Action{{Type: ActionTypeCancelTimer, Kind: TimerInputAck}}
@@ -427,16 +403,12 @@ func (r *Reactor) stepTurnCompleted() []Action {
 	return nil // output-side routing lives in codexreactor; no input action.
 }
 
-// stepTimerFired handles the bounded-liveness timer edges. EVERY branch lands in
-// a state with an outgoing action — the structural AIS-INV-001 guarantee.
 func (r *Reactor) stepTimerFired(ev Event) []Action {
 	switch ev.Kind {
 	case TimerHandshake:
 		if r.state.Phase != Handshaking {
 			return nil // handshake already resolved; the fire is stale.
 		}
-		// Fast-fail: no handshake within the bound (AIS-017). Terminal, not a
-		// silent exit-0.
 		r.state.Phase = Exited
 		return []Action{{Type: ActionTypeEmit, Emit: EmitLaunchFailure, Reason: "handshake timeout"}}
 
@@ -444,8 +416,6 @@ func (r *Reactor) stepTimerFired(ev Event) []Action {
 		if r.state.Phase != AwaitingAck {
 			return nil // already acked/rejected; the fire is stale.
 		}
-		// The resume-hang fix: a missing ack in-bound becomes a recoverable
-		// terminal (agent_input_stale), never silence (AIS-INV-001).
 		seq := r.state.PendingSeq
 		r.state.PendingSeq = 0
 		r.state.Phase = Ready
@@ -454,8 +424,6 @@ func (r *Reactor) stepTimerFired(ev Event) []Action {
 	return nil
 }
 
-// stepClose handles CloseInput: gracefully interrupt an open turn (AIS-017),
-// then close stdin and drain.
 func (r *Reactor) stepClose() []Action {
 	switch r.state.Phase {
 	case Exited, Draining:
@@ -468,11 +436,6 @@ func (r *Reactor) stepClose() []Action {
 			{Type: ActionTypeCloseInput},
 		}
 	case AwaitingAck:
-		// A submission is still pending its terminal. Once we enter Draining the
-		// resolving edges (TimerInputAck/InputAcked/InputRejected) are all guarded
-		// on Phase==AwaitingAck and would drop silently, so resolve the pending
-		// seq to agent_input_stale HERE — never leave a SubmitInput without a
-		// terminal (AIS-INV-001; silence is forbidden).
 		seq := r.state.PendingSeq
 		r.state.PendingSeq = 0
 		r.state.Phase = Draining
@@ -487,9 +450,6 @@ func (r *Reactor) stepClose() []Action {
 	}
 }
 
-// stepTransportTerminal handles the codec's ErrorEvent/DisconnectEvent (RS-009).
-// If a submission is pending, it MUST resolve to agent_input_stale (never
-// silence, AIS-INV-001); before Ready it is a launch failure (AIS-017).
 func (r *Reactor) stepTransportTerminal(reason string) []Action {
 	switch r.state.Phase {
 	case Spawning, Handshaking:
@@ -504,7 +464,6 @@ func (r *Reactor) stepTransportTerminal(reason string) []Action {
 			{Type: ActionTypeEmit, Emit: EmitInputStale, InputSeq: seq, Reason: reason},
 		}
 	default:
-		// Ready / InTurn / Draining: no submission owes a terminal; wind down.
 		r.state.Phase = Exited
 		return nil
 	}

@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// Tests for ReadReviewVerdict per workspace-model.md §4.7.WM-027a and
-// event-model.md §8.1a.3 (bead hk-7om2q.15).
-//
-// Helper prefix: reviewVerdictFixture (distinct from sibling helpers).
-
-// reviewVerdictFixtureValidJSON returns a JSON byte slice for a valid
-// agent-reviewer schema v1 verdict payload.
 func reviewVerdictFixtureValidJSON(t *testing.T) []byte {
 	t.Helper()
 	payload := map[string]interface{}{
@@ -30,8 +23,6 @@ func reviewVerdictFixtureValidJSON(t *testing.T) []byte {
 	return data
 }
 
-// reviewVerdictFixtureWrite writes JSON data to a review.json file inside
-// a fresh temp workspace and returns the workspace path.
 func reviewVerdictFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	workspacePath := t.TempDir()
@@ -45,10 +36,6 @@ func reviewVerdictFixtureWrite(t *testing.T, data []byte) string {
 	}
 	return workspacePath
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReviewVerdictPath — path helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReviewVerdictPathShape verifies that ReviewVerdictPath returns
 // the canonical path per WM-027a: ${workspace_path}/.harmonik/review.json
@@ -74,10 +61,6 @@ func TestWM027a_ReviewVerdictPathFilename(t *testing.T) {
 		t.Errorf("WM-027a: review verdict filename = %q, want review.json", filepath.Base(got))
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — happy path
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReadReviewVerdictHappyPath verifies that a valid schema v1 file
 // is parsed and returns a non-nil ReviewVerdict with all fields intact.
@@ -190,10 +173,6 @@ func TestWM027a_ReadReviewVerdictEmptyFlagsAccepted(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — absent file
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM027a_ReadReviewVerdictAbsentReturnsNil verifies that (nil, nil) is
 // returned when review.json does not exist (WM-027a §(e) inconclusive condition).
 func TestWM027a_ReadReviewVerdictAbsentReturnsNil(t *testing.T) {
@@ -208,10 +187,6 @@ func TestWM027a_ReadReviewVerdictAbsentReturnsNil(t *testing.T) {
 		t.Errorf("WM-027a: ReadReviewVerdict(absent) returned non-nil verdict; want nil")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — ErrMalformed: schema_version mismatch
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReadReviewVerdictSchemaVersionMismatch verifies that a file with
 // schema_version != 1 returns ErrMalformed.
@@ -255,10 +230,6 @@ func TestWM027a_ReadReviewVerdictSchemaVersionMissing(t *testing.T) {
 		t.Errorf("WM-027a: error = %v; want errors.Is(err, ErrMalformed)", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — ErrMalformed: unknown verdict
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReadReviewVerdictUnknownVerdict verifies that an unrecognised
 // verdict string returns ErrMalformed.
@@ -308,10 +279,6 @@ func TestWM027a_ReadReviewVerdictMissingVerdict(t *testing.T) {
 		t.Errorf("WM-027a: error = %v; want errors.Is(err, ErrMalformed)", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — ErrMalformed: missing fields
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReadReviewVerdictMissingFlags verifies that a file with no
 // flags key returns ErrMalformed.
@@ -372,10 +339,6 @@ func TestWM027a_ReadReviewVerdictEmptyNotes(t *testing.T) {
 		t.Errorf("WM-027a: error = %v; want errors.Is(err, ErrMalformed)", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadReviewVerdict — ErrMalformed: unparseable JSON
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM027a_ReadReviewVerdictInvalidJSON verifies that a non-JSON file returns
 // ErrMalformed.

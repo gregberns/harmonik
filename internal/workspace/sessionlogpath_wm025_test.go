@@ -53,7 +53,6 @@ func TestWM025_SessionLogDirPath(t *testing.T) {
 			t.Errorf("WM-025: SessionLogRootPath = %q, want %q", gotRoot, wantRoot)
 		}
 
-		// SessionLogDirPath must start with the root.
 		gotDir := SessionLogDirPath(workspacePath, sessionID)
 		if filepath.Dir(gotDir) != wantRoot {
 			t.Errorf("WM-025: SessionLogDirPath parent = %q, want %q", filepath.Dir(gotDir), wantRoot)
@@ -63,8 +62,6 @@ func TestWM025_SessionLogDirPath(t *testing.T) {
 	t.Run("distinct-sessions-no-collision", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-025: session-log directories for distinct sessions within a workspace
-		// never collide because session_id is unique per launch.
 		workspacePath := "/srv/harmonik/.harmonik/worktrees/0196a1b2-c3d4-7025-8a1b-2c3d4e5f0028"
 		sessionID1 := "sess-0196a1b2-c3d4-7025-8a1b-000000002504"
 		sessionID2 := "sess-0196a1b2-c3d4-7025-8a1b-000000002505"
@@ -91,7 +88,6 @@ func TestWM025_CreateSessionLogDir(t *testing.T) {
 		sessionID := "sess-0196a1b2-c3d4-7025-8a1b-000000002506"
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-		// Ensure the worktree dir exists (no git worktree add needed for path tests).
 		if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 			t.Fatalf("MkdirAll worktree: %v", err)
 		}
@@ -113,7 +109,6 @@ func TestWM025_CreateSessionLogDir(t *testing.T) {
 	t.Run("idempotent-create", func(t *testing.T) {
 		t.Parallel()
 
-		// Creating the same session-log dir twice must succeed without error.
 		repo, _ := tempRepo(t)
 		runID := "0196a1b2-c3d4-7025-8a1b-2c3d4e5f002a"
 		sessionID := "sess-0196a1b2-c3d4-7025-8a1b-000000002507"

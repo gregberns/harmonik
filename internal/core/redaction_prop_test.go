@@ -1,33 +1,5 @@
 package core
 
-// Property tests for RedactByFieldName and RedactionRegistry using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. RedactByFieldName nil-safety: nil input yields nil output.
-//
-//  2. RedactByFieldName non-mutation: the original payload map is never mutated.
-//
-//  3. RedactByFieldName field-name redaction: any key matching the HC-031 regex
-//     (secret|token|password|api[_-]?key|auth) yields RedactedSentinel in output.
-//
-//  4. RedactByFieldName pass-through: keys not matching the regex are copied
-//     unchanged.
-//
-//  5. RedactionMiddleware nil-safety: nil payload yields nil output.
-//
-//  6. RedactionMiddleware non-mutation: the original payload map is never mutated.
-//
-//  7. RedactionMiddleware value-pattern redaction: any string value that matches a
-//     registered pattern is replaced with RedactedSentinel; unmatched values pass
-//     through.
-//
-// Spec refs: specs/handler-contract.md §4.7.HC-031, §4.7.HC-032.
-// Bead ref: hk-djice.
-
 import (
 	"regexp"
 	"strings"
@@ -36,10 +8,8 @@ import (
 	"pgregory.net/rapid"
 )
 
-// sensitiveKeyPrefixes are key fragments that trigger HC-031 field-name redaction.
 var sensitiveKeyPrefixes = []string{"secret", "token", "password", "api_key", "api-key", "apikey", "auth"}
 
-// genSensitiveKey draws a key that must be redacted by HC-031.
 func genSensitiveKey(rt *rapid.T, label string) string {
 	rt.Helper()
 	prefix := rapid.SampledFrom(sensitiveKeyPrefixes).Draw(rt, label+"_prefix")
@@ -47,18 +17,11 @@ func genSensitiveKey(rt *rapid.T, label string) string {
 	return prefix + suffix
 }
 
-// genSafeKey draws a key that must NOT be redacted (no HC-031 prefix, case-insensitively).
 func genSafeKey(rt *rapid.T, label string) string {
 	rt.Helper()
-	// Use rapid.StringMatching with a negative pattern: keys that contain none of
-	// the sensitive prefixes (case-insensitive).  For simplicity generate from a
-	// known-safe alphabet so the match is easy to verify without re-running the
-	// regex inside the generator.
 	return rapid.StringMatching(`^[bcdfghjklmnpqruvwxyz][bcdfghjklmnpqruvwxyz0-9]{0,15}$`).Draw(rt, label)
 }
 
-// genPayload draws a map[string]any with a mix of safe and sensitive keys and
-// string values.
 func genPayload(rt *rapid.T, label string) map[string]any {
 	rt.Helper()
 	size := rapid.IntRange(0, 8).Draw(rt, label+"_size")
@@ -76,7 +39,6 @@ func genPayload(rt *rapid.T, label string) map[string]any {
 	return m
 }
 
-// copyPayload makes a shallow copy of a map[string]any for mutation detection.
 func copyPayload(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
@@ -87,8 +49,6 @@ func copyPayload(m map[string]any) map[string]any {
 	}
 	return out
 }
-
-// --- RedactByFieldName properties ---
 
 func TestProp_RedactByFieldName_NilSafety(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -153,8 +113,6 @@ func TestProp_RedactByFieldName_SafeKeysPassThrough(t *testing.T) {
 	})
 }
 
-// --- RedactionRegistry / RedactionMiddleware properties ---
-
 func TestProp_RedactionMiddleware_NilSafety(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		r := NewRedactionRegistry()
@@ -194,13 +152,10 @@ func TestProp_RedactionMiddleware_RegisteredPatternRedactsValue(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		r := NewRedactionRegistry()
 
-		// Pick a secret token string that we'll embed in some values.
 		secret := rapid.StringMatching(`^[A-Z]{4,12}$`).Draw(rt, "secret")
 		re := regexp.MustCompile(regexp.QuoteMeta(secret))
 		r.RegisterPattern("subsys", []*regexp.Regexp{re})
 
-		// Build a payload where at least one safe key has a value containing the
-		// secret so the pattern fires on a value (not a field name).
 		safeKey := genSafeKey(rt, "k")
 		payload := map[string]any{
 			safeKey: secret + "_suffix",
@@ -218,12 +173,10 @@ func TestProp_RedactionMiddleware_UnmatchedValuePassesThrough(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		r := NewRedactionRegistry()
 
-		// Register a pattern that will never match our generated safe values.
 		re := regexp.MustCompile(`ZZZZZZZZZZZZZZZZZZZZ`) // effectively unmatchable
 		r.RegisterPattern("subsys", []*regexp.Regexp{re})
 
 		safeKey := genSafeKey(rt, "k")
-		// Generate a value guaranteed not to contain the unmatchable literal.
 		safeVal := rapid.StringMatching(`^[a-z0-9]{1,20}$`).Draw(rt, "v")
 		payload := map[string]any{safeKey: safeVal}
 
@@ -238,7 +191,6 @@ func TestProp_RedactionMiddleware_UnmatchedValuePassesThrough(t *testing.T) {
 func TestProp_RedactionMiddleware_HC031FieldNamesAlwaysRedacted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		r := NewRedactionRegistry()
-		// No value-level patterns registered; only HC-031 field-name rule applies.
 
 		sensitiveKey := strings.ToLower(genSensitiveKey(rt, "k"))
 		payload := map[string]any{

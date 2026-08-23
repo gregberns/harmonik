@@ -1,19 +1,5 @@
 package testhelpers_test
 
-// jsonlfixture sanity tests — verify that every JSONLFixture* function produces
-// byte slices that satisfy their structural contracts (correct JSON, line count,
-// newline discipline, key presence) WITHOUT invoking the production JSONL reader.
-// The intent is to keep the fixtures honest: a fixture that produces malformed
-// bytes in the "valid" case would corrupt the higher-level reader tests that
-// depend on it.
-//
-// These tests are deliberately lightweight: they decode JSON with the stdlib
-// decoder (not the production reader) and assert structural properties only.
-//
-// Spec refs: event-model.md §6.2 (on-disk JSONL format and read-recovery rules),
-// §6.1 (envelope RECORD field presence), §10.2 (test-surface obligations for
-// EV-001–EV-008 and EV-015–EV-020).
-
 import (
 	"bytes"
 	"encoding/json"
@@ -22,12 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/testhelpers"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers scoped to this file.
-// ---------------------------------------------------------------------------
-
-// countLines counts newline-terminated lines in b. A final byte sequence with
-// no trailing newline is NOT counted (matches the JSONL torn-tail definition).
 func countLines(b []byte) int {
 	if len(b) == 0 {
 		return 0
@@ -41,9 +21,6 @@ func countLines(b []byte) int {
 	return n
 }
 
-// decodeFirstLine decodes the first '\n'-terminated JSON object from b.
-// It returns the number of bytes consumed (including the '\n'), the decoded
-// object, and any error.
 func decodeFirstLine(b []byte) (consumed int, decoded map[string]any, err error) {
 	idx := bytes.IndexByte(b, '\n')
 	if idx == -1 {
@@ -56,7 +33,6 @@ func decodeFirstLine(b []byte) (consumed int, decoded map[string]any, err error)
 	return idx + 1, decoded, nil
 }
 
-// requiredEnvelopeKeys lists the field names required by event-model.md §6.1 EV-001.
 var requiredEnvelopeKeys = []string{
 	"event_id",
 	"schema_version",
@@ -66,7 +42,6 @@ var requiredEnvelopeKeys = []string{
 	"payload",
 }
 
-// assertEnvelopeKeys fails t if any required key is absent from obj.
 func assertEnvelopeKeys(t *testing.T, label string, obj map[string]any) {
 	t.Helper()
 	for _, k := range requiredEnvelopeKeys {
@@ -75,10 +50,6 @@ func assertEnvelopeKeys(t *testing.T, label string, obj map[string]any) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// JSONLFixtureMinimalEnvelope
-// ---------------------------------------------------------------------------
 
 // TestJSONLFixtureMinimalEnvelope_OneLine verifies that the minimal-envelope
 // fixture produces exactly one newline-terminated JSONL line.
@@ -132,10 +103,6 @@ func TestJSONLFixtureMinimalEnvelope_OptionalFieldsAbsent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// JSONLFixtureFullEnvelope
-// ---------------------------------------------------------------------------
-
 // TestJSONLFixtureFullEnvelope_OneLine verifies the full-envelope fixture is
 // one line.
 func TestJSONLFixtureFullEnvelope_OneLine(t *testing.T) {
@@ -175,10 +142,6 @@ func TestJSONLFixtureFullEnvelope_OptionalFieldsPresent(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// JSONLFixtureMultipleValid
-// ---------------------------------------------------------------------------
 
 // TestJSONLFixtureMultipleValid_ThreeLines verifies exactly three lines.
 func TestJSONLFixtureMultipleValid_ThreeLines(t *testing.T) {
@@ -241,10 +204,6 @@ func TestJSONLFixtureMultipleValid_StrictlyIncreasingEventIDs(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// JSONLFixtureDurabilityClasses
-// ---------------------------------------------------------------------------
-
 // TestJSONLFixtureDurabilityClasses_ThreeEntries verifies three entries are returned.
 func TestJSONLFixtureDurabilityClasses_ThreeEntries(t *testing.T) {
 	t.Parallel()
@@ -293,10 +252,6 @@ func TestJSONLFixtureDurabilityClasses_EachLineIsValidJSON(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// JSONLFixtureTornTail
-// ---------------------------------------------------------------------------
-
 // TestJSONLFixtureTornTail_ThreeVariants verifies three variants are returned.
 func TestJSONLFixtureTornTail_ThreeVariants(t *testing.T) {
 	t.Parallel()
@@ -318,7 +273,6 @@ func TestJSONLFixtureTornTail_ValidLinesBefore(t *testing.T) {
 			if fix.ValidLineCount != 1 {
 				t.Errorf("kind %q: ValidLineCount = %d, want 1", fix.Kind, fix.ValidLineCount)
 			}
-			// Verify first line is valid JSON.
 			idx := bytes.IndexByte(fix.JSONL, '\n')
 			if idx == -1 {
 				t.Fatalf("kind %q: no newline found; fixture has no complete first line", fix.Kind)
@@ -364,7 +318,6 @@ func TestJSONLFixtureTornTail_BadJSON(t *testing.T) {
 			t.Fatal("TornTailBadJSON: no bytes after first newline")
 		}
 		tail := fix.JSONL[idx+1:]
-		// Remove trailing newline if any before checking.
 		tail = bytes.TrimRight(tail, "\n")
 		var obj map[string]any
 		if err := json.Unmarshal(tail, &obj); err == nil {
@@ -382,7 +335,6 @@ func TestJSONLFixtureTornTail_BadEnvelope(t *testing.T) {
 		if fix.Kind != testhelpers.TornTailBadEnvelope {
 			continue
 		}
-		// Locate the second newline.
 		first := bytes.IndexByte(fix.JSONL, '\n')
 		if first == -1 {
 			t.Fatal("TornTailBadEnvelope: no first newline")
@@ -405,10 +357,6 @@ func TestJSONLFixtureTornTail_BadEnvelope(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// JSONLFixtureMidFileCorruption
-// ---------------------------------------------------------------------------
 
 // TestJSONLFixtureMidFileCorruption_Layout verifies the fixture has the correct
 // line layout: valid, corrupt, valid.
@@ -468,10 +416,6 @@ func TestJSONLFixtureMidFileCorruption_OffsetMatchesActual(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// JSONLFixtureEmptyLog
-// ---------------------------------------------------------------------------
-
 // TestJSONLFixtureEmptyLog_TwoVariants verifies two variants are returned.
 func TestJSONLFixtureEmptyLog_TwoVariants(t *testing.T) {
 	t.Parallel()
@@ -521,10 +465,6 @@ func TestJSONLFixtureEmptyLog_PriorCycle(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// JSONLFixtureConcurrentTail
-// ---------------------------------------------------------------------------
-
 // TestJSONLFixtureConcurrentTail_TwoCompletedLines verifies two complete lines.
 func TestJSONLFixtureConcurrentTail_TwoCompletedLines(t *testing.T) {
 	t.Parallel()
@@ -533,7 +473,6 @@ func TestJSONLFixtureConcurrentTail_TwoCompletedLines(t *testing.T) {
 	if fix.CompletedLines != 2 {
 		t.Errorf("CompletedLines = %d, want 2", fix.CompletedLines)
 	}
-	// Count actual newlines.
 	if n := countLines(fix.JSONL); n != 2 {
 		t.Errorf("JSONL contains %d newline-terminated lines, want 2", n)
 	}

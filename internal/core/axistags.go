@@ -298,8 +298,6 @@ func (t AxisTags) Valid() bool {
 		t.Idempotency.Valid()
 }
 
-// axistagsJSON is the wire shape used for JSON marshal/unmarshal.
-// The sub-enum TextMarshaler/TextUnmarshaler implementations enforce validation.
 type axistagsJSON struct {
 	LLMFreedom    LLMFreedom      `json:"llm_freedom"`
 	IODeterminism IODeterminism   `json:"io_determinism"`
@@ -319,9 +317,6 @@ func (t AxisTags) MarshalJSON() ([]byte, error) {
 			string(t.Idempotency),
 		)
 	}
-	// A conversion, not a field-by-field literal: the two shapes must stay
-	// identical, and a conversion turns any future drift into a compile error
-	// instead of a silently dropped field.
 	return json.Marshal(axistagsJSON(t))
 }
 

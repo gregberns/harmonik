@@ -1,22 +1,5 @@
 package daemon_test
 
-// verdictexecutor_rc025a_test.go — tests for ExecuteVerdict (RC-025a).
-//
-// Covers:
-//   - Step 1: malformed verdict routes to escalate-to-human fallback.
-//   - Step 2: stale verdict returns Stale=true, emits reconciliation_verdict_stale.
-//   - Steps 3–7: valid non-stale no-op-accept verdict produces verdict-emitted
-//     commit + verdict-executed commit, emits both events, releases lock.
-//   - Step 4: escalate-to-human emits operator_escalation_required.
-//   - Lock release is unconditional (step 7 fires even on error path).
-//   - Verdict-emitted commit carries Harmonik-Workflow-Class: reconciliation.
-//   - Verdict-executed commit carries Harmonik-Verdict-Executed: true.
-//
-// Test helper prefix: ve025a (bead hk-63oh.36).
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-025a.
-// Bead ref: hk-63oh.36.
-
 import (
 	"context"
 	"encoding/json"
@@ -34,10 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// ── Fixtures ─────────────────────────────────────────────────────────────────
-
-// ve025aGitInit initialises a bare-minimum git repository in dir so git commit
-// commands in the executor succeed.
 func ve025aGitInit(t *testing.T, dir string) {
 	t.Helper()
 	for _, args := range [][]string{
@@ -67,7 +46,6 @@ func ve025aGitInit(t *testing.T, dir string) {
 	}
 }
 
-// ve025aValidVerdictEvent builds a valid VerdictEvent for the given verdict.
 func ve025aValidVerdictEvent(verdict core.Verdict) core.VerdictEvent {
 	ve := core.VerdictEvent{
 		Verdict:           verdict,
@@ -91,8 +69,6 @@ func ve025aValidVerdictEvent(verdict core.Verdict) core.VerdictEvent {
 	return ve
 }
 
-// ve025aRecordingEmitter implements handlercontract.EventEmitter and records
-// every emitted event type for assertion.
 type ve025aRecordingEmitter struct {
 	Types []core.EventType
 }
@@ -107,7 +83,6 @@ func (e *ve025aRecordingEmitter) EmitWithRunID(_ context.Context, _ core.RunID, 
 	return nil
 }
 
-// ve025aAcquireLock acquires a reconciliation lock for targetRunID in projectDir.
 func ve025aAcquireLock(t *testing.T, projectDir, targetRunID string) *lifecycle.ReconciliationLock {
 	t.Helper()
 	lock, err := lifecycle.AcquireReconciliationLock(projectDir, targetRunID)
@@ -117,13 +92,10 @@ func ve025aAcquireLock(t *testing.T, projectDir, targetRunID string) *lifecycle.
 	return lock
 }
 
-// ve025aWorktreePath returns the investigator worktree path the executor resolves.
 func ve025aWorktreePath(projectDir, runID string) string {
 	return filepath.Join(projectDir, ".harmonik", "worktrees", runID)
 }
 
-// ve025aSetupWorktree creates and git-inits the investigator's worktree at the
-// path the verdict executor will use.
 func ve025aSetupWorktree(t *testing.T, projectDir string, investigatorRunID uuid.UUID) {
 	t.Helper()
 	wtPath := ve025aWorktreePath(projectDir, investigatorRunID.String())
@@ -134,7 +106,6 @@ func ve025aSetupWorktree(t *testing.T, projectDir string, investigatorRunID uuid
 	ve025aGitInit(t, wtPath)
 }
 
-// ve025aCurrentGitHead returns the current HEAD hash of the git repo at dir.
 func ve025aCurrentGitHead(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
@@ -146,7 +117,6 @@ func ve025aCurrentGitHead(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// ve025aGitLog returns the full formatted git log from dir for assertions.
 func ve025aGitLog(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "log", "--format=fuller", "--no-abbrev-commit")
@@ -158,7 +128,6 @@ func ve025aGitLog(t *testing.T, dir string) string {
 	return string(out)
 }
 
-// ve025aAssertEventEmitted fails the test if want is not present in types.
 func ve025aAssertEventEmitted(t *testing.T, types []core.EventType, want core.EventType, desc string) {
 	t.Helper()
 	for _, et := range types {
@@ -169,15 +138,12 @@ func ve025aAssertEventEmitted(t *testing.T, types []core.EventType, want core.Ev
 	t.Errorf("%s: event %q not emitted; emitted types: %v", desc, want, types)
 }
 
-// ve025aCfg builds a VerdictExecutorConfig for the given projectDir and emitter.
 func ve025aCfg(projectDir string, emitter *ve025aRecordingEmitter) daemon.VerdictExecutorConfig {
 	return daemon.VerdictExecutorConfig{
 		ProjectDir: projectDir,
 		Emitter:    emitter,
 	}
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 // TestExecuteVerdict_MalformedVerdict_RoutesToFallback verifies that a
 // VerdictEvent that fails Valid() causes ExecuteVerdict to route to the
@@ -191,7 +157,6 @@ func TestExecuteVerdict_MalformedVerdict_RoutesToFallback(t *testing.T) {
 	projectDir := t.TempDir()
 	ve025aGitInit(t, projectDir)
 
-	// Build an invalid VerdictEvent: InvestigatorRunID is nil UUID → Valid() = false.
 	ve := core.VerdictEvent{
 		Verdict:           core.VerdictNoOpAccept,
 		InvestigatorRunID: uuid.Nil,
@@ -232,7 +197,6 @@ func TestExecuteVerdict_StaleVerdict_ReturnsStale(t *testing.T) {
 	projectDir := t.TempDir()
 	ve025aGitInit(t, projectDir)
 
-	// VerdictEvent carries a snapshot token with an intentionally stale git hash.
 	ve := ve025aValidVerdictEvent(core.VerdictNoOpAccept)
 	ve.SnapshotToken.GitHeadHash = "0000000000000000000000000000000000000000"
 
@@ -292,7 +256,6 @@ func TestExecuteVerdict_NoOpAccept_CommitsAndEmits(t *testing.T) {
 	ve025aAssertEventEmitted(t, emitter.Types, core.EventTypeReconciliationVerdictExecuted,
 		"RC-025a step 6: reconciliation_verdict_executed must be emitted")
 
-	// Both commits must exist in the investigator worktree log.
 	wtPath := ve025aWorktreePath(projectDir, ve.InvestigatorRunID.String())
 	logOut := ve025aGitLog(t, wtPath)
 	if !strings.Contains(logOut, "verdict-emitted") {
@@ -302,13 +265,11 @@ func TestExecuteVerdict_NoOpAccept_CommitsAndEmits(t *testing.T) {
 		t.Errorf("verdict-executed commit missing from investigator worktree log:\n%s", logOut)
 	}
 
-	// verdict.json must exist on disk.
 	verdictFile := filepath.Join(wtPath, ".harmonik", "reconciliation", ve.InvestigatorRunID.String(), "verdict.json")
 	data, readErr := os.ReadFile(verdictFile) //nolint:gosec // G304: path from test fixture
 	if readErr != nil {
 		t.Fatalf("verdict.json not found at %q: %v", verdictFile, readErr)
 	}
-	// File should be valid JSON.
 	if !json.Valid(data) {
 		t.Errorf("verdict.json is not valid JSON: %q", data)
 	}
@@ -355,37 +316,18 @@ func TestExecuteVerdict_LockReleasedOnError(t *testing.T) {
 	ve025aGitInit(t, projectDir)
 
 	ve := ve025aValidVerdictEvent(core.VerdictNoOpAccept)
-	// Deliberately do NOT set up the investigator worktree — step 3 will fail.
 	ve.SnapshotToken.GitHeadHash = ve025aCurrentGitHead(t, projectDir)
 
 	lock := ve025aAcquireLock(t, projectDir, ve.TargetRunID.String())
 
-	// ExecuteVerdict fails (no worktree) but must still release the lock.
 	_, _ = daemon.ExecuteVerdict(context.Background(), ve, lock, ve025aCfg(projectDir, &ve025aRecordingEmitter{}))
 
-	// If the lock was released, a new acquire succeeds.
-	//
-	// The acquire is retried within a bounded window rather than asserted on the
-	// first attempt (hk-fei89). An flock lives on the open file description, and
-	// fork() duplicates every fd into the child; O_CLOEXEC drops the fd at exec,
-	// not at fork. So while any sibling test in this package sits between fork()
-	// and execve() for one of its git subprocesses, that child still references
-	// this test's own lock fd, and the flock reads as held even though
-	// ExecuteVerdict has already closed it. Measured directly: under fork
-	// pressure the window fires on ~2% of acquires and always clears in under
-	// 13ms.
-	//
-	// The window does not weaken what this test checks. A genuinely leaked lock
-	// is still held when the window expires, so a real step-7 regression still
-	// fails here; only the transient fork-window false positive is absorbed.
 	const releaseWindow = 2 * time.Second
 	deadline := time.Now().Add(releaseWindow)
 	var lastErr error
 	for {
 		lock2, err := lifecycle.AcquireReconciliationLock(projectDir, ve.TargetRunID.String())
 		if err == nil {
-			// This probe lock is ours now; failing to hand it back would leak the
-			// very resource this test asserts is not leaked.
 			if relErr := lock2.Release(); relErr != nil {
 				t.Errorf("release probe reconciliation lock: %v", relErr)
 			}
@@ -454,9 +396,6 @@ func TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit(t *te
 	ve025aSetupWorktree(t, projectDir, ve.InvestigatorRunID)
 	ve.SnapshotToken.GitHeadHash = ve025aCurrentGitHead(t, projectDir)
 
-	// Set up the target run's worktree with unstaged WIP (modified README).
-	// ve025aGitInit creates a README and commits it; modifying it without
-	// staging gives CaptureWIP something non-empty to capture.
 	targetWTPath := ve025aWorktreePath(projectDir, ve.TargetRunID.String())
 	if err := os.MkdirAll(targetWTPath, 0o755); err != nil {
 		t.Fatalf("TestExecuteVerdict_ReopenBead: setup target worktree mkdir: %v", err)
@@ -468,12 +407,8 @@ func TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit(t *te
 	}
 
 	lock := ve025aAcquireLock(t, projectDir, ve.TargetRunID.String())
-	// ExecuteVerdict fails at step 4 (reopen-bead requires BrAdapter) but
-	// step 3 (verdict-emitted commit with WIP capture) must succeed first.
 	_, _ = daemon.ExecuteVerdict(context.Background(), ve, lock, ve025aCfg(projectDir, &ve025aRecordingEmitter{}))
 
-	// RC-019: wip-capture/git-status.txt must exist in the investigator
-	// worktree after the verdict-emitted commit lands.
 	wtPath := ve025aWorktreePath(projectDir, ve.InvestigatorRunID.String())
 	statusFile := filepath.Join(wtPath, ".harmonik", "reconciliation",
 		ve.InvestigatorRunID.String(), "wip-capture", "git-status.txt")

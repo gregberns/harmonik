@@ -44,7 +44,6 @@ func TestFilterEventsByType(t *testing.T) {
 		{EventID: "ddd", Type: "run_completed"},
 	}
 
-	// Filter for completions only.
 	got := filterEventsByType(events, "run_completed", "run_failed")
 	if len(got) != 3 {
 		t.Fatalf("expected 3 events; got %d", len(got))
@@ -55,13 +54,11 @@ func TestFilterEventsByType(t *testing.T) {
 		}
 	}
 
-	// Filter for a type that is absent.
 	none := filterEventsByType(events, "merge_conflict")
 	if len(none) != 0 {
 		t.Errorf("expected 0 events; got %d", len(none))
 	}
 
-	// Empty type list returns nothing.
 	empty := filterEventsByType(events)
 	if len(empty) != 0 {
 		t.Errorf("expected 0 events with no filter; got %d", len(empty))
@@ -72,9 +69,6 @@ func TestFilterEventsByType(t *testing.T) {
 func TestUUIDv7Age(t *testing.T) {
 	t.Parallel()
 
-	// A well-formed UUIDv7 whose first 48 bits encode a known Unix millisecond.
-	// 2024-01-01 00:00:00 UTC = 1704067200000 ms.
-	// Build a valid UUIDv7 manually: first 48 bits = timestamp, rest arbitrary.
 	tsMillis := int64(1704067200000) // 2024-01-01T00:00:00Z
 	var raw [16]byte
 	raw[0] = byte(tsMillis >> 40)
@@ -85,26 +79,21 @@ func TestUUIDv7Age(t *testing.T) {
 	raw[5] = byte(tsMillis)
 	raw[6] = 0x70 // version nibble (7) in top 4 bits
 	raw[7] = 0x80
-	// Remaining bytes can be zero.
 
-	// Format as UUID string (8-4-4-4-12 hex).
 	uuidStr := formatUUIDBytes(raw)
 
-	// Reference "now" = 5 seconds after the encoded timestamp.
 	refNow := time.Unix(tsMillis/1000, 0).Add(5 * time.Second)
 	got := uuidv7Age(uuidStr, refNow)
 	if got != "5s" {
 		t.Errorf("uuidv7Age with 5s offset = %q; want %q", got, "5s")
 	}
 
-	// Reference "now" = exactly at the timestamp (age 0).
 	at := time.Unix(tsMillis/1000, 0)
 	got = uuidv7Age(uuidStr, at)
 	if got != "0s" {
 		t.Errorf("uuidv7Age at timestamp = %q; want %q", got, "0s")
 	}
 
-	// Invalid / short string returns "?".
 	if v := uuidv7Age("", time.Now()); v != "?" {
 		t.Errorf("uuidv7Age(\"\") = %q; want %q", v, "?")
 	}
@@ -112,14 +101,12 @@ func TestUUIDv7Age(t *testing.T) {
 		t.Errorf("uuidv7Age(\"not-a-uuid\") = %q; want %q", v, "?")
 	}
 
-	// Zero timestamp bytes returns "?".
 	zeroUUID := "00000000-0000-0000-0000-000000000000"
 	if v := uuidv7Age(zeroUUID, time.Now()); v != "?" {
 		t.Errorf("uuidv7Age(zero) = %q; want %q", v, "?")
 	}
 }
 
-// formatUUIDBytes converts a 16-byte array into a standard UUID string.
 func formatUUIDBytes(b [16]byte) string {
 	const hx = "0123456789abcdef"
 	buf := make([]byte, 36)

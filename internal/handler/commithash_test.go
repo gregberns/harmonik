@@ -29,22 +29,11 @@ import (
 	"testing"
 )
 
-// commitHashFixtureKnownHash is the SHA-1-shaped hash value embedded into
-// every fixture binary built by commitHashFixtureBuild.  It uses a
-// recognisable pattern so test failures are easy to spot in output.
 const commitHashFixtureKnownHash = "deadbeef01234567890abcdef0123456789abcde"
 
-// commitHashFixtureBuild compiles a tiny Go program with commitHashFixtureKnownHash
-// embedded via -ldflags and returns the path to the resulting binary.  The
-// binary is placed in a t.TempDir() and is cleaned up automatically.
-//
-// If the Go toolchain is unavailable (e.g. a stripped CI image) the test is
-// skipped via t.Skip, not failed, so that the rest of the suite continues.
 func commitHashFixtureBuild(t *testing.T) string {
 	t.Helper()
 
-	// Minimal Go program: no output, exits cleanly.  The only requirement is
-	// that -ldflags -X can be applied to main.commitHash.
 	const src = `package main
 
 // commitHash is set at build time via -ldflags "-X main.commitHash=<sha>".
@@ -79,8 +68,6 @@ func main() {}
 	return outBinary
 }
 
-// commitHashFixturePlainFile writes arbitrary bytes to a temp file and returns
-// its path.  Used to simulate a binary that does NOT contain the expected hash.
 func commitHashFixturePlainFile(t *testing.T, content []byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -130,7 +117,6 @@ func TestVerifyCommitHash_HC043_MismatchReturnsErrStructural(t *testing.T) {
 func TestVerifyCommitHash_HC043_MismatchOnPlainFile(t *testing.T) {
 	t.Parallel()
 
-	// Content that is guaranteed NOT to contain commitHashFixtureKnownHash.
 	path := commitHashFixturePlainFile(t, []byte("hello world\n"))
 
 	err := VerifyCommitHash(path, commitHashFixtureKnownHash)
@@ -149,7 +135,6 @@ func TestVerifyCommitHash_HC043_MismatchOnPlainFile(t *testing.T) {
 func TestVerifyCommitHash_HC043_EmptyExpectedIsStructural(t *testing.T) {
 	t.Parallel()
 
-	// Use a path that does not exist — the function must fail before the read.
 	err := VerifyCommitHash("/nonexistent/binary", "")
 	if err == nil {
 		t.Fatal("VerifyCommitHash: expected error for empty expected hash, got nil")
@@ -178,8 +163,6 @@ func TestVerifyCommitHash_HC043_FileNotFound(t *testing.T) {
 func TestVerifyCommitHash_HC043_HashSubstringInFile(t *testing.T) {
 	t.Parallel()
 
-	// Embed the known hash surrounded by noise bytes, simulating the binary
-	// data segment layout produced by the Go linker.
 	content := append([]byte("noise-prefix\x00"), []byte(commitHashFixtureKnownHash)...)
 	content = append(content, []byte("\x00noise-suffix")...)
 
@@ -190,40 +173,15 @@ func TestVerifyCommitHash_HC043_HashSubstringInFile(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Integration test — hk-uwie
-// ---------------------------------------------------------------------------
-//
-// TestVerifyCommitHash_HC043_RealBinary exercises VerifyCommitHash against the
-// actual harmonik-twin-generic binary built with the production ldflags stamp
-// (same stamp path as the Makefile's build-twin-generic target).
-//
-// commitHashFixtureBuildTwin compiles cmd/harmonik-twin-generic with
-// -ldflags "-X main.commitHash=<HEAD>" using exec.CommandContext(t.Context(),
-// ...) and returns the binary path together with the stamped hash value.  The
-// binary is placed in t.TempDir() and is cleaned up automatically.
-
-// commitHashFixtureBuildTwin builds cmd/harmonik-twin-generic with the
-// production ldflags stamp (mirroring the Makefile build-twin-generic target)
-// and returns (binaryPath, stampedHash).  The binary is written into
-// t.TempDir() and cleaned up automatically.
-//
-// If git or the Go toolchain is unavailable the test is skipped, not failed.
-//
-// Cite: specs/handler-contract.md §4.10.HC-043, §4.10.HC-045; Makefile
-// build-twin-generic target.
 func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 	t.Helper()
 
-	// Resolve the repo root so we can reference the package path absolutely.
 	rootOut, err := exec.CommandContext(t.Context(), "git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Skipf("commitHashFixtureBuildTwin: git unavailable: %v", err)
 	}
 	repoRoot := strings.TrimSpace(string(rootOut))
 
-	// Obtain the current HEAD SHA — this is the value the Makefile stamps via
-	// COMMIT_HASH := $(shell git rev-parse HEAD).
 	hashOut, err := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Skipf("commitHashFixtureBuildTwin: git rev-parse HEAD: %v", err)
@@ -262,15 +220,12 @@ func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 func TestVerifyCommitHash_HC043_RealBinary(t *testing.T) {
 	binaryPath, stampedHash := commitHashFixtureBuildTwin(t)
 
-	// Happy path: the stamped hash must be found in the binary.
 	if err := VerifyCommitHash(binaryPath, stampedHash); err != nil {
 		t.Errorf("VerifyCommitHash against real twin binary: expected nil, got %v", err)
 	}
 
-	// Mismatch path: a different SHA-1-shaped hash must return ErrStructural.
 	wrongHash := "0000000000000000000000000000000000000000"
 	if wrongHash == stampedHash {
-		// Extremely unlikely but guard against accidental equality.
 		wrongHash = "ffffffffffffffffffffffffffffffffffffffff"
 	}
 	err := VerifyCommitHash(binaryPath, wrongHash)

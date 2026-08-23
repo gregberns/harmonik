@@ -1,13 +1,5 @@
 package sentinel_test
 
-// governor_bt1_test.go — BT1 unit-gap tests for the movement governor.
-//
-// Covers: HEAD-advance counting (was 0 coverage), weight-0-chatter vs a
-// populated events.jsonl, boundary-equality/staircase reproducibility,
-// and the "single-low-window stays WATCHING" invariant.
-//
-// Bead: hk-tbg8 (flywheel-BT1). Epic: hk-0oca (codename:flywheel).
-
 import (
 	"context"
 	"encoding/json"
@@ -21,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// setupGitRepoWithCommit creates a minimal git repo whose origin/main branch
-// has exactly one commit. The commit's committer date is set to commitTime so
-// window-filter tests work correctly. Returns the projectDir, which already
-// contains .harmonik/events/.
 func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -69,7 +57,6 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v\n%s", err, out)
 	}
-	// Push whatever branch is checked out to origin/main.
 	runGit(projectDir, "push", "origin", "HEAD:main")
 
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o750); err != nil {
@@ -150,7 +137,6 @@ func TestGovernor_Weight0Chatter_PopulatedFile(t *testing.T) {
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	// Write 20 weight-0 chatter events across five non-terminal types.
 	chatterTypes := []core.EventType{
 		core.EventTypeRunStarted,
 		core.EventTypeStateEntered,
@@ -166,7 +152,6 @@ func TestGovernor_Weight0Chatter_PopulatedFile(t *testing.T) {
 		}
 	}
 
-	// Also write a reviewer_verdict{REQUEST_CHANGES} — weight-0 per spec §1.1.
 	rcPayload, err := json.Marshal(map[string]interface{}{
 		"verdict":        "REQUEST_CHANGES",
 		"schema_version": 1,
@@ -290,7 +275,6 @@ func TestGovernor_StaircaseReproducibility(t *testing.T) {
 		HasReadyBeads: true,
 	}
 
-	// Run Evaluate twice from identical initial state; outputs must match.
 	state1 := &sentinel.GovernorState{ConsecutiveLowWindows: 1}
 	state2 := &sentinel.GovernorState{ConsecutiveLowWindows: 1}
 

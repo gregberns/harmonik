@@ -84,9 +84,6 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 
 	graph, parseErr := dot.Parse(string(src), dotPath)
 	if parseErr != nil {
-		// CP-056: policy_ref is a deterministic rejection — return ErrPolicyRefRejected
-		// (which wraps handlercontract.ErrDeterministic) and print a deprecation warning
-		// to stderr naming the typed replacement attributes per the spec mandate.
 		if strings.Contains(parseErr.Error(), "CP-056") {
 			fmt.Fprintf(os.Stderr,
 				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
@@ -143,11 +140,6 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 		}
 	}
 
-	// WG-046 (security): parse the TEMPLATE with __TOKEN__ placeholders intact,
-	// then substitute per-attribute AFTER parse (substituteGraphParams below). The
-	// DOT lexer preserves __TOKEN__ verbatim inside quoted attribute values, so a
-	// param value can never alter graph shape (DOT-structure injection is closed by
-	// construction) and tool_command values can be context-aware shell-quoted.
 	graph, parseErr := dot.Parse(string(src), dotPath)
 	if parseErr != nil {
 		if strings.Contains(parseErr.Error(), "CP-056") {
@@ -166,10 +158,6 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 		}
 	}
 
-	// WG-045 (security): substitute params into the parsed graph per-attribute —
-	// tool_command values shell-quoted, all others verbatim — applying ingestion
-	// hygiene + the residual-token launch check. Runs BEFORE Validate so typed-field
-	// checks see substituted values.
 	if subErr := substituteGraphParams(graph, params); subErr != nil {
 		return nil, &ErrWorkflowLoad{
 			Path:   dotPath,
@@ -202,8 +190,6 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 // (hk-30vlb): same pipeline as LoadDotWorkflowWithParams but without the
 // os.ReadFile call.
 func LoadDotWorkflowFromBytes(src []byte, sourceName string, params map[string]string) (*dot.Graph, error) {
-	// WG-046 (security): parse the TEMPLATE with __TOKEN__ placeholders intact,
-	// then substitute per-attribute AFTER parse (substituteGraphParams below).
 	graph, parseErr := dot.Parse(string(src), sourceName)
 	if parseErr != nil {
 		if strings.Contains(parseErr.Error(), "CP-056") {
@@ -222,9 +208,6 @@ func LoadDotWorkflowFromBytes(src []byte, sourceName string, params map[string]s
 		}
 	}
 
-	// WG-045 (security): substitute params into the parsed graph per-attribute —
-	// tool_command values shell-quoted, all others verbatim — applying ingestion
-	// hygiene + the residual-token launch check. Runs BEFORE Validate.
 	if subErr := substituteGraphParams(graph, params); subErr != nil {
 		return nil, &ErrWorkflowLoad{
 			Path:   sourceName,
@@ -266,7 +249,6 @@ func LoadDotWorkflowWithPolicy(dotPath string, policy *core.PolicyDocument) (*do
 		return nil, nil, err
 	}
 
-	// Build a name→skills index from the policy's skill_sets block (CP-057 §6.3).
 	skillSetIndex := make(map[string][]string, len(policy.SkillSets))
 	for _, ss := range policy.SkillSets {
 		skillSetIndex[ss.Name] = ss.Skills

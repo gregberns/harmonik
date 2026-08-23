@@ -19,13 +19,8 @@ import (
 	"testing"
 )
 
-// twinLaunchFixtureKnownHash is the SHA-1-shaped hash used across all HC-045
-// fixture helpers.  The recognisable pattern makes test failures easy to spot.
 const twinLaunchFixtureKnownHash = "aabbccdd00112233445566778899aabbccddeeff"
 
-// twinLaunchFixtureBinaryWithHash writes a file at path containing
-// twinLaunchFixtureKnownHash in its bytes, simulating a twin binary built with
-// -ldflags embedding.
 func twinLaunchFixtureBinaryWithHash(t *testing.T, dir, name string) string {
 	t.Helper()
 	content := append([]byte("twin-binary-prefix\x00"), []byte(twinLaunchFixtureKnownHash)...)
@@ -37,9 +32,6 @@ func twinLaunchFixtureBinaryWithHash(t *testing.T, dir, name string) string {
 	return path
 }
 
-// twinLaunchFixtureBinaryWithoutHash writes a file at path that does NOT
-// contain twinLaunchFixtureKnownHash, simulating a binary built without or
-// with a different commit hash.
 func twinLaunchFixtureBinaryWithoutHash(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -49,12 +41,6 @@ func twinLaunchFixtureBinaryWithoutHash(t *testing.T, dir, name string) string {
 	return path
 }
 
-// twinLaunchFixtureRepo creates a temp directory simulating a repo root with a
-// twin binary at "twins/<name>".  Returns the repoRoot dir and the repo-relative
-// ref string (e.g. "twins/claude-twin").
-//
-// If withHash is true, the binary contains twinLaunchFixtureKnownHash.
-// If withHash is false, the binary does NOT contain the known hash.
 func twinLaunchFixtureRepo(t *testing.T, name string, withHash bool) (repoRoot, binaryRef string) {
 	t.Helper()
 	repoRoot = t.TempDir()
@@ -70,10 +56,6 @@ func twinLaunchFixtureRepo(t *testing.T, name string, withHash bool) (repoRoot, 
 	binaryRef = filepath.Join("twins", name)
 	return repoRoot, binaryRef
 }
-
-// ---------------------------------------------------------------------------
-// TwinLaunchConfig.Validate tests
-// ---------------------------------------------------------------------------
 
 // TestTwinLaunchConfig_HC045_ValidateEmptyBinaryRef verifies that Validate
 // returns ErrTwinLaunchConfigInvalid (wrapping ErrStructural) when BinaryRef
@@ -126,10 +108,6 @@ func TestTwinLaunchConfig_HC045_ValidateComplete(t *testing.T) {
 		t.Errorf("Validate: expected nil for complete config, got %v", err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// VerifyTwinLaunch tests
-// ---------------------------------------------------------------------------
 
 // TestVerifyTwinLaunch_HC045_HappyPath verifies that VerifyTwinLaunch returns
 // the resolved absolute path and nil error when the binary exists at the

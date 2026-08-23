@@ -23,15 +23,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// jsonTagFixtureFieldCase describes one Event struct field's expected JSON tag.
 type jsonTagFixtureFieldCase struct {
 	goName      string // Go field identifier
 	wantJSONKey string // expected json key (the part before any comma)
 	omitEmpty   bool   // whether ,omitempty is expected
 }
 
-// hqwn69EventJSONTagCases lists every field of core.Event with its expected
-// json tag per event-model.md §6.2.
 var hqwn69EventJSONTagCases = []jsonTagFixtureFieldCase{
 	{goName: "EventID", wantJSONKey: "event_id", omitEmpty: false},
 	{goName: "SchemaVersion", wantJSONKey: "schema_version", omitEmpty: false},
@@ -45,16 +42,12 @@ var hqwn69EventJSONTagCases = []jsonTagFixtureFieldCase{
 	{goName: "Payload", wantJSONKey: "payload", omitEmpty: false},
 }
 
-// hqwn69TraceContextJSONTagCases lists every field of core.TraceContext with
-// its expected json tag per event-model.md §6.1.
 var hqwn69TraceContextJSONTagCases = []jsonTagFixtureFieldCase{
 	{goName: "TraceID", wantJSONKey: "trace_id", omitEmpty: true},
 	{goName: "ParentEventID", wantJSONKey: "parent_event_id", omitEmpty: true},
 	{goName: "RootEventID", wantJSONKey: "root_event_id", omitEmpty: true},
 }
 
-// hqwn69CheckJSONTags is a shared helper that verifies JSON struct tags on the
-// given reflect.Type against the provided field-case table.
 func hqwn69CheckJSONTags(t *testing.T, structType reflect.Type, cases []jsonTagFixtureFieldCase) {
 	t.Helper()
 
@@ -77,7 +70,6 @@ func hqwn69CheckJSONTags(t *testing.T, structType reflect.Type, cases []jsonTagF
 				return
 			}
 
-			// Split tag into key and options (e.g., "event_id,omitempty").
 			parts := strings.SplitN(tag, ",", 2)
 			key := parts[0]
 			opts := ""
@@ -173,7 +165,6 @@ func TestHqwn69_EventMarshalProducesSnakeCaseKeys(t *testing.T) {
 		}
 	}
 
-	// Verify PascalCase keys are NOT present (the old tag-free form would produce these).
 	forbiddenKeys := []string{
 		`"EventID"`,
 		`"SchemaVersion"`,
@@ -205,7 +196,6 @@ func TestHqwn69_EventOmitEmptyFieldsAbsentWhenNil(t *testing.T) {
 		TimestampWall:   time.Date(2026, 4, 24, 14, 22, 11, 0, time.UTC),
 		SourceSubsystem: "github.com/gregberns/harmonik/internal/orchestrator",
 		Payload:         json.RawMessage(`{}`),
-		// All optional fields left nil.
 	}
 
 	b, err := json.Marshal(e)

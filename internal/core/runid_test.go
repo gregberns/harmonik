@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// mustParseRunID constructs a RunID from a UUID string, failing the test on error.
 func mustParseRunID(t *testing.T, s string) RunID {
 	t.Helper()
 
@@ -21,7 +20,6 @@ func mustParseRunID(t *testing.T, s string) RunID {
 }
 
 func TestRunID_String(t *testing.T) {
-	// UUIDv7 canonical form: 8-4-4-4-12 hex digits with hyphens.
 	const raw = "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f6a7b"
 
 	r := mustParseRunID(t, raw)

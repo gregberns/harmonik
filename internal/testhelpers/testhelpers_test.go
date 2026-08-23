@@ -9,11 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/testhelpers"
 )
 
-// ---------------------------------------------------------------------------
-// assert.go — test the success paths (failure paths call FailNow/Goexit which
-// cannot be exercised safely from an external test package without a real sub-T).
-// ---------------------------------------------------------------------------
-
 func TestAssertNoError_Nil(t *testing.T) {
 	testhelpers.AssertNoError(t, nil)
 }
@@ -26,10 +21,6 @@ func TestAssertEqual_Match(t *testing.T) {
 func TestAssertTrue_True(t *testing.T) {
 	testhelpers.AssertTrue(t, true, "should not fail")
 }
-
-// ---------------------------------------------------------------------------
-// clock.go
-// ---------------------------------------------------------------------------
 
 func TestFakeClock_Now(t *testing.T) {
 	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -65,13 +56,8 @@ func TestFakeClock_AdvanceNegativePanics(t *testing.T) {
 }
 
 func TestFakeClock_ImplementsClock(t *testing.T) {
-	// Compile-time assertion: *FakeClock satisfies the Clock interface.
 	var _ testhelpers.Clock = testhelpers.NewFakeClock(time.Now())
 }
-
-// ---------------------------------------------------------------------------
-// tempdir.go
-// ---------------------------------------------------------------------------
 
 func TestTempDir_CreatesDirectory(t *testing.T) {
 	dir := testhelpers.TempDir(t)
@@ -89,10 +75,6 @@ func TestTempDir_CreatesDirectory(t *testing.T) {
 		t.Errorf("TempDir result %q is not a directory", dir)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// testenv.go
-// ---------------------------------------------------------------------------
 
 func TestNewEnv_CreatesLayout(t *testing.T) {
 	env := testhelpers.NewEnv(t)

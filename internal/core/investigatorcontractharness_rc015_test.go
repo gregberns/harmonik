@@ -7,27 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ---- hk-63oh.75: Investigator-agent contract harness (RC-015..RC-019, RC-015a) ----
-//
-// This file contains fixture-level / spec-text harness tests that prove the
-// investigator-agent contracts per specs/reconciliation/spec.md §4.4 without
-// requiring full integration infrastructure (twin handler binary, live daemon).
-//
-// Judgment call: the RC-018 SIGTERM/SIGKILL ordering and RC-015a launch sequence
-// require integration infrastructure (twin handler, live Unix socket) not yet built.
-// Each such test is structured as a specification anchor proving the shape contract
-// rather than an end-to-end signal path. Full integration tests belong in a future
-// integration harness bead once the twin handler ships.
-//
-// Helper prefix: rc75Investigator (bead hk-63oh.75).
-
-// ---- RC-015: Investigator inputs are bound by snapshot token ----
-
-// rc75InvestigatorFixtureSnapshotToken returns a valid SnapshotToken for RC-015
-// harness tests. Uses fixed values so tests are deterministic.
-//
-// Spec ref: specs/reconciliation/schemas.md §6.1 RECORD SnapshotToken;
-// specs/reconciliation/spec.md §4.4 RC-015.
 func rc75InvestigatorFixtureSnapshotToken(t *testing.T) SnapshotToken {
 	t.Helper()
 	return SnapshotToken{
@@ -37,14 +16,6 @@ func rc75InvestigatorFixtureSnapshotToken(t *testing.T) SnapshotToken {
 	}
 }
 
-// rc75InvestigatorFixtureInvestigatorInput returns a valid InvestigatorInput
-// for RC-015 harness tests, using the snapshot token from
-// rc75InvestigatorFixtureSnapshotToken so that snapshot-binding tests can verify
-// the token is threaded through from dispatch to investigator.
-//
-// Spec ref: specs/reconciliation/spec.md §4.4 RC-015 — "InvestigatorInput shape
-// declared in schemas.md §6.1 is a documented LOGICAL VIEW the investigator
-// constructs at runtime."
 func rc75InvestigatorFixtureInvestigatorInput(t *testing.T) InvestigatorInput {
 	t.Helper()
 	tok := rc75InvestigatorFixtureSnapshotToken(t)
@@ -101,7 +72,6 @@ func TestRC015_SnapshotTokenPlumbedThroughInvestigatorInput(t *testing.T) {
 
 	tok := rc75InvestigatorFixtureSnapshotToken(t)
 	inp := rc75InvestigatorFixtureInvestigatorInput(t)
-	// Override the snapshot token so we can verify exact plumbing.
 	inp.SnapshotToken = tok
 
 	got := inp.SnapshotToken
@@ -174,15 +144,11 @@ func TestRC015_SnapshotTokenJSONSerializationRoundTrip(t *testing.T) {
 func TestRC015_InvestigatorInputLogicalViewNotPreAssembled(t *testing.T) {
 	t.Parallel()
 
-	// The type must exist (it documents the logical view).
 	inp := rc75InvestigatorFixtureInvestigatorInput(t)
 	if !inp.Valid() {
 		t.Error("RC-015: InvestigatorInput.Valid() = false; logical view shape is broken")
 	}
 
-	// The SnapshotToken bounds the view: any investigator query with an authority
-	// time prior to GitHeadHash or BeadsAuditEntryID is in-scope; later is out.
-	// This is a documentation anchor: Valid() on the snapshot token is the fence.
 	if !inp.SnapshotToken.Valid() {
 		t.Error("RC-015: InvestigatorInput.SnapshotToken.Valid() = false; snapshot bounding is broken")
 	}
@@ -200,35 +166,29 @@ func TestRC015_InvestigatorInputLogicalViewNotPreAssembled(t *testing.T) {
 func TestRC015_SnapshotTokenBoundsAllThreeStores(t *testing.T) {
 	t.Parallel()
 
-	// A token with all three stores populated is valid.
 	full := rc75InvestigatorFixtureSnapshotToken(t)
 	if !full.Valid() {
 		t.Fatal("RC-015: fully-populated SnapshotToken.Valid() = false; fixture error")
 	}
 
-	// A token missing git_head_hash is invalid (git store unbounded).
 	missingGit := full
 	missingGit.GitHeadHash = ""
 	if missingGit.Valid() {
 		t.Error("RC-015: SnapshotToken with empty GitHeadHash.Valid() = true, want false")
 	}
 
-	// A token missing beads_audit_entry_id is invalid (Beads store unbounded).
 	missingBeads := full
 	missingBeads.BeadsAuditEntryID = ""
 	if missingBeads.Valid() {
 		t.Error("RC-015: SnapshotToken with empty BeadsAuditEntryID.Valid() = true, want false")
 	}
 
-	// A token missing captured_at_timestamp is invalid (no temporal anchor).
 	missingTs := full
 	missingTs.CapturedAtTimestamp = ""
 	if missingTs.Valid() {
 		t.Error("RC-015: SnapshotToken with empty CapturedAtTimestamp.Valid() = true, want false")
 	}
 }
-
-// ---- RC-015a: Investigator is an HC handler ----
 
 // TestRC015a_InvestigatorAgentTypeAndRoleAreCanonical verifies that the
 // canonical investigator agent_type ("claude-code") and role ("investigator")
@@ -245,12 +205,9 @@ func TestRC015_SnapshotTokenBoundsAllThreeStores(t *testing.T) {
 func TestRC015a_InvestigatorAgentTypeAndRoleAreCanonical(t *testing.T) {
 	t.Parallel()
 
-	// The canonical pair per RC-015a.
 	const wantAgentType = "claude-code"
 	const wantRole = "investigator"
 
-	// AgentType is a core type declared in agenttype.go; verify the string value
-	// that an investigator LaunchSpec must carry.
 	investigatorAgentType := AgentType(wantAgentType)
 	if string(investigatorAgentType) != wantAgentType {
 		t.Errorf("RC-015a: investigator AgentType = %q, want %q", string(investigatorAgentType), wantAgentType)
@@ -259,9 +216,6 @@ func TestRC015a_InvestigatorAgentTypeAndRoleAreCanonical(t *testing.T) {
 		t.Errorf("RC-015a: AgentType(%q).Valid() = false, want true", wantAgentType)
 	}
 
-	// The role value is a string constant declared by RC-015a; no typed Role
-	// type exists yet (follows the typed-alias-deferral pattern — a typed Role
-	// would be a separate bead). Use the raw string as the canonical declaration.
 	if wantRole == "" {
 		t.Error("RC-015a: canonical investigator role is empty; spec anchor broken")
 	}
@@ -287,7 +241,6 @@ func TestRC015a_InvestigatorOutcomeKindIsReconciliationVerdict(t *testing.T) {
 		SchemaVersion:     1,
 	}
 
-	// Construct the investigator outcome via the Outcome envelope per RC-022a.
 	investigatorOutcome := Outcome{
 		Status:  OutcomeStatusSuccess,
 		Kind:    OutcomeKindReconciliationVerdict,
@@ -306,8 +259,6 @@ func TestRC015a_InvestigatorOutcomeKindIsReconciliationVerdict(t *testing.T) {
 	}
 }
 
-// ---- RC-016: Investigator playbook per category ----
-
 // TestRC016_PlaybookRefRequiredInInvestigatorInput verifies that InvestigatorInput
 // requires a non-empty PlaybookRef, establishing the code-level contract for
 // the per-category playbook obligation of RC-016.
@@ -319,14 +270,12 @@ func TestRC015a_InvestigatorOutcomeKindIsReconciliationVerdict(t *testing.T) {
 func TestRC016_PlaybookRefRequiredInInvestigatorInput(t *testing.T) {
 	t.Parallel()
 
-	// Missing PlaybookRef must cause Valid() to return false.
 	inp := rc75InvestigatorFixtureInvestigatorInput(t)
 	inp.PlaybookRef = ""
 	if inp.Valid() {
 		t.Error("RC-016: InvestigatorInput.Valid() = true with empty PlaybookRef; want false")
 	}
 
-	// Restored PlaybookRef re-validates.
 	inp.PlaybookRef = "playbook://cat-2-non-idempotent"
 	if !inp.Valid() {
 		t.Error("RC-016: InvestigatorInput.Valid() = false with non-empty PlaybookRef; want true")
@@ -343,7 +292,6 @@ func TestRC016_PlaybookRefRequiredInInvestigatorInput(t *testing.T) {
 func TestRC016_InvestigatorCategoriesRequirePlaybook(t *testing.T) {
 	t.Parallel()
 
-	// Categories that require an investigator per §8.12.
 	investigatorCategories := []struct {
 		cat         ReconciliationCategory
 		playbookRef string
@@ -370,8 +318,6 @@ func TestRC016_InvestigatorCategoriesRequirePlaybook(t *testing.T) {
 		})
 	}
 }
-
-// ---- RC-017: Every reconciliation workflow declares a wall-clock budget ----
 
 // TestRC017_BudgetWallClockSecondsRequiredInInput verifies that InvestigatorInput
 // requires BudgetWallClockSeconds > 0, establishing the code-level contract for
@@ -442,8 +388,6 @@ func TestRC017_PerCategoryDefaultBudgetsMatchSpec(t *testing.T) {
 	}
 }
 
-// ---- RC-018: Budget exhaustion terminates with fallback verdict ----
-
 // TestRC018_BudgetExhaustedPayloadIsValid verifies that a BudgetExhaustedPayload
 // with all required fields populated passes Valid(), establishing the payload
 // shape for the reconciliation_budget_exhausted event per RC-018.
@@ -479,7 +423,6 @@ func TestRC018_BudgetExhaustedPayloadIsValid(t *testing.T) {
 func TestRC018_BudgetExhaustedFallbackVerdictIsEscalateToHuman(t *testing.T) {
 	t.Parallel()
 
-	// The fallback verdict is always escalate-to-human per RC-018.
 	fallback := VerdictEscalateToHuman
 
 	if !fallback.Valid() {
@@ -489,8 +432,6 @@ func TestRC018_BudgetExhaustedFallbackVerdictIsEscalateToHuman(t *testing.T) {
 		t.Errorf("RC-018: fallback verdict string = %q, want %q", string(fallback), "escalate-to-human")
 	}
 
-	// The fallback verdict event produced on budget exhaustion must be structurally
-	// identical to an investigator-emitted escalate-to-human (operator-indistinguishable).
 	fallbackEvent := VerdictEvent{
 		Verdict:           fallback,
 		InvestigatorRunID: uuid.Must(uuid.NewV7()),
@@ -511,7 +452,6 @@ func TestRC018_BudgetExhaustedFallbackVerdictIsEscalateToHuman(t *testing.T) {
 func TestRC018_BudgetExhaustedPayloadElapsedExceedsBudget(t *testing.T) {
 	t.Parallel()
 
-	// Elapsed must exceed or equal budget to be meaningful (budget exhaustion).
 	payload := BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
 		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
@@ -524,7 +464,6 @@ func TestRC018_BudgetExhaustedPayloadElapsedExceedsBudget(t *testing.T) {
 			payload.ElapsedSeconds, payload.BudgetSeconds)
 	}
 
-	// A payload with negative elapsed is structurally invalid.
 	negPayload := BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
 		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
@@ -556,7 +495,6 @@ func TestRC018_BudgetExhaustedPayloadElapsedExceedsBudget(t *testing.T) {
 func TestRC018_SIGTERMSIGKILLOrderingIsDocumented(t *testing.T) {
 	t.Parallel()
 
-	// The 5-step sequence per RC-018.
 	steps := []string{
 		"sigterm-investigator",
 		"sigkill-after-hc018-interval",
@@ -569,9 +507,6 @@ func TestRC018_SIGTERMSIGKILLOrderingIsDocumented(t *testing.T) {
 		t.Errorf("RC-018: expected 5 budget-exhaustion steps per spec, got %d", len(steps))
 	}
 
-	// Steps (4) and (5) [indices 3 and 4] are NOT atomic per RC-018.
-	// A crash between them routes through Cat 3b (verdict-emitted-but-unexecuted).
-	// This ordering is the spec anchor; integration testing requires twin handler.
 	emitBudgetExhaustedIdx := 3
 	emitVerdictIdx := 4
 	if emitBudgetExhaustedIdx >= emitVerdictIdx {
@@ -579,14 +514,11 @@ func TestRC018_SIGTERMSIGKILLOrderingIsDocumented(t *testing.T) {
 			emitBudgetExhaustedIdx, emitVerdictIdx)
 	}
 
-	// Cat 3b routes the crash-between-(4)-and-(5) case.
 	cat3b := ReconciliationCategoryCat3b
 	if !cat3b.Valid() {
 		t.Error("RC-018: ReconciliationCategoryCat3b is not valid; enum definition error")
 	}
 }
-
-// ---- RC-019: Investigator captures WIP before emitting reopen-bead ----
 
 // TestRC019_WIPCapturePathConventionMatchesSpec verifies that the WIP-capture
 // path convention matches the spec: .harmonik/reconciliation/<investigator_run_id>/wip-capture/
@@ -600,10 +532,8 @@ func TestRC019_WIPCapturePathConventionMatchesSpec(t *testing.T) {
 
 	investigatorRunID := uuid.Must(uuid.NewV7()).String()
 
-	// The canonical WIP-capture path per RC-019.
 	wipCapturePath := ".harmonik/reconciliation/" + investigatorRunID + "/wip-capture/"
 
-	// The path must contain the required prefix and suffix.
 	const expectedPrefix = ".harmonik/reconciliation/"
 	const expectedSuffix = "/wip-capture/"
 
@@ -630,7 +560,6 @@ func TestRC019_WIPCapturePathConventionMatchesSpec(t *testing.T) {
 func TestRC019_WIPCaptureOnlyMandatoryForReopenBead(t *testing.T) {
 	t.Parallel()
 
-	// Only reopen-bead requires WIP capture; all others are optional.
 	type verdictWIPRequirement struct {
 		verdict    Verdict
 		wipCapture string // "mandatory" or "optional"
@@ -661,13 +590,11 @@ func TestRC019_WIPCaptureOnlyMandatoryForReopenBead(t *testing.T) {
 		}
 	}
 
-	// Exactly one verdict requires mandatory WIP capture.
 	if mandatoryCount != 1 {
 		t.Errorf("RC-019: mandatory WIP capture applies to %d verdicts, want exactly 1 (reopen-bead)",
 			mandatoryCount)
 	}
 
-	// The mandatory verdict is reopen-bead.
 	if requirements[0].verdict != VerdictReopenBead {
 		t.Errorf("RC-019: first mandatory-WIP verdict = %q, want %q",
 			requirements[0].verdict, VerdictReopenBead)
@@ -687,8 +614,6 @@ func TestRC019_WIPCaptureOnlyMandatoryForReopenBead(t *testing.T) {
 func TestRC019_WorkspaceObservationWIPPresentFieldDocumentsGitStatusPorcelain(t *testing.T) {
 	t.Parallel()
 
-	// A WorkspaceObservation with WIPPresent = true models a worktree where
-	// git status --porcelain is non-empty.
 	obs := workspaceObsFixture(t)
 	obs.WIPPresent = true
 
@@ -696,7 +621,6 @@ func TestRC019_WorkspaceObservationWIPPresentFieldDocumentsGitStatusPorcelain(t 
 		t.Error("RC-019: WorkspaceObservation with WIPPresent=true is invalid; want valid")
 	}
 
-	// A WorkspaceObservation with WIPPresent = false models a clean worktree.
 	obs.WIPPresent = false
 	if !obs.Valid() {
 		t.Error("RC-019: WorkspaceObservation with WIPPresent=false is invalid; want valid")

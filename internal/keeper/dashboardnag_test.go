@@ -1,7 +1,5 @@
 package keeper
 
-// dashboardnag_test.go — unit tests for the hk-xg6rw dashboard pre-nag.
-
 import (
 	"context"
 	"os"

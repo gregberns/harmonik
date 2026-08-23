@@ -1,28 +1,5 @@
 package queue
 
-// intentrecovery.go — the startup half of the durable replace transaction.
-//
-// WriteReplacement installs a durable <name>.replace-intent before it renames
-// the candidate over the canonical queue file, and the QueueStore removes that
-// intent after the rename lands. A crash between those two steps leaves the
-// intent on disk.
-//
-// Nothing used to read it back. The consequence was not a slow leak: an intent
-// left behind refuses the next install of a different intent for the same queue
-// (durableNoReplace returns noReplaceRefused), the QueueStore reads that refusal
-// as an indeterminate commit and quarantines the queue, and the operator's own
-// `queue recover` path installs an intent too, so it is refused by the same
-// leftover file. One crash wedged the queue until somebody deleted the file by
-// hand.
-//
-// RecoverReplaceIntents is the missing read-back. It runs once at startup and
-// finishes or rolls back each leftover intent against the facts the intent
-// itself pins by digest. Read its doc comment for exactly how early "at
-// startup" is, because it is not as early as it sounds.
-//
-// Spec ref: specs/queue-model.md §3.1 QM-001 — the atomic-write sequence.
-// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a — startup queue load.
-
 import (
 	"bytes"
 	"encoding/base64"
@@ -50,8 +27,6 @@ var ErrArchiveHandoffIntentNotRecoverable = errors.New(
 	"queue: leftover archive-handoff intent needs the linked-handoff continuation, which is not wired",
 )
 
-// replaceIntentSuffix is the filename suffix of a durable replace intent inside
-// the queues directory.
 const replaceIntentSuffix = ".replace-intent"
 
 // ReplaceIntentRecovery reports what RecoverReplaceIntents did with one
@@ -133,15 +108,6 @@ func recoverReplaceIntents(projectDir string, ops namespaceOps) ([]ReplaceIntent
 	return recoveries, nil
 }
 
-// recoverOneIntentFile resolves a single intent file named by its basename.
-// Every failure path returns a refusal that names the queue, so a caller can
-// report the wedge even when the bytes are too corrupt to say which queue the
-// intent meant.
-//
-// The bool is false when the file is gone by the time it is read, which is the
-// one case with nothing to report: no intent, no wedge, and no action taken.
-// Reporting that as a successful recovery would put a line in the daemon log
-// claiming a crash was cleaned up when none was.
 func recoverOneIntentFile(projectDir, basename string, ops namespaceOps) (ReplaceIntentRecovery, bool) {
 	nameFromFile := strings.TrimSuffix(basename, replaceIntentSuffix)
 	refuse := func(err error) (ReplaceIntentRecovery, bool) {
@@ -208,9 +174,6 @@ func completionRecoveryPhase(projectDir string, intent ReplaceIntentV1, ops name
 	return CompletionPhaseCommitIndeterminate
 }
 
-// recoverCompletionReplaceIntent converges one exact QM-053 transaction. A
-// restart does not retry the final observation. It installs only the bound
-// receipt, then makes canonical and intent absence durable.
 func recoverCompletionReplaceIntent(
 	projectDir string,
 	intent ReplaceIntentV1,
@@ -293,11 +256,6 @@ func finishRecoveredCompletion(
 	return CompletionPhaseCleaned, nil
 }
 
-// recoverReplaceIntent completes a plain replace transaction after a restart.
-// It is the sibling of recoverFailedReplaceIntent for intents that carry no
-// receipt binding, and it acts on the same rule: only the exact durable bytes
-// for this queue are accepted, and the action comes from classification against
-// the on-disk facts rather than from anything the caller believes.
 func recoverReplaceIntent(
 	projectDir string,
 	intent ReplaceIntentV1,
@@ -320,9 +278,6 @@ func recoverReplaceIntent(
 	}
 	switch action {
 	case ReplacePromoteCanonical:
-		// The rename already landed before the crash. The canonical file is
-		// already the candidate's bytes, so the only unfinished step is
-		// dropping the intent.
 		if err := cleanupReplaceIntent(projectDir, intent.NormalizedName, ops); err != nil {
 			return ReplaceRefuse, fmt.Errorf("cleanup replace intent: %w", err)
 		}
@@ -342,8 +297,6 @@ func recoverReplaceIntent(
 	}
 }
 
-// retryCandidateRename finishes a transaction whose candidate was durable but
-// whose rename had not happened when the process died.
 func retryCandidateRename(projectDir string, intent ReplaceIntentV1, ops namespaceOps) error {
 	qDir := queuesDir(projectDir)
 	candidatePath := filepath.Join(qDir, intent.CandidateTempBasename)
@@ -360,9 +313,6 @@ func retryCandidateRename(projectDir string, intent ReplaceIntentV1, ops namespa
 	return nil
 }
 
-// discardCandidate rolls a transaction back to its prior state. The canonical
-// file still holds the prior bytes, so removing the candidate and the intent
-// restores the queue exactly as it stood before the transaction began.
 func discardCandidate(projectDir string, intent ReplaceIntentV1, ops namespaceOps) error {
 	qDir := queuesDir(projectDir)
 	candidatePath := filepath.Join(qDir, intent.CandidateTempBasename)

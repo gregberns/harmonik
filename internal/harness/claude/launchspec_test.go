@@ -1,23 +1,5 @@
 package claude_test
 
-// launchspec_test.go — unit tests for claude.BuildLaunchSpec (hk-gql20.13).
-//
-// Verifies the helper threads all bridge pieces correctly for all four workflow
-// phases: single, implementer-initial, implementer-resume, reviewer.
-//
-// Key invariants tested:
-//
-//   - CHB-008: --session-id used for single/initial/reviewer; --resume for resume.
-//   - CHB-009: reviewer always mints a fresh session ID, ignores priorClaudeSessID.
-//   - CHB-007: CheckForbiddenFlags is invoked (forbidden flag injected via argv
-//     detection path is not directly testable here — the helper builds argv
-//     internally, so we verify the deny-list path via env-var injection).
-//   - LaunchSpec fields are populated correctly per spec.
-//   - shared.LaunchArtifacts carries claudeSessionID, sessionLogPath, handlerSessionID,
-//     and preExecMsgs.
-//
-// Helper prefix: claudeLaunchSpecFixture (bead hk-gql20.13).
-
 import (
 	"context"
 	"os"
@@ -33,22 +15,15 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
-// claudeLaunchSpecFixtureWorkspace creates a temporary workspace directory
-// suitable for MaterializeClaudeSettings and CheckSettingsLocalJSON.
-// Returns the workspace path.
 func claudeLaunchSpecFixtureWorkspace(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// Ensure the .claude/ directory exists so MaterializeClaudeSettings does not
-	// need to create it from scratch (it will, but this mirrors real worktree layout).
 	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o700); err != nil {
 		t.Fatalf("claudeLaunchSpecFixtureWorkspace: MkdirAll .claude/: %v", err)
 	}
 	return dir
 }
 
-// claudeLaunchSpecFixtureRunCtx builds a shared.LaunchCtx for the given phase.
-// workspacePath must be a valid temp directory (e.g. from claudeLaunchSpecFixtureWorkspace).
 func claudeLaunchSpecFixtureRunCtx(
 	t *testing.T,
 	workspacePath string,
@@ -75,10 +50,6 @@ func claudeLaunchSpecFixtureRunCtx(
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestBuildClaudeLaunchSpec — all four phases
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildClaudeLaunchSpec_Single verifies the helper builds a correct
 // LaunchSpec and artifacts for single-mode (no phase, fresh session).
 func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
@@ -92,7 +63,6 @@ func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
 		t.Fatalf("TestBuildClaudeLaunchSpec_Single: unexpected error: %v", err)
 	}
 
-	// LaunchSpec fields.
 	if spec.Binary != "claude" {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "claude")
 	}
@@ -100,10 +70,8 @@ func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, ws)
 	}
 
-	// Single-mode uses --session-id (CHB-008: not implementer-resume).
 	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
-	// Artifacts non-empty.
 	if arts.ClaudeSessionID == "" {
 		t.Error("claudeSessionID must be non-empty")
 	}
@@ -117,7 +85,6 @@ func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
 		t.Errorf("preExecMsgs len = %d; want 4 (CHB-018)", len(arts.PreExecMsgs))
 	}
 
-	// CHB-006: required env vars present.
 	claudeLaunchSpecAssertEnvKey(t, spec.Env, "HARMONIK_RUN_ID")
 	claudeLaunchSpecAssertEnvKey(t, spec.Env, "HARMONIK_DAEMON_SOCKET")
 	claudeLaunchSpecAssertEnvKey(t, spec.Env, "HARMONIK_CLAUDE_SESSION_ID")
@@ -138,7 +105,6 @@ func TestBuildClaudeLaunchSpec_ImplementerInitial(t *testing.T) {
 		t.Fatalf("TestBuildClaudeLaunchSpec_ImplementerInitial: unexpected error: %v", err)
 	}
 
-	// implementer-initial: --session-id (not --resume).
 	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
 	if arts.ClaudeSessionID == "" {
@@ -155,7 +121,6 @@ func TestBuildClaudeLaunchSpec_ImplementerResume(t *testing.T) {
 	t.Parallel()
 
 	ws := claudeLaunchSpecFixtureWorkspace(t)
-	// Mint a fake prior session ID.
 	priorUID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("mint priorUID: %v", err)
@@ -169,10 +134,8 @@ func TestBuildClaudeLaunchSpec_ImplementerResume(t *testing.T) {
 		t.Fatalf("TestBuildClaudeLaunchSpec_ImplementerResume: unexpected error: %v", err)
 	}
 
-	// implementer-resume: --resume (CHB-008).
 	claudeLaunchSpecAssertResumeFlag(t, spec.Args)
 
-	// Session ID is reused from prior (CHB-008).
 	if arts.ClaudeSessionID != priorSessID {
 		t.Errorf("claudeSessionID = %q; want prior session %q", arts.ClaudeSessionID, priorSessID)
 	}
@@ -188,7 +151,6 @@ func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 	t.Parallel()
 
 	ws := claudeLaunchSpecFixtureWorkspace(t)
-	// CHB-009: reviewer must always mint fresh; caller must NOT pass a prior session ID.
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
 
 	spec, arts, err := claude.BuildLaunchSpec(context.Background(), rc)
@@ -196,7 +158,6 @@ func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 		t.Fatalf("TestBuildClaudeLaunchSpec_Reviewer: unexpected error: %v", err)
 	}
 
-	// Reviewer uses --session-id (fresh session; CHB-009 — never --resume).
 	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
 	if arts.ClaudeSessionID == "" {
@@ -220,7 +181,6 @@ func TestBuildClaudeLaunchSpec_CheckForbiddenFlagsInvoked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint runUID: %v", err)
 	}
-	// Inject the forbidden env var via baseEnv.
 	rc := shared.LaunchCtx{
 		RunID:             core.RunID(runUID),
 		BeadID:            "test-bead-chb007",
@@ -288,17 +248,9 @@ func TestBuildClaudeLaunchSpec_TwinBlind(t *testing.T) {
 	if spec.Binary != "harmonik-twin-claude" {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "harmonik-twin-claude")
 	}
-	// Args, Env, WorkDir shape must be identical to the claude case.
 	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// assertion helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// claudeLaunchSpecAssertSessionIDFlag verifies that args contains
-// "--session-id" followed by a non-empty UUID string, and verifies that
-// "--resume" is absent.
 func claudeLaunchSpecAssertSessionIDFlag(t *testing.T, args []string) {
 	t.Helper()
 	for i, a := range args {
@@ -306,7 +258,6 @@ func claudeLaunchSpecAssertSessionIDFlag(t *testing.T, args []string) {
 			if i+1 >= len(args) || args[i+1] == "" {
 				t.Error("--session-id present but session ID value is missing or empty")
 			}
-			// Verify --resume is absent (single / initial / reviewer phases).
 			for _, b := range args {
 				if b == "--resume" {
 					t.Error("--resume must not be present for non-resume phases (CHB-008)")
@@ -318,8 +269,6 @@ func claudeLaunchSpecAssertSessionIDFlag(t *testing.T, args []string) {
 	t.Errorf("--session-id not found in args %v; required for non-resume phases (CHB-008)", args)
 }
 
-// claudeLaunchSpecAssertResumeFlag verifies that args contains
-// "--resume" followed by a non-empty UUID string, and that "--session-id" is absent.
 func claudeLaunchSpecAssertResumeFlag(t *testing.T, args []string) {
 	t.Helper()
 	for i, a := range args {
@@ -338,8 +287,6 @@ func claudeLaunchSpecAssertResumeFlag(t *testing.T, args []string) {
 	t.Errorf("--resume not found in args %v; required for implementer-resume phase (CHB-008)", args)
 }
 
-// claudeLaunchSpecAssertEnvKey verifies that env contains at least one entry
-// with the given key prefix "KEY=".
 func claudeLaunchSpecAssertEnvKey(t *testing.T, env []string, key string) {
 	t.Helper()
 	prefix := key + "="
@@ -350,10 +297,6 @@ func claudeLaunchSpecAssertEnvKey(t *testing.T, env []string, key string) {
 	}
 	t.Errorf("env missing %q entry; have %v", key, env)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CI-003 regression: credential deny-list scrub at BuildLaunchSpec boundary
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv is the integration-level
 // regression lock for specs/credential-isolation.md CI-003/CI-004a.
@@ -376,9 +319,6 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint runUID: %v", err)
 	}
-	// Inject live credential values into baseEnv to simulate a caller that
-	// passes os.Environ() without pre-filtering. The values are test-only
-	// sentinels; no real credentials are used (CI-007).
 	rc := shared.LaunchCtx{
 		RunID:          core.RunID(runUID),
 		BeadID:         "test-bead-ci003",
@@ -401,8 +341,6 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 		t.Fatalf("TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv: unexpected error: %v", err)
 	}
 
-	// Assert no credential deny-list key carries a live value in spec.Env (CI-003).
-	// Error messages redact values per CI-007.
 	denyKeys := []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
 	for _, kv := range spec.Env {
 		for _, dk := range denyKeys {
@@ -413,9 +351,6 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 		}
 	}
 
-	// Assert explicit empty overrides are present (CI-003, CI-INV-002). The tmux
-	// -e mechanism is additive — merely omitting a key leaves the server env value
-	// intact; only an explicit KEY= zeros it in the spawned window.
 	for _, dk := range denyKeys {
 		want := dk + "="
 		found := false
@@ -431,17 +366,6 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-055b: --dangerously-skip-permissions path-check tests (hk-fdyip)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// claudeLaunchSpecFixtureWorktreeLayout creates a temp directory tree that
-// mirrors the harmonik worktree layout:
-//
-//	<root>/.harmonik/worktrees/<runID>/
-//
-// Returns (worktreeRootPath, worktreePath) where worktreePath is the per-run
-// subdirectory that should be used as workspacePath.
 func claudeLaunchSpecFixtureWorktreeLayout(t *testing.T, runID string) (worktreeRootPath, worktreePath string) {
 	t.Helper()
 	root := t.TempDir()
@@ -507,10 +431,7 @@ func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree(t *testing.
 func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree(t *testing.T) {
 	t.Parallel()
 
-	// workspacePath is a plain temp dir unrelated to the worktree root.
 	ws := claudeLaunchSpecFixtureWorkspace(t)
-	// worktreeRootPath points to a different temp dir (simulating the harmonik
-	// worktrees root on another path).
 	unrelatedRoot := t.TempDir()
 
 	runUID, err := uuid.NewV7()

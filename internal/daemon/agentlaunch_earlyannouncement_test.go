@@ -1,29 +1,5 @@
 package daemon
 
-// agentlaunch_earlyannouncement_test.go — the launch WIRES the session slot in.
-//
-// agentlaunch_sessionslot_test.go pins sessionSlot on its own: an announcement
-// that lands in an empty slot is held, and the kill fires the moment a session
-// arrives. That is the type's behaviour, and it is true whether or not
-// runAgentLaunch ever calls it. This file pins the other half — that the launch
-// path actually routes the agent_end callback through the slot, so the kill
-// survives the ordering the real world produces.
-//
-// The ordering is not a race here, it is a certainty. handler.Launch applies
-// spec.StdoutWrapper INSIDE the call, before it hands the session back, so a
-// harness whose interceptor announces on construction announces while the slot
-// is still empty. The fake harness below does exactly that, synchronously, so
-// the test reaches the early-announcement branch on every run with no sleeps
-// and no timing luck.
-//
-// What goes wrong without the latch is a HANG, not a wrong value: the kill is
-// dropped, the agent keeps running with its work already done, and in
-// production a stall watchdog eventually reaps it — which IS recorded as a
-// failure, so the run fails and the commit is discarded (hk-tyksz). The child
-// here is a `sleep` that outlives any plausible test, so the assertion is that
-// the launch comes back well inside its own deadline. It cannot, unless the
-// kill landed.
-
 import (
 	"context"
 	"io"
@@ -38,19 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// earlyAnnounceHarness is the pi harness reduced to the three answers
-// runAgentLaunch reads on this path:
-//
-//   - SessionIDCaptured, which is what makes the launch build an interceptor
-//     and an agent_end callback at all (and, as a consequence, forces the exec
-//     path with a real child process);
-//   - CompletionProcessExit, the self-terminating mode pi and codex run in;
-//   - an interceptor that fires agentEndCb before it returns the reader.
-//
-// Everything else is a stub. The launch never calls Seed, Retask, Teardown or
-// DetectReady, and a stub that panics would be a truer statement of that — but
-// it would also turn a future wiring change into a crash instead of a failed
-// assertion, so they no-op.
 type earlyAnnounceHarness struct {
 	agentType core.AgentType
 
@@ -67,7 +30,6 @@ var _ handlercontract.Harness = (*earlyAnnounceHarness)(nil)
 func (h *earlyAnnounceHarness) AgentType() core.AgentType { return h.agentType }
 
 func (h *earlyAnnounceHarness) LaunchSpec(handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
-	// runAgentLaunch is given a built spec; it never asks the harness for one.
 	return handlercontract.SpawnSpec{}, nil
 }
 
@@ -139,8 +101,6 @@ func TestRunAgentLaunch_AnnouncementBeforeTheSessionExistsStillReapsTheChild(t *
 			Clock:   substrate.SystemClock{},
 		},
 		Handles: runloop.SharedHandles{
-			// Empty: no adapter for this agent type is a supported launch path —
-			// the segment feeds a synthetic ready rather than waiting.
 			AdapterRegistry: handlercontract.NewAdapterRegistry(),
 			HarnessRegistry: reg,
 			// The completion wait dereferences the store unconditionally, so a

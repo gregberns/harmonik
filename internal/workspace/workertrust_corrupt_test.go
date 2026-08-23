@@ -1,32 +1,5 @@
 package workspace
 
-// workertrust_corrupt_test.go — the worker-side trust program must never rebuild
-// the shared Claude config from scratch (hk-remote-trust-corrupt-config-clobber-li01o).
-//
-// WHAT WENT WRONG. The program's load_cfg() answered every read failure with an
-// empty dict: a missing file, a JSON syntax error, and a top-level value that is
-// not an object all came back as {}. Only the first of those means "there is
-// nothing here yet". For the other two a file exists that we could not read, and
-// answering {} sent the caller on to write a fresh config over the top — which
-// keeps the trust key and discards every other project entry and every other
-// top-level key on that machine.
-//
-// A torn read is the expected way in, not a corrupt disk. The writer this whole
-// subsystem defends against rewrites the shared config wholesale and does not
-// take our lock, so a reader can land mid-rewrite and see truncated JSON. The
-// in-process path has always refused to overwrite on a failed parse and says so
-// in readClaudeConfigMap; these tests hold the remote path to the same contract.
-//
-// The claims:
-//
-//  1. an unparseable config is left EXACTLY as it was, byte for byte, and the
-//     program fails rather than pretending it wrote;
-//  2. the same for a config whose top-level JSON is not an object;
-//  3. a MISSING config is still created, because that case really is "start
-//     fresh" and breaking it would break every first launch on a new worker; and
-//  4. the Go caller turns that exit status into a structural error, so the
-//     launch stops instead of exec'ing claude into an untrusted folder.
-
 import (
 	"bytes"
 	"context"
@@ -42,11 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// runWorkerTrustProgram runs the shipped program for real against cfgPath and
-// returns its combined output and error. Running python3 rather than asserting
-// on the program TEXT is the point: the program is assembled by a Go format
-// string, so a template that produces invalid python would pass any text
-// assertion and fail only on a live worker.
 func runWorkerTrustProgram(t *testing.T, cfgPath, worktree string) ([]byte, error) {
 	t.Helper()
 
@@ -60,9 +28,6 @@ func runWorkerTrustProgram(t *testing.T, cfgPath, worktree string) ([]byte, erro
 	return out, err
 }
 
-// assertConfigUntouched fails when cfgPath no longer holds want, naming what
-// replaced it. The whole point of the fix is that the file is not modified, so
-// the assertion compares bytes rather than parsing.
 func assertConfigUntouched(t *testing.T, cfgPath string, want []byte) {
 	t.Helper()
 
@@ -81,9 +46,6 @@ func TestWorkerTrustUpsert_UnparseableConfigIsLeftAlone(t *testing.T) {
 	worktree := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
 
-	// A truncated object — what a reader sees when it lands in the middle of
-	// another writer's non-atomic rewrite. It carries a second project entry so
-	// the damage this test guards against is visible in the failure message.
 	corrupt := []byte(`{"projects": {"/some/other/worktree": {"hasTrustDialogAccepted": true}}, "oauth`)
 	if err := os.WriteFile(cfgPath, corrupt, 0o600); err != nil {
 		t.Fatalf("seed the corrupt config: %v", err)
@@ -112,8 +74,6 @@ func TestWorkerTrustUpsert_NonObjectConfigIsLeftAlone(t *testing.T) {
 	worktree := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
 
-	// Valid JSON, wrong shape. json.load succeeds here, so this case cannot be
-	// caught by the ValueError branch and needs its own check.
 	notAnObject := []byte(`["this is not a claude config"]`)
 	if err := os.WriteFile(cfgPath, notAnObject, 0o600); err != nil {
 		t.Fatalf("seed the non-object config: %v", err)
@@ -163,8 +123,6 @@ func TestWorkerTrustUpsert_MissingConfigIsStillCreated(t *testing.T) {
 // agent_ready is ever synthesized, and the run dies at its ready deadline with
 // nothing saying why. Structural is what makes the dispatch path report it.
 func TestEnsureWorktreeTrustVia_UnparseableConfigIsStructural(t *testing.T) {
-	// The status is built from the constant so the fixture cannot drift away from
-	// the value the program actually exits with.
 	runner := fixedResultRunner{script: fmt.Sprintf("echo 'not valid JSON' >&2; exit %d", workerConfigUnparseableExit)}
 
 	err := EnsureWorktreeTrustVia(t.Context(), runner, t.TempDir())

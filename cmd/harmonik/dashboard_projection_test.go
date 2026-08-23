@@ -1,14 +1,5 @@
 package main
 
-// dashboard_projection_test.go — table-driven coverage for the pure projection
-// helpers behind `harmonik dashboard`.
-//
-// These functions decide what the operator sees on the fleet dashboard: which
-// decisions land in which mailbox and in what order, whether a lane reads as
-// staffed or dead, and how a missing value is rendered. They are pure over
-// their inputs and were entirely uncovered — a reordering or a dropped case
-// would change what the operator acts on with nothing failing.
-
 import (
 	"testing"
 
@@ -35,7 +26,6 @@ func TestMailboxUrgencyRank_OrdersBlockerFirst(t *testing.T) {
 		})
 	}
 
-	// The ordering itself is the contract, not the specific integers.
 	if mailboxUrgencyRank(string(core.DecisionUrgencyBlocker)) >=
 		mailboxUrgencyRank(string(core.DecisionUrgencyQuestion)) {
 		t.Error("blocker must sort before question")
@@ -82,7 +72,6 @@ func TestFilterDecisionsByTopic(t *testing.T) {
 	})
 
 	t.Run("does not mutate the input order", func(t *testing.T) {
-		// filterDecisionsByTopic sorts its own slice; the caller's must survive.
 		_ = filterDecisionsByTopic(decisions, "ops")
 		if decisions[0].DecisionID != "d-3" {
 			t.Errorf("input reordered: first element is now %q, want d-3", decisions[0].DecisionID)

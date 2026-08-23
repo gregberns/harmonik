@@ -6,18 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// subwfNestedCheckpointFixture returns a Checkpoint that represents a durable
-// transition inside an expanded sub-workflow. It carries the parent run's RunID
-// per EM-035: every checkpoint inside a sub-workflow expansion MUST be on the
-// parent run's task branch and MUST use the parent run_id as the sole run
-// identifier.
-//
-// The namespaced NodeID "dispatch/validate" encodes the sub-workflow expansion
-// per §4.8.EM-034a: the parent node is "dispatch" and the expanded node is
-// "validate".
-//
-// Per EM-035, there MUST NOT be a separate sub-workflow checkpoint trail; the
-// parent run's task branch is the only trail.
 func subwfNestedCheckpointFixture(t *testing.T) Checkpoint {
 	t.Helper()
 
@@ -34,9 +22,6 @@ func subwfNestedCheckpointFixture(t *testing.T) Checkpoint {
 	}
 }
 
-// subwfNestedCheckpointFixtureParentRunID returns the canonical parent RunID
-// used by subwfNestedCheckpointFixture. Tests assert that every checkpoint
-// inside a sub-workflow expansion carries this RunID — not a child RunID.
 func subwfNestedCheckpointFixtureParentRunID() RunID {
 	return RunID(uuid.MustParse("01960000-0000-7000-8000-000000004700"))
 }
@@ -103,11 +88,8 @@ func TestSubWorkflowNestedCheckpoint_PathUsesParentRunID(t *testing.T) {
 func TestSubWorkflowNestedCheckpoint_NamespacedNodeID(t *testing.T) {
 	t.Parallel()
 
-	// The namespaced node ID for an expanded node "validate" inside parent node
-	// "dispatch" is "dispatch/validate" per §4.8.EM-034a.
 	namespacedNodeID := NodeID("dispatch/validate")
 
-	// Confirm the namespaced form is non-empty and contains a slash separator.
 	if namespacedNodeID == "" {
 		t.Fatal("namespaced NodeID must not be empty")
 	}
@@ -133,8 +115,6 @@ func TestSubWorkflowNestedCheckpoint_NoSeparateTrail(t *testing.T) {
 
 	parentRunID := subwfNestedCheckpointFixtureParentRunID()
 
-	// Simulate three checkpoints inside a nested sub-workflow. All MUST carry
-	// the parent RunID; no checkpoint may carry a distinct "sub-workflow RunID".
 	for i, c := range []Checkpoint{
 		subwfNestedCheckpointFixture(t),
 		subwfNestedCheckpointFixture(t),

@@ -11,18 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// The name of this test does NOT need to stay short, and an earlier version of
-// this comment said it did. That claim was measured and it is wrong, so it is
-// recorded here rather than deleted silently: this test takes the /tmp fallback
-// on every run, and a deliberately long-named variant still fails correctly
-// against the old guard. The reason is that on darwin /tmp is a symlink too
-// (/tmp → /private/tmp, the same 8 bytes as /var), so BOTH branches hand back an
-// unresolved path and both expose the defect.
-//
-// Rename it freely. What catches the bug is the assertion below that the
-// directory the fixture returns is already resolved — not which temp branch the
-// fixture happened to take.
-
 // TestSockBinds asserts that the socket path scenarioFixtureProjectDir approves
 // is the socket path that actually binds.
 //
@@ -45,9 +33,6 @@ func TestSockBinds(t *testing.T) {
 
 	project := scenarioFixtureProjectDir(t)
 
-	// The fixture promises a resolved directory. If it ever stops keeping that
-	// promise, the seam reopens silently, so check it directly rather than
-	// inferring it from the bind below.
 	resolved, err := filepath.EvalSymlinks(project.projectDir)
 	if err != nil {
 		t.Fatalf("EvalSymlinks(%q): %v", project.projectDir, err)
@@ -57,12 +42,10 @@ func TestSockBinds(t *testing.T) {
 			project.projectDir, len(project.projectDir), resolved, len(resolved))
 	}
 
-	// The guard the daemon itself runs must accept what the fixture handed back.
 	if err := lifecycle.ValidateSocketPathLength(project.sockPath); err != nil {
 		t.Errorf("fixture returned a socket path its own guard rejects: %v", err)
 	}
 
-	// The claim that matters: the kernel takes it.
 	if err := os.MkdirAll(filepath.Dir(project.sockPath), 0o755); err != nil { //nolint:gosec // G301: matches .harmonik dir conventions
 		t.Fatalf("MkdirAll: %v", err)
 	}

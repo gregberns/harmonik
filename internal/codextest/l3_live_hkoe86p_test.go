@@ -1,18 +1,5 @@
 package codextest_test
 
-// L3 live tests — real codex app-server (codex-app-server T5, hk-oe86p)
-//
-// L3 tests require CODEX_LIVE=1 and a codex binary on PATH (or CODEX_BIN set).
-// They are SKIPPED by default (CODEX_LIVE=0). The L3 happy-path is the
-// PRE-DEPLOY E2E GATE for the codex-app-server integration.
-//
-// Budget: token-capped (one minimal text turn, "ping" prompt, timeout 90s).
-// Wire-canary only: asserts the protocol handshake completes, not content.
-//
-// Run with: CODEX_LIVE=1 make test-codex-live
-//
-// Bead: hk-oe86p [codex-app-server T5]
-
 import (
 	"bufio"
 	"encoding/json"
@@ -27,7 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/codexwire"
 )
 
-// skipUnlessLive skips the test when CODEX_LIVE is not "1".
 func skipUnlessLive(t *testing.T) {
 	t.Helper()
 	if os.Getenv("CODEX_LIVE") != "1" {
@@ -35,7 +21,6 @@ func skipUnlessLive(t *testing.T) {
 	}
 }
 
-// codexBinaryPath resolves the codex binary path from CODEX_BIN or PATH.
 func codexBinaryPath(t *testing.T) string {
 	t.Helper()
 	if bin := os.Getenv("CODEX_BIN"); bin != "" {
@@ -65,8 +50,6 @@ func cleanupAppServer(t *testing.T, cmd *exec.Cmd) {
 		}
 	}
 }
-
-// ─── L3 — happy-path live wire canary ────────────────────────────────────────
 
 // TestL3_HappyPathLive is the PRE-DEPLOY E2E gate for the codex-app-server
 // wire protocol. It launches a real codex app-server subprocess, sends the
@@ -102,7 +85,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 		cleanupAppServer(t, cmd)
 	})
 
-	// writeFrame sends a JSON-RPC frame to the server's stdin.
 	writeFrame := func(v any) {
 		t.Helper()
 		b, err := json.Marshal(v)
@@ -115,7 +97,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 		}
 	}
 
-	// Handshake step 1: initialize request
 	writeFrame(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -126,7 +107,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 		},
 	})
 
-	// Read frames from stdout until we get the initialize result.
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 4<<20), 4<<20)
 
@@ -143,7 +123,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 			}
 			frame, parseErr := codexwire.Parse([]byte(line))
 			if parseErr != nil {
-				// Non-fatal: log and continue
 				t.Logf("parse error (continuing): %v (raw: %q)", parseErr, line)
 				continue
 			}
@@ -161,15 +140,12 @@ func TestL3_HappyPathLive(t *testing.T) {
 		return codexwire.Frame{}, fmt.Errorf("EOF before seeing %q", want)
 	}
 
-	// Wait for initialize result
 	if _, err := readUntil("initialize_result"); err != nil {
 		t.Fatalf("L3: initialize result: %v", err)
 	}
 
-	// Handshake step 2: initialized notification (client → server)
 	writeFrame(map[string]any{"jsonrpc": "2.0", "method": "initialized"})
 
-	// Handshake step 3: thread/start
 	writeFrame(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -177,12 +153,10 @@ func TestL3_HappyPathLive(t *testing.T) {
 		"params":  map[string]any{},
 	})
 
-	// Wait for thread/started notification (carries thread id)
 	threadStartedFrame, err := readUntil("thread/started")
 	if err != nil {
 		t.Fatalf("L3: thread/started: %v", err)
 	}
-	// Extract thread id from the raw params.
 	if threadStartedFrame.RawParams != nil {
 		var params map[string]any
 		if jsonErr := json.Unmarshal(threadStartedFrame.RawParams, &params); jsonErr == nil {
@@ -198,7 +172,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 	}
 	t.Logf("L3: thread id = %s", threadID)
 
-	// Handshake step 4: turn/start with a minimal prompt (wire-canary: "ok" prompt, budget-capped)
 	writeFrame(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
@@ -213,7 +186,6 @@ func TestL3_HappyPathLive(t *testing.T) {
 		},
 	})
 
-	// Wait for turn/completed — the E2E wire canary assertion
 	_, err = readUntil("turn/completed")
 	if err != nil {
 		t.Fatalf("L3: turn/completed: %v", err)
@@ -281,7 +253,6 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 			continue
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse && string(frame.ID) == "1" {
-			// Verify userAgent field present and non-empty via raw result.
 			var result map[string]any
 			if frame.RawResult != nil {
 				if jsonErr := json.Unmarshal(frame.RawResult, &result); jsonErr == nil {

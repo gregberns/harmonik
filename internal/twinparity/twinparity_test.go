@@ -10,12 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/twinparity"
 )
 
-// recordingTB is a testing.TB that intercepts failure calls instead of failing
-// the enclosing test. It embeds a real testing.TB solely to satisfy the
-// unexported testing.TB.private() method (testing.TB is not implementable
-// otherwise); the failure methods are overridden to record, not abort. This
-// lets negative tests assert that AssertStreamEquivalent REPORTS a failure
-// without a real t.Fatal aborting the suite.
 type recordingTB struct {
 	testing.TB
 	failed bool
@@ -50,14 +44,8 @@ func loadOrFail(t *testing.T, path string) twinparity.Stream {
 	return s
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dual-field kind extraction (load-bearing)
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestDualFieldKindExtraction(t *testing.T) {
-	// event_type-bearing envelope (real capture) → kind from event_type.
 	envelope := `{"event_type":"outcome_emitted","type":"ignored_raw","outcome_status":"success","node_id":"n1","event_id":"11111111-1111-1111-1111-111111111111","timestamp":"2026-05-14T10:00:00Z"}`
-	// type-only raw wire line → kind falls back to type.
 	rawLine := `{"type":"outcome_emitted","outcome_status":"success","node_id":"n1"}`
 
 	s, err := twinparity.LoadStreamLines([]string{envelope, rawLine})
@@ -74,10 +62,6 @@ func TestDualFieldKindExtraction(t *testing.T) {
 		t.Errorf("raw line: want kind outcome_emitted (fallback to type), got %q", s.Events[1].Kind)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Happy path: equivalent streams pass
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestEquivalentStreamsPass(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
@@ -125,12 +109,10 @@ func TestRealEmissionOrderPasses(t *testing.T) {
 	realStream := loadOrFail(t, filepath.Join("testdata", "real-emission-order.events.jsonl"))
 
 	rec := &recordingTB{TB: t}
-	// Default spine (no Kinds override) = TerminalKinds durable triad.
 	twinparity.AssertStreamEquivalent(rec, twin, realStream, twinparity.EquivOptions{})
 	if rec.failed {
 		t.Fatalf("real durable emission order must PASS the default spine; got failure: %s", rec.lastMsg())
 	}
-	// Assert the default spine is exactly the durable triad, in order.
 	want := []string{"outcome_emitted", "bead_closed", "run_completed"}
 	if len(twinparity.TerminalKinds) != len(want) {
 		t.Fatalf("TerminalKinds must be the 3-kind durable triad, got %v", twinparity.TerminalKinds)
@@ -141,10 +123,6 @@ func TestRealEmissionOrderPasses(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Negative: a dropped durable terminal FAILS AssertStreamEquivalent(default)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestDroppedDurableTerminalFails(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
@@ -162,15 +140,8 @@ func TestDroppedDurableTerminalFails(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Negative: a reordered durable triad FAILS the subsequence engine
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestReorderedDurableFails(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
-	// bead_closed appears BEFORE outcome_emitted — the reverse of the durable
-	// order — so the default spine's outcome_emitted→bead_closed subsequence
-	// cannot be satisfied.
 	realStream := loadOrFail(t, filepath.Join("testdata", "mutated", "reordered-durable.events.jsonl"))
 
 	rec := &recordingTB{TB: t}
@@ -182,10 +153,6 @@ func TestReorderedDurableFails(t *testing.T) {
 		t.Errorf("failure message should name the ordering divergence; got: %s", rec.lastMsg())
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Payload-field divergence names the first field
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestPayloadFieldDivergenceReported(t *testing.T) {
 	twinLine := `{"event_type":"outcome_emitted","outcome_status":"success","node_id":"n1"}`
@@ -212,10 +179,6 @@ func TestPayloadFieldDivergenceReported(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Volatile-field dropping
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestVolatileFieldsDropped(t *testing.T) {
 	line := `{"event_type":"outcome_emitted","outcome_status":"success","node_id":"n1","run_id":"r","event_id":"e","session_log_path":"/x/y","emitted_at":"2026-05-14T10:00:00Z"}`
 	s, err := twinparity.LoadStreamLines([]string{line})
@@ -237,10 +200,6 @@ func TestVolatileFieldsDropped(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Timing tolerance
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestTimingWithinTolerancePasses(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
 	realStream := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
@@ -254,8 +213,6 @@ func TestTimingWithinTolerancePasses(t *testing.T) {
 
 func TestTimingOutsideToleranceFails(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
-	// review-loop's outcome→hook is ~1s but agent_ready→outcome differs vs
-	// happy-path; use a tiny tolerance to force a failure on the edge delta.
 	realStream := loadOrFail(t, filepath.Join("testdata", "review-loop.events.jsonl"))
 
 	rec := &recordingTB{TB: t}
@@ -268,8 +225,6 @@ func TestTimingOutsideToleranceFails(t *testing.T) {
 
 func TestTimingMissingEndpointFails(t *testing.T) {
 	twin := loadOrFail(t, filepath.Join("testdata", "happy-path.events.jsonl"))
-	// dropped-durable-terminal has no bead_closed, so the bead_closed endpoint
-	// is absent in the real stream.
 	realStream := loadOrFail(t, filepath.Join("testdata", "mutated", "dropped-durable-terminal.events.jsonl"))
 
 	rec := &recordingTB{TB: t}
@@ -279,10 +234,6 @@ func TestTimingMissingEndpointFails(t *testing.T) {
 		t.Fatalf("absent hook_fired endpoint must fail the timing assertion")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Vocabulary
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestVocabularyAssembly(t *testing.T) {
 	if !twinparity.IsKnownKind("outcome_emitted") {
@@ -297,7 +248,6 @@ func TestVocabularyAssembly(t *testing.T) {
 	if len(twinparity.KnownKinds()) == 0 {
 		t.Error("KnownKinds must be non-empty")
 	}
-	// Named sets sanity.
 	if len(twinparity.TerminalKinds) != 3 {
 		t.Errorf("TerminalKinds should have 3 entries (durable triad), got %d", len(twinparity.TerminalKinds))
 	}

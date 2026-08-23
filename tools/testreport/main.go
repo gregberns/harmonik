@@ -35,8 +35,6 @@ import (
 	"strings"
 )
 
-// event is the subset of `go test -json` records this tool reads. The stream
-// carries more fields; the ones below are the only ones a report needs.
 type event struct {
 	Action  string  `json:"Action"`
 	Package string  `json:"Package"`
@@ -45,7 +43,6 @@ type event struct {
 	Elapsed float64 `json:"Elapsed"`
 }
 
-// pkg accumulates one package's result while the stream is read.
 type pkg struct {
 	name    string
 	failed  bool
@@ -80,25 +77,16 @@ func run(in *os.File, out *os.File) error {
 	var order []string
 
 	sc := bufio.NewScanner(in)
-	// Test output lines can be long — a stack trace or a diff of two large
-	// structures. The default 64 KiB token limit truncates those and turns a
-	// readable failure into a mystery.
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 || line[0] != '{' {
-			// `go test -json` emits a bare line when the test binary writes
-			// something before the harness starts. Keep it rather than drop it:
-			// it is usually a build error, and losing it is how a red run reads
-			// as an empty one.
 			fmt.Fprintln(out, string(line))
 			continue
 		}
 		var ev event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			// A malformed record is reported, never skipped. A parser that
-			// silently drops what it cannot read is how a failure disappears.
 			fmt.Fprintf(out, "testreport: unreadable record: %s\n", string(line))
 			continue
 		}
@@ -120,7 +108,6 @@ func run(in *os.File, out *os.File) error {
 	return report(out, packages, order)
 }
 
-// apply folds one stream record into its package's accumulated result.
 func apply(p *pkg, ev event) {
 	switch ev.Action {
 	case "output":
@@ -134,7 +121,6 @@ func apply(p *pkg, ev event) {
 			return
 		}
 		p.passed++
-		// The test passed, so nothing it printed is worth a reader's time.
 		delete(p.output, ev.Test)
 	case "skip":
 		if ev.Test == "" {
@@ -155,8 +141,6 @@ func apply(p *pkg, ev event) {
 	}
 }
 
-// report prints failing output first, then the per-package summary, then what
-// never ran.
 func report(out *os.File, packages map[string]*pkg, order []string) error {
 	var failed []string
 	for _, name := range order {
@@ -167,8 +151,6 @@ func report(out *os.File, packages map[string]*pkg, order []string) error {
 		failed = append(failed, name)
 
 		fmt.Fprintf(out, "\n=== FAIL %s\n", name)
-		// Package-level output holds build and setup failures, which explain
-		// every test that never ran. It comes first for that reason.
 		for _, line := range p.output[""] {
 			fmt.Fprint(out, line)
 		}
@@ -206,8 +188,6 @@ func report(out *os.File, packages map[string]*pkg, order []string) error {
 	return nil
 }
 
-// reportNotRun names everything that did not execute. It prints on every run,
-// green or red, because a green result is exactly when a reader stops looking.
 func reportNotRun(out *os.File, packages map[string]*pkg, names []string) {
 	var silent, empty []string
 	totalRan, totalSkipped := 0, 0
@@ -230,9 +210,6 @@ func reportNotRun(out *os.File, packages map[string]*pkg, names []string) {
 		fmt.Fprintf(out, "  %d packages have no test files: %s\n", len(empty), strings.Join(empty, " "))
 	}
 	if len(silent) > 0 {
-		// A package that has test files but executed nothing is the dangerous
-		// case. It means a filter matched nothing, a build tag excluded
-		// everything, or the package did not build.
 		fmt.Fprintf(out, "  WARNING — %d packages ran ZERO tests but are not empty:\n", len(silent))
 		for _, name := range silent {
 			fmt.Fprintf(out, "    %s\n", name)

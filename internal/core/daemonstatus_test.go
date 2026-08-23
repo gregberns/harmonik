@@ -152,7 +152,6 @@ func TestDaemonStatusMarshalText(t *testing.T) {
 func TestDaemonStatusRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all seven values.
 	type wrapper struct {
 		Status DaemonStatus `json:"status"`
 	}
@@ -190,7 +189,6 @@ func TestDaemonStatusRoundTrip(t *testing.T) {
 func TestDaemonStatusUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all seven declared values.
 	var s DaemonStatus
 	err := s.UnmarshalText([]byte("made_up"))
 	if err == nil {

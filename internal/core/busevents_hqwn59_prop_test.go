@@ -1,24 +1,11 @@
 package core
 
-// busevents_hqwn59_prop_test.go — property tests for the Valid() methods
-// declared in busevents_hqwn59.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// Approach: rapid generator builds a valid payload, flips exactly one required
-// field to its zero/invalid value, asserts Valid()==false; all-valid -> true.
-//
-// Refs: hk-qgzso (property-test coverage uplift for hk-j3hrn core uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ============================================================
-// MetricPayload
-// ============================================================
 
 func TestProp_MetricPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -43,10 +30,6 @@ func TestProp_MetricPayload_EmptyNameRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// ConsumerFailedPayload
-// ============================================================
 
 func TestProp_ConsumerFailedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -146,10 +129,6 @@ func TestProp_ConsumerFailedPayload_EmptyFailedAtRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// DeadLetterEnqueuedPayload
-// ============================================================
-
 func TestProp_DeadLetterEnqueuedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := DeadLetterEnqueuedPayload{
@@ -239,10 +218,6 @@ func TestProp_DeadLetterEnqueuedPayload_EmptyEnqueuedAtRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// BusOverflowPayload
-// ============================================================
 
 func TestProp_BusOverflowPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -363,10 +338,6 @@ func TestProp_BusOverflowPayload_InvalidShedPolicyRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// RedactionFailedPayload
-// ============================================================
 
 func TestProp_RedactionFailedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

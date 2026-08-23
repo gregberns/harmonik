@@ -1,11 +1,5 @@
 package keepertest_test
 
-// Corpus drift canary (T10; RS-018 item 2; measurement-design §3 "canary" row
-// + §1.4): the extractor's manifest.json must equal the FROZEN 2026-07-13
-// anchors before any replay runs — if a re-extraction shifts any anchor, this
-// fails first (D13 out-of-band principle applied to the corpus itself).
-// UNGATED: runs under make test-keeper-l012.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -18,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keepertwin"
 )
 
-// frozenAnchors are the pinned baseline-2026-07-13 aggregates
-// (measurement-design §1.4; SK-R10).
 var frozenAnchors = struct {
 	started, complete, aborted, clearUnconfirmed, unterminated, count int
 	handoffTimeoutAborts                                              int

@@ -271,7 +271,6 @@ func TestReconciliationCategoryRoundTrip(t *testing.T) {
 func TestReconciliationCategoryUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all eleven declared values.
 	var c ReconciliationCategory
 	err := c.UnmarshalText([]byte("cat-99"))
 	if err == nil {

@@ -1,25 +1,5 @@
 package workspace
 
-// conflictresolution_wm022a_test.go — tests for WM-022a all-mechanical branch
-// escalation guard (hk-8mwo.34).
-//
-// Covers:
-//   - IsAllMechanicalBranch: predicate on workspace ImplementerHandlerRef.
-//   - IsAllMechanicalRef: predicate on raw HandlerRef pointer.
-//   - Integration: null ref → ShouldDispatchConflictResolver returns EscalateNullRef
-//     (WM-024 is skipped; no BuildConflictResolverLaunchSpec call proceeds).
-//   - Integration: null ref → BuildConflictEscalationPayload proceeds from
-//     conflict-resolving → discarded (the WM-022a path end-to-end).
-//   - No-silent-remap: verifies the system MUST NOT remap the implementer role when
-//     implementer_handler_ref is null.
-//
-// Spec ref: workspace-model.md §4.6 WM-022a — "If implementer_handler_ref is null
-//   at merge-pending entry … the workspace manager MUST skip WM-024 re-dispatch and
-//   emit merge_conflict_escalation directly per WM-023 on conflict detection. The
-//   system MUST NOT silently remap the implementer role to an unrelated handler class."
-//
-// Bead ref: hk-8mwo.34.
-
 import (
 	"testing"
 
@@ -28,13 +8,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// wm022aFixtureRunID returns a deterministic test RunID for WM-022a tests.
 func wm022aFixtureRunID() core.RunID {
 	return core.RunID(uuid.MustParse("0196b200-0000-7000-8000-00000022a000"))
 }
 
-// wm022aFixtureWorkspace returns a *Workspace in the conflict-resolving state with
-// a nil ImplementerHandlerRef (all-mechanical task branch per WM-022a).
 func wm022aFixtureWorkspace() *Workspace {
 	runID := wm022aFixtureRunID()
 	return &Workspace{
@@ -54,8 +31,6 @@ func wm022aFixtureWorkspace() *Workspace {
 		SchemaVersion: WorkspaceSchemaVersion,
 	}
 }
-
-// ── IsAllMechanicalBranch ────────────────────────────────────────────────────
 
 // TestIsAllMechanicalBranch_NilRefIsAllMechanical verifies that a workspace with
 // a nil ImplementerHandlerRef reports as all-mechanical per WM-022a.
@@ -93,8 +68,6 @@ func TestIsAllMechanicalBranch_NilWorkspaceSafe(t *testing.T) {
 	}
 }
 
-// ── IsAllMechanicalRef ───────────────────────────────────────────────────────
-
 // TestIsAllMechanicalRef_NilIsAllMechanical verifies that a nil HandlerRef pointer
 // signals an all-mechanical branch per WM-022a.
 func TestIsAllMechanicalRef_NilIsAllMechanical(t *testing.T) {
@@ -116,8 +89,6 @@ func TestIsAllMechanicalRef_NonNilIsNotAllMechanical(t *testing.T) {
 	}
 }
 
-// ── Integration: all-mechanical → ShouldDispatchConflictResolver → EscalateNullRef ──
-
 // TestWM022a_NullRefSkipsReDispatch verifies that when implementer_handler_ref is nil,
 // ShouldDispatchConflictResolver returns EscalateNullRef — meaning WM-024 re-dispatch
 // is skipped regardless of attempt count or cap.
@@ -129,14 +100,12 @@ func TestWM022a_NullRefSkipsReDispatch(t *testing.T) {
 
 	noRetire := func(_ core.HandlerRef) bool { return false }
 
-	// null ref with 0 attempts (first conflict detection).
 	dec := ShouldDispatchConflictResolver(nil, 0, DefaultConflictResolutionAttemptCap, noRetire)
 	if dec != ConflictResolveEscalateNullRef {
 		t.Errorf("WM-022a: ShouldDispatch(nil, 0, cap, noRetire) = %q; want %q",
 			dec, ConflictResolveEscalateNullRef)
 	}
 
-	// null ref NEVER dispatches, even below any cap.
 	for attempts := 0; attempts <= DefaultConflictResolutionAttemptCap+1; attempts++ {
 		dec = ShouldDispatchConflictResolver(nil, attempts, DefaultConflictResolutionAttemptCap, noRetire)
 		if dec != ConflictResolveEscalateNullRef {
@@ -170,8 +139,6 @@ func TestWM022a_NullRefDecisionIsNotDispatch(t *testing.T) {
 	}
 }
 
-// ── Integration: all-mechanical full path ────────────────────────────────────
-
 // TestWM022a_AllMechanicalDirectEscalationPath verifies the full WM-022a path:
 //
 //  1. IsAllMechanicalBranch(ws) = true (nil ref)
@@ -186,12 +153,10 @@ func TestWM022a_AllMechanicalDirectEscalationPath(t *testing.T) {
 
 	ws := wm022aFixtureWorkspace() // conflict-resolving, nil ref
 
-	// Step 1: confirm all-mechanical.
 	if !IsAllMechanicalBranch(ws) {
 		t.Fatal("WM-022a: precondition: IsAllMechanicalBranch = false; want true")
 	}
 
-	// Step 2: dispatch decision — must be EscalateNullRef (re-dispatch skipped).
 	noRetire := func(_ core.HandlerRef) bool { return false }
 	dec := ShouldDispatchConflictResolver(
 		ws.ImplementerHandlerRef, // nil
@@ -203,7 +168,6 @@ func TestWM022a_AllMechanicalDirectEscalationPath(t *testing.T) {
 		t.Fatalf("WM-022a: decision = %q; want EscalateNullRef", dec)
 	}
 
-	// Step 3: build escalation payload (WM-023 path, no re-dispatch).
 	conflictPaths := []string{"internal/core/foo.go"}
 	payload, err := BuildConflictEscalationPayload(ws, conflictPaths, "2026-05-07T12:00:00Z")
 	if err != nil {
@@ -213,7 +177,6 @@ func TestWM022a_AllMechanicalDirectEscalationPath(t *testing.T) {
 		t.Fatalf("WM-022a: escalation payload.Valid() = false")
 	}
 
-	// Step 4: transition to discarded after escalation event emission.
 	if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 		t.Fatalf("WM-022a: Transition(conflict-resolving → discarded): %v", err)
 	}
@@ -221,7 +184,6 @@ func TestWM022a_AllMechanicalDirectEscalationPath(t *testing.T) {
 		t.Errorf("WM-022a: final state = %q; want discarded", ws.State)
 	}
 
-	// WM-037a: interrupt_state cleared to none in terminal state.
 	if ws.InterruptState != core.InterruptStateNone {
 		t.Errorf("WM-022a+WM-037a: interrupt_state = %q; want none", ws.InterruptState)
 	}
@@ -233,14 +195,12 @@ func TestWM022a_AllMechanicalDirectEscalationPath(t *testing.T) {
 func TestWM022a_IsAllMechanicalBranchConsistentWithRef(t *testing.T) {
 	t.Parallel()
 
-	// nil ref case.
 	wsNil := wm022aFixtureWorkspace() // nil ref
 	if IsAllMechanicalBranch(wsNil) != IsAllMechanicalRef(wsNil.ImplementerHandlerRef) {
 		t.Errorf("WM-022a: IsAllMechanicalBranch(nil-ref ws) = %v, IsAllMechanicalRef(nil) = %v; must be equal",
 			IsAllMechanicalBranch(wsNil), IsAllMechanicalRef(wsNil.ImplementerHandlerRef))
 	}
 
-	// non-nil ref case.
 	wsAgentic := wm022aFixtureWorkspace()
 	ref := core.HandlerRef("agentic-claude")
 	wsAgentic.ImplementerHandlerRef = &ref

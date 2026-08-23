@@ -1,12 +1,5 @@
 package core
 
-// Property tests for OutcomeEmittedPayload.Valid() in outcomeemittedpayload.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Bead ref: hk-z02yj (part of hk-j3hrn core coverage uplift).
-
 import (
 	"testing"
 
@@ -14,7 +7,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// validOutcomeStatuses holds the declared OutcomeStatus constants for rapid.SampledFrom.
 var validOutcomeStatuses = []OutcomeStatus{
 	OutcomeStatusSuccess,
 	OutcomeStatusFail,

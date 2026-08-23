@@ -119,7 +119,6 @@ type SentinelConfig struct {
 	Mode string
 }
 
-// suppressionTTL returns the effective SuppressionTTL, falling back to the default.
 func (c SentinelConfig) suppressionTTL() time.Duration {
 	if c.SuppressionTTL > 0 {
 		return c.SuppressionTTL
@@ -127,7 +126,6 @@ func (c SentinelConfig) suppressionTTL() time.Duration {
 	return DefaultSuppressionTTL
 }
 
-// attachedInactiveTimeout returns the effective AttachedInactiveTimeout.
 func (c SentinelConfig) attachedInactiveTimeout() time.Duration {
 	if c.AttachedInactiveTimeout > 0 {
 		return c.AttachedInactiveTimeout
@@ -269,16 +267,11 @@ func (e *ErrTrivialVerifyCommand) Error() string {
 	)
 }
 
-// isTrivialVerifyCommand reports whether cmd is trivially always-exit-0 and
-// therefore cannot assert an observable post-condition (spec §5.3).
-// The trivial set is: empty/whitespace-only, "true" (shell builtin), ":" (shell no-op).
 func isTrivialVerifyCommand(cmd string) bool {
 	t := strings.TrimSpace(cmd)
 	return t == "" || t == "true" || t == ":"
 }
 
-// rawSentinelConfig is the YAML shape of the sentinel: block.
-// Unknown keys are silently ignored (forward-compat).
 type rawSentinelConfig struct {
 	SuppressionTTL          string            `yaml:"suppression_ttl"`
 	AttachedInactiveTimeout string            `yaml:"attached_inactive_timeout"`
@@ -293,8 +286,6 @@ type rawSentinelConfig struct {
 	Mode                    string            `yaml:"mode"`
 }
 
-// rawConfigWithSentinel is the minimal top-level shape we need to extract sentinel:.
-// Unknown sibling keys are silently ignored (forward-compat).
 type rawConfigWithSentinel struct {
 	Sentinel rawSentinelConfig `yaml:"sentinel"`
 }
@@ -319,7 +310,6 @@ func LoadSentinelConfig(projectDir string) (SentinelConfig, error) {
 	return parseSentinelConfig(data)
 }
 
-// parseSentinelConfig decodes raw YAML bytes and returns the SentinelConfig.
 func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 	var raw rawConfigWithSentinel
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -388,9 +378,6 @@ func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 		cfg.MovementWeights = s.MovementWeights
 	}
 
-	// Carry the pointer through verbatim: nil = key absent (GovernorConfig fails
-	// loud), &0 = operator explicitly disables the gate (valid), &N = configured
-	// threshold. No compiled default is ever applied here.
 	cfg.LivenessNoProgressN = s.LivenessNoProgressN
 
 	if len(s.DoneDefinition) > 0 {

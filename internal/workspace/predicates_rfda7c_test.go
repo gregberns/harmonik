@@ -6,25 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Property tests for workspace predicate evaluation (bead hk-rfda7 step c).
-//
-// These tests exhaustively verify the predicate functions — IsTerminal,
-// IsInFlight, WorkspaceState.Valid(), InterruptState.Valid() — over the
-// complete set of declared enum values, plus a representative sample of
-// non-declared strings. The properties checked are:
-//
-//   - Completeness: every declared constant satisfies Valid().
-//   - Partition: for every valid WorkspaceState, exactly one of IsTerminal or
-//     IsInFlight is true (they are mutually exclusive and collectively exhaustive
-//     over the valid state space).
-//   - Rejection: non-declared strings fail Valid().
-//   - Invariant: the zero value of WorkspaceState ("") fails Valid() — it is
-//     the "initial" sentinel used by Transition but is NOT a legal lifecycle
-//     state per §7.1.
-//   - Retirement: the "setup" value retired in WM v0.3.0 fails Valid() per §12.
-
-// allWorkspaceStates is the complete set of declared WorkspaceState constants.
-// Must match workspace-model.md §4.4 WM-014 (7 values).
 var allWorkspaceStates = []core.WorkspaceState{
 	core.WorkspaceStateCreated,
 	core.WorkspaceStateReady,
@@ -35,8 +16,6 @@ var allWorkspaceStates = []core.WorkspaceState{
 	core.WorkspaceStateDiscarded,
 }
 
-// allInterruptStates is the complete set of declared InterruptState constants.
-// Must match workspace-model.md §4.10 (5 values).
 var allInterruptStates = []core.InterruptState{
 	core.InterruptStateNone,
 	core.InterruptStateOperatorPaused,
@@ -45,13 +24,11 @@ var allInterruptStates = []core.InterruptState{
 	core.InterruptStateDaemonCrashSuspected,
 }
 
-// terminalWorkspaceStates is the subset of allWorkspaceStates that are terminal.
 var terminalWorkspaceStates = []core.WorkspaceState{
 	core.WorkspaceStateMerged,
 	core.WorkspaceStateDiscarded,
 }
 
-// inFlightWorkspaceStates is the subset of allWorkspaceStates that are in-flight.
 var inFlightWorkspaceStates = []core.WorkspaceState{
 	core.WorkspaceStateCreated,
 	core.WorkspaceStateReady,
@@ -296,13 +273,11 @@ func TestRFDA7c_InterruptState_NoneIsValidAndIsZeroLike(t *testing.T) {
 func TestRFDA7c_WorkspaceValid_RequiresAllFields(t *testing.T) {
 	t.Parallel()
 
-	// A workspace with every required field populated must pass Valid().
 	ws := wsRecordFixtureValid(t)
 	if err := ws.Valid(); err != nil {
 		t.Errorf("full workspace: Valid() = %v; want nil", err)
 	}
 
-	// Each corruption case must fail Valid() independently.
 	cases := []struct {
 		name    string
 		corrupt func(*Workspace)
@@ -344,7 +319,6 @@ func TestRFDA7c_WorkspaceValid_OptionalFieldsNilIsAccepted(t *testing.T) {
 	}
 }
 
-// repr returns a printable representation of an empty string (for sub-test names).
 func repr(s string) string {
 	if s == "" {
 		return "(empty)"

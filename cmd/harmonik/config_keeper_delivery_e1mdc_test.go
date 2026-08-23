@@ -1,11 +1,5 @@
 package main
 
-// config_keeper_delivery_e1mdc_test.go — T2 (hk-keeper-delivery-config-surface-e1mdc):
-// the new keeper.warn_messages keys reach WatcherConfig through the REAL
-// load→resolve→construct path (daemon.LoadProjectConfig → ResolveKeeperConfig →
-// buildKeeperConfigs), with no rebuild, exactly like default_warn_text /
-// actionable_warn_text. Also pins crew default-off. Spec: SK-032.
-
 import (
 	"os"
 	"path/filepath"
@@ -14,10 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// e1mdcConfigBase is a COMPLETE keeper block (ResolveKeeperConfig refuses an
-// incomplete one). Self-contained (not the integration-tagged e2eConfigYAML) so
-// this acceptance test runs in the default suite. The warn_messages block is
-// appended per-case below.
 const e1mdcConfigBase = `schema_version: 1
 keeper:
   context_thresholds:
@@ -58,14 +48,11 @@ keeper:
     max_handoff_timeouts: 3
 `
 
-// e1mdcConfigWithKeys carries both T2 delivery keys under test.
 const e1mdcConfigWithKeys = e1mdcConfigBase + `  warn_messages:
     leader_defer_text: "finish the unit, then harmonik keeper restart-now --agent x"
     crew_defer_text: "crew finish-then-self-restart"
 `
 
-// e1mdcConfigNoCrewKey sets ONLY the leader key, to prove crew_defer_text
-// defaults empty/off end-to-end.
 const e1mdcConfigNoCrewKey = e1mdcConfigBase + `  warn_messages:
     leader_defer_text: "leader only"
 `
@@ -129,12 +116,9 @@ func TestConfigE2E_CrewDeferKeyDefaultsOff_e1mdc(t *testing.T) {
 		KeeperCfg:  projCfg.Keeper,
 	})
 
-	// Crew key absent → empty at the watcher; K7 config hook is default-off and
-	// nothing consumes it, so no crew behavior fires.
 	if watcherCfg.CrewDeferText != "" {
 		t.Errorf("WatcherConfig.CrewDeferText = %q; want empty (crew key default-off)", watcherCfg.CrewDeferText)
 	}
-	// The leader key still threads.
 	if watcherCfg.LeaderDeferText != "leader only" {
 		t.Errorf("WatcherConfig.LeaderDeferText = %q; want %q", watcherCfg.LeaderDeferText, "leader only")
 	}

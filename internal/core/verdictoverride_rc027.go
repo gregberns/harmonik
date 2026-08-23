@@ -1,47 +1,5 @@
 package core
 
-// verdictoverride_rc027.go — Operator verdict-override surface (RC-027).
-//
-// RC-027 requires a per-reconciliation-workflow policy option that allows
-// operators to pause the daemon's verdict-execution step until an operator
-// explicitly confirms or vetoes the verdict. Default: execution proceeds
-// without operator confirmation; operators opt in by setting confirm_required:
-// true in the workflow's YAML policy.
-//
-// This file declares:
-//
-//   - OperatorVerdictOverridePolicy — extracted from the workflow's YAML policy;
-//     ConfirmRequired signals whether the daemon MUST pause verdict execution
-//     and wait for operator input before executing the verdict's mechanical
-//     action (RC-025, RC-025a).
-//
-//   - VerdictOverrideDecision — the operator's decision: confirm (proceed with
-//     the verdict) or veto (abort the verdict execution).
-//
-//   - VetoPromotion — the optional --promote-to target for a veto decision.
-//     Currently the only valid promotion target is escalate-to-human.
-//
-//   - OperatorVerdictOverrideRequest — the operator's full decision as received
-//     from the CLI; carries Decision and, for VetoDecision, the optional
-//     VetoPromotion.
-//
-//   - PolicyRequiresConfirmation — pure function: returns true when the policy
-//     declares confirm_required: true.
-//
-//   - ApplyVetoPromotion — pure function: maps a veto request to the verdict
-//     that MUST replace the investigator's verdict when a veto carries
-//     --promote-to escalate-to-human.
-//
-// This is a pure, I/O-free layer. The daemon's verdict-executor (RC-025a)
-// consumes OperatorVerdictOverridePolicy to decide whether to gate execution
-// behind operator input. The CLI (confirm-verdict / veto-verdict) constructs
-// and sends an OperatorVerdictOverrideRequest to the daemon via the socket
-// protocol. The separation mirrors the VerdictExecutionPlan layer for RC-025.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-// specs/operator-nfr.md §4.3 ON-014;
-// specs/s01/reconciliation/policies/ (confirm_required field).
-
 // OperatorVerdictOverridePolicy is the policy-document field set extracted from
 // a reconciliation workflow's YAML policy that controls whether the daemon
 // MUST pause verdict execution and await operator input.
@@ -187,7 +145,6 @@ func (r OperatorVerdictOverrideRequest) Valid() bool {
 	if !r.VetoPromotion.Valid() {
 		return false
 	}
-	// Confirm requests MUST NOT carry a VetoPromotion.
 	if r.Decision == VerdictOverrideDecisionConfirm && r.VetoPromotion != VetoPromotionNone {
 		return false
 	}
@@ -208,8 +165,5 @@ func ApplyVetoPromotion(promotion VetoPromotion) Verdict {
 	if promotion == VetoPromotionEscalateToHuman {
 		return VerdictEscalateToHuman
 	}
-	// Plain veto without promotion: leave the run's state untouched.
-	// no-op-accept is the correct mechanical outcome — no BI close, no dispatch,
-	// no escalation; just mark the pending confirmation as resolved.
 	return VerdictNoOpAccept
 }

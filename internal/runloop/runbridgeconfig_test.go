@@ -1,28 +1,5 @@
 package runloop
 
-// runbridgeconfig_test.go — pins the per-mode merge-retry budget.
-//
-// This exists because the budget was nearly lost twice over.
-//
-// MaxMergeAttempts=3 and the retryable-reason classification belonged to the
-// review-loop mode alone. When that mode was retired (execution-model.md
-// §4.3.EM-015d) the budget was deliberately ported to dot rather than dropped:
-// the reasons runmerge.IsRetryableReason classifies — rebase_conflict,
-// non_ff_merge, merge_fmt_failed — are artifacts of CONCURRENT merge-to-main,
-// not properties of a workflow shape, and they get MORE likely as concurrency
-// rises. Letting the budget lapse to 1 as a side effect of a deletion would
-// have made the surviving default mode strictly less robust at the merge step
-// than the mode it replaced.
-//
-// The scenario fixture that exercises this end to end (RunConcurrentMerge) is
-// back on dot and does cover the budget again. This unit test stays anyway, and
-// deliberately does not depend on it: the fixture was briefly pinned to single
-// (where MaxMergeAttempts is 1 by design), and while it was, nothing in the tree
-// covered the budget at all. The invariant is guarded here at the level where it
-// is decided, so it survives whatever happens to that fixture next.
-//
-// Helper prefix: rbc (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"testing"
 

@@ -1,46 +1,5 @@
 package scenario
 
-// coreloopproof_fixture_drift_test.go — fixture-drift guard for the model
-// resolution contract in the core-loop-proof matrix fixtures (GAP-5).
-//
-// The live matrix runner (scripts/core-loop-*.sh) reads seed-beads.json and
-// cells.json to seed beads and assert the model_selected event stream. If someone
-// "helpfully" pins a model on the codex seed, or writes a literal model name back
-// into a cell, the fixtures start asserting the wrong thing while every Go unit
-// test still passes. This is a plain go-test drift guard — no scenario build tag,
-// no twin — that fails the moment the fixtures drift from the contract.
-//
-// WHAT THE FIXTURES MEAN, which is what this guard checks. A model name is
-// written down in exactly ONE place per seed: a model:<alias> label. A seed
-// without one takes harnesses.<harness>.model from the scratch config (pi), or
-// leaves the model uncontrolled entirely (codex, set by $CODEX_HOME/config.toml).
-// cells.json names no model at all: it carries the sentinels "@resolved" and
-// "@foreign", and the runner substitutes the resolved values before it folds the
-// assertion.
-//
-// The guard checks the fixtures against that design, not against the literals the
-// fixtures stopped carrying. Asserting the literals is what this file used to do,
-// and it is the failure a08fa9de3 removed: three copies of one model name went
-// stale together and the gate asserted a model the server would 404.
-//
-// BOTH halves of the resolution are in this repository, so both are in scope. The
-// label half is seed-beads.json. The config half is
-// scripts/scratch-config-overlay.yaml — scripts/scratch-daemon.sh appends that
-// block onto the scratch config, and scripts/core-loop-matrix.sh resolves a seed's
-// model against it. The config half degrades SILENTLY, which is why it needs a
-// guard: the runner's own comment says a seed with neither a label nor a config
-// value "resolves to empty, and the model check is skipped for that cell". Delete
-// or rename harnesses.pi.model in the overlay and seed_model_for returns empty, the
-// pi cells' model expectation becomes null, AND foreign_models_for drops the pi
-// model from every other cell's leak set. Every leak guard weakens and nothing goes
-// red. Check (1c) is the guard for that.
-//
-// Every check below is on a file this test can read, and every check is a positive
-// statement that can fail.
-//
-// Bead refs: hk-d170r (codex empty→account-default), hk-heh3t (retired guard),
-// hk-hyxkj (this rewrite).
-
 import (
 	"encoding/json"
 	"os"
@@ -56,8 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// coreLoopProofSeedFile is the parsed shape of scenarios/core-loop-proof/seed-beads.json.
-// Only the fields this guard inspects are modelled.
 type coreLoopProofSeedFile struct {
 	Seeds []coreLoopProofSeed `json:"seeds"`
 }
@@ -78,7 +35,6 @@ type coreLoopProofSeed struct {
 	ModelPin json.RawMessage `json:"model_pin"`
 }
 
-// coreLoopProofCellsFile is the parsed shape of scenarios/core-loop-proof/cells.json.
 type coreLoopProofCellsFile struct {
 	Cells []coreLoopProofCell `json:"cells"`
 }
@@ -130,28 +86,12 @@ type coreLoopProofCell struct {
 	} `json:"expect"`
 }
 
-// coreLoopProofFixtureDir returns the absolute scenarios/core-loop-proof dir.
 func coreLoopProofFixtureDir(t *testing.T) string {
 	t.Helper()
 	root := conformanceCorpusFixtureRepoRoot(t)
 	return filepath.Join(root, "scenarios", "core-loop-proof")
 }
 
-// coreLoopProofSeedModelControl is the per-harness-family rule for whether a seed
-// may name its own model. It is the whole of harmonik's control over the model a
-// seed's run selects, so the table IS the contract.
-//
-// The claude row is what keeps the other two honest. Two "must not carry a label"
-// rules on their own pass just as happily when label parsing is broken as when the
-// fixtures are correct, which is exactly the vacuous check hk-hyxkj was filed for.
-// One family that MUST carry a label fails loudly in that case.
-//
-// modelFromConfig splits the two label-less families, which are label-less for
-// opposite reasons. pi HAS a model and it is written in
-// scripts/scratch-config-overlay.yaml, so an empty resolution there is a defect and
-// check (1c) forbids it. codex has NO harmonik-controlled model at all — the
-// operator's $CODEX_HOME/config.toml sets it — so codex resolving to empty is the
-// designed behaviour and codex must be excluded from that check.
 var coreLoopProofSeedModelControl = map[string]struct {
 	wantModelLabel  bool
 	modelFromConfig bool
@@ -162,9 +102,6 @@ var coreLoopProofSeedModelControl = map[string]struct {
 	"claude-code": {true, false, "the claude model IS pinned per bead, and the pin is what the leak guards forbid on other harnesses"},
 }
 
-// coreLoopProof sentinels. cells.json carries these instead of model names;
-// scripts/core-loop-matrix.sh substitutes the resolved values before it folds a
-// cell's assertion.
 const (
 	coreLoopProofResolvedSentinel = "@resolved"
 	coreLoopProofForeignSentinel  = "@foreign"
@@ -183,7 +120,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 
 	dir := coreLoopProofFixtureDir(t)
 
-	// ── seed-beads.json ──────────────────────────────────────────────────────
 	seedData, err := os.ReadFile(filepath.Join(dir, "seed-beads.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
 	if err != nil {
 		t.Fatalf("read seed-beads.json: %v", err)
@@ -196,8 +132,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		t.Fatal("seed-beads.json declares no seeds; every check below would be vacuous")
 	}
 
-	// (1) Each seed names its own model, or does not, according to its harness
-	// family. A model: label is the ONLY place a seed may write a model name.
 	seenFamily := map[string]bool{}
 	for _, seed := range seedFile.Seeds {
 		rule, known := coreLoopProofSeedModelControl[seed.Harness]
@@ -217,24 +151,12 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		}
 	}
 
-	// (1b) Every family the table covers must appear. A family that silently
-	// stops being seeded takes its rule out of force without deleting it.
 	for family := range coreLoopProofSeedModelControl {
 		if !seenFamily[family] {
 			t.Errorf("no seed declares harness %q; its model-control rule is no longer in force", family)
 		}
 	}
 
-	// (1c) A family whose rule says the model comes from config must actually find
-	// one there. This is the other half of the resolution, and it fails silently:
-	// scripts/core-loop-matrix.sh seed_model_for falls back to
-	// harnesses.<harness>.model, and when that is missing it returns empty, the
-	// cell's model expectation is rewritten to null, and foreign_models_for drops
-	// the value from every OTHER cell's leak set. Nothing goes red. That is the same
-	// defect shape as hk-hyxkj, one file over, and it is checkable from the repo.
-	// The pair of conditions is the message's own premise: config is the model's
-	// only source exactly when the family declares one there AND check (1) has
-	// already forbidden its seeds a label.
 	overlayModels := coreLoopProofScratchOverlayModels(t)
 	for family, rule := range coreLoopProofSeedModelControl {
 		if rule.wantModelLabel || !rule.modelFromConfig {
@@ -246,11 +168,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		}
 	}
 
-	// (2) model_pin must stay deleted. a08fa9de3 removed it as a field with no
-	// reader — a second written-down copy of a fact the label already carries.
-	// coreLoopProofSeed.ModelPin is json.RawMessage so an absent key (nil) stays
-	// distinct from a declared null ("null"). A *string flattens the two, and that
-	// flattening is precisely how the old assertion went vacuous.
 	for _, seed := range seedFile.Seeds {
 		if seed.ModelPin != nil {
 			t.Errorf("seed %q carries a model_pin field; it was deleted because nothing reads it, and a second copy of the model fact is what went stale before (a08fa9de3)",
@@ -258,7 +175,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		}
 	}
 
-	// ── cells.json ───────────────────────────────────────────────────────────
 	cellsData, err := os.ReadFile(filepath.Join(dir, "cells.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
 	if err != nil {
 		t.Fatalf("read cells.json: %v", err)
@@ -271,9 +187,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		t.Fatal("cells.json declares no cells; every check below would be vacuous")
 	}
 
-	// (3) No cell names a model. Both expectations carry their sentinel, and the
-	// runner substitutes the resolved value. A literal here bypasses resolution
-	// and is the exact rot a08fa9de3 removed.
 	for _, cell := range cellsFile.Cells {
 		got := cell.Expect.ModelSelected.Model
 		if got == nil {
@@ -291,14 +204,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		}
 	}
 
-	// (4) The sentinels bind to their only reader. If the runner's spelling and
-	// the fixture's spelling part company, the runner folds the assertion against
-	// the literal string "@resolved" and every cell goes red — but only on a live
-	// matrix run, which is expensive and rare. Catch it here instead.
-	//
-	// This is a SPELLING check on the runner, not a behaviour check. It confirms the
-	// sentinel strings still appear in the script. It does not confirm the runner
-	// still substitutes a resolved value for them.
 	runner := coreLoopProofMatrixRunnerSource(t)
 	for _, sentinel := range []string{coreLoopProofResolvedSentinel, coreLoopProofForeignSentinel} {
 		if !strings.Contains(runner, sentinel) {
@@ -306,23 +211,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 		}
 	}
 
-	// (5) The cross-harness leak guard cannot be vacuous. For an unpinned cell the
-	// runner's forbidden set is every OTHER seed's resolved model, and a seed
-	// whose model comes from the scratch config resolves to a value this test
-	// cannot see. At least one seed from another family must carry a model:
-	// label, so the forbidden set is provably non-empty from the repo alone.
-	//
-	// While the table above names one family that MUST carry a label, checks (1)
-	// and (1b) together already force that seed to exist, so a fixture edit alone
-	// cannot make this check the only failure. Nor can a table edit alone: flip the
-	// last wantModelLabel row to false and check (1) fails alongside this one,
-	// because the seed still carries the label the table now forbids.
-	//
-	// This check is the SOLE failure only under the two-part edit — flip the last
-	// wantModelLabel row to false AND delete that seed's model: label. That pair is
-	// internally consistent, so every other check stays green, and yet no seed pins
-	// a model any more and the leak guard has nothing left to forbid. This check is
-	// the one that says so.
 	for family, rule := range coreLoopProofSeedModelControl {
 		if rule.wantModelLabel {
 			continue
@@ -333,8 +221,6 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 	}
 }
 
-// coreLoopProofModelLabel returns the alias of the seed's model: label, or "" when
-// it carries none.
 func coreLoopProofModelLabel(labels []string) string {
 	const prefix = "model:"
 	for _, lbl := range labels {
@@ -345,8 +231,6 @@ func coreLoopProofModelLabel(labels []string) string {
 	return ""
 }
 
-// coreLoopProofHasPinnedSeedOutside reports whether some seed of a family other
-// than the given one carries a model: label.
 func coreLoopProofHasPinnedSeedOutside(seeds []coreLoopProofSeed, family string) bool {
 	for _, seed := range seeds {
 		if seed.Harness == family {
@@ -359,14 +243,6 @@ func coreLoopProofHasPinnedSeedOutside(seeds []coreLoopProofSeed, family string)
 	return false
 }
 
-// coreLoopProofScratchOverlayModels returns harnesses.<family>.model for every
-// harness family declared in scripts/scratch-config-overlay.yaml.
-//
-// That overlay is the config half of the model resolution. scripts/scratch-daemon.sh
-// appends it onto the scratch .harmonik/config.yaml, and the runner's
-// harness_cfg_value reads harnesses.<harness>.model back out of the result. The key
-// this map is looked up by is therefore the harness family name itself, which is how
-// the runner spells it too.
 func coreLoopProofScratchOverlayModels(t *testing.T) map[string]string {
 	t.Helper()
 	path := filepath.Join(conformanceCorpusFixtureRepoRoot(t), "scripts", "scratch-config-overlay.yaml")
@@ -389,8 +265,6 @@ func coreLoopProofScratchOverlayModels(t *testing.T) map[string]string {
 	return models
 }
 
-// coreLoopProofMatrixRunnerSource returns the text of the matrix runner — the one
-// program that reads the cells.json sentinels.
 func coreLoopProofMatrixRunnerSource(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(conformanceCorpusFixtureRepoRoot(t), "scripts", "core-loop-matrix.sh")
@@ -470,12 +344,6 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 				cell.Cell, *d.WorkflowMode)
 		}
 
-		// workflow_id is always emitted, so a cell that expects it absent asserts
-		// less than the daemon guarantees. core.RunStartedPayload.Valid rejects a
-		// record whose descriptor is invalid, and the descriptor reaching
-		// emitRunStarted came from a resolvedWorkflow that was already checked the
-		// same way (internal/daemon/workloop_runplan.go resolveWorkflow). An empty
-		// workflow_id therefore cannot appear on the wire.
 		if d.WorkflowIDPresent == nil {
 			t.Errorf("cell %q expect.dispatch has no workflow_id_present; gap4 cannot assert the descriptor resolved", cell.Cell)
 		} else if !*d.WorkflowIDPresent {
@@ -505,9 +373,6 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 		}
 		checkCoreLoopProofPolicyBinding(t, cell.Cell, workflowMode, workflowID, *d.ReviewPolicy, *d.WorkflowSelectionSource)
 
-		// The dispatched node set is the second, independent signal that the run
-		// took the path the policy claims. It is a containment check: required
-		// names what the run must dispatch, forbidden what it must never dispatch.
 		var required, forbidden []string
 		if d.Nodes != nil {
 			required, forbidden = d.Nodes.Required, d.Nodes.Forbidden
@@ -529,29 +394,6 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 	}
 }
 
-// checkCoreLoopProofPolicyBinding fails when a cell's (workflow_mode,
-// workflow_id, review_policy, workflow_selection_source) tuple is one the daemon
-// could never emit.
-//
-// It does NOT restate the rule. It builds the run_started payload the cell
-// describes and asks core.RunStartedPayload.Valid — the same method the daemon's
-// own resolver output must satisfy — whether that record is legal. A restated
-// copy of the rule is what went wrong the first time: the earlier guard listed
-// the two sources that may select no_review and checked only that direction, so
-// flipping a legacy_single_label cell from no_review to reviewed stayed green
-// even though core.ValidPolicyBinding rejects the pair. Calling the real
-// validator cannot drift from it.
-//
-// TWO VALUES THE FIXTURE DOES NOT SUPPLY are filled in here, and neither weakens
-// the check:
-//
-//   - workflow_version. Valid compares the whole descriptor, ID and version. All
-//     three graphs the matrix reaches declare version "1.0" (workflow.dot,
-//     specs/examples/review-loop.dot, specs/examples/no-review-bead.dot), so the
-//     version never varies across the matrix and a second constant in cells.json
-//     would be a copy of a fact that lives in the graph file.
-//   - run_id, workspace_path, input_ref, started_at. Valid requires them
-//     non-zero. They carry no policy meaning, so any legal value does.
 func checkCoreLoopProofPolicyBinding(t *testing.T, cellName, mode, workflowID, policy, source string) {
 	t.Helper()
 
@@ -652,9 +494,6 @@ func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
 		seedByKey[seed.Key] = seed
 	}
 
-	// (6) No cell names a branch. The value must be the sentinel, and nothing else:
-	// a literal here is a second copy of a fact that lives in seed-beads.json or in
-	// the daemon's branching.yaml, and both copies have already drifted once.
 	for _, cell := range cellsFile.Cells {
 		switch got := cell.Expect.LandsOn; {
 		case got == nil:
@@ -666,11 +505,6 @@ func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
 		}
 	}
 
-	// (7) The sentinel resolves THROUGH the cell's seed key, so the key must match a
-	// seed. scripts/core-loop-matrix.sh seed_lands_on_for looks the key up in
-	// seed-beads.json and falls back to the trunk when it finds nothing, so a
-	// mistyped or renamed key silently turns an integration-branch cell into a
-	// trunk-landing cell. Nothing goes red. Same silent-degradation shape as (1c).
 	for _, cell := range cellsFile.Cells {
 		if cell.SeedBead == "" {
 			t.Errorf("cell %q names no seed_bead; the runner has no key to resolve %q through and dies rather than guess",
@@ -683,12 +517,6 @@ func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
 		}
 	}
 
-	// (8) At least one seed must ask for its own integration branch. This is the
-	// non-vacuity check for t10 as a whole. When every seed lands on the project
-	// default, every cell's $want equals its $trunk, the "the trunk advanced" arm of
-	// assert_t10 is unreachable by construction, and t10 degrades to "something
-	// landed" for the whole matrix — which is exactly the check the per-bead
-	// targeting contract (hk-lgykq) needs it not to be.
 	sawTargetBranch := false
 	for _, seed := range seedFile.Seeds {
 		if seed.TargetBranch != "" {
@@ -700,24 +528,6 @@ func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
 		t.Error("no seed in seed-beads.json declares a target_branch; every cell then lands on the project default, the trunk-must-not-move arm of t10 can never fire, and per-bead branch targeting goes unasserted across the whole matrix")
 	}
 
-	// (9) The runner still reads both branch names off the components that own
-	// them, rather than writing either down. THREE spellings must survive, and the
-	// loop below requires all three:
-	//
-	//   - `/^[[:space:]]+lands_on:/` — the awk read of defaults.lands_on out of the
-	//     scratch daemon's branching.yaml. The same shape scripts/scratch-daemon.sh
-	//     isolate_push_target WRITES that key with, and the same shape
-	//     scripts/core-loop-seed.sh reads defaults.start_from with.
-	//   - `seed_lands_on_for` — the resolver the "@resolved" sentinel is
-	//     substituted by. It turns a cell's seed key into a branch name.
-	//   - `_trunk_branch` — the key the runner injects the trunk name into the cell
-	//     spec under. Check (10) is the reading end of that same key.
-	//
-	// These are SPELLING checks, like (4), and they are WEAK. strings.Contains, so
-	// renaming seed_lands_on_for to seed_lands_on_forX still passes, and renaming a
-	// definition together with every caller still passes. They say the landing
-	// resolution has not been deleted outright. They do not say the runner still
-	// uses what it reads — a live matrix run is what says that.
 	runner := coreLoopProofMatrixRunnerSource(t)
 	for _, want := range []string{
 		`/^[[:space:]]+lands_on:/`,
@@ -729,17 +539,12 @@ func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
 		}
 	}
 
-	// (10) The trunk name has a reader on the other side. The runner can inject
-	// ._trunk_branch faithfully and still assert nothing if the assertion library
-	// drops it — assert_t10's trunk-must-not-move arm would simply never fire.
 	assertLib := coreLoopProofAssertLibrarySource(t)
 	if !strings.Contains(assertLib, "_trunk_branch") {
 		t.Error("scripts/core-loop-assert.jq does not mention _trunk_branch; the runner injects the trunk name and nothing reads it, so t10 cannot tell a landing on the trunk from a landing on the intended branch")
 	}
 }
 
-// coreLoopProofAssertLibrarySource returns the text of the assertion library —
-// the other reader of the values the matrix runner injects into a cell spec.
 func coreLoopProofAssertLibrarySource(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(conformanceCorpusFixtureRepoRoot(t), "scripts", "core-loop-assert.jq")

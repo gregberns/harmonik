@@ -37,9 +37,6 @@ const (
 	MaxTemplateParamKeyBytes = 128
 )
 
-// templateParamKeyRe is the required key grammar: an uppercase leading letter
-// followed by uppercase letters, digits, or underscores. This matches the WG-045
-// token grammar (minus the __ delimiters) and the POSIX environment-name shape.
 var templateParamKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // ErrInvalidTemplateParam is returned by ValidateTemplateParams when a key or value

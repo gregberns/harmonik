@@ -36,12 +36,10 @@ func TestStore_AddGetListRemove(t *testing.T) {
 		t.Fatalf("Add a: %v", err)
 	}
 
-	// Get
 	got, ok := s.Get("a")
 	if !ok {
 		t.Fatalf("Get(a): not found")
 	}
-	// Defaults must be normalised on add.
 	if got.OverlapPolicy != OverlapPolicySkip {
 		t.Errorf("OverlapPolicy default = %q, want %q", got.OverlapPolicy, OverlapPolicySkip)
 	}
@@ -49,13 +47,11 @@ func TestStore_AddGetListRemove(t *testing.T) {
 		t.Errorf("Catchup default = %q, want %q", got.Catchup, CatchupCoalesceWithinWindow)
 	}
 
-	// List is sorted by id.
 	list := s.List()
 	if len(list) != 2 || list[0].ID != "a" || list[1].ID != "b" {
 		t.Fatalf("List = %+v, want sorted [a b]", idsOf(list))
 	}
 
-	// Remove
 	removed, err := s.Remove("a")
 	if err != nil {
 		t.Fatalf("Remove a: %v", err)
@@ -67,7 +63,6 @@ func TestStore_AddGetListRemove(t *testing.T) {
 		t.Fatalf("Get(a) still found after remove")
 	}
 
-	// Remove of absent id is a no-op (false, nil).
 	removed, err = s.Remove("zzz")
 	if err != nil || removed {
 		t.Fatalf("Remove(absent) = (%v,%v), want (false,nil)", removed, err)
@@ -92,7 +87,6 @@ func TestStore_PersistReloadRoundTrip(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// A fresh store over the same dir must see the same job.
 	s2 := NewStore(dir)
 	if err := s2.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -127,12 +121,10 @@ func TestStore_AtomicWrite_NoTempLeftBehind(t *testing.T) {
 		if len(e.Name()) >= 4 && e.Name()[len(e.Name())-4:] == ".tmp" {
 			t.Fatalf("temp file left behind: %s", e.Name())
 		}
-		// also catch the .tmp-<pid> form
 		if containsTmp(e.Name()) {
 			t.Fatalf("temp file left behind: %s", e.Name())
 		}
 	}
-	// The canonical file exists and parses as a fileDoc.
 	data, err := os.ReadFile(filepath.Join(hk, scheduleFileName))
 	if err != nil {
 		t.Fatalf("read schedules.json: %v", err)
@@ -212,12 +204,9 @@ func TestStore_ReloadIfChanged(t *testing.T) {
 		t.Fatalf("reader Load: %v", err)
 	}
 
-	// Out-of-process add (simulating the CLI writing the file).
 	if err := writer.Add(sampleJob("rc")); err != nil {
 		t.Fatalf("writer Add: %v", err)
 	}
-	// Force a modtime difference robustly: rewrite the file once more so its mtime
-	// is strictly newer than the reader's zero-value loadedMod.
 	if err := writer.Add(sampleJob("rc2")); err != nil {
 		t.Fatalf("writer Add 2: %v", err)
 	}
@@ -233,7 +222,6 @@ func TestStore_ReloadIfChanged(t *testing.T) {
 		t.Fatalf("reader did not pick up out-of-process job after reload")
 	}
 
-	// A second reload with no file change reports false.
 	changed, err = reader.ReloadIfChanged()
 	if err != nil {
 		t.Fatalf("ReloadIfChanged (2): %v", err)
@@ -290,7 +278,6 @@ func TestStore_CrossProcessNoLostUpdate(t *testing.T) {
 	daemon := NewStore(dir)
 	cli := NewStore(dir)
 
-	// Both processes start from the same on-disk state (job present, never fired).
 	if err := daemon.Add(sampleJob("job1")); err != nil {
 		t.Fatalf("daemon Add: %v", err)
 	}
@@ -298,21 +285,15 @@ func TestStore_CrossProcessNoLostUpdate(t *testing.T) {
 		t.Fatalf("cli Load: %v", err)
 	}
 
-	// Daemon records a fire. Its in-memory + on-disk LastFire now advances.
 	fireTS := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	if ok, err := daemon.MarkFired("job1", fireTS, 4242); err != nil || !ok {
 		t.Fatalf("daemon MarkFired = (%v,%v)", ok, err)
 	}
 
-	// CLI now disables the job from its STALE snapshot (it never saw the fire).
-	// The fix makes this a read-modify-write under the flock: it reloads the
-	// daemon's committed LastFire before applying the disable, so LastFire is NOT
-	// clobbered back to empty.
 	if ok, err := cli.SetEnabled("job1", false); err != nil || !ok {
 		t.Fatalf("cli SetEnabled = (%v,%v)", ok, err)
 	}
 
-	// Re-read from disk via a fresh store: both mutations must be present.
 	verify := NewStore(dir)
 	if err := verify.Load(); err != nil {
 		t.Fatalf("verify Load: %v", err)

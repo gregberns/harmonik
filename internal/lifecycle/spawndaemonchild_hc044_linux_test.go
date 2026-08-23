@@ -7,12 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// i3151PlatformVerifyPdeathsig is the Linux implementation of the Pdeathsig
-// assertion helper. On Linux, SysProcAttr.Pdeathsig MUST be syscall.SIGTERM
-// per HC-044.
-//
-// Spec ref: specs/handler-contract.md §4.10.HC-044 — "On Linux, handler
-// subprocesses SHOULD install PR_SET_PDEATHSIG(SIGTERM) at spawn time."
 func i3151PlatformVerifyPdeathsig(t *testing.T, attr *syscall.SysProcAttr) {
 	t.Helper()
 

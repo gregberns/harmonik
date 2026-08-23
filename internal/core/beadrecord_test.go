@@ -2,7 +2,6 @@ package core
 
 import "testing"
 
-// validBeadRecord returns a fully-populated valid BeadRecord for use in tests.
 func validBeadRecord(t *testing.T) BeadRecord {
 	t.Helper()
 	return BeadRecord{
@@ -92,7 +91,6 @@ func TestBeadRecordValid_RejectionCases(t *testing.T) {
 			name: "invalid edge in Edges slice rejected",
 			mutate: func(r *BeadRecord) {
 				r.Edges = []DependencyEdge{
-					// valid edge
 					{
 						FromBeadID: BeadID("bead-abc-123"),
 						ToBeadID:   BeadID("bead-def-456"),

@@ -1,23 +1,5 @@
 package codex
 
-// export_test.go — the codex test seams, relocated verbatim from
-// internal/daemon/export_test.go by P2 unit E1a-1
-// (plans/2026-07-21-p2-extraction/E1a-codex-harness.md §4 step 13).
-//
-// Go's export_test.go seams are visible ONLY inside their own package's test
-// binary, so the daemon's copy could not serve the codex tests once those tests
-// became package codex_test. Every seam below is byte-equivalent to the daemon
-// original apart from the identifier renames the move required, which is why the
-// seven relocated external test files are an import-path edit rather than a
-// rewrite.
-//
-// Four seams did NOT come along, because their consumers stayed in the daemon:
-// ExportedCodexRunCtx / ExportedBuildCodexLaunchSpec / ExportedNewCodexHarness
-// still exist in internal/daemon/export_test.go as thin aliases onto this
-// package's now-exported RunCtx / BuildLaunchSpec / NewHarness, and
-// ExportedWorktreeHEADHasRefsTrailer forwards to internal/harness/shared there
-// as it does here.
-
 import (
 	"context"
 	"fmt"
@@ -28,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BuildLaunchSpec test seams (hk-rgxwd C2/T7)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedCodexRunCtx is the exported shape of the per-launch run context.
 //
@@ -48,10 +26,6 @@ type ExportedCodexRunCtx = RunCtx
 //
 // Bead ref: hk-rgxwd.
 var ExportedBuildCodexLaunchSpec = BuildLaunchSpec
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codex billing guard test seams (hk-tu48u C3/T11)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedMaterializeForcedLoginMethod exposes materializeForcedLoginMethod for
 // tests in package codex_test.
@@ -80,10 +54,6 @@ func ExportedRunCodexBillingGuard(bus handlercontract.EventEmitter, beadID, code
 // ExportedForcedLoginMethodValue is the value the guard materializes / asserts.
 // Bead ref: hk-tu48u.
 const ExportedForcedLoginMethodValue = forcedLoginMethodValue
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Harness + codex JSONL parser test seams (hk-m57va C2/T8)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedNewCodexHarness re-exports NewHarness for tests in package codex_test.
 //
@@ -171,10 +141,6 @@ func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts
 	}, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// codex Refs:<bead> trailer guarantee test seams (hk-bpxci C2/T9)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ExportedCodexRefsOutcome mirrors the shared.RefsOutcome enum for tests. The
 // enum moved to internal/harness/shared in P2 unit E1a-0; the seam name is kept
 // so the existing test files compile unchanged.
@@ -234,10 +200,6 @@ func ExportedEnsureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA strin
 func ExportedCodexSeedPromptInstruction(beadID core.BeadID) string {
 	return fmt.Sprintf(codexSeedPromptTemplate, string(beadID))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codex thread_id interceptor test seams (hk-mzgh)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedNewCodexThreadIDInterceptor exposes newCodexThreadIDInterceptor for
 // tests in package codex_test. It returns the concrete type so tests can call

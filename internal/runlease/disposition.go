@@ -136,13 +136,6 @@ func (d Disposition) Releases(r Resource) bool {
 	return true
 }
 
-// survivesWithTheRun reports whether r is part of what a surviving run leaves
-// standing — either the next boot needs it to find the agent, or the agent
-// still needs it to work and to report.
-//
-// The tunnel and the hook session are in this list and were in no equivalent
-// list before this package existed. They were torn down regardless, which left
-// a surviving agent holding a session it could no longer report through.
 func survivesWithTheRun(r Resource) bool {
 	switch r {
 	case AgentSession, Worktree, RunRecord, HookSession, TunnelProcess, TunnelPort:

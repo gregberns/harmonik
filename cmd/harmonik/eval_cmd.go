@@ -1,20 +1,5 @@
 package main
 
-// eval_cmd.go — harmonik eval collect (EH1)
-//
-// Pure post-run collector: reads <project>/.harmonik/events/events.jsonl,
-// groups by run_id, and for each eval run emits one flat JSON record
-// (DESIGN.md §1.3 schema) to .harmonik/eval-results.jsonl.
-//
-// An eval run is identified by the presence of a node_dispatch_requested
-// event for the "grade" node (dot_cascade.go emits this for ALL node types,
-// including non-agentic shell nodes). Grade pass/fail is inferred from
-// whether outcome_emitted for the "judge" node appears — judge only executes
-// when grade succeeds per the eval DOT topology.
-//
-// Read-only over the log, off the daemon hot path, deterministic.
-// Bead: hk-eval-harness-collector-uavgd (EH1).
-
 import (
 	"bufio"
 	"context"
@@ -89,7 +74,6 @@ EXIT CODES
   1   Error reading input or writing output
 `
 
-// evalEnvelope is the minimal event envelope we decode from each JSONL line.
 type evalEnvelope struct {
 	Type          string          `json:"type"`
 	TimestampWall time.Time       `json:"timestamp_wall"`
@@ -97,7 +81,6 @@ type evalEnvelope struct {
 	Payload       json.RawMessage `json:"payload"`
 }
 
-// evalRunState accumulates events for one run_id.
 type evalRunState struct {
 	beadID          string
 	startedAt       string // from run_started payload
@@ -110,7 +93,6 @@ type evalRunState struct {
 	commitSHA       string  // last checkpoint_written.commit_hash
 }
 
-// evalResultRecord is the output schema (DESIGN.md §1.3).
 type evalResultRecord struct {
 	SchemaVersion  int     `json:"schema_version"`
 	RunID          string  `json:"run_id"`
@@ -129,7 +111,6 @@ type evalResultRecord struct {
 	Timestamp      string  `json:"timestamp"`
 }
 
-// runEvalCollect is the testable entry-point for `harmonik eval collect`.
 func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {
 	fs := flag.NewFlagSet("eval collect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -185,8 +166,6 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 
 	piModel := evalReadPiModel(absProject)
 
-	// Dedup on re-run: records for run_ids already present in the output file
-	// are skipped so re-collecting does not double-count the training set.
 	existing, err := evalReadExistingRunIDs(*outputFile)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err); writeErr != nil {
@@ -203,9 +182,6 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 		return 1
 	}
 	written, skipped, writeErr := evalWriteRecords(f, states, existing, absProject, piModel, stderr)
-	// The output file is append-mode: a Close failure means the last records may
-	// never have reached disk, so it is reported as a collect failure rather than
-	// silently folded into a success message.
 	if closeErr := f.Close(); closeErr != nil && writeErr == nil {
 		writeErr = fmt.Errorf("close %s: %w", *outputFile, closeErr)
 	}
@@ -222,11 +198,6 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	return 0
 }
 
-// evalWriteRecords appends one JSONL record per collectable run in deterministic
-// run_id order (map iteration order is randomised, and re-collecting the same
-// events must produce byte-identical output). Records that cannot be built or
-// marshalled are reported on stderr and skipped; a write failure aborts and is
-// returned so the caller can close the file and fail the command.
 func evalWriteRecords(
 	w io.Writer,
 	states map[string]*evalRunState,
@@ -271,8 +242,6 @@ func evalWriteRecords(
 	return written, skipped, nil
 }
 
-// evalReadExistingRunIDs returns the set of run_ids already present in the
-// output file. A missing file yields an empty set. Malformed lines are skipped.
 func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 	ids := map[string]struct{}{}
 	f, err := os.Open(path) //nolint:gosec // G304: path is the operator-supplied eval-collect output file
@@ -309,8 +278,6 @@ func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 	return ids, nil
 }
 
-// evalReadEvents scans events.jsonl and returns per-run accumulated state.
-// If filterRunID is non-empty, only that run is tracked.
 func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -403,9 +370,6 @@ func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) 
 			}
 
 		case "outcome_emitted":
-			// Judge is an agentic node — it emits outcome_emitted.
-			// Judge only executes when grade succeeds (DOT topology), so
-			// its outcome_emitted is the grade-pass signal.
 			var p struct {
 				NodeID string `json:"node_id"`
 			}
@@ -428,7 +392,6 @@ func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) 
 	return states, nil
 }
 
-// evalBuildRecord constructs one output record for an eval run.
 func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string) (evalResultRecord, error) {
 	rec := evalResultRecord{
 		SchemaVersion: 1,
@@ -440,7 +403,6 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 
 	rec.Pass = st.judgeOutcome
 
-	// wall_time_s from run_started.started_at and run_completed.ended_at.
 	if st.startedAt != "" && st.endedAt != "" {
 		start, err1 := time.Parse(time.RFC3339, st.startedAt)
 		end, err2 := time.Parse(time.RFC3339, st.endedAt)
@@ -449,15 +411,12 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 		}
 	}
 
-	// implement_time_s from implementer_phase_complete.duration_seconds.
 	rec.ImplementTimeS = st.implSecs
 
-	// timestamp from the run_completed wall clock.
 	if !st.completedWall.IsZero() {
 		rec.Timestamp = st.completedWall.UTC().Format(time.RFC3339)
 	}
 
-	// model: pi harness → harnesses.pi.model from config; others → harness name.
 	switch st.harness {
 	case "pi":
 		rec.Model = piModel
@@ -465,14 +424,12 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 		rec.Model = st.harness
 	}
 
-	// task_id, difficulty, check_kind from bead labels.
 	if st.beadID != "" {
 		labels, err := evalFetchBeadLabels(st.beadID, projectDir)
 		if err == nil {
 			rec.TaskID = evalLabelValue(labels, "task_id")
 			rec.Difficulty = evalLabelValue(labels, "difficulty")
 			rec.CheckKind = evalLabelValue(labels, "check_kind")
-			// override model if explicitly labelled
 			if m := evalLabelValue(labels, "model"); m != "" {
 				rec.Model = m
 			}
@@ -482,7 +439,6 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 	return rec, nil
 }
 
-// evalFetchBeadLabels invokes `br show --json <beadID>` and returns the labels slice.
 func evalFetchBeadLabels(beadID, projectDir string) ([]string, error) {
 	cmd := exec.CommandContext(context.Background(), "br", "show", "--json", beadID)
 	cmd.Dir = projectDir
@@ -490,7 +446,6 @@ func evalFetchBeadLabels(beadID, projectDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// br show --json returns a JSON array with one object.
 	var items []struct {
 		Labels []string `json:"labels"`
 	}
@@ -503,8 +458,6 @@ func evalFetchBeadLabels(beadID, projectDir string) ([]string, error) {
 	return items[0].Labels, nil
 }
 
-// evalLabelValue extracts the value after "key:" from a label list.
-// E.g. evalLabelValue(labels, "task_id") on ["task_id:eval-fizzbuzz"] → "eval-fizzbuzz".
 func evalLabelValue(labels []string, key string) string {
 	prefix := key + ":"
 	for _, l := range labels {
@@ -515,7 +468,6 @@ func evalLabelValue(labels []string, key string) string {
 	return ""
 }
 
-// rawMinimalConfig holds just the harnesses block needed by the collector.
 type rawMinimalConfig struct {
 	Harnesses struct {
 		Pi struct {
@@ -524,8 +476,6 @@ type rawMinimalConfig struct {
 	} `yaml:"harnesses"`
 }
 
-// evalReadPiModel reads harnesses.pi.model from .harmonik/config.yaml.
-// Returns empty string on any error (model label on bead is the fallback).
 func evalReadPiModel(projectDir string) string {
 	data, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "config.yaml"))
 	if err != nil {
@@ -538,7 +488,6 @@ func evalReadPiModel(projectDir string) string {
 	return cfg.Harnesses.Pi.Model
 }
 
-// runEvalCmd dispatches harmonik eval sub-verbs.
 func runEvalCmd(subArgs []string, stdout, stderr io.Writer) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
 		if _, err := fmt.Fprint(stdout, evalCmdHelp); err != nil {

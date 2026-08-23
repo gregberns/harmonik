@@ -23,15 +23,5 @@ package scenario
 //
 // Spec ref: specs/scenario-harness.md §4.4 SH-015a.
 func WorkspaceSnapshotPath(scenarioName string) string {
-	// ScenarioWorkspacePath returns <fixture-root>/<scenario-name>/workspace/.
-	// The fixture-root-relative form strips the leading <fixture-root>/ prefix,
-	// yielding <scenario-name>/workspace — a portable relative path.
-	//
-	// Implementation note: ScenarioWorkspacePath takes (fixtureRoot, scenarioName)
-	// and joins them, so the relative portion is always:
-	//   <scenarioName>/workspace
-	// We construct the relative path directly to keep this function pure
-	// (no filesystem access required) and avoid coupling to fixtureRoot
-	// at record-time.
 	return scenarioName + "/workspace"
 }

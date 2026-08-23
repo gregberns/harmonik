@@ -1,77 +1,5 @@
 package daemon_test
 
-// tmuxsubstrate_capresize_test.go — regression tests for the two defects an
-// independent review found underneath the live spawn-cap resize (hk-ad79i).
-//
-// # The bugs
-//
-// Two semaphores gate a spawn. nonTerminalSem holds the operator's cap n;
-// spawnSem holds n+1, and the extra slot is the reserve that lets the merge
-// node of a finished run start even when every ordinary slot is busy (hk-x882o).
-// The terminal path waits for that slot with NO timeout, on purpose, so that
-// reviewed work is never thrown away.
-//
-//   - hk-6yrs9 (P1): lowering the cap set spawnSem's capacity to n+1 with no
-//     regard for what was in flight. Drop from 16 to 2 with 16 sessions running
-//     and the capacity (3) sits below the in-use count (16). The reserve is
-//     gone, and every merge node waits — unbounded — until fourteen sessions
-//     drain. New with the cap-lowering fix, because before it the cap only ever
-//     went up. It arrives exactly when the operator is throttling a box that is
-//     already overloaded.
-//
-//   - hk-pcjkp (P2): the two capacities moved in a fixed order, non-terminal
-//     first, and SetCapacity broadcasts. On a RAISE that wakes every blocked
-//     spawn against a spawnSem that still holds the OLD capacity; the woken
-//     spawns then missed the fast-path-only TryAcquire in acquireSpawnSlot and
-//     failed with a structural error. Asking for MORE capacity was the case
-//     that refused spawns. The structural failure itself is gone since
-//     hk-terminal-reserve-unbounded-wyy6y — a missed fast path now waits out
-//     the rest of its budget — so what the ordering saves today is that wait,
-//     not the spawn.
-//
-// # Fix
-//
-// SetSpawnCap orders the two moves by direction — widen from the inside out,
-// narrow from the outside in — so spawnSem.Capacity() >= cap+1 holds at every
-// instant rather than only at the ends; and it clamps the spawnSem target so a
-// shrink never takes the reserve from work already in flight. The clamp is
-// given back on the release path as those sessions drain.
-//
-// # What is tested
-//
-//   - TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow: the cheapest red
-//     test for hk-pcjkp. It reads both capacities from INSIDE the window
-//     between the two moves, in both directions. Pre-fix the raise reports a
-//     spawn capacity below the non-terminal cap.
-//   - TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted: the
-//     failure a user sees — spawns blocked at the cap, the cap raised, and not
-//     one of them made to queue for the capacity the raise had just granted it.
-//   - TestSpawnCapShrink_TerminalReserveSurvivesInFlightSessions: the hk-6yrs9
-//     incident. Pre-fix the terminal spawn never returns.
-//   - TestSpawnCapShrink_ReserveCountsTerminalSessionsToo: the reserve is
-//     measured against every slot in flight, merge nodes included. The first
-//     version of the fix counted only the ordinary sessions; this fails at the
-//     exact numbers that version produces.
-//   - TestSpawnCapShrink_ReserveIsGivenBackAsSessionsDrain: the clamp is not
-//     permanent — once the excess sessions are gone the capacity is back at the
-//     operator's cap plus one, so terminal spawns cannot oversubscribe the box
-//     the operator was throttling.
-//   - TestSpawnCapResize_SettingTheCapItAlreadyHoldsChangesNothing: a ratchet in
-//     the clamp. Setting the cap to the number it already holds ran the shrink
-//     path, which re-clamped one slot higher whenever a merge node held the
-//     reserve, so repeating the call climbed away from the operator's cap.
-//
-// # Helper prefix
-//
-// Helpers use the prefix "capResizeFixture" per implementer-protocol.md. The
-// fake tmux adapter and the two spawn helpers are reused from
-// tmuxsubstrate_terminalreserve_test.go — same package, same subject.
-//
-// # Beads
-//
-//   - hk-6yrs9 (a shrink removes the terminal reserve)
-//   - hk-pcjkp (a raise refuses a spawn while the two bounds disagree)
-
 import (
 	"context"
 	"testing"
@@ -81,17 +9,12 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// capResizeFixtureSubstrate builds a capped substrate over the shared fake tmux
-// adapter, with an acquire timeout generous enough that a blocked non-terminal
-// spawn waits for the resize rather than timing out first.
 func capResizeFixtureSubstrate(capN int, acquireTimeout time.Duration) handler.Substrate {
 	return daemon.NewTmuxSubstrate(&terminalReserveFixtureAdapter{}, "capresize-session",
 		daemon.WithSpawnCap(capN),
 		daemon.WithSpawnAcquireTimeout(acquireTimeout))
 }
 
-// capResizeFixtureSaturate holds n non-terminal sessions and returns them, so a
-// test can drain them one at a time.
 func capResizeFixtureSaturate(t *testing.T, sub handler.Substrate, n int) []handler.SubstrateSession {
 	t.Helper()
 	held := make([]handler.SubstrateSession, 0, n)
@@ -176,8 +99,6 @@ func TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted(t *testing.
 	const waiters = 5
 	sub := capResizeFixtureSubstrate(1, 10*time.Second)
 
-	// One session holds the only slot; the waiters below all block on it. It
-	// takes the fast path itself, so the slow-path count starts at zero.
 	capResizeFixtureSaturate(t, sub, 1)
 	if got := daemon.ExportedSpawnSemWaits(sub); got != 0 {
 		t.Fatalf("slow-path entries = %d before the resize, want 0 — the fixture "+
@@ -185,8 +106,6 @@ func TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted(t *testing.
 	}
 
 	started := make(chan struct{}, waiters)
-	// Hold the window open until every waiter has entered SpawnWindow, so the
-	// broadcast from the first move lands while the second has not happened.
 	daemon.ExportedSetCapResizeMid(sub, func() {
 		for i := 0; i < waiters; i++ {
 			<-started
@@ -250,8 +169,6 @@ func TestSpawnCapShrink_TerminalReserveSurvivesInFlightSessions(t *testing.T) {
 		t.Errorf("after the shrink, spawn capacity = %d with %d sessions in flight; want at least %d "+
 			"so one slot is still free for a terminal spawn (hk-6yrs9)", got, capN, want)
 	}
-	// The operator's cap DID come down — the clamp must not quietly refuse the
-	// throttle for ordinary work.
 	if got := daemon.ExportedSpawnCapSize(sub); got != 1 {
 		t.Errorf("non-terminal cap = %d after lowering to 1 — the throttle did not take effect", got)
 	}

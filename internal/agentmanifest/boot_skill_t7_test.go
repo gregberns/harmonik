@@ -15,10 +15,8 @@ func TestBootSkillInBriefOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// captain is the parent of crew
 	makeTypeFolder(t, agentsDir, "captain", "operator", "I am captain — I run the fleet.\n", "")
 
-	// boot skill in _skills/
 	bootDir := filepath.Join(agentsDir, "_skills", "boot")
 	if err := os.MkdirAll(bootDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -28,7 +26,6 @@ func TestBootSkillInBriefOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// crew type with boot as first context skill
 	crewDir := filepath.Join(agentsDir, "crew")
 	if err := os.MkdirAll(crewDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -68,7 +65,6 @@ markers:
 		t.Fatalf("BuildBootDoc: %v", err)
 	}
 
-	// Verify boot skill is in the skills list
 	if len(doc.Skills) == 0 {
 		t.Fatal("expected at least one skill entry, got none")
 	}
@@ -79,7 +75,6 @@ markers:
 		t.Errorf("boot skill ShortDesc %q does not contain 'harmonik agent brief'", doc.Skills[0].ShortDesc)
 	}
 
-	// Verify the rendered markdown mentions harmonik agent brief
 	var buf strings.Builder
 	if err := RenderMarkdown(doc, &buf); err != nil {
 		t.Fatalf("RenderMarkdown: %v", err)

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// setTempClaudeConfig redirects defaultClaudeGlobalConfigPath to a
-// temp-dir-scoped path for the duration of the test. This prevents any test
-// from touching the real ~/.claude.json on the developer's machine.
 func setTempClaudeConfig(t *testing.T) string {
 	t.Helper()
 	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
@@ -60,7 +57,6 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 	cfgPath := filepath.Join(dir, ".claude.json")
 	worktreePath := filepath.Join(dir, "worktrees", "run-xyz")
 
-	// Write a pre-existing config with a different project and a top-level key.
 	initial := map[string]interface{}{
 		"theme": "dark",
 		"projects": map[string]interface{}{
@@ -88,14 +84,12 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 		t.Fatalf("WM-040b: Unmarshal merged config: %v", err)
 	}
 
-	// Top-level "theme" key MUST be preserved.
 	if cfg["theme"] != "dark" {
 		t.Errorf("WM-040b: top-level 'theme' key lost; got %v", cfg["theme"])
 	}
 
 	projects := mustJSONObject(t, cfg, "projects", "WM-040b: merged config")
 
-	// Existing project entry MUST be preserved.
 	other, ok := projects["/some/other/project"].(map[string]interface{})
 	if !ok {
 		t.Fatal("WM-040b: existing project entry lost")
@@ -104,7 +98,6 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 		t.Errorf("WM-040b: existing project 'lastCost' lost; got %v", other["lastCost"])
 	}
 
-	// New worktree entry MUST be trusted.
 	entry, ok := projects[worktreePath].(map[string]interface{})
 	if !ok {
 		t.Fatalf("WM-040b: new worktree entry missing for %s", worktreePath)

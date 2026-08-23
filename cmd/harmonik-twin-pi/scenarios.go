@@ -35,15 +35,11 @@ const (
 	ScenarioEmptyTurn = "empty-turn"
 )
 
-// Deterministic per-turn token counts for the happy-path scenario. Fixed so the
-// reference capture and the parser-driven usage assertion are byte-stable.
 const (
 	happyPathInputTokens  int64 = 42
 	happyPathOutputTokens int64 = 17
 )
 
-// sessionIDForScenario returns a deterministic session id for the given scenario.
-// The id is a fixed UUID per scenario so NDJSON streams are byte-reproducible.
 func sessionIDForScenario(scenario string) string {
 	switch scenario {
 	case ScenarioHappyPath:
@@ -55,7 +51,6 @@ func sessionIDForScenario(scenario string) string {
 	}
 }
 
-// scenarioConfig carries the runtime parameters for a scenario execution.
 type scenarioConfig struct {
 	// sessionOverride, when non-empty, replaces the deterministic scenario
 	// session id — set from the --session resume flag so the twin echoes the
@@ -63,9 +58,6 @@ type scenarioConfig struct {
 	sessionOverride string
 }
 
-// runScenario drives the named scenario, writing pi NDJSON to w.
-//
-// Returns an error if the scenario name is unrecognised or a write fails.
 func runScenario(w io.Writer, name string, cfg scenarioConfig) error {
 	e := newPiEmitter(w)
 	sessionID := cfg.sessionOverride
@@ -84,8 +76,6 @@ func runScenario(w io.Writer, name string, cfg scenarioConfig) error {
 	}
 }
 
-// runHappyPath implements the happy-path variant: a single successful turn with
-// non-zero usage. session → message_start → message_end → agent_end.
 func runHappyPath(e *piEmitter, sessionID string) error {
 	if err := e.emitSession(sessionID, "/twin/pi/happy-path"); err != nil {
 		return fmt.Errorf("happy-path: emit session: %w", err)
@@ -102,8 +92,6 @@ func runHappyPath(e *piEmitter, sessionID string) error {
 	return nil
 }
 
-// runEmptyTurn implements the empty-turn variant: session → agent_end with no
-// message events and zero usage.
 func runEmptyTurn(e *piEmitter, sessionID string) error {
 	if err := e.emitSession(sessionID, "/twin/pi/empty-turn"); err != nil {
 		return fmt.Errorf("empty-turn: emit session: %w", err)

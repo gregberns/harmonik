@@ -1,81 +1,5 @@
 package daemon
 
-// coldstarttoken_test.go — the cold-start token: a remote run must hold one to
-// start its agent, it gives the token back when the agent is ready, and it gives
-// it back exactly once however the run ends.
-//
-// # Which token this file is about
-//
-// There are TWO spawn tokens in this daemon and they never overlap.
-//
-//   - The COLD-START token, held here. One channel for the whole daemon,
-//     capacity 3, built in newTestRuntime and reached through
-//     SharedHandles.AgentSpawnSem. runAgentLaunch takes one immediately before
-//     the remote agent spawn and gives it back as soon as the readiness phase
-//     settles. A LOCAL run never takes one.
-//   - The tmux substrate's own spawn cap, which bounds LOCAL window spawns. It
-//     has a different owner, a different release path, and no coordination with
-//     the cold-start token. A REMOTE run never takes one.
-//
-// Every test name here says "cold-start" for that reason. A name that only said
-// "spawn token" would be true of both and would pin neither.
-//
-// # What was here before
-//
-// Nothing. The token had no test at all: not taken, not given back, not given
-// back once, not given back when the readiness phase times out. It is also the
-// best-behaved resource the run holds, so it is the shape the other eight are
-// meant to be rewritten to, and a shape with no test cannot serve as a model.
-//
-// # How these tests observe the token
-//
-// Each test drives the real beadRunOne through runBeadOneTest with a
-// pre-selected worker, which is what makes the run remote. The token is a
-// channel the test owns, so its occupancy is the observable. A token already in
-// the channel stands for a sibling run holding it. The tests then read three
-// things:
-//
-//   - whether the agent process ever started, through a marker file the stub
-//     agent writes as its first act,
-//   - whether a free slot exists at a moment when the agent is known to be still
-//     running,
-//   - how many tokens are in the channel once beadRunOne has returned.
-//
-// The stub agent blocks until the test releases it. That is what makes "the
-// token came back while the run body was still going" an observation rather than
-// a race.
-//
-// # Mutation record
-//
-// Every test here was checked by breaking the thing it claims to protect and
-// confirming that test went red. Each test names its own mutation. Seven were
-// run in total:
-//
-//   - delete the take — the five remote tests all go red, and only the local
-//     test stays green, which is what it is for,
-//   - remove the prompt give-back — the window test goes red,
-//   - make a lease spendable twice — the exactly-once test goes red,
-//   - hold the token on a lease the launch scope does not hold — the
-//     readiness-timeout test goes red,
-//   - gate a local run too — the local test goes red,
-//   - set the production capacity to 2, and then to 4 — BOTH capacity subtests
-//     go red both times.
-//
-// Removing the prompt give-back also takes a second test down with it, and that
-// is honest: it trips the exactly-once test at its stated precondition, because
-// that test needs both give-back paths to run.
-//
-// # Where the fixture lives
-//
-// The remote setting — the repository, the ssh shim, the tunnel seam, the
-// reserved worker slot, the bead and the run environment — is in
-// remoterunfixture_test.go and is shared with the tunnel-refusal test. Only what
-// these tests vary is here.
-//
-// Helper names in this package are package-scoped. Grep the package before you
-// add one, because two files that add the same name in separate worktrees merge
-// cleanly and then fail to build.
-
 import (
 	"context"
 	"fmt"
@@ -97,42 +21,16 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture timings
-// ─────────────────────────────────────────────────────────────────────────────
-
 const (
-	// coldstartWaitLimit bounds every "wait until X happens" loop. A test that
-	// hits it fails with its own message rather than with a package-wide timeout.
 	coldstartWaitLimit = 30 * time.Second
 
-	// coldstartParkGrace is how long a test waits after the run has reached the
-	// take site before it concludes the run is parked there.
-	//
-	// The run signals through the launch-spec builder, which is the last step
-	// before the take. Nothing between the two blocks, so this grace covers
-	// scheduling only.
 	coldstartParkGrace = 500 * time.Millisecond
 
-	// coldstartReadyTimeout is the readiness deadline the ready-timeout test
-	// gives a remote run. It must be long enough for the sampler below to see
-	// the token held and short enough to keep the test quick.
 	coldstartReadyTimeout = 700 * time.Millisecond
 
-	// coldstartSamplePeriod is how often a test polls an observable.
 	coldstartSamplePeriod = 2 * time.Millisecond
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The stub agent
-// ─────────────────────────────────────────────────────────────────────────────
-
-// coldstartAgent is a stub agent that reports when it started and then waits for
-// the test to let it finish.
-//
-// Holding the agent open is what separates "the token came back at the end of
-// the cold-start window" from "the token came back when the run ended". Without
-// it both readings produce the same channel occupancy.
 type coldstartAgent struct {
 	// startedPath is created by the agent as its first act.
 	startedPath string
@@ -140,7 +38,6 @@ type coldstartAgent struct {
 	releasePath string
 }
 
-// coldstartNewAgent builds a stub agent under its own directory.
 func coldstartNewAgent(t *testing.T) coldstartAgent {
 	t.Helper()
 	dir := t.TempDir()
@@ -150,8 +47,6 @@ func coldstartNewAgent(t *testing.T) coldstartAgent {
 	}
 }
 
-// handlerArgs returns the arguments beadRunOne prepends to the launch spec. The
-// binary is /bin/sh, so these make the agent a shell script.
 func (a coldstartAgent) handlerArgs() []string {
 	return []string{
 		"-c",
@@ -159,18 +54,15 @@ func (a coldstartAgent) handlerArgs() []string {
 	}
 }
 
-// started reports whether the agent process has begun.
 func (a coldstartAgent) started() bool {
 	_, err := os.Stat(a.startedPath)
 	return err == nil
 }
 
-// waitStarted blocks until the agent begins, or reports false at the limit.
 func (a coldstartAgent) waitStarted() bool {
 	return coldstartWaitFor(coldstartWaitLimit, a.started)
 }
 
-// letFinish tells the agent it may exit.
 func (a coldstartAgent) letFinish(t *testing.T) {
 	t.Helper()
 	if err := os.WriteFile(a.releasePath, []byte("go\n"), 0o600); err != nil {
@@ -178,7 +70,6 @@ func (a coldstartAgent) letFinish(t *testing.T) {
 	}
 }
 
-// coldstartWaitFor polls cond until it holds or the limit passes.
 func coldstartWaitFor(limit time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(limit)
 	for {
@@ -192,13 +83,6 @@ func coldstartWaitFor(limit time.Duration, cond func() bool) bool {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Adapters — the two readiness outcomes these tests need
-// ─────────────────────────────────────────────────────────────────────────────
-
-// coldstartAdapter answers the readiness question with a constant. The two
-// answers are the only thing these tests need out of an adapter, so they are one
-// type with a field rather than two types carrying the same five methods.
 type coldstartAdapter struct{ ready bool }
 
 func (a coldstartAdapter) DetectReady(_ core.EventEnvelope) bool { return a.ready }
@@ -217,28 +101,10 @@ func (coldstartAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticR
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }
 
-// coldstartReadyAtOnce treats the first event of the run as agent_ready.
-//
-// It stands in for the production claude adapter, whose ready signal arrives over
-// the hook relay that no in-process fixture runs. The shape it reproduces is the
-// one the token depends on: readiness settles while the agent keeps working.
-// Under the real adapter this fixture's agent is never ready at all, the
-// cold-start window swallows the whole run, and "the token came back early" stops
-// being expressible.
 var coldstartReadyAtOnce = coldstartAdapter{ready: true}
 
-// coldstartNeverReady never reports ready, so the run ends on the readiness
-// deadline.
 var coldstartNeverReady = coldstartAdapter{ready: false}
 
-// coldstartRegistryFor registers one adapter under claude-code, which is the
-// agent type every bead in this file resolves to, and then seals the registry.
-//
-// Sealing is not load-bearing here. A registry seals itself on the first ForAgent
-// call, and beadRunOne makes that call, so an unsealed registry reaches the same
-// state a moment later. It is done at construction because that is the order
-// production is in — every Register at boot, then reads for the life of the
-// daemon — and because eight more resources get fixtures modelled on this one.
 func coldstartRegistryFor(t *testing.T, adapter handlercontract.Adapter) *handlercontract.AdapterRegistry {
 	t.Helper()
 	reg := handlercontract.NewAdapterRegistry()
@@ -249,11 +115,6 @@ func coldstartRegistryFor(t *testing.T, adapter handlercontract.Adapter) *handle
 	return reg
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The run under test
-// ─────────────────────────────────────────────────────────────────────────────
-
-// coldstartOptions are the four things the tests vary.
 type coldstartOptions struct {
 	// remote decides whether beadRunOne is handed a pre-selected worker. Only a
 	// remote run reaches the cold-start token.
@@ -269,7 +130,6 @@ type coldstartOptions struct {
 	readyTimeout time.Duration
 }
 
-// coldstartRun is one prepared call of beadRunOne.
 type coldstartRun struct {
 	deps        testRuntime
 	env         runloop.RunEnv
@@ -301,13 +161,6 @@ type coldstartRun struct {
 	ok bool
 }
 
-// outcome describes how the run ended, for a failure message.
-//
-// "no agent started" has two very different causes and the assertion cannot
-// tell them apart on its own: the run may still be parked on a resource, or it
-// may have failed early and returned, in which case waiting the full limit only
-// delays a diagnosis that already exists. This reports which one happened and
-// the events the run emitted on its way out.
 func (r *coldstartRun) outcome() string {
 	r.mu.Lock()
 	returned, ok := r.returned, r.ok
@@ -333,11 +186,6 @@ func (r *coldstartRun) outcome() string {
 		ok, events, reason)
 }
 
-// coldstartAddWorktree adds a real git worktree of repoDir at dir.
-//
-// It shares repoDir's object store, so the baseline SHA the graph node reads
-// from the worktree and the tip it diffs against both resolve. An independent
-// repository cannot promise that, however carefully its commit is built.
 func coldstartAddWorktree(t *testing.T, repoDir, dir string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", dir, "HEAD")
@@ -346,9 +194,6 @@ func coldstartAddWorktree(t *testing.T, repoDir, dir string) {
 		t.Fatalf("coldstartAddWorktree: git worktree add %s: %v\n%s", dir, err, out)
 	}
 	t.Cleanup(func() {
-		// Not t.Context(): the test context is already cancelled by the time a
-		// cleanup runs, so the removal would never start. This one is its own,
-		// and bounded so a wedged git cannot hold the suite open.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		rm := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", dir)
@@ -359,49 +204,17 @@ func coldstartAddWorktree(t *testing.T, repoDir, dir string) {
 	})
 }
 
-// coldstartPrepare builds a runnable beadRunOne call.
-//
-// It must be called from the test goroutine: it sets PATH and swaps a
-// package-level seam in internal/transport/tunnel.
 func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	t.Helper()
 
 	projectDir := remotefixRepo(t)
 
-	// The worktree is handed in rather than created, so no test here depends on
-	// git worktree add against a worker that does not exist.
-	//
-	// It must be a real worktree OF projectDir, sharing its object store. The
-	// graph node keeps the worktree HEAD as the node baseline and then diffs that
-	// baseline against the tip. Both SHAs must resolve in the same repository or
-	// the diff fails and the run gives up before it ever spawns an agent.
-	//
-	// This used to be an INDEPENDENT repository built by the same hooksockGitInit
-	// as projectDir. That produced two commits with the same tree, author and
-	// message, differing only in their timestamp, which git records to the
-	// second. The two SHAs were therefore equal whenever both commits landed in
-	// the same wall-clock second and different whenever they straddled a boundary
-	// — measured at about one pair in eight. On the unequal runs the baseline SHA
-	// did not exist in the worktree repo, `git diff base..tip` exited 128, and
-	// the run failed at "diff-hash error before agentic node". The test then
-	// waited its full 30s for an agent that had already been abandoned, and
-	// reported it as a cold-start-gate failure. The gate was never involved. The
-	// test passed only by accidental SHA collision between two unrelated
-	// repositories.
 	worktreeDir := filepath.Join(t.TempDir(), "worktree")
 	coldstartAddWorktree(t, projectDir, worktreeDir)
 	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
 		return worktreeDir, func() {}, nil
 	}
 
-	// Exit 0: the tunnel readiness probe runs over this shim, and a non-zero exit
-	// refuses the run before it reaches the cold-start token.
-	//
-	// A REMOTE run reads the baseline over the runner, so the HEAD probe arrives
-	// here as an ssh call rather than a local git call. The shim must answer it,
-	// or a remote run stops at the same unreadable baseline that the local git
-	// init above fixes for a local run. The shim is built after the worktree so
-	// it can name it.
 	remotefixSSHShimAnsweringHEAD(t, 0, worktreeDir)
 	remotefixTunnelSeam(t, remotefixIdleTunnel)
 
@@ -415,8 +228,6 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	var takeSiteOnce bool
 	launchSpecBuilder := func(ctx context.Context, lc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		spec, artifacts, err := claude.BuildLaunchSpec(ctx, lc)
-		// The builder runs once per run on the run's own goroutine, so the flag
-		// needs no lock.
 		if !takeSiteOnce {
 			takeSiteOnce = true
 			close(atTakeSite)
@@ -453,16 +264,6 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	}
 }
 
-// start runs beadRunOne on its own goroutine and returns a channel that closes
-// when it returns.
-//
-// It also registers a cleanup that releases the stub agent and waits for the run
-// to return. Most tests here end on a t.Fatal, which skips the letFinish call at
-// the bottom of the test body. The stub agent then sleeps forever, the run
-// goroutine stays parked in WaitForOutcome, and it outlives the test that made
-// it. goleak.VerifyNone in subscribe_test.go inspects the WHOLE process, so that
-// abandoned run turns two unrelated tests red and the failure names this file's
-// stack. A test may fail; it may not leave a run behind.
 func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*coldstartWaitLimit)
@@ -476,12 +277,6 @@ func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 		r.mu.Unlock()
 	}()
 	t.Cleanup(func() {
-		// Plain write, not letFinish: a cleanup must not call t.Fatalf, and the
-		// file is already there on the paths that released the agent normally.
-		// The error is reported rather than dropped: `_ =` is a finding here
-		// because .golangci.yml sets errcheck check-blank, and a cleanup that
-		// silently fails to release the agent leaves the next assertion waiting
-		// on a marker that never arrives.
 		if wErr := os.WriteFile(r.agent.releasePath, []byte("go\n"), 0o600); wErr != nil {
 			t.Logf("coldstart cleanup: release marker %s: %v", r.agent.releasePath, wErr)
 		}
@@ -496,9 +291,6 @@ func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 	return done
 }
 
-// waitAtTakeSite blocks until the run has built its launch spec, then waits out
-// the park grace. After it returns, a run that is going to park at the take is
-// parked there.
 func (r *coldstartRun) waitAtTakeSite(t *testing.T) {
 	t.Helper()
 	select {
@@ -510,13 +302,6 @@ func (r *coldstartRun) waitAtTakeSite(t *testing.T) {
 	time.Sleep(coldstartParkGrace)
 }
 
-// coldstartProductionToken returns the cold-start channel the production
-// constructor builds.
-//
-// The capacity test reads the number 3 from here rather than writing 3 into the
-// fixture. A test that made its own channel would keep passing after someone
-// changed the production capacity, which is the one thing that test exists to
-// notice.
 func coldstartProductionToken(t *testing.T) chan struct{} {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -533,8 +318,6 @@ func coldstartProductionToken(t *testing.T) chan struct{} {
 	return deps.handles.AgentSpawnSem
 }
 
-// coldstartFill puts n tokens in the channel, standing for n sibling runs that
-// already hold one.
 func coldstartFill(t *testing.T, token chan struct{}, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
@@ -547,17 +330,6 @@ func coldstartFill(t *testing.T, token chan struct{}, n int) {
 	}
 }
 
-// coldstartAdmitByFreeingASlot parks the run on a channel that is already full,
-// proves it is waiting there for a token, and then frees one so it may proceed.
-//
-// Every test that measures the GIVE-BACK needs this preamble. Without it, "a
-// free slot exists" and "the count is back where it started" are both true of a
-// run that never took a token at all, so a give-back test would stay green after
-// the take was deleted. Parking the run first is what rules that out, and it is
-// deterministic: the run signals when it reaches the take site, and a run that is
-// going to wait is already waiting by the time the grace has passed.
-//
-// The caller must have filled the channel to capacity before starting the run.
 func coldstartAdmitByFreeingASlot(t *testing.T, run *coldstartRun, agent coldstartAgent) {
 	t.Helper()
 	run.waitAtTakeSite(t)
@@ -571,11 +343,6 @@ func coldstartAdmitByFreeingASlot(t *testing.T, run *coldstartRun, agent coldsta
 	}
 }
 
-// coldstartWatchForFullChannel starts a sampler that records whether the channel
-// was ever at capacity. Call the returned stop function before reading it.
-//
-// This is the other way to show the run took a token, for a test that cannot use
-// the parking preamble above.
 func coldstartWatchForFullChannel(token chan struct{}) (seenFull func() bool, stop func()) {
 	full := make(chan struct{}, 1)
 	watching := make(chan struct{})
@@ -601,9 +368,6 @@ func coldstartWatchForFullChannel(token chan struct{}) (seenFull func() bool, st
 		func() { stopOnce.Do(func() { close(watching) }) }
 }
 
-// coldstartFreeSlot reports whether the channel has room for one more token,
-// WITHOUT keeping the slot. A free slot at a moment when the agent is known to
-// be running is how these tests see that the run gave its token back.
 func coldstartFreeSlot(token chan struct{}) bool {
 	select {
 	case token <- struct{}{}:
@@ -613,10 +377,6 @@ func coldstartFreeSlot(token chan struct{}) bool {
 		return false
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A remote run must hold a token before it may start its agent
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent drives a remote
 // run against a cold-start channel that is already full and asserts the run
@@ -630,8 +390,6 @@ func coldstartFreeSlot(token chan struct{}) bool {
 // Mutation: delete the take (the select on AgentSpawnSem in runAgentLaunch). The
 // agent then starts while the channel is full and the first assertion goes red.
 func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T) {
-	// Not parallel: sets PATH and swaps a package-level seam in
-	// internal/transport/tunnel.
 	agent := coldstartNewAgent(t)
 	token := make(chan struct{}, 1)
 	coldstartFill(t, token, 1)
@@ -657,8 +415,6 @@ func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T
 	default:
 	}
 
-	// Give a token back on behalf of the sibling run, and the parked run must
-	// proceed.
 	<-token
 	if !agent.waitStarted() {
 		t.Fatalf("the agent never started within %v after a cold-start token came free.\n"+
@@ -669,10 +425,6 @@ func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T
 	agent.letFinish(t)
 	coldstartAwait(t, done)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A local run is not gated at all
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestColdStartToken_ALocalRunTakesNoColdStartToken drives a LOCAL run against a
 // cold-start channel that is already full and asserts the agent starts anyway
@@ -690,8 +442,6 @@ func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T
 // Mutation: drop the in.Remote guard on the take. The local run then parks on
 // the full channel, no agent appears, and this test fails at the wait.
 func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
-	// Not parallel: sets PATH and swaps a package-level seam in
-	// internal/transport/tunnel.
 	agent := coldstartNewAgent(t)
 	token := make(chan struct{}, 1)
 	coldstartFill(t, token, 1)
@@ -724,10 +474,6 @@ func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The token comes back at the end of the cold-start window
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRunEnds
 // asserts the run gives its token back as soon as readiness settles, while its
 // agent is still working.
@@ -749,11 +495,7 @@ func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
 // close at the end of the launch. The channel then stays full for as long as the
 // agent is blocked and this test fails.
 func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRunEnds(t *testing.T) {
-	// Not parallel: sets PATH and swaps a package-level seam in
-	// internal/transport/tunnel.
 	agent := coldstartNewAgent(t)
-	// Capacity two, both tokens out: one stands for a sibling run and one is the
-	// slot this test hands over.
 	token := make(chan struct{}, 2)
 	coldstartFill(t, token, 2)
 
@@ -784,10 +526,6 @@ func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRun
 	coldstartAwait(t, done)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The token comes back exactly once
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths drives
 // one run on which BOTH give-back paths execute and asserts the channel is left
 // exactly as it was found.
@@ -811,11 +549,7 @@ func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRun
 // give-back call without clearing it. The scope's close then makes a second
 // receive, the sibling token is gone, and the final count reads 0 instead of 1.
 func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *testing.T) {
-	// Not parallel: sets PATH and swaps a package-level seam in
-	// internal/transport/tunnel.
 	agent := coldstartNewAgent(t)
-	// Capacity two, both tokens out: one stands for a sibling run and one is the
-	// slot this test hands over.
 	token := make(chan struct{}, 2)
 	coldstartFill(t, token, 2)
 
@@ -846,10 +580,6 @@ func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *t
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The token comes back when readiness times out
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut asserts the deferred
 // give-back covers the path where the prompt one never runs.
 //
@@ -867,8 +597,6 @@ func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *t
 // give-back is left. The timed-out run then keeps its token and the final count
 // reads 2.
 func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
-	// Not parallel: sets PATH and swaps a package-level seam in
-	// internal/transport/tunnel.
 	agent := coldstartNewAgent(t)
 	token := make(chan struct{}, 2)
 	coldstartFill(t, token, 1)
@@ -880,14 +608,7 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 		adapter:      coldstartNeverReady,
 		readyTimeout: coldstartReadyTimeout,
 	})
-	// Sample the channel while the run is inside its readiness window. The
-	// deadline holds that window open long enough to be seen.
 	seenFull, stopWatch := coldstartWatchForFullChannel(token)
-	// The explicit stop below is the one that makes seenFull readable. This defer
-	// covers the paths that never reach it: any t.Fatal between here and there
-	// leaves the sampler goroutine sleeping for the life of the test binary, and
-	// the goroutine-leak checks in subscribe_test.go then fail on a leak this file
-	// created. stop is idempotent, so both calls are safe.
 	defer stopWatch()
 	done := run.start(t)
 
@@ -905,18 +626,6 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 			"leak: three such runs park every later remote dispatch for the life of the daemon.", got)
 	}
 
-	// The run must have ended on the readiness deadline. Any other reason means
-	// the fixture measured a different path.
-	//
-	// The reason is matched as a SUBSTRING and not for equality. A bare
-	// "agent_ready_timeout" is what the retired imperative tail reopened with;
-	// the graph path names the node that timed out as well, and that node name is
-	// what an operator reading a multi-node graph needs. Equality here pinned the
-	// older format and was red on that count alone at the commit this test was
-	// written against, before any of it measured the token. Substring keeps every
-	// bit of the guard's discriminating power — a run that ended for any OTHER
-	// reason still fails it, and a reason that carries this token can only have
-	// come from the readiness deadline.
 	calls := run.ledger.calls()
 	if len(calls) != 1 {
 		t.Fatalf("ReopenBead call count = %d, want exactly 1\ncalls=%+v", len(calls), calls)
@@ -928,10 +637,6 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 
 	agent.letFinish(t)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The capacity is three
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits reads the
 // capacity the production constructor builds and drives a run against both sides
@@ -950,17 +655,11 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 // BOTH subtests go red both times, because each also checks that the channel
 // reaches capacity exactly when a capacity of 3 says it should.
 func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *testing.T) {
-	// Not parallel: the subtests set PATH and swap a package-level seam in
-	// internal/transport/tunnel.
 	t.Run("a remote run starts its agent while two cold-start tokens are out", func(t *testing.T) {
 		agent := coldstartNewAgent(t)
 		token := coldstartProductionToken(t)
 		coldstartFill(t, token, 2)
 
-		// The readiness deadline holds the cold-start window open long enough for
-		// the sampler below to see the channel at capacity. Without that the
-		// window closes in microseconds, the sampler misses it, and "the agent
-		// started" would also be true of a run that took no token.
 		run := coldstartPrepare(t, coldstartOptions{
 			remote:       true,
 			token:        token,
@@ -969,9 +668,6 @@ func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *test
 			readyTimeout: coldstartReadyTimeout,
 		})
 		seenFull, stopWatch := coldstartWatchForFullChannel(token)
-		// See the same defer above: the t.Fatalf directly below skips the explicit
-		// stop, and the abandoned sampler goroutine then fails the goroutine-leak
-		// checks in subscribe_test.go. stop is idempotent.
 		defer stopWatch()
 		done := run.start(t)
 
@@ -1013,7 +709,6 @@ func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *test
 				"trips agent_ready_timeout under a full ramp.")
 		}
 
-		// Let the run finish so the fixture tears down cleanly.
 		<-token
 		if !agent.waitStarted() {
 			t.Fatalf("the agent never started within %v after a token came free", coldstartWaitLimit)
@@ -1023,11 +718,6 @@ func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *test
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Small shared helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// coldstartClosed reports whether the run has returned, without blocking.
 func coldstartClosed(done <-chan struct{}) bool {
 	select {
 	case <-done:
@@ -1037,7 +727,6 @@ func coldstartClosed(done <-chan struct{}) bool {
 	}
 }
 
-// coldstartAwait blocks until the run returns, or fails the test.
 func coldstartAwait(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {

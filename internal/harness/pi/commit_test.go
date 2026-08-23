@@ -1,17 +1,5 @@
 package pi_test
 
-// picommit_test.go — Refs:<bead> trailer guarantee tests for the Pi harness
-// (codename:pilot, PI-030/PI-031, hk-mazln).
-//
-// Coverage (ensurePiRefsTrailer decision table):
-//   1. Pi self-committed WITH the trailer → no-op (already_present).
-//   2. Pi edited but did NOT commit → fallback CREATES a commit with the trailer.
-//   3. Pi committed WITHOUT the trailer → fallback AMENDS HEAD to add it.
-//   4. Pi did nothing (clean worktree, HEAD unchanged) → no_change, no fabrication.
-//   5. Empty beadID → error (guard).
-//
-// Mirrors codexcommit_test.go in structure and helper naming.
-
 import (
 	"context"
 	"os"
@@ -24,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// test git helpers (real git in t.TempDir)
-// ─────────────────────────────────────────────────────────────────────────────
 
 func piCommitGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -49,8 +33,6 @@ func piCommitGitOut(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// piCommitRepo creates a temp git repo with one initial commit and returns the
-// path and the initial HEAD SHA (the "parent" before a Pi turn).
 func piCommitRepo(t *testing.T) (wtPath, parentSHA string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -86,10 +68,6 @@ func piCommitCount(t *testing.T, dir string) int {
 	}
 	return n
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FALLBACK — ensurePiRefsTrailer
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestPiFallback_AlreadyCommittedWithTrailer_NoOp verifies the no-op path: Pi
 // already committed WITH the trailer → ensurePiRefsTrailer makes no new commit

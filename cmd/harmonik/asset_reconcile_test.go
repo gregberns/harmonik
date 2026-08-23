@@ -1,13 +1,5 @@
 package main
 
-// asset_reconcile_test.go — exhaustive coverage of the 3-way reconcile PLANNER
-// and the assets.lock I/O. Every matrix cell (skip/create/fast-forward/conflict/
-// leave + the lock-stale-but-disk==embed case + missing-disk-restore) is exercised
-// for at least one representative of each AssetClass, and the lock round-trip is
-// checked including the absent-file → empty-lock contract and deterministic JSON.
-//
-// Bead ref: hk-gh1m (assets.lock + 3-way reconcile engine).
-
 import (
 	"bytes"
 	"os"
@@ -15,16 +7,12 @@ import (
 	"testing"
 )
 
-// hash stand-ins. The reconcile planner is a pure string comparison, so any
-// distinct fixed strings stand in for sha256 digests.
 const (
 	shaEmbed = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	shaLock  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	shaLocal = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
 
-// classRep returns a representative embed path for each AssetClass, so the matrix
-// is exercised once per class via Classify.
 func classRep(c AssetClass) string {
 	switch c {
 	case Managed:
@@ -43,8 +31,6 @@ func classRep(c AssetClass) string {
 func TestReconcileMatrix(t *testing.T) {
 	classes := []AssetClass{Managed, ManagedRegion, ContentOwned, Scaffold}
 
-	// Each case describes the three legs for ONE path and the expected verdict.
-	// inEmbed/inLock toggle membership; embedSha/lockSha/diskSha set the hashes.
 	type tc struct {
 		name    string
 		inEmbed bool
@@ -87,8 +73,6 @@ func TestReconcileMatrix(t *testing.T) {
 				if c.disk != "" {
 					disk[path] = c.disk
 				}
-				// The leave case is only meaningful when disk holds a path absent
-				// from the manifest; ensure the path is recorded on disk.
 				if !c.inEmbed {
 					disk[path] = c.disk
 				}
@@ -107,7 +91,6 @@ func TestReconcileMatrix(t *testing.T) {
 				if got.Path != path {
 					t.Errorf("Path = %q, want %q", got.Path, path)
 				}
-				// Sanity: the *Sha fields echo the inputs.
 				if c.inEmbed && got.EmbedSha != c.embed {
 					t.Errorf("EmbedSha = %q, want %q", got.EmbedSha, c.embed)
 				}
@@ -170,7 +153,6 @@ func TestReconcileUnclassified(t *testing.T) {
 // (hk-gh1m gap 2): a disk-only path under context/ classifies ContentOwned even
 // though the planner leaves it untouched.
 func TestReconcileLeavePathClass(t *testing.T) {
-	// Empty manifest: nothing is shipped, so every disk path is project-authored.
 	m := Manifest{FormatVersion: ManifestFormatVersion}
 	lock := Lock{FormatVersion: LockFormatVersion, Files: map[string]LockEntry{}}
 	disk := map[string]string{
@@ -283,7 +265,6 @@ func TestWriteLockDeterministic(t *testing.T) {
 		"assets/a.md": {Path: "assets/a.md", Sha256: shaLock},
 		"assets/b.md": {Path: "assets/b.md", Sha256: shaLocal},
 	}
-	// Two locks with identically-valued (but distinctly-constructed) maps.
 	l1 := Lock{FormatVersion: LockFormatVersion, Files: files}
 	l2 := Lock{FormatVersion: LockFormatVersion, Files: map[string]LockEntry{
 		"assets/b.md": {Path: "assets/b.md", Sha256: shaLocal},

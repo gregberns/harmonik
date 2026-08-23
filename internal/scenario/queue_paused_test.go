@@ -31,15 +31,10 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 const queuePausedFixtureQueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ff0081"
 
 var queuePausedFixtureNow = time.Date(2026, 5, 15, 14, 0, 0, 0, time.UTC)
 
-// queuePausedFixtureTempDir creates a temporary directory and registers cleanup.
 func queuePausedFixtureTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "harmonik-queuepaused-")
@@ -50,7 +45,6 @@ func queuePausedFixtureTempDir(t *testing.T) string {
 	return dir
 }
 
-// queuePausedFixtureItem builds a queue.Item with the given bead ID and status.
 func queuePausedFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	return queue.Item{
 		BeadID: core.BeadID(beadID),
@@ -58,7 +52,6 @@ func queuePausedFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	}
 }
 
-// queuePausedFixtureGroup builds a wave Group at the given index with the supplied items.
 func queuePausedFixtureGroup(idx int, status queue.GroupStatus, items []queue.Item) queue.Group {
 	return queue.Group{
 		GroupIndex: idx,
@@ -69,8 +62,6 @@ func queuePausedFixtureGroup(idx int, status queue.GroupStatus, items []queue.It
 	}
 }
 
-// queuePausedFixtureAdvance calls AdvanceGroup with the fixture queue ID and
-// timestamp, failing the test on any unexpected error.
 func queuePausedFixtureAdvance(
 	t *testing.T,
 	g *queue.Group,
@@ -90,8 +81,6 @@ func queuePausedFixtureAdvance(
 	return newStatus, events
 }
 
-// queuePausedFixtureUnmarshalPausedPayload decodes a queue_paused event payload,
-// failing the test on any error.
 func queuePausedFixtureUnmarshalPausedPayload(t *testing.T, e queue.EventIntent) core.QueuePausedPayload {
 	t.Helper()
 	var p core.QueuePausedPayload
@@ -101,8 +90,6 @@ func queuePausedFixtureUnmarshalPausedPayload(t *testing.T, e queue.EventIntent)
 	return p
 }
 
-// queuePausedFixtureUnmarshalCompletedPayload decodes a queue_group_completed
-// event payload, failing the test on any error.
 func queuePausedFixtureUnmarshalCompletedPayload(t *testing.T, e queue.EventIntent) core.QueueGroupCompletedPayload {
 	t.Helper()
 	var p core.QueueGroupCompletedPayload
@@ -111,10 +98,6 @@ func queuePausedFixtureUnmarshalCompletedPayload(t *testing.T, e queue.EventInte
 	}
 	return p
 }
-
-// ---------------------------------------------------------------------------
-// (a) group reaches complete-with-failures on synthetic failure
-// ---------------------------------------------------------------------------
 
 // TestQueuePaused_GroupReachesCompleteWithFailures verifies that AdvanceGroup
 // transitions an active group to complete-with-failures when at least one item
@@ -172,10 +155,6 @@ func TestQueuePaused_InFlightSiblingBlocksGroupCompletion(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// (b) queue transitions to paused-by-failure (QM-052)
-// ---------------------------------------------------------------------------
-
 // TestQueuePaused_QueueStatusTransitionsToPausedByFailure verifies that after a
 // group reaches complete-with-failures, the caller-managed queue envelope should
 // be set to paused-by-failure per QM-052. This test constructs the queue envelope
@@ -183,13 +162,11 @@ func TestQueuePaused_InFlightSiblingBlocksGroupCompletion(t *testing.T) {
 func TestQueuePaused_QueueStatusTransitionsToPausedByFailure(t *testing.T) {
 	t.Parallel()
 
-	// Simulate a group that has reached complete-with-failures.
 	g := queuePausedFixtureGroup(0, queue.GroupStatusCompleteWithFailures, []queue.Item{
 		queuePausedFixtureItem("hk-t81-ba01", queue.ItemStatusCompleted),
 		queuePausedFixtureItem("hk-t81-ba02", queue.ItemStatusFailed),
 	})
 
-	// The queue envelope reflects the pause-by-failure status transition per QM-052.
 	q := queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       queuePausedFixtureQueueID,
@@ -198,11 +175,9 @@ func TestQueuePaused_QueueStatusTransitionsToPausedByFailure(t *testing.T) {
 		Groups:        []queue.Group{g},
 	}
 
-	// Verify the queue status is paused-by-failure.
 	if q.Status != queue.QueueStatusPausedByFailure {
 		t.Errorf("queue status = %q, want %q", q.Status, queue.QueueStatusPausedByFailure)
 	}
-	// Verify the group status is complete-with-failures.
 	if q.Groups[0].Status != queue.GroupStatusCompleteWithFailures {
 		t.Errorf("group[0] status = %q, want %q", q.Groups[0].Status, queue.GroupStatusCompleteWithFailures)
 	}
@@ -214,8 +189,6 @@ func TestQueuePaused_QueueStatusTransitionsToPausedByFailure(t *testing.T) {
 func TestQueuePaused_PausedQueueBlocksSuccessorGroupAdvance(t *testing.T) {
 	t.Parallel()
 
-	// Group 1 is pending — it would normally advance after group 0 succeeds, but
-	// the queue is paused-by-failure so it must not.
 	g1 := queuePausedFixtureGroup(1, queue.GroupStatusPending, []queue.Item{
 		queuePausedFixtureItem("hk-t81-bb01", queue.ItemStatusPending),
 	})
@@ -229,10 +202,6 @@ func TestQueuePaused_PausedQueueBlocksSuccessorGroupAdvance(t *testing.T) {
 		t.Errorf("event count = %d, want 0 while queue is paused-by-failure", len(events))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// (c) queue_paused event with reason=group_failure
-// ---------------------------------------------------------------------------
 
 // TestQueuePaused_EventEmittedWithGroupFailureReason verifies that AdvanceGroup
 // on an active group with failures emits two events in order:
@@ -255,7 +224,6 @@ func TestQueuePaused_EventEmittedWithGroupFailureReason(t *testing.T) {
 		t.Fatalf("event count = %d, want 2 (queue_group_completed + queue_paused)", len(events))
 	}
 
-	// events[0] must be queue_group_completed with final_status=complete-with-failures.
 	if events[0].Type != "queue_group_completed" {
 		t.Errorf("events[0].Type = %q, want %q", events[0].Type, "queue_group_completed")
 	}
@@ -269,7 +237,6 @@ func TestQueuePaused_EventEmittedWithGroupFailureReason(t *testing.T) {
 			completedPayload.QueueID, queuePausedFixtureQueueID)
 	}
 
-	// events[1] must be queue_paused with reason=group_failure.
 	if events[1].Type != "queue_paused" {
 		t.Errorf("events[1].Type = %q, want %q", events[1].Type, "queue_paused")
 	}
@@ -338,10 +305,6 @@ func TestQueuePaused_EventGroupIndexMatchesGroup(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// (d) queue.json persists across daemon restart with paused-by-failure status
-// ---------------------------------------------------------------------------
-
 // TestQueuePaused_PersistRoundTrip verifies that a Queue with status=paused-by-failure
 // survives a Persist → Load round trip with status preserved (QM-001, QM-002, QM-055).
 func TestQueuePaused_PersistRoundTrip(t *testing.T) {
@@ -349,7 +312,6 @@ func TestQueuePaused_PersistRoundTrip(t *testing.T) {
 
 	projectDir := queuePausedFixtureTempDir(t)
 
-	// Build a Queue envelope in paused-by-failure state with one completed group.
 	q := queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       queuePausedFixtureQueueID,
@@ -365,12 +327,10 @@ func TestQueuePaused_PersistRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Persist simulates the daemon writing queue.json after the failure pause.
 	if err := queue.Persist(ctx, projectDir, &q); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	// Load simulates the daemon reading queue.json on restart (QM-002).
 	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -379,13 +339,11 @@ func TestQueuePaused_PersistRoundTrip(t *testing.T) {
 		t.Fatal("Load returned nil; expected queue with paused-by-failure status")
 	}
 
-	// QM-055: the loaded queue must retain paused-by-failure status — no auto-resume.
 	if loaded.Status != queue.QueueStatusPausedByFailure {
 		t.Errorf("loaded queue status = %q, want %q (QM-055: pause persists across restart)",
 			loaded.Status, queue.QueueStatusPausedByFailure)
 	}
 
-	// Verify queue_id and group_count are preserved.
 	if loaded.QueueID != queuePausedFixtureQueueID {
 		t.Errorf("loaded queue_id = %q, want %q", loaded.QueueID, queuePausedFixtureQueueID)
 	}
@@ -393,7 +351,6 @@ func TestQueuePaused_PersistRoundTrip(t *testing.T) {
 		t.Fatalf("loaded group count = %d, want 1", len(loaded.Groups))
 	}
 
-	// Verify the group status is preserved.
 	if loaded.Groups[0].Status != queue.GroupStatusCompleteWithFailures {
 		t.Errorf("loaded group[0] status = %q, want %q",
 			loaded.Groups[0].Status, queue.GroupStatusCompleteWithFailures)

@@ -60,12 +60,8 @@ const (
 // schedule ModelDone at its real .idle-flip offset with the recorded source.
 const OldCorpusModelDoneSource = "idle_marker"
 
-// stimulusPct is the gauge percentage synthesized on the cycle-entry GaugeTick:
-// at/above the default act threshold (90) so the ladder fires, below the
-// default force threshold (95) so no forced-clear bookkeeping is triggered.
 const stimulusPct = 92.0
 
-// stepKind names a synthesized stimulus step (a keeper.Event constructor).
 type stepKind string
 
 const (
@@ -76,20 +72,13 @@ const (
 	stepTimerFired     stepKind = "timer_fired"
 )
 
-// stimStep is one row-cell of the synthesis decision table: which input event
-// to schedule and at what virtual-time offset from cycle entry.
 type stimStep struct {
 	step  stepKind
 	timer keeper.TimerKind // stepTimerFired only
 	at    time.Duration    // virtual offset from cycle entry (t0)
 }
 
-// Virtual-time offsets used by the synthesis table. All are deterministic
-// build-time constants; the recorded ~35 days of baseline replay in
-// milliseconds of virtual time (measurement-design §2.4).
 const (
-	// dNonce is the virtual offset at which the agent's handoff-nonce echo is
-	// observed (well inside the 300s handoff_timeout).
 	dNonce = 5 * time.Second
 	// dModelDone == dNonce: the D12/SK-018 old-corpus carve-out — ModelDone is
 	// scheduled immediately after NonceObserved with ZERO virtual delay, so the
@@ -101,45 +90,6 @@ const (
 	dSessionChanged = dNonce + 5*time.Second
 )
 
-// synthesisTable is THE single reviewed decision table (measurement-design
-// §2.4). FROZEN per 00b R6 (T11 decision, 2026-07-14): R6 requires this table
-// be frozen against a GREEN differential before the transition scaffold is
-// deleted. D13's live old-vs-new scaffold is OBSOLETE — T7 already deleted the
-// old blocking Cycler (runCycle), which is entangled with pre-T7 code and not
-// cleanly resurrectable; T7 landed with the full ~55-file keeper suite green
-// (the regression catch the scaffold existed to provide). The "green
-// differential" of record is therefore the L1 golden-vs-baseline corpus test
-// (measurement-design §3's named PERMANENT net: internal/keepertest
-// TestL1_* — new reactor reproduces all 507 recorded baseline outcomes) plus
-// the T13 no-regress metrics (scripts/keeper-metrics.sh, all 9 anchors held).
-// Both are green as of T13, so this table is frozen: do not edit the schedules
-// without re-greening L1 + the metrics. It is the one choke point where
-// "recorded output → plausible input" lives. Each stratum
-// maps to the full, flat input-event schedule delivered through the Twin;
-// timer firings that the recorded outcome requires are pre-scheduled at the
-// exact virtual instant the shell's fake clock would have fired them
-// (handoff_timeout at t0+300s; clear_backstop at t_clear+150s), which is
-// well-defined because the reactor's arming offsets are deterministic.
-//
-//	stratum                | schedule                                            | expected terminal
-//	-----------------------+-----------------------------------------------------+---------------------------------
-//	clean_complete         | GaugeTick@0 → NonceObserved@5s → ModelDone@5s       | cycle_complete,
-//	                       |   (idle_marker, D12 zero-delay)                     |   no clear_unconfirmed
-//	                       |   → SessionChanged@10s                              |
-//	degraded_complete      | GaugeTick@0 → NonceObserved@5s → ModelDone@5s       | cycle_complete WITH
-//	                       |   → SessionChanged never →                          |   clear_unconfirmed
-//	                       |   TimerFired(clear_backstop)@5s+150s                |
-//	abort_handoff_timeout  | GaugeTick@0 → nonce NEVER, no HandoffFreshSeen →    | KNOWN-DIVERGENCE (required FIX):
-//	                       |   TimerFired(handoff_timeout)@300s                  |   OLD terminated the cycle with
-//	                       |                                                     |   cycle_aborted{handoff_timeout};
-//	                       |                                                     |   NEW SUSPENDS it with
-//	                       |                                                     |   cycle_parked{handoff_pending},
-//	                       |                                                     |   same cycle id, resumable later.
-//	                       |                                                     |   /clear never sent either way.
-//	unterminated           | the recorded SR9 hang: nonce+model-done land,       | KNOWN-DIVERGENCE (required FIX):
-//	                       |   /clear sent, SessionChanged never →               |   OLD wedged (no terminal); NEW
-//	                       |   TimerFired(clear_backstop)@5s+150s                |   MUST terminate within bound →
-//	                       |                                                     |   cycle_complete + clear_unconfirmed
 var synthesisTable = map[Stratum][]stimStep{
 	StratumCleanComplete: {
 		{step: stepGaugeTick, at: 0},
@@ -170,8 +120,6 @@ var synthesisTable = map[Stratum][]stimStep{
 	},
 }
 
-// synthEpoch is the fallback virtual base time for summaries with a missing or
-// unparsable started_at.
 var synthEpoch = time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
 
 // Classify maps a recorded cycle summary onto its synthesis stratum. It errors

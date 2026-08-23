@@ -1,14 +1,5 @@
 package core
 
-// launchdiag_hkfra5l.go — payload types for the launch-diagnostic event types:
-//
-//   - pasteinject_failed  — paste-inject delivery failure (file absent, WriteLastPane error)
-//   - launch_stall_detected — run_started seen but no launch_initiated within 30 s
-//   - spawn_cap_blocked — SpawnWindow could not acquire a spawn slot within the
-//     bounded acquire timeout (slot-leak signature; hk-4l7zs)
-//
-// Refs: hk-fra5l (first two), hk-4l7zs (spawn_cap_blocked).
-
 // PasteInjectFailedPayload is the event-bus payload for the pasteinject_failed
 // event type.
 //

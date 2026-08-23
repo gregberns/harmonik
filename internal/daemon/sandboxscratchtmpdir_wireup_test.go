@@ -1,30 +1,5 @@
 package daemon
 
-// sandboxscratchtmpdir_wireup_test.go — the environment the sandbox wrap
-// produces reaches the process a launch actually starts
-// (hk-sandbox-no-writable-tmpdir-7484h).
-//
-// sandboxscratchtmpdir_test.go pins the WRAP: given a spawn config it returns
-// CLAUDE_CODE_TMPDIR pointing at a directory the profile grants. That is one
-// half of a two-part fact, and it is the half a test can assert without leaving
-// the wrap. The other half is that a launch APPLIES what the wrap returned.
-// Exactly two lines do that, one per launch path:
-//
-//	runAgentLaunch                    spec.Env = append(spec.Env, wrapEnv...)
-//	(*perRunSubstrate).SpawnWindow    in.Env   = append(in.Env, wrapped.Env...)
-//
-// Before this file, deleting either line left the whole daemon package green:
-// every other test reaches the wrap through the export seam and applies the env
-// itself (cmd.Env = append(os.Environ(), extraEnv...)). So the shape this bead
-// was filed for — two pieces of code naming a directory and no test that they
-// name the SAME one — had simply moved up one level, from "profile vs wrap" to
-// "wrap vs launch".
-//
-// These two tests therefore observe the env on the FAR side of each line: the
-// environment the srt process is given on the exec path, and the params handed
-// to `tmux new-window` on the substrate path. Neither reads the wrap's return
-// value, because reading it is what let the defect through.
-
 import (
 	"context"
 	"io"
@@ -45,15 +20,10 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// childTmpDirEntry is the one environment entry both launch paths must carry.
-// Spelled here from the same constant production uses, so a rename of the knob
-// moves the test with the code instead of leaving a stale literal behind.
 func childTmpDirEntry(worktreePath string) string {
 	return srtChildTmpDirEnvVar + "=" + SandboxScratchDir(worktreePath)
 }
 
-// wireupSandboxConfig is the live deployment's gate config for agentType: srt
-// backend, that harness listed.
 func wireupSandboxConfig(agentType core.AgentType) projectconfig.SandboxConfig {
 	return projectconfig.SandboxConfig{
 		Backend:   "srt",
@@ -61,13 +31,6 @@ func wireupSandboxConfig(agentType core.AgentType) projectconfig.SandboxConfig {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Substrate path — tmux new-window
-// ─────────────────────────────────────────────────────────────────────────────
-
-// recordingWindowAdapter is a tmux.Adapter that keeps the NewWindowIn params it
-// was called with. Everything else is inherited inert from noopTmuxAdapter, so
-// this fake states exactly one thing: what the substrate asked tmux for.
 type recordingWindowAdapter struct {
 	noopTmuxAdapter
 
@@ -82,9 +45,6 @@ func (a *recordingWindowAdapter) NewWindowIn(_ context.Context, p tmux.NewWindow
 	return tmux.Outcome{Handle: tmux.WindowHandle("harmonik-wireup:w"), PaneID: "%1"}
 }
 
-// recorded returns the single NewWindowIn params, failing when the count is not
-// one — a spawn that never reached tmux and a spawn that reached it twice are
-// both states in which the assertions below would measure nothing.
 func (a *recordingWindowAdapter) recorded(t *testing.T) tmux.NewWindowIn {
 	t.Helper()
 	a.mu.Lock()
@@ -124,8 +84,6 @@ func TestTheSubstrateLaunchPathGivesTheSpawnedWindowTheSandboxScratchTmpdir(t *t
 		t.Fatal("the gate declined to wrap a pi run under backend=srt — this test would then assert the absence of an env nothing was asked to produce")
 	}
 
-	// A harness-supplied entry, so the assertion below can tell "the sandbox env
-	// was appended" from "the environment was replaced wholesale".
 	const harnessEntry = "PI_CODING_AGENT_DIR=/nonexistent/agent-dir"
 	if _, err := prs.SpawnWindow(t.Context(), handler.SubstrateSpawn{
 		WindowName: "wireup",
@@ -138,9 +96,6 @@ func TestTheSubstrateLaunchPathGivesTheSpawnedWindowTheSandboxScratchTmpdir(t *t
 
 	params := adapter.recorded(t)
 
-	// The paired positive: this spawn really did take the sandbox branch. Without
-	// it an env-absence assertion is satisfied for free by a run that was never
-	// wrapped at all.
 	if !strings.Contains(params.Command, "--settings") {
 		t.Fatalf("the spawned command %q is not srt-wrapped, so the env under test was never produced", params.Command)
 	}
@@ -158,7 +113,6 @@ func TestTheSubstrateLaunchPathGivesTheSpawnedWindowTheSandboxScratchTmpdir(t *t
 	}
 }
 
-// containsEntry reports whether env holds the exact "KEY=VALUE" entry.
 func containsEntry(env []string, entry string) bool {
 	for _, kv := range env {
 		if kv == entry {
@@ -168,14 +122,6 @@ func containsEntry(env []string, entry string) bool {
 	return false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Exec path — the srt process runAgentLaunch starts
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wireupHarness is a SessionIDCaptured, ProcessExit harness: the two answers
-// that send runAgentLaunch down the EXEC path, where spec.Env becomes the
-// child's environment outright (handler.Launch: cmd.Env = spec.Env). Everything
-// else is an inert stub, as in agentlaunch_earlyannouncement_test.go.
 type wireupHarness struct{ earlyAnnounceHarness }
 
 // NewSessionIDInterceptor passes the stream through and announces nothing. The
@@ -214,9 +160,6 @@ func TestTheExecLaunchPathGivesTheSrtProcessTheSandboxScratchTmpdir(t *testing.T
 		"    exit 0\n" +
 		"    ;;\n" +
 		"esac\n" +
-		// The engagement probe. Report the denial a working sandbox reports and
-		// do NOT perform the probe's write, which is what verifySandboxEngaged
-		// reads as "the sandbox engaged".
 		"echo 'sandbox_init: deny file-write-create' >&2\n" +
 		"exit 1\n"
 	if err := os.WriteFile(filepath.Join(stubDir, "srt"), []byte(stub), 0o700); err != nil { //nolint:gosec // G306: the stub must be executable
@@ -269,8 +212,6 @@ func TestTheExecLaunchPathGivesTheSrtProcessTheSandboxScratchTmpdir(t *testing.T
 			"Nothing was exec'd, so the environment assertion below would measure nothing.", res.FailErr)
 	}
 
-	// The paired positive: prove the recorded invocation is the LAUNCH and not
-	// the engagement probe, and that it carried the srt wrap.
 	argv, err := os.ReadFile(argvDump) //nolint:gosec // G304: path is this test's own temp dir
 	if err != nil {
 		t.Fatalf("the stub srt never ran the agent launch: %v (Fail=%v FailErr=%v).\n"+
@@ -299,8 +240,6 @@ func TestTheExecLaunchPathGivesTheSrtProcessTheSandboxScratchTmpdir(t *testing.T
 			"the sandbox env is APPENDED to spec.Env, never assigned over it", got)
 	}
 
-	// A granted path is not a directory: srt stats the child's TMPDIR before any
-	// sandboxed process runs, so the launch has to have created it too.
 	scratch := SandboxScratchDir(worktree)
 	info, statErr := os.Stat(scratch)
 	if statErr != nil {

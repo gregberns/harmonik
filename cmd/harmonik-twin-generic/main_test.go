@@ -8,21 +8,12 @@ import (
 	"testing"
 )
 
-// twinGenericFixture helpers follow the per-bead prefix discipline declared in
-// implementer-protocol.md §Helper-prefix discipline. Prefix: twinGenericFixture.
-
-// twinGenericFixtureSocketFile creates a temp directory and returns a
-// non-existent socket path inside it (the socket is not actually created here;
-// the twin binary only dials, the daemon creates it).
 func twinGenericFixtureSocketFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	return filepath.Join(dir, "daemon.sock")
 }
 
-// twinGenericFixtureLaunchSpecFile writes a minimal JSON file to t.TempDir and
-// returns its path.  The content is intentionally minimal: LaunchSpec parsing
-// is deferred to hk-ahvq.48.2.
 func twinGenericFixtureLaunchSpecFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,7 +28,6 @@ func twinGenericFixtureLaunchSpecFile(t *testing.T) string {
 // panic when --socket-path is absent.  This is the "exit cleanly on missing
 // fixture" precondition declared by hk-ahvq.48.1.
 func TestRunMissingSocketPath(t *testing.T) {
-	// Override os.Args so flag.Parse sees no arguments.
 	orig := os.Args
 	os.Args = []string{"harmonik-twin-generic"}
 	defer func() { os.Args = orig }()
@@ -78,16 +68,11 @@ func TestRunLaunchSpecFilePresent(t *testing.T) {
 	}
 	defer func() { os.Args = orig }()
 
-	// No daemon is listening; expect dial failure → exit code 1.
 	code := run()
 	if code != 1 {
 		t.Errorf("expected exit code 1 (dial failure), got %d", code)
 	}
 }
-
-// --- commit-hash stamp tests (hk-ahvq.48.4) ---
-//
-// Helper prefix for this bead: commitHashFixture.
 
 // TestCommitHashVarIsSettable verifies that the commitHash package-level
 // variable can be set from a test — confirming that -ldflags "-X
@@ -102,12 +87,10 @@ func TestCommitHashVarIsSettable(t *testing.T) {
 	orig := commitHash
 	defer func() { commitHash = orig }()
 
-	// Confirm the zero-string baseline (unstamped build).
 	if commitHash != "" {
 		t.Logf("commitHash is %q (non-empty — binary was built with ldflags stamp)", commitHash)
 	}
 
-	// Set the variable directly (simulates what -ldflags does at link time).
 	const testHash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	commitHash = testHash
 	if commitHash != testHash {

@@ -2,10 +2,6 @@ package core
 
 import "regexp"
 
-// redactionCommonPrefixRe is the HC-031 common-prefix regex applied to payload
-// field names before emission.
-//
-// Spec: specs/handler-contract.md §4.7.HC-031.
 var redactionCommonPrefixRe = regexp.MustCompile(`(?i)(secret|token|password|api[_-]?key|auth)`)
 
 // RedactedSentinel is the replacement string for any redacted field value

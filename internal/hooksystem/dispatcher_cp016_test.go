@@ -1,24 +1,5 @@
 package hooksystem_test
 
-// dispatcher_cp016_test.go — conformance tests for CP-016 "Hook dispatch is
-// owned by S05; delivery is at-least-once".
-//
-// CP-016 requires:
-//  1. S05 MUST deliver each Hook's side-effect at least once.
-//  2. Duplicate delivery is acceptable for idempotency_class = idempotent.
-//  3. For idempotency_class = non-idempotent, S05 MUST bound delivery to
-//     at-most-once via a persisted delivery-receipt mechanism (deferred).
-//  4. The hook's declared idempotency_class flows through to the
-//     SideEffectDescriptor carried in the hook_fired event.
-//  5. When idempotency_class is not declared on the hook, the spec default
-//     (non-idempotent per §6.3 YAML) applies.
-//
-// Spec ref: specs/control-points.md §4.3.CP-016, §6.3 YAML.
-// Bead ref: hk-a8bg.15
-//
-// All package-level identifiers use the cp016Fixture prefix per the
-// implementer-protocol.md helper-prefix discipline.
-
 import (
 	"context"
 	"encoding/json"
@@ -30,12 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-// cp016FixtureMakeHookCPWithIdempotency builds a Hook ControlPoint with an
-// explicit IdempotencyClass on the HookPayload.
 func cp016FixtureMakeHookCPWithIdempotency(
 	name string,
 	idempotencyClass core.IdempotencyClass,
@@ -62,9 +37,6 @@ func cp016FixtureMakeHookCPWithIdempotency(
 	}
 }
 
-// cp016FixtureMakeHookCPNoIdempotency builds a Hook ControlPoint WITHOUT an
-// explicit IdempotencyClass (zero value), to verify that the spec default
-// (non-idempotent per §6.3) is applied by the dispatcher.
 func cp016FixtureMakeHookCPNoIdempotency(name, triggerEvent string) core.ControlPoint {
 	expr := core.PolicyExpression("true")
 	return core.ControlPoint{
@@ -78,7 +50,6 @@ func cp016FixtureMakeHookCPNoIdempotency(name, triggerEvent string) core.Control
 				TriggerEvent:   triggerEvent,
 				SideEffectKind: core.SideEffectKindEmitEvent,
 				HaltOnFailure:  false,
-				// IdempotencyClass deliberately omitted (zero value "").
 			},
 		},
 		Axes:          core.BaselineAxisTags,
@@ -87,9 +58,6 @@ func cp016FixtureMakeHookCPNoIdempotency(name, triggerEvent string) core.Control
 	}
 }
 
-// cp016FixtureCollectFiredDescriptors subscribes an observer that collects
-// SideEffectDescriptor from every hook_fired event. Returns the slice pointer
-// and the bus-registration function.
 func cp016FixtureCollectFiredDescriptors(
 	descriptors *[]core.SideEffect,
 	mu *sync.Mutex,
@@ -117,10 +85,6 @@ func cp016FixtureCollectFiredDescriptors(
 		return err
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-016: idempotency_class declared as idempotent propagates to hook_fired
-// ---------------------------------------------------------------------------
 
 // TestCP016_IdempotentClassPropagatesInHookFired verifies that when a hook
 // declares idempotency_class = idempotent, the hook_fired event's
@@ -169,10 +133,6 @@ func TestCP016_IdempotentClassPropagatesInHookFired(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-016: idempotency_class declared as non-idempotent propagates to hook_fired
-// ---------------------------------------------------------------------------
-
 // TestCP016_NonIdempotentClassPropagatesInHookFired verifies that when a hook
 // declares idempotency_class = non-idempotent, the hook_fired event's
 // SideEffectDescriptor carries IdempotencyClassNonIdempotent.
@@ -220,10 +180,6 @@ func TestCP016_NonIdempotentClassPropagatesInHookFired(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-016: spec default (non-idempotent) applies when class is not declared
-// ---------------------------------------------------------------------------
-
 // TestCP016_DefaultIsNonIdempotentWhenClassOmitted verifies that when a hook
 // omits idempotency_class (zero value on HookPayload), the dispatcher applies
 // the spec default — non-idempotent per §6.3 YAML — and the hook_fired event's
@@ -269,10 +225,6 @@ func TestCP016_DefaultIsNonIdempotentWhenClassOmitted(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-016: SideEffectDescriptor is well-formed (Valid()) in hook_fired
-// ---------------------------------------------------------------------------
-
 // TestCP016_HookFiredSideEffectDescriptorIsValid verifies that the
 // SideEffectDescriptor in every hook_fired event satisfies SideEffect.Valid().
 // This asserts that S05 always emits a structurally correct descriptor,
@@ -282,7 +234,6 @@ func TestCP016_DefaultIsNonIdempotentWhenClassOmitted(t *testing.T) {
 func TestCP016_HookFiredSideEffectDescriptorIsValid(t *testing.T) {
 	t.Parallel()
 
-	// Two hooks with different idempotency classes to cover both paths.
 	cpIdem := cp016FixtureMakeHookCPWithIdempotency(
 		"idem-hook", core.IdempotencyClassIdempotent,
 	)

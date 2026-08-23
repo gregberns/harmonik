@@ -1,18 +1,5 @@
 package keeper_test
 
-// cycle_convo_aware_test.go — unit tests for the conversation-aware ACT
-// suppression gates (hk-74iyd): auto-hold on a recent inbound operator turn
-// (Gate 5d) and post-answer grace delay (Gate 5e).
-//
-// These tests drive the INCIDENT SCENARIO: agent at CrispIdle + above-act
-// band + a recent inbound operator user turn in the transcript → the cycle
-// MUST NOT fire ACT. Today (before the fix) the cycle fires because only
-// tmux keystrokes suppress Gate 7; an operator reading via remote-control
-// or iOS has no keystrokes and looks idle. After the fix, the transcript
-// turn detected by Gate 5d auto-engages a hold.
-//
-// Harness idioms mirror cycle_operator_attached_test.go and keeper_hold_test.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -25,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// writeTranscriptLine appends one JSON line to the transcript file for the
-// given sessionID under transcriptDir. The line has the given "type" and
-// "timestamp" and a "message" whose content is either real text (for "user"
-// turns) or real text response (for "assistant" turns).
 func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string, isReal bool) {
 	t.Helper()
 	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
@@ -68,14 +51,10 @@ func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string
 	}
 }
 
-// recentTS returns an RFC3339Nano timestamp that is `age` ago.
 func recentTS(age time.Duration) string {
 	return time.Now().UTC().Add(-age).Format(time.RFC3339Nano)
 }
 
-// newConvoAwareCycler builds a Cycler with the conversation-aware fields set.
-// All injection/handoff/gauge fakes are wired so the ONLY thing stopping the
-// cycle from completing is the conversation-aware gate under test.
 func newConvoAwareCycler(
 	t *testing.T,
 	agent, projectDir, transcriptDir, cycleID string,
@@ -99,15 +78,12 @@ func newConvoAwareCycler(
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
 
-		// Conversation-aware fields under test:
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: operatorTurnLookback,
 		PostAnswerGrace:      postAnswerGrace,
 	}
 	return mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 }
-
-// ── Gate 5d: auto-hold on recent operator turn ────────────────────────────────
 
 // TestCycler_RecentOperatorTurn_SuppressesACT drives the INCIDENT: an agent at
 // CrispIdle + above-act band with a real user turn in the transcript within the
@@ -128,20 +104,16 @@ func TestCycler_RecentOperatorTurn_SuppressesACT(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a real user turn that happened 30 seconds ago.
 	writeTranscriptLine(t, transcriptDir, sid, "user", recentTS(30*time.Second), true)
 
-	// Operator turn lookback is 5 minutes — the 30s-ago turn is within the window.
 	cycler := newConvoAwareCycler(t, agent, projectDir, transcriptDir, cycleID,
 		em, spy, jc, 5*time.Minute, 0)
 
-	// CrispIdle=true, above-act threshold (95%).
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Gate 5d MUST suppress the cycle: no injection.
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls (Gate 5d should suppress ACT for recent operator turn); got %d: %v",
 			n, spy.texts())
@@ -166,7 +138,6 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a stale user turn (10 minutes ago), outside the 5-minute lookback.
 	writeTranscriptLine(t, transcriptDir, prevSID, "user", recentTS(10*time.Minute), true)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
@@ -196,7 +167,6 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Stale turn is outside the lookback → cycle MUST proceed (injection happened).
 	if n := len(spy.texts()); n < 2 {
 		t.Errorf("want >=2 inject calls (stale turn should not suppress); got %d: %v",
 			n, spy.texts())
@@ -222,7 +192,6 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a RECENT turn but it's tool_result only — NOT a real operator message.
 	writeTranscriptLine(t, transcriptDir, prevSID, "user", recentTS(10*time.Second), false)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
@@ -252,7 +221,6 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Tool-result-only turn must NOT trigger auto-hold → cycle proceeds.
 	if n := len(spy.texts()); n < 2 {
 		t.Errorf("want >=2 inject calls (tool_result turn must not suppress); got %d: %v",
 			n, spy.texts())
@@ -278,7 +246,6 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a very recent real user turn (1 second ago) — would normally suppress.
 	writeTranscriptLine(t, transcriptDir, prevSID, "user", recentTS(1*time.Second), true)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
@@ -308,7 +275,6 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// OperatorTurnLookback=0 disables Gate 5d → cycle must proceed.
 	if n := len(spy.texts()); n < 2 {
 		t.Errorf("want >=2 inject calls (lookback=0 must not suppress); got %d: %v",
 			n, spy.texts())
@@ -333,7 +299,6 @@ func TestCycler_Gate5d_DoesNotWriteHoldMarker(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Seed the .sid file so SetHold can resolve the live session id.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
@@ -343,10 +308,8 @@ func TestCycler_Gate5d_DoesNotWriteHoldMarker(t *testing.T) {
 		t.Fatalf("write .sid: %v", err)
 	}
 
-	// Write a real user turn 30 seconds ago — within the 5-minute lookback.
 	writeTranscriptLine(t, transcriptDir, sid, "user", recentTS(30*time.Second), true)
 
-	// OperatorTurnLookback=5m, PostAnswerGrace=0 so only Gate 5d is active.
 	cycler := newConvoAwareCycler(t, agent, projectDir, transcriptDir, cycleID,
 		em, spy, jc, 5*time.Minute, 0)
 
@@ -355,19 +318,15 @@ func TestCycler_Gate5d_DoesNotWriteHoldMarker(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Gate 5d must suppress.
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls (Gate 5d suppress); got %d", n)
 	}
 
-	// No hold marker is written. A later tick can retry after the lookback.
 	holdPath := filepath.Join(keeperDir, agent+".hold."+sid)
 	if _, err := os.Stat(holdPath); !os.IsNotExist(err) {
 		t.Errorf("Gate 5d wrote persistent hold marker %q: %v", holdPath, err)
 	}
 }
-
-// ── Gate 5e: post-answer grace delay ─────────────────────────────────────────
 
 // TestCycler_PostAnswerGrace_SuppressesACT verifies that a real assistant text
 // turn within PostAnswerGrace suppresses the cycle.
@@ -386,10 +345,8 @@ func TestCycler_PostAnswerGrace_SuppressesACT(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a real assistant text response 5 seconds ago.
 	writeTranscriptLine(t, transcriptDir, sid, "assistant", recentTS(5*time.Second), true)
 
-	// PostAnswerGrace is 30s — the 5s-ago turn is within the window.
 	cycler := newConvoAwareCycler(t, agent, projectDir, transcriptDir, cycleID,
 		em, spy, jc, 0, 30*time.Second)
 
@@ -398,7 +355,6 @@ func TestCycler_PostAnswerGrace_SuppressesACT(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Gate 5e MUST suppress: no injection.
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls (Gate 5e should suppress ACT within post-answer grace); got %d: %v",
 			n, spy.texts())
@@ -423,7 +379,6 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write an assistant turn 2 minutes ago; grace is only 30s.
 	writeTranscriptLine(t, transcriptDir, prevSID, "assistant", recentTS(2*time.Minute), true)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
@@ -453,7 +408,6 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Expired grace → cycle proceeds.
 	if n := len(spy.texts()); n < 2 {
 		t.Errorf("want >=2 inject calls (expired grace should not suppress); got %d: %v",
 			n, spy.texts())
@@ -478,7 +432,6 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Write a RECENT assistant turn but it's pure tool_use (not a real response).
 	writeTranscriptLine(t, transcriptDir, prevSID, "assistant", recentTS(5*time.Second), false)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
@@ -508,7 +461,6 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Pure tool_use turn must NOT trigger grace → cycle proceeds.
 	if n := len(spy.texts()); n < 2 {
 		t.Errorf("want >=2 inject calls (tool_use assistant turn must not trigger grace); got %d: %v",
 			n, spy.texts())

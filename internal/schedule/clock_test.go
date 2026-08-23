@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// mustLoad loads an IANA location or fails the test.
 func mustLoad(t *testing.T, name string) *time.Location {
 	t.Helper()
 	loc, err := time.LoadLocation(name)
@@ -86,8 +85,6 @@ func TestNextFire(t *testing.T) {
 }
 
 func TestNextFire_LocalTZ(t *testing.T) {
-	// tz="local" must resolve to time.Local. We assert the returned instant equals
-	// the wall-clock HH:MM formed in time.Local, independent of the host's offset.
 	ref := time.Date(2026, 6, 12, 0, 0, 0, 0, time.Local)
 	got, err := NextFire(Schedule{Kind: ScheduleKindDaily, At: "10:15", TZ: "local"}, ref)
 	if err != nil {
@@ -251,24 +248,18 @@ func TestNextFire_DSTSpringForward(t *testing.T) {
 	ny := mustLoad(t, "America/New_York")
 	sch := Schedule{Kind: ScheduleKindDaily, At: "02:30", TZ: "America/New_York"}
 
-	// ref: just after midnight local on the spring-forward day, before the missing
-	// hour, so "today at 02:30 NY" is the next fire.
 	ref := time.Date(2026, 3, 8, 1, 0, 0, 0, ny)
 	got, err := NextFire(sch, ref)
 	if err != nil {
 		t.Fatalf("NextFire on spring-forward day: unexpected error: %v", err)
 	}
 
-	// The reference normalised instant: time.Date of the nonexistent 02:30 in NY,
-	// computed the same way NextFire does. NextFire must match it exactly.
 	wantInstant := time.Date(2026, 3, 8, 2, 30, 0, 0, ny).UTC()
 	if !got.Equal(wantInstant) {
 		t.Fatalf("NextFire = %s, want stdlib-normalised %s",
 			got.Format(time.RFC3339), wantInstant.Format(time.RFC3339))
 	}
 
-	// Sanity: strictly after ref and within the same NY calendar day (no full-day
-	// drift to 03-09).
 	if !got.After(ref) {
 		t.Fatalf("NextFire %s is not after ref %s", got.Format(time.RFC3339), ref.Format(time.RFC3339))
 	}

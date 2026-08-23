@@ -36,10 +36,6 @@ import (
 // they pass as conformance gates once the implementation lands. The fixture is marked
 // with a TODO citing the owning bead reference.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §4.9 WM-035: Intra-run rollback verdicts keep the same worktree
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM035_WorktreeStableAfterIntraRunRollback verifies that each of the three
 // intra-run rollback verdicts (resume-here, resume-with-context,
 // reset-to-checkpoint) leaves the Workspace.Path unchanged.
@@ -192,7 +188,6 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 				SchemaVersion: 1,
 			}
 
-			// Write a lease-lock so the run appears live (simulates mid-run state).
 			lock := &core.LeaseLockFile{
 				RunID:     core.RunID(u),
 				PID:       os.Getpid(),
@@ -204,13 +199,10 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 				t.Fatalf("WM-035: WriteLeaseLockAtomic: %v", err)
 			}
 
-			// Apply the intra-run rollback verdict. Per WM-035, the worktree
-			// MUST be kept — no git worktree remove is issued.
 			if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, v, sha); err != nil {
 				t.Fatalf("WM-035[%s]: applyVerdict: %v", v, err)
 			}
 
-			// Worktree directory MUST still exist after rollback.
 			if _, err := os.Stat(worktreePath); err != nil {
 				t.Errorf("WM-035[%s]: worktree directory absent after rollback; want persisted: %v", v, err)
 			}
@@ -253,9 +245,6 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}
 
-	// Make a second commit on the task branch (represents a checkpoint after
-	// work has been done). After applying reset-to-checkpoint, HEAD MUST
-	// revert to initialSHA (the rollback target).
 	extraFile := filepath.Join(worktreePath, "progress.txt")
 	if err := os.WriteFile(extraFile, []byte("work in progress\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -294,23 +283,18 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 		SchemaVersion: 1,
 	}
 
-	// Apply reset-to-checkpoint with rollbackTarget = initialSHA (EM-044
-	// rollback_to_state_id points to the earlier state).
 	if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, core.VerdictResetToCheckpoint, initialSHA); err != nil {
 		t.Fatalf("WM-035[reset-to-checkpoint]: applyVerdict: %v", err)
 	}
 
-	// Worktree MUST still be the same path.
 	if ws.Path != worktreePath {
 		t.Errorf("WM-035[reset-to-checkpoint]: worktree-stable violated: path changed to %q", ws.Path)
 	}
 
-	// Branch MUST still be the same.
 	if ws.BranchName != branch {
 		t.Errorf("WM-035[reset-to-checkpoint]: branch-stable violated: branch changed to %q", ws.BranchName)
 	}
 
-	// run_id MUST be unchanged.
 	if ws.RunID != core.RunID(u) {
 		t.Errorf("WM-035[reset-to-checkpoint]: run_id-unchanged violated: run_id changed to %q", ws.RunID)
 	}
@@ -331,33 +315,20 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture helpers — prefix: intraRunRollbackFixture
-// ─────────────────────────────────────────────────────────────────────────────
-
-// intraRunRollbackFixtureRunIDs maps verdict names to stable UUIDv7-format run IDs
-// for use in tests that need deterministic run IDs per verdict.
 var intraRunRollbackFixtureRunIDs = map[string]string{
 	"resume-here":         "0196b300-0000-7000-8000-000000035001",
 	"resume-with-context": "0196b300-0000-7000-8000-000000035002",
 	"reset-to-checkpoint": "0196b300-0000-7000-8000-000000035003",
 }
 
-// intraRunRollbackFixtureRunID returns the deterministic run_id for the given verdict name.
 func intraRunRollbackFixtureRunID(verdict string) string {
 	id, ok := intraRunRollbackFixtureRunIDs[verdict]
 	if !ok {
-		// Fallback for unknown verdicts — not expected in WM-035 tests.
 		return "0196b300-0000-7000-8000-000000035000"
 	}
 	return id
 }
 
-// intraRunRollbackFixtureWorkspace constructs a minimal in-memory Workspace in
-// the leased state for use in single-field-check subtests that do not require a
-// real git worktree on disk.
-//
-// The run_id is deterministic per verdict to prevent cross-subtest collisions.
 func intraRunRollbackFixtureWorkspace(t *testing.T, verdictStr string) *Workspace {
 	t.Helper()
 
@@ -398,20 +369,12 @@ func intraRunRollbackFixtureWorkspace(t *testing.T, verdictStr string) *Workspac
 func intraRunRollbackFixtureApplyVerdict(ctx context.Context, ws *Workspace, verdict core.Verdict, rollbackTarget string) error {
 	switch verdict {
 	case core.VerdictResumeHere, core.VerdictResumeWithContext:
-		// WM-035: no worktree change, no branch change, no run_id change.
-		// The implementation will dispatch a fresh agent session; the fixture
-		// models the workspace-primitive invariants only.
 		return nil
 
 	case core.VerdictResetToCheckpoint:
-		// WM-035: keep worktree and branch; revert HEAD to rollbackTarget inside
-		// the existing worktree via git reset --hard per EM-044.
-		// When rollbackTarget is empty (unit-test-only mode), skip the git op.
 		if rollbackTarget == "" {
 			return nil
 		}
-		// The git operation runs INSIDE ws.Path (the existing worktree) — the
-		// worktree directory is not removed or re-created (WM-035).
 		resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", rollbackTarget)
 		resetCmd.Dir = ws.Path
 		if out, err := resetCmd.CombinedOutput(); err != nil {
@@ -424,8 +387,6 @@ func intraRunRollbackFixtureApplyVerdict(ctx context.Context, ws *Workspace, ver
 	}
 }
 
-// intraRunRollbackFixtureError is a simple error type for intra-run rollback
-// fixture errors.
 type intraRunRollbackFixtureError string
 
 func (e intraRunRollbackFixtureError) Error() string { return string(e) }

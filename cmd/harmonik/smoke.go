@@ -1,35 +1,5 @@
 package main
 
-// smoke.go — `harmonik smoke` subcommand (hk-4rkrg).
-//
-// Runs a 5-signal self-checking end-to-end verification over a live daemon.
-// Creates a minimal smoke bead, submits it to the daemon's queue, subscribes
-// to events, and asserts the full dispatch→commit→review→closure arc:
-//
-//	Signal 1 — run_started (bead dispatched; isolating worktree allocated)
-//	Signal 2 — run_completed (implementer committed; daemon merged)
-//	Signal 3 — commit on target branch (correct-branch assertion)
-//	Signal 4 — reviewer_verdict (review gate confirmed)
-//	Signal 5 — bead_closed (terminal lifecycle completed)
-//
-// Signals 2 and 3 are verified together: git is checked after run_completed
-// fires to confirm the commit landed on the configured target branch.
-//
-// # Smoke bead task
-//
-// The smoke bead instructs the implementer agent to append a single line to
-// docs/smoke-log.md (creating the file if absent) and commit. This produces
-// a real git commit on the target branch, satisfying Signal 3.
-//
-// # Exit codes
-//
-//	0  — all signals observed within the timeout; all assertions passed
-//	1  — argument, setup, or assertion failure (details on stderr)
-//	2  — timeout: one or more signals not observed before --timeout elapsed
-//	17 — daemon not running (socket missing or ECONNREFUSED)
-//
-// Bead ref: hk-4rkrg.
-
 import (
 	"bufio"
 	"bytes"
@@ -48,7 +18,6 @@ import (
 
 const smokeDefaultTimeout = 20 * time.Minute
 
-// smokeSignalName maps signal index → display name for the result table.
 var smokeSignalNames = [5]string{
 	"run_started",
 	"run_completed",
@@ -57,25 +26,15 @@ var smokeSignalNames = [5]string{
 	"bead_closed",
 }
 
-// smokeResult holds the outcome of each signal check.
 type smokeResult struct {
 	observed [5]bool
 	detail   [5]string // extra context per signal (run_id, branch, verdict, ...)
 }
 
-// runSmokeSubcommand dispatches `harmonik smoke [flags]`.
-//
-// Exit codes:
-//
-//	0  — all signals observed
-//	1  — argument or setup error
-//	2  — timeout
-//	17 — daemon not running
 func runSmokeSubcommand(args []string) int {
 	return runSmoke(args, os.Stdout, os.Stderr)
 }
 
-// runSmoke is the testable core of the smoke subcommand.
 func runSmoke(args []string, stdout, stderr io.Writer) int {
 	var (
 		projectFlag string
@@ -139,7 +98,6 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Resolve project directory.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -160,7 +118,6 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 	projectDir := absProject
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 
-	// Resolve target branch (flag > branching.yaml > "main").
 	targetBranch := branchFlag
 	if targetBranch == "" {
 		targetBranch = smokeReadTargetBranch(harmonikDir)
@@ -176,7 +133,6 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
 	defer cancel()
 
-	// Step 1: create or reuse the smoke bead.
 	smokeBeadID := beadIDFlag
 	ownBead := smokeBeadID == ""
 	if ownBead {
@@ -190,7 +146,6 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Step 2: submit the smoke bead to the queue.
 	if code := smokeSubmitBead(ctx, projectDir, smokeBeadID, queueFlag, stderr); code != 0 {
 		if ownBead {
 			if cleanupErr := smokeCleanupBead(ctx, projectDir, smokeBeadID, stderr); cleanupErr != nil {
@@ -203,11 +158,8 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Step 3: subscribe and wait for all signals.
-
 	result, exitCode := smokeWatchSignals(ctx, sockPath, projectDir, targetBranch, smokeBeadID, stdout, stderr)
 
-	// Print result table.
 	if err := smokePrintResults(stdout, smokeBeadID, result); err != nil {
 		return 1
 	}
@@ -230,8 +182,6 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
-// smokeReadTargetBranch reads lands_on from .harmonik/branching.yaml.
-// Falls back to "main" on any error.
 func smokeReadTargetBranch(harmonikDir string) string {
 	//nolint:gosec // G304: harmonikDir is operator-controlled
 	data, err := os.ReadFile(filepath.Join(harmonikDir, "branching.yaml"))
@@ -242,7 +192,6 @@ func smokeReadTargetBranch(harmonikDir string) string {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "lands_on:") {
 			val := strings.TrimSpace(strings.TrimPrefix(line, "lands_on:"))
-			// Strip inline comments.
 			if idx := strings.Index(val, "#"); idx >= 0 {
 				val = strings.TrimSpace(val[:idx])
 			}
@@ -254,7 +203,6 @@ func smokeReadTargetBranch(harmonikDir string) string {
 	return "main"
 }
 
-// smokeCreateBead creates a smoke bead via `br create` and returns its ID.
 func smokeCreateBead(ctx context.Context, projectDir string, stdout, stderr io.Writer) (beadID string, exitCode int) {
 	brPath, err := exec.LookPath("br")
 	if err != nil {
@@ -312,7 +260,6 @@ This task is complete when the file is updated and committed.`
 	return id, 0
 }
 
-// smokeSubmitBead submits the smoke bead to the daemon queue.
 func smokeSubmitBead(ctx context.Context, projectDir, beadID, queueName string, stderr io.Writer) int {
 	exe, err := os.Executable()
 	if err != nil {
@@ -344,8 +291,6 @@ func smokeSubmitBead(ctx context.Context, projectDir, beadID, queueName string, 
 	return 0
 }
 
-// smokeCleanupBead closes the smoke bead if the smoke run failed before
-// the daemon could close it naturally.
 func smokeCleanupBead(ctx context.Context, projectDir, beadID string, stderr io.Writer) error {
 	brPath, err := exec.LookPath("br")
 	if err != nil {
@@ -362,8 +307,6 @@ func smokeCleanupBead(ctx context.Context, projectDir, beadID string, stderr io.
 	return nil
 }
 
-// smokeWatchSignals subscribes to daemon events and collects the 5 signals.
-// Returns a populated smokeResult and an exit code (0=pass, 1=fail, 2=timeout).
 func smokeWatchSignals(
 	ctx context.Context,
 	sockPath, projectDir, targetBranch, smokeBeadID string,
@@ -371,15 +314,10 @@ func smokeWatchSignals(
 ) (smokeResult, int) {
 	var result smokeResult
 
-	// Dial the daemon socket.
 	dialCtx, cancelDial := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelDial()
 	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	if err != nil {
-		// Use the shared daemon-down predicates: net.Dial to a missing unix
-		// socket returns *net.OpError wrapping *os.SyscallError (errno ENOENT on
-		// Linux, EINVAL on macOS), which an *os.PathError type-assert never
-		// matches — that was the hk-d4y2p bug that leaked exit 1.
 		if commsIsSocketAbsent(err) || commsIsConnRefused(err) {
 			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (socket %s missing or refused)\n", sockPath); writeErr != nil {
 				return result, 1
@@ -399,7 +337,6 @@ func smokeWatchSignals(
 		}
 	}()
 
-	// Close the connection when the context expires so the reader goroutine exits.
 	go func() {
 		<-ctx.Done()
 		if closeErr := conn.Close(); closeErr != nil {
@@ -409,7 +346,6 @@ func smokeWatchSignals(
 		}
 	}()
 
-	// Send subscribe request for the relevant event types.
 	reqBody := map[string]any{
 		"op":                "subscribe",
 		"heartbeat_seconds": 60,
@@ -435,12 +371,9 @@ func smokeWatchSignals(
 		return result, 1
 	}
 
-	// smokeRunID is populated after Signal 1 fires.
 	var smokeRunID string
 	runFailed := false
 
-	// Read the NDJSON stream line by line. Large-but-valid event lines (e.g.
-	// a big reviewer_verdict notes field) must not abort the scan.
 	scanner := bufio.NewScanner(conn)
 	setLargeScanBuffer(scanner)
 	for scanner.Scan() {
@@ -449,10 +382,6 @@ func smokeWatchSignals(
 			continue
 		}
 
-		// A refused subscription carries no "type", so the decode below would
-		// skip it, the scan would end at EOF, and smoke would report its
-		// timeout code — blaming a slow daemon for signals it was never
-		// subscribed to (hk-1dwk2).
 		if reason, refused := subscribeRefusalReason(line); refused {
 			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon refused the subscription: %s\n", reason); writeErr != nil {
 				return result, 1
@@ -460,7 +389,6 @@ func smokeWatchSignals(
 			return result, 1
 		}
 
-		// Parse the event envelope: {"event_id":"...","type":"...","payload":{...},...}
 		var env struct {
 			Type    string          `json:"type"`
 			Payload json.RawMessage `json:"payload"`
@@ -510,7 +438,6 @@ func smokeWatchSignals(
 					return result, 1
 				}
 
-				// Signal 3: verify the commit landed on the target branch.
 				branchOK, commitRef := smokeCheckCommitOnBranchContext(ctx, projectDir, targetBranch, smokeBeadID, stderr)
 				result.observed[2] = branchOK
 				if branchOK {
@@ -589,19 +516,16 @@ func smokeWatchSignals(
 			}
 		}
 
-		// All signals collected — done.
 		if result.observed[0] && result.observed[1] && result.observed[2] &&
 			result.observed[3] && result.observed[4] {
 			return result, 0
 		}
 
-		// Run failed — no point waiting for more signals.
 		if runFailed {
 			return result, 1
 		}
 	}
 
-	// Scanner exited — either context timeout or connection closed.
 	if ctx.Err() != nil {
 		return result, 2
 	}
@@ -611,16 +535,9 @@ func smokeWatchSignals(
 		}
 		return result, 1
 	}
-	// Connection closed cleanly without all signals: treat as timeout.
 	return result, 2
 }
 
-// smokeCheckCommitOnBranch checks whether a commit referencing <beadID> in its
-// message exists on <branch> in the project git repo. The smoke task commits
-// with subject "smoke(<beadID>): ..." and a "Refs: <beadID>" trailer; matching
-// the bead ID as a fixed string covers both forms, so a correct commit passes
-// even if the agent omits the trailer.
-// Returns (true, short-sha) on success; (false, "") on failure.
 func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Writer) (found bool, commitRef string) {
 	return smokeCheckCommitOnBranchContext(context.Background(), projectDir, branch, beadID, stderr)
 }
@@ -641,12 +558,10 @@ func smokeCheckCommitOnBranchContext(ctx context.Context, projectDir, branch, be
 	if commitLine == "" {
 		return false, ""
 	}
-	// commitLine is "<sha> <message>"; extract the sha.
 	parts := strings.SplitN(commitLine, " ", 2)
 	return true, parts[0]
 }
 
-// smokePrintResults prints the signal result table to stdout.
 func smokePrintResults(stdout io.Writer, beadID string, result smokeResult) error {
 	if _, err := fmt.Fprintf(stdout, "\nharmonik smoke: result for bead %s\n", beadID); err != nil {
 		return fmt.Errorf("print smoke result header: %w", err)

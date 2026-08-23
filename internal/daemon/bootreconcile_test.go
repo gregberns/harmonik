@@ -15,9 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// brRunnableFixtureBootState builds the smallest bootState ensureBrRunnable
-// needs — a config and an event bus writing to a JSONL file the test can read
-// back. It returns the state and the path to that file.
 func brRunnableFixtureBootState(t *testing.T) (state *bootState, eventsJSONLPath string) {
 	t.Helper()
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
@@ -31,8 +28,6 @@ func brRunnableFixtureBootState(t *testing.T) (state *bootState, eventsJSONLPath
 	return &bootState{bus: eventbus.NewBusImplWithWriter(core.NewRedactionRegistry(), writer)}, eventsPath
 }
 
-// brRunnableFixtureMockBr writes a shell script that prints stdout and exits
-// with the given code, then returns an adapter pointed at it.
 func brRunnableFixtureMockBr(t *testing.T, stdout string, exitCode int) *brcli.Adapter {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "br")
@@ -48,8 +43,6 @@ func brRunnableFixtureMockBr(t *testing.T, stdout string, exitCode int) *brcli.A
 	return adapter
 }
 
-// brRunnableFixtureStartupFailures reads the JSONL event log and returns the
-// payload of every daemon_startup_failed record in it.
 func brRunnableFixtureStartupFailures(t *testing.T, eventsPath string) []core.DaemonStartupFailedPayload {
 	t.Helper()
 	raw, err := os.ReadFile(eventsPath) //nolint:gosec // G304: path is t.TempDir-derived

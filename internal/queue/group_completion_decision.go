@@ -100,11 +100,6 @@ func decideSuccessfulGroupCompletion(next *Queue, groupPos int, input GroupCompl
 		if successorErr != nil {
 			return GroupCompletionResult{}, fmt.Errorf("queue: decide successor group: %w", successorErr)
 		}
-		// AdvanceGroup applies the QM-031 guard itself: a pending group does not
-		// start while the queue is not active. On a paused queue the successor
-		// therefore stays pending, and the completion must say so. Reporting
-		// that as successor-activated is the lie GroupCompletionDispositionSuccessorHeld
-		// exists to stop.
 		disposition := GroupCompletionDispositionSuccessorHeld
 		if successorStatus == GroupStatusActive {
 			if err := ActivatePendingGroup(&next.Groups[i], stamp); err != nil {
@@ -186,9 +181,6 @@ func resolveGroupCompletionTarget(prior Queue, input GroupCompletionInput) (grou
 		}
 		return groupCompletionTarget{}, nil, stateError(GroupCompletionErrorInvalidGroupStatus, group.Status, item.Status)
 	}
-	// A paused queue still owns the runs it dispatched before the pause. See
-	// queueAcceptsItemCompletion for which statuses that covers and why
-	// paused-by-failure is not one of them.
 	if !queueAcceptsItemCompletion(prior.Status) {
 		return groupCompletionTarget{}, nil, stateError(GroupCompletionErrorInvalidQueueStatus, group.Status, item.Status)
 	}

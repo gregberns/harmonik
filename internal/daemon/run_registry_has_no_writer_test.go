@@ -1,47 +1,5 @@
 package daemon
 
-// run_registry_has_no_writer_test.go — the run registry is read by four
-// production files and written by none, and these tests are what that costs.
-//
-// .harmonik/runs/<run_id>.json is the only durable statement that a bead is
-// being worked on right now. internal/run.Write puts one there. Nothing in
-// production calls it: the call lived in the imperative single-workflow tail of
-// beadRunOne and went out with that tail. Every run is a graph run now, and the
-// graph launch in dot_cascade_core.go passes no ConfigurePerRunSubstrate hook,
-// so nothing sets the independent-session flag and nothing writes a record.
-//
-// The directory is therefore always empty, so every reader takes its empty-set
-// branch on every boot for ever. Three tests here pin a DIFFERENT thing that
-// branch decides. They are RED on purpose and they stay red until a run again
-// records itself before it spawns its agent.
-//
-// Each drives the REAL run through the fixture in
-// survive_shutdown_run_resources_test.go rather than writing a record by hand.
-// A hand-written record makes every one of them pass today, which is exactly
-// why the defect survived: the package already has tests that seed the registry
-// themselves, and they are all green.
-//
-// # Why the fourth test is here
-//
-// The three consequence tests are the acceptance criteria for the repair, and
-// on their own they accept a repair that does not work. Each one only needs a
-// record carrying the right BeadID, written at any time, with every other field
-// left zero. That was measured, not reasoned: a probe that wrote
-// Record{SchemaVersion, RunID, BeadID} from the post-launch callback turned all
-// three green, and the property test in internal/run with them.
-//
-// Such a record is useless. adoptDeadRunSessions matches a live session by
-// SessionName and treats an empty one as dead, so it would reset the bead of an
-// agent that is still working. probeRunProcessDead gives up on an empty
-// SessionName. And a record written after the spawn is not written at all for a
-// daemon killed in between, which is the exact crash the registry exists for.
-//
-// So TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched pins the shape
-// of the record rather than a consequence of its absence. It is what stops the
-// other three from being satisfied by a repair that writes something.
-//
-// Helper prefix: noWriter.
-
 import (
 	"context"
 	"path/filepath"
@@ -58,15 +16,6 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture
-// ─────────────────────────────────────────────────────────────────────────────
-
-// noWriterLedger records every bead reset and answers every status query with
-// in_progress, which is the status a bead has while an agent works it. The
-// reconcile skips any bead that is not open or in_progress, so a ledger that
-// answered with the zero value would make every "the bead was left alone"
-// assertion below pass for the wrong reason.
 type noWriterLedger struct {
 	mu     sync.Mutex
 	resets []core.BeadID
@@ -90,7 +39,6 @@ func (l *noWriterLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadR
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusInProgress}, nil
 }
 
-// wasReset reports whether beadID was reset in_progress → open.
 func (l *noWriterLedger) wasReset(beadID core.BeadID) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -102,21 +50,6 @@ func (l *noWriterLedger) wasReset(beadID core.BeadID) bool {
 	return false
 }
 
-// noWriterInFlightRun drives one bead through the real run on the ordering the
-// registry exists for: the substrate CAN give the agent a tmux session of its
-// own, and the daemon then stops while the agent is still coming up. That is
-// the survive case — the agent keeps working in a session this daemon no longer
-// owns, and a record on disk is the only thing that will tell the next boot so.
-//
-// It asks for a session of its own and does not get one today. Nothing sets the
-// independent-session flag, so the spawn takes the shared-window path. That is
-// the same deletion these tests are about, which is why the guard below accepts
-// a window OR a session: it is there to prove an agent was launched, not to
-// pre-judge which kind of launch it was.
-//
-// It returns the project directory the run used. It fails the test if the run
-// never reached a spawn, because "the registry is empty" is free in a fixture
-// where no run ever started.
 func noWriterInFlightRun(t *testing.T) string {
 	t.Helper()
 	out := surviveRunDriveWith(t, surviveRunOpts{
@@ -132,10 +65,6 @@ func noWriterInFlightRun(t *testing.T) string {
 	return out.projectDir
 }
 
-// noWriterSeedRecord writes one registry record by hand. This is the control
-// every test below needs: it is what the reader does when the registry is NOT
-// empty, so a reader that ignores the seeded record is broken in its own right
-// rather than starved of input.
 func noWriterSeedRecord(t *testing.T, projectDir string, beadID core.BeadID, sessionName string) {
 	t.Helper()
 	runID := uuid.NewString()
@@ -149,10 +78,6 @@ func noWriterSeedRecord(t *testing.T, projectDir string, beadID core.BeadID, ses
 		t.Fatalf("noWriter: seed a control record: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Consequence 1 — the protection that runs backwards
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBootReconcile_TheDispatchTrackerSweepLeavesABeadWithALiveRunAlone is the
 // dangerous one.
@@ -196,9 +121,6 @@ func TestBootReconcile_TheDispatchTrackerSweepLeavesABeadWithALiveRunAlone(t *te
 
 	projectDir := noWriterInFlightRun(t)
 
-	// The bead the daemon was killed on before its run ever announced itself.
-	// The queue records it dispatched, nothing is working it, and it must come
-	// back. It is the reconcile's whole job.
 	const crashedBead = core.BeadID("hk-crashed-before-run-started")
 
 	ledger := &noWriterLedger{}
@@ -244,10 +166,6 @@ func TestBootReconcile_TheDispatchTrackerSweepLeavesABeadWithALiveRunAlone(t *te
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Consequence 2 — nothing is adopted across a restart
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunSessionAdoption_ARunLaunchedBeforeARestartIsAdoptedAfterIt pins the
 // recovery the registry was built for.
 //
@@ -272,8 +190,6 @@ func TestRunSessionAdoption_ARunLaunchedBeforeARestartIsAdoptedAfterIt(t *testin
 	noWriterSeedRecord(t, projectDir, seededBead, "harmonik-run-seeded-control")
 
 	ledger := &noWriterLedger{}
-	// A tmux server with no sessions at all: this is the next boot, and every
-	// session the previous daemon left is gone.
 	adapter := &surviveRecoveryAdapter{}
 
 	adoptDeadRunSessions(
@@ -301,10 +217,6 @@ func TestRunSessionAdoption_ARunLaunchedBeforeARestartIsAdoptedAfterIt(t *testin
 			"finished.", surviveRunProbeBead)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Consequence 3 — a reader that cannot tell its two answers apart
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestStrandedBeadGuard_TellsARunningBeadApartFromOneWithNoRun pins the reader
 // whose empty-set branch is indistinguishable from its real answer.
@@ -350,10 +262,6 @@ func TestStrandedBeadGuard_TellsARunningBeadApartFromOneWithNoRun(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The shape of the record — what the three tests above do not constrain
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
 // is the precondition for all three claims above, and it is the one that stops
 // them being satisfied by a repair that writes a record with nothing in it.
@@ -380,9 +288,6 @@ func TestStrandedBeadGuard_TellsARunningBeadApartFromOneWithNoRun(t *testing.T) 
 func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched(t *testing.T) {
 	t.Parallel()
 
-	// The daemon stays up. This test is only about what is true at the instant
-	// the agent is launched, and a shutdown would add a second reason for a
-	// record to be absent afterwards.
 	out := surviveRunDriveWith(t, surviveRunOpts{ownSession: true, realWorktree: true})
 
 	if out.adapter.windows() == 0 && len(out.adapter.sessions()) == 0 {
@@ -390,9 +295,6 @@ func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
 			"no spawn for the record to come before.")
 	}
 
-	// runpkg.ScanRegistry fails closed, so one error covers "nothing was written"
-	// and "something unusable was written". The raw decode separates them, and
-	// the two need different fixes.
 	if out.recordAtSpawnErr != nil && out.rawRecordAtSpawnErr != nil {
 		t.Errorf("the run registry held no record when the agent was launched "+
 			"(reader: %v; file: %v)\n"+
@@ -417,11 +319,6 @@ func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
 			"daemon's own session dies with the daemon, and no record can save it.")
 	}
 
-	// Everything below reads the bytes on disk, so it means nothing if there were
-	// none. It reads the RAW record on purpose: production's reader refuses a
-	// record whose session name is empty or whose run id does not match its own
-	// file name, so the field checks below would be unreachable through it and
-	// every one of these defects would report as the single error above.
 	if out.rawRecordAtSpawnErr != nil {
 		return
 	}

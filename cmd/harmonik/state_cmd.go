@@ -1,15 +1,5 @@
 package main
 
-// state_cmd.go — `harmonik state [--json]` CLI command (hk-gv04 P2-a).
-//
-// Emits a typed StateSnapshot aggregating: supervise status, keeper .ctx/.sid,
-// tmux probe, QueueStore.AllQueues, crew.List, RunRegistry.Snapshot, and
-// GatherDrainFacts. When the daemon is running the snapshot comes from a
-// live socket RPC; when not, it falls back to disk reads (read_quality.unsure).
-//
-// Spec ref: specs/system-state.md §4 (SS-001..SS-015).
-// Bead ref: hk-gv04 (P2-a: harmonik state aggregator command).
-
 import (
 	"context"
 	"encoding/json"
@@ -23,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// runStateSubcommand implements `harmonik state [--json]`.
-//
-// Exit codes:
-//
-//	0 — snapshot emitted successfully (even if read_quality.unsure)
-//	1 — fatal error (flag parse, marshal failure)
 func runStateSubcommand(args []string) int {
 	asJSON := false
 	for _, a := range args {
@@ -54,7 +38,6 @@ func runStateSubcommand(args []string) int {
 	if isDaemonUp(projectDir) {
 		snap, err = stateViaSocket(ctx, projectDir)
 		if err != nil {
-			// Non-fatal: fall back to disk.
 			fmt.Fprintf(os.Stderr, "harmonik state: socket RPC failed (%v); falling back to disk\n", err)
 			snap = daemon.BuildDiskSnapshot(ctx, projectDir)
 		}
@@ -79,7 +62,6 @@ func runStateSubcommand(args []string) int {
 	return 0
 }
 
-// stateViaSocket sends a "state" RPC to the daemon and returns the decoded snapshot.
 func stateViaSocket(ctx context.Context, projectDir string) (daemon.StateSnapshot, error) {
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 	payload, err := json.Marshal(map[string]string{"op": "state"})
@@ -105,8 +87,6 @@ func stateViaSocket(ctx context.Context, projectDir string) (daemon.StateSnapsho
 	return snap, nil
 }
 
-// resolveProjectDirForState returns the project root for the current working
-// directory, using the same logic as other harmonik subcommands.
 func resolveProjectDirForState() (string, error) {
 	projectDir := os.Getenv("HK_PROJECT")
 	if projectDir == "" {
@@ -122,9 +102,6 @@ func resolveProjectDirForState() (string, error) {
 	return projectDir, nil
 }
 
-// printStateHuman renders a compact human-readable summary of the snapshot.
-// The tabwriter buffers every row until Flush, so a Flush failure means the
-// operator saw nothing at all — it is returned rather than dropped.
 func printStateHuman(snap daemon.StateSnapshot) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
@@ -215,8 +192,6 @@ func writeStateRow(w io.Writer, format string, args ...any) error {
 	return nil
 }
 
-// findProjectRoot walks up from dir looking for a .harmonik directory.
-// Returns "" if none found within 10 hops.
 func findProjectRoot(dir string) string {
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(filepath.Join(dir, ".harmonik")); err == nil {
@@ -231,5 +206,4 @@ func findProjectRoot(dir string) string {
 	return ""
 }
 
-// ensure lifecycle import is used (SocketPath used via isDaemonUp).
 var _ = lifecycle.SocketPath

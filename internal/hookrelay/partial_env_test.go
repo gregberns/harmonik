@@ -1,29 +1,5 @@
 package hookrelay
 
-// partial_env_test.go — the relay must be able to report its own failure.
-//
-// The defect this pins (hk-stop-relay-cannot-fail-5n2t3): envFromOS returned a
-// bare error for ANY absent HARMONIK_* variable, and Run turned every one of
-// those into a silent exit 0. Two very different situations shared that exit:
-//
-//  1. No HARMONIK_* variable is set at all. The relay is running under a hand-
-//     started Claude Code session in a project whose settings.json carries the
-//     hook. Nothing is wrong and nothing should be said.
-//  2. The session IS harmonik-managed but one variable did not arrive. The
-//     completion signal cannot be delivered, and the only channel that could
-//     report that is hard-wired to succeed. The daemon then waits out the whole
-//     commit budget and records the finished agent as a budget overrun.
-//
-// Case 2 must be loud. Case 1 must stay quiet — the daemon is legitimately down
-// on a developer box, and a relay that shouted there would break every local
-// session.
-//
-// The two cases are told apart by PRESENCE, not by emptiness, so these tests
-// take care to distinguish an unexported variable from one exported as "".
-//
-// Spec: specs/claude-hook-bridge.md §4.6 CHB-017 ("MUST exit 1 on any
-// unrecoverable failure ... env-var mismatch").
-
 import (
 	"bytes"
 	"os"
@@ -31,25 +7,8 @@ import (
 	"testing"
 )
 
-// relayEnvKeys is every variable envFromOS reads, required and optional. It is
-// DERIVED from the lists the code itself reads, never retyped. A hand-kept copy
-// would agree with envFromOS only until the next variable is added, and the
-// disagreement would then surface as a test that fails on a machine which
-// exports the new name and passes on one that does not.
 var relayEnvKeys = append(append([]string{}, requiredEnvKeys...), optionalEnvKeys...)
 
-// unsetRelayEnv REMOVES every HARMONIK_* variable the relay reads, so the test
-// starts from a known state whatever the developer's shell carries.
-//
-// It unsets. It does not empty. Setting each variable to "" leaves all nine
-// PRESENT, which is the wired-session-with-broken-values case and not the
-// no-harmonik-session case any test that calls this helper wants to stage. The
-// two were interchangeable only while envFromOS decided presence with
-// os.Getenv, and that conflation is the defect the reviewer caught.
-//
-// t.Setenv is called first for its bookkeeping alone: it records the variable's
-// original value and restores it when the test ends. The testing package has no
-// t.Unsetenv, so the removal is done with os.Unsetenv straight after.
 func unsetRelayEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range relayEnvKeys {
@@ -109,8 +68,6 @@ func TestEachEnvKeyLandsInItsOwnField(t *testing.T) {
 	}
 }
 
-// stopStdin is a well-formed Stop hook payload. session_id matches the value the
-// wired test below puts in HARMONIK_CLAUDE_SESSION_ID.
 const stopStdin = `{"session_id":"c1","hook_event_name":"Stop",` +
 	`"transcript_path":"/tmp/t.jsonl","cwd":"/tmp","message":"done"}`
 
@@ -163,7 +120,6 @@ func TestRelayReportsAWiredSessionWithAMissingVariable(t *testing.T) {
 	t.Setenv("HARMONIK_WORKFLOW_ID", "w1")
 	t.Setenv("HARMONIK_NODE_ID", "n1")
 	t.Setenv("HARMONIK_AGENT_TYPE", "claude-code")
-	// HARMONIK_DAEMON_SOCKET stays unset: there is nowhere to send the signal.
 
 	var stderr bytes.Buffer
 	rc := Run("Stop", strings.NewReader(stopStdin), &stderr, nil)
@@ -171,8 +127,6 @@ func TestRelayReportsAWiredSessionWithAMissingVariable(t *testing.T) {
 	if rc != 1 {
 		t.Fatalf("exit code = %d, want 1: a wired session that cannot deliver its Stop must report it; stderr=%q", rc, stderr.String())
 	}
-	// The message has to name the variable, or the reader learns only that
-	// something is wrong.
 	if !strings.Contains(stderr.String(), "HARMONIK_DAEMON_SOCKET") {
 		t.Fatalf("stderr = %q, want it to name the absent variable HARMONIK_DAEMON_SOCKET", stderr.String())
 	}
@@ -216,7 +170,6 @@ func TestRelayReportsAWiredSessionThatMixesAbsentAndEmptyVariables(t *testing.T)
 	t.Setenv("HARMONIK_RUN_ID", "r1")
 	t.Setenv("HARMONIK_WORKSPACE_PATH", "/tmp")
 	t.Setenv("HARMONIK_DAEMON_SOCKET", "") // computed to nothing
-	// The remaining five required variables stay unset.
 
 	var stderr bytes.Buffer
 	rc := Run("Stop", strings.NewReader(stopStdin), &stderr, nil)

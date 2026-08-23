@@ -1,19 +1,5 @@
 package daemon
 
-// followup_ledger_ac1.go — durable at-most-once ledger for the staged-bead
-// generator (flywheel-motion.md §5.4 B guardrail 4).
-//
-// The in-memory followUpLedger (eagerRefillPort.followUpLedger) prevents
-// duplicate follow-up beads within a single daemon session, but is re-made on
-// restart. This file provides load/append helpers so the ledger
-// is persisted to .harmonik/follow-up-ledger.jsonl and re-seeded at boot,
-// making the at-most-once guarantee durable across daemon restarts.
-//
-// File format: one JSON object per line — {"k":"<beadID>:<class>"}.
-// Malformed or empty-key lines are skipped silently on load.
-//
-// Bead ref: hk-3ndb (AC1 — durable staged-bead ledger).
-
 import (
 	"bufio"
 	"context"
@@ -25,14 +11,10 @@ import (
 
 const followUpLedgerFileName = "follow-up-ledger.jsonl"
 
-// followUpLedgerEntry is the on-disk JSON format for one ledger record.
 type followUpLedgerEntry struct {
 	K string `json:"k"`
 }
 
-// loadFollowUpLedger reads the JSONL ledger at path and returns the set of
-// already-seen keys (format: "<beadID>:<class>"). A missing file is not an
-// error — it is treated as an empty ledger.
 func loadFollowUpLedger(path string) (map[string]struct{}, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -66,9 +48,6 @@ func loadFollowUpLedger(path string) (map[string]struct{}, error) {
 	return result, nil
 }
 
-// appendFollowUpLedger appends a single key entry to the JSONL ledger at
-// path, creating the file if necessary. Failures are non-fatal to the caller
-// but should be logged.
 func appendFollowUpLedger(path, key string) error {
 	data, err := json.Marshal(followUpLedgerEntry{K: key})
 	if err != nil {

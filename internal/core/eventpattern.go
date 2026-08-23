@@ -51,8 +51,6 @@ func (p EventPattern) MatchesType(eventType EventType) bool {
 	return ok
 }
 
-// eventPatternJSON is the wire shape used for JSON marshal/unmarshal.
-// Types is serialised as a sorted array for deterministic output.
 type eventPatternJSON struct {
 	Wildcard bool     `json:"wildcard"`
 	Types    []string `json:"types"`

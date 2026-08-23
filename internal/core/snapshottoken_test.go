@@ -2,9 +2,6 @@ package core
 
 import "testing"
 
-// snapshotTokenFixture returns a fully-populated SnapshotToken with all
-// required fields set to valid non-empty values. Tests mutate individual
-// fields to probe Valid().
 func snapshotTokenFixture(t *testing.T) SnapshotToken {
 	t.Helper()
 	return SnapshotToken{

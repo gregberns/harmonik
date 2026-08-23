@@ -1,12 +1,5 @@
 package daemon
 
-// export_meters_pause_test.go — test-seam exports for internal/daemon spend
-// meters and pause controllers (RT19.14 split of export_test.go): the
-// handlerpause_policy_37zy8.go, spendmeter_hkk3f8g.go,
-// perqueuespendmeter_tigaf11.go, operatorpause.go, handlerpause_9hwbw.go and
-// handlerpause_autoresume_0otqs.go seams. package daemon test file; see
-// export_test.go header for the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"

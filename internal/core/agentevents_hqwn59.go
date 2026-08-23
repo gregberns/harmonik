@@ -2,19 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// agentevents_hqwn59.go — event-bus payload types for §8.3 agent/handler
-// lifecycle events covered by this implementer wave (hqwn59b):
-//   - agent_started            (§8.3.2)
-//   - agent_ready              (§8.3.1)
-//   - agent_output_chunk       (§8.3.3)
-//   - agent_failed             (§8.3.5)
-//   - agent_rate_limit_status  (§8.3.6)
-//   - skills_provisioned       (§8.3.8)
-//   - handler_capabilities     (§8.3.9)
-//
-// Spec ref: specs/event-model.md §8.3.
-// Bead refs: hk-hqwn.59.22, hk-hqwn.59.21, hk-hqwn.59.23, hk-hqwn.59.25, hk-hqwn.59.26, hk-hqwn.59.28, hk-hqwn.59.29.
-
 // AgentStartedPayload is the typed event payload for the agent_started event
 // (event-model.md §8.3.2).
 //

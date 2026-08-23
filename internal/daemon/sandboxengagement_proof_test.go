@@ -1,29 +1,5 @@
 package daemon_test
 
-// sandboxengagement_proof_test.go — behavioural pin on the srt sandbox
-// engagement gate (sandboxgate.go verifySandboxEngaged, srtEngagementCanaryPath).
-//
-// The gate exists because srt's own exit code is not evidence the sandbox
-// applied: under fork saturation sandbox_init can silently fail while srt still
-// exits 0. The gate therefore runs a canary probe and demands TWO independent
-// signals before it lets a real agent launch:
-//
-//   - srt itself reported a non-zero exit, AND
-//   - the canary write never reached disk.
-//
-// Either signal alone is the shape of "srt exited but the sandbox never
-// applied", and the caller must treat a non-nil return as fatal.
-//
-// Both functions were mutated on 2026-08-04 and the whole suite stayed green.
-// verifySandboxEngaged was made to always report the sandbox engaged, which is
-// the gate failing OPEN — an agent runs unsandboxed and nothing sees it. These
-// tests drive the four combinations of the two signals through a stub srt
-// binary, so the gate cannot fail open again without one of them going red.
-//
-// The stub is a shell script, so the tests need no macOS Seatbelt, no real srt,
-// and no fork-saturation timing. spawn.SrtBinary is honored by the production
-// code for exactly this reason.
-
 import (
 	"context"
 	"encoding/json"
@@ -35,14 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// engagementProbeStub writes an executable stand-in for the srt binary and
-// returns its path. The production probe invokes it as
-//
-//	<stub> --settings <profilePath> -c <script>
-//
-// so the script the sandbox is supposed to deny arrives in $4. A stub that runs
-// $4 models a sandbox that never applied. A stub that does not run it models a
-// sandbox that denied the write.
 func engagementProbeStub(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "srt-stub")
@@ -52,10 +20,6 @@ func engagementProbeStub(t *testing.T, body string) string {
 	return path
 }
 
-// engagementFixture builds a valid spawn config plus the canary path the probe
-// will try to write. The profile input carries the four required fields, so a
-// refusal in these tests always comes from the engagement decision and never
-// from profile generation.
 func engagementFixture(t *testing.T, stubBody string) (spawn *daemon.ExportedSrtSpawnConfig, attemptCounterPath string) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -76,26 +40,16 @@ func engagementFixture(t *testing.T, stubBody string) (spawn *daemon.ExportedSrt
 	return spawn, daemon.ExportedSrtEngagementCanaryPath(projectDir, runID)
 }
 
-// Stub bodies, one per combination of the two signals the gate reads.
 const (
-	// The sandbox denied the canary write and srt reported the failure. This is
-	// the only combination that proves engagement.
 	stubDeniedWriteAndFailed = `echo "sandbox_init: deny file-write-create" >&2
 exit 1`
 
-	// The sandbox never applied: the child ran unsandboxed, the canary write
-	// landed, and srt still exited 0.
 	stubWroteAndExitedZero = `sh -c "$4"
 exit 0`
 
-	// The canary write landed but srt reported a non-zero exit. Trusting srt's
-	// exit code alone reads this as engaged, which is the failure the gate was
-	// written to stop.
 	stubWroteButExitedNonZero = `sh -c "$4"
 exit 1`
 
-	// Nothing was written but srt exited 0. Trusting the canary alone reads this
-	// as engaged, and it is just as unproven.
 	stubWroteNothingAndExitedZero = `exit 0`
 )
 
@@ -180,7 +134,6 @@ func TestSandboxEngagement_AOneOffApplyFailureIsRetriedRatherThanTreatedAsFatal(
 	t.Parallel()
 
 	counter := filepath.Join(t.TempDir(), "attempts")
-	// Attempt one fails open. Every later attempt shows a working sandbox.
 	body := `counter='` + counter + `'
 n=$(cat "$counter" 2>/dev/null || echo 0)
 n=$((n+1))

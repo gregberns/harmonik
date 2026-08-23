@@ -1,29 +1,5 @@
 package daemon_test
 
-// hk_pkugu_pi_model_leak_test.go — regression test for the pi-model-leak bug
-// (hk-pkugu, codename:pi-model-leak).
-//
-// # The bug
-//
-// At claim time, workloop.go resolved the (model, effort) preference with the
-// agentType HARDCODED to core.AgentTypeClaudeCode. That sealed the claude tier-3
-// default (claude-sonnet-4-6 / "sonnet") into rc.model even for a pi-resolved run.
-// effectiveModel() then returned that leaked claude model for a *PiHarness, so the
-// daemon asked the pi provider for a claude model → provider error → the run exited
-// in ~3s without advancing HEAD.
-//
-// # The fix
-//
-// workloop resolves the harness agent-type up front (resolveHarnessAgentTypeQuiet,
-// mirroring resolveHarness's precedence walk without emitting events) and passes
-// THAT into ResolveModelPreference. For a pi-resolved run the tier-3 default is
-// empty (pi has no defaultModelEntries entry), so resolvedModel is empty and
-// effectiveModel correctly falls back to the configured pi model.
-//
-// Helper prefix: hkpkugu (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-pkugu.
-
 import (
 	"context"
 	"testing"
@@ -34,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// hkpkuguBead builds a minimal BeadRecord with the given labels.
 func hkpkuguBead(labels []string) core.BeadRecord {
 	return core.BeadRecord{BeadID: core.BeadID("hk-pkugu-test"), Labels: labels}
 }
@@ -74,7 +49,6 @@ func TestPiModelLeak_QuietResolutionMatchesResolveHarness(t *testing.T) {
 				t.Errorf("quiet resolution = %q; want %q", quiet, tc.want)
 			}
 
-			// Must equal the launch-time resolveHarness result for the same inputs.
 			launch := daemon.ExportedResolveHarness(
 				context.Background(), bead,
 				core.AgentType(""), core.AgentType(""), tc.globalDefault,
@@ -100,7 +74,6 @@ func TestPiModelLeak_PiRunDoesNotInheritClaudeDefault(t *testing.T) {
 	bus := eventbus.NewBusImpl()
 	bead := hkpkuguBead(nil) // no model:/effort:/harness: labels
 
-	// ── Pi-resolved run (global default harness = pi) ──────────────────────────
 	piAgentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypePi,
 	)
@@ -115,20 +88,15 @@ func TestPiModelLeak_PiRunDoesNotInheritClaudeDefault(t *testing.T) {
 		t.Errorf("pi-resolved run leaked model %q; want empty (no pi tier-3 default → config fallback)", piModel)
 	}
 
-	// effectiveModel for a PiHarness with the leaked-empty model must fall back to
-	// the configured pi model.
 	piH := daemon.ExportedNewPiHarness("pi", "ornith-provider", "ornith", "PI_KEY", "", "", "openai-completions")
 	if got := daemon.ExportedEffectiveModel(piH, piModel); got != "ornith" {
 		t.Errorf("effectiveModel(pi, %q) = %q; want %q (configured pi model)", piModel, got, "ornith")
 	}
 
-	// Guard against regression: the OLD hardcoded-claude behavior would have sealed
-	// "sonnet" here, which effectiveModel would then return instead of "ornith".
 	if daemon.ExportedEffectiveModel(piH, "sonnet") == "ornith" {
 		t.Fatal("sanity: a non-empty rc.model should override the pi config fallback")
 	}
 
-	// ── Claude-resolved run (global default harness = claude-code) ─────────────
 	claudeAgentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypeClaudeCode,
 	)

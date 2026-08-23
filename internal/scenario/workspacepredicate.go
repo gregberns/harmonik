@@ -84,64 +84,47 @@ type WorkspacePredicate struct {
 	Description string `json:"description" yaml:"description"`
 }
 
-// sha1Re matches a full 40-character lowercase hexadecimal SHA-1.
 var sha1Re = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// hexOnlyRe matches any non-empty string that looks like hex (used to detect
-// short-SHA attempts: hex but fewer than 40 chars is a short-SHA).
 var hexOnlyRe = regexp.MustCompile(`^[0-9a-f]+$`)
 
-// validate returns (ok, reason). reason is non-empty iff ok is false, and
-// contains an operator-readable explanation of the rejection. Exposed as
-// package-private so tests can assert specific rejection paths without
-// exporting.
 func (p WorkspacePredicate) validate() (ok bool, reason string) {
-	// Description must be non-empty.
 	if p.Description == "" {
 		return false, "description must be non-empty"
 	}
 
-	// Kind must be a declared value.
 	if !p.Kind.Valid() {
 		return false, fmt.Sprintf("unknown kind %q", string(p.Kind))
 	}
 
-	// Path safety per SH-022: absolute paths and traversal are forbidden.
 	if filepath.IsAbs(p.Path) {
 		return false, "path must be repo-relative (absolute path forbidden per SH-022)"
 	}
-	// Detect Windows-style absolute paths (e.g., C:\...).
 	if len(p.Path) >= 3 && p.Path[1] == ':' && (p.Path[2] == '/' || p.Path[2] == '\\') {
 		return false, "path must be repo-relative (absolute path forbidden per SH-022)"
 	}
-	// Detect .. traversal segments using path.Clean (slash-based; portable).
 	cleaned := path.Clean(p.Path)
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return false, "path must not contain traversal (.. segments forbidden per SH-022)"
 	}
-	// Also check for raw .. components in the original path string.
 	for _, segment := range strings.Split(p.Path, "/") {
 		if segment == ".." {
 			return false, "path must not contain traversal (.. segments forbidden per SH-022)"
 		}
 	}
 
-	// Per-kind Expected validation per §6.3.
 	switch p.Kind {
 	case WorkspacePredicateKindFileExists:
-		// §6.3: expected MUST be absent (None); presence of the file is the predicate.
 		if p.Expected != nil {
 			return false, "file_exists: Expected must be nil (file presence is the sole predicate per §6.3)"
 		}
 
 	case WorkspacePredicateKindFileContentsEqual:
-		// §6.3: expected is the literal byte-equal contents (UTF-8 string).
 		if p.Expected == nil {
 			return false, "file_contents_equal: Expected must be non-nil (literal file contents required per §6.3)"
 		}
 
 	case WorkspacePredicateKindFileContentsMatch:
-		// §6.3: expected is a Go RE2 pattern; must compile.
 		if p.Expected == nil {
 			return false, "file_contents_match: Expected must be non-nil (RE2 pattern required per §6.3)"
 		}
@@ -150,7 +133,6 @@ func (p WorkspacePredicate) validate() (ok bool, reason string) {
 		}
 
 	case WorkspacePredicateKindGitRefAt:
-		// §6.3: expected is a 40-char hex SHA-1 OR a ref name; short-SHA is forbidden.
 		if p.Expected == nil {
 			return false, "git_ref_at: Expected must be non-nil (SHA-1 or ref name required per §6.3)"
 		}
@@ -158,15 +140,11 @@ func (p WorkspacePredicate) validate() (ok bool, reason string) {
 		if val == "" {
 			return false, "git_ref_at: Expected must be non-empty"
 		}
-		// If it looks like hex (all [0-9a-f]) but is NOT exactly 40 chars, it is a short-SHA.
 		if hexOnlyRe.MatchString(val) && !sha1Re.MatchString(val) {
 			return false, "git_ref_at: short-SHA forms are forbidden; use full 40-char hex SHA-1 or a ref name (§6.3)"
 		}
-		// A full 40-char SHA-1 is always valid; ref names are accepted heuristically.
-		// No further structural check is applied to ref names (e.g. refs/heads/main, HEAD).
 
 	case WorkspacePredicateKindCommitTrailerPresent:
-		// §6.3: expected is the trailer key (e.g., Harmonik-Run-ID); must be non-empty.
 		if p.Expected == nil {
 			return false, "commit_trailer_present: Expected must be non-nil (trailer key required per §6.3)"
 		}

@@ -14,9 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// runIDRegexProduction is the canonical filesystem-safety regex for run_id values
-// per workspace-model.md §4.1 WM-002: "run_id MUST match the filesystem-safe
-// regex [A-Za-z0-9-]+ (UUIDv7 satisfies this by construction)".
 var runIDRegexProduction = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
 // RunIDValid reports whether s matches the canonical filesystem-safety regex for
@@ -88,11 +85,6 @@ type DiscoveredWorktree struct {
 	SessionsPathConflict bool
 }
 
-// discoveredLeaseLock is the subset of lease-lock fields recovered by startup
-// discovery per WM-013c step (c): run_id, pid, and created_at.
-//
-// The full LeaseLockFile type (core.LeaseLockFile) is used by write/read paths.
-// Discovery only needs the three cited fields for classification purposes.
 type discoveredLeaseLock struct {
 	RunID     string
 	PID       int
@@ -137,20 +129,15 @@ type discoveredLeaseLock struct {
 func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootConfig) ([]DiscoveredWorktree, error) {
 	worktreeRoot := WorktreeRootPath(repoRoot, cfg)
 
-	// Step (a): enumerate subdirectories of the worktree root.
 	entries, err := os.ReadDir(worktreeRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// The canonical root can be absent while Git still records a foreign
-			// worktree. Keep scanning registration authority.
 			entries = nil
 		} else {
 			return nil, fmt.Errorf("workspace: DiscoverWorktrees: ReadDir %q: %w", worktreeRoot, err)
 		}
 	}
 
-	// Step (b): call `git worktree list --porcelain` once for the whole repo.
-	// Parse the output into a set of registered worktree paths.
 	registeredPaths, err := porcelainWorktreeRegistrations(ctx, repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: DiscoverWorktrees: git worktree list: %w", err)
@@ -162,7 +149,6 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 	for _, entry := range entries {
 		name := entry.Name()
 		if !RunIDValid(name) {
-			// Does not match the WM-002 run_id regex; skip.
 			continue
 		}
 		seenRunIDs[name] = true
@@ -183,16 +169,10 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 	return results, nil
 }
 
-// discoverWorktree performs WM-013c steps (b) to (d) against one candidate
-// directory that exists below the worktree root: the git registration, the
-// lease-lock, and the sessions root.
 func discoverWorktree(
 	runID, worktreePath string,
 	registrations map[string]porcelainWorktreeRegistration,
 ) DiscoveredWorktree {
-	// Resolve symlinks before checking the git-registered set: on macOS,
-	// t.TempDir() paths under /var/folders are symlinks to /private/var/folders,
-	// and git --version 2.34+ resolves to the realpath in its output.
 	resolvedPath := worktreePath
 	if rp, err := filepath.EvalSymlinks(worktreePath); err == nil {
 		resolvedPath = rp
@@ -213,25 +193,13 @@ func discoverWorktree(
 		),
 	}
 
-	// Step (c): read the lease-lock file if present. A missing lease-lock leaves
-	// both LeaseLock nil and LeaseLockUnreadable false — the caller classifies
-	// it as NoLock.
 	dw.LeaseLock, dw.LeaseLockUnreadable = discoverLeaseLock(worktreePath)
 
-	// Step (d): stat the sessions root directory.
 	dw.HasSessionsDir, dw.HasExactSidecar, dw.SessionsPathConflict = discoverSessions(worktreePath, runID)
 
 	return dw
 }
 
-// discoverLeaseLock performs WM-013c step (c) for one worktree. It returns the
-// parsed lock when the file is present and readable, and (nil, false) when no
-// lock file exists — the caller reads that as "not leased" per WM-013a.
-//
-// A read or parse error means the lock file EXISTS but its content cannot be
-// recovered (corrupt/truncated). That returns (nil, true). Fail safe: the lock
-// is present-but-unknown, so downstream reapers treat the worktree as
-// possibly-live and NEVER as absent, which would route it to force-removal.
 func discoverLeaseLock(worktreePath string) (*discoveredLeaseLock, bool) {
 	leaseLockPath := LeaseLockPath(worktreePath)
 	var lock *discoveredLeaseLock
@@ -252,10 +220,6 @@ func discoverLeaseLock(worktreePath string) (*discoveredLeaseLock, bool) {
 	return lock, false
 }
 
-// discoverSessions performs WM-013c step (d) for one worktree. It stats the
-// sessions root and, when that root is a directory, looks for the sidecar of the
-// exact run. conflict reports a sessions path that cannot be read or that holds
-// an unsupported entry.
 func discoverSessions(worktreePath, runID string) (hasSessionsDir, hasExactSidecar, conflict bool) {
 	sessionsRoot := SessionLogRootPath(worktreePath)
 	info, statErr := os.Lstat(sessionsRoot)
@@ -269,12 +233,6 @@ func discoverSessions(worktreePath, runID string) (hasSessionsDir, hasExactSidec
 	return true, sidecar, sidecarErr != nil
 }
 
-// registeredOnlyWorktrees reports the worktrees that git still registers and
-// that the directory walk did not reach — a registration whose run directory is
-// gone, or one that sits outside the canonical worktree root. Each is a
-// registration conflict, because the canonical path holds no matching directory.
-// It records every run_id it reports in seenRunIDs, so one registration never
-// produces two results.
 func registeredOnlyWorktrees(
 	repoRoot string,
 	cfg WorktreeRootConfig,
@@ -364,11 +322,6 @@ func conflictingWorktreeRegistration(
 	return false
 }
 
-// porcelainWorktreePaths returns a set of absolute worktree paths reported by
-// `git worktree list --porcelain` as registered for the given repo.
-//
-// Each "worktree <path>" line in the porcelain output contributes one entry.
-// The set is keyed by the cleaned absolute path string.
 type porcelainWorktreeRegistration struct {
 	Branch string
 	Head   string
@@ -431,15 +384,12 @@ func parsePorcelainWorktreeBlock(block string) (string, porcelainWorktreeRegistr
 	return path, registration, valid
 }
 
-// readDiscoveredLeaseLock reads the lease-lock fields required by WM-013c step
-// (c) from the given path. Returns (nil, nil) when the file is absent.
 func readDiscoveredLeaseLock(leaseLockPath string) (*discoveredLeaseLock, error) {
 	lock, err := ReadLeaseLock(leaseLockPath)
 	if err != nil {
 		return nil, err
 	}
 	if lock == nil {
-		// Absent — caller interprets as "not leased" per WM-013a.
 		return nil, nil //nolint:nilnil // nil result with nil error is the documented "absent" signal
 	}
 	return &discoveredLeaseLock{

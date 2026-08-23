@@ -1,39 +1,5 @@
 package daemon
 
-// spendmeter_hkk3f8g.go — daemon-side per-day spend meter (hk-k3f8g).
-//
-// DaemonSpendMeter implements the daemon-side half of the CL-090 / CL-090a
-// unified spend ceiling:
-//
-//   - CL-090a (max-runs backstop): counts run_started events since the last
-//     UTC midnight; when runsToday >= maxRunsPerDay the meter emits
-//     budget_exhausted{budget_scope=handler_account} so the existing HP-012
-//     handler-pause policy pauses the claude handler type and halts dispatch.
-//
-//   - CL-090 (bytes proxy): accumulates budget_accrual output_bytes per day as
-//     a proxy for USD spend; when bytesToday >= dailyCapBytes (derived from
-//     FLYWHEEL_BUDGET_USD_PER_DAY × bytesPerUSD) the same budget_exhausted event
-//     is emitted.  Because bytes are an imprecise proxy for USD the max-runs
-//     ceiling is the loss-proof backstop for this bead; exact USD attribution is
-//     deferred to a Pi-side unified meter (CL-090 full spec).
-//
-// Lifecycle: construct with NewDaemonSpendMeter, call Subscribe(bus) before
-// bus.Seal(). The meter is asynchronous: trip and emission happen inside the
-// bus worker-pool goroutine that delivers the triggering event, not on the
-// emitting path.
-//
-// Day boundary: UTC midnight, tracked as a YYYY-MM-DD key. State resets
-// automatically (runs, bytes, exhausted flag) on the first event processed
-// after a day rollover. There is no separate reset goroutine.
-//
-// Idempotency: budget_exhausted is emitted at most once per calendar day.
-// Subsequent events within the same day are no-ops once exhausted=true.
-//
-// Spec ref: specs/cognition-loop.md §4.11 CL-090, CL-090a.
-// Spec ref: specs/handler-pause.md §11a, HP-012.
-// Spec ref: specs/event-model.md §8.4.3.
-// Bead ref: hk-k3f8g.
-
 import (
 	"context"
 	"encoding/json"
@@ -48,38 +14,16 @@ import (
 )
 
 const (
-	// defaultMaxRunsPerDay is the max-runs ceiling applied when
-	// HARMONIK_MAX_RUNS_PER_DAY is not set.  Finite by design per CL-090a.
 	defaultMaxRunsPerDay = 200
 
-	// envMaxRunsPerDay is the environment variable an operator can set to
-	// override the per-day max-runs ceiling.  Value must be a positive integer;
-	// "unlimited" is not accepted (per-day ceiling must be finite per CL-090a).
 	envMaxRunsPerDay = "HARMONIK_MAX_RUNS_PER_DAY"
 
-	// envFlywheelBudgetUSDPerDay is the existing env var that controls the
-	// per-day USD cap on the Pi side; the daemon meter reads the same variable
-	// so operators tune one knob for both layers.
 	envFlywheelBudgetUSDPerDay = "FLYWHEEL_BUDGET_USD_PER_DAY"
 
-	// defaultDailyBudgetUSD is the USD cap applied when
-	// FLYWHEEL_BUDGET_USD_PER_DAY is not set.  Mirrors the flywheel default.
 	defaultDailyBudgetUSD = 20.0
 
-	// bytesPerUSD is the rough output-bytes → USD conversion rate used to
-	// translate the USD cap into a bytes-per-day ceiling.
-	//
-	// Derivation: claude-sonnet-4-6 output pricing ≈ $3/1M output tokens
-	// × ~500 bytes/token = $3/500k bytes ≈ $1/166k bytes → 166_000 bytes/USD.
-	// Using a conservative 100_000 to trip slightly early rather than late.
-	//
-	// Operators who rely on precise USD enforcement should prefer the max-runs
-	// ceiling (HARMONIK_MAX_RUNS_PER_DAY) which does not require unit conversion.
 	bytesPerUSD float64 = 100_000
 
-	// daemonDailyBudgetRef is the BudgetRef carried in budget_exhausted events
-	// emitted by DaemonSpendMeter.  Distinct from per-run budget refs so
-	// consumers can discriminate by budget_ref if needed.
 	daemonDailyBudgetRef core.BudgetRef = "daemon-daily"
 )
 
@@ -122,17 +66,14 @@ func NewDaemonSpendMeter(bus eventbus.EventBus) *DaemonSpendMeter {
 	switch budgetEnv {
 	case "", "unlimited":
 		if budgetEnv == "unlimited" {
-			// Operator explicitly opted out of the USD ceiling.
 			dailyCapBytes = 0
 		} else {
-			// Unset → use default.
 			dailyCapBytes = defaultDailyBudgetUSD * bytesPerUSD
 		}
 	default:
 		if capUSD, err := strconv.ParseFloat(budgetEnv, 64); err == nil && capUSD > 0 {
 			dailyCapBytes = capUSD * bytesPerUSD
 		} else {
-			// Unparseable value — fall back to default (fail-closed).
 			dailyCapBytes = defaultDailyBudgetUSD * bytesPerUSD
 		}
 	}
@@ -185,8 +126,6 @@ func (m *DaemonSpendMeter) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// handleRunStarted increments the daily run counter and trips the meter when
-// runsToday >= maxRunsPerDay (CL-090a).
 func (m *DaemonSpendMeter) handleRunStarted(ctx context.Context, _ core.Event) error {
 	m.mu.Lock()
 	m.rolloverIfNewDayLocked()
@@ -207,8 +146,6 @@ func (m *DaemonSpendMeter) handleRunStarted(ctx context.Context, _ core.Event) e
 	return nil
 }
 
-// handleBudgetAccrual accumulates output_bytes and trips the meter when
-// bytesToday >= dailyCapBytes (CL-090 bytes proxy).
 func (m *DaemonSpendMeter) handleBudgetAccrual(ctx context.Context, evt core.Event) error {
 	if m.dailyCapBytes <= 0 {
 		return nil // bytes-cap disabled (FLYWHEEL_BUDGET_USD_PER_DAY=unlimited)
@@ -216,7 +153,6 @@ func (m *DaemonSpendMeter) handleBudgetAccrual(ctx context.Context, evt core.Eve
 
 	var payload core.BudgetAccrualPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
-		// Malformed payload — skip; bus dead-letter path handles persistent failures.
 		return nil
 	}
 	if payload.CostBasis != core.CostBasisOutputBytes {
@@ -245,8 +181,6 @@ func (m *DaemonSpendMeter) handleBudgetAccrual(ctx context.Context, evt core.Eve
 	return nil
 }
 
-// emitExhausted emits budget_exhausted{budget_scope=handler_account} exactly
-// once per day. Concurrent callers are serialised by the exhausted flag under mu.
 func (m *DaemonSpendMeter) emitExhausted(ctx context.Context, spentUSD, capUSD float64) error {
 	m.mu.Lock()
 	if m.exhausted {
@@ -273,8 +207,6 @@ func (m *DaemonSpendMeter) emitExhausted(ctx context.Context, spentUSD, capUSD f
 	return nil
 }
 
-// rolloverIfNewDayLocked resets per-day counters when the UTC date has changed.
-// MUST be called while m.mu is held.
 func (m *DaemonSpendMeter) rolloverIfNewDayLocked() {
 	today := spendMeterTodayKey()
 	if today != m.dayKey {
@@ -285,7 +217,6 @@ func (m *DaemonSpendMeter) rolloverIfNewDayLocked() {
 	}
 }
 
-// spendMeterTodayKey returns the current UTC date as "YYYY-MM-DD".
 func spendMeterTodayKey() string {
 	return time.Now().UTC().Format("2006-01-02")
 }

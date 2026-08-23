@@ -1,14 +1,5 @@
 package sessiondata
 
-// sessiondata_per_node_attr_hk_eval_prog_per_node_attr_tqftl_test.go
-//
-// Sensors for WS1e: per-node time+token attribution.
-// Verifies that buildRunEventData collects node_dispatch_requested events and
-// that Collect() uses them to compute per-node WallTimeS and filter transcript
-// turns to the correct time window.
-//
-// Bead: hk-eval-prog-per-node-attr-tqftl
-
 import (
 	"encoding/json"
 	"fmt"
@@ -18,7 +9,6 @@ import (
 	"time"
 )
 
-// writeEventLines writes raw JSON lines to path, one per line.
 func writeEventLines(t *testing.T, path string, lines []string) {
 	t.Helper()
 	//nolint:gosec // G304: path is a controlled test fixture under t.TempDir.
@@ -44,7 +34,6 @@ func marshalFixtureJSON(value any) string {
 	return string(data)
 }
 
-// eventLine builds a minimal event JSONL line for the given type, run_id, and payload.
 func eventLine(evType, runID, wallTS string, payload map[string]any) string {
 	env := map[string]any{
 		"event_id":       "00000000-0000-0000-0000-000000000001",
@@ -57,7 +46,6 @@ func eventLine(evType, runID, wallTS string, payload map[string]any) string {
 	return marshalFixtureJSON(env)
 }
 
-// transcriptLine builds a Claude transcript assistant-turn JSONL line.
 func transcriptLine(ts string, inputTok, outputTok int64) string {
 	entry := map[string]any{
 		"type":      "assistant",
@@ -125,7 +113,6 @@ func TestBuildRunEventData_DeduplicatesNodeID(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000007"
 
 	writeEventLines(t, evPath, []string{
-		// First dispatch of implement at T1.
 		eventLine("node_dispatch_requested", runID, "2026-07-05T10:00:01Z", map[string]any{
 			"run_id": runID, "node_id": "implement", "requested_at": "2026-07-05T10:00:01Z", "origin": "workflow",
 		}),
@@ -148,7 +135,6 @@ func TestBuildRunEventData_DeduplicatesNodeID(t *testing.T) {
 	if d.NodeDispatchEvents[0].NodeID != "implement" {
 		t.Errorf("events[0].NodeID = %q, want implement", d.NodeDispatchEvents[0].NodeID)
 	}
-	// First occurrence must be kept (T1), not the retry (T2).
 	wantT1 := time.Date(2026, 7, 5, 10, 0, 1, 0, time.UTC)
 	if !d.NodeDispatchEvents[0].RequestedAt.Equal(wantT1) {
 		t.Errorf("events[0].RequestedAt = %v, want %v", d.NodeDispatchEvents[0].RequestedAt, wantT1)
@@ -199,10 +185,8 @@ func TestCollect_PerNodeWallTimeS(t *testing.T) {
 	}
 	evPath := filepath.Join(eventsDir, "events.jsonl")
 
-	// Write a transcript for the "implement" node.
 	transcriptPath := filepath.Join(dir, "transcript.jsonl")
 	writeEventLines(t, transcriptPath, []string{
-		// One turn at 10:00:10 — inside the implement window [10:00:01, 10:03:12).
 		transcriptLine("2026-07-05T10:00:10Z", 1000, 200),
 	})
 
@@ -260,12 +244,10 @@ func TestCollect_PerNodeWallTimeS(t *testing.T) {
 		t.Fatalf("nodes len = %d, want 3 (implement, grade, judge)", len(rec.Nodes))
 	}
 
-	// implement: window [10:00:01, 10:03:12) = 191 seconds.
 	impl := rec.Nodes[0]
 	if impl.NodeID != "implement" {
 		t.Errorf("nodes[0].node_id = %q, want implement", impl.NodeID)
 	}
-	// implement window: 10:03:12 - 10:00:01 = 3min 11s = 191s.
 	const wantImplWall = 191.0
 	if impl.WallTimeS < wantImplWall-0.5 || impl.WallTimeS > wantImplWall+0.5 {
 		t.Errorf("implement WallTimeS = %f, want ~%f", impl.WallTimeS, wantImplWall)
@@ -277,7 +259,6 @@ func TestCollect_PerNodeWallTimeS(t *testing.T) {
 		t.Errorf("implement.Tokens.Input = %d, want 1000", impl.Tokens.Input)
 	}
 
-	// grade: non-agentic, no tokens.
 	grade := rec.Nodes[1]
 	if grade.NodeID != "grade" {
 		t.Errorf("nodes[1].node_id = %q, want grade", grade.NodeID)
@@ -285,17 +266,14 @@ func TestCollect_PerNodeWallTimeS(t *testing.T) {
 	if grade.Tokens != nil {
 		t.Error("grade.Tokens should be nil (non-agentic shell node)")
 	}
-	// grade window: [10:03:12, 10:03:16) = 4 seconds.
 	if grade.WallTimeS < 3.5 || grade.WallTimeS > 4.5 {
 		t.Errorf("grade WallTimeS = %f, want ~4", grade.WallTimeS)
 	}
 
-	// judge: non-agentic in this test (no session_log_location).
 	judge := rec.Nodes[2]
 	if judge.NodeID != "judge" {
 		t.Errorf("nodes[2].node_id = %q, want judge", judge.NodeID)
 	}
-	// judge window: [10:03:16, 10:03:36) = 20 seconds.
 	if judge.WallTimeS < 19.5 || judge.WallTimeS > 20.5 {
 		t.Errorf("judge WallTimeS = %f, want ~20", judge.WallTimeS)
 	}
@@ -315,9 +293,6 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	}
 	evPath := filepath.Join(eventsDir, "events.jsonl")
 
-	// Transcript with three turns: one per node window.
-	// implement window: [10:00:00, 10:02:00)
-	// judge window:     [10:02:00, 10:03:00)
 	transcriptPath := filepath.Join(dir, "transcript.jsonl")
 	writeEventLines(t, transcriptPath, []string{
 		transcriptLine("2026-07-05T10:00:30Z", 500, 100), // implement window
@@ -329,8 +304,6 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	t0 := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
 	tEnd := time.Date(2026, 7, 5, 10, 3, 0, 0, time.UTC)
 
-	// Both implement and judge share the same transcript (edge-case: same file
-	// listed twice with different node_ids — simulates a resumed Claude session).
 	writeEventLines(t, evPath, []string{
 		eventLine("run_started", runID, "2026-07-05T10:00:00Z", map[string]any{
 			"bead_id": "hk-ws1e-split", "started_at": "2026-07-05T10:00:00Z",
@@ -383,7 +356,6 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	if impl.Tokens == nil {
 		t.Fatal("implement.Tokens nil")
 	}
-	// Two turns in implement window: 500+300=800 input, 100+50=150 output.
 	if impl.Tokens.Input != 800 {
 		t.Errorf("implement input = %d, want 800", impl.Tokens.Input)
 	}
@@ -395,7 +367,6 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	if judge.NodeID != "judge" {
 		t.Errorf("nodes[1].node_id = %q, want judge", judge.NodeID)
 	}
-	// judge has no session_log_location in this test, so tokens nil.
 	if judge.Tokens != nil {
 		t.Error("judge.Tokens should be nil (no session_log_location for judge)")
 	}
@@ -416,7 +387,6 @@ func TestCollect_NoDispatchEvents_FallsThrough(t *testing.T) {
 
 	transcriptPath := filepath.Join(dir, "transcript.jsonl")
 	writeEventLines(t, transcriptPath, []string{
-		// No timestamps — should still be counted in the non-DOT path.
 		func() string {
 			entry := map[string]any{
 				"type": "assistant",
@@ -448,7 +418,6 @@ func TestCollect_NoDispatchEvents_FallsThrough(t *testing.T) {
 			"log_path":   transcriptPath,
 			"log_format": "claude-jsonl",
 		}),
-		// No node_dispatch_requested events.
 	})
 
 	err := Collect(CollectParams{
@@ -484,7 +453,6 @@ func TestCollect_NoDispatchEvents_FallsThrough(t *testing.T) {
 	if rec.Nodes[0].Tokens.Input != 2000 {
 		t.Errorf("tokens.input = %d, want 2000", rec.Nodes[0].Tokens.Input)
 	}
-	// WallTimeS should be 0 (no dispatch windows, existing path doesn't set it).
 	if rec.Nodes[0].WallTimeS != 0 {
 		t.Errorf("WallTimeS = %f, want 0 for non-DOT path", rec.Nodes[0].WallTimeS)
 	}

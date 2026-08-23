@@ -30,9 +30,6 @@ func TestOperatorActiveSince(t *testing.T) {
 		{"no clients (empty output)", "", false},
 		{"only whitespace", "  \n\t\n", false},
 		{
-			// The operator's remote-control / iOS workflow: a terminal stays
-			// attached but its keystrokes go through Claude, not tmux, so
-			// client_activity is frozen far in the past. Must NOT suppress.
 			name: "single idle attached client",
 			out:  epoch(16*24*time.Hour) + "\n",
 			want: false,
@@ -58,8 +55,6 @@ func TestOperatorActiveSince(t *testing.T) {
 			want: false,
 		},
 		{
-			// Many idle clients + one active → active wins (operator IS typing
-			// into the pane locally; suppress to avoid racing keystrokes).
 			name: "mixed: idle clients plus one active",
 			out:  epoch(2*time.Hour) + "\n" + epoch(time.Hour) + "\n" + epoch(30*time.Second) + "\n",
 			want: true,
@@ -70,8 +65,6 @@ func TestOperatorActiveSince(t *testing.T) {
 			want: false,
 		},
 		{
-			// A future timestamp (clock skew) is treated as active — the safe,
-			// suppress-leaning direction.
 			name: "future activity timestamp",
 			out:  epoch(-time.Minute) + "\n",
 			want: true,

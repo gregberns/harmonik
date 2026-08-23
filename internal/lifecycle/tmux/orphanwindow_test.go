@@ -11,13 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Fake Adapter for window-sweep tests (orphanWindowFixture prefix per hk-gql20.9)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// orphanWindowFixtureAdapter is a deterministic in-memory fake of the [Adapter]
-// interface used in orphan-window-sweep tests. It holds session→windows maps
-// and records which windows were killed.
 type orphanWindowFixtureAdapter struct {
 	// sessions maps session name → slice of window names.
 	sessions map[string][]string
@@ -67,7 +60,6 @@ func (a *orphanWindowFixtureAdapter) ListWindows(_ context.Context, session stri
 	if !ok {
 		return nil, ErrNoSession
 	}
-	// Return a copy so callers cannot modify the map.
 	out := make([]string, len(windows))
 	copy(out, windows)
 	return out, nil
@@ -88,7 +80,6 @@ func (a *orphanWindowFixtureAdapter) KillWindow(_ context.Context, handle Window
 	}
 	a.killed = append(a.killed, handle)
 	if a.removeOnKill {
-		// Parse "session:window" to remove from in-memory state.
 		target := string(handle)
 		colonIdx := strings.Index(target, ":")
 		if colonIdx >= 0 {
@@ -145,7 +136,6 @@ func (a *orphanWindowFixtureAdapter) WriteToPane(_ context.Context, _, _ string,
 	return nil
 }
 
-// orphanWindowFixtureRemoveWindow removes windowName from the session's window list.
 func (a *orphanWindowFixtureAdapter) orphanWindowFixtureRemoveWindow(session, windowName string) {
 	windows := a.sessions[session]
 	filtered := windows[:0]
@@ -157,8 +147,6 @@ func (a *orphanWindowFixtureAdapter) orphanWindowFixtureRemoveWindow(session, wi
 	a.sessions[session] = filtered
 }
 
-// orphanWindowFixtureNewAdapter constructs a fresh fake adapter with the given
-// sessions. removeOnKill=true so that post-kill polling exits promptly.
 func orphanWindowFixtureNewAdapter(sessions map[string][]string, removeOnKill bool) *orphanWindowFixtureAdapter {
 	return &orphanWindowFixtureAdapter{
 		sessions:     sessions,
@@ -166,19 +154,12 @@ func orphanWindowFixtureNewAdapter(sessions map[string][]string, removeOnKill bo
 	}
 }
 
-// orphanWindowFixtureProjectHash returns a core.ProjectHash whose first 6 hex
-// chars are "abcdef", used across window-sweep tests.
 func orphanWindowFixtureProjectHash() core.ProjectHash {
-	// ProjectHash is a 12-char lowercase hex string per core.ProjectHash.
 	return core.ProjectHash("abcdef012345")
 }
 
-// orphanWindowFixtureSweepPrefix is the expected "hk-<hash6>-" prefix for the
-// fixture project hash.
 const orphanWindowFixtureSweepPrefix = "hk-abcdef-"
 
-// orphanWindowFixtureShortenTimers replaces the package-level poll vars with
-// very short durations for fast tests and restores them via t.Cleanup.
 func orphanWindowFixtureShortenTimers(t *testing.T) {
 	t.Helper()
 	origInterval := windowSweepPollInterval
@@ -190,10 +171,6 @@ func orphanWindowFixtureShortenTimers(t *testing.T) {
 		windowSweepPollCeiling = origCeiling
 	})
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SweepOrphanTmuxWindows tests (PL-021c)
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestPL021c_SweepOrphanTmuxWindows_NilAdapterReturnsZero verifies that a nil
 // adapter produces (0, nil) — no-op sweep.
@@ -366,7 +343,6 @@ func TestPL021c_SweepOrphanTmuxWindows_SessionVanishesDuringListWindows(t *testi
 	t.Parallel()
 
 	hash := orphanWindowFixtureProjectHash()
-	// Seed one session that will return ErrNoSession from ListWindows.
 	adapter := orphanWindowFixtureNewAdapter(map[string][]string{
 		"vanishing-session": {},
 	}, false)
@@ -404,16 +380,13 @@ func TestPL021c_SweepOrphanTmuxWindows_KillWindowErrorNonFatal(t *testing.T) {
 	var logBuf strings.Builder
 	logger := log.New(&logBuf, "", 0)
 
-	// Should not return an error even though kill failed.
 	killed, err := SweepOrphanTmuxWindows(context.Background(), hash, adapter, logger)
 	if err != nil {
 		t.Errorf("kill error non-fatal: unexpected error: %v", err)
 	}
-	// The window was still counted as killed (we incremented after the kill attempt).
 	if killed != 1 {
 		t.Errorf("kill error non-fatal: killed = %d, want 1", killed)
 	}
-	// The log must mention the error.
 	if !strings.Contains(logBuf.String(), "kill-window") && !strings.Contains(logBuf.String(), "error") {
 		t.Errorf("kill error non-fatal: expected log message about kill error, got %q", logBuf.String())
 	}

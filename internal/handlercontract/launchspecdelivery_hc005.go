@@ -51,17 +51,14 @@ func MarshalLaunchSpec(spec *LaunchSpec) ([]byte, error) {
 //
 //	spec, err := handlercontract.ReadLaunchSpecFromArgs(os.Args[1:], os.Stdin)
 func ReadLaunchSpecFromArgs(args []string, r io.Reader) (*LaunchSpec, error) {
-	// Scan for "--launch-spec <path>".
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == LaunchSpecFileArg {
 			return readLaunchSpecFromFile(args[i+1])
 		}
 	}
-	// Default: read from stdin.
 	return readLaunchSpecFromReader(r)
 }
 
-// readLaunchSpecFromFile reads and validates the LaunchSpec from a JSON file.
 func readLaunchSpecFromFile(path string) (*LaunchSpec, error) {
 	if path == "" {
 		return nil, fmt.Errorf("handlercontract: ReadLaunchSpec: %s argument has empty path", LaunchSpecFileArg)
@@ -74,7 +71,6 @@ func readLaunchSpecFromFile(path string) (*LaunchSpec, error) {
 	return unmarshalLaunchSpec(data, fmt.Sprintf("file %q", path))
 }
 
-// readLaunchSpecFromReader reads and validates the LaunchSpec from r (stdin).
 func readLaunchSpecFromReader(r io.Reader) (*LaunchSpec, error) {
 	if r == nil {
 		return nil, fmt.Errorf("handlercontract: ReadLaunchSpec: reader is nil (no stdin)")
@@ -86,8 +82,6 @@ func readLaunchSpecFromReader(r io.Reader) (*LaunchSpec, error) {
 	return unmarshalLaunchSpec(data, "stdin")
 }
 
-// unmarshalLaunchSpec parses and validates a LaunchSpec from raw JSON bytes.
-// source is a human-readable label ("stdin" or "file <path>") for error messages.
 func unmarshalLaunchSpec(data []byte, source string) (*LaunchSpec, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("handlercontract: ReadLaunchSpec: empty %s", source)

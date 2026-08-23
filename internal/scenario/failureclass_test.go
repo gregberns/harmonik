@@ -159,7 +159,6 @@ func TestFailureClassMarshalText(t *testing.T) {
 func TestFailureClassRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all eight values.
 	type wrapper struct {
 		Class FailureClass `json:"class"`
 	}
@@ -198,7 +197,6 @@ func TestFailureClassRoundTrip(t *testing.T) {
 func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all eight declared values.
 	var f FailureClass
 	err := f.UnmarshalText([]byte("made_up"))
 	if err == nil {
@@ -219,7 +217,6 @@ func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 func TestFailureClassPrecedenceNonZero(t *testing.T) {
 	t.Parallel()
 
-	// Every valid FailureClass must return a non-zero precedence rank.
 	valid := []FailureClass{
 		FailureClassHarnessInternalError,
 		FailureClassOrchestrationInternalError,
@@ -240,7 +237,6 @@ func TestFailureClassPrecedenceNonZero(t *testing.T) {
 func TestFailureClassPrecedenceInvalidReturnsZero(t *testing.T) {
 	t.Parallel()
 
-	// An unknown FailureClass must return 0 from Precedence.
 	if got := FailureClass("").Precedence(); got != 0 {
 		t.Errorf("Precedence(%q) = %d; want 0 for invalid value", "", got)
 	}
@@ -252,8 +248,6 @@ func TestFailureClassPrecedenceInvalidReturnsZero(t *testing.T) {
 func TestFailureClassPrecedenceOrder(t *testing.T) {
 	t.Parallel()
 
-	// §8.0 precedence table (highest first).  Rank 1 = highest.
-	// Verify the ordinal assignment matches the spec order.
 	table := []struct {
 		class FailureClass
 		rank  int
@@ -277,8 +271,6 @@ func TestFailureClassPrecedenceOrder(t *testing.T) {
 func TestFailureClassPrecedenceStrictOrdering(t *testing.T) {
 	t.Parallel()
 
-	// Verify that each class has strictly lower rank (higher precedence) than
-	// the next class in the table — i.e., the ranks form a strict total order.
 	ordered := []FailureClass{
 		FailureClassHarnessInternalError,
 		FailureClassOrchestrationInternalError,

@@ -46,8 +46,6 @@ import (
 	"strings"
 )
 
-// explicitDenyPrefixes are LLM SDK import path prefixes forbidden in the
-// daemon's transitive closure (PL-INV-002).  Deny takes precedence over allow.
 var explicitDenyPrefixes = []string{
 	"github.com/anthropics/",
 	"github.com/openai/",
@@ -100,7 +98,6 @@ func main() {
 	fmt.Println("forbid-import: OK — all transitive imports are permitted")
 }
 
-// isDenied returns true if imp matches any deny-list prefix.
 func isDenied(imp string) bool {
 	for _, prefix := range explicitDenyPrefixes {
 		if strings.HasPrefix(imp, prefix) {
@@ -110,9 +107,7 @@ func isDenied(imp string) bool {
 	return false
 }
 
-// isAllowed returns true if imp is stdlib, self, or belongs to an allowed module.
 func isAllowed(imp string, allowedModules []string) bool {
-	// Stdlib: first path segment has no dot.
 	first := imp
 	if idx := strings.IndexByte(imp, '/'); idx >= 0 {
 		first = imp[:idx]
@@ -121,12 +116,10 @@ func isAllowed(imp string, allowedModules []string) bool {
 		return true
 	}
 
-	// Self.
 	if strings.HasPrefix(imp, selfPrefix) {
 		return true
 	}
 
-	// go.mod requires.
 	for _, mod := range allowedModules {
 		if strings.HasPrefix(imp, mod) {
 			return true
@@ -136,16 +129,12 @@ func isAllowed(imp string, allowedModules []string) bool {
 	return false
 }
 
-// goListPackage mirrors the subset of "go list -json" output we need.
 type goListPackage struct {
 	ImportPath  string
 	Imports     []string
 	TestImports []string
 }
 
-// listTransitiveImports calls "go list -deps -json <pattern>" and returns the
-// deduplicated set of all import paths in the transitive dependency graph
-// (excluding test imports; those are out of scope for the daemon ban).
 func listTransitiveImports(pattern string) ([]string, error) {
 	cmd := exec.Command("go", "list", "-deps", "-json", pattern)
 	cmd.Stderr = os.Stderr
@@ -174,16 +163,11 @@ func listTransitiveImports(pattern string) ([]string, error) {
 	return result, nil
 }
 
-// readGoModRequires reads go.mod in the current working directory and returns
-// the module paths listed under "require" directives.  This is intentionally
-// simple (line-based) to avoid pulling in golang.org/x/mod.
 func readGoModRequires() ([]string, error) {
 	f, err := os.Open("go.mod")
 	if err != nil {
 		return nil, err
 	}
-	// Read-only scan runs after this defer, so keep the close deferred to
-	// function exit; the close error on a read handle is immaterial.
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "forbid-import: close go.mod: %v\n", closeErr)
@@ -203,7 +187,6 @@ func readGoModRequires() ([]string, error) {
 			inRequire = false
 			continue
 		}
-		// Single-line require: "require module/path vX.Y.Z"
 		if strings.HasPrefix(line, "require ") {
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {
@@ -211,7 +194,6 @@ func readGoModRequires() ([]string, error) {
 			}
 			continue
 		}
-		// Inside require block: "  module/path vX.Y.Z [// indirect]"
 		if inRequire && line != "" && !strings.HasPrefix(line, "//") {
 			parts := strings.Fields(line)
 			if len(parts) >= 1 {

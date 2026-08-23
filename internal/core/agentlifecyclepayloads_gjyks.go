@@ -2,23 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// agentlifecyclepayloads_gjyks.go — event-bus payload types for the 8
-// EventType constants that were declared in eventtype.go but lacked
-// constructor registrations in eventreg_hqwn59.go (bead hk-gjyks):
-//
-//   - agent_completed            (§8.3.4)
-//   - agent_hard_terminating     (§8.3.13)
-//   - agent_heartbeat            (handler-contract.md §4.6 HC-026a)
-//   - agent_resumed_after_warning (§8.3.11)
-//   - agent_soft_terminating     (§8.3.12)
-//   - agent_warning_silent_hang  (§8.3.10)
-//   - bead_closed                (execution-model.md §4.12 EM-052)
-//   - working_tree_refresh_failed (execution-model.md §4.12 EM-054)
-//
-// Spec refs: specs/event-model.md §8.3, specs/execution-model.md §4.12,
-//            specs/handler-contract.md §4.6 HC-026a.
-// Bead ref: hk-gjyks.
-
 // AgentCompletedPayload is the typed event payload for the agent_completed
 // event (event-model.md §8.3.4).
 //
@@ -543,10 +526,6 @@ func (p MergeBuildFailedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// beads-integration.md §4.5a BI-013c — bead_claim_skipped
-// ---------------------------------------------------------------------------
 
 // BeadClaimSkippedPayload is the typed event payload for the bead_claim_skipped
 // event (beads-integration.md §4.5a BI-013c).

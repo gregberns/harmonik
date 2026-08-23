@@ -21,10 +21,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── fixtures ────────────────────────────────────────────────────────────────
-
-// edgeCascadeFixtureRun returns a minimal valid Run ready for cascade tests.
-// run.Context is pre-allocated so ApplyContextUpdates may write into it.
 func edgeCascadeFixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
@@ -39,7 +35,6 @@ func edgeCascadeFixtureRun(t *testing.T) *Run {
 	}
 }
 
-// edgeCascadeFixtureOutcome returns a minimal valid Outcome (SUCCESS, default kind).
 func edgeCascadeFixtureOutcome(t *testing.T) Outcome {
 	t.Helper()
 	return Outcome{
@@ -48,8 +43,6 @@ func edgeCascadeFixtureOutcome(t *testing.T) Outcome {
 	}
 }
 
-// edgeCascadeFixtureEdge returns a valid Edge with the given ordering_key and
-// weight, from "node-a" to the supplied toNode. Condition is nil (unconditional).
 func edgeCascadeFixtureEdge(t *testing.T, toNode NodeID, weight int, orderingKey string) Edge {
 	t.Helper()
 	return Edge{
@@ -60,17 +53,13 @@ func edgeCascadeFixtureEdge(t *testing.T, toNode NodeID, weight int, orderingKey
 	}
 }
 
-// edgeCascadeFixtureEvalAlwaysTrue is a ConditionEvaluator that always returns true.
 func edgeCascadeFixtureEvalAlwaysTrue(_ PolicyExpression, _ map[string]any, _ Outcome) bool {
 	return true
 }
 
-// edgeCascadeFixtureEvalAlwaysFalse is a ConditionEvaluator that always returns false.
 func edgeCascadeFixtureEvalAlwaysFalse(_ PolicyExpression, _ map[string]any, _ Outcome) bool {
 	return false
 }
-
-// ── EM-041a: context-update ordering ────────────────────────────────────────
 
 // TestEdgeCascadeEM041a_ContextUpdatesAppliedBeforeConditionEval verifies that
 // outcome.ContextUpdates are merged into run.Context before any condition is
@@ -91,8 +80,6 @@ func TestEdgeCascadeEM041a_ContextUpdatesAppliedBeforeConditionEval(t *testing.T
 		OrderingKey: "a",
 	}
 
-	// The evaluator observes run.Context at evaluation time; we verify that
-	// "flag" is already present (context-update applied before eval).
 	var seenCtx map[string]any
 	eval := func(expr PolicyExpression, ctx map[string]any, _ Outcome) bool {
 		seenCtx = ctx
@@ -106,11 +93,9 @@ func TestEdgeCascadeEM041a_ContextUpdatesAppliedBeforeConditionEval(t *testing.T
 		t.Fatalf("EM-041a: cascade did not match, want Matched=true; failure: %s / %s",
 			result.FailureClass, result.FailureReason)
 	}
-	// The context must carry the update at evaluation time.
 	if v, ok := seenCtx["flag"]; !ok || v != true {
 		t.Errorf("EM-041a: condition evaluator saw ctx[\"flag\"]=%v (present=%v), want true (EM-041a: updates precede condition eval)", v, ok)
 	}
-	// run.Context itself must reflect the update after SelectNextEdge returns.
 	if v, ok := run.Context["flag"]; !ok || v != true {
 		t.Errorf("EM-041a: run.Context[\"flag\"]=%v (present=%v) after SelectNextEdge, want true", v, ok)
 	}
@@ -156,8 +141,6 @@ func TestEdgeCascadeEM041a_NilContextUpdatesIsNoop(t *testing.T) {
 	}
 }
 
-// ── EM-041 (a): condition filtering ─────────────────────────────────────────
-
 // TestEdgeCascadeEM041_NilConditionIsUnconditional verifies that an edge with a
 // nil Condition is always included in the matched set without calling the
 // evaluator.
@@ -167,7 +150,6 @@ func TestEdgeCascadeEM041_NilConditionIsUnconditional(t *testing.T) {
 	run := edgeCascadeFixtureRun(t)
 	outcome := edgeCascadeFixtureOutcome(t)
 
-	// Edge has nil Condition — evaluator must NOT be called.
 	e := edgeCascadeFixtureEdge(t, "node-b", 0, "a")
 	if e.Condition != nil {
 		t.Fatal("fixture error: Condition should be nil")
@@ -292,8 +274,6 @@ func TestEdgeCascadeEM041_OnlyConditionTrueEdgesAreMatched(t *testing.T) {
 	}
 }
 
-// ── EM-041 (b): preferred_label narrowing ───────────────────────────────────
-
 // TestEdgeCascadeEM041_PreferredLabelNarrowsMatchedSet verifies that when
 // outcome.PreferredLabel is set the cascade narrows to edges whose Label equals
 // it, discarding unmatched edges.
@@ -358,8 +338,6 @@ func TestEdgeCascadeEM041_PreferredLabelNoMatchFallsBackToFullSet(t *testing.T) 
 		t.Errorf("EM-041 (b): selected %q, want %q (fallback to full set)", result.Edge.ToNode, "node-b")
 	}
 }
-
-// ── EM-041 (c): suggested_next_ids narrowing ────────────────────────────────
 
 // TestEdgeCascadeEM041_SuggestedNextIDsNarrowsMatchedSet verifies that when
 // PreferredLabel is absent and SuggestedNextIDs is non-empty, the cascade
@@ -440,8 +418,6 @@ func TestEdgeCascadeEM041_PreferredLabelTakesPrecedenceOverSuggestedNextIDs(t *t
 	}
 }
 
-// ── EM-041 (d)+(e): weight + ordering_key tie-break ─────────────────────────
-
 // TestEdgeCascadeEM041_HigherWeightSelectedFirst verifies that the edge with the
 // higher Weight is selected when OrderingKey would otherwise distinguish them.
 func TestEdgeCascadeEM041_HigherWeightSelectedFirst(t *testing.T) {
@@ -495,7 +471,6 @@ func TestEdgeCascadeEM041_WeightBeatsOrderingKey(t *testing.T) {
 	run := edgeCascadeFixtureRun(t)
 	outcome := edgeCascadeFixtureOutcome(t)
 
-	// "a" < "b" lexically, but weight 1 < 10, so weight wins.
 	eLexFirst := edgeCascadeFixtureEdge(t, "node-lex-first", 1, "a")
 	eWeightFirst := edgeCascadeFixtureEdge(t, "node-weight-first", 10, "b")
 
@@ -510,8 +485,6 @@ func TestEdgeCascadeEM041_WeightBeatsOrderingKey(t *testing.T) {
 			result.Edge.ToNode, "node-weight-first")
 	}
 }
-
-// ── EM-046a: no-matching-edge failure ────────────────────────────────────────
 
 // TestEdgeCascadeEM041_EmptyCandidatesYieldsStructuralFailure verifies that an
 // empty candidate slice yields FailureClassStructural / no_outgoing_edge_matches
@@ -559,8 +532,6 @@ func TestEdgeCascadeEM041_AllConditionsFalseYieldsStructuralFailure(t *testing.T
 	}
 }
 
-// ── EM-043: traversal cap → compilation_loop ─────────────────────────────────
-
 // TestEdgeCascadeEM041_TraversalCapReachedYieldsCompilationLoop verifies that
 // when the selected edge's traversal count has reached its TraversalCap the
 // cascade returns FailureClassCompilationLoop (§4.10.EM-043).
@@ -580,7 +551,6 @@ func TestEdgeCascadeEM041_TraversalCapReachedYieldsCompilationLoop(t *testing.T)
 		TraversalCap: &cap1,
 	}
 
-	// Simulate one prior traversal by directly incrementing the counter.
 	_, err := cycles.Increment(run.RunID, "node-a", "node-b", nil)
 	if err != nil {
 		t.Fatalf("fixture error: Increment failed: %v", err)
@@ -614,7 +584,6 @@ func TestEdgeCascadeEM041_TraversalCapNotReachedAllowsEdge(t *testing.T) {
 		TraversalCap: &cap3,
 	}
 
-	// One prior traversal — well below cap 3.
 	_, err := cycles.Increment(run.RunID, "node-a", "node-b", nil)
 	if err != nil {
 		t.Fatalf("fixture error: Increment failed: %v", err)
@@ -638,7 +607,6 @@ func TestEdgeCascadeEM041_NilTraversalCapIsUnbounded(t *testing.T) {
 	cycles := NewCycleCounter()
 
 	e := edgeCascadeFixtureEdge(t, "node-b", 0, "a")
-	// TraversalCap is nil — increment many times, should never trigger cap.
 	for i := 0; i < 100; i++ {
 		_, err := cycles.Increment(run.RunID, "node-a", "node-b", nil)
 		if err != nil {
@@ -653,8 +621,6 @@ func TestEdgeCascadeEM041_NilTraversalCapIsUnbounded(t *testing.T) {
 			result.FailureClass)
 	}
 }
-
-// ── Determinism assertion ────────────────────────────────────────────────────
 
 // TestEdgeCascadeEM041_IdenticalInputsProduceIdenticalOutput verifies that the
 // cascade is deterministic: identical inputs produce identical output regardless
@@ -695,8 +661,6 @@ func TestEdgeCascadeEM041_IdenticalInputsProduceIdenticalOutput(t *testing.T) {
 			result1.Edge.ToNode, result2.Edge.ToNode)
 	}
 }
-
-// ── ApplyContextUpdates standalone ──────────────────────────────────────────
 
 // TestApplyContextUpdates_MergesIntoContext is a direct unit test of the
 // exported ApplyContextUpdates helper.

@@ -1,11 +1,5 @@
 package core
 
-// reviewgateanomaly_hktnmjy.go — event payload for the review_gate_anomaly
-// alarm (§8.14).
-//
-// Spec ref: specs/event-model.md §8.14 (hk-tnmjy).
-// Bead ref: hk-tnmjy.
-
 // ReviewGateAnomalyPayload is the typed event payload for the
 // review_gate_anomaly event (event-model.md §8.14).
 //

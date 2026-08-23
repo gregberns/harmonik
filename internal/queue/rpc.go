@@ -1,26 +1,5 @@
 package queue
 
-// rpc.go — JSON-RPC method handlers for the four queue control-surface methods.
-//
-// Each handler is a pure function: it receives the parsed request and the
-// in-memory queue state, runs the appropriate pipeline, and returns a typed
-// response plus an optional *RPCError. The daemon's socket dispatcher (in
-// internal/daemon/socket.go) owns I/O, context propagation, and event emission.
-//
-// Handlers implemented here:
-//   - HandleQueueSubmit   — validate → mint queue_id (UUIDv7) → Persist → QM-050
-//   - HandleQueueAppend   — AppendItems → map ValidationError → response
-//   - HandleQueueStatus   — Load + return envelope snapshot (QM-057)
-//   - HandleQueueDryRun   — Validate ONLY; no Persist, no event emission (QM-028)
-//
-// Spec refs:
-//   - specs/queue-model.md §2.10 (request/response RECORD shapes)
-//   - specs/queue-model.md §6    (validation pipeline, QM-020..QM-029b)
-//   - specs/queue-model.md §8.1  (QM-050 submit sequence)
-//   - specs/process-lifecycle.md §4.4 PL-003a (method-set)
-//
-// Bead ref: hk-nomxl.
-
 import (
 	"context"
 	"encoding/json"
@@ -34,11 +13,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 )
-
-// ---------------------------------------------------------------------------
-// QueueSetter — minimal interface so HandlerAdapter can update the daemon's
-// in-memory QueueStore without importing internal/daemon (cycle prevention).
-// ---------------------------------------------------------------------------
 
 // QueueSetter is the write side of the daemon's QueueStore. HandlerAdapter
 // calls SetQueue after every persist so the running workloop sees the updated
@@ -110,10 +84,6 @@ type EventEmitter interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
 
-// ---------------------------------------------------------------------------
-// RPCError — typed JSON-RPC error for queue operations
-// ---------------------------------------------------------------------------
-
 // RPCError is the JSON-RPC-shaped error returned by queue method handlers when
 // a request fails validation or encounters a queue-level rejection. The Code
 // field carries one of the -32010..-32019 error codes defined in errors.go per
@@ -139,8 +109,6 @@ func (e *RPCError) Error() string {
 	return fmt.Sprintf("queue RPC error %d: %s (%v)", e.Code, e.Message, e.Detail)
 }
 
-// rpcErrorFromValidation converts a ValidationError into an RPCError using
-// the QM-029b code mapping in JSONRPCError (errors.go).
 func rpcErrorFromValidation(ve ValidationError) *RPCError {
 	code, message := JSONRPCError(ve.Reason)
 	return &RPCError{
@@ -149,10 +117,6 @@ func rpcErrorFromValidation(ve ValidationError) *RPCError {
 		Detail:  ve.Detail,
 	}
 }
-
-// ---------------------------------------------------------------------------
-// HandleQueueSubmit
-// ---------------------------------------------------------------------------
 
 // HandleQueueSubmit handles a queue-submit JSON-RPC request.
 //
@@ -184,19 +148,13 @@ func HandleQueueSubmit(
 	if rpcErr := validatePiQueueWorkers(req); rpcErr != nil {
 		return QueueSubmitResponse{}, nil, nil, rpcErr
 	}
-	// Normalise the queue name for the per-name single-active guard and for
-	// the QM-002/2.1 name-validity pre-check inside Validate.
 	queueName := NormaliseQueueName(req.Name)
 
-	// Run the validation pipeline.
 	vreq := ValidationRequest{
 		Groups:    req.Groups,
 		QueueName: queueName,
 		IsAppend:  false,
 	}
-	// Note: the caller is responsible for loading the active queue and passing it
-	// in via a wrapper; here we use projectDir to load it ourselves per QM-027.
-	// Load by the normalised request name to enforce the per-name single-active guard.
 	existing, loadErr := Load(ctx, projectDir, queueName)
 	if loadErr != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
@@ -207,8 +165,6 @@ func HandleQueueSubmit(
 	}
 	vreq.ActiveQueue = existing
 
-	// Load other active queues for the EM-065 cross-queue double-queue guard.
-	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
 	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, queueName)
 	if oqErr != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
@@ -234,7 +190,6 @@ func HandleQueueSubmit(
 		return QueueSubmitResponse{}, nil, nil, rpcErr
 	}
 
-	// Mint queue_id per QM-010.
 	queueUUID, err := uuid.NewV7()
 	if err != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
@@ -249,7 +204,6 @@ func HandleQueueSubmit(
 		return QueueSubmitResponse{}, nil, nil, buildErr
 	}
 
-	// Persist per QM-001 (QM-063: persist before events).
 	if persistErr := Persist(ctx, projectDir, q); persistErr != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
 			Code:    -32099,
@@ -279,10 +233,8 @@ func BuildQueueSubmit(
 	}
 
 	now := acceptedAt.UTC()
-	// Build the in-memory Queue envelope per QM-050: all groups start pending.
 	groups := make([]Group, len(req.Groups))
 	for i, g := range req.Groups {
-		// Normalise submitted items: daemon-minted fields reset per §2.10.
 		items := make([]Item, len(g.Items))
 		for j, item := range g.Items {
 			items[j] = NewPendingItem(Item{
@@ -300,7 +252,6 @@ func BuildQueueSubmit(
 				TemplateParams: item.TemplateParams,
 			})
 		}
-		// Apply QM-025 deferred status to items that have an open blocker.
 		deferredSet := buildDeferredSet(deferredPairs, i)
 		for j := range items {
 			if _, deferred := deferredSet[items[j].BeadID]; deferred {
@@ -391,10 +342,6 @@ func validateQueueTemplateParams(req QueueSubmitRequest) *RPCError {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// HandleQueueAppend
-// ---------------------------------------------------------------------------
-
 // HandleQueueAppend handles a queue-append JSON-RPC request.
 //
 // Loads the active queue, validates the queue_id identity guard, then
@@ -424,17 +371,6 @@ func HandleQueueAppend(
 	return HandleQueueAppendOnQueue(ctx, req, ledger, projectDir, q)
 }
 
-// resolveAppendTargetFromDisk resolves the append target queue by loading it
-// from disk (bead ref: hk-1k5as):
-//  1. Name given → load by name (append-by-name, hk-tigaf.8).
-//  2. Name absent, QueueID given → enumerate all queues and find by UUID
-//     so that --queue-id alone works for non-main queues.
-//  3. Both absent → default to "main".
-//
-// NOTE (B1): callers holding the queue mutation lock must NOT use this —
-// resolve against the LOCKED in-memory store instead (see
-// HandlerAdapter.handleQueueAppendLocked) so the read-modify-write is
-// serialised against concurrent status mutations.
 func resolveAppendTargetFromDisk(
 	ctx context.Context,
 	req QueueAppendRequest,
@@ -506,9 +442,6 @@ func HandleQueueAppendOnQueue(
 		}
 	}
 
-	// Identity guard: when QueueID is supplied AND Name is also supplied,
-	// reject on mismatch (hk-tigaf.8). When resolved by UUID above, q.QueueID
-	// already equals req.QueueID by construction — no re-check needed.
 	if req.QueueID != "" && req.Name != "" && q.QueueID != req.QueueID {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
@@ -521,14 +454,11 @@ func HandleQueueAppendOnQueue(
 		}
 	}
 
-	// Convert []core.BeadID → []string for AppendItems.
 	beadIDStrs := make([]string, len(req.BeadIDs))
 	for i, id := range req.BeadIDs {
 		beadIDStrs[i] = string(id)
 	}
 
-	// Load other active queues for the EM-065 cross-queue double-queue guard.
-	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
 	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, NormaliseQueueName(q.Name))
 	if oqErr != nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
@@ -551,10 +481,6 @@ func HandleQueueAppendOnQueue(
 		}
 	}
 
-	// Compute newTailIndices: indices of appended items within the target group.
-	// AppendItems only returns success with an in-range GroupIndex, but guard
-	// the direct index defensively so a decode-time mismatch can never panic the
-	// socket handler. Bead ref: W4 mega-review §c.
 	if req.GroupIndex < 0 || req.GroupIndex >= len(mutated.Groups) {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
@@ -581,10 +507,6 @@ func HandleQueueAppendOnQueue(
 	return resp, mutated, events, nil
 }
 
-// ---------------------------------------------------------------------------
-// HandleQueueStatus
-// ---------------------------------------------------------------------------
-
 // HandleQueueStatus handles a queue-status JSON-RPC request.
 //
 // Loads and returns the current queue envelope.
@@ -607,10 +529,6 @@ func HandleQueueStatus(
 	projectDir string,
 	req QueueStatusRequest,
 ) (QueueStatusResponse, *RPCError) {
-	// ActiveRuns is computed for EVERY resolution path, including the ones
-	// that resolve no queue at all. The Queue field answers a question the
-	// caller asked with a name; this one answers "is anything running", which
-	// a caller with no name still has to be able to ask.
 	activeRuns, rpcErr := collectActiveRuns(ctx, projectDir)
 	if rpcErr != nil {
 		return QueueStatusResponse{}, rpcErr
@@ -618,7 +536,6 @@ func HandleQueueStatus(
 
 	switch {
 	case req.Name != "":
-		// Name-based lookup.
 		q, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
 		if loadErr != nil {
 			return QueueStatusResponse{}, &RPCError{
@@ -630,7 +547,6 @@ func HandleQueueStatus(
 		return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
 
 	case req.QueueID != "":
-		// UUID-based lookup: enumerate all queues and find the matching one.
 		q, findErr := findQueueByID(ctx, projectDir, req.QueueID)
 		if findErr != nil {
 			return QueueStatusResponse{}, findErr
@@ -670,14 +586,6 @@ func HandleQueueStatus(
 		}, nil
 
 	default:
-		// Backward-compatible default: load the "main" queue.
-		//
-		// The Queue field keeps that meaning, because QM-057 defines it and
-		// callers read it. What changes is that "main" is no longer the whole
-		// answer: work dispatched from a NAMED queue used to make this path
-		// report {"queue": null} while an agent was running, and every reader
-		// of that payload concluded the daemon was idle. ActiveRuns above is
-		// computed across all queues and says otherwise.
 		q, loadErr := Load(ctx, projectDir, QueueNameMain)
 		if loadErr != nil {
 			return QueueStatusResponse{}, &RPCError{
@@ -690,18 +598,6 @@ func HandleQueueStatus(
 	}
 }
 
-// collectActiveRuns enumerates every queue and returns one entry per item that
-// is currently dispatched.
-//
-// It returns an empty non-nil slice when nothing is in flight, so the encoded
-// payload carries [] rather than null and a reader can trust len() as the
-// answer to "is anything running".
-//
-// A queue that fails to load is skipped rather than failing the whole call,
-// matching findQueueByID: a single unreadable queue file must not make the
-// daemon unable to answer whether OTHER queues are busy. Only the enumeration
-// itself is fatal, because a failure there means the answer would be silently
-// partial.
 func collectActiveRuns(ctx context.Context, projectDir string) ([]ActiveRun, *RPCError) {
 	active := []ActiveRun{}
 
@@ -740,10 +636,6 @@ func collectActiveRuns(ctx context.Context, projectDir string) ([]ActiveRun, *RP
 	return active, nil
 }
 
-// ---------------------------------------------------------------------------
-// HandleQueueDryRun
-// ---------------------------------------------------------------------------
-
 // HandleQueueDryRun handles a queue-dry-run JSON-RPC request.
 //
 // Runs the full validation pipeline per §6 WITHOUT calling Persist and WITHOUT
@@ -761,11 +653,8 @@ func HandleQueueDryRun(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueDryRunResponse, *RPCError) {
-	// Normalise the queue name so the per-name single-active guard (QM-027)
-	// is evaluated against the correct per-name slot, not always "main".
 	queueName := NormaliseQueueName(req.Name)
 
-	// Load the active queue for QM-027 check (single-active-queue per name).
 	existing, loadErr := Load(ctx, projectDir, queueName)
 	if loadErr != nil {
 		return QueueDryRunResponse{}, &RPCError{
@@ -775,8 +664,6 @@ func HandleQueueDryRun(
 		}
 	}
 
-	// Load other active queues for the EM-065 cross-queue double-queue guard.
-	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
 	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, queueName)
 	if oqErr != nil {
 		return QueueDryRunResponse{}, &RPCError{
@@ -806,8 +693,6 @@ func HandleQueueDryRun(
 		return QueueDryRunResponse{}, rpcErrorFromValidation(verrs[0])
 	}
 
-	// Build the resolved Queue as it would exist post-submit (per §2.10).
-	// No Persist, no events per QM-028.
 	now := time.Now().UTC()
 	groups := make([]Group, len(req.Groups))
 	for i, g := range req.Groups {
@@ -837,9 +722,6 @@ func HandleQueueDryRun(
 		})
 	}
 
-	// Use a placeholder queue_id for the dry-run resolved envelope (per §2.10:
-	// "would-be Queue envelope as it would exist post-submit"). queue_id is
-	// daemon-minted at accept time so the dry-run uses a well-formed zero UUID.
 	resolvedQueue := NewActiveQueue(Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       "00000000-0000-0000-0000-000000000000",
@@ -848,7 +730,6 @@ func HandleQueueDryRun(
 		Groups:        groups,
 	})
 
-	// Build LedgerDepNotices from LedgerDepPairs.
 	notices := make([]LedgerDepNotice, 0, len(deferredPairs))
 	for _, p := range deferredPairs {
 		notices = append(notices, LedgerDepNotice{
@@ -864,16 +745,6 @@ func HandleQueueDryRun(
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// findQueueByID — UUID-based queue resolution shared by status + append
-// ---------------------------------------------------------------------------
-
-// findQueueByID enumerates all active queues under projectDir and returns the
-// first one whose QueueID equals queueID.  Returns (nil, nil) when no match is
-// found (callers should treat this as {queue: null}).  Returns a non-nil
-// *RPCError only on I/O failure.
-//
-// Bead ref: hk-1k5as.
 func findQueueByID(ctx context.Context, projectDir, queueID string) (*Queue, *RPCError) {
 	names, err := EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -894,10 +765,6 @@ func findQueueByID(ctx context.Context, projectDir, queueID string) (*Queue, *RP
 	}
 	return nil, nil
 }
-
-// ---------------------------------------------------------------------------
-// HandleQueueList
-// ---------------------------------------------------------------------------
 
 // HandleQueueList handles a queue-list JSON-RPC request.
 //
@@ -955,10 +822,6 @@ func HandleQueueList(
 
 	return QueueListResponse{Queues: summaries}, nil
 }
-
-// ---------------------------------------------------------------------------
-// HandlerAdapter — concrete QueueHandler implementation for daemon wiring
-// ---------------------------------------------------------------------------
 
 // HandlerAdapter wraps the four HandleQueue* functions and satisfies the
 // daemon.QueueHandler interface. It decodes raw JSON params from the socket
@@ -1035,11 +898,6 @@ type HandlerAdapter struct {
 	workerToggle func(name string, enabled bool) (string, error)
 }
 
-// emitOrLog publishes evt on the adapter's bus and LOGS a publish failure
-// rather than dropping it. A dropped queue event is invisible to every
-// downstream consumer (the workloop, the dashboard, replay), so the failure
-// has to leave a trace even though the RPC itself has already succeeded and
-// cannot be rolled back on it. where names the calling handler.
 func (a *HandlerAdapter) emitOrLog(ctx context.Context, where string, t core.EventType, raw []byte) {
 	if err := a.bus.Emit(ctx, t, raw); err != nil {
 		log.Printf("queue: %s: emit %s: %v", where, t, err)
@@ -1189,14 +1047,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		}
 	}
 
-	// H6 (two-writer lost-update / single-active TOCTOU fix): serialise the whole
-	// submit read-modify-write — the disk Load, the QM-027 single-active check,
-	// and the Persist all happen inside the pure HandleQueueSubmit, plus the
-	// in-memory write-back below — under the SAME queue mutation lock B1 uses for
-	// append and the workloop uses for status mutations. Without it two concurrent
-	// submits for the same new queue name can both pass the single-active check
-	// and both Persist to <name>.json (last-writer-wins drops one). Only test
-	// harnesses wiring a nil/plain QueueSetter fall through unlocked.
 	locker, hasLock := a.qs.(MutationLocker)
 	var lv LockedQueueView
 	if hasLock {
@@ -1211,14 +1061,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		return nil, rpcErr
 	}
 
-	// Read every value the rest of this function needs BEFORE the queue is
-	// published, because publishing hands q to another goroutine (hk-e7y44).
-	// LockedSetQueueByName puts q in the shared store and Wake starts the work
-	// loop writing q.Groups[i].Status through activateFirstPendingGroupLocked.
-	// The emit block below used to count the beads with a range over q.Groups,
-	// which copies each Group by VALUE — Status included — so it read a field
-	// the scheduler was writing. The emits do not mutate the queue, but not
-	// mutating is not the same as not touching it.
 	var (
 		submittedPayload core.QueueSubmittedPayload
 		queueName        string
@@ -1240,11 +1082,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		queueWorkers = q.Workers
 	}
 
-	// Thread the persisted queue into the running workloop (hk-4ukkq). Under the
-	// mutation lock we MUST write back through the LOCKED view — NOT a.qs.SetQueue,
-	// which re-acquires the non-reentrant queueMu and would self-deadlock (the same
-	// trap B1's appendUnderLock avoids via lv.LockedSetQueueByName). Wake the
-	// workloop, then release the lock.
 	if q != nil {
 		if hasLock {
 			lv.LockedSetQueueByName(NormaliseQueueName(q.Name), q)
@@ -1257,26 +1094,17 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		lv.Done()
 	}
 
-	// QM-066 oversubscription warning: a per-queue Workers count above the global
-	// --max-concurrent is permitted (the runtime global ceiling still wins per
-	// QM-062) but is logged ONCE here at submit so operators notice the queue can
-	// never reach its requested width. Emitted to stderr (the daemon's diagnostic
-	// channel); not an error.
 	if q != nil && a.globalMaxConcurrent >= 1 && queueWorkers > a.globalMaxConcurrent {
 		fmt.Fprintf(os.Stderr,
 			"daemon: queue-submit: queue %q workers=%d oversubscribes global --max-concurrent=%d; global ceiling still applies (QM-062/QM-066)\n",
 			queueName, queueWorkers, a.globalMaxConcurrent)
 	}
 
-	// Emit queue_submitted event (hk-peucr). The queue has already been
-	// persisted inside HandleQueueSubmit so QM-063 (persist-before-emit) is
-	// satisfied.
 	if a.bus != nil && q != nil {
 		if raw, err := json.Marshal(submittedPayload); err == nil {
 			a.emitOrLog(ctx, "HandleQueueSubmit", core.EventTypeQueueSubmitted, raw)
 		}
 
-		// Emit queue_item_deferred_for_ledger_dep for QM-025 deferred items.
 		detectedAt := submittedPayload.SubmittedAt
 		for _, pair := range ledgerDepPairs {
 			deferPayload := core.QueueItemDeferredForLedgerDepPayload{
@@ -1302,24 +1130,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 	return data, nil
 }
 
-// appendUnderLock performs the whole queue-append read-modify-write under the
-// queue mutation lock (B1: two-writer lost-update fix):
-//
-//  1. LockForMutationView — same lock as the workloop's LockForMutation.
-//  2. Resolve the target queue from the LIVE locked in-memory store (NOT a
-//     fresh disk Load, which would race concurrent status mutations). Falls
-//     back to disk only when the queue is not in memory (e.g. adapter wired
-//     to a fresh store) — still safe because every writer persists under
-//     this same lock.
-//  3. Clone the resolved queue and run AppendItems on the CLONE (only after
-//     validation passes — a rejected append leaves the store untouched). The
-//     live store entry is not mutated until the persist below succeeds
-//     (hk-3hh9w: no memory-ahead-of-disk on a failed persist).
-//  4. Persist the clone WHILE holding the lock (QM-063 persist-before-emit),
-//     install it via the locked view only on success, release, then Wake the
-//     workloop.
-//
-// Events are returned for the caller to emit AFTER the lock is released.
 func (a *HandlerAdapter) appendUnderLock(
 	ctx context.Context,
 	req QueueAppendRequest,
@@ -1328,7 +1138,6 @@ func (a *HandlerAdapter) appendUnderLock(
 	lv := locker.LockForMutationView()
 	defer lv.Done()
 
-	// Resolve from the locked in-memory store (hk-1k5as resolution order).
 	var q *Queue
 	switch {
 	case req.Name != "":
@@ -1344,7 +1153,6 @@ func (a *HandlerAdapter) appendUnderLock(
 		q = lv.LockedQueueByName(QueueNameMain)
 	}
 
-	// Disk fallback: queue persisted but not (yet) in the in-memory store.
 	if q == nil {
 		diskQ, rpcErr := resolveAppendTargetFromDisk(ctx, req, a.projectDir)
 		if rpcErr != nil {
@@ -1353,14 +1161,6 @@ func (a *HandlerAdapter) appendUnderLock(
 		q = diskQ
 	}
 
-	// Snapshot-and-swap (hk-3hh9w): AppendItems mutates the queue in place, and
-	// for the in-memory-resolved case q IS the live locked store entry. Mutating
-	// it directly and then Persisting would leave the in-memory store ahead of
-	// disk if Persist fails (memory has the appended items, disk does not, no
-	// rollback). Mutate a clone instead and install it into the store only after
-	// Persist succeeds — mirroring the legacy path, which operates on a fresh
-	// disk-loaded copy and SetQueues only on a successful persist. On Persist
-	// failure the live store is left untouched.
 	if _, err := json.Marshal(q); err != nil {
 		return QueueAppendResponse{}, nil, &RPCError{
 			Code: -32099, Message: "internal_error",
@@ -1381,24 +1181,15 @@ func (a *HandlerAdapter) appendUnderLock(
 	}
 
 	if mutated != nil {
-		// QM-063: persist BEFORE emitting; still under the mutation lock so a
-		// concurrent status-mutation cannot interleave and clobber this write.
-		// mutated is the clone, so a Persist failure here has NOT touched the
-		// live store — nothing to roll back.
 		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
 			return QueueAppendResponse{}, nil, &RPCError{
 				Code: -32099, Message: "internal_error",
 				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
 			}
 		}
-		// Install the persisted clone into the live store only now that disk and
-		// memory agree.
 		lv.LockedSetQueueByName(NormaliseQueueName(mutated.Name), mutated)
 	}
 
-	// Wake AFTER the write-back; the deferred Done releases the lock when this
-	// function returns, and Wake's buffered non-blocking send is safe to fire
-	// while still holding it (it only touches wakeC).
 	locker.Wake()
 	return resp, events, nil
 }
@@ -1421,12 +1212,6 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-append request: %v", err)},
 		}
 	}
-	// B1 (two-writer lost-update fix): when the QueueSetter also implements
-	// MutationLocker (daemon.QueueStore does), the ENTIRE
-	// read-modify-write — resolve the live queue, AppendItems, Persist, write
-	// back — runs under the queue mutation lock, serialised against the
-	// workloop's LockForMutation status mutations. Only test harnesses that
-	// pass a nil/plain QueueSetter fall through to the legacy unlocked path.
 	locker, hasLock := a.qs.(MutationLocker)
 
 	var resp QueueAppendResponse
@@ -1444,8 +1229,6 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 			return nil, rpcErr
 		}
 
-		// Persist the mutated queue (QM-063: persist before emit) and update the
-		// in-memory QueueStore so the workloop sees the appended items (hk-lzs8r).
 		if mutated != nil {
 			if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
 				return nil, &RPCError{
@@ -1459,7 +1242,6 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 		}
 	}
 
-	// Emit append events returned by AppendItems (hk-peucr).
 	if a.bus != nil {
 		for _, evt := range events {
 			a.emitOrLog(ctx, "HandleQueueAppend", evt.Type, evt.Payload)
@@ -1495,15 +1277,11 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawM
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	// Mark a shut queue here too (hk-ujanf). queue-status resolves the name the
-	// caller asked for, so read the name off the resolved queue rather than the
-	// request: --queue-id names no queue at all.
 	if reader, ok := a.qs.(QuarantineReader); ok && resp.Queue != nil {
 		if reason := reader.QuarantineReason(resp.Queue.Name); reason != nil {
 			resp.QuarantineReason = reason.Error()
 		}
 	}
-	// Surface the current effective ceiling (hk-ohiaf).
 	if a.concurrencyGet != nil {
 		resp.MaxConcurrent = a.concurrencyGet()
 	} else {
@@ -1555,9 +1333,6 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	// Mark every queue the daemon has shut (hk-ujanf). HandleQueueList answers
-	// from disk, and the quarantine is in memory, so the marker must be added
-	// here or the row shows a dead queue as a healthy one.
 	if reader, ok := a.qs.(QuarantineReader); ok {
 		for i := range resp.Queues {
 			if reason := reader.QuarantineReason(resp.Queues[i].Name); reason != nil {
@@ -1565,7 +1340,6 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 			}
 		}
 	}
-	// Surface the current effective ceiling (hk-ohiaf).
 	if a.concurrencyGet != nil {
 		resp.MaxConcurrent = a.concurrencyGet()
 	} else {
@@ -1584,59 +1358,14 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	return data, nil
 }
 
-// resolveSpawnCap decides what the local spawn cap should be for a
-// set-concurrency request of n, given the cap currently in force. It returns
-// the target cap, or a refusal.
-//
-// Each LOCAL in-flight bead occupies 2 non-terminal sessions (implementer +
-// reviewer), so a ceiling of n beads needs n*2 slots. Remote runs (hk-hs7ex)
-// spawn tmux on the WORKER and do not consume the local semaphore, so nothing
-// here applies to them.
-//
-// THE RESIZE IS SYMMETRIC, and that is the repair (hk-ad79i). It used to run
-// only inside `n*2 > cap`, so a LOWER n never reached the setter and the cap
-// RATCHETED: one `set-concurrency 999999` installed 1999998 slots, and setting
-// the value back to 1 left them installed for the life of the daemon. The
-// operator's undo did not undo the thing that matters, and the readback that
-// looked stale was in fact telling the truth about a cap nobody could reach.
-//
-// Three bounds, in the order they are applied:
-//
-//   - The FLOOR. The target never goes below the cap the daemon started with,
-//     so lowering max_concurrent cannot discard an operator's explicit
-//     HARMONIK_MAX_CONCURRENT_SESSIONS. Without it, the fix for the ratchet
-//     would have introduced the mirror-image defect.
-//   - The CEILING. A raise beyond what the host can serve is REFUSED. The
-//     auto-raise (hk-omvan) deliberately replaced the old refusal so the knob
-//     could scale real throughput without a restart, but it took its bound
-//     from the request itself, so it agreed with any number it was given. It
-//     is now bounded by a measurement of the host instead.
-//   - No live resize (spawnCapSet nil, the pre-hk-omvan substrate). Any raise
-//     is refused with the hk-vfeeo detail, unchanged. Lowering is a no-op
-//     there because the cap is fixed at startup.
-//
-// Bead ref: hk-ad79i (follow-ups hk-vfeeo, hk-omvan).
 func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 	want := n * 2
 	if want < a.spawnCapFloor {
 		want = a.spawnCapFloor
 	}
 	if want <= currentCap {
-		// Lowering, or no change. Nothing to refuse: giving back slots is always
-		// safe. Resizing moves a field, in-flight holders keep the slots they
-		// already have, and new acquires block until the cap drains. Nothing in
-		// flight is killed.
-		//
-		// The reassuring half of that is not the whole of it, and reading it as
-		// "a shrink is free" cost a P1 (hk-6yrs9). A shrink narrows the pool
-		// that a finished run's merge node draws on, and that node waits with
-		// no timeout at all. The substrate keeps one slot free through the
-		// shrink and gives the excess back as the over-cap sessions drain
-		// (SetCapacityKeepingOneFree in internal/daemon), so the merge still
-		// starts — but the guarantee lives there, not here.
 		return want, nil
 	}
-	// A raise from here on.
 	if a.spawnCapSet == nil {
 		safeMax := currentCap / 2
 		reason := fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap. Each LOCAL bead needs 2 sessions, so %d asks for %d non-terminal slots. The cap now in force is %d slots, which is max_concurrent %d. Nothing changed. Restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap. Remote worker runs are not subject to this limit.", n, n, want, currentCap, safeMax, n, n*2)
@@ -1667,19 +1396,8 @@ func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 	return want, nil
 }
 
-// spawnCapExceededReason is the typed reason code for a refused spawn-cap
-// raise. It stays the first word of the refusal message so callers can still
-// match the class of the error.
 const spawnCapExceededReason = "spawn_cap_exceeded"
 
-// spawnCapExceededMessage joins the typed reason code to the human explanation.
-//
-// The numbers MUST ride in Message, not only in Detail. The daemon copies an
-// RPCError onto the wire as SocketResponse{Error: Message, ErrorCode: Code} and
-// drops Detail, and the CLI prints "error: <Message> (code <n>)". So a refusal
-// that kept its ceiling and its current value in Detail reached the operator as
-// the bare token, and a person who hit the cap with one extra digit learned
-// neither number (hk-qm3zv).
 func spawnCapExceededMessage(reason string) string {
 	return spawnCapExceededReason + ": " + reason
 }
@@ -1704,8 +1422,6 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)},
 		}
 	}
-	// Validate N >= 1 (as documented) before touching the controller: a zero or
-	// negative ceiling would stall or corrupt dispatch accounting.
 	if req.N < 1 {
 		return nil, &RPCError{
 			Code: -32099, Message: "invalid_concurrency",
@@ -1718,8 +1434,6 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"},
 		}
 	}
-	// The response reports the cap ACTUALLY in force after this call, which is
-	// what makes the readback honest once the resize runs in both directions.
 	spawnCap := 0
 	if a.spawnCapGet != nil {
 		spawnCap = a.spawnCapGet()
@@ -1788,9 +1502,6 @@ func (a *HandlerAdapter) HandleQueueCancel(ctx context.Context, params json.RawM
 		}
 	}
 	if q == nil {
-		// Absent or an unparseable corrupt stub: nothing to archive, but still
-		// reap any stale in-memory slot under this name so it can't wedge the
-		// cross-queue dedup guard either (hk-0mmy4).
 		if a.qs != nil {
 			a.qs.ClearQueueByName(name)
 		}
@@ -1881,23 +1592,6 @@ func (a *HandlerAdapter) HandleWorkerSetEnabled(_ context.Context, params json.R
 	return data, nil
 }
 
-// ---------------------------------------------------------------------------
-// loadOtherQueues — EM-065 cross-queue helper
-// ---------------------------------------------------------------------------
-
-// loadOtherQueues returns all active queues under projectDir whose name
-// differs from excludeName. Used by the EM-065 cross-queue double-queue guard
-// (specs/execution-model.md §4.14) in HandleQueueSubmit, HandleQueueAppend,
-// and HandleQueueDryRun to populate ValidationRequest.OtherQueues.
-//
-// Returns nil when no other queues exist (empty queues dir or only the
-// excluded name is present). Individual per-queue load failures (e.g., a
-// corrupt json file for a different queue) are silently skipped: the EM-065
-// guard is a best-effort pre-flight; the Beads atomic claim (BI-009) is the
-// final barrier. The returned error covers only directory-level I/O failures
-// (EnumerateQueueNames failure).
-//
-// Bead ref: hk-xizhl.
 func loadOtherQueues(ctx context.Context, projectDir, excludeName string) ([]*Queue, error) {
 	names, err := EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -1917,13 +1611,6 @@ func loadOtherQueues(ctx context.Context, projectDir, excludeName string) ([]*Qu
 	return others, nil
 }
 
-// ---------------------------------------------------------------------------
-// buildDeferredSet — shared helper for submit and dry-run
-// ---------------------------------------------------------------------------
-
-// buildDeferredSet returns a map of beadID → blockerBeadID for all QM-025
-// notices that apply to group groupIndex. Used by both HandleQueueSubmit and
-// HandleQueueDryRun to apply deferred-for-ledger-dep status to items.
 func buildDeferredSet(pairs []LedgerDepPair, groupIndex int) map[core.BeadID]core.BeadID {
 	set := make(map[core.BeadID]core.BeadID)
 	for _, p := range pairs {

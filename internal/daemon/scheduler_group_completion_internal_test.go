@@ -15,29 +15,11 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// The group completion is the one path that marks a queue item terminal. Every
-// case below asserts on the queue read back OFF DISK, never out of the store:
-// the claim is durability, and the in-memory store agrees with a decision that
-// never reached a file.
-//
-// Bead ref: hk-nw6on.
-
 const (
-	// completionQueueName is the queue every case completes on. The completion
-	// is per-item, so a second queue name would add no coverage.
 	completionQueueName = queue.QueueNameMain
 
-	// The fixture holds TWO groups, and the items it completes sit in the
-	// SECOND group behind a completed group and a pending sibling. A one-group
-	// one-item fixture cannot tell a lookup that honours the group index, the
-	// item index and the bead id from one hardcoded to the first of each.
 	completionGroupIndex = 1
 
-	// completionDecoyBead is the THIRD item. The stale-snapshot case changes a
-	// byte on it as well as bumping the generation, because the write checks
-	// the generation BEFORE it compares bytes: a generation-only bump would
-	// exercise one of the two guards and leave a future reordering passing for
-	// the wrong reason.
 	completionDecoyBead = core.BeadID("hk-completion-decoy")
 
 	completionFirstBead  = core.BeadID("hk-completion-first")
@@ -48,16 +30,8 @@ const (
 	completionSecondIndex = 2
 )
 
-// completionStamp is the terminal time every case reports. A fixed value keeps
-// the persisted bytes comparable between runs.
 var completionStamp = time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
 
-// completionFixture builds a project directory holding one active queue whose
-// two target items sit behind a completed group and a pending sibling, and
-// reserves both targets so they are durably dispatched.
-//
-// The pending sibling is what keeps the group active after both completions,
-// so each case tests the item write rather than the queue-completion machinery.
 func completionFixture(t *testing.T) (projectDir string, store *queuewiring.QueueStore, queueID string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -114,9 +88,6 @@ func completionFixture(t *testing.T) (projectDir string, store *queuewiring.Queu
 	return projectDir, store, queueID
 }
 
-// completionPort builds the seam the completion runs through. eagerRefill is
-// left zero so the refill effect no-ops, and the emitter is a spy rather than
-// nil because a committed completion emits its group intents.
 func completionPort(projectDir string, store *queuewiring.QueueStore) reapSeamPort {
 	return reapSeamPort{
 		bus:           &intentDurabilityEmitter{},
@@ -127,7 +98,6 @@ func completionPort(projectDir string, store *queuewiring.QueueStore) reapSeamPo
 	}
 }
 
-// loadCompletionItems reads the active group's three items back off disk.
 func loadCompletionItems(t *testing.T, projectDir string) (persisted queue.Queue, decoy, first, second queue.Item) {
 	t.Helper()
 	//nolint:gosec // the path is built from t.TempDir(); the test wrote this file itself
@@ -145,9 +115,6 @@ func loadCompletionItems(t *testing.T, projectDir string) (persisted queue.Queue
 	return persisted, items[completionDecoyIndex], items[completionFirstIndex], items[completionSecondIndex]
 }
 
-// staleCompletionSnapshot returns a snapshot that is guaranteed to lose, having
-// invalidated the live queue against BOTH of the write's guards: the generation
-// counter has moved and the bytes differ at the item the caller is not writing.
 func staleCompletionSnapshot(store *queuewiring.QueueStore) queuewiring.Snapshot {
 	stale := store.Snapshot(completionQueueName)
 	locked := store.LockForMutation()
@@ -163,8 +130,6 @@ func staleCompletionSnapshot(store *queuewiring.QueueStore) queuewiring.Snapshot
 			}
 		}
 	}
-	// LockedSetQueueByName bumps the generation, so the snapshot above is now
-	// stale on the generation guard as well as on the byte comparison.
 	locked.LockedSetQueueByName(completionQueueName, live)
 	return stale
 }
@@ -185,12 +150,9 @@ func TestEvaluateGroupAdvanceFrom_RetriesAfterLosingTheSnapshotRace(t *testing.T
 	projectDir, store, queueID := completionFixture(t)
 	port := completionPort(projectDir, store)
 
-	// The first run finishes and records its outcome normally. Its write is one
-	// of the generation bumps the second run has to survive.
 	evaluateGroupAdvanceWithOutcome(t.Context(), port, completionQueueName, queueID,
 		completionGroupIndex, completionFirstIndex, true, completionStamp)
 
-	// The second run's snapshot is stale before the loop ever runs.
 	stale := staleCompletionSnapshot(store)
 	evaluateGroupAdvanceFrom(t.Context(), port, stale, groupCompletion{
 		QueueName:   completionQueueName,
@@ -210,8 +172,6 @@ func TestEvaluateGroupAdvanceFrom_RetriesAfterLosingTheSnapshotRace(t *testing.T
 			"outcome was never recorded and its group can never reach all-terminal",
 			second.Status, queue.ItemStatusCompleted)
 	}
-	// The retry re-reads the live queue, so it must carry the byte another
-	// writer changed rather than replay the caller's stale copy over it.
 	if decoy.LastFailureReason != "x" {
 		t.Errorf("persisted decoy LastFailureReason = %q; want %q — the retry wrote the stale snapshot back and "+
 			"reverted another writer's change", decoy.LastFailureReason, "x")
@@ -245,21 +205,16 @@ func TestEvaluateGroupAdvanceWithOutcome_RecordsAnOutcomeOnADrainingQueue(t *tes
 		t.Errorf("persisted first item = %q; want %q — a run that finished during the drain lost its outcome, and "+
 			"nothing re-selects a dispatched item", first.Status, queue.ItemStatusCompleted)
 	}
-	// The drain must survive the write. A completion that resumed the queue
-	// would start dispatching again, which is the one thing a drain forbids.
 	if persisted.Status != queue.QueueStatusPausedByDrain {
 		t.Errorf("persisted queue status = %q; want %q — recording an outcome must not resume a drained queue",
 			persisted.Status, queue.QueueStatusPausedByDrain)
 	}
-	// The other in-flight run has not reported yet, so it stays dispatched.
 	if second.Status != queue.ItemStatusDispatched {
 		t.Errorf("persisted second item = %q; want %q — the completion wrote an item it was not given",
 			second.Status, queue.ItemStatusDispatched)
 	}
 }
 
-// pauseCompletionQueueForDrain parks the fixture's queue the way an operator
-// drain does, through the real transition rather than by assigning the status.
 func pauseCompletionQueueForDrain(t *testing.T, store *queuewiring.QueueStore) {
 	t.Helper()
 	locked := store.LockForMutation()
@@ -274,9 +229,6 @@ func pauseCompletionQueueForDrain(t *testing.T, store *queuewiring.QueueStore) {
 	locked.LockedSetQueueByName(completionQueueName, live)
 }
 
-// finalCompletionFixture builds a project directory holding one active queue of
-// ONE group and ONE item, reserved so it is durably dispatched. Completing that
-// item is the last item of the last group, so it completes the whole queue.
 func finalCompletionFixture(t *testing.T) (projectDir string, store *queuewiring.QueueStore, queueID string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -324,8 +276,6 @@ func TestEvaluateGroupAdvanceWithOutcome_CompletesTheQueueOnADrainingQueue(t *te
 	evaluateGroupAdvanceWithOutcome(t.Context(), port, completionQueueName, queueID,
 		0, 0, true, completionStamp)
 
-	// The completed canonical file is unlinked and the name is released. A
-	// queue file still on disk is the stall this case exists to catch.
 	canonical := filepath.Join(projectDir, ".harmonik", "queues", completionQueueName+".json")
 	if _, err := os.Stat(canonical); !os.IsNotExist(err) {
 		raw, _ := os.ReadFile(canonical) //nolint:errcheck,gosec // best-effort detail for the failure message; the path is under t.TempDir()
@@ -344,8 +294,6 @@ func TestEvaluateGroupAdvanceWithOutcome_CompletesTheQueueOnADrainingQueue(t *te
 func TestEvaluateGroupAdvanceWithOutcome_GroupFailureOutranksARestartPause(t *testing.T) {
 	projectDir, store, queueID := completionFixture(t)
 	port := completionPort(projectDir, store)
-	// The decoy is the third pending item; fail it too so the group can reach
-	// all-terminal from the two completions below.
 	failDecoyItem(t, store, projectDir)
 	pauseCompletionQueueForRestart(t, store)
 
@@ -374,8 +322,6 @@ func TestEvaluateGroupAdvanceWithOutcome_GroupFailureOutranksARestartPause(t *te
 	}
 }
 
-// failDecoyItem marks the fixture's third item failed through the reservation
-// owner, so the group can reach all-terminal on the two reported outcomes.
 func failDecoyItem(t *testing.T, store *queuewiring.QueueStore, projectDir string) {
 	t.Helper()
 	snapshot := store.Snapshot(completionQueueName)
@@ -396,8 +342,6 @@ func failDecoyItem(t *testing.T, store *queuewiring.QueueStore, projectDir strin
 	}
 }
 
-// pauseCompletionQueueForRestart parks the fixture's queue the way a clean
-// daemon shutdown does, which is the pause that sets the resume-on-start bit.
 func pauseCompletionQueueForRestart(t *testing.T, store *queuewiring.QueueStore) {
 	t.Helper()
 	locked := store.LockForMutation()
@@ -415,25 +359,6 @@ func pauseCompletionQueueForRestart(t *testing.T, store *queuewiring.QueueStore)
 	locked.LockedSetQueueByName(completionQueueName, live)
 }
 
-// ── the give-up branch ───────────────────────────────────────────────────────
-
-// perpetuallyStaleLedger invalidates the caller's snapshot from INSIDE the
-// completion attempt, which is the only place a test can reach.
-//
-// The retry loop re-reads a fresh snapshot after every loss, so arranging one
-// stale snapshot up front loses exactly one attempt. Losing all of them needs a
-// writer that moves the queue between the loop's read and the attempt's write —
-// and the failure-propagation ledger is called in precisely that window, on
-// every attempt, before the transaction runs.
-//
-// The sibling's technique does NOT port. releaseFrom's give-up test forces its
-// losses with a cancelled context, but a cancelled context is not a stale
-// snapshot: under the positive ErrStaleSnapshot classification it settles
-// rather than contends, so copying that here would exercise the wrong branch
-// and pass for the wrong reason.
-//
-// BlocksEdge answers false, so nothing is propagated and the group keeps its
-// shape. The bump is the whole point of the fake; the answer is incidental.
 type perpetuallyStaleLedger struct {
 	store *queuewiring.QueueStore
 
@@ -461,11 +386,6 @@ func (l *perpetuallyStaleLedger) BlocksEdge(context.Context, core.BeadID, core.B
 	if live == nil {
 		return false, nil
 	}
-	// Move the bytes as well as the counter. The write checks the generation
-	// BEFORE it compares bytes, so a counter-only bump would exercise one of
-	// the two guards and leave a future reordering passing for the wrong
-	// reason. This writes to the store only — never to disk — so the on-disk
-	// assertion below is about the completion alone.
 	for gi := range live.Groups {
 		for ii := range live.Groups[gi].Items {
 			if live.Groups[gi].Items[ii].BeadID == completionDecoyBead {
@@ -477,13 +397,6 @@ func (l *perpetuallyStaleLedger) BlocksEdge(context.Context, core.BeadID, core.B
 	return false, nil
 }
 
-// strandedCompletionFixture builds a project directory holding one active queue
-// whose group holds a DEFERRED decoy and one dispatched target.
-//
-// The decoy is deferred rather than pending because that is what makes the
-// ledger run: FailDeferredDependents only consults it for items in the
-// ledger-deferred state. Deferred is not terminal, so the group stays active
-// and the completion reaches the ordinary intermediate write.
 func strandedCompletionFixture(t *testing.T) (projectDir string, store *queuewiring.QueueStore, queueID string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -546,9 +459,6 @@ func TestEvaluateGroupAdvanceFrom_GivesUpAfterTheBudgetAndSaysTheItemIsStranded(
 		})
 	})
 
-	// Every attempt reached the ledger, so every attempt really did run and
-	// really did lose. A test where the loop exited early would still see the
-	// stranded line if the budget were misread, but it would not see this.
 	if ledger.calls != groupCompletionRetryBudget {
 		t.Errorf("ledger was consulted %d times; want %d — the loop did not spend its whole budget",
 			ledger.calls, groupCompletionRetryBudget)
@@ -567,7 +477,6 @@ func TestEvaluateGroupAdvanceFrom_GivesUpAfterTheBudgetAndSaysTheItemIsStranded(
 		}
 	}
 
-	// The give-up path must not claim to have recorded anything.
 	persisted := loadStrandedQueue(t, projectDir)
 	target := persisted.Groups[0].Items[1]
 	if target.Status != queue.ItemStatusDispatched {
@@ -579,7 +488,6 @@ func TestEvaluateGroupAdvanceFrom_GivesUpAfterTheBudgetAndSaysTheItemIsStranded(
 	}
 }
 
-// loadStrandedQueue reads the one-group fixture's queue back off disk.
 func loadStrandedQueue(t *testing.T, projectDir string) queue.Queue {
 	t.Helper()
 	//nolint:gosec // the path is built from t.TempDir(); the test wrote this file itself
@@ -597,9 +505,6 @@ func loadStrandedQueue(t *testing.T, projectDir string) queue.Queue {
 	return persisted
 }
 
-// completionCaptureStderr runs fn with os.Stderr redirected to a pipe and
-// returns everything fn wrote there. The reader is drained on its own goroutine
-// so a writer that outruns the pipe buffer cannot deadlock the test.
 func completionCaptureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()

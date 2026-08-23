@@ -1,18 +1,5 @@
 package watch_test
 
-// ledger_we2_test.go — RED→GREEN tests for WE2 (watch event ledger).
-//
-// Three required assertions (task spec):
-//   (a) A Scan advances the cursor to the last event_id WITHOUT touching any
-//       comms-recv cursor.
-//   (b) A duplicate event_id is not double-counted.
-//   (c) A simulated subscription_gap triggers a re-scan from the cursor and
-//       returns events that were dropped from the live stream.
-//
-// Done-check: these tests must be GREEN; no comms-recv cursor write must
-// appear on the watch read path (verified structurally: watch.Ledger only
-// writes .harmonik/watch/cursor and .harmonik/watch/latest.json).
-
 import (
 	"encoding/json"
 	"os"
@@ -28,8 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/watch"
 )
 
-// ledgerFixtureDir builds a temp project tree with .harmonik/events/ and
-// .harmonik/watch/ sub-dirs.  Returns (projectDir, harmonikDir, eventsPath).
 func ledgerFixtureDir(t *testing.T) (projectDir, harmonikDir, eventsPath string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -43,7 +28,6 @@ func ledgerFixtureDir(t *testing.T) (projectDir, harmonikDir, eventsPath string)
 	return projectDir, harmonikDir, filepath.Join(eventsDir, "events.jsonl")
 }
 
-// ledgerFixtureEvent builds a minimal valid core.Event with a fresh UUIDv7.
 func ledgerFixtureEvent(t *testing.T, evType string) core.Event {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -60,7 +44,6 @@ func ledgerFixtureEvent(t *testing.T, evType string) core.Event {
 	}
 }
 
-// ledgerFixtureAppend marshals events and appends them to eventsPath.
 func ledgerFixtureAppend(t *testing.T, eventsPath string, events []core.Event) {
 	t.Helper()
 	w, err := eventbus.OpenJSONLWriter(eventsPath)
@@ -83,8 +66,6 @@ func ledgerFixtureAppend(t *testing.T, eventsPath string, events []core.Event) {
 	}
 }
 
-// readCursorFile reads the cursor file and returns its trimmed content.
-// Returns "" if the file does not exist.
 func readCursorFile(t *testing.T, harmonikDir string) string {
 	t.Helper()
 	path := filepath.Join(harmonikDir, "watch", "cursor")
@@ -120,7 +101,6 @@ func TestWatchLedger_ScanAdvancesCursorWithoutTouchingRecvCursor(t *testing.T) {
 		t.Fatalf("Scan: %v", err)
 	}
 
-	// Returned exactly the 3 events in order.
 	if len(got) != 3 {
 		t.Fatalf("Scan: want 3 events, got %d", len(got))
 	}
@@ -131,7 +111,6 @@ func TestWatchLedger_ScanAdvancesCursorWithoutTouchingRecvCursor(t *testing.T) {
 		t.Errorf("event[2] EventID mismatch: got %v, want %v", got[2].EventID, evC.EventID)
 	}
 
-	// Watch cursor advanced to the last event.
 	cursorStr := readCursorFile(t, harmonikDir)
 	if cursorStr == "" {
 		t.Fatal("cursor file not written after Scan")
@@ -140,7 +119,6 @@ func TestWatchLedger_ScanAdvancesCursorWithoutTouchingRecvCursor(t *testing.T) {
 		t.Errorf("cursor: got %q, want %q", cursorStr, evC.EventID.String())
 	}
 
-	// comms-recv cursor directory MUST NOT exist.
 	recvCursorDir := filepath.Join(harmonikDir, "comms", "cursors")
 	if _, statErr := os.Stat(recvCursorDir); !os.IsNotExist(statErr) {
 		t.Errorf("comms-recv cursor dir %q must not be created by Scan (recv-cursor contamination)", recvCursorDir)
@@ -167,7 +145,6 @@ func TestWatchLedger_DedupeEventID(t *testing.T) {
 		t.Fatalf("NewLedger: %v", err)
 	}
 
-	// Simulate the live stream delivering evA before the scan.
 	ledger.MarkSeen(evA.EventID)
 
 	got, err := ledger.Scan(eventsPath)
@@ -175,7 +152,6 @@ func TestWatchLedger_DedupeEventID(t *testing.T) {
 		t.Fatalf("Scan: %v", err)
 	}
 
-	// evA is already seen → only evB and evC are returned.
 	if len(got) != 2 {
 		t.Fatalf("Scan after MarkSeen: want 2 events, got %d", len(got))
 	}
@@ -186,7 +162,6 @@ func TestWatchLedger_DedupeEventID(t *testing.T) {
 		t.Errorf("event[1] want evC (%v), got %v", evC.EventID, got[1].EventID)
 	}
 
-	// A second Scan with no new events returns nothing (cursor at evC, no events after it).
 	got2, err := ledger.Scan(eventsPath)
 	if err != nil {
 		t.Fatalf("second Scan: %v", err)
@@ -220,7 +195,6 @@ func TestWatchLedger_SubscriptionGapRescans(t *testing.T) {
 		t.Fatalf("NewLedger: %v", err)
 	}
 
-	// Normal scan: A, B, C processed; cursor advances to C.
 	got, err := ledger.Scan(eventsPath)
 	if err != nil {
 		t.Fatalf("initial Scan: %v", err)
@@ -232,15 +206,12 @@ func TestWatchLedger_SubscriptionGapRescans(t *testing.T) {
 		t.Fatalf("cursor after initial Scan: got %v, want %v", ledger.Cursor(), evC.EventID)
 	}
 
-	// Append D, E — the "dropped" events (subscription_gap).
 	evD := ledgerFixtureEvent(t, "run_started")
 	evE := ledgerFixtureEvent(t, "run_completed")
 	ledgerFixtureAppend(t, eventsPath, []core.Event{evD, evE})
 
-	// Additionally simulate the live stream having delivered D already.
 	ledger.MarkSeen(evD.EventID)
 
-	// subscription_gap re-scan: should return only E (D is in the seen set).
 	got2, err := ledger.ScanOnSubscriptionGap(eventsPath)
 	if err != nil {
 		t.Fatalf("ScanOnSubscriptionGap: %v", err)
@@ -252,7 +223,6 @@ func TestWatchLedger_SubscriptionGapRescans(t *testing.T) {
 		t.Errorf("ScanOnSubscriptionGap: want evE (%v), got %v", evE.EventID, got2[0].EventID)
 	}
 
-	// Cursor advanced to E.
 	if ledger.Cursor() != evE.EventID {
 		t.Errorf("cursor after gap re-scan: got %v, want %v", ledger.Cursor(), evE.EventID)
 	}

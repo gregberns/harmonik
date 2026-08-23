@@ -135,8 +135,6 @@ func TestEvidenceExternalDir_EM021SiblingRelationship(t *testing.T) {
 	recordPath := TransitionRecordPath(runID, transitionID)
 	evidenceDir := EvidenceExternalDir(runID, transitionID)
 
-	// Strip the .json suffix from the record path; the evidence dir MUST be
-	// a sub-path of the same <transition_id>/ directory.
 	base := strings.TrimSuffix(recordPath, ".json")
 	wantPrefix := base + "/evidence"
 	if evidenceDir != wantPrefix {

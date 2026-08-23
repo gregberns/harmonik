@@ -32,10 +32,6 @@ import (
 func RunQueueResume(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	diag := newPrinter(errOut)
 	var queueName string
-	// GIVEN is not the same question as NON-EMPTY. `--queue=` and
-	// `--queue ""` both leave queueName == "", which the resolution below
-	// cannot tell apart from a caller who never typed the flag unless the
-	// parse records that they did.
 	queueNameGiven := false
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
@@ -54,26 +50,6 @@ func RunQueueResume(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return exitTransportError
 	}
 
-	// An empty selector VALUE is refused here, before the request is built.
-	//
-	// An empty queue name is not a name the daemon rejects — its
-	// `refuseUnknownQueueLocked` returns early on "" without looking it up.
-	// It is the GLOBAL scope: `HandleOperatorResume` branches on `queueName == ""`
-	// and drives EVERY queue. So
-	// `harmonik queue resume "$q"` with $q unset cleared a deliberate fleet-wide pause,
-	// and said "resumed: " with an empty name at exit 0. The caller aimed at one
-	// queue and the value did not arrive (hk-wki4e).
-	//
-	// A BARE `harmonik queue resume` is a different act — it supplies no
-	// selector at all — and keeps the usage error below.
-	//
-	// Global scope is not lost: `harmonik supervise resume` sends the op with
-	// no `queue` key at all, and it is the only other spelling of it. There
-	// is no --all flag and no literal keyword, so refusing "" here costs
-	// the caller nothing they cannot say another way.
-	//
-	// The order matches the resolution order below: the flag wins, so its
-	// emptiness is the one to report when both are empty.
 	switch {
 	case queueNameGiven && queueName == "":
 		diag.println("harmonik queue resume: --queue was given an empty value; pass a queue name or drop the flag. Nothing was resumed.")
@@ -83,7 +59,6 @@ func RunQueueResume(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return exitTransportError
 	}
 
-	// Queue name: prefer --queue flag, fall back to positional argument.
 	if queueName == "" {
 		if len(positional) < 1 {
 			diag.println("harmonik queue resume: usage: hk queue resume <name>")

@@ -18,9 +18,6 @@ type dispatchReplayBeadReader interface {
 	ShowBead(context.Context, core.BeadID) (core.BeadRecord, error)
 }
 
-// filesystemDispatchReplayReader reads only durable production authorities.
-// Claim, Git, and outcome readers are separate prerequisites. Until they are
-// present, non-prepared replay cannot be classified as safe.
 type filesystemDispatchReplayReader struct {
 	projectDir string
 	beads      dispatchReplayBeadReader

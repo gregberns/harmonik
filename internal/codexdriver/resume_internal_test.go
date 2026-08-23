@@ -1,13 +1,5 @@
 package codexdriver
 
-// White-box test for the hk-160yb G1 resume handshake: spawn(...) with a
-// non-empty resumeThreadID must complete its launch handshake via
-// `thread/resume <id>` (the G2 wire method) instead of `thread/start`, re-adopt
-// the prior server-side thread id, and reach Ready so a submission acks. The
-// resume spawn seam is unexported (the resident owner is its only production
-// caller — G1b), so this exercises it in-package. It rides the same twin
-// re-exec harness as driver_test.go (shared TestMain / runTwin).
-
 import (
 	"context"
 	"os"
@@ -52,9 +44,6 @@ func TestResumeHandshakeReattachesThread(t *testing.T) {
 		t.Fatal("session does not satisfy handler.InputPort")
 	}
 
-	// A successful ack proves the handshake completed — i.e. the reactor reached
-	// Ready — which on the resume path can only happen via the thread/resume
-	// response (thread/start is never sent when resumeThreadID is set).
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	ack, err := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("resumed turn")})
@@ -65,15 +54,10 @@ func TestResumeHandshakeReattachesThread(t *testing.T) {
 		t.Fatalf("outcome = %v, want Delivered", ack.Outcome)
 	}
 
-	// The resumed thread id must be the one we asked to re-attach to, not a
-	// fresh thread/start id.
 	if got := cs.currentThreadID(); got != resumeID {
 		t.Fatalf("threadID = %q, want %q (re-adopted via thread/resume)", got, resumeID)
 	}
 
-	// Wind the session down cleanly so Outcome.StderrTail is populated, then
-	// prove the twin received thread/resume for the requested id (not
-	// thread/start).
 	if err := sess.Kill(context.Background()); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}

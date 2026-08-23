@@ -13,46 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// cooldown_wedge_test.go — the in-progress cooldown's half of the refusal
-// wedge (hk-nown4).
-//
-// # Why this needs its own file and its own harness
-//
-// Two things hide this failure, and both have to be defeated at once.
-//
-// The first is the wake pump. runAdmissionLoop pokes QueueStore.Wake() every
-// 2 ms, which is exactly the signal production does not have. Any fixture built
-// on it sails through a parked loop. So this file runs the loop itself, with no
-// pump.
-//
-// The second is the choice of observable, and it is the subtler trap. ShowBead
-// is useless here: suppressing `br show` for five minutes is the whole POINT of
-// the cooldown (hk-403fw), so its count is 1 and flat whether the loop is
-// polling or wedged solid. A test that watched ShowBead would report health in
-// both worlds. This file counts LOOP TICKS instead, through the periodic disk
-// probe with its cadence overridden to a nanosecond so it fires once per tick.
-// Free space is reported far above the watermark, so the probe only counts — it
-// never latches diskLow and never runs the reclaim subprocess.
-//
-// # The failure being pinned
-//
-// Once the tick refuses every eligible item, the queue stops being a candidate
-// and selection returns no-selection. The loop then takes the idle branch, which
-// blocks on the wake channel with NO timer. A queue that reaches it runs again
-// only if something else fires that channel.
-//
-// The tempting reasoning — that the cooldown always has a real wake signal
-// because the sibling run completes — is wrong, and the arming site is why. It
-// fires on the ledger's coarse status alone and never asks the run registry
-// whether THIS daemon owns a run for the bead. A stale on-disk run left by a
-// dead daemon, which is what a plain restart produces, arms it just the same. No
-// completion will ever come and the park is permanent, not five minutes.
-//
-// specs/queue-model.md §9.8 states the rule this pins: a queue whose every
-// eligible item is refused MUST be re-examined on a bounded poll and MUST NOT be
-// left waiting only on an external wake signal. It says every refusal, not one
-// of them.
-
 // TestCooldownRefusalDoesNotParkTheLoop measures whether the loop keeps ticking
 // while its only item is refused by the in-progress cooldown.
 //
@@ -75,12 +35,6 @@ func TestCooldownRefusalDoesNotParkTheLoop(t *testing.T) {
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
 
-	// Reach the cooldown the way production does. The resetter seam is wired
-	// because production wires it unconditionally; registering a run for the bead
-	// is what skips the stranded auto-reset branch and lands on the arm site.
-	// QueueName is empty — the shape a br-ready-dispatched run has — so this
-	// handle stays out of the "main" queue's in-flight tally and selection still
-	// offers the item.
 	reg := daemon.NewRunRegistry()
 	daemon.ExportedRunRegistryRegister(reg, core.RunID(uuid.New()), &daemon.RunHandle{BeadID: beadID})
 
@@ -115,8 +69,6 @@ func TestCooldownRefusalDoesNotParkTheLoop(t *testing.T) {
 		daemon.ExportedRunWorkLoopWithDiskReclaimAndTestPorts(ctx, deps, diskReclaim, params) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Settle into the idle branch, then sample across several poll intervals.
-	// workloopPollInterval is 2 s, so a 6 s gap holds a handful of them.
 	time.Sleep(3 * time.Second)
 	early := readTicks()
 	time.Sleep(6 * time.Second)

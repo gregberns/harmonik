@@ -56,7 +56,6 @@ func RunQueueList(ctx context.Context, subArgs []string, out, errOut io.Writer) 
 	return handleResponse(resp, out, outputJSON, renderQueueListText)
 }
 
-// renderQueueListText prints a human-readable summary of a QueueListResponse.
 func renderQueueListText(result json.RawMessage, out io.Writer) int {
 	var resp struct {
 		Queues []struct {
@@ -86,9 +85,6 @@ func renderQueueListText(result json.RawMessage, out io.Writer) int {
 			q.Name, q.QueueID, q.Status,
 			q.PendingItems, q.Workers, q.CompletedItems, q.FailedItems,
 		)
-		// A quarantined queue keeps its status and its counts, so the row above
-		// reads like a healthy one. The block below is the only thing that
-		// separates a dead queue from a slow one (hk-ujanf).
 		printQuarantineBlock(p, q.Name, q.QuarantineReason)
 	}
 	return renderExit(p)

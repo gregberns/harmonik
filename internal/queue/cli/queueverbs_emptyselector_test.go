@@ -9,28 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue/cli"
 )
 
-// ---------------------------------------------------------------------------
-// An EMPTY selector VALUE on queue pause / resume / recover (hk-wki4e)
-// ---------------------------------------------------------------------------
-//
-// `queue pause ""` used to survive the `len(positional) < 1` usage guard, set
-// queueName to "", and send {"op":"operator-pause","queue":""} to the daemon.
-// An empty queue name is not a name the daemon refuses: OperatorPauseController
-// short-circuits its unknown-queue check on "" and HandleOperatorPause branches
-// on `queueName == ""` to drive EVERY queue. So `queue pause "$q"` with $q
-// unset paused the whole fleet, and `queue resume "$q"` cleared a pause the
-// operator had set on purpose — both printing a success line and exiting 0.
-//
-// `queue recover ""` is the same hole with a different landing: its handler
-// reads "" as the DEFAULT queue rather than as global scope, so it re-armed
-// every failed item on `main` — a queue the caller never named — and exited 0.
-// It is the destructive one of the three.
-//
-// The load-bearing assertion below is NOT the exit code. It is that the daemon
-// received NO REQUEST AT ALL. An exit code is a claim about what happened; a
-// socket that was never written to is what happened.
-
-// queueVerbSpy records every request that reaches the fake daemon.
 type queueVerbSpy struct {
 	mu       sync.Mutex
 	requests []string
@@ -55,8 +33,6 @@ func (s *queueVerbSpy) seen() []string {
 func TestQueueVerbs_EmptySelectorValue_IsRefused(t *testing.T) {
 	t.Parallel()
 
-	// run is the verb under test. Both signatures are identical, so one table
-	// drives both and neither can be fixed while the other is left open.
 	for _, verb := range []struct {
 		name    string
 		run     func(context.Context, []string, *strings.Builder, *strings.Builder) int
@@ -88,9 +64,6 @@ func TestQueueVerbs_EmptySelectorValue_IsRefused(t *testing.T) {
 
 				projectDir := queueCliFixtureTempDir(t)
 				spy := &queueVerbSpy{}
-				// A LIVE daemon is the point. If the CLI still builds the
-				// request, this server answers it happily and the verb exits 0
-				// — which is exactly the bug, and is what the spy catches.
 				queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
 					spy.record(raw)
 					return queueCliFixtureSuccessResponse(t, map[string]any{})
@@ -102,7 +75,6 @@ func TestQueueVerbs_EmptySelectorValue_IsRefused(t *testing.T) {
 				args := append([]string{"--project", projectDir}, tc.args...)
 				got := verb.run(context.Background(), args, &out, &errOut)
 
-				// The one that matters: the daemon was never asked.
 				if seen := spy.seen(); len(seen) != 0 {
 					t.Errorf("queue %s %v: sent %d request(s) to the daemon for a selector the caller never filled in: %q",
 						verb.name, tc.args, len(seen), seen)

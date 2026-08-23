@@ -1,20 +1,5 @@
 package core
 
-// Property tests for HandlerRef using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. MarshalText/UnmarshalText round-trip: any non-empty HandlerRef marshals
-//     to its string bytes and unmarshals back to the same value.
-//
-//  2. Empty rejected: MarshalText and UnmarshalText both return errors for the
-//     empty string.
-//
-// See handlerref.go and handler-contract.md §6.1.
-
 import (
 	"testing"
 

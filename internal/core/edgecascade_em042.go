@@ -113,19 +113,13 @@ func DispatchEdge(
 	guard GuardEvaluator,
 	gate GateEvaluator,
 ) DispatchOutcome {
-	// §4.10.EM-041a / CP-018 — apply context updates BEFORE guard fires so the
-	// guard observes post-update run state per the execution-model.md §7.3
-	// pseudocode ordering (apply_context_updates precedes apply_guards).
-	// SelectNextEdge re-applies idempotently; same values, safe.
 	ApplyContextUpdates(run, outcome.ContextUpdates)
 
-	// §4.10.EM-042 — apply guard reordering before the cascade.
 	reordered := guard(run, candidates, outcome)
 	if len(reordered) != len(candidates) {
 		panic("edgecascade: guard violated EM-042 invariant: returned slice length differs from input")
 	}
 
-	// §4.10.EM-041 — run the deterministic cascade on the (possibly reordered) candidates.
 	cascadeResult := SelectNextEdge(run, reordered, outcome, eval, cycles)
 	if cascadeResult.Failed {
 		return DispatchOutcome{
@@ -135,19 +129,15 @@ func DispatchEdge(
 		}
 	}
 
-	// §4.10.EM-042 — apply gate to the chosen edge.
 	action := gate(run, cascadeResult.Edge, outcome)
 	switch action {
 	case GateActionAllow:
 		return DispatchOutcome{Advance: true, Edge: cascadeResult.Edge}
 	case GateActionDeny:
-		// §4.10.EM-042a — gate denial; run stays in source state, gate-pending.
 		return DispatchOutcome{Stay: true}
 	case GateActionEscalateToHuman:
 		return DispatchOutcome{Escalate: true}
 	default:
-		// Unknown GateAction: treat as structural failure per GateAction contract
-		// ("A reader observing an unknown GateAction MUST reject the enclosing record").
 		return DispatchOutcome{
 			Failed:        true,
 			FailureClass:  FailureClassStructural,

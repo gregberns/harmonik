@@ -1,23 +1,5 @@
 package queue_test
 
-// append_test.go — acceptance tests for AppendItems (specs/queue-model.md §7).
-//
-// Coverage:
-//   - QM-040: stream-only target — append to wave group is rejected.
-//   - QM-041: tail-append — items land at the tail of the stream's items list
-//     with status pending and appended_at set.
-//   - QM-042: queue_appended event emitted; queue_item_deferred_for_ledger_dep
-//     emitted for QM-025-deferred items in append order, after queue_appended.
-//   - QM-043: append to an active stream does not interfere with in-flight items.
-//   - QM-044: append to a terminal group (complete-success, complete-with-failures)
-//     is rejected.
-//
-// Helper prefix: appendFixture (derived from "append" concept per
-// implementer-protocol.md §Helper-prefix discipline).
-//
-// Spec ref: queue-model.md §7.
-// Bead ref: hk-soxgu.
-
 import (
 	"context"
 	"encoding/json"
@@ -29,17 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const appendFixtureQueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0099"
 
 var appendFixtureAcceptedAt = time.Date(2026, 5, 16, 11, 12, 13, 456000000, time.FixedZone("test", -7*60*60))
 
-// appendFixtureFakeLedger is a minimal BeadLedger fake for append tests.
-// All IDs listed in statuses are returned with their mapped status;
-// unknown IDs return BeadStatusNotFound.
 type appendFixtureFakeLedger struct {
 	statuses map[core.BeadID]queue.BeadStatus
 	edges    map[[2]core.BeadID]bool
@@ -56,7 +31,6 @@ func (f *appendFixtureFakeLedger) BlocksEdge(_ context.Context, blocker, blocked
 	return f.edges[[2]core.BeadID{blocker, blocked}], nil
 }
 
-// appendFixtureOpenLedger returns a fake ledger with all given IDs in "open" state.
 func appendFixtureOpenLedger(ids ...string) *appendFixtureFakeLedger {
 	m := make(map[core.BeadID]queue.BeadStatus, len(ids))
 	for _, id := range ids {
@@ -68,9 +42,6 @@ func appendFixtureOpenLedger(ids ...string) *appendFixtureFakeLedger {
 	}
 }
 
-// appendFixtureStreamQueue builds a Queue containing a single stream group at
-// the given GroupStatus. Items in the group are passed as beadID/status pairs
-// and pre-populated so that in-flight or terminal scenarios can be tested.
 func appendFixtureStreamQueue(groupStatus queue.GroupStatus, existingItems []queue.Item) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
@@ -88,7 +59,6 @@ func appendFixtureStreamQueue(groupStatus queue.GroupStatus, existingItems []que
 	}
 }
 
-// appendFixtureItem is a shorthand Item constructor for tests.
 func appendFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	return queue.Item{
 		BeadID: core.BeadID(beadID),
@@ -96,17 +66,12 @@ func appendFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	}
 }
 
-// appendFixtureDecodePayload unmarshals an event intent payload into dst.
 func appendFixtureDecodePayload(t *testing.T, evt queue.EventIntent, dst interface{}) {
 	t.Helper()
 	if err := json.Unmarshal(evt.Payload, dst); err != nil {
 		t.Fatalf("decode event payload for %q: %v", evt.Type, err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QM-040 — stream-only target
-// ---------------------------------------------------------------------------
 
 // TestAppendItemsQM040WaveReject verifies that AppendItems returns a validation
 // error with reason append_target_invalid when the target group is a wave group
@@ -146,10 +111,6 @@ func TestAppendItemsQM040WaveReject(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QM-041 — tail-append
-// ---------------------------------------------------------------------------
-
 // TestAppendItemsQM041TailAppend verifies that successful AppendItems places
 // the new items at the tail of the stream group's items list, with
 // status: pending, run_id: nil, and appended_at set.
@@ -179,12 +140,10 @@ func TestAppendItemsQM041TailAppend(t *testing.T) {
 		t.Fatalf("want 3 items (1 existing + 2 appended), got %d", len(items))
 	}
 
-	// First item must be the pre-existing one, untouched.
 	if items[0].BeadID != "hk-exist01" {
 		t.Errorf("items[0].BeadID = %q, want %q", items[0].BeadID, "hk-exist01")
 	}
 
-	// Appended items must appear at the tail with correct initial state.
 	for i, wantID := range []string{"hk-new01", "hk-new02"} {
 		item := items[i+1]
 		if string(item.BeadID) != wantID {
@@ -203,15 +162,10 @@ func TestAppendItemsQM041TailAppend(t *testing.T) {
 		}
 	}
 
-	// Must have produced at least one event (queue_appended).
 	if len(events) == 0 {
 		t.Fatal("expected events, got none")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QM-042 — queue_appended event + deferred events
-// ---------------------------------------------------------------------------
 
 // TestAppendItemsQM042EventEmitted verifies that AppendItems emits exactly one
 // queue_appended event with the correct payload fields.
@@ -231,7 +185,6 @@ func TestAppendItemsQM042EventEmitted(t *testing.T) {
 		t.Fatalf("AppendItems error: %v", err)
 	}
 
-	// First event must be queue_appended.
 	if len(events) == 0 {
 		t.Fatal("no events emitted")
 	}
@@ -261,7 +214,6 @@ func TestAppendItemsQM042EventEmitted(t *testing.T) {
 		t.Error("payload.Valid() = false, want true")
 	}
 
-	// No deferred items expected here; event count should be exactly 1.
 	if len(events) != 1 {
 		t.Errorf("event count = %d, want 1 (no deferred items)", len(events))
 	}
@@ -276,12 +228,10 @@ func TestAppendItemsQM042EventEmitted(t *testing.T) {
 func TestAppendItemsQM042DeferredEventsAfterAppended(t *testing.T) {
 	t.Parallel()
 
-	// Existing group with "hk-blocker" that blocks "hk-blocked".
 	q := appendFixtureStreamQueue(queue.GroupStatusActive, []queue.Item{
 		appendFixtureItem("hk-blocker", queue.ItemStatusPending),
 	})
 
-	// Ledger: both open; "hk-blocker" blocks "hk-blocked".
 	ledger := &appendFixtureFakeLedger{
 		statuses: map[core.BeadID]queue.BeadStatus{
 			"hk-blocker": queue.BeadStatusOpen,
@@ -298,7 +248,6 @@ func TestAppendItemsQM042DeferredEventsAfterAppended(t *testing.T) {
 		t.Fatalf("AppendItems error: %v", err)
 	}
 
-	// Expect: queue_appended, then queue_item_deferred_for_ledger_dep.
 	if len(events) != 2 {
 		t.Fatalf("event count = %d, want 2 (appended + deferred)", len(events))
 	}
@@ -321,7 +270,6 @@ func TestAppendItemsQM042DeferredEventsAfterAppended(t *testing.T) {
 		t.Error("deferredPayload.Valid() = false")
 	}
 
-	// The appended item's status must be deferred-for-ledger-dep in the queue.
 	appendedItem := q.Groups[0].Items[len(q.Groups[0].Items)-1]
 	if appendedItem.Status != queue.ItemStatusDeferredForLedgerDep {
 		t.Errorf("appended item status = %q, want deferred-for-ledger-dep", appendedItem.Status)
@@ -374,10 +322,6 @@ func TestAppendItemsSeveralDeferredItemsKeepExactIntentOrder(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QM-043 — append to active stream is in-flight-safe
-// ---------------------------------------------------------------------------
-
 // TestAppendItemsQM043ActiveInFlightSafe verifies that AppendItems succeeds
 // when the stream group is active and contains in-flight (dispatched) items.
 // The in-flight items must be unmodified after the append.
@@ -403,7 +347,6 @@ func TestAppendItemsQM043ActiveInFlightSafe(t *testing.T) {
 		t.Fatalf("AppendItems unexpectedly failed for active stream: %v", err)
 	}
 
-	// In-flight item must be untouched.
 	if result.Groups[0].Items[0].Status != queue.ItemStatusDispatched {
 		t.Errorf("in-flight item status changed: got %q, want dispatched",
 			result.Groups[0].Items[0].Status)
@@ -412,7 +355,6 @@ func TestAppendItemsQM043ActiveInFlightSafe(t *testing.T) {
 		t.Errorf("in-flight item RunID changed; want %q", runIDStr)
 	}
 
-	// New item must have been appended.
 	if len(result.Groups[0].Items) != 2 {
 		t.Fatalf("item count = %d, want 2", len(result.Groups[0].Items))
 	}
@@ -420,15 +362,10 @@ func TestAppendItemsQM043ActiveInFlightSafe(t *testing.T) {
 		t.Errorf("appended item BeadID = %q, want hk-new01", result.Groups[0].Items[1].BeadID)
 	}
 
-	// queue_appended event must have been emitted.
 	if len(events) == 0 || events[0].Type != "queue_appended" {
 		t.Errorf("expected queue_appended event; got events: %v", events)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QM-044 — terminal-status rejection
-// ---------------------------------------------------------------------------
 
 // TestAppendItemsQM044TerminalGroupReject verifies that AppendItems rejects
 // appends to a group that has already reached a terminal GroupStatus
@@ -466,10 +403,6 @@ func TestAppendItemsQM044TerminalGroupReject(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Sentinel error cases
-// ---------------------------------------------------------------------------
 
 // TestAppendItemsNilQueue verifies that AppendItems returns ErrAppendQueueNil
 // when the queue argument is nil.

@@ -1,51 +1,5 @@
 package main
 
-// resolve_stall_sentinel_config.go — stall-sentinel config resolver (hk-hm09z).
-//
-// # OPERATOR-FACING CHOKEPOINT — imposes NO built-in defaults at runtime.
-//
-// ResolveStallSentinelConfig is the validation gate for the stall_sentinel: block
-// in .harmonik/config.yaml. Per the no-hardcoded-thresholds mandate (the same
-// operator-philosophy that governs the keeper and watch config), the product
-// imposes ZERO baked stall-sentinel defaults: EVERY required value must be set
-// by the operator. When a required value is unset the resolver AGGREGATES all the
-// missing keys and returns a single *StallSentinelConfigMissingError so the
-// sentinel REFUSES TO START — it never silently defaults.
-//
-// Why it lives in cmd/harmonik (NOT internal/daemon or internal/sentinel): the
-// resolver needs daemon.StallSentinelConfig (the parsed .harmonik/config.yaml
-// stall_sentinel: block), and depguard bans internal packages from importing
-// internal/daemon (.golangci.yml). This mirrors the keeper resolver pattern
-// (resolve_keeper_config.go) and the watch resolver pattern (resolve_watch_config.go).
-//
-// # Config layout (stall_sentinel: block)
-//
-//	stall_sentinel:
-//	  escalation:
-//	    tier1_crew:     <Go duration>  # X — escalate to crew after this stall age
-//	    tier2_captain:  <Go duration>  # Y — escalate to captain
-//	    tier3_operator: <Go duration>  # Z — escalate to operator mailbox
-//	  detection:
-//	    run_silence_stall:     <Go duration>  # Layer A: heartbeat-gap trigger
-//	    review_finalize_stall: <Go duration>  # Layer A: review-stall trigger
-//	    run_max_age:           <Go duration>  # Layer A: run-age backstop
-//	    lane_noprogress_stall: <Go duration>  # Layer B: no-forward-progress trigger
-//
-// All 7 keys are required. Absent → refuse to start. Off/0s is a valid explicit
-// value when the operator consciously disables a threshold; the resolver accepts
-// zero when the key is PRESENT (duration = 0s) but reports it as MISSING when
-// the duration is zero because the key was ABSENT from config.yaml.
-//
-// # Fail-loud
-//
-// *StallSentinelConfigMissingError — one or more required values are UNSET.
-// Aggregates ALL missing keys into ONE error (operator sees them all at once).
-// The message names the real dotted yaml key paths and points at
-// 'harmonik sentinel config --example'.
-//
-// Bead ref: hk-hm09z.
-// Spec ref: .kerf/works/stall-sentinel/SPEC.md §3/§5, plans/2026-07-02-stall-sentinel/DESIGN.md §3/§5.
-
 import (
 	"fmt"
 	"strings"
@@ -54,9 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// requiredStallSentinelValue describes one required stall-sentinel config value:
-// its dotted yaml key path (for the missing-value error and --example parity),
-// a human description, and whether the operator supplied it.
 type requiredStallSentinelValue struct {
 	keyPath     string
 	description string
@@ -93,22 +44,8 @@ func (e *StallSentinelConfigMissingError) Error() string {
 		dir, strings.Join(parts, "; "), dir)
 }
 
-// allStallSentinelValues returns the canonical list of ALL stall-sentinel config
-// values. The Description field is the SINGLE source of truth shared by
-// checkMissingStallSentinelValues (error path) and stallSentinelConfigExampleYAML
-// (--example). A field is satisfied when its parsed duration is non-zero (set to
-// any valid Go duration, including 0s which the operator explicitly wrote as the
-// key).
-//
-// NOTE: 0-duration values can only arise from an explicit `key: 0s` in config
-// (parseDurationField returns 0 for empty string = absent, and 0 for "0s" = set).
-// Since "absent" and "0s" map to the same zero time.Duration, the resolver treats
-// ALL zero values as missing. This is intentional: 0s thresholds are nonsensical
-// for stall detection (they'd fire on every tick), and the example block shows
-// non-zero starting values the operator must own.
 func allStallSentinelValues(cfg projectconfig.StallSentinelConfig) []requiredStallSentinelValue {
 	return []requiredStallSentinelValue{
-		// ── escalation tiers (X/Y/Z) ──
 		{
 			keyPath:     "stall_sentinel.escalation.tier1_crew",
 			description: "Go duration after stall detection before escalating to the crew (Tier 1 / X; fail-loud when unset)",
@@ -149,8 +86,6 @@ func allStallSentinelValues(cfg projectconfig.StallSentinelConfig) []requiredSta
 	}
 }
 
-// checkMissingStallSentinelValues returns every requiredStallSentinelValue where
-// satisfied=false. Empty result = all required values supplied.
 func checkMissingStallSentinelValues(cfg projectconfig.StallSentinelConfig) []requiredStallSentinelValue {
 	var missing []requiredStallSentinelValue
 	for _, v := range allStallSentinelValues(cfg) {
@@ -207,13 +142,6 @@ func ResolveStallSentinelConfig(cfg projectconfig.StallSentinelConfig, projectDi
 	}, nil
 }
 
-// stallSentinelConfigExampleBlock is the complete, commented stall_sentinel: block
-// template. The comment text for each key MUST appear verbatim in the corresponding
-// Description field of allStallSentinelValues() — tests enforce this single-source-
-// of-truth invariant.
-//
-// Suggested starting values: pick values wider than real incident durations so the
-// sentinel is sensitive but not noisy. The operator owns and tunes these numbers.
 const stallSentinelConfigExampleBlock = `stall_sentinel:
   # Escalation tiers — X/Y/Z in the DESIGN.md brief.
   # Each is a Go duration string (e.g. '10m', '1h30m'). All three are required.
@@ -237,8 +165,6 @@ const stallSentinelConfigExampleBlock = `stall_sentinel:
     lane_noprogress_stall: 25m
 `
 
-// stallSentinelConfigExampleYAML returns the complete stall_sentinel: example block.
-// Single source of truth for 'harmonik sentinel config --example'.
 func stallSentinelConfigExampleYAML() string {
 	return stallSentinelConfigExampleBlock
 }

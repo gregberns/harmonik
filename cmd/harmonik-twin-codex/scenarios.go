@@ -50,13 +50,10 @@ const (
 	ScenarioTurnFailed    = "turn-failed"
 )
 
-// threadIDForScenario returns a deterministic thread_id for the given scenario
-// name. The ID is fixed per scenario so JSONL streams are byte-reproducible.
 func threadIDForScenario(scenario string) string {
 	return "codex-twin-" + scenario
 }
 
-// scenarioConfig carries the runtime parameters for a scenario execution.
 type scenarioConfig struct {
 	// worktreePath is the -C / --cd working directory for git operations.
 	// Required for trailer-commit and edits-no-commit; ignored for no-edits
@@ -68,11 +65,6 @@ type scenarioConfig struct {
 	beadID string
 }
 
-// runScenario drives the named scenario, writing codex JSONL to w and
-// optionally performing git operations in cfg.worktreePath.
-//
-// Returns an error if the scenario name is unrecognised or if a scenario step
-// fails (e.g., git error for trailer-commit).
 func runScenario(w io.Writer, name string, cfg scenarioConfig) error {
 	e := newCodexEmitter(w)
 	threadID := threadIDForScenario(name)
@@ -92,12 +84,6 @@ func runScenario(w io.Writer, name string, cfg scenarioConfig) error {
 	}
 }
 
-// runTrailerCommit implements the trailer-commit variant.
-//
-// Emits thread.started + turn.completed, then commits a sentinel file with a
-// Refs:<beadID> trailer in cfg.worktreePath.  Returns nil even when git exits
-// non-zero (the twin emits turn.completed before the commit step, mirroring
-// real codex where commit is a model decision after the turn concludes).
 func runTrailerCommit(e *codexEmitter, threadID string, cfg scenarioConfig) error {
 	if err := e.emitThreadStarted(threadID); err != nil {
 		return fmt.Errorf("trailer-commit: emit thread.started: %w", err)
@@ -107,19 +93,12 @@ func runTrailerCommit(e *codexEmitter, threadID string, cfg scenarioConfig) erro
 	}
 
 	if cfg.worktreePath == "" {
-		// No worktree supplied — caller cannot assert git side-effects.
-		// Twin still exits cleanly; scenario test that needs git must pass -C.
 		return nil
 	}
 
 	return commitWithRefsTrailer(cfg.worktreePath, cfg.beadID)
 }
 
-// runEditsNoCommit implements the edits-no-commit variant.
-//
-// Emits thread.started + turn.completed, then writes a sentinel file to
-// cfg.worktreePath without committing.  The adapter's commit-after-exit
-// fallback (C2 AC2.4) must create the Refs commit.
 func runEditsNoCommit(e *codexEmitter, threadID string, cfg scenarioConfig) error {
 	if err := e.emitThreadStarted(threadID); err != nil {
 		return fmt.Errorf("edits-no-commit: emit thread.started: %w", err)
@@ -132,7 +111,6 @@ func runEditsNoCommit(e *codexEmitter, threadID string, cfg scenarioConfig) erro
 		return nil
 	}
 
-	// Write a sentinel file but do NOT commit.
 	ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 	name := ".harmonik-twin-codex-edit-" + ts
 	path := filepath.Join(cfg.worktreePath, name)
@@ -143,10 +121,6 @@ func runEditsNoCommit(e *codexEmitter, threadID string, cfg scenarioConfig) erro
 	return nil
 }
 
-// runNoEdits implements the no-edits variant.
-//
-// Emits thread.started + turn.completed with no worktree changes.
-// The noChange path in the shared loop fires (C2 AC2.5).
 func runNoEdits(e *codexEmitter, threadID string) error {
 	if err := e.emitThreadStarted(threadID); err != nil {
 		return fmt.Errorf("no-edits: emit thread.started: %w", err)
@@ -154,10 +128,6 @@ func runNoEdits(e *codexEmitter, threadID string) error {
 	return e.emitTurnCompleted()
 }
 
-// runTurnFailed implements the turn-failed variant.
-//
-// Emits thread.started + turn.failed.  The adapter maps turn.failed to
-// run_failed (C2 edge case).
 func runTurnFailed(e *codexEmitter, threadID string) error {
 	if err := e.emitThreadStarted(threadID); err != nil {
 		return fmt.Errorf("turn-failed: emit thread.started: %w", err)
@@ -165,14 +135,6 @@ func runTurnFailed(e *codexEmitter, threadID string) error {
 	return e.emitTurnFailed("codex-twin: turn.failed scenario simulation")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Git helper (trailer-commit)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// commitWithRefsTrailer writes a sentinel file and commits it in worktreePath
-// with a Refs:<beadID> trailer.  Git author/committer identity is set via env
-// vars to avoid touching the project's git config (same approach as the claude
-// twin's commit_on_cue step).
 func commitWithRefsTrailer(worktreePath, beadID string) error {
 	ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 	sentinelName := ".harmonik-twin-codex-commit-" + ts

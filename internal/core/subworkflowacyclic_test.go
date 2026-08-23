@@ -2,11 +2,6 @@ package core
 
 import "testing"
 
-// subwfAcyclicFixtureLinear builds a 3-node linear reference graph:
-//
-//	root → child → grandchild
-//
-// This graph is acyclic and must pass HasCycle() == false (EM-034b).
 func subwfAcyclicFixtureLinear() *SubWorkflowRefGraph {
 	g := NewSubWorkflowRefGraph()
 	g.AddEdge("root", "child")
@@ -14,22 +9,12 @@ func subwfAcyclicFixtureLinear() *SubWorkflowRefGraph {
 	return g
 }
 
-// subwfAcyclicFixtureSelfRef builds a graph where workflow A references itself:
-//
-//	A → A
-//
-// Self-reference is a cycle and MUST cause HasCycle() == true per EM-034b.
 func subwfAcyclicFixtureSelfRef() *SubWorkflowRefGraph {
 	g := NewSubWorkflowRefGraph()
 	g.AddEdge("A", "A")
 	return g
 }
 
-// subwfAcyclicFixtureMutual builds a graph where two workflows reference each other:
-//
-//	A → B → A
-//
-// Mutual reference is a cycle and MUST cause HasCycle() == true per EM-034b.
 func subwfAcyclicFixtureMutual() *SubWorkflowRefGraph {
 	g := NewSubWorkflowRefGraph()
 	g.AddEdge("A", "B")
@@ -37,12 +22,6 @@ func subwfAcyclicFixtureMutual() *SubWorkflowRefGraph {
 	return g
 }
 
-// subwfAcyclicFixtureDiamondAcyclic builds a diamond-shaped acyclic graph:
-//
-//	A → B → D
-//	A → C → D
-//
-// A diamond with a shared sink is acyclic and must pass HasCycle() == false.
 func subwfAcyclicFixtureDiamondAcyclic() *SubWorkflowRefGraph {
 	g := NewSubWorkflowRefGraph()
 	g.AddEdge("A", "B")
@@ -139,9 +118,7 @@ func TestSubWorkflowRefGraphHasCycle_DisconnectedCycle(t *testing.T) {
 	t.Parallel()
 
 	g := NewSubWorkflowRefGraph()
-	// Acyclic component.
 	g.AddEdge("X", "Y")
-	// Cyclic component (isolated from the first).
 	g.AddEdge("A", "B")
 	g.AddEdge("B", "A")
 	if !g.HasCycle() {

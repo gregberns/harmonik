@@ -25,13 +25,6 @@ package shared
 
 import "fmt"
 
-// implementerResumeSeedTemplate is the seed prompt for a DOT back-edge resume
-// turn. It points the resumed implementer at the prior iteration's
-// reviewer-feedback file, instructs it to address every point, and REQUIRES a
-// new commit carrying the Refs: trailer (the no-commit-on-resume failure this
-// fixes). It degrades gracefully when the feedback file is absent.
-//
-// The first %d is the prior iteration number; the second %s is the bead ID.
 const implementerResumeSeedTemplate = `You are resuming a task you already worked on in a prior turn. The workflow routed the work back to you.
 
 FIRST read .harmonik/reviewer-feedback.iter-%d.md in your worktree — it says WHAT routed the work back, and its first line says WHO produced it. It is a reviewer's verdict, flags and notes only when it says so; otherwise the daemon wrote it because the commit gate went red or because your prior pass produced no commit. Address EVERY point it raises. (If that file is not present, re-read .harmonik/agent-task.md and make sure your prior changes were actually committed.)

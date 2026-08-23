@@ -1,17 +1,5 @@
 package watch_test
 
-// digest_we_soak2_b2_test.go — RED→GREEN acceptance tests for hk-8yh32.2
-// (WE-SOAK-2/B2: watch digest freshness + pruning).
-//
-// P3 (DIGEST STALENESS): Ledger.WriteDigest must stamp updated_at on every
-//   write regardless of what the caller placed in the struct.  Before the fix,
-//   a caller that omits updated_at produces a stale (or empty) timestamp;
-//   after the fix, WriteDigest is the authoritative stamper.
-//
-// P4 (DIGEST NOISE): appendDigestFlag (via EscalationEngine.Process) must
-//   evict RESOLVED/NOTED flags and enforce a cap of PendingFlagsMaxLen so that
-//   pending_flags never grows unbounded.
-
 import (
 	"fmt"
 	"strings"
@@ -37,10 +25,8 @@ func TestWatchDigest_UpdatedAtAlwaysStampedByWrite_B2_P3(t *testing.T) {
 
 	before := time.Now()
 
-	// Write a digest with NO updated_at supplied by the caller.
 	d := watch.WatchDigest{
 		Cursor: "0193a2b3-dead-7000-0000-000000000001",
-		// UpdatedAt intentionally omitted — WriteDigest must stamp it itself.
 	}
 	if err := ledger.WriteDigest(d); err != nil {
 		t.Fatalf("WriteDigest: %v", err)
@@ -86,7 +72,6 @@ func TestWatchDigest_UpdatedAtAdvancesOnSecondWrite_B2_P3b(t *testing.T) {
 
 	staleTs := "2026-01-01T06:02:35Z" // ~9.8 h ago (the SOAK-1 incident timestamp)
 
-	// Write a digest that a misbehaving caller stamped with a stale time.
 	stale := watch.WatchDigest{
 		Cursor:    "0193a2b3-dead-7000-0000-000000000001",
 		UpdatedAt: staleTs,
@@ -125,7 +110,6 @@ func TestWatchDigest_PrunesResolvedAndNotedFlags_B2_P4(t *testing.T) {
 	sender := &mockSender{}
 	engine := &watch.EscalationEngine{Ledger: ledger, Sender: sender}
 
-	// Append a mix of active and terminal flags via the PULL-DIGEST path.
 	for i := 0; i < 8; i++ {
 		flag := fmt.Sprintf("crew paul stale on epic hk-%04d; check needed (%d)", i, i)
 		ev := escalationFixtureEvent(t, "run_stale")
@@ -134,7 +118,6 @@ func TestWatchDigest_PrunesResolvedAndNotedFlags_B2_P4(t *testing.T) {
 		}
 	}
 
-	// Add terminal flags — these must be evicted by the pruner.
 	for i := 0; i < 7; i++ {
 		resolvedFlag := fmt.Sprintf("RESOLVED: crew paul reconnected on epic hk-%04d (%d)", i, i)
 		ev := escalationFixtureEvent(t, "run_stale")
@@ -155,7 +138,6 @@ func TestWatchDigest_PrunesResolvedAndNotedFlags_B2_P4(t *testing.T) {
 		t.Fatal("P4: latest.json was not written")
 	}
 
-	// No RESOLVED or NOTED flags must survive.
 	for _, f := range d.PendingFlags {
 		if strings.Contains(f, "RESOLVED") {
 			t.Errorf("P4: RESOLVED flag was not evicted: %q", f)
@@ -165,7 +147,6 @@ func TestWatchDigest_PrunesResolvedAndNotedFlags_B2_P4(t *testing.T) {
 		}
 	}
 
-	// Total must not exceed the cap.
 	if len(d.PendingFlags) > watch.PendingFlagsMaxLen {
 		t.Fatalf("P4: pending_flags len %d exceeds cap %d: %v",
 			len(d.PendingFlags), watch.PendingFlagsMaxLen, d.PendingFlags)
@@ -187,7 +168,6 @@ func TestWatchDigest_CapEnforcedOnActiveFlags_B2_P4b(t *testing.T) {
 	sender := &mockSender{}
 	engine := &watch.EscalationEngine{Ledger: ledger, Sender: sender}
 
-	// Append more active flags than the cap.
 	excess := watch.PendingFlagsMaxLen + 5
 	for i := 0; i < excess; i++ {
 		flag := fmt.Sprintf("crew paul stale on epic hk-%04d; check needed (%d)", i, i)
@@ -206,7 +186,6 @@ func TestWatchDigest_CapEnforcedOnActiveFlags_B2_P4b(t *testing.T) {
 		t.Fatalf("P4b: cap not enforced: len=%d want ≤%d", len(d.PendingFlags), watch.PendingFlagsMaxLen)
 	}
 
-	// The MOST RECENT flags must be retained (oldest evicted).
 	lastFlag := fmt.Sprintf("crew paul stale on epic hk-%04d; check needed (%d)", excess-1, excess-1)
 	found := false
 	for _, f := range d.PendingFlags {

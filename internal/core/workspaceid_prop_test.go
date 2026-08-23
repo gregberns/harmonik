@@ -1,20 +1,5 @@
 package core
 
-// Property tests for WorkspaceID using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. MarshalText/UnmarshalText round-trip: any WorkspaceID marshals to its
-//     canonical UUID string and unmarshals back to the same value.
-//
-//  2. String parse-back: String() returns the canonical UUID form accepted
-//     by UnmarshalText.
-//
-// See workspaceid.go and event-model.md §8.5.1–§8.5.6.
-
 import (
 	"testing"
 

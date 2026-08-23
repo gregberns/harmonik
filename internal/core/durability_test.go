@@ -9,8 +9,6 @@ package core
 
 import "testing"
 
-// durabilityFixtureAllKinds returns the full set of TransitionKind values for
-// use in durability truth-table tests.
 func durabilityFixtureAllKinds() []TransitionKind {
 	return []TransitionKind{
 		TransitionKindForward,
@@ -21,8 +19,6 @@ func durabilityFixtureAllKinds() []TransitionKind {
 	}
 }
 
-// durabilityFixtureAllStatuses returns the full set of OutcomeStatus values for
-// use in durability truth-table tests.
 func durabilityFixtureAllStatuses() []OutcomeStatus {
 	return []OutcomeStatus{
 		OutcomeStatusSuccess,

@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// errAfterN is an io.Writer that succeeds for the first n writes and then fails
-// every subsequent one — the shape of a pager that exits mid-report or a pipe
-// that fills up.
 type errAfterN struct {
 	n     int
 	sink  strings.Builder
@@ -43,8 +40,6 @@ func TestPrinterRetainsFirstErrorAndStopsWriting(t *testing.T) {
 		t.Fatalf("retained error = %v, want %v", p.err, boom)
 	}
 
-	// Every later write must be a no-op: the retained error is not overwritten
-	// and the underlying writer is not called again.
 	callsAtFailure := w.calls
 	p.println("third")
 	p.printf("fourth\n")

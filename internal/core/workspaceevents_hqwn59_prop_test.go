@@ -1,24 +1,11 @@
 package core
 
-// workspaceevents_hqwn59_prop_test.go — property tests for the Valid() methods
-// declared in workspaceevents_hqwn59.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// Approach: rapid generator builds a valid payload, flips exactly one required
-// field to its zero/invalid value, asserts Valid()==false; all-valid -> true.
-//
-// Refs: hk-qgzso (property-test coverage uplift for hk-j3hrn core uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ============================================================
-// WorkspaceCreatedPayload
-// ============================================================
 
 func TestProp_WorkspaceCreatedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -90,10 +77,6 @@ func TestProp_WorkspaceCreatedPayload_EmptyParentCommitRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// WorkspaceLeasedPayload
-// ============================================================
-
 func TestProp_WorkspaceLeasedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := WorkspaceLeasedPayload{
@@ -146,10 +129,6 @@ func TestProp_WorkspaceLeasedPayload_EmptyLeasedAtRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// WorkspaceMergeStatus
-// ============================================================
-
 func TestProp_WorkspaceMergeStatus_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allWorkspaceMergeStatuses {
@@ -175,10 +154,6 @@ func TestProp_WorkspaceMergeStatus_KnownConstantsAccepted(t *testing.T) {
 	})
 }
 
-// ============================================================
-// WorkspaceMergeStatusPayload
-// ============================================================
-
 func TestProp_WorkspaceMergeStatusPayload_AllValidPendingAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := WorkspaceMergeStatusPayload{
@@ -188,7 +163,6 @@ func TestProp_WorkspaceMergeStatusPayload_AllValidPendingAccepted(t *testing.T) 
 			SourceBranch: drawNonEmptyString(rt, "source"),
 			TargetBranch: drawNonEmptyString(rt, "target"),
 			ChangedAt:    drawNonEmptyString(rt, "changed_at"),
-			// MergeCommitHash must be nil for pending
 		}
 		if !p.Valid() {
 			rt.Error("Valid() == false for well-formed WorkspaceMergeStatusPayload (pending)")
@@ -329,10 +303,6 @@ func TestProp_WorkspaceMergeStatusPayload_EmptyChangedAtRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// WorkspaceDiscardedPayload
-// ============================================================
-
 func TestProp_WorkspaceDiscardedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := WorkspaceDiscardedPayload{
@@ -384,10 +354,6 @@ func TestProp_WorkspaceDiscardedPayload_EmptyReasonRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// WorkspaceInterruptedPayload
-// ============================================================
 
 func TestProp_WorkspaceInterruptedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -466,10 +432,6 @@ func TestProp_WorkspaceInterruptedPayload_InvalidCategoryRejected(t *testing.T) 
 		}
 	})
 }
-
-// ============================================================
-// MergeConflictEscalationPayload
-// ============================================================
 
 func TestProp_MergeConflictEscalationPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

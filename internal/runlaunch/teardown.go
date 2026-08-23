@@ -1,9 +1,5 @@
 package runlaunch
 
-// teardown.go — the hk-68pvl kill-before-worktree-removal backstop.
-//
-// Carved out of internal/daemon/workloop.go by P2 unit E5 RT19b (pure move).
-
 import (
 	"context"
 

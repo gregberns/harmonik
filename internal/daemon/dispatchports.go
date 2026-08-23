@@ -5,20 +5,15 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// capacityPort holds the live dispatch ceiling. It is built once at boot and
-// shared with every path that admits or reaps work.
 type capacityPort struct {
 	maxConcurrent   int
 	concurrencyCtrl *ConcurrencyController
 }
 
-// newCapacityPort keeps the static ceiling and its live override together.
 func newCapacityPort(maxConcurrent int, concurrencyCtrl *ConcurrencyController) capacityPort {
 	return capacityPort{maxConcurrent: maxConcurrent, concurrencyCtrl: concurrencyCtrl}
 }
 
-// queueSurfacePort holds the queue-specific inputs of the dispatch loop. The
-// QueueStore remains a shared run handle on legacy aggregate.
 type queueSurfacePort struct {
 	submitWakeC  <-chan struct{}
 	queueLedger  queue.BeadLedger
@@ -34,9 +29,6 @@ func newQueueSurfacePort(submitWakeC <-chan struct{}, queueLedger queue.BeadLedg
 	return queueSurfacePort{submitWakeC: submitWakeC, queueLedger: queueLedger}
 }
 
-// dispatchGatesPort owns the controllers and loop-local dedup state used by
-// dispatch admission. Maps are always allocated because only the loop touches
-// them.
 type dispatchGatesPort struct {
 	bus                     handlercontract.EventEmitter
 	handlerPauseController  *HandlerPauseController

@@ -29,7 +29,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 	t.Run("one-commit-per-task", func(t *testing.T) {
 		t.Parallel()
 
-		// Three checkpoint commits on the task branch → exactly one on integration.
 		runID := "0196b100-0000-7000-8000-000000000019"
 		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 			"checkpoint: first node",
@@ -40,7 +39,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-one")
 		taskBranch := "run/" + runID
 
-		// --strategy=ort explicitly per WM-019 pin.
 		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
@@ -70,8 +68,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 	t.Run("trailer/run-id-always-present", func(t *testing.T) {
 		t.Parallel()
 
-		// Use a distinct run ID from the "one-commit-per-task" subtest to avoid
-		// worktree path collisions when subtests run in parallel within the same tempDir.
 		runIDB := "0196b100-0000-7000-8000-00000000019b"
 		repo, sha := mergeBackFixtureSetupTaskBranch(t, runIDB, []string{"checkpoint: work"})
 
@@ -84,7 +80,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			t.Fatalf("WM-019: merge for trailer test: %v\n%s", err, out)
 		}
 
-		// Commit message with Harmonik-Run-ID trailer (always present).
 		commitMsg := "squash: run " + runIDB + "\n\nHarmonik-Run-ID: " + runIDB
 		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
@@ -120,7 +115,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			t.Fatalf("WM-019: merge for bead-id test: %v\n%s", err, out)
 		}
 
-		// Bead-tied run: message includes BOTH Harmonik-Run-ID and Harmonik-Bead-ID.
 		beadID := "hk-test01.42"
 		commitMsg := "squash: run " + runID + "\n\n" +
 			"Harmonik-Run-ID: " + runID + "\n" +
@@ -171,7 +165,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			t.Fatalf("WM-019: merge for no-bead-id test: %v\n%s", err, out)
 		}
 
-		// Non-bead-tied run: only Harmonik-Run-ID, no Harmonik-Bead-ID.
 		commitMsg := "squash: run " + runID + "\n\nHarmonik-Run-ID: " + runID
 		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
@@ -240,7 +233,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 	t.Run("conflict-detection", func(t *testing.T) {
 		t.Parallel()
 
-		// Set up two branches that modify the same line of README.
 		repo, sha := tempRepo(t)
 
 		gitRun := func(dir string, args ...string) {
@@ -252,7 +244,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			}
 		}
 
-		// Branch A: edit README line 1 with "branch-A content".
 		branchA := "conflict-branch-A"
 		pathA := filepath.Join(repo, ".harmonik", "worktrees", "conflict-A")
 		if err := os.MkdirAll(filepath.Dir(pathA), 0o700); err != nil {
@@ -265,7 +256,6 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		gitRun(pathA, "add", "README")
 		gitRun(pathA, "commit", "-m", "checkpoint: branch A edit")
 
-		// Branch B: edit same README line 1 with "branch-B content".
 		branchB := "conflict-branch-B"
 		pathB := filepath.Join(repo, ".harmonik", "worktrees", "conflict-B")
 		if err := os.MkdirAll(filepath.Dir(pathB), 0o700); err != nil {
@@ -278,12 +268,10 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		gitRun(pathB, "add", "README")
 		gitRun(pathB, "commit", "-m", "checkpoint: branch B edit")
 
-		// Try to squash-merge B into A — expect conflict.
 		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", branchB)
 		mergeCmd.Dir = pathA
 		out, mergeErr := mergeCmd.CombinedOutput()
 
-		// Assert: non-zero exit code signals conflict per WM-018a.
 		if mergeErr == nil {
 			t.Errorf("WM-019 conflict-detection: expected non-zero exit from conflicting squash-merge, got success\n%s", out)
 		}

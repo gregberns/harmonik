@@ -1,26 +1,5 @@
 package daemon
 
-// mergetomain_pushrace_t7_test.go — F4 (M4-C5 / T7) forced lost-push race.
-//
-// The F4 relocation moves `git push origin <target>` OUTSIDE the mergeq exclusion
-// domain (Phase B). Correctness on a lost race therefore comes from Phase D
-// re-validating INSIDE the domain (CAS-rollback + fetch + re-base to origin) and
-// re-attempting, NOT from holding the lock across the network push.
-//
-// This test forces origin to advance in the exact window the relocation opens —
-// between the local prepare and the push — by wrapping `git` with a shim that,
-// on the FIRST `git push`, injects a diverging (non-conflicting) commit into
-// origin out-of-band before forwarding the daemon's push. That first push is
-// therefore rejected non-fast-forward; the driver must fetch, re-base the
-// run-branch onto the new origin tip, and retry the push successfully.
-//
-// Assertions:
-//   (A) the merge succeeds (re-enter-on-conflict retry worked);
-//   (B) origin's main contains BOTH the out-of-band race commit and the run work;
-//   (C) local main matches origin main after the retry.
-//
-// Bead/task: M4-C5 / T7 (F4 push relocation); companions hk-svieq (retry taxonomy).
-
 import (
 	"context"
 	"os"
@@ -37,10 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// pushRaceSetupRepo builds a project repo with a bare origin and a run-branch one
-// commit ahead of main, returning projectDir, originDir, and the run's RunID. It
-// mirrors rsmInvSetupRepo but also hands back originDir so the push shim can
-// advance it out-of-band.
 func pushRaceSetupRepo(t *testing.T) (projectDir, originDir string, runID core.RunID) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -68,11 +43,6 @@ func pushRaceSetupRepo(t *testing.T) (projectDir, originDir string, runID core.R
 	return projectDir, originDir, runID
 }
 
-// pushRaceInstallShim prepends a PATH `git` shim that, on the FIRST `git push`,
-// clones origin into a scratch dir, commits a diverging race.txt, and pushes it
-// back to origin BEFORE forwarding the daemon's push — deterministically forcing
-// a non-fast-forward rejection on the first Phase-B push. Later pushes forward
-// straight through so the retry succeeds.
 func pushRaceInstallShim(t *testing.T, originDir string) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
@@ -114,12 +84,10 @@ func TestMergeToMain_ForcedLostPushRace_ReEntersAndRetries(t *testing.T) {
 	out := runmerge.RunBranchToTarget(context.Background(), q.Submit, projectDir, runID, &noopEmitter{},
 		core.BeadID("hk-t7-pushrace"), "", "main", nil, "")
 
-	// (A) Merge succeeded despite the forced first-push non-FF rejection.
 	if !out.Success {
 		t.Fatalf("forced lost-push race did not recover: reason=%q noChange=%v", out.Reason, out.NoChange)
 	}
 
-	// (B) origin main contains BOTH the race commit and the run work.
 	for _, want := range []string{"race.txt", "work.txt"} {
 		lsCmd := exec.CommandContext(t.Context(), "git", "cat-file", "-e", "main:"+want) //nolint:gosec // G204: fixed git subcommand + test-controlled loop constants
 		lsCmd.Dir = originDir
@@ -128,7 +96,6 @@ func TestMergeToMain_ForcedLostPushRace_ReEntersAndRetries(t *testing.T) {
 		}
 	}
 
-	// (C) local main == origin main after the retry push.
 	localMain := pushRaceRevParse(t, projectDir, "refs/heads/main")
 	originMain := pushRaceRevParse(t, originDir, "refs/heads/main")
 	if localMain != originMain {

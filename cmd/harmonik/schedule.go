@@ -1,33 +1,5 @@
 package main
 
-// schedule.go — `harmonik schedule` CLI subcommand block (codename:schedule, hk-0es).
-//
-// The generic recurring-job surface. All verbs mutate (or read)
-// .harmonik/schedules.json directly via internal/schedule.Store, so they work
-// whether or not the daemon is running: a running daemon reloads the file on its
-// next tick (mtime-change detection) and picks up the change within one poll
-// interval; when no daemon is up the change takes effect on next boot.
-//
-// Verbs:
-//
-//	add     --id <id> --schedule "daily@HH:MM <tz>" --action <command|spawn-crew> ...
-//	list    [--json]
-//	remove  <id>
-//	enable  <id>
-//	disable <id>
-//	run-now <id>     (sets a one-shot force-fire flag; honours overlap policy)
-//
-// Exit codes (mirrors the queue/crew CLI taxonomy):
-//
-//	0   Success
-//	1   Argument error / job not found / persistence failure
-//	2   Unrecognised verb
-//
-// No daemon connection is required for any verb, so there is no exit-17 path
-// here (unlike queue submit/crew start): the file IS the coordination surface.
-//
-// Spec ref: hk-0es brief (operator-locked D1 daily-only, D2 catch-up coalesce).
-
 import (
 	"encoding/json"
 	"fmt"
@@ -39,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// runScheduleSubcommand routes `harmonik schedule <verb> [args]`.
-// subArgs is os.Args[2:].
 func runScheduleSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -73,8 +43,6 @@ func runScheduleSubcommand(subArgs []string) int {
 	}
 }
 
-// resolveScheduleStore resolves projectDir (--project or cwd), constructs a
-// Store, and loads the existing file. Returns nil + a non-zero exit code on error.
 func resolveScheduleStore(projectFlag string) (*schedule.Store, int) {
 	if projectFlag == "" {
 		wd, err := os.Getwd()
@@ -97,13 +65,6 @@ func resolveScheduleStore(projectFlag string) (*schedule.Store, int) {
 	return store, 0
 }
 
-// parseScheduleSpec parses a schedule spec string into a Schedule.
-//
-// Accepted forms:
-//
-//	"daily@09:30"                    — daily at 09:30 local time
-//	"daily@09:30 America/New_York"   — daily at 09:30 in a specific timezone
-//	"every@5m"                       — every 5 minutes (Go duration, e.g. 30s, 1h)
 func parseScheduleSpec(spec string) (schedule.Schedule, error) {
 	spec = strings.TrimSpace(spec)
 	fields := strings.Fields(spec)
@@ -123,13 +84,11 @@ func parseScheduleSpec(spec string) (schedule.Schedule, error) {
 			tz = fields[1]
 		}
 		s := schedule.Schedule{Kind: kind, At: at[1], TZ: tz}
-		// Validate via NextFire so a bad HH:MM / tz fails at add-time, not at fire-time.
 		if _, err := schedule.NextFire(s, time.Now()); err != nil {
 			return schedule.Schedule{}, err
 		}
 		return s, nil
 	case schedule.ScheduleKindEvery:
-		// Validate the duration at add-time.
 		s := schedule.Schedule{Kind: kind, Interval: at[1]}
 		if _, err := schedule.NextFire(s, time.Now()); err != nil {
 			return schedule.Schedule{}, err
@@ -140,7 +99,6 @@ func parseScheduleSpec(spec string) (schedule.Schedule, error) {
 	}
 }
 
-// runScheduleAdd implements `schedule add`.
 func runScheduleAdd(args []string) int {
 	var (
 		id, specStr, actionKind      string
@@ -233,7 +191,6 @@ func runScheduleAdd(args []string) int {
 		return 1
 	}
 
-	// Validate optional policy fields.
 	switch overlap {
 	case "", schedule.OverlapPolicySkip, schedule.OverlapPolicyAllow:
 	default:
@@ -248,9 +205,6 @@ func runScheduleAdd(args []string) int {
 			schedule.CatchupCoalesceWithinWindow, schedule.CatchupOff)
 		return 1
 	}
-	// Validate --catchup-window at add-time: the clock parses it with
-	// time.ParseDuration when firing, so reject a malformed value here rather
-	// than silently persisting a job that never catches up.
 	if catchupWin != "" {
 		if _, err := time.ParseDuration(catchupWin); err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik schedule add: --catchup-window %q is not a valid duration (e.g. 24h): %v\n",
@@ -286,7 +240,6 @@ func runScheduleAdd(args []string) int {
 	return 0
 }
 
-// runScheduleList implements `schedule list [--json]`.
 func runScheduleList(args []string) int {
 	jsonOut := false
 	projectFlag := ""
@@ -335,7 +288,6 @@ func runScheduleList(args []string) int {
 		}
 		nextStr := "-"
 		if next, err := schedule.JobNextFire(j, now); err == nil {
-			// Display next-fire in local time per the brief.
 			nextStr = next.Local().Format("2006-01-02 15:04 MST")
 		}
 		lastStr := "never"
@@ -352,7 +304,6 @@ func runScheduleList(args []string) int {
 	return 0
 }
 
-// scheduleActionSummary renders a one-line summary of an action for `list`.
 func scheduleActionSummary(a schedule.Action) string {
 	switch a.Kind {
 	case schedule.ActionKindCommand:
@@ -364,7 +315,6 @@ func scheduleActionSummary(a schedule.Action) string {
 	}
 }
 
-// runScheduleRemove implements `schedule remove <id>`.
 func runScheduleRemove(args []string) int {
 	id, projectFlag, code := scheduleSingleIDArgs("remove", args)
 	if code != 0 {
@@ -387,7 +337,6 @@ func runScheduleRemove(args []string) int {
 	return 0
 }
 
-// runScheduleEnableDisable implements `schedule enable|disable <id>`.
 func runScheduleEnableDisable(args []string, enable bool) int {
 	verb := "disable"
 	if enable {
@@ -414,7 +363,6 @@ func runScheduleEnableDisable(args []string, enable bool) int {
 	return 0
 }
 
-// runScheduleRunNow implements `schedule run-now <id>`.
 func runScheduleRunNow(args []string) int {
 	id, projectFlag, code := scheduleSingleIDArgs("run-now", args)
 	if code != 0 {
@@ -437,7 +385,6 @@ func runScheduleRunNow(args []string) int {
 	return 0
 }
 
-// scheduleSingleIDArgs parses the common `<id> [--project DIR]` argument shape.
 func scheduleSingleIDArgs(verb string, args []string) (id, projectFlag string, code int) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]

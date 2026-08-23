@@ -1,18 +1,5 @@
 package main
 
-// crew_keeper_test.go — unit tests for crew keeper watcher integration (hk-yfcc).
-//
-// Tests cover:
-//  - seedSID: session ID file is written to the correct path with the correct
-//    content (trim + newline).
-//  - spawnCrewKeeper / stopCrewKeeper: keeper session names are correctly derived
-//    from the crew name ("hk-keeper-<name>").
-//
-// spawnCrewKeeper and stopCrewKeeper shell out to tmux (not available in unit
-// tests). Their keeper-session-name convention is the load-bearing constraint,
-// and is verified here via the name-derivation helper. The keeper --warn-only
-// flag acceptance is proven by TestWatcher_WarnOnly_* in the keeper package.
-
 import (
 	"os"
 	"path/filepath"
@@ -78,7 +65,6 @@ func TestSeedSID_MkdirAll(t *testing.T) {
 	name := "gamma"
 	sessionID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 
-	// Confirm the keeper dir doesn't exist before the call.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if _, err := os.Stat(keeperDir); !os.IsNotExist(err) {
 		t.Fatalf("expected keeper dir to be absent before seedSID; err=%v", err)

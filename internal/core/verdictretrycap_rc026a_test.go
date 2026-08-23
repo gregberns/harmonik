@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// verdictretrycap_rc026a_test.go — Tests for RC-026a Cat 3b retry cap logic.
-//
-// Covers:
-//   - VerdictExecutionAttemptRecord.Valid() shape invariants.
-//   - VerdictRetryCapDefault value.
-//   - CheckVerdictRetryCap pure function for all boundary conditions:
-//     nil record (first retry), mid-range, cap boundary, cap exceeded.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-026a.
-
-// ---- VerdictExecutionAttemptRecord.Valid ----
-
 // TestVerdictExecutionAttemptRecord_ValidIsTrue verifies that a well-formed
 // record passes Valid().
 func TestVerdictExecutionAttemptRecord_ValidIsTrue(t *testing.T) {
@@ -83,8 +71,6 @@ func TestVerdictExecutionAttemptRecord_EmptyLastAttemptAtIsInvalid(t *testing.T)
 	}
 }
 
-// ---- VerdictRetryCapDefault ----
-
 // TestVerdictRetryCapDefault_IsFive verifies that the default cap is N=5 per
 // RC-026a.
 func TestVerdictRetryCapDefault_IsFive(t *testing.T) {
@@ -95,8 +81,6 @@ func TestVerdictRetryCapDefault_IsFive(t *testing.T) {
 		t.Errorf("VerdictRetryCapDefault = %d, want %d (RC-026a default cap N=5)", VerdictRetryCapDefault, want)
 	}
 }
-
-// ---- CheckVerdictRetryCap ----
 
 // TestCheckVerdictRetryCap_NilRecord_FirstRetryAllowed verifies that when no
 // file exists yet (nil record), the first retry (attempt=1) is allowed.
@@ -281,7 +265,6 @@ func TestCheckVerdictRetryCap_CustomCap(t *testing.T) {
 		LastAttemptAt: "2026-06-01T00:00:00Z",
 	}
 
-	// cap=3: attempt 3 is the last; attempt 4 is beyond.
 	d3 := CheckVerdictRetryCap(record, 3)
 	if !d3.Allowed {
 		t.Error("CheckVerdictRetryCap(attempt=2, cap=3): Allowed = false; want true (attempt 3 is at cap but allowed)")

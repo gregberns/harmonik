@@ -62,8 +62,6 @@ func (c *FakeClock) Sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// ─── Ticker ──────────────────────────────────────────────────────────────────
-
 type fakeTicker struct {
 	clock    *FakeClock
 	ch       chan time.Time
@@ -106,8 +104,6 @@ func (t *fakeTicker) Stop() {
 	c.tickers = out
 }
 
-// ─── Advance ─────────────────────────────────────────────────────────────────
-
 // Advance moves virtual time forward by d, firing tickers at each interval
 // boundary and waking sleepers whose deadline is reached, in timeline order.
 // Advance is the test/harness driver; it is not part of ClockPort.
@@ -127,8 +123,6 @@ func (c *FakeClock) Advance(d time.Duration) {
 	c.now = target
 }
 
-// nextEventBefore returns the earliest ticker-boundary or sleeper deadline in
-// (now, target]. Caller holds mu.
 func (c *FakeClock) nextEventBefore(target time.Time) (time.Time, bool) {
 	var best time.Time
 	has := false
@@ -150,9 +144,6 @@ func (c *FakeClock) nextEventBefore(target time.Time) (time.Time, bool) {
 	return best, has
 }
 
-// fireTickersAt fires every live ticker whose nextFire == at, advancing its
-// nextFire by one interval. The send is non-blocking (buffer cap 1), so a
-// prior unconsumed tick coalesces — matching real time.Ticker. Caller holds mu.
 func (c *FakeClock) fireTickersAt(at time.Time) {
 	for _, t := range c.tickers {
 		if t.stopped {
@@ -168,8 +159,6 @@ func (c *FakeClock) fireTickersAt(at time.Time) {
 	}
 }
 
-// wakeSleepersAt closes done for every sleeper whose deadline <= at and drops
-// it from the list. Caller holds mu.
 func (c *FakeClock) wakeSleepersAt(at time.Time) {
 	out := c.sleepers[:0]
 	for _, s := range c.sleepers {

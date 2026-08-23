@@ -1,40 +1,17 @@
 package main
 
-// decisions_coverage_test.go — pure-logic coverage for the `harmonik decisions`
-// command cluster (decisions.go + decisions_k4.go). These tests exercise the
-// paths that need NO live daemon: path resolution, terminal printing, row
-// rendering, every usage/help block, and the flag-parsing / arg-validation /
-// socket-absent (exit 17) branches of each verb.
-//
-// Deliberately NOT covered here (need a live daemon socket, a real presence
-// projection over a running bus, or a blocking subscribe stream):
-//   - decisionsBlockedWait / decisionsArmSubscribe (open a live subscribe stream)
-//   - decisionsDialOp beyond its dial-failure branch (needs a responding daemon)
-//   - runDecisionsListOrShowParsed past the dial (needs a daemon to return rows)
-// Those are integration-level and out of scope for this pure-logic pass.
-//
-// Reuses captureStateStdout (state_cmd_coverage_test.go) and the dx9* helpers
-// (decisions_hkxz9_test.go). New helpers use the "dcov" prefix.
-
 import (
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// dcovRC runs fn (a subcommand invocation) while suppressing its stdout, and
-// returns both the exit code and the captured stdout. Stderr is left alone
-// (matches the existing raise/withdraw tests).
 func dcovRC(t *testing.T, fn func() int) (int, string) {
 	t.Helper()
 	var rc int
 	out := captureStateStdout(t, func() { rc = fn() })
 	return rc, out
 }
-
-// ----------------------------------------------------------------------------
-// decisionsResolvePaths — pure path resolution
-// ----------------------------------------------------------------------------
 
 func TestDecisionsResolvePaths(t *testing.T) {
 	tests := []struct {
@@ -76,7 +53,6 @@ func TestDecisionsResolvePaths(t *testing.T) {
 }
 
 func TestDecisionsResolvePaths_DefaultsToCwd(t *testing.T) {
-	// Empty project flag → cwd (absolute, non-empty), socket under it.
 	abs, sock, rc := decisionsResolvePaths("", "", "list")
 	if rc != 0 {
 		t.Fatalf("rc = %d, want 0", rc)
@@ -89,10 +65,6 @@ func TestDecisionsResolvePaths_DefaultsToCwd(t *testing.T) {
 		t.Errorf("sockPath = %q, want %q", sock, wantSock)
 	}
 }
-
-// ----------------------------------------------------------------------------
-// decisionsPrintTerminal — pure output of a resolved/withdrawn terminal
-// ----------------------------------------------------------------------------
 
 func TestDecisionsPrintTerminal(t *testing.T) {
 	tests := []struct {
@@ -117,10 +89,6 @@ func TestDecisionsPrintTerminal(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// renderDecisionRows — the human "what-needs-me" queue renderer
-// ----------------------------------------------------------------------------
-
 func TestRenderDecisionRows_Empty(t *testing.T) {
 	out := captureStateStdout(t, func() { renderDecisionRows(nil) })
 	if out != "No open decisions.\n" {
@@ -142,7 +110,6 @@ func TestRenderDecisionRows_Fields(t *testing.T) {
 			OrphanedPending: true,
 		},
 		{
-			// Empty blocked/context render as "-", no urgency, not orphaned.
 			decisionListItem: decisionListItem{
 				DecisionID: "dec-2",
 				Question:   "Pick region",
@@ -153,23 +120,16 @@ func TestRenderDecisionRows_Fields(t *testing.T) {
 	}
 	out := captureStateStdout(t, func() { renderDecisionRows(rows) })
 
-	// Row 1: fully populated, orphaned + urgency decorations present.
 	if !strings.Contains(out, "Ship v2? · ship|hold · alice · hk-aaa · dec-1  [blocker]  [orphaned-pending]") {
 		t.Errorf("row 1 render wrong; full output:\n%s", out)
 	}
-	// Row 2: empty blocked_agent and context_link collapse to "-", no decorations.
 	if !strings.Contains(out, "Pick region · us|eu · - · - · dec-2\n") {
 		t.Errorf("row 2 render wrong (expected '-' placeholders, no decorations); full output:\n%s", out)
 	}
-	// Row 2 must NOT carry an orphaned/urgency tag.
 	if strings.Contains(out, "dec-2  [") {
 		t.Errorf("row 2 should have no urgency/orphaned decoration; full output:\n%s", out)
 	}
 }
-
-// ----------------------------------------------------------------------------
-// Usage / help blocks — every usage function prints non-empty guidance.
-// ----------------------------------------------------------------------------
 
 func TestDecisionsUsageFunctions(t *testing.T) {
 	tests := []struct {
@@ -196,11 +156,6 @@ func TestDecisionsUsageFunctions(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// raise — flag-parsing branches not already covered (help, unknown flag,
-// unexpected positional, invalid urgency). All return before any dial.
-// ----------------------------------------------------------------------------
-
 func TestDecisionsRaise_FlagParsing(t *testing.T) {
 	tests := []struct {
 		name string
@@ -221,10 +176,6 @@ func TestDecisionsRaise_FlagParsing(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// wait — help + unknown flag.
-// ----------------------------------------------------------------------------
-
 func TestDecisionsWait_FlagParsing(t *testing.T) {
 	tests := []struct {
 		name string
@@ -243,10 +194,6 @@ func TestDecisionsWait_FlagParsing(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// withdraw — help + unknown flag (id/reason validation already in hkxz9 test).
-// ----------------------------------------------------------------------------
-
 func TestDecisionsWithdraw_FlagParsing(t *testing.T) {
 	tests := []struct {
 		name string
@@ -264,11 +211,6 @@ func TestDecisionsWithdraw_FlagParsing(t *testing.T) {
 		})
 	}
 }
-
-// ----------------------------------------------------------------------------
-// list — help, unknown flag, unexpected positional (all pre-dial), plus the
-// socket-absent exit 17 once parsing passes.
-// ----------------------------------------------------------------------------
 
 func TestDecisionsList_FlagParsing(t *testing.T) {
 	tests := []struct {
@@ -296,10 +238,6 @@ func TestDecisionsList_MissingDaemonExit17(t *testing.T) {
 		t.Errorf("list with no daemon: rc = %d, want 17", rc)
 	}
 }
-
-// ----------------------------------------------------------------------------
-// show — help, no id, two ids, unknown flag, and exit 17 with a valid single id.
-// ----------------------------------------------------------------------------
 
 func TestDecisionsShow_ArgValidation(t *testing.T) {
 	tests := []struct {
@@ -331,10 +269,6 @@ func TestDecisionsShow_MissingDaemonExit17(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// answer — help, wrong arg count, unknown flag, and exit 17 with valid args.
-// ----------------------------------------------------------------------------
-
 func TestDecisionsAnswer_ArgValidation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -358,7 +292,6 @@ func TestDecisionsAnswer_ArgValidation(t *testing.T) {
 
 func TestDecisionsAnswer_MissingDaemonExit17(t *testing.T) {
 	dir := t.TempDir()
-	// Valid two positionals + a resolver default → parsing passes, dial fails → 17.
 	rc, _ := dcovRC(t, func() int {
 		return runDecisionsAnswerSubcommand([]string{dx9D1, "ship", "--project", dir})
 	})
@@ -366,10 +299,6 @@ func TestDecisionsAnswer_MissingDaemonExit17(t *testing.T) {
 		t.Errorf("answer with no daemon: rc = %d, want 17", rc)
 	}
 }
-
-// ----------------------------------------------------------------------------
-// mailbox — help, unknown flag, unexpected positional, and exit 17.
-// ----------------------------------------------------------------------------
 
 func TestMailbox_FlagParsing(t *testing.T) {
 	tests := []struct {

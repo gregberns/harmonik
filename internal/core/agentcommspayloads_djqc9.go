@@ -1,18 +1,5 @@
 package core
 
-// agentcommspayloads_djqc9.go — event-bus payload types for agent-comms
-// typed events (agent-comms spec §1, bead hk-djqc9):
-//
-//   - agent_message  (§1.1) — directed/broadcast message between agents
-//   - agent_presence (§1.2) — join/refresh/leave presence beat
-//
-// Both types ride the standard EV-001 envelope (event.go:27).
-// agent_message is F-class (fsync-boundary per spec §1.1 "no silent drops" G2).
-// agent_presence is O-class (ordinary — losing a refresh beat on crash is harmless).
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §1.
-// Bead ref: hk-djqc9.
-
 // AgentPresenceStatus is the typed discriminator for the status field of an
 // agent_presence event (agent-comms spec §1.2).
 type AgentPresenceStatus string

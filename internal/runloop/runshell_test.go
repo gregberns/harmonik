@@ -11,13 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// runshell_test.go — the RT7 FakeClock drive-loop conformance test. It exercises
-// the shell composition root end-to-end in virtual time (RSM-INV-002, RSM-025):
-// a Dispatch that never becomes ready rides the SR9 ready-timeout edge (kill +
-// agent_ready_timeout emit + Failed), and the run's failure maps onto the Run
-// machine's reopen spine (reopen + failed run terminal). No wall-clock sleeps.
-
-// recordingEffectors captures which effector arms fired, for assertions.
 type recordingEffectors struct {
 	mu               sync.Mutex
 	launched         bool
@@ -97,10 +90,6 @@ func TestRunShell_ReadyTimeout_KillsAndFails(t *testing.T) {
 		result <- sh.RunDispatch(context.Background(), runexec.NewDispatch(cfg), "sess-1", "spec-ref")
 	}()
 
-	// Pump virtual time until the dispatch reaches its terminal. Each drive
-	// generation arms exactly one deadline ticker; advancing past the largest
-	// composed deadline fires whichever timer is live, converging in two edges
-	// (agent_ready → ready_kill_reap).
 	final := pumpUntilDone(t, clock, result)
 
 	if final.Phase != runexec.DispatchFailed {
@@ -120,12 +109,6 @@ func TestRunShell_ReadyTimeout_KillsAndFails(t *testing.T) {
 	}
 }
 
-// pumpUntilDone advances the FakeClock in small virtual steps, yielding to the
-// reactor goroutine between advances so it can arm its deadline ticker before
-// the next advance crosses it. Small steps (1s) never leapfrog a deadline
-// (≥10s) armed at now+d, so every timer edge fires deterministically; the real
-// yield keeps the test converging without racing BlockUntil against a
-// goroutine that has already terminated.
 func pumpUntilDone(t *testing.T, clock *substrate.FakeClock, result <-chan runexec.DispatchState) runexec.DispatchState {
 	t.Helper()
 	for i := 0; i < 500; i++ {
@@ -148,8 +131,6 @@ func TestRunShell_Run_MapsFailureToReopen(t *testing.T) {
 	clock := substrate.NewFakeClock(time.Unix(0, 0))
 	rec := &recordingEffectors{}
 	events := make(chan runexec.Event, 1)
-	// The sub-driver return (a failed dispatch mapped to a mode failure) arrives
-	// on the tap after provisioning.
 	events <- runexec.Event{Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure}
 
 	eff := rec.bundle()

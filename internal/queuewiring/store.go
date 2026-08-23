@@ -58,9 +58,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// submitWakeCBufSize is the buffer depth for the wake channel. Buffer of 1
-// ensures a non-blocking send never blocks and coalesces rapid bursts into a
-// single wakeup (hk-24xn1).
 const submitWakeCBufSize = 1
 
 // QueueStore is the daemon-singleton holder for the name-keyed queue registry.
@@ -92,9 +89,6 @@ type QueueStore struct {
 
 var errCompletionObservationInProgress = errors.New("completion observation is in progress")
 
-// newQueueStore returns a ready-to-use QueueStore with no active queues.
-//
-// Bead ref: hk-j808w, hk-tigaf.2.
 func newQueueStore() *QueueStore {
 	return &QueueStore{
 		queues:      make(map[string]*queue.Queue),
@@ -112,11 +106,6 @@ func newQueueStore() *QueueStore {
 func NewQueueStore() *QueueStore {
 	return newQueueStore()
 }
-
-// ---------------------------------------------------------------------------
-// Single-name shims — backward-compat API that targets QueueNameMain ("main").
-// The workloop, RunRegistry, and all pre-NQ-A1 callers use these methods.
-// ---------------------------------------------------------------------------
 
 // SetQueue installs q under the write lock at the slot derived from q.Name
 // (normalised to QueueNameMain if empty). It replaces any prior value at that
@@ -185,10 +174,6 @@ func (s *QueueStore) ClearQueue() {
 	s.queueMu.Unlock()
 }
 
-// ---------------------------------------------------------------------------
-// Name-keyed API — per-name set/get/clear for multi-queue dispatch (NQ-A1).
-// ---------------------------------------------------------------------------
-
 // QueueByName returns a deep copy of the *queue.Queue for the given name, or
 // nil when no queue with that name is loaded. name MUST be normalised
 // (non-empty) before calling; use queue.NormaliseQueueName.
@@ -255,10 +240,6 @@ func (s *QueueStore) AllQueues() map[string]*queue.Queue {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// Wake / WakeCh — workloop submit-wake (unchanged from hk-j808w).
-// ---------------------------------------------------------------------------
-
 // WakeCh returns the channel that receives a signal after every SetQueue /
 // SetQueueByName call. The workloop selects on this channel alongside its poll
 // timer to wake immediately when a new queue is submitted (hk-24xn1).
@@ -290,10 +271,6 @@ func (s *QueueStore) Wake() {
 	default:
 	}
 }
-
-// ---------------------------------------------------------------------------
-// LockForMutation — read-then-write serialisation (QM-064).
-// ---------------------------------------------------------------------------
 
 // LockForMutation acquires the write lock and returns a *LockedQueueStore
 // whose Done method releases it. Use for read-then-write sequences
@@ -416,8 +393,6 @@ func (lq *LockedQueueStore) LockedAllQueueNames() []string {
 	return names
 }
 
-// ---------------------------------------------------------------------------
-
 // Snapshot is kept as an alias for existing QueueStore callers. The queue
 // package owns the transaction port so queue operations do not import this
 // registry package.
@@ -448,9 +423,6 @@ var ErrQueueQuarantined = errors.New("queuewiring: queue is quarantined after a 
 // Spec ref: specs/queue-model.md §9.1 QM-060 (single writer).
 var ErrStaleSnapshot = errors.New("queuewiring: queue snapshot is stale")
 
-// The queue read commands reach the quarantine through this port. It is
-// satisfied by a runtime type assertion in queue.HandlerAdapter, so nothing
-// else would catch a rename of the method below.
 var _ queue.QuarantineReader = (*QueueStore)(nil)
 
 // QuarantineReason returns the error that shut the named queue, or nil when the
@@ -496,15 +468,6 @@ type FailedRecoveryResult struct {
 
 var _ queue.TransactionStore = (*QueueStore)(nil)
 
-// commitFailedRecovery resumes one paused-by-failure queue through the QM-001
-// transaction owner. It returns the same receipt without a second mutation
-// when the queue was already recovered.
-//
-// It is the durable half of recovery and it decides nothing about policy. The
-// caller is RecoverFailed in recovery.go, which owns the QM-052b preflight and
-// the typed refusals. Keeping the two apart is what stops a second recovery
-// entry point from growing: this method is unexported, so the ledger preflight
-// cannot be skipped by reaching past it.
 func (s *QueueStore) commitFailedRecovery(ctx context.Context, projectDir, name string) FailedRecoveryResult {
 	name = queue.NormaliseQueueName(name)
 	snapshot := s.Snapshot(name)
@@ -643,18 +606,6 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		CompletionReceiptBinding:     req.CompletionReceiptBinding,
 	})
 	if !commit.Committed() {
-		// QM-001: on ANY I/O error in the atomic-write sequence the daemon MUST
-		// refuse further mutations to this queue. That covers both a write that
-		// definitely did not land and one whose result is unknown — a full disk
-		// and a corrupt queue file do not clear by trying again, and a caller
-		// that keeps trying turns one failure into an unbounded retry loop.
-		//
-		// OutcomeRejected is deliberately NOT quarantined: the replacement was
-		// refused before any I/O was attempted (a malformed request, or a
-		// cancelled context), so nothing about the queue on disk is in doubt and
-		// the next caller deserves a fresh try.
-		//
-		// Spec ref: specs/queue-model.md §3.1 QM-001.
 		if commit.Outcome != queue.OutcomeRejected {
 			s.quarantined[name] = commit.Err
 		}
@@ -711,10 +662,6 @@ func (s *QueueStore) Complete(ctx context.Context, req queue.CompletionRequest) 
 	)
 }
 
-// completionRejected builds the one result shape every pre-commit guard on the
-// completion path returns. A rejection is always Outcome=rejected in the
-// namespace result AND Phase=rejected; writing the pair out at each guard let
-// the two disagree, and only one of them is what callers switch on.
 func completionRejected(err error) queue.CompletionResult {
 	return queue.CompletionResult{
 		NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
@@ -722,15 +669,6 @@ func completionRejected(err error) queue.CompletionResult {
 	}
 }
 
-// validateCompletionSnapshotLocked checks the caller's snapshot against live
-// store state: the queue is not quarantined, and the snapshot still describes
-// what the store holds. The caller MUST hold queueMu — every field this reads
-// is guarded by it.
-//
-// The nil check on Snapshot.Queue is last in its condition on purpose:
-// sameQueue answers for a nil argument, and a caller that reordered these
-// would turn a stale snapshot into a nil dereference in the identity check
-// that runs next.
 func (s *QueueStore) validateCompletionSnapshotLocked(req queue.CompletionRequest, name string) error {
 	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
 		return quarantineErr
@@ -746,11 +684,6 @@ func (s *QueueStore) validateCompletionSnapshotLocked(req queue.CompletionReques
 	return nil
 }
 
-// validateCompletionCandidate checks the caller's candidate queue against the
-// snapshot's identity, then replays the value-only completion decision the
-// candidate claims to be the result of. It reads no store state and holds no
-// lock: the snapshot it dereferences has already been validated by
-// validateCompletionSnapshotLocked, which is why that call comes first.
 func validateCompletionCandidate(req queue.CompletionRequest, name string) error {
 	if req.Candidate == nil || req.Candidate.QueueID != req.Snapshot.Queue.QueueID ||
 		req.Candidate.Name != name {
@@ -837,8 +770,6 @@ func (s *QueueStore) finishCompletion(
 	cleanupIntent func(string, string) error,
 	installMarker func(string, queue.CompletionReleaseMarkerInputs, time.Time) (queue.CompletionReleaseMarker, error),
 ) queue.CompletionResult {
-	// The completed canonical and receipt are durable. Retain the completed
-	// queue in memory until canonical and intent absence are also durable.
 	s.queues[name] = queue.CloneQueue(&prepared.Candidate)
 	s.generations[name]++
 	installedGeneration := s.generations[name]
@@ -910,9 +841,6 @@ func (s *QueueStore) garbageCollectCompletionReceipts(
 	return collect(projectDir, observation)
 }
 
-// otherQueuesLocked returns a deep copy of every queue except exclude. The
-// caller must hold the write lock. Copies are handed out rather than the stored
-// pointers because the write path mutates those in place.
 func (s *QueueStore) otherQueuesLocked(exclude string) map[string]*queue.Queue {
 	others := make(map[string]*queue.Queue, len(s.queues))
 	for otherName, otherQueue := range s.queues {

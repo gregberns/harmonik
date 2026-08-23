@@ -2,7 +2,6 @@ package core
 
 import "testing"
 
-// evidenceFixture returns a populated Evidence map for use in tests.
 func evidenceFixture() Evidence {
 	return Evidence{
 		"key":  "value",
@@ -11,8 +10,6 @@ func evidenceFixture() Evidence {
 	}
 }
 
-// evidenceSubWorkflowPinFixture returns a valid SubWorkflowExpansionPin for
-// use in Evidence map tests. Uses the canonical value shape per EM-034c.
 func evidenceSubWorkflowPinFixture() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     "reconciliation-v1",
@@ -51,7 +48,6 @@ func TestEvidenceValid_ArbitraryKeys(t *testing.T) {
 func TestEvidenceValid_ReservedKeySubWorkflowPin(t *testing.T) {
 	t.Parallel()
 
-	// Value shape per EM-034c: SubWorkflowExpansionPin struct.
 	pin := evidenceSubWorkflowPinFixture()
 	e := Evidence{EvidenceKeySubWorkflowPin: pin}
 	if !e.Valid() {
@@ -91,10 +87,6 @@ func TestEvidenceValid_ReservedKeyPartialSuccess(t *testing.T) {
 	}
 }
 
-// --- CP-040 Gate verdict persistence ---
-
-// gateVerdictForEvidenceTest returns a minimal valid GateVerdictRecord for
-// use in Evidence.SetGateVerdict tests.
 func gateVerdictForEvidenceTest() GateVerdictRecord {
 	h := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	return GateVerdictRecord{

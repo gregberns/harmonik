@@ -1,19 +1,5 @@
 package codesync
 
-// codesync_test.go — ordered-argv tests for the DD1 code-sync sequence
-// (remote-substrate B8, hk-rs-b8-codesync-3fk0; box-A direct-fetch rework hk-7bwx).
-//
-// Gate-runnable: all git subprocesses are intercepted by RecordingRunner with
-// a no-op CmdFunc (exec.CommandContext(ctx, "true")) so no network or real git is needed.
-//
-// Test matrix:
-//   TestRSB8_CodeSyncArgvOrder/remote-run: verifies fetch-base → worktree-add
-//     (on the worker via SSH) then box-A direct-SSH-fetch of the run branch
-//     straight from the worker repo (ssh://<host><repoPath>). The old
-//     worker→GitHub push step is GONE (hk-7bwx).
-//   TestRSB8_CodeSyncArgvOrder/local-run: verifies that no SSH calls appear and
-//     the box-A-fetch argv carries the direct ssh:// URL.
-
 import (
 	"context"
 	"os/exec"
@@ -24,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// newNoOpRecorder returns a RecordingRunner whose CmdFunc delegates every call
-// to exec.CommandContext(ctx, "true") so commands always succeed without side effects.
 func newNoOpRecorder() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -49,33 +33,22 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		workerRepoPath = "/Users/gb/harmonik-worker/repo"
 	)
 	branch := workspace.TaskBranchName(runID)
-	// Direct-SSH fetch URL box A uses: ssh://<host>/<abs repo path>.
 	workerURL := "ssh://" + workerHost + workerRepoPath
 
 	t.Run("remote-run", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 
-		// Use a temp dir as the worker repo root so that workspace.CreateWorktree's
-		// os.MkdirAll succeeds and reaches runner.Command (where the recording
-		// happens). The git command itself is intercepted by the no-op CmdFunc.
 		tmpWorkerRepo := t.TempDir()
 		tmpWorkerWtPath := workspace.WorktreePath(tmpWorkerRepo, runID, workspace.NoWorktreeRootOverride())
 
-		// sshRR captures all git commands tunnelled to the worker.
 		sshRR := newNoOpRecorder()
-		// localRR captures git commands run locally on box A (step c).
 		localRR := newNoOpRecorder()
 
-		// Step (a): fetch-base on worker.
 		if err := fetchBaseOnWorker(ctx, sshRR, tmpWorkerRepo, baseSHA); err != nil {
 			t.Fatalf("RSB8: fetchBaseOnWorker: %v", err)
 		}
 
-		// Step (worktree): create worktree on worker via SSHRunner (B7 seam).
-		// We call workspace.CreateWorktree with the SSHRunner so the worktree-add
-		// git command is recorded by the same sshRR. The no-op CmdFunc makes the
-		// `git worktree add` return success without a real git repo.
 		wtCfg := workspace.NoWorktreeRootOverride().WithRunner(sshRR)
 		if err := workspace.CreateWorktree(ctx, tmpWorkerRepo, runID, baseSHA, wtCfg); err == nil ||
 			!strings.Contains(err.Error(), "empty HEAD") {
@@ -83,25 +56,14 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		}
 		_ = tmpWorkerWtPath // worktree path no longer used (no worker→origin push, hk-7bwx)
 
-		// Step (c): fetch run-branch on box A DIRECTLY from the worker repo over SSH.
-		// hk-7bwx: NO worker→GitHub push precedes this; box A dials the worker via
-		// the ssh:// URL using its own credentials.
 		if err := FetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
 			t.Fatalf("RSB8: FetchRunBranchBoxA: %v", err)
 		}
-
-		// ── Assert SSH call order ─────────────────────────────────────────
-		// Expected calls via sshRR (in order); NO push step (hk-7bwx):
-		//   [0] git -C <tmpWorkerRepo> fetch origin <baseSHA>   (fetch-base)
-		//   [1] git -C <tmpWorkerRepo> cat-file -t <baseSHA>    (verify SHA present; hk-2hfyt)
-		//   [2] mkdir -p <parentDir>                            (CreateWorktree remote mkdir, hk-eodo)
-		//   [3] git -C <tmpWorkerRepo> worktree add -b ...      (worktree-add, may retry)
 
 		if len(sshRR.Calls) < 4 {
 			t.Fatalf("RSB8/remote: expected at least 4 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
 		}
 
-		// Call 0: fetch-base
 		c0 := sshRR.Calls[0]
 		if c0.Name != "git" {
 			t.Errorf("RSB8/remote: calls[0].Name = %q, want git", c0.Name)
@@ -111,7 +73,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[0].Args = %v, want %v", c0.Args, wantC0)
 		}
 
-		// Call 1: cat-file -t verification (hk-2hfyt).
 		c1 := sshRR.Calls[1]
 		if c1.Name != "git" {
 			t.Errorf("RSB8/remote: calls[1].Name = %q, want git", c1.Name)
@@ -121,9 +82,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[1].Args = %v, want %v", c1.Args, wantC1)
 		}
 
-		// Call 2: remote mkdir -p <parentDir> (CreateWorktree routes mkdir through
-		// the runner for remote runs so the parent dir is created on the worker,
-		// not locally — hk-eodo TOCTOU fix).
 		c2 := sshRR.Calls[2]
 		if c2.Name != "mkdir" {
 			t.Errorf("RSB8/remote: calls[2].Name = %q, want mkdir", c2.Name)
@@ -132,7 +90,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[2].Args = %v, want [-p <parentDir>]", c2.Args)
 		}
 
-		// Call 3: worktree-add (first git command issued by CreateWorktree).
 		c3 := sshRR.Calls[3]
 		if c3.Name != "git" {
 			t.Errorf("RSB8/remote: calls[3].Name = %q, want git", c3.Name)
@@ -142,8 +99,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[3].Args = %v, want [-C <tmpWorkerRepo> worktree add ...]", c3.Args)
 		}
 
-		// hk-7bwx: there is NO worker→origin push anymore — assert NO SSH call is a
-		// push (the run branch never leaves the worker repo; box A fetches it direct).
 		for i, c := range sshRR.Calls {
 			joined := strings.Join(append([]string{c.Name}, c.Args...), " ")
 			if strings.Contains(joined, "push") {
@@ -151,9 +106,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			}
 		}
 
-		// ── Assert local call (box-A direct-SSH fetch) ───────────────────
-		// box A fetches the run branch straight from the worker repo over SSH:
-		//   git -C <projectDir> fetch ssh://<host><repoPath> run/<id>:refs/heads/run/<id>
 		if len(localRR.Calls) != 1 {
 			t.Fatalf("RSB8/remote: expected 1 local call, got %d: %v", len(localRR.Calls), localRR.Calls)
 		}
@@ -166,8 +118,6 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: localRR.calls[0].Args = %v, want %v", cLocal.Args, wantLocal)
 		}
 
-		// ── Assert ordering: fetch-base is FIRST; worktree-add precedes nothing
-		// after it on the SSH channel (no push) ───────────────────────────
 		foundFetchBase := strings.Join(sshRR.Calls[0].Args, " ")
 		if !strings.Contains(foundFetchBase, "fetch") || !strings.Contains(foundFetchBase, baseSHA) {
 			t.Errorf("RSB8/remote: first SSH call is not fetch-base: %v", sshRR.Calls[0].Args)
@@ -178,30 +128,17 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 
-		// For a local run, none of the DD1 code-sync steps are triggered.
-		// The daemon calls worktree-add with the default (local) runner, then
-		// goes straight to mergeRunBranchToMain without any SSH or box-A fetch.
-		//
-		// Verify: calling FetchRunBranchBoxA with a recording (non-SSH) runner
-		// produces NO SSH output and uses the direct ssh:// URL argv (hk-7bwx);
-		// fetchBaseOnWorker is simply never called for a local run.
-
 		sshRR := newNoOpRecorder() // should remain empty for a local run
 
-		// Simulate the box-A fetch with a non-SSH recording runner. The fetch
-		// command itself always carries the direct-SSH worker URL (hk-7bwx);
-		// the local runner is the transport for the git process box A runs.
 		localRR := newNoOpRecorder()
 		if err := FetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
 			t.Fatalf("RSB8/local: FetchRunBranchBoxA: %v", err)
 		}
 
-		// No SSH-runner calls should have been made.
 		if len(sshRR.Calls) != 0 {
 			t.Errorf("RSB8/local: expected 0 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
 		}
 
-		// The call goes through the local recording runner with the ssh:// URL argv.
 		if len(localRR.Calls) != 1 {
 			t.Fatalf("RSB8/local: expected 1 local call, got %d: %v", len(localRR.Calls), localRR.Calls)
 		}
@@ -254,7 +191,6 @@ func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 			callN++
 			if callN <= failCount {
-				// Return a command that exits non-zero with the ref-not-found message.
 				return exec.CommandContext(ctx, "/bin/sh", "-c",
 					"printf \"error: couldn't find remote ref run/xxx\\n\" >&2; exit 128")
 			}
@@ -265,7 +201,6 @@ func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 	if err := FetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
 		t.Fatalf("FetchRunBranchBoxA: expected success after %d retries, got: %v", failCount, err)
 	}
-	// Expect failCount failures + 1 success = failCount+1 total calls.
 	if callN != failCount+1 {
 		t.Errorf("CmdFunc called %d times, want %d", callN, failCount+1)
 	}
@@ -288,7 +223,6 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 	rr := &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 			callN++
-			// Connection-refused — a hard error, must not retry.
 			return exec.CommandContext(ctx, "/bin/sh", "-c",
 				"printf \"ssh: connect to host 100.87.151.114 port 22: Connection refused\\n\" >&2; exit 128")
 		},
@@ -298,7 +232,6 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on hard failure, got nil")
 	}
-	// Must fail after exactly 1 call (no retry).
 	if callN != 1 {
 		t.Errorf("CmdFunc called %d times on hard error, want 1 (no retry)", callN)
 	}
@@ -326,7 +259,6 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 		baseSHA        = "aabbccddaabbccddaabbccddaabbccddaabbccdd"
 	)
 
-	// sshRR simulates: fetch exits 0 (success) but cat-file exits 128 (SHA absent).
 	fetchCalled, catFileCalled := 0, 0
 	sshRR := &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -337,7 +269,6 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 				}
 				if a == "cat-file" {
 					catFileCalled++
-					// exit 128 — SHA not present in ODB
 					return exec.CommandContext(ctx, "/bin/sh", "-c",
 						"printf 'fatal: git cat-file: not in the object database\n' >&2; exit 128")
 				}
@@ -346,7 +277,6 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 		},
 	}
 
-	// localRR captures the push from box A to the worker (push fallback).
 	localRR := newNoOpRecorder()
 
 	err := EnsureBaseOnWorker(ctx, sshRR, workerRepoPath, baseSHA,
@@ -362,7 +292,6 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 		t.Errorf("cat-file called %d times, want 1", catFileCalled)
 	}
 
-	// localRR should have received exactly one call: git push ssh://<host>/<repo> <sha>:refs/harmonik/base
 	if len(localRR.Calls) != 1 {
 		t.Fatalf("localRR: expected 1 push call, got %d: %v", len(localRR.Calls), localRR.Calls)
 	}
@@ -398,7 +327,6 @@ func TestEnsureBaseOnWorker_NoFallbackOnConnectionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on SSH connection failure, got nil")
 	}
-	// No push should be attempted — the error is a connection failure, not errBaseSHAAbsent.
 	if len(localRR.Calls) != 0 {
 		t.Errorf("localRR: expected 0 calls on connection error, got %d: %v", len(localRR.Calls), localRR.Calls)
 	}
@@ -437,7 +365,6 @@ func TestPushBaseToWorker_ArgvShape(t *testing.T) {
 	}
 }
 
-// argvSliceEqual reports whether a and b have identical elements.
 func argvSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

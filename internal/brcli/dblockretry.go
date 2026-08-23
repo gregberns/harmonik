@@ -113,29 +113,6 @@ func (a *Adapter) RunWithDBLockedRetry(
 	return result, err
 }
 
-// runWithDBLockedRetryTimeoutKills is RunWithDBLockedRetry plus the number of
-// attempts it lost to a WALL-CLOCK TIMEOUT KILL. RunWithDBLockedRetry delegates
-// to it and drops the count.
-//
-// The count matters to the claim path. A caller that sees `br` REFUSE a write
-// cannot always tell whether an EARLIER attempt of the same call already
-// landed. The two transient classes that force a retry carry OPPOSITE evidence,
-// and only one of them creates that doubt:
-//
-//   - Timeout kill (BrUnavailable). `br` was killed at the wall-clock deadline.
-//     It may have committed the write before it died, because a commit and its
-//     acknowledgement are not atomic (hk-5dewt / hk-yjsk8). A later refusal may
-//     be `br` rejecting OUR OWN landed write. This is the doubt. It is counted.
-//   - Locked database (BrDbLocked, exit 3). `br` gave up waiting for the write
-//     lock and wrote NOTHING. A later refusal cannot be our own write. There is
-//     no doubt here, so this is NOT counted.
-//
-// Counting attempts instead of timeout kills would conflate the two and credit
-// a claim after ordinary SQLite contention, which re-opens the takeover the
-// claim gate exists to stop. Count only the kills.
-//
-// The count is 0 for a call whose attempts all produced a definite answer from
-// `br`, however many attempts that took.
 func (a *Adapter) runWithDBLockedRetryTimeoutKills(
 	ctx context.Context,
 	cfg TimeoutConfig,
@@ -147,34 +124,25 @@ func (a *Adapter) runWithDBLockedRetryTimeoutKills(
 ) (Result, int, error) {
 	backoff := base
 
-	// Diagnostic counters: track how many attempts hit each failure class.
 	var countDbLocked, countUnavailable int
 
-	// lastResult and lastErr hold the outcome of the most-recent transient
-	// attempt so the escalation message can surface them verbatim.
 	var lastResult Result
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		result, err := a.RunWithTimeout(ctx, cfg, kind, args...)
 
-		// Classify outcome into one of: success, non-transient error,
-		// transient (DbLocked Result or BrUnavailable-wrapped err).
 		switch {
 		case err == nil && result.BrErr != BrDbLocked:
-			// Success or non-DbLocked Result: return as-is.
 			return result, countUnavailable, nil
 		case err != nil && errors.Is(err, context.Canceled):
-			// Context cancellation is never a transient retry target.
 			return Result{}, countUnavailable, err
 		case err != nil && errors.Is(err, context.DeadlineExceeded):
 			return Result{}, countUnavailable, err
 		case err != nil && !errors.Is(err, BrUnavailable):
-			// Exec / fork error that is NOT a wall-clock timeout: propagate.
 			return Result{}, countUnavailable, err
 		}
 
-		// Transient: record outcome for diagnostics.
 		lastResult = result
 		lastErr = err
 		if err != nil {
@@ -183,9 +151,7 @@ func (a *Adapter) runWithDBLockedRetryTimeoutKills(
 			countDbLocked++
 		}
 
-		// If this was the last allowed attempt, escalate with full diagnostics.
 		if attempt == maxRetries {
-			// Capture the last 200 bytes of stderr for the diagnostic message.
 			stderrSnippet := lastResult.Stderr
 			if len(stderrSnippet) > 200 {
 				stderrSnippet = stderrSnippet[len(stderrSnippet)-200:]
@@ -216,10 +182,6 @@ func (a *Adapter) runWithDBLockedRetryTimeoutKills(
 			)
 		}
 
-		// Sleep for the current backoff, then double (capped at cap_).
-		// Add up to 25% jitter before capping to reduce thundering herd under
-		// concurrent terminal writes (hk-cw4sx: N workers retry simultaneously).
-		// Respect context cancellation during the sleep.
 		select {
 		case <-ctx.Done():
 			return Result{}, countUnavailable, fmt.Errorf("brcli: context canceled during transient-failure backoff: %w", ctx.Err())
@@ -235,6 +197,5 @@ func (a *Adapter) runWithDBLockedRetryTimeoutKills(
 		}
 	}
 
-	// Unreachable: the loop always returns on the last iteration.
 	return Result{}, countUnavailable, errors.New("brcli: RunWithDBLockedRetry: internal invariant violation")
 }

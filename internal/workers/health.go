@@ -1,13 +1,5 @@
 package workers
 
-// health.go — boot-time worker health check (remote-substrate B6).
-//
-// RunHealthCheck runs four probes against each enabled worker. Any failure marks
-// that worker unhealthy in the Registry (SetEnabledByName(name, false)) and emits
-// a typed worker_unhealthy event. Config entries are never deleted (FR11).
-//
-// Bead ref: hk-rs-b6-healthcheck-isda.
-
 import (
 	"bytes"
 	"context"
@@ -88,11 +80,6 @@ func RunHealthCheck(ctx context.Context, runner tmux.CommandRunner, cfg Config, 
 		}
 		probeName, detail, err := runProbes(ctx, runner, w)
 		if err != nil {
-			// Target this specific worker by name. SetEnabledByName is a no-op
-			// (returns an error we intentionally ignore) when w is not the
-			// worker held by reg, so a failing worker never flips a different
-			// worker's Enabled state. This matters once more than one worker is
-			// configured; with the v1 single-worker cap it matches SetEnabled.
 			_, _ = reg.SetEnabledByName(w.Name, false) //nolint:errcheck // no-op (error intentionally ignored) when w is not the worker held by reg — see comment above
 			emitUnhealthyEvent(ctx, w.Name, probeName, detail, emit)
 			continue
@@ -102,15 +89,11 @@ func RunHealthCheck(ctx context.Context, runner tmux.CommandRunner, cfg Config, 
 	return nil
 }
 
-// probeSpec describes a single health-check probe.
 type probeSpec struct {
 	name string   // event payload probe name
 	argv []string // command + args passed to runner.Command
 }
 
-// runProbes executes all four health probes against w using runner.
-// Returns the probe name, a human-readable detail string, and a non-nil error
-// on first failure. Returns ("", "", nil) when all probes pass.
 func runProbes(ctx context.Context, runner tmux.CommandRunner, w Worker) (probeName, detail string, err error) {
 	probes := []probeSpec{
 		{name: "tmux_version", argv: []string{"tmux", "-V"}},
@@ -130,8 +113,6 @@ func runProbes(ctx context.Context, runner tmux.CommandRunner, w Worker) (probeN
 	return "", "", nil
 }
 
-// emitUnhealthyEvent marshals and emits a worker_unhealthy event.
-// No-op when emit is nil.
 func emitUnhealthyEvent(ctx context.Context, workerName, probeName, detail string, emit EmitFunc) {
 	if emit == nil {
 		return

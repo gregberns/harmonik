@@ -1,11 +1,5 @@
 package presence_test
 
-// reaper_test.go — unit tests for the hitl-decisions orphan reaper (component
-// K5, bead hk-061) and the lifted open-decision projection. These are plain
-// (non-scenario) unit tests: they build a synthetic events.jsonl on disk and
-// assert the N9 predicate (Offline → reaped; Stale/Online/unknown → not reaped),
-// idempotency (N3), and the sole-emitter "by=keeper" / reason=orphaned contract.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/presence"
 )
 
-// recEmitter records EmitWithRunID calls for assertions.
 type recEmitter struct {
 	calls []recCall
 }
@@ -36,7 +29,6 @@ func (r *recEmitter) EmitWithRunID(_ context.Context, _ core.RunID, t core.Event
 	return nil
 }
 
-// emit appends one event to jsonlPath through a real bus+writer (durable path).
 func emit(t *testing.T, jsonlPath string, evType core.EventType, payload any) {
 	t.Helper()
 	writer, err := eventbus.OpenJSONLWriter(jsonlPath)
@@ -56,7 +48,6 @@ func emit(t *testing.T, jsonlPath string, evType core.EventType, payload any) {
 	}
 }
 
-// emitNeeded emits a decision_needed and returns the minted decision_id.
 func emitNeeded(t *testing.T, jsonlPath, blockedAgent string) string {
 	t.Helper()
 	before := presence.OpenDecisions(jsonlPath)
@@ -130,7 +121,6 @@ func TestReapOrphanedDecisions_N9Predicate(t *testing.T) {
 	}
 }
 
-// emitNeededNoAgent emits a decision_needed with an empty blocked_agent.
 func emitNeededNoAgent(t *testing.T, jsonlPath string) string {
 	t.Helper()
 	before := presence.OpenDecisions(jsonlPath)
@@ -151,8 +141,6 @@ func emitNeededNoAgent(t *testing.T, jsonlPath string) string {
 	return ""
 }
 
-// withdrawnIDs returns the set of decision_ids the emitter recorded, asserting
-// each is reason=orphaned by=keeper (the N9 sole-emitter contract).
 func withdrawnIDs(t *testing.T, em *recEmitter) map[string]bool {
 	t.Helper()
 	out := make(map[string]bool)
@@ -184,7 +172,6 @@ func TestReapOrphanedDecisions_Idempotent(t *testing.T) {
 	did := emitNeeded(t, path, "gone")
 	emitPresence(t, path, "gone", "offline", time.Now())
 
-	// First reap: withdraws once.
 	em1 := &recEmitter{}
 	if _, err := presence.ReapOrphanedDecisions(context.Background(), path, em1); err != nil {
 		t.Fatalf("reap 1: %v", err)
@@ -193,7 +180,6 @@ func TestReapOrphanedDecisions_Idempotent(t *testing.T) {
 		t.Fatalf("first reap must withdraw %s", did)
 	}
 
-	// Replay the withdrawal into the log (the FileEmitter would), then reap again.
 	emit(t, path, core.EventTypeDecisionWithdrawn, core.DecisionWithdrawnPayload{
 		DecisionID: did, Reason: core.DecisionWithdrawnReasonOrphaned, By: "keeper",
 	})
@@ -216,7 +202,6 @@ func TestReapOrphanedDecisions_AnswerRace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	did := emitNeeded(t, path, "gone")
 	emitPresence(t, path, "gone", "offline", time.Now())
-	// Answer lands first.
 	emit(t, path, core.EventTypeDecisionResolved, core.DecisionResolvedPayload{
 		DecisionID: did, ChosenOption: "a", Resolver: "operator",
 	})
@@ -241,7 +226,6 @@ func TestReapOrphanedDecisions_NilEmitter(t *testing.T) {
 // TestReapOrphanedDecisions_EmptyLog asserts an empty/absent log is a clean no-op.
 func TestReapOrphanedDecisions_EmptyLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	// no file written yet
 	em := &recEmitter{}
 	res, err := presence.ReapOrphanedDecisions(context.Background(), path, em)
 	if err != nil {

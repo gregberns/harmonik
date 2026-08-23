@@ -30,8 +30,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Event types ─────────────────────────────────────────────────────────────
-
 // EventType classifies a typed event fed to the reactor.
 type EventType string
 
@@ -77,8 +75,6 @@ type Event struct {
 	Message       string    `json:"message,omitempty"`
 }
 
-// ─── Action types ────────────────────────────────────────────────────────────
-
 // ActionType classifies an action produced by the reactor for the effector.
 type ActionType string
 
@@ -116,8 +112,6 @@ type Action struct {
 	Message       string     `json:"message,omitempty"`
 }
 
-// ─── Effector ────────────────────────────────────────────────────────────────
-
 // Effector executes Actions produced by the reactor. It is the codex
 // instantiation of the generic substrate seam (substrate.Effector[Action]).
 //
@@ -129,8 +123,6 @@ type Action struct {
 // The real effector wires into the harmonik event bus and the codex stdio
 // channel. FakeEffector (in fake.go) records actions for scenario assertions.
 type Effector = substrate.Effector[Action]
-
-// ─── EventSource ─────────────────────────────────────────────────────────────
 
 // EventSource is the provider of typed Events. It is the codex instantiation of
 // the generic substrate seam (substrate.EventSource[Event]).
@@ -144,8 +136,6 @@ type Effector = substrate.Effector[Action]
 //   - SyntheticSource (fake.go): delivers a pre-defined []Event slice; used in
 //     unit and scenario tests.
 type EventSource = substrate.EventSource[Event]
-
-// ─── State ───────────────────────────────────────────────────────────────────
 
 // State is the reactor's mutable state. It is updated by Step and can be
 // inspected between steps in tests.
@@ -164,8 +154,6 @@ type State struct {
 	// on EventTypeConnected (reconnect).
 	LastSeq uint64
 }
-
-// ─── Reactor ─────────────────────────────────────────────────────────────────
 
 // Reactor is the translation brain for the codex app-server integration.
 //
@@ -192,7 +180,6 @@ func (r *Reactor) State() State { return r.state }
 //
 // Returns nil (not an empty slice) when no actions are produced.
 func (r *Reactor) Step(ev Event) []Action {
-	// I2 — dedup-by-seq. Seq=0 bypasses dedup (connection lifecycle events).
 	if ev.Seq > 0 && ev.Seq <= r.state.LastSeq {
 		return nil
 	}
@@ -203,11 +190,6 @@ func (r *Reactor) Step(ev Event) []Action {
 	switch ev.Type {
 
 	case EventTypeConnected:
-		// Reconnect: reset dedup seq and clear in-flight state. Any turn that
-		// was in-flight before disconnect was already terminated by the
-		// Disconnected event. Clear ThreadID too — the prior thread does not
-		// survive a reconnect; leaving it stale would misattribute the first
-		// post-reconnect delta/status until the next TurnStarted overwrites it.
 		r.state.InFlight = false
 		r.state.TurnID = ""
 		r.state.ThreadID = ""
@@ -216,7 +198,6 @@ func (r *Reactor) Step(ev Event) []Action {
 
 	case EventTypeDisconnected:
 		if r.state.InFlight {
-			// I1: terminate the in-flight turn on disconnect.
 			r.state.InFlight = false
 			r.state.TurnID = ""
 			return []Action{{
@@ -227,11 +208,6 @@ func (r *Reactor) Step(ev Event) []Action {
 		return nil
 
 	case EventTypeTurnStarted:
-		// I1: record the new turn in-flight. If another turn was already
-		// in-flight (mid-turn steer, or rare server reordering), it is
-		// superseded — emit a terminal for the orphaned turn so the effector
-		// closes it out. A superseded turn must not vanish without a terminal
-		// (wind-down is a terminal, not silence).
 		var actions []Action
 		if r.state.InFlight && r.state.TurnID != "" && r.state.TurnID != ev.TurnID {
 			actions = []Action{{
@@ -248,7 +224,6 @@ func (r *Reactor) Step(ev Event) []Action {
 
 	case EventTypeTurnCompleted:
 		if !r.state.InFlight {
-			// Stale completion with no turn in-flight; drop silently.
 			return nil
 		}
 		r.state.InFlight = false
@@ -286,7 +261,6 @@ func (r *Reactor) Step(ev Event) []Action {
 		}}
 
 	case EventTypeError:
-		// Server or transport error terminates any in-flight turn.
 		r.state.InFlight = false
 		r.state.TurnID = ""
 		return []Action{{
@@ -295,7 +269,6 @@ func (r *Reactor) Step(ev Event) []Action {
 		}}
 	}
 
-	// Unknown event type: drop silently (forward-compat).
 	return nil
 }
 

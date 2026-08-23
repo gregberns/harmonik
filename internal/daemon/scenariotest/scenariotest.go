@@ -38,10 +38,6 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// CapturedEvent — single event from the JSONL stream
-// ──────────────────────────────────────────────────────────────────────────────
-
 // CapturedEvent is one JSONL envelope line decoded to the fields relevant for
 // scenario assertions (type, run_id, raw payload).
 type CapturedEvent struct {
@@ -52,10 +48,6 @@ type CapturedEvent struct {
 	// Raw is the full JSON line as read from the JSONL file.
 	Raw string
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// EventStream — thread-safe captured event list
-// ──────────────────────────────────────────────────────────────────────────────
 
 // EventStream is a thread-safe list of captured events populated by
 // CaptureEventStream. It is safe to read concurrently while the daemon is
@@ -85,10 +77,6 @@ func (es *EventStream) Types() []string {
 	}
 	return out
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// CaptureEventStream — background JSONL tail reader
-// ──────────────────────────────────────────────────────────────────────────────
 
 // CaptureEventStream starts a background goroutine that polls the JSONL log at
 // jsonlPath and appends decoded events to the returned EventStream. Polling
@@ -134,7 +122,6 @@ func CaptureEventStream(t *testing.T, ctx context.Context, jsonlPath string) *Ev
 					RunID string `json:"run_id"`
 				}
 				if decErr := json.Unmarshal([]byte(line), &env); decErr != nil {
-					// Skip malformed lines; bump offset.
 				} else {
 					es.mu.Lock()
 					es.events = append(es.events, CapturedEvent{
@@ -158,10 +145,6 @@ func CaptureEventStream(t *testing.T, ctx context.Context, jsonlPath string) *Ev
 	return es
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// WaitForEvent — poll until a matching event arrives
-// ──────────────────────────────────────────────────────────────────────────────
-
 // WaitForEvent polls the JSONL file at jsonlPath until an event of eventType
 // scoped to runID appears (or timeout expires). When runID is empty it matches
 // any run_id.
@@ -181,8 +164,6 @@ func WaitForEvent(t *testing.T, jsonlPath, eventType, runID string, timeout time
 	return false
 }
 
-// scanJSONLForEvent reads the whole JSONL file and returns true when a matching
-// event is found.
 func scanJSONLForEvent(t *testing.T, jsonlPath, eventType, runID string) bool {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -217,10 +198,6 @@ func scanJSONLForEvent(t *testing.T, jsonlPath, eventType, runID string) bool {
 	}
 	return false
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertEventSequence — ordered subset check
-// ──────────────────────────────────────────────────────────────────────────────
 
 // ExpectedEvent describes one expected event in an ordered sequence assertion.
 type ExpectedEvent struct {
@@ -257,7 +234,6 @@ func AssertEventSequence(t *testing.T, jsonlPath string, required []ExpectedEven
 	}
 }
 
-// readAllEvents decodes every non-empty JSONL line from jsonlPath.
 func readAllEvents(t *testing.T, jsonlPath string) []CapturedEvent {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -298,10 +274,6 @@ func eventTypes(events []CapturedEvent) []string {
 	}
 	return out
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertQueueJSON — validate queue.json state
-// ──────────────────────────────────────────────────────────────────────────────
 
 // QueueExpectation carries the expected fields for an AssertQueueJSON call.
 type QueueExpectation struct {
@@ -359,10 +331,6 @@ func AssertQueueJSON(t *testing.T, projectDir string, expected QueueExpectation)
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertNoOrphanTmuxWindows — verify no harmonik windows leaked
-// ──────────────────────────────────────────────────────────────────────────────
-
 // AssertNoOrphanTmuxWindows asserts that no tmux windows with the harmonik
 // naming prefix remain after a scenario test. Skips the assertion when adapter
 // is nil (non-tmux environments).
@@ -396,10 +364,6 @@ func AssertNoOrphanTmuxWindows(t *testing.T, adapter tmuxPkg.Adapter) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertNoOrphanTmuxWindowsRequired — adapter-required variant
-// ──────────────────────────────────────────────────────────────────────────────
-
 // AssertNoOrphanTmuxWindowsRequired is like AssertNoOrphanTmuxWindows but
 // fails the test with t.Fatal when adapter is nil instead of returning silently.
 // Use this variant in tests that must explicitly verify tmux window cleanup
@@ -416,10 +380,6 @@ func AssertNoOrphanTmuxWindowsRequired(t *testing.T, adapter tmuxPkg.Adapter) {
 	AssertNoOrphanTmuxWindows(t, adapter)
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertWorktreeGone — verify worktree directory was removed
-// ──────────────────────────────────────────────────────────────────────────────
-
 // AssertWorktreeGone asserts that the git worktree directory for the given
 // runID no longer exists under .harmonik/worktrees/ in projectDir. A run_failed
 // event must cause the daemon to remove the worktree via its cleanup function.
@@ -435,10 +395,6 @@ func AssertWorktreeGone(t *testing.T, projectDir, runID string) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// AssertBeadStatus — verify br status for a bead ID
-// ──────────────────────────────────────────────────────────────────────────────
-
 // AssertBeadStatus runs `br show <beadID> --format json` via brPath and asserts
 // the returned status matches wantStatus.
 //
@@ -453,7 +409,6 @@ func AssertBeadStatus(t *testing.T, brPath, beadID, wantStatus string) {
 	if err != nil {
 		t.Fatalf("AssertBeadStatus: br show %s: %v", beadID, err)
 	}
-	// br show --format json returns a JSON array of bead records.
 	var records []struct {
 		Status string `json:"status"`
 	}
@@ -467,10 +422,6 @@ func AssertBeadStatus(t *testing.T, brPath, beadID, wantStatus string) {
 		t.Errorf("AssertBeadStatus: bead %s: got status %q, want %q", beadID, records[0].Status, wantStatus)
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TwinBinaryPath — locate harmonik-twin-claude
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TwinBinaryPath returns the absolute path to the harmonik-twin-claude binary.
 //
@@ -488,7 +439,6 @@ func AssertBeadStatus(t *testing.T, brPath, beadID, wantStatus string) {
 //
 // Bead: hk-jf2tb.
 func TwinBinaryPath() (string, bool) {
-	// 1. Override for CI or explicit test configuration.
 	if env := os.Getenv("HARMONIK_TWIN_CLAUDE"); env != "" {
 		if _, err := os.Stat(env); err == nil {
 			return env, true
@@ -519,15 +469,11 @@ func CheckoutBinaryPath(name string) (string, bool) {
 	if !ok {
 		return name, false
 	}
-	// thisFile = .../internal/daemon/scenariotest/scenariotest.go
-	// checkout root = 4 dirs up
 	worktreeRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
 	primary := filepath.Join(worktreeRoot, name)
 	if statOK(primary) {
 		return primary, true
 	}
-	// The binary commonly lives only in the main checkout while the test runs
-	// from a worktree. Walk up to the .git pointer to find it.
 	if mainRoot := findMainRepoRoot(worktreeRoot); mainRoot != "" {
 		if candidate := filepath.Join(mainRoot, name); statOK(candidate) {
 			return candidate, true
@@ -541,9 +487,6 @@ func statOK(path string) bool {
 	return err == nil
 }
 
-// findMainRepoRoot walks the directory tree upward from start looking for a
-// .git directory. In a normal checkout it returns the repo root; in a worktree
-// it reads the .git file's gitdir pointer and returns the main checkout root.
 func findMainRepoRoot(start string) string {
 	dir := start
 	for {
@@ -551,7 +494,6 @@ func findMainRepoRoot(start string) string {
 		info, err := os.Stat(gitPath)
 		if err == nil {
 			if info.IsDir() {
-				// Normal checkout — .git is a directory.
 				return dir
 			}
 			// Worktree — .git is a file pointing at the real gitdir.
@@ -567,13 +509,9 @@ func findMainRepoRoot(start string) string {
 				return ""
 			}
 			gitdir := strings.TrimPrefix(line, prefix)
-			// gitdir is .../harmonik/.git/worktrees/<name>
-			// Strip /worktrees/<name> to get .../harmonik/.git
-			// then strip /.git to get .../harmonik
 			if idx := strings.Index(gitdir, "/.git/worktrees/"); idx >= 0 {
 				return gitdir[:idx]
 			}
-			// Fall back: parent of gitdir's parent is the repo root.
 			return filepath.Dir(filepath.Dir(gitdir))
 		}
 		parent := filepath.Dir(dir)
@@ -607,7 +545,6 @@ func WriteReviewLoopWorkflowDot(t *testing.T, projectDir string) {
 	if !ok {
 		t.Fatal("WriteReviewLoopWorkflowDot: runtime.Caller failed")
 	}
-	// thisFile = <root>/internal/daemon/scenariotest/scenariotest.go
 	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
 	src := filepath.Join(root, "specs", "examples", "review-loop.dot")
 

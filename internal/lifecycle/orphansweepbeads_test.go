@@ -1,10 +1,5 @@
 package lifecycle
 
-// orphansweepbeads_test.go — unit tests for the PL-006 sixth-bullet
-// stale-in_progress bead-reset sweep. Bead ref: hk-iuaed.4.
-//
-// Helper prefix: imrestSweep (per implementer-protocol §Helper-prefix).
-
 import (
 	"context"
 	"encoding/json"
@@ -20,11 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ---------------------------------------------------------------------------
-// Fakes for BeadLedger / BeadResetter / MergeCommitScanner
-// ---------------------------------------------------------------------------
-
-// imrestSweepFakeLedger implements InFlightBeadLedger.
 type imrestSweepFakeLedger struct {
 	beads []core.BeadRecord
 	err   error
@@ -34,7 +24,6 @@ func (f *imrestSweepFakeLedger) ListInFlightBeads(_ context.Context) ([]core.Bea
 	return f.beads, f.err
 }
 
-// imrestSweepFakeResetter implements BeadResetter and records calls.
 type imrestSweepFakeResetter struct {
 	called []core.BeadID
 	errOn  map[core.BeadID]error
@@ -55,7 +44,6 @@ func (f *imrestSweepFakeResetter) ResetBead(
 	return nil
 }
 
-// imrestSweepFakeMergeScanner implements MergeCommitScanner.
 type imrestSweepFakeMergeScanner struct {
 	merged map[core.BeadID]bool
 	err    error
@@ -68,7 +56,6 @@ func (f *imrestSweepFakeMergeScanner) HasMergeCommitForBead(_ context.Context, b
 	return f.merged[beadID], nil
 }
 
-// imrestSweepFakeCat3cCloser implements BeadCat3cCloser and records calls.
 type imrestSweepFakeCat3cCloser struct {
 	called []core.BeadID
 	errOn  map[core.BeadID]error
@@ -82,7 +69,6 @@ func (f *imrestSweepFakeCat3cCloser) SweepCloseBead(_ context.Context, _ brcli.T
 	return nil
 }
 
-// imrestSweepBead constructs a valid in-progress BeadRecord with the given ID.
 func imrestSweepBead(id string) core.BeadRecord {
 	return core.BeadRecord{
 		BeadID:        core.BeadID(id),
@@ -95,8 +81,6 @@ func imrestSweepBead(id string) core.BeadRecord {
 	}
 }
 
-// imrestSweepWriteIntent writes a minimal IntentLogEntry to intentLogDir for
-// (op, beadID) so ScanIntentLog observes it.
 func imrestSweepWriteIntent(t *testing.T, intentLogDir string, beadID core.BeadID, op core.TerminalOp) {
 	t.Helper()
 	if err := os.MkdirAll(intentLogDir, 0o750); err != nil {
@@ -142,9 +126,6 @@ func imrestSweepWriteIntent(t *testing.T, intentLogDir string, beadID core.BeadI
 		t.Fatalf("imrestSweepWriteIntent: constructed IntentLogEntry failed Valid(): %+v", entry)
 	}
 
-	// Encode bead ID into filename via the same scheme as the adapter:
-	// "<encoded_ikey>.json" with colons replaced by underscores.
-	// We don't need byte-exact compatibility — the scanner reads any *.json.
 	data, marshErr := json.Marshal(entry)
 	if marshErr != nil {
 		t.Fatalf("imrestSweepWriteIntent: Marshal: %v", marshErr)
@@ -155,8 +136,6 @@ func imrestSweepWriteIntent(t *testing.T, intentLogDir string, beadID core.BeadI
 	}
 }
 
-// imrestSweepBaseConfig builds a SweepStaleInProgressBeadsConfig with the
-// required scalar fields populated.
 func imrestSweepBaseConfig(t *testing.T) SweepStaleInProgressBeadsConfig {
 	t.Helper()
 	return SweepStaleInProgressBeadsConfig{
@@ -165,10 +144,6 @@ func imrestSweepBaseConfig(t *testing.T) SweepStaleInProgressBeadsConfig {
 		DaemonStartNS: time.Now().UnixNano(),
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SweepStaleInProgressBeads — happy paths and exclusions
-// ---------------------------------------------------------------------------
 
 // TestSweepStaleInProgressBeads_NoBeads verifies that an empty in-flight set
 // yields zero resets and no error.
@@ -252,13 +227,6 @@ func TestSweepStaleInProgressBeads_ExclusionB_PendingCloseIntent(t *testing.T) {
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-iuaed.t2")
 
-	// Provenance proxy: in production, the claim intent has been removed by
-	// BI-030 step 6 success. For exclusion (b) to fire we need to satisfy
-	// provenance via the claim intent OR an alternate signal. Since the only
-	// provenance signal today is the claim intent, this test exercises a
-	// situation where BOTH a claim and a close intent are present — which is
-	// transient but valid (claim intent in-flight on the previous instance
-	// when the daemon crashed; close intent never landed).
 	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpClaim)
 	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpClose)
 
@@ -328,7 +296,6 @@ func TestSweepStaleInProgressBeads_NoClaimIntent_NotOwned(t *testing.T) {
 
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-iuaed.t4")
-	// No claim intent written.
 
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
@@ -419,9 +386,6 @@ func TestSweepStaleInProgressBeads_ConfigValidation(t *testing.T) {
 	}
 }
 
-// imrestSweepFakeProvenance implements ProvenanceChecker. owns reports the
-// set of beads for which Owns returns true; err is returned by every call when
-// non-nil.
 type imrestSweepFakeProvenance struct {
 	owns map[core.BeadID]bool
 	err  error
@@ -447,8 +411,6 @@ func TestSweepStaleInProgressBeads_ResetFires_WhenProvenanceCheckerEstablishesOw
 
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-iuaed.t5")
-	// No claim intent written (simulating a prior BI-031 recovery that
-	// cleared the intent file). No close/reopen intent. No merge commit.
 
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	cfg.Provenance = &imrestSweepFakeProvenance{owns: map[core.BeadID]bool{bid: true}}
@@ -637,7 +599,6 @@ func TestScanIntentLog_PartitionsByOp(t *testing.T) {
 	if _, ok := mutations["hk-d"]; ok {
 		t.Error("hk-d (reset) should NOT be in mutations set")
 	}
-	// All four beads must appear in provenance.
 	for _, bid := range []core.BeadID{"hk-a", "hk-b", "hk-c", "hk-d"} {
 		if _, ok := provenance[bid]; !ok {
 			t.Errorf("expected %s in provenance set", bid)
@@ -684,35 +645,16 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvena
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-sc3o4-repro")
 
-	// Simulate: claim intent was cleared by BI-031 recovery; a timed-out close
-	// attempt left a close intent on disk. No claim intent present.
 	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpClose)
-	// No TerminalOpClaim intent written — this is the scenario.
 
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
-	// No ProvenanceChecker wired (production default).
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	// hk-sc3o4 fix: the close intent establishes provenance AND exclusion (b)
-	// does NOT suppress the reset because the bead is stale IN_PROGRESS with
-	// no live Cat 3a handler. BUT wait: exclusion (b) fires on mutation intent
-	// presence — so this test exercises the tricky interaction.
-	//
-	// Correct behavior per PL-006: stale close intent = Cat 3a territory.
-	// The sweep MUST NOT preempt Cat 3a. Therefore count = 0 here.
-	// The provenance fix ensures the bead reaches the exclusion checks
-	// rather than being silently skipped — but exclusion (b) still applies.
-	//
-	// The real fix for hk-sc3o4 therefore requires either:
-	//   (i)  a stale RESET intent (not close) establishing provenance, or
-	//   (ii) a ProvenanceChecker that is wired to detect orphaned beads.
-	//
-	// This test documents the correct layered behavior.
 	if result.ResetCount != 0 {
 		t.Errorf("PL-006 exclusion (b) must suppress reset when close intent present: count = %d, want 0", result.ResetCount)
 	}
@@ -740,14 +682,11 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvena
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-sc3o4-repro-reset")
 
-	// Stale reset intent from a prior sweep that crashed during the BI-030
-	// atomic rename. No claim intent. No close/reopen intent.
 	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpReset)
 
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
-	// No ProvenanceChecker (production default).
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
@@ -760,10 +699,6 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvena
 		t.Errorf("hk-sc3o4: ResetBead not called on expected bead: calls=%v", resetter.called)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Cat 3c auto-resolution (hk-lgtq2) — BeadCat3cCloser coverage
-// ---------------------------------------------------------------------------
 
 // TestSweepStaleInProgressBeads_Cat3cClose_Success verifies the Cat 3c
 // auto-resolution happy path: when a non-nil Cat3cCloser is injected and the
@@ -779,9 +714,7 @@ func TestSweepStaleInProgressBeads_Cat3cClose_Success(t *testing.T) {
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-lgtq2-cat3c-success")
 
-	// Provenance via ProvenanceChecker (no intent file needed).
 	cfg.Provenance = &imrestSweepFakeProvenance{owns: map[core.BeadID]bool{bid: true}}
-	// Merge scanner: bead is subsumed (merge commit present on target branch).
 	cfg.MergeScanner = &imrestSweepFakeMergeScanner{merged: map[core.BeadID]bool{bid: true}}
 
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
@@ -794,14 +727,12 @@ func TestSweepStaleInProgressBeads_Cat3cClose_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	// Cat 3c close must have fired.
 	if result.Cat3cCloseCount != 1 {
 		t.Errorf("Cat3cCloseCount = %d, want 1", result.Cat3cCloseCount)
 	}
 	if len(closer.called) != 1 || closer.called[0] != bid {
 		t.Errorf("SweepCloseBead calls = %v, want [%s]", closer.called, bid)
 	}
-	// Reset must NOT have fired (Cat 3c takes the bead, not reset path).
 	if result.ResetCount != 0 {
 		t.Errorf("ResetCount = %d, want 0 (Cat 3c owns the bead)", result.ResetCount)
 	}
@@ -809,10 +740,6 @@ func TestSweepStaleInProgressBeads_Cat3cClose_Success(t *testing.T) {
 		t.Errorf("ResetBead must not be called for a Cat 3c bead: calls=%v", resetter.called)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Queue-based provenance and liveness (hk-2ty0g — SIGKILL recovery fix)
-// ---------------------------------------------------------------------------
 
 // TestSweepStaleInProgressBeads_QueueOwned_NoIntentFile_ResetsOrphan is the
 // regression test for hk-2ty0g (SIGKILL recovery — orphan sweep emits
@@ -832,22 +759,16 @@ func TestSweepStaleInProgressBeads_QueueOwned_NoIntentFile_ResetsOrphan(t *testi
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-2ty0g-queue-owned")
 
-	// Empty intent log — simulates fully-drained BI-031 recovery.
-	// No intent files written for bid.
-
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	// Wire QueueOwned: bead appears in queue.json (any status other than dispatched).
 	cfg.QueueOwned = QueueOwnedSet{bid: {}}
-	// QueueDispatched is nil / empty — no live run in the queue.
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	// hk-2ty0g fix: QueueOwned establishes provenance → reset must fire.
 	if result.ResetCount != 1 {
 		t.Errorf("hk-2ty0g: queue-owned bead with empty intent log should be reset: count = %d, want 1", result.ResetCount)
 	}
@@ -868,13 +789,10 @@ func TestSweepStaleInProgressBeads_QueueDispatched_ExcludesLiveRun(t *testing.T)
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-2ty0g-queue-dispatched")
 
-	// No intent file — simulates fully-drained BI-031 recovery.
-
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	// Wire both sets: bead is owned AND dispatched — live run exists.
 	cfg.QueueOwned = QueueOwnedSet{bid: {}}
 	cfg.QueueDispatched = QueueDispatchedSet{bid: {}}
 
@@ -882,7 +800,6 @@ func TestSweepStaleInProgressBeads_QueueDispatched_ExcludesLiveRun(t *testing.T)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	// Exclusion (a-queue) must suppress the reset: queue still believes run is live.
 	if result.ResetCount != 0 {
 		t.Errorf("hk-2ty0g: queue-dispatched bead must not be reset (exclusion a-queue): count = %d, want 0", result.ResetCount)
 	}
@@ -903,8 +820,6 @@ func TestSweepStaleInProgressBeads_QueueOwned_Dispatched_ExcludesEvenWithNoInten
 	cfg := imrestSweepBaseConfig(t)
 	bid := core.BeadID("hk-2ty0g-queue-dispatched-nofile")
 
-	// Empty intent log AND queue-dispatched: the queue is the authoritative
-	// liveness source here.
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
@@ -934,7 +849,6 @@ func TestSweepStaleInProgressBeads_Cat3cClose_ErrorAggregated(t *testing.T) {
 	bidFail := core.BeadID("hk-lgtq2-cat3c-fail")
 	bidOK := core.BeadID("hk-lgtq2-cat3c-ok")
 
-	// Both beads owned and both subsumed.
 	cfg.Provenance = &imrestSweepFakeProvenance{owns: map[core.BeadID]bool{bidFail: true, bidOK: true}}
 	cfg.MergeScanner = &imrestSweepFakeMergeScanner{merged: map[core.BeadID]bool{bidFail: true, bidOK: true}}
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{
@@ -948,21 +862,18 @@ func TestSweepStaleInProgressBeads_Cat3cClose_ErrorAggregated(t *testing.T) {
 	cfg.Cat3cCloser = closer
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
-	// Error must be reported (aggregated from the failing close).
 	if err == nil {
 		t.Fatal("expected aggregated error from Cat 3c close failure; got nil")
 	}
 	if !errors.Is(err, sentinel) {
 		t.Errorf("expected sentinel %v wrapped in returned error; got %v", sentinel, err)
 	}
-	// The successful bead (bidOK) must have been closed — sweep continued despite bidFail error.
 	if result.Cat3cCloseCount != 1 {
 		t.Errorf("Cat3cCloseCount = %d, want 1 (bidOK succeeded)", result.Cat3cCloseCount)
 	}
 	if len(closer.called) != 2 {
 		t.Errorf("SweepCloseBead call count = %d, want 2 (both beads attempted); calls=%v", len(closer.called), closer.called)
 	}
-	// No resets issued — both beads reached the Cat 3c path.
 	if result.ResetCount != 0 {
 		t.Errorf("ResetCount = %d, want 0", result.ResetCount)
 	}

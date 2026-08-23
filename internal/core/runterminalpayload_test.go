@@ -22,11 +22,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Fixture helpers (runterminalFixture prefix)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// runterminalFixtureCompleted returns a fully-populated, valid RunCompletedPayload.
 func runterminalFixtureCompleted(t *testing.T) RunCompletedPayload {
 	t.Helper()
 	summary := "workflow finished successfully"
@@ -38,8 +33,6 @@ func runterminalFixtureCompleted(t *testing.T) RunCompletedPayload {
 	}
 }
 
-// runterminalFixtureCompletedNoSummary returns a valid RunCompletedPayload
-// without an optional summary field (nil Summary).
 func runterminalFixtureCompletedNoSummary(t *testing.T) RunCompletedPayload {
 	t.Helper()
 	return RunCompletedPayload{
@@ -50,8 +43,6 @@ func runterminalFixtureCompletedNoSummary(t *testing.T) RunCompletedPayload {
 	}
 }
 
-// runterminalFixtureFailed returns a fully-populated, valid RunFailedPayload
-// with a structural failure class and a non-empty last_checkpoint SHA.
 func runterminalFixtureFailed(t *testing.T) RunFailedPayload {
 	t.Helper()
 	stateID := StateID(uuid.MustParse("01942b3c-0000-7000-8000-000000000021"))
@@ -67,10 +58,6 @@ func runterminalFixtureFailed(t *testing.T) RunFailedPayload {
 	}
 }
 
-// runterminalFixtureFailedNoCheckpoint returns a valid RunFailedPayload that
-// represents a budget_exhausted failure at dispatch time: no terminal_state_id
-// (before any node was entered) and empty last_checkpoint (no prior durable
-// transition).
 func runterminalFixtureFailedNoCheckpoint(t *testing.T) RunFailedPayload {
 	t.Helper()
 	return RunFailedPayload{
@@ -84,9 +71,6 @@ func runterminalFixtureFailedNoCheckpoint(t *testing.T) RunFailedPayload {
 	}
 }
 
-// runterminalFixtureEm015bSpecContent reads specs/execution-model.md and
-// returns the paragraph anchored by "EM-015b". Fails if the file is
-// unreadable or the anchor is absent.
 func runterminalFixtureEm015bSpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -116,10 +100,6 @@ func runterminalFixtureEm015bSpecContent(t *testing.T) string {
 	return para
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Spec-content sensor (EM-015b)
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestRunTerminal_EM015b_SpecContainsRequiredPhrases verifies that
 // execution-model.md §4.3 EM-015b encodes the canonical phrases for
 // run_completed and run_failed emission rules.
@@ -148,10 +128,6 @@ func TestRunTerminal_EM015b_SpecContainsRequiredPhrases(t *testing.T) {
 		}
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// RunCompletedPayload sensor tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestRunCompletedPayload_Valid_FullyPopulated verifies that a fully-populated
 // RunCompletedPayload passes Valid().
@@ -296,10 +272,6 @@ func TestRunCompletedPayload_JSONKeys(t *testing.T) {
 		}
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// RunFailedPayload sensor tests
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestRunFailedPayload_Valid_FullyPopulated verifies that a fully-populated
 // RunFailedPayload passes Valid().
@@ -528,20 +500,14 @@ func TestRunFailedPayload_LastCheckpointCarriesFailureClassAndSHA(t *testing.T) 
 
 	p := runterminalFixtureFailed(t)
 
-	// FailureClass must be non-empty and valid.
 	if !p.FailureClass.Valid() {
 		t.Errorf("FailureClass %q not valid; EM-025 requires failure_class in run_failed payload", p.FailureClass)
 	}
 
-	// LastCheckpoint must be present when a durable transition has occurred.
 	if p.LastCheckpoint == "" {
 		t.Error("LastCheckpoint is empty; EM-025 requires last_checkpoint SHA in run_failed payload when a checkpoint exists")
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// WorkflowMode field tests — RunCompletedPayload (T-WM-005)
-// ──────────────────────────────────────────────────────────────────────────────
 
 // TestRunCompletedPayload_WorkflowModeOmittedWhenNil verifies that when
 // WorkflowMode is nil the JSON output omits the workflow_mode key (omitempty),
@@ -613,10 +579,6 @@ func TestRunCompletedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// WorkflowMode field tests — RunFailedPayload (T-WM-005)
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TestRunFailedPayload_WorkflowModeOmittedWhenNil verifies that when
 // WorkflowMode is nil the JSON output omits the workflow_mode key (omitempty).
 func TestRunFailedPayload_WorkflowModeOmittedWhenNil(t *testing.T) {
@@ -685,12 +647,6 @@ func TestRunFailedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
 	}
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// QueueID / QueueGroupIndex field tests — QM-011 / QM-012 (hk-gkljz)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// runterminalFixtureQueueID returns a canonical queue_id string for use in
-// queue-field tests.
 func runterminalFixtureQueueID() string {
 	return "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001"
 }
@@ -820,8 +776,6 @@ func TestRunFailedPayload_QueueFieldsRoundTrip(t *testing.T) {
 func TestRunTerminal_MutualExclusion_TypeLevel(t *testing.T) {
 	t.Parallel()
 
-	// A stub that emits exactly one of {RunCompletedPayload, RunFailedPayload}
-	// models the EM-015b emission contract at the type level.
 	type terminalEmission struct {
 		completed *RunCompletedPayload
 		failed    *RunFailedPayload

@@ -22,21 +22,13 @@ import (
 // and enters `degraded` status per [process-lifecycle.md §4.3]."
 var ErrBeadsUnavailable = errors.New("lifecycle: Beads unreachable at startup — active-run discovery halted per EM-031a")
 
-// activeRunSource describes how a run was discovered during active-run discovery.
 type activeRunSource int
 
 const (
-	// activeRunSourceBeads means the run was discovered via the Beads
-	// non-terminal query (a bead exists in a non-terminal Beads status).
 	activeRunSourceBeads activeRunSource = iota
 
-	// activeRunSourceBranch means the run was discovered via the git
-	// task-branch scan (a branch tip carried a Harmonik-Run-ID trailer
-	// matching no terminal-state bead).
 	activeRunSourceBranch
 
-	// activeRunSourceBoth means the run was discovered from both Beads and
-	// a git task-branch scan (present in union of both sets).
 	activeRunSourceBoth
 )
 
@@ -94,21 +86,8 @@ func (s ActiveRunSet) Entries() []ActiveRunEntry {
 	return out
 }
 
-// taskBranchPrefix is the git ref prefix for harmonik task branches per
-// workspace-model.md §4.2 WM-005 ("run/<run_id>").
 const taskBranchPrefix = "refs/heads/run/"
 
-// isTerminalBeadStatus reports whether the given Beads CoarseStatus corresponds
-// to a terminal run state. Per EM-031a, a run is NOT in the active-run set when
-// its Beads status is terminal.
-//
-// Beads-terminal statuses are `closed` and `tombstone`:
-//   - `closed`    → run completed, failed, or was accepted-close-with-note
-//   - `tombstone` → bead was irreversibly terminated by the operator
-//
-// All other statuses (open, in_progress, blocked, deferred, draft, pinned, and
-// any forward-compatible unknown status) are treated as non-terminal per the
-// read-surface pass-through rule in beads-integration.md §4.3 BI-013.
 func isTerminalBeadStatus(s core.CoarseStatus) bool {
 	return s.IsTerminal()
 }
@@ -186,9 +165,6 @@ type GitBranchTipReader struct {
 // When a trailer is absent, the prefix is followed immediately by the next
 // labeled field or end-of-line, producing an empty string after stripping.
 func (r GitBranchTipReader) ListTaskBranchTips(ctx context.Context) ([]BranchTip, error) {
-	// Format: three labeled fields, separated by spaces.
-	// separator=%x00 ensures multi-value trailers (if any) are collapsed to
-	// one NUL-separated value; callers may split on NUL if needed.
 	const format = "REF:%(refname:short) RUN:%(trailers:key=Harmonik-Run-ID,valueonly=true,separator=%x00) BEAD:%(trailers:key=Harmonik-Bead-ID,valueonly=true,separator=%x00)"
 
 	//nolint:gosec // G204: arguments are hard-coded constants or RepoDir resolved at startup; not user input
@@ -216,7 +192,6 @@ func (r GitBranchTipReader) ListTaskBranchTips(ctx context.Context) ([]BranchTip
 		}
 		tip, ok := parseGitBranchTipLine(line)
 		if !ok {
-			// Unparseable line — skip without halting startup.
 			continue
 		}
 		tips = append(tips, tip)
@@ -227,11 +202,6 @@ func (r GitBranchTipReader) ListTaskBranchTips(ctx context.Context) ([]BranchTip
 	return tips, nil
 }
 
-// parseGitBranchTipLine parses one line of `git for-each-ref` output in the
-// labeled format "REF:<branch> RUN:<run_id> BEAD:<bead_id>".
-//
-// Returns the parsed BranchTip and true on success. Returns zero-value and
-// false on malformed input (missing REF: prefix, unexpected structure).
 func parseGitBranchTipLine(line string) (BranchTip, bool) {
 	const refPfx = "REF:"
 	const runPfx = " RUN:"
@@ -241,7 +211,6 @@ func parseGitBranchTipLine(line string) (BranchTip, bool) {
 		return BranchTip{}, false
 	}
 
-	// Find " RUN:" marker.
 	runIdx := strings.Index(line, runPfx)
 	if runIdx < 0 {
 		return BranchTip{}, false
@@ -250,18 +219,15 @@ func parseGitBranchTipLine(line string) (BranchTip, bool) {
 
 	rest := line[runIdx+len(runPfx):]
 
-	// Find " BEAD:" marker.
 	beadIdx := strings.Index(rest, beadPfx)
 	var runID, beadID string
 	if beadIdx >= 0 {
 		runID = rest[:beadIdx]
 		beadID = rest[beadIdx+len(beadPfx):]
 	} else {
-		// No BEAD: field — runID is the remainder.
 		runID = rest
 	}
 
-	// Strip any NUL bytes introduced by separator=%x00 (multi-value trailers).
 	runID = strings.TrimRight(strings.ReplaceAll(runID, "\x00", ","), ",")
 	beadID = strings.TrimRight(strings.ReplaceAll(beadID, "\x00", ","), ",")
 
@@ -312,20 +278,16 @@ func parseGitBranchTipLine(line string) (BranchTip, bool) {
 //
 // Spec ref: execution-model.md §4.7 EM-031a; event-model.md §4.5 EV-022.
 func DiscoverActiveRuns(ctx context.Context, querier BeadsQuerier, reader BranchTipReader) (ActiveRunSet, error) {
-	// Step 1: query Beads for non-terminal beads. Beads-unreachable halts discovery.
 	beadEntries, terminalBeadIDs, err := queryNonTerminalBeads(ctx, querier)
 	if err != nil {
 		return ActiveRunSet{}, err
 	}
 
-	// Step 2: scan git task branches and find runs whose Harmonik-Run-ID
-	// trailer does not match any terminal-state bead.
 	branchRuns, err := scanTaskBranchTips(ctx, reader, terminalBeadIDs)
 	if err != nil {
 		return ActiveRunSet{}, fmt.Errorf("lifecycle: DiscoverActiveRuns: branch scan: %w", err)
 	}
 
-	// Step 3: compute the union, merging entries that appear in both sources.
 	return unionActiveRuns(beadEntries, branchRuns), nil
 }
 
@@ -337,31 +299,16 @@ func NewBeadsQuerierFromAdapter(adapter *brcli.Adapter) BeadsQuerier {
 	return adapter
 }
 
-// beadRunEntry is a transient struct used within DiscoverActiveRuns.
 type beadRunEntry struct {
 	// beadID is the Beads bead identifier.
 	beadID core.BeadID
 }
 
-// queryNonTerminalBeads fetches all beads in non-terminal Beads status and
-// returns:
-//   - beadEntries: one entry per non-terminal bead found
-//   - terminalBeadIDs: set of BeadIDs in terminal status (closed/tombstone),
-//     used by the branch scan to exclude already-completed runs.
-//
-// Per EM-031a, non-terminal statuses are every status except `closed` and
-// `tombstone`. This function issues one query per non-terminal status and
-// one per terminal status.
-//
-// Beads-unreachable: returns error wrapping ErrBeadsUnavailable for
-// BrUnavailable and BrDbLocked outcomes per EM-031a.
 func queryNonTerminalBeads(ctx context.Context, querier BeadsQuerier) (
 	beadEntries []beadRunEntry, terminalBeadIDs map[core.BeadID]struct{}, err error,
 ) {
 	terminalBeadIDs = make(map[core.BeadID]struct{})
 
-	// Non-terminal statuses to query. Per EM-031a, every status except
-	// `closed` and `tombstone` is non-terminal for harmonik's purposes.
 	nonTerminalStatuses := []string{"open", "in_progress", "blocked", "deferred", "draft", "pinned"}
 
 	for _, status := range nonTerminalStatuses {
@@ -370,19 +317,13 @@ func queryNonTerminalBeads(ctx context.Context, querier BeadsQuerier) (
 			if isBeadsUnavailable(queryErr) {
 				return nil, nil, fmt.Errorf("%w: %w", ErrBeadsUnavailable, queryErr)
 			}
-			// Non-infrastructure errors (schema mismatch, parse failure) are
-			// fatal for discovery — we cannot safely classify without Beads.
 			return nil, nil, fmt.Errorf("lifecycle: queryNonTerminalBeads: status=%s: %w", status, queryErr)
 		}
 		for _, rec := range records {
-			// Include all non-terminal beads as bead entries; the RunID
-			// association is established by the Beads bead_id ↔ run_id join
-			// via the task-branch Harmonik-Bead-ID trailer (Step 2).
 			beadEntries = append(beadEntries, beadRunEntry{beadID: rec.BeadID})
 		}
 	}
 
-	// Also collect terminal beads so the branch scan can exclude them.
 	for _, status := range core.TerminalCoarseStatuses() {
 		records, queryErr := querier.ListBeadsByStatus(ctx, string(status))
 		if queryErr != nil {
@@ -399,16 +340,6 @@ func queryNonTerminalBeads(ctx context.Context, querier BeadsQuerier) (
 	return beadEntries, terminalBeadIDs, nil
 }
 
-// scanTaskBranchTips scans git task branches and returns ActiveRunEntry values
-// for runs whose Harmonik-Run-ID trailer does not match any terminal-state bead.
-//
-// For each task branch:
-//   - If the tip has no Harmonik-Run-ID trailer → skip (not a harmonik checkpoint).
-//   - If the branch's Harmonik-Bead-ID trailer matches a terminal-state bead → skip.
-//   - Otherwise → include in the result as an activeRunSourceBranch entry.
-//
-// Spec ref: execution-model.md §4.7 EM-031a — "branches whose tip carries a
-// Harmonik-Run-ID trailer matching no terminal-state bead."
 func scanTaskBranchTips(ctx context.Context, reader BranchTipReader, terminalBeadIDs map[core.BeadID]struct{}) ([]ActiveRunEntry, error) {
 	tips, err := reader.ListTaskBranchTips(ctx)
 	if err != nil {
@@ -418,11 +349,9 @@ func scanTaskBranchTips(ctx context.Context, reader BranchTipReader, terminalBea
 	entries := make([]ActiveRunEntry, 0, len(tips))
 	for _, tip := range tips {
 		if tip.RunID == "" {
-			// No Harmonik-Run-ID on the tip commit — not a harmonik checkpoint; skip.
 			continue
 		}
 
-		// If the branch carries a Bead ID that is in the terminal set, exclude.
 		if tip.BeadID != "" {
 			beadID := core.BeadID(tip.BeadID)
 			if _, terminal := terminalBeadIDs[beadID]; terminal {
@@ -430,11 +359,8 @@ func scanTaskBranchTips(ctx context.Context, reader BranchTipReader, terminalBea
 			}
 		}
 
-		// Parse RunID.
 		var runID core.RunID
 		if unmarshalErr := runID.UnmarshalText([]byte(tip.RunID)); unmarshalErr != nil {
-			// Malformed RunID trailer on a task branch — skip with a note.
-			// This is unusual but should not halt startup; the run is not classifiable.
 			continue
 		}
 
@@ -453,20 +379,9 @@ func scanTaskBranchTips(ctx context.Context, reader BranchTipReader, terminalBea
 	return entries, nil
 }
 
-// unionActiveRuns merges the Beads-sourced bead entries and the branch-sourced
-// entries into a single ActiveRunSet, deduplicating by BeadID when possible.
-//
-// Strategy: branch entries are added first, indexed by BeadID. Then bead entries
-// are merged: if a bead entry's BeadID matches a branch entry's BeadID, that
-// branch entry's source is upgraded to activeRunSourceBoth. Otherwise the bead
-// entry is added as a Beads-only entry.
-//
-// NOTE: RunID for Beads-only entries (no task branch yet) is zero-value;
-// callers that need the RunID must obtain it via state reconstruction per EM-031.
 func unionActiveRuns(beadEntries []beadRunEntry, branchEntries []ActiveRunEntry) ActiveRunSet {
 	result := make([]ActiveRunEntry, 0, len(beadEntries)+len(branchEntries))
 
-	// Add branch entries first, indexing by BeadID for deduplication.
 	branchByBeadID := make(map[core.BeadID]int, len(branchEntries))
 	for _, e := range branchEntries {
 		idx := len(result)
@@ -476,25 +391,18 @@ func unionActiveRuns(beadEntries []beadRunEntry, branchEntries []ActiveRunEntry)
 		}
 	}
 
-	// Merge bead entries with branch entries by BeadID.
 	seenBeads := make(map[core.BeadID]struct{}, len(beadEntries))
 	for _, be := range beadEntries {
 		if _, seen := seenBeads[be.beadID]; seen {
-			// Dedup: same bead appeared in multiple status queries (unlikely
-			// but guard against edge cases or future Beads semantics changes).
 			continue
 		}
 		seenBeads[be.beadID] = struct{}{}
 
 		if idx, found := branchByBeadID[be.beadID]; found {
-			// Bead also seen in branch scan — upgrade source to "both".
 			result[idx].source = activeRunSourceBoth
 		} else {
-			// Bead-only entry (no task branch yet or bead_id not in any branch tip).
 			bid := be.beadID
 			result = append(result, ActiveRunEntry{
-				// RunID is zero when the run has not yet produced a task branch;
-				// state reconstruction per EM-031 establishes it from git + Beads.
 				BeadID: &bid,
 				source: activeRunSourceBeads,
 			})
@@ -504,13 +412,6 @@ func unionActiveRuns(beadEntries []beadRunEntry, branchEntries []ActiveRunEntry)
 	return ActiveRunSet{entries: result}
 }
 
-// isBeadsUnavailable reports whether err indicates that the Beads store is
-// unreachable at the infrastructure level (BrUnavailable, BrDbLocked, or
-// exec failure), as opposed to a schema or logic error.
-//
-// Per EM-031a: infrastructure failures MUST halt discovery and trigger Cat 0.
-// Schema mismatches are also fatal (we cannot safely classify), but they are
-// propagated directly rather than being wrapped in ErrBeadsUnavailable.
 func isBeadsUnavailable(err error) bool {
 	return errors.Is(err, brcli.BrUnavailable) || errors.Is(err, brcli.BrDbLocked)
 }

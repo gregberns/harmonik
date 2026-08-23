@@ -1,33 +1,5 @@
 package main
 
-// start_daemon_test.go — a daemon starts because somebody named it, never
-// because an argv ran out of verbs to match.
-//
-// The defect: the daemon was what run() did when nothing else claimed the
-// arguments. Three spellings therefore started one by accident —
-//
-//	harmonik                        (no arguments at all)
-//	harmonik --project DIR          (flags, no verb)
-//	harmonik --project DIR status   (there is no `status` subcommand)
-//
-// — because unknownSubcommand declines anything beginning with "-" and anything
-// with no argument, and everything it declined fell through to flag.Parse.
-//
-// The third is the one that cost real time. During a daemon redeploy an operator
-// poll-checking `harmonik --project X status` started a SECOND daemon that
-// contended with the one being revived; it hung a poll loop and probably killed
-// an early revive attempt during the 2026-06-30 deploy. The runbook then warned
-// readers off the SAFE spelling and left the hazardous one unmarked, so a careful
-// reader was steered into it.
-//
-// Bead ref: hk-cli-flag-first-starts-daemon-gjhiy.
-//
-// These tests call run in this process, which is safe for the same reason
-// unknown_subcommand_test.go documents: the refusal returns before run registers
-// its flags and reads the working directory. A "flag redefined: project" panic
-// from this file means somebody moved the refusal below the daemon setup — which
-// would also mean the process reached the disk before deciding not to boot.
-
 import (
 	"os"
 	"strings"

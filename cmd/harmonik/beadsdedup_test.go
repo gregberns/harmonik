@@ -9,16 +9,11 @@ import (
 	"time"
 )
 
-// writeJSONLFixture writes a JSONL file containing the given rows and returns
-// the path.  It is a thin wrapper over beadsMergeFixture so both test suites
-// share the same helper style.
 func writeJSONLFixture(t *testing.T, rows []map[string]any) string {
 	t.Helper()
 	return beadsMergeFixture(t, rows)
 }
 
-// readJSONLStatus reads back the "status" string for the single row in a JSONL
-// file, failing the test if there is not exactly one row.
 func readJSONLStatus(t *testing.T, path string) string {
 	t.Helper()
 	rows := beadsMergeReadJSONL(t, path)
@@ -28,7 +23,6 @@ func readJSONLStatus(t *testing.T, path string) string {
 	return beadsMergeExtractStringField(t, rows[0], "status")
 }
 
-// readJSONLIDs reads all bead IDs from a JSONL file.
 func readJSONLIDs(t *testing.T, path string) []string {
 	t.Helper()
 	rows := beadsMergeReadJSONL(t, path)
@@ -40,7 +34,6 @@ func readJSONLIDs(t *testing.T, path string) []string {
 }
 
 func TestBeadsDedup_NoDuplicates(t *testing.T) {
-	// Unsorted input, no dups: command must still sort and write 2 rows.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	path := writeJSONLFixture(t, []map[string]any{
 		{"id": "hk-bbb", "status": "open", "updated_at": timeStr(ts)},
@@ -61,7 +54,6 @@ func TestBeadsDedup_NoDuplicates(t *testing.T) {
 }
 
 func TestBeadsDedup_OlderOpenThenNewerClosed(t *testing.T) {
-	// File order: open (older) then closed (newer).  closed must survive.
 	older := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
 	path := writeJSONLFixture(t, []map[string]any{
@@ -80,7 +72,6 @@ func TestBeadsDedup_OlderOpenThenNewerClosed(t *testing.T) {
 }
 
 func TestBeadsDedup_NewerClosedThenOlderOpen(t *testing.T) {
-	// File order: closed (newer) then open (older).  closed must survive.
 	older := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
 	path := writeJSONLFixture(t, []map[string]any{
@@ -99,7 +90,6 @@ func TestBeadsDedup_NewerClosedThenOlderOpen(t *testing.T) {
 }
 
 func TestBeadsDedup_MultipleIDsSomeWithDups(t *testing.T) {
-	// Mix of unique beads and one duplicated bead.
 	older := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
 	path := writeJSONLFixture(t, []map[string]any{
@@ -220,11 +210,9 @@ func TestDeduplicateBeadRows_NewestWins(t *testing.T) {
 }
 
 func TestRowsToMap_LWWWithinFile(t *testing.T) {
-	// rowsToMap must now keep the newest updated_at, not the last file position.
 	older := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
 
-	// closed (newer) appears first, open (older) appears second.
 	rows := []beadRow{
 		{id: "hk-y", updatedAt: newer},
 		{id: "hk-y", updatedAt: older},

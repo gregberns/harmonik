@@ -30,7 +30,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		branch := TaskBranchName(runID)
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		// Create the worktree and write a lease lock.
 		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("CreateWorktree: %v", err)
 		}
@@ -49,12 +48,10 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		dw := discovered[0]
 
-		// Step (a): run_id matches.
 		if dw.RunID != runID {
 			t.Errorf("WM-013c: RunID = %q, want %q", dw.RunID, runID)
 		}
 
-		// Step (b): registered in git.
 		if !dw.RegisteredInGit {
 			t.Errorf("WM-013c: RegisteredInGit = false, want true")
 		}
@@ -62,7 +59,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			t.Errorf("WM-013c: registration = (%q, %q), want (%q, %q)", dw.GitBranch, dw.HeadCommit, branch, sha)
 		}
 
-		// Step (c): lease lock present with correct run_id and pid.
 		if dw.LeaseLock == nil {
 			t.Fatalf("WM-013c: LeaseLock = nil, want non-nil")
 		}
@@ -73,7 +69,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			t.Errorf("WM-013c: LeaseLock.PID = %d, want %d", dw.LeaseLock.PID, os.Getpid())
 		}
 
-		// Step (d): no sessions dir yet.
 		if dw.HasSessionsDir {
 			t.Errorf("WM-013c: HasSessionsDir = true, want false (no sessions created)")
 		}
@@ -91,7 +86,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		// Pre-create the sessions root (simulating session start).
 		sessionsRoot := SessionLogRootPath(worktreePath)
 		if err := os.MkdirAll(sessionsRoot, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessions root: %v", err)
@@ -116,12 +110,9 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("orphan-directory-flagged-registered-false", func(t *testing.T) {
 		t.Parallel()
 
-		// A directory under .harmonik/worktrees/ that is NOT registered in git
-		// must be returned with RegisteredInGit == false.
 		repo, _ := tempRepo(t)
 		orphanRunID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0003"
 
-		// Manually create the directory without going through `git worktree add`.
 		orphanPath := filepath.Join(repo, ".harmonik", "worktrees", orphanRunID)
 		if err := os.MkdirAll(orphanPath, 0o700); err != nil {
 			t.Fatalf("MkdirAll orphan: %v", err)
@@ -143,11 +134,8 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("empty-root-returns-nil-slice", func(t *testing.T) {
 		t.Parallel()
 
-		// When the worktree root does not exist, DiscoverWorktrees must return
-		// (nil, nil) — no error, no results.
 		repo, _ := tempRepo(t)
 
-		// Do NOT create .harmonik/worktrees/.
 		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Errorf("WM-013c: DiscoverWorktrees on absent root: want nil error, got %v", err)
@@ -160,8 +148,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("non-matching-directories-skipped", func(t *testing.T) {
 		t.Parallel()
 
-		// Directories with names that do NOT match the [A-Za-z0-9-]+ regex are
-		// skipped (e.g., .gitkeep, __pycache__, names with dots or underscores).
 		repo, _ := tempRepo(t)
 
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
@@ -185,7 +171,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("multiple-worktrees-discovered", func(t *testing.T) {
 		t.Parallel()
 
-		// Two registered worktrees both appear in the result.
 		repo, sha := tempRepo(t)
 		runIDs := []string{
 			"0196a1b2-c3d4-713c-8a1b-2c3d4e5f0004",
@@ -224,8 +209,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("run-id-valid-filters-regex", func(t *testing.T) {
 		t.Parallel()
 
-		// RunIDValid is the production filter used by DiscoverWorktrees.
-		// Verify its contract directly: [A-Za-z0-9-]+ only.
 		cases := []struct {
 			s    string
 			want bool
@@ -250,7 +233,6 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("worktree-path-matches-canonical-construction", func(t *testing.T) {
 		t.Parallel()
 
-		// WorktreePath in DiscoveredWorktree must equal WorktreePath(repo, runID, NoWorktreeRootOverride()).
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0006"
 

@@ -1,21 +1,5 @@
 package queue
 
-// append.go — queue-append semantics for the queue subsystem.
-//
-// Implements the append operation per specs/queue-model.md §7:
-//   - QM-040: stream-only target (wave groups reject)
-//   - QM-041: tail-append with status: pending, appended_at stamped
-//   - QM-042: emit queue_appended event after persistence; emit
-//     queue_item_deferred_for_ledger_dep for each QM-025-deferred item
-//   - QM-043: append to active stream is in-flight-safe (no interference)
-//   - QM-044: terminal-status rejection (append to complete-* group rejected)
-//
-// Exported surface:
-//   - AppendItems — validate + mutate + emit events for a queue-append request.
-//
-// Spec ref: specs/queue-model.md §7.
-// Bead ref: hk-soxgu.
-
 import (
 	"context"
 	"errors"
@@ -70,12 +54,6 @@ func AppendItems(
 		return nil, nil, err
 	}
 
-	// Bounds-guard groupIndex BEFORE any q.Groups[groupIndex] access below.
-	// The Validate pipeline (QM-024) also rejects an out-of-range index, but
-	// this handler indexes q.Groups directly at several points; an independent
-	// guard keeps a malformed GroupIndex (e.g. decoded from untrusted JSON on
-	// the socket) from panicking with an out-of-range access rather than
-	// returning a typed error. Bead ref: W4 mega-review §c.
 	if groupIndex < 0 || groupIndex >= len(q.Groups) {
 		return nil, nil, &ValidationError{
 			Reason: ReasonAppendTargetInvalid,
@@ -87,7 +65,6 @@ func AppendItems(
 		}
 	}
 
-	// Build the Items slice for the validation request.
 	appendItems := make([]Item, len(beadIDs))
 	for i, id := range beadIDs {
 		appendItems[i] = NewPendingItem(Item{
@@ -95,9 +72,6 @@ func AppendItems(
 		})
 	}
 
-	// Run the validation pipeline (IsAppend=true covers QM-024, QM-020..QM-026,
-	// QM-025 informational). OtherQueues carries cross-queue candidates for the
-	// EM-065 double-queue guard (passed in by the caller via variadic param).
 	vreq := ValidationRequest{
 		Groups: []Group{
 			NewPendingGroup(Group{
@@ -121,13 +95,9 @@ func AppendItems(
 		return nil, nil, &verrs[0]
 	}
 
-	// Validation passed. Normalize the shell-supplied acceptance time once.
 	now := acceptedAt.UTC()
 	nowStr := now.Format(time.RFC3339Nano)
 
-	// Build a set of deferred bead IDs from QM-025 notices returned by Validate.
-	// Validate only checks edges within the appended set; we also need to check
-	// edges from existing non-terminal group items against each appended item.
 	deferredSet := make(map[core.BeadID]core.BeadID)
 	for _, p := range deferredPairs {
 		if p.GroupIndex == groupIndex {
@@ -135,10 +105,6 @@ func AppendItems(
 		}
 	}
 
-	// QM-044 / QM-025 cross-check: for each newly appended item that is not yet
-	// in deferredSet, check whether any existing non-terminal item in the group
-	// has a blocks edge against it. This covers the case where the blocker
-	// already lives in the group (not in the appended set).
 	existingGroup := q.Groups[groupIndex]
 	for _, newItem := range appendItems {
 		if _, already := deferredSet[newItem.BeadID]; already {
@@ -163,7 +129,6 @@ func AppendItems(
 		}
 	}
 
-	// QM-041 — tail-append: build final items with correct status + appended_at.
 	newItems := make([]Item, len(beadIDs))
 	for i, id := range beadIDs {
 		beadID := core.BeadID(id)
@@ -180,11 +145,9 @@ func AppendItems(
 		}
 	}
 
-	// Mutate in place: append to the target group's Items slice.
 	g := &q.Groups[groupIndex]
 	g.Items = append(g.Items, newItems...)
 
-	// QM-042 — emit queue_appended.
 	appendedBeadIDStrs := make([]string, len(beadIDs))
 	copy(appendedBeadIDStrs, beadIDs)
 
@@ -200,8 +163,6 @@ func AppendItems(
 
 	events := []EventIntent{evtAppended}
 
-	// QM-042 — emit queue_item_deferred_for_ledger_dep per deferred item, in
-	// append order, after queue_appended.
 	for _, id := range beadIDs {
 		beadID := core.BeadID(id)
 		blockerID, deferred := deferredSet[beadID]
@@ -245,9 +206,6 @@ func ValidationReason(err error) QueueValidationReason {
 	return ""
 }
 
-// itemIsTerminalStatus reports whether s is a terminal ItemStatus.
-// Mirrors the unexported itemIsTerminal in state.go; duplicated here to avoid
-// coupling append.go to state.go internals.
 func itemIsTerminalStatus(s ItemStatus) bool {
 	return s == ItemStatusCompleted || s == ItemStatusFailed
 }

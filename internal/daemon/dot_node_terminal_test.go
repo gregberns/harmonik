@@ -1,16 +1,5 @@
 package daemon_test
 
-// dot_node_terminal_test.go — the graph node must read what the agent REPORTED,
-// not only whether the worktree HEAD moved.
-//
-// The graph path decided node success on HEAD advance alone. It never read the
-// Stop-hook outcome and never ran the terminal classifier the single-mode tail
-// runs, so an agent that committed and then signalled failure was recorded as a
-// SUCCESS node and its work was merged. The same blindness covered the process
-// exit code and the progress-stream watcher.
-//
-// Bead: hk-v4wer.
-
 import (
 	"strings"
 	"testing"

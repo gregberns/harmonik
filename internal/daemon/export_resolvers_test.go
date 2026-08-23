@@ -1,10 +1,5 @@
 package daemon
 
-// export_resolvers_test.go — test-seam exports for internal/daemon resolvers
-// (RT19.16 split of export_test.go): the moderesolve.go, harnessresolve.go,
-// modelpreference.go, pi_profile_resolve.go and standardgraph.go seams. package
-// daemon test file; see export_test.go header for the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 

@@ -6,13 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// run_a1_test.go — Amendment A1 payload plumbing (RSM-031..035): event-sourced
-// reopen/terminal strings, the single-mode path-label latch, the staged merge
-// failure strings, the rejected-prefix gate-failure pairing, and the
-// subsumed-approved close. Each row mirrors the RT7 design-note string table
-// (.kerf/works/2026-07-14-run-state-machine/04-design/rt7-single-mode-failure-mapping.md §2).
-
-// driveToDispatching brings a fresh Run to Dispatching.
 func driveToDispatching(t *testing.T, cfg RunConfig) *Run {
 	t.Helper()
 	m := NewRun(cfg)
@@ -25,8 +18,6 @@ func driveToDispatching(t *testing.T, cfg RunConfig) *Run {
 }
 
 func TestRunA1_ProvisionFailedCarriesStrings(t *testing.T) {
-	// RSM-032: rows 0a–0c — reason and summary ride the event; distinct strings
-	// (the worktree-create case) are both preserved.
 	m := NewRun(stdRunCfg())
 	got := m.Step(Event{
 		Kind: EvProvisionFailed, At: at(1),
@@ -53,8 +44,6 @@ func TestRunA1_ProvisionFailedEmptyFallsBackToConfig(t *testing.T) {
 }
 
 func TestRunA1_ModeFailureCarriesStrings(t *testing.T) {
-	// RSM-031: rows 1/1b/14 — a failed single-mode Dispatch is a mode failure
-	// whose strings ride the event.
 	m := driveToDispatching(t, stdRunCfg())
 	got := m.Step(Event{
 		Kind: EvModeOutcome, ModeOutcome: ModeFailure, At: at(3),
@@ -71,8 +60,6 @@ func TestRunA1_ModeFailureCarriesStrings(t *testing.T) {
 }
 
 func TestRunA1_SubsumedApprovedClose(t *testing.T) {
-	// RSM-035: row 13 — subsumed with the emit-approved flag closes with
-	// outcome_emitted=approved and the event-carried summary.
 	m := driveToDispatching(t, stdRunCfg())
 	got := m.Step(Event{
 		Kind: EvModeOutcome, ModeOutcome: ModeSubsumed, EmitOutcome: true, At: at(3),
@@ -91,7 +78,6 @@ func TestRunA1_SubsumedApprovedClose(t *testing.T) {
 }
 
 func TestRunA1_SubsumedWithoutFlagKeepsRT6Close(t *testing.T) {
-	// DOT subsumed path unchanged: no flag → no outcome emission, config summary.
 	m := driveToDispatching(t, stdRunCfg())
 	got := m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeSubsumed, At: at(3)})
 	if !eqKinds(kinds(got), []ActionKind{ActCloseBead}) {
@@ -103,7 +89,6 @@ func TestRunA1_SubsumedWithoutFlagKeepsRT6Close(t *testing.T) {
 }
 
 func TestRunA1_PathLabelLatchAndCloseSummaries(t *testing.T) {
-	// RSM-033 + rows 9–11: the latched label parameterizes the close summaries.
 	cases := []struct {
 		kind      EventKind
 		detail    string
@@ -136,7 +121,6 @@ func TestRunA1_PathLabelLatchAndCloseSummaries(t *testing.T) {
 }
 
 func TestRunA1_CloseErrorEventDetailSummary(t *testing.T) {
-	// Row 12: the close-error summary is composed shell-side and rides the event.
 	m := driveToDispatching(t, stdRunCfg())
 	m.Step(Event{Kind: EvAgentCompleted, Detail: "agent_completed: stop-hook outcome", At: at(3)})
 	m.Step(Event{Kind: EvGuardsPassed, At: at(4)})
@@ -149,8 +133,6 @@ func TestRunA1_CloseErrorEventDetailSummary(t *testing.T) {
 }
 
 func TestRunA1_GateFailedRejectedPrefix(t *testing.T) {
-	// RSM-034 + row 4: an event-classified gate failure pairs the rejected
-	// emission with the reopen; reason == summary == sgr.reason.
 	m := driveToDispatching(t, stdRunCfg())
 	m.Step(Event{Kind: EvAgentCompleted, Detail: "agent_completed: stop-hook outcome", At: at(3)})
 	m.Step(Event{Kind: EvGuardsPassed, At: at(4)})
@@ -179,7 +161,6 @@ func TestRunA1_GateFailedEmptyReasonKeepsRT6(t *testing.T) {
 }
 
 func TestRunA1_GuardReasonsRideEvents(t *testing.T) {
-	// Row 3: the guard string rides the event; reason == summary.
 	for _, tc := range []struct {
 		kind   EventKind
 		reason string
@@ -198,9 +179,6 @@ func TestRunA1_GuardReasonsRideEvents(t *testing.T) {
 }
 
 func TestRunA1_MergeStageStrings(t *testing.T) {
-	// RSM-033 staged merge failures, rows 5–8: note the load-bearing byte
-	// difference — reopen "code-sync failed" (space) vs summary
-	// "code-sync-failed" (hyphen).
 	cases := []struct {
 		kind        EventKind
 		detail      string
@@ -248,7 +226,6 @@ func TestRunA1_MergeStageStrings(t *testing.T) {
 }
 
 func TestRunA1_MergeFatalNoLabelKeepsRT6(t *testing.T) {
-	// Review-loop/DOT (no latched label) merge failure keeps the config strings.
 	m := driveToDispatching(t, stdRunCfg())
 	m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeSuccess, At: at(3)})
 	m.Step(Event{Kind: EvGatePassed, At: at(4)})

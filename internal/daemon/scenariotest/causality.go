@@ -1,14 +1,5 @@
 package scenariotest
 
-// causality.go — AssertEventCausality helper for scenario tests (hk-xegej).
-//
-// AssertEventCausality asserts the "successor" invariant: every occurrence of a
-// predicate event type must be followed by at least one successor event within a
-// deadline measured against timestamp_wall.
-//
-// Spec ref: specs/scenario-harness.md §4 (assertion vocabulary).
-// Bead: hk-xegej.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -19,7 +10,6 @@ import (
 	"time"
 )
 
-// timedEvent is an internal snapshot used only by the causality checker.
 type timedEvent struct {
 	Type          string
 	RunID         string
@@ -88,8 +78,6 @@ func AssertEventCausality(
 	}
 }
 
-// readTimedEvents decodes every non-empty JSONL line from jsonlPath into
-// timedEvent values, preserving order.
 func readTimedEvents(t *testing.T, jsonlPath string) []timedEvent {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -130,8 +118,6 @@ func readTimedEvents(t *testing.T, jsonlPath string) []timedEvent {
 	return out
 }
 
-// formatTimedEvents returns a multi-line string listing each event's index,
-// type, and wall timestamp — used in failure messages.
 func formatTimedEvents(events []timedEvent) string {
 	var sb strings.Builder
 	for i, ev := range events {

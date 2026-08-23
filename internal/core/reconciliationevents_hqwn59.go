@@ -2,31 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// reconciliationevents_hqwn59.go — event-bus payload types for §8.6 reconciliation
-// lifecycle events covered by this implementer wave (hqwn59b):
-//   - reconciliation_started                  (§8.6.1)
-//   - reconciliation_category_assigned        (§8.6.2)
-//   - reconciliation_verdict_emitted          (§8.6.3)
-//   - reconciliation_verdict_executed         (§8.6.4)  — uses existing VerdictExecutedPayload
-//   - reconciliation_verdict_malformed        (§8.6.5)  — uses existing MalformedVerdictPayload
-//   - reconciliation_budget_exhausted         (§8.6.6)  — uses existing BudgetExhaustedPayload
-//   - reconciliation_verdict_stale            (§8.6.7)  — uses existing StaleVerdictPayload
-//   - store_divergence_detected               (§8.6.8)
-//   - operator_escalation_required            (§8.6.9)
-//   - divergence_inconclusive                 (§8.6.10)
-//   - reconciliation_dispatch_deduplicated    (§8.6.11)
-//   - reconciliation_detector_panic           (§8.6.12)
-//   - reconciliation_verdict_execution_retry  (§8.6.13)
-//   - bead_terminal_transition_recovered      (§8.6.14) — reserved for later per OQ-BI-008
-//
-// §8.6.4, §8.6.5, §8.6.6, §8.6.7 already have dedicated payload types in
-// this package (VerdictExecutedPayload, MalformedVerdictPayload,
-// BudgetExhaustedPayload, StaleVerdictPayload respectively) and are registered
-// in registerReconciliationEvents() by forwarding to those existing types.
-//
-// Spec ref: specs/event-model.md §8.6.
-// Bead refs: hk-hqwn.59.43 through hk-hqwn.59.56.
-
 // ReconciliationTrigger is the typed discriminator for the trigger field of a
 // reconciliation_started event (event-model.md §8.6.1).
 type ReconciliationTrigger string
@@ -275,10 +250,6 @@ func (k DivergenceKind) Valid() bool {
 		return false
 	}
 }
-
-// Note: DivergenceCorroboration type and constants are defined in
-// divergencecorroboration.go (DivergenceCorroborationGitCorroborated,
-// DivergenceCorroborationBeadsCorroborated) per EV-023a.
 
 // StoreDivergenceDetectedPayload is the typed event payload for the
 // store_divergence_detected event (event-model.md §8.6.8 §6.3).

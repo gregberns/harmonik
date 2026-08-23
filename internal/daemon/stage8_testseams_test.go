@@ -11,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// testRuntime holds the same typed bundles and declared loop inputs as the
-// production composition root. It is only a test edge.
 type testRuntime struct {
 	env     runloop.RunEnv
 	ports   runloop.RunPorts

@@ -1,17 +1,5 @@
 package handlercontract
 
-// diagnostic_hc014a.go — DiagnosticReport type for Adapter.Diagnose (HC-014a).
-//
-// DiagnosticReport is the return type of the optional Adapter.Diagnose seam
-// declared in specs/handler-contract.md §4.3a HC-014a.
-//
-// The full schema is deferred.  Today only Message and Healthy
-// are populated; no daemon consumer reads them (they are logged for operator
-// visibility only).
-//
-// Spec: specs/handler-contract.md §4.3a HC-014a.
-// Bead: hk-tvsl7.
-
 // DiagnosticReport carries the result of an Adapter.Diagnose call.
 //
 // The full shape is deferred; the controller logs Message at INFO

@@ -10,23 +10,14 @@ import (
 	"testing"
 )
 
-// corruptCheckpointFixtureRunID returns a deterministic, valid UUIDv7-shaped
-// run ID for EM-017a corrupted-checkpoint tests. The counter space is offset
-// at 200 to avoid collisions with durableFixtureRunID (1–99),
-// nonTxFixtureRunID (100–199), and reconstructionFixtureRunID (100+).
 func corruptCheckpointFixtureRunID(n int) string {
 	return durableFixtureRunID(200 + n)
 }
 
-// corruptCheckpointFixtureTransitionID returns a deterministic UUIDv7-shaped
-// transition ID for use in corrupted-checkpoint fixtures.
 func corruptCheckpointFixtureTransitionID(n int) string {
 	return fmt.Sprintf("01900000-0000-7000-8000-0000ffff%04d", n)
 }
 
-// corruptCheckpointFixtureWriteSiblingFile writes a JSON sibling file at the
-// canonical path `.harmonik/transitions/<runID>/<transitionID>.json` inside
-// repoDir. content is written verbatim; callers control validity.
 func corruptCheckpointFixtureWriteSiblingFile(t *testing.T, repoDir, runID, transitionID, content string) {
 	t.Helper()
 
@@ -41,9 +32,6 @@ func corruptCheckpointFixtureWriteSiblingFile(t *testing.T, repoDir, runID, tran
 	}
 }
 
-// corruptCheckpointFixtureMinimalJSON returns a minimal valid transition record
-// JSON for use in well-formed baseline commits. It carries schema_version so
-// that the EM-022 schema-version field is present.
 func corruptCheckpointFixtureMinimalJSON(runID, transitionID string) string {
 	return fmt.Sprintf(
 		`{"schema_version":1,"run_id":%q,"transition_id":%q}`,
@@ -51,9 +39,6 @@ func corruptCheckpointFixtureMinimalJSON(runID, transitionID string) string {
 	)
 }
 
-// corruptCheckpointFixtureCommitWithTrailers lands a checkpoint commit on the
-// current branch of repoDir. It carries both Harmonik-Run-ID and
-// Harmonik-Transition-ID trailers per §6.2. Returns the full commit SHA.
 func corruptCheckpointFixtureCommitWithTrailers(t *testing.T, repoDir, runID, transitionID, nodeID string) string {
 	t.Helper()
 
@@ -63,8 +48,6 @@ func corruptCheckpointFixtureCommitWithTrailers(t *testing.T, repoDir, runID, tr
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")
 
-	// Commit message with both trailers required by §6.2 checkpoint trailer format.
-	// Blank line before trailers is required by git's trailer parser.
 	msg := fmt.Sprintf(
 		"checkpoint: %s\n\nHarmonik-Run-ID: %s\nHarmonik-Transition-ID: %s\n",
 		nodeID, runID, transitionID,
@@ -73,19 +56,10 @@ func corruptCheckpointFixtureCommitWithTrailers(t *testing.T, repoDir, runID, tr
 	return durableFixtureReadTip(t, repoDir, "run/"+runID)
 }
 
-// corruptCheckpointFixtureSiblingPath returns the canonical sibling-file path
-// for a (runID, transitionID) pair within repoDir.
-//
-// Spec ref: execution-model.md §4.4 EM-018 — sibling at
-// `.harmonik/transitions/<run_id>/<transition_id>.json`.
 func corruptCheckpointFixtureSiblingPath(repoDir, runID, transitionID string) string {
 	return filepath.Join(repoDir, ".harmonik", "transitions", runID, transitionID+".json")
 }
 
-// corruptCheckpointFixtureCheckTrailerPresent reads the git log for commitSHA
-// in repoDir and asserts that the Harmonik-Transition-ID trailer is present.
-// This distinguishes the EM-017a pre-condition (trailer present, sibling
-// absent/corrupted) from a plain missing-trailer commit.
 func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSHA string) {
 	t.Helper()
 
@@ -100,23 +74,6 @@ func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSH
 	}
 }
 
-// corruptCheckpointFixtureClassify is the sensor function under test.
-// It embodies the EM-017a detection logic: given a repo and a commit SHA,
-// it checks whether the Harmonik-Transition-ID trailer is present and, if so,
-// whether the expected sibling file exists, is non-empty, and parses as valid JSON.
-//
-// Return values:
-//   - (false, nil)  — no trailer; not an EM-017a concern.
-//   - (true, nil)   — trailer present AND sibling file is valid; clean checkpoint.
-//   - (true, err)   — trailer present AND sibling is missing/truncated/invalid;
-//     caller MUST dispatch reconciliation per EM-017a and MUST NOT silently proceed.
-//
-// The function honours two of the three EM-017a failure modes:
-//   - missing: os.ErrNotExist
-//   - truncated (zero length): ErrSiblingTruncated
-//   - schema invalid (JSON parse failure): ErrSiblingInvalidSchema
-//
-// Spec ref: execution-model.md §4.4 EM-017a — corrupted-checkpoint fallback rule.
 func corruptCheckpointFixtureClassify(t *testing.T, repoDir, commitSHA string) (hasTrailer bool, err error) {
 	t.Helper()
 
@@ -139,25 +96,20 @@ func corruptCheckpointFixtureClassify(t *testing.T, repoDir, commitSHA string) (
 	}
 
 	if transitionID == "" {
-		// No Harmonik-Transition-ID trailer — not an EM-017a concern.
 		return false, nil
 	}
 
-	// Trailer present: check the sibling file.
 	siblingPath := corruptCheckpointFixtureSiblingPath(repoDir, runID, transitionID)
 	//nolint:gosec // G304: siblingPath constructed from repoDir (t.TempDir()) + trailer values; not user input
 	data, readErr := os.ReadFile(siblingPath)
 	if readErr != nil {
-		// Missing file — EM-017a corruption condition.
 		return true, fmt.Errorf("EM-017a: sibling file missing at %s: %w", siblingPath, readErr)
 	}
 
 	if len(data) == 0 {
-		// Truncated (zero-length) file — EM-017a corruption condition.
 		return true, fmt.Errorf("EM-017a: sibling file truncated (zero length) at %s: %w", siblingPath, ErrSiblingTruncated)
 	}
 
-	// Schema validation: must parse as JSON object with schema_version field.
 	var record map[string]json.RawMessage
 	if jsonErr := json.Unmarshal(data, &record); jsonErr != nil {
 		return true, fmt.Errorf("EM-017a: sibling file fails schema validation at %s: %w", siblingPath, ErrSiblingInvalidSchema)
@@ -181,8 +133,6 @@ var ErrSiblingTruncated = fmt.Errorf("sibling file is zero-length (truncated)")
 // Spec ref: execution-model.md §4.4 EM-017a — "fails schema validation" corruption class.
 var ErrSiblingInvalidSchema = fmt.Errorf("sibling file fails schema validation")
 
-// --- Tests for EM-017a ---
-
 // TestEM017a_MissingSiblingFileDetectedAsCorrupted is the primary sensor for
 // the EM-017a "sibling file missing" corruption class.
 //
@@ -203,13 +153,10 @@ func TestEM017a_MissingSiblingFileDetectedAsCorrupted(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(1)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Commit with both trailers but NO sibling file written.
 	sha := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, transitionID, "node-a")
 
-	// Pre-condition: trailer is present.
 	corruptCheckpointFixtureCheckTrailerPresent(t, repoDir, sha)
 
-	// Sensor must detect corrupted checkpoint.
 	hasTrailer, err := corruptCheckpointFixtureClassify(t, repoDir, sha)
 	if !hasTrailer {
 		t.Errorf("EM-017a: classify returned hasTrailer=false; Harmonik-Transition-ID trailer is present in commit %s", sha)
@@ -218,7 +165,6 @@ func TestEM017a_MissingSiblingFileDetectedAsCorrupted(t *testing.T) {
 		t.Errorf("EM-017a: classify returned nil error for missing sibling file; daemon must NOT silently proceed per EM-017a")
 	}
 
-	// Verify the sibling file truly does not exist (belt-and-suspenders for the test).
 	siblingPath := corruptCheckpointFixtureSiblingPath(repoDir, runID, transitionID)
 	if _, statErr := os.Stat(siblingPath); !os.IsNotExist(statErr) {
 		t.Errorf("test invariant: sibling file should not exist at %s; got statErr=%v", siblingPath, statErr)
@@ -244,7 +190,6 @@ func TestEM017a_TruncatedSiblingFileDetectedAsCorrupted(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(2)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Write a zero-byte sibling file (simulates a truncated/partial write).
 	corruptCheckpointFixtureWriteSiblingFile(t, repoDir, runID, transitionID, "")
 
 	sha := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, transitionID, "node-a")
@@ -281,7 +226,6 @@ func TestEM017a_InvalidJSONSiblingFileDetectedAsCorrupted(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(3)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Write a syntactically invalid JSON blob.
 	corruptCheckpointFixtureWriteSiblingFile(t, repoDir, runID, transitionID, `{invalid json`)
 
 	sha := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, transitionID, "node-a")
@@ -313,7 +257,6 @@ func TestEM017a_MissingSchemaVersionFieldDetectedAsCorrupted(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(4)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Valid JSON but missing the required schema_version field.
 	corruptCheckpointFixtureWriteSiblingFile(t, repoDir, runID, transitionID,
 		fmt.Sprintf(`{"run_id":%q,"transition_id":%q}`, runID, transitionID),
 	)
@@ -350,7 +293,6 @@ func TestEM017a_ValidSiblingFileIsNotCorrupted(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(5)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Write a valid sibling file before committing.
 	corruptCheckpointFixtureWriteSiblingFile(t, repoDir, runID, transitionID,
 		corruptCheckpointFixtureMinimalJSON(runID, transitionID),
 	)
@@ -384,7 +326,6 @@ func TestEM017a_NoTrailerCommitIsNotAnEM017aConcern(t *testing.T) {
 	runID := corruptCheckpointFixtureRunID(6)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Commit a plain checkpoint with only Harmonik-Run-ID (no Transition-ID trailer).
 	sha := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-a")
 
 	hasTrailer, err := corruptCheckpointFixtureClassify(t, repoDir, sha)
@@ -424,9 +365,6 @@ func TestEM017a_RecursionBoundedToOneLevel(t *testing.T) {
 	transitionID := corruptCheckpointFixtureTransitionID(7)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Simulate a corrupted verdict commit: Harmonik-Transition-ID present but
-	// sibling file missing — exactly as a corrupted first-level checkpoint.
-	// The daemon must be able to detect this for the Cat 6b escalation path.
 	sha := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, transitionID, "verdict-node")
 	corruptCheckpointFixtureCheckTrailerPresent(t, repoDir, sha)
 
@@ -458,7 +396,6 @@ func TestEM017a_MultipleCheckpointsOnlyCorruptedOneDetected(t *testing.T) {
 	runID := corruptCheckpointFixtureRunID(8)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Two clean checkpoints (sibling files written before each commit).
 	txID1 := corruptCheckpointFixtureTransitionID(81)
 	txID2 := corruptCheckpointFixtureTransitionID(82)
 	txID3 := corruptCheckpointFixtureTransitionID(83)
@@ -471,10 +408,8 @@ func TestEM017a_MultipleCheckpointsOnlyCorruptedOneDetected(t *testing.T) {
 		corruptCheckpointFixtureMinimalJSON(runID, txID2))
 	sha2 := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, txID2, "node-2")
 
-	// Third checkpoint commit: sibling file NOT written (crash scenario).
 	sha3 := corruptCheckpointFixtureCommitWithTrailers(t, repoDir, runID, txID3, "node-3")
 
-	// Clean commits must pass.
 	_, err1 := corruptCheckpointFixtureClassify(t, repoDir, sha1)
 	if err1 != nil {
 		t.Errorf("EM-017a: clean checkpoint sha1 incorrectly flagged as corrupted: %v", err1)
@@ -484,7 +419,6 @@ func TestEM017a_MultipleCheckpointsOnlyCorruptedOneDetected(t *testing.T) {
 		t.Errorf("EM-017a: clean checkpoint sha2 incorrectly flagged as corrupted: %v", err2)
 	}
 
-	// Corrupted commit must be detected.
 	hasTrailer3, err3 := corruptCheckpointFixtureClassify(t, repoDir, sha3)
 	if !hasTrailer3 {
 		t.Errorf("EM-017a: classify returned hasTrailer=false for corrupted sha3 %s", sha3)

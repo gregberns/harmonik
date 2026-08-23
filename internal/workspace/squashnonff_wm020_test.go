@@ -40,12 +40,10 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 	taskTip := strings.TrimSpace(string(taskTipBefore))
 
-	// Task branch tip must differ from sha (it has commits on top).
 	if taskTip == sha {
 		t.Fatalf("WM-020: task branch tip equals sha — fixture did not add commits")
 	}
 
-	// Record integration branch tip before merge (starts at sha = integration-branch origin).
 	integBranch := mergeBackFixtureIntegBranchName("integ-020-nonff")
 	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	integTipBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
@@ -54,12 +52,10 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 	integBefore := strings.TrimSpace(string(integTipBefore))
 
-	// Integration branch starts at sha (no commits beyond the initial one).
 	if integBefore != sha {
 		t.Errorf("WM-020: integration tip before merge = %q, want sha %q", integBefore, sha)
 	}
 
-	// Perform squash-merge.
 	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = integPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
@@ -95,7 +91,6 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 		t.Errorf("WM-020: integration tip did not advance (still at sha=%q)", sha)
 	}
 
-	// Assert: integration tip != task branch tip (squash creates a new commit).
 	if integAfter == taskTip {
 		t.Errorf("WM-020: integration tip == task branch tip %q — "+
 			"squash-merge must produce a new commit, not point at task tip", taskTip)
@@ -124,15 +119,11 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 		t.Errorf("WM-020: squash commit parent = %q, want initial sha %q", parent, sha)
 	}
 
-	// Verify scratch worktree for the integration branch was created with MkdirAll.
 	if _, err := os.Stat(integPath); os.IsNotExist(err) {
 		t.Errorf("WM-020: integration worktree path %q does not exist", integPath)
 	}
 }
 
-// mergeBackFixtureIntegBranchName returns the integration branch name for a given suffix,
-// matching the naming used by mergeBackFixtureMakeIntegWorktree.
-// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
 func mergeBackFixtureIntegBranchName(suffix string) string {
 	return "harmonik/integration/" + suffix
 }

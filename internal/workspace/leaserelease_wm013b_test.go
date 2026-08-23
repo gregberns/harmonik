@@ -23,8 +23,6 @@ import (
 func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 	t.Parallel()
 
-	// Table of terminal paths per WM-013b.
-	// Each case represents a different terminal path with its per-path release gate.
 	cases := []struct {
 		name        string
 		reason      string
@@ -57,8 +55,6 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			t.Parallel()
 
 			repo, sha := tempRepo(t)
-			// Pad or truncate reason to 8 chars for the last segment of the run_id,
-			// then sanitize to [A-Za-z0-9-]+.
 			reasonPad := tc.reason
 			for len(reasonPad) < 8 {
 				reasonPad += "0"
@@ -78,38 +74,20 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 				t.Fatalf("git worktree add: %v\n%s", err, out)
 			}
 
-			// Write the lease-lock (simulating workspace in leased state).
-			// Note: table-driven runIDs are not valid UUIDs; we use the fixture
-			// helper for the initial write. WriteLeaseLockAtomic correctness is
-			// separately covered in TestWM013a_LeaseLockCanonicalPathAndContent.
 			leaseLockPath := LeaseLockPath(worktreePath)
 			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
-			// Verify lease-lock exists before terminal transition.
 			if _, err := os.Stat(leaseLockPath); err != nil {
 				t.Fatalf("WM-013b[%s]: lease-lock absent before terminal transition: %v", tc.name, err)
 			}
 
-			// --- Per-terminal-path release gate ---
-			// In production, the gate is the fsync of the terminal event. In this
-			// fixture, we simulate the durability step by writing the workspace-local
-			// lease_released JSONL marker (required for post_escalation and
-			// verdict_driven per WM-013b; we write it for ALL paths as the spec
-			// mandates marker-before-unlink for all terminal paths).
-			//
-			// WM-013b: "Across all terminal paths, the workspace-local lease_released
-			// JSONL marker MUST be written before the lease-lock file is removed."
-			//
-			// WriteLeaseReleasedMarker is the production function (WM-013b).
 			if err := WriteLeaseReleasedMarker(worktreePath, runID, workspaceID, tc.reason); err != nil {
 				t.Fatalf("WM-013b[%s]: WriteLeaseReleasedMarker: %v", tc.name, err)
 			}
 
-			// Assert marker file exists and has valid content BEFORE unlink.
 			eventsFile := WorkspaceLocalEventsPath(worktreePath, workspaceID)
 			markerData := mustReadFile(t, eventsFile)
 
-			// Parse the JSONL marker line.
 			lines := strings.Split(strings.TrimRight(string(markerData), "\n"), "\n")
 			if len(lines) < 1 || lines[0] == "" {
 				t.Fatalf("WM-013b[%s]: events JSONL is empty", tc.name)
@@ -140,23 +118,18 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 				t.Errorf("WM-013b[%s]: marker.released_at %q not RFC 3339: %v", tc.name, marker.ReleasedAt, parseErr)
 			}
 
-			// Now remove the lease-lock (release step — after marker is durable).
-			// ReleaseLeaseLock is the production function (WM-013b).
 			if err := ReleaseLeaseLock(leaseLockPath); err != nil {
 				t.Fatalf("WM-013b[%s]: ReleaseLeaseLock: %v", tc.name, err)
 			}
 
-			// Assert: lease-lock is absent after release.
 			if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 				t.Errorf("WM-013b[%s]: lease-lock still present after release; want absent", tc.name)
 			}
 
-			// Assert: workspace-local marker file is still present (marker persists).
 			if _, err := os.Stat(eventsFile); err != nil {
 				t.Errorf("WM-013b[%s]: events JSONL absent after lock release; want present: %v", tc.name, err)
 			}
 
-			// Idempotent release: a second call MUST succeed without error.
 			if err := ReleaseLeaseLock(leaseLockPath); err != nil {
 				t.Errorf("WM-013b[%s]: ReleaseLeaseLock idempotent second call: %v", tc.name, err)
 			}
@@ -196,18 +169,13 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		// Note: runID here is sanitized but not a valid UUID (length 37 after
-		// leaseFixtureSanitizeRunID). We use the fixture helper for the lock write
-		// only; the marker and release use production functions.
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
-		// Simulate crash: write marker, but DON'T remove the lock yet.
 		if err := WriteLeaseReleasedMarker(worktreePath, runID, workspaceID, "post_escalation"); err != nil {
 			t.Fatalf("WM-013b: WriteLeaseReleasedMarker: %v", err)
 		}
 
-		// Crash state: both marker and lock-file exist simultaneously.
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Fatalf("WM-013b: crash state: lease-lock absent; want present: %v", err)
 		}
@@ -216,13 +184,10 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 			t.Fatalf("WM-013b: crash state: events JSONL absent; want present: %v", err)
 		}
 
-		// Startup reconciliation detects this state and completes the release
-		// (idempotent replay: unlink the lock). ReleaseLeaseLock is idempotent.
 		if err := ReleaseLeaseLock(leaseLockPath); err != nil {
 			t.Fatalf("WM-013b: idempotent replay ReleaseLeaseLock: %v", err)
 		}
 
-		// After idempotent replay: lock absent, marker still present.
 		if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 			t.Errorf("WM-013b: idempotent replay: lock still present; want absent")
 		}
@@ -232,8 +197,6 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 	})
 }
 
-// leaseFixtureSanitizeRunID replaces characters not in [A-Za-z0-9-] with hyphens.
-// Used to produce valid run_ids from test case names.
 func leaseFixtureSanitizeRunID(s string) string {
 	result := make([]byte, len(s))
 	for i := 0; i < len(s); i++ {

@@ -1,35 +1,5 @@
 package codex
 
-// codexwalguard_concurrency_test.go — concurrency-safety tests for the codex
-// stale-WAL guard (hk-qlelr).
-//
-// # Why this file exists separately
-//
-// $CODEX_HOME (default ~/.codex) is GLOBAL: one directory, one set of
-// state_*.sqlite databases, shared by every codex process on the host. It is not
-// per-run, per-worktree, or per-project. At --max-concurrent N, N codex
-// processes and N guard invocations run against that one directory at once.
-//
-// A 3-way concurrency experiment (2026-07-22) measured the race live: all three
-// guards fired against the same global state_5.sqlite-wal within one second. One
-// removed a genuinely stale WAL; TWO hit the post-backup TOCTOU re-check and
-// correctly declined. The WAL then grew 593 KB -> 2.70 MB while three codex
-// processes wrote to it. Without that re-check, two guards would have deleted a
-// WAL that three live processes were writing into.
-//
-// That makes the "unheld" gate and its TOCTOU re-check load-bearing rather than
-// decorative — they are the ONLY thing standing between concurrent dispatch and
-// codex state corruption. codexwalguard_test.go pins the size/threshold/config/
-// backup logic and states in its own header that the lsof-held case is
-// "deliberately NOT exercised here to avoid flakiness."
-//
-// So the one property that makes concurrent $CODEX_HOME sharing safe had no
-// test. These are those tests. They are not flaky: the handle is held by the
-// test process itself for the duration of the call, which is a real open handle
-// on a real file, not a simulated one.
-//
-// Bead ref: hk-qlelr.
-
 import (
 	"bytes"
 	"fmt"
@@ -56,8 +26,6 @@ func TestCleanCodexStaleWAL_HeldWAL_NeverRemoved(t *testing.T) {
 	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 1024\n")
 	wal := writeWAL(t, codexHome, 4096) // > threshold: would be removed if unheld
 
-	// Hold a real open handle for the duration of the guard call, exactly as a
-	// live peer codex process would.
 	held, err := os.Open(wal) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("open wal to hold it: %v", err)
@@ -75,9 +43,6 @@ func TestCleanCodexStaleWAL_HeldWAL_NeverRemoved(t *testing.T) {
 	if _, statErr := os.Stat(wal); statErr != nil {
 		t.Fatalf("HELD wal was removed — this is the corruption the guard exists to prevent; stat err = %v", statErr)
 	}
-	// A held WAL is skipped BEFORE the backup dir is created, so there should be
-	// no backup dir at all. This distinguishes "skipped early" from "backed up
-	// then declined at the TOCTOU re-check".
 	dirs, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
 	if globErr != nil {
 		t.Fatalf("glob backup dirs: %v", globErr)
@@ -105,7 +70,6 @@ func TestCleanCodexStaleWAL_HeldBaseDB_NeverRemoved(t *testing.T) {
 	wal := writeWAL(t, codexHome, 4096)
 	base := filepath.Join(codexHome, "state_abc123.sqlite")
 
-	// Hold ONLY the base db — the WAL itself is unheld.
 	held, err := os.Open(base) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("open base db to hold it: %v", err)
@@ -178,7 +142,6 @@ func TestCleanCodexStaleWAL_ConcurrentGuards_NeverLoseTheWAL(t *testing.T) {
 		}
 	}
 
-	// The base db must be untouched by every guard — it is never in scope.
 	baseAfter, err := os.ReadFile(base) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("base db missing after concurrent guards: %v", err)
@@ -187,7 +150,6 @@ func TestCleanCodexStaleWAL_ConcurrentGuards_NeverLoseTheWAL(t *testing.T) {
 		t.Fatalf("base db was modified by the guard; before=%q after=%q", baseBefore, baseAfter)
 	}
 
-	// Recoverability: gone implies a byte-identical backup exists.
 	if _, statErr := os.Stat(wal); os.IsNotExist(statErr) {
 		copies, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
 		if globErr != nil {
@@ -219,7 +181,6 @@ func TestCleanCodexStaleWAL_ConcurrentGuards_NeverLoseTheWAL(t *testing.T) {
 func TestReapCodexWALBackupDirs_NeverReapsNewest(t *testing.T) {
 	codexHome := t.TempDir()
 
-	// Pre-existing older backups, well past the retention cap.
 	past := time.Now().Add(-time.Hour).UnixNano()
 	for i := 0; i < walBackupKeepLast+4; i++ {
 		dir := filepath.Join(codexHome, fmt.Sprintf(".wal-backup-%d", past+int64(i)))
@@ -228,7 +189,6 @@ func TestReapCodexWALBackupDirs_NeverReapsNewest(t *testing.T) {
 		}
 	}
 
-	// The backup a concurrently-running guard would have just created.
 	newest := filepath.Join(codexHome, fmt.Sprintf(".wal-backup-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(newest, 0o700); err != nil {
 		t.Fatalf("mkdir newest: %v", err)

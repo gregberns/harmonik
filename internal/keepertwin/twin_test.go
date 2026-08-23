@@ -1,12 +1,5 @@
 package keepertwin_test
 
-// T9 round-trip smoke test (measurement-design §2): for one real corpus cycle
-// per stratum, synthesize the input schedule, encode it, replay it through
-// substrate.Twin via keeperCodec, drive the pure keeper reactor, and assert a
-// terminal is reached (never silence) with the golden outcome. The exhaustive
-// 507-cycle L1 golden test is T10; this proves the corpus → synthesizer →
-// codec → Twin → reactor pipe end to end.
-
 import (
 	"bytes"
 	"context"
@@ -25,8 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// corpusCyclesDir resolves testdata/keeper-cycles/baseline-2026-07-13/cycles
-// relative to this source file (the codex l1 idiom).
 func corpusCyclesDir(t *testing.T) string {
 	t.Helper()
 	_, self, _, ok := runtime.Caller(0)
@@ -50,7 +41,6 @@ func loadSummary(t *testing.T, path string) keepertwin.CycleSummary {
 	return sum
 }
 
-// pickPerStratum returns the lexically-first corpus cycle of each stratum.
 func pickPerStratum(t *testing.T) map[keepertwin.Stratum]keepertwin.CycleSummary {
 	t.Helper()
 	dir := corpusCyclesDir(t)
@@ -85,8 +75,6 @@ func pickPerStratum(t *testing.T) map[keepertwin.Stratum]keepertwin.CycleSummary
 	return picked
 }
 
-// twinConfig is the explicit-scalar reactor config for replay (NewCycle does
-// not apply defaults; the values mirror keeper's documented defaults).
 func twinConfig(agent string) *keeper.CyclerConfig {
 	return &keeper.CyclerConfig{
 		AgentName:            agent,
@@ -102,7 +90,6 @@ func twinConfig(agent string) *keeper.CyclerConfig {
 	}
 }
 
-// runCycle replays sum through the full pipe and returns the recorded actions.
 func runCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action {
 	t.Helper()
 	events, err := keepertwin.SynthesizeStimulus(sum)
@@ -114,8 +101,6 @@ func runCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action {
 		t.Fatalf("encode %s: %v", sum.CKey, err)
 	}
 
-	// Wall-clock backstop only (converts a genuine code-hang into a failure;
-	// the replay itself is virtual-time and completes in microseconds).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -134,7 +119,6 @@ func runCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action {
 	return eff.Actions()
 }
 
-// emittedTypes collects the emitted event types from the recorded actions.
 func emittedTypes(actions []keeper.Action) []core.EventType {
 	var types []core.EventType
 	for _, a := range actions {
@@ -241,7 +225,6 @@ func TestTwinRoundTrip_HandoffTimeoutParksPendingOnTheSameCycleID(t *testing.T) 
 		if p.Reason != "handoff_pending" {
 			t.Fatalf("park reason = %q, want handoff_pending (the resumable flavor)", p.Reason)
 		}
-		// The one value still carried across from the recording.
 		if p.CycleID != sum.CycleID {
 			t.Fatalf("park cycle_id = %q, want the recorded %q", p.CycleID, sum.CycleID)
 		}

@@ -136,19 +136,9 @@ type Result struct {
 //
 // Higher-level methods built on Run will add the remaining layers.
 func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
-	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
-	// low-level primitive used by higher-level methods that add their own timeout wrapping.
-	// NOTE(hk-872.32): terminal-transition writes are serialized via Adapter.terminalMu
-	// (hk-hdbls); reads are concurrent. On BrDbLocked, callers MUST use
-	// RunWithDBLockedRetry (dblockretry.go) which implements the BI-025c retry policy.
-
 	//nolint:gosec // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input.
 	cmd := exec.CommandContext(ctx, a.brPath, args...)
 
-	// Pin the working directory to the project root so that `br` discovers the
-	// .beads database under projectDir regardless of where the harmonik process
-	// was launched.  When projectDir is empty (test callers using New) the field
-	// is left unset and the subprocess inherits the process CWD.
 	if a.projectDir != "" {
 		cmd.Dir = a.projectDir
 	}
@@ -162,19 +152,9 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			// ExitCode -1 means the process was killed by a signal. When the
-			// context has an error it means exec.CommandContext sent the kill
-			// (cancellation or timeout); treat this as an exec-level failure so
-			// callers can observe context.Canceled / context.DeadlineExceeded.
-			// NOTE(hk-872.30): RunWithTimeout handles the timeout path; when it
-			// fires SIGTERM/SIGKILL the context is a non-canceling Background()
-			// so this branch is not taken from that path — timeout errors are
-			// classified as BrUnavailable directly in RunWithTimeout.
 			if exitErr.ExitCode() == -1 && ctx.Err() != nil {
 				return Result{}, fmt.Errorf("brcli: subprocess killed by context: %w", ctx.Err())
 			}
-			// Non-zero exit (>0) is a normal subprocess outcome, not an exec
-			// failure. Classify per BI-025a and return with BrErr populated.
 			code := exitErr.ExitCode()
 			return Result{
 				Stdout:   stdoutBuf.Bytes(),
@@ -183,14 +163,9 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 				BrErr:    BrErrorFromExit(code, stderrCap.Result().Bytes),
 			}, nil
 		}
-		// Exec failure: binary not found, fork failed, context canceled before
-		// start, etc. Return zero-value Result + the original error so the
-		// caller can distinguish "br ran and failed" from "br could not be
-		// launched". BrErr is not set (zero value) because no subprocess ran.
 		return Result{}, fmt.Errorf("brcli: exec failed: %w", err)
 	}
 
-	// Exit code 0 — success.
 	return Result{
 		Stdout:   stdoutBuf.Bytes(),
 		Stderr:   stderrCap.Result().Bytes,
@@ -199,17 +174,6 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	}, nil
 }
 
-// runFormatJSON invokes `<brPath> <args...> --format json` and returns the
-// subprocess result. It is the BI-025b JSON-mode wrapper for commands that
-// expose a --format flag (br show, br dep list). Callers that use the global
-// --json flag (br audit log) or that require text parsing (br --version) MUST
-// call Run directly; see BI-025b carve-out notes in audit.go and version.go.
-//
-// Parse failures of the structured output returned by runFormatJSON callers
-// MUST classify as BrSchemaMismatch per BI-025b. Enforcement is in each
-// higher-level method (ShowBead, ListDependencies).
-//
-// Spec ref: specs/beads-integration.md §4.8a BI-025b.
 func (a *Adapter) runFormatJSON(ctx context.Context, args ...string) (Result, error) {
 	jsonArgs := make([]string, 0, len(args)+2)
 	jsonArgs = append(jsonArgs, args...)

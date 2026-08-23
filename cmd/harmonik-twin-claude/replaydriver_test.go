@@ -12,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/twinparity"
 )
 
-// sampleDir is the committed Claude-A hand-authored capture that Claude-B
-// replays. wire.ndjson is the raw progress stream; events.jsonl is the durable
-// event log (with the daemon-projected terminal triad).
 func sampleDir(t *testing.T) string {
 	t.Helper()
 	return filepath.Join("..", "..", "testdata", "twin-parity", "claude", "happy-path-sample")
@@ -59,16 +56,11 @@ func TestRunReplayRoundTripIdentity(t *testing.T) {
 		t.Fatalf("runReplay: %v", err)
 	}
 
-	// (1) Verbatim / no-restamp: replayed bytes are byte-identical to the source.
 	if !bytes.Equal(buf.Bytes(), origWire) {
 		t.Fatalf("replay is not verbatim: output diverged from the captured wire\n--- want ---\n%s\n--- got ---\n%s",
 			origWire, buf.Bytes())
 	}
 
-	// (2) F1 on replayed output: the replayed wire's terminal-spine anchor
-	// (outcome_emitted, with node_id/outcome_status) is equivalent to the durable
-	// capture's own. This genuinely runs the equivalence engine over runReplay's
-	// output.
 	twin, err := twinparity.LoadStreamLines(splitLines(buf.String()))
 	if err != nil {
 		t.Fatalf("LoadStreamLines(replayed wire): %v", err)
@@ -81,8 +73,6 @@ func TestRunReplayRoundTripIdentity(t *testing.T) {
 		Kinds: []string{"outcome_emitted"},
 	})
 
-	// (3) F1 DURABLE gate over the round-tripped corpus: default spine
-	// (TerminalKinds) + DefaultTimingEdges pass on the committed durable capture.
 	twinparity.AssertStreamEquivalent(t, durable, durable, twinparity.EquivOptions{})
 	twinparity.AssertTimingWithinTolerance(t, durable, durable, twinparity.DefaultTimingEdges, time.Second)
 }
@@ -137,8 +127,6 @@ func TestRunReplayFirstLineNotHandshake(t *testing.T) {
 	}
 }
 
-// splitLines splits replay output into non-empty NDJSON lines for
-// twinparity.LoadStreamLines.
 func splitLines(s string) []string {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {

@@ -11,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// resolve_stall_sentinel_config_test.go — tests for stall-sentinel config resolver.
-// Mirrors the watch config parity + missing-key test patterns (watch_config_parity_we7_test.go).
-// Bead ref: hk-hm09z.
-
 // TestStallSentinelConfigParity verifies that every requiredStallSentinelValue in
 // allStallSentinelValues() has its keyPath AND description appearing verbatim in
 // stallSentinelConfigExampleYAML(). Enforces the single-source-of-truth invariant
@@ -130,7 +126,6 @@ func TestResolveStallSentinelConfig_MissingError(t *testing.T) {
 	if !strings.Contains(msg, "--example") {
 		t.Errorf("error must reference '--example'; got: %s", msg)
 	}
-	// Spot-check key paths appear in the error message.
 	for _, k := range []string{
 		"stall_sentinel.escalation.tier1_crew",
 		"stall_sentinel.detection.run_silence_stall",
@@ -188,7 +183,6 @@ func TestStallSentinelExampleBlock_ParseRoundTrip(t *testing.T) {
 	}
 }
 
-// fullStallSentinelConfig returns a StallSentinelConfig with all required fields set.
 func fullStallSentinelConfig() projectconfig.StallSentinelConfig {
 	return projectconfig.StallSentinelConfig{
 		Tier1Crew:           10 * time.Minute,

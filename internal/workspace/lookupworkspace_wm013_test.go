@@ -71,7 +71,6 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 	t.Run("exists-on-disk-false-when-absent", func(t *testing.T) {
 		t.Parallel()
 
-		// Before CreateWorktree, ExistsOnDisk must be false.
 		repo, _ := tempRepo(t)
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001b"
 
@@ -87,7 +86,6 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 	t.Run("exists-on-disk-true-after-create", func(t *testing.T) {
 		t.Parallel()
 
-		// After CreateWorktree, ExistsOnDisk must be true.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001c"
 
@@ -122,8 +120,6 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 	t.Run("derivation-is-deterministic-no-index-needed", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-013: calling LookupWorkspace twice for the same run_id must produce
-		// identical results — no external state consulted.
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001e"
 

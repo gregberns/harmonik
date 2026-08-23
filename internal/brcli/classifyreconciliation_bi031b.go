@@ -1,31 +1,5 @@
 package brcli
 
-// classifyreconciliation_bi031b.go — BI-031b schema-mismatch divergence emission.
-//
-// Spec refs:
-//   - specs/beads-integration.md §4.10 BI-031b (normative)
-//   - specs/event-model.md §8.6.10 (divergence_inconclusive payload)
-//   - specs/event-model.md §6.3 EV-023a (single-authority inconclusive semantics)
-//
-// BI-031b: a BrSchemaMismatch recovery path MUST emit divergence_inconclusive
-// per event-model.md §8.6.10 with reason=authority_unavailable and refuse the
-// reissue.  Recovery cannot proceed under schema drift.
-//
-// Nothing prevents schema drift ahead of time. BI-024a checks only that `br`
-// runs, and BI-024's pinned version is a record that no code reads, so a
-// BrSchemaMismatch here is the FIRST signal that the installed `br` moved out
-// from under the adapter. Treat it as such: it routes to the operator, not to a
-// retry.
-//
-// This file provides:
-//   - SchemaMismatchEmitter — the narrow interface for divergence_inconclusive
-//     emission.  eventbus.EventBus satisfies it via its Emit method.
-//   - BrErrReconciliationCategoryWithEmit — augmented classifier that emits
-//     divergence_inconclusive when the error resolves to BrSchemaMismatch.
-//
-// The existing BrErrReconciliationCategory pure function is unchanged and remains
-// the canonical classification surface for callers that do not carry an event bus.
-
 import (
 	"context"
 	"encoding/json"
@@ -71,7 +45,6 @@ func BrErrReconciliationCategoryWithEmit(
 ) ReconciliationCategory {
 	cat := BrErrReconciliationCategory(err)
 
-	// Only emit on BrSchemaMismatch — errors.Is so wrapped errors resolve correctly.
 	if errors.Is(err, BrSchemaMismatch) {
 		emitSchemaMismatchInconclusive(ctx, evidenceRef, bus)
 	}
@@ -79,9 +52,6 @@ func BrErrReconciliationCategoryWithEmit(
 	return cat
 }
 
-// emitSchemaMismatchInconclusive marshals and emits a divergence_inconclusive
-// event with reason=authority_unavailable per BI-031b / event-model.md §8.6.10.
-// Falls back to a structured-log record when bus is nil or emission fails.
 func emitSchemaMismatchInconclusive(
 	ctx context.Context,
 	evidenceRef string,
@@ -99,7 +69,6 @@ func emitSchemaMismatchInconclusive(
 
 	raw, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
-		// Marshal of a known-shape struct should never fail; guard anyway.
 		slog.ErrorContext(ctx, "brcli: divergence_inconclusive: payload marshal failed; falling back to structured-log",
 			"subsystem", "beads-adapter",
 			"evidence_ref", evidenceRef,
@@ -112,7 +81,6 @@ func emitSchemaMismatchInconclusive(
 
 	if bus != nil {
 		if emitErr := bus.Emit(ctx, core.EventTypeDivergenceInconclusive, raw); emitErr != nil {
-			// Bus emission failed — structured-log fallback per ON-035.
 			slog.ErrorContext(ctx, "brcli: divergence_inconclusive: bus emission failed; structured-log fallback",
 				"subsystem", "beads-adapter",
 				"evidence_ref", evidenceRef,
@@ -124,7 +92,6 @@ func emitSchemaMismatchInconclusive(
 		return
 	}
 
-	// Bus is nil: structured-log fallback per ON-035.
 	slog.ErrorContext(ctx, "brcli: divergence_inconclusive: bus unavailable; structured-log fallback",
 		"subsystem", "beads-adapter",
 		"evidence_ref", evidenceRef,

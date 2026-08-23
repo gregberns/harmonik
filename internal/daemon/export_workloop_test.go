@@ -1,19 +1,5 @@
 package daemon
 
-// export_workloop_test.go — the residue of the RT19 split of the former
-// export_test.go: the work-loop core accessors and the remaining
-// single-owner seams (launch-spec builders, composition-root wiring,
-// stale-watch, bandwidth-tuner, heartbeat, paste-inject, queue accessors,
-// pane-liveness, cognition builder, stranded-bead guard) that no topic file
-// claimed. See the sibling export_*_test.go files for the topic-grouped seams.
-//
-// This file is compiled only when running tests (it lives in package daemon,
-// not daemon_test). It exports otherwise-unexported symbols so that
-// workloop_test.go (package daemon_test) can inject stub dependencies without
-// modifying the production API surface.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"
@@ -98,24 +84,6 @@ func ExportedStoreLocalInFlight(deps testRuntime, n int32) {
 	deps.handles.LocalInFlight.Store(n)
 }
 
-// The three launch-spec builder shims (ExportedBuildLaunchSpecImplementerInitial /
-// ImplementerResume / Reviewer) went with launchspecbuild.go when the review-loop
-// mode was retired (EM-015d). The DOT path builds its per-node launch specs
-// through rp.LaunchBuilder instead.
-
-// runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
-// it registers the run's handle, builds the per-run bundles (including the
-// RT18.11 launch-builder resolution that used to live inside beadRunOne) and
-// invokes beadRunOne, so a test that constructs a testRuntime + RunEnv drives a
-// single bead run exactly as production does.
-//
-// The Register/Unregister pair mirrors the dispatch loop in scheduler.go, which
-// registers the handle BEFORE it starts the run goroutine and unregisters it in a
-// defer that outlives every defer inside beadRunOne. Without it every
-// RunRegistry.Get on the run path missed and the seams that hang off the handle —
-// the resolved agent type, the session lifecycle machine, the abort flag, the
-// captured-output fact the exit disposition reads — were dead in every white-box
-// test while being live in production.
 func runBeadOneTest(ctx context.Context, deps testRuntime, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
 	deps.runRegistry.Register(env.RunID, &RunHandle{
 		BeadID:          env.BeadRecord.BeadID,
@@ -131,12 +99,6 @@ func runBeadOneTest(ctx context.Context, deps testRuntime, env runloop.RunEnv, e
 	return beadRunOne(ctx, env, rp, handles, extraContext, preSelected, localSlotHeld)
 }
 
-// runBundlesFromDeps assembles the env/ports/handles bundles a test shim passes
-// into a run-path function after the RT18 signature drop, mirroring how the
-// production runWorkLoop caller builds them — it routes through buildRunBundles,
-// so the launch builder is resolved (routed / claude fallback) and threaded onto
-// rp.LaunchBuilder exactly as production does, and a fixture-injected
-// launchSpecBuilder still reaches the review/DOT sub-drivers.
 func runBundlesFromDeps(deps testRuntime, runID core.RunID) (runloop.RunEnv, runloop.RunPorts, runloop.SharedHandles) {
 	env := deps.runEnv(runID, core.BeadRecord{}, "", "", core.AgentType(""))
 	rp, handles := deps.buildRunBundles(env)
@@ -154,20 +116,12 @@ func ExportedRunAutoStatusInspection(ctx context.Context, wtPath string) (core.O
 	return runAutoStatusInspection(ctx, nil, wtPath)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CHB-025 test seams (hk-w5vra.11)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ExportedProductionWorktreeFactory exposes productionWorktreeFactory for tests
 // that need to wrap or observe real git worktree creation (e.g. merge-to-main
 // integration tests).
 //
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
-
-// ─────────────────────────────────────────────────────────────────────────────
-// StaleWatcher test seams (hk-wkzlc)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedStalewatchScan triggers a single scan pass on w, identical to what
 // the background loop does on each ticker tick. Allows tests to drive stale
@@ -201,10 +155,6 @@ func ExportedStalewatchObserve(w *StaleWatcher, ctx context.Context, evt core.Ev
 	_ = w.observe(ctx, evt) //nolint:errcheck // hk-0z5x: this seam is called in statement position by the stalewatch tests, which assert on watcher state rather than the observe error; surfacing it would push unchecked-error findings onto every caller.
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BandwidthTuner test seams (hk-w6q7)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ExportedBandwidthTunerTick triggers a single evaluation tick on t, identical
 // to what the background loop does on each ticker tick. Allows tests to drive
 // poll-gate behaviour deterministically without real time passing.
@@ -214,10 +164,6 @@ func ExportedBandwidthTunerTick(t *BandwidthTuner) {
 	t.tick()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildClaudeLaunchSpec test seams (hk-gql20.13)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // ExportedNewDaemonHeartbeatEmitter exposes newDaemonHeartbeatEmitter for
 // tests in package daemon_test.
 //
@@ -225,12 +171,6 @@ func ExportedBandwidthTunerTick(t *BandwidthTuner) {
 func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID core.RunID) handler.HeartbeatEmitter {
 	return newDaemonHeartbeatEmitter(bus, runID)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-056 test seams (hk-gql20.18)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// (duplicate buildClaudeLaunchSpec stubs removed — canonical declarations above at lines ~295-356)
 
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.  Returns the briefDelivered channel (hk-930o3).
@@ -272,19 +212,11 @@ func ExportedInputBufferName(sub handler.Substrate) string {
 	return ""
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Project config + model resolution test seams (hk-bfvk7)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // HandlerEnvOf returns the handlerEnv field from deps.
 // Used by tests to assert HARMONIK_PROJECT_HASH injection (hk-nvrvp).
 func HandlerEnvOf(deps testRuntime) []string {
 	return deps.env.HandlerEnv
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// QueueStore test seams (hk-j808w)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedEvaluateGroupAdvanceWithOutcome exposes evaluateGroupAdvanceWithOutcome
 // for tests in package daemon_test. Drives EM-015f group-advance evaluation
@@ -305,10 +237,6 @@ func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps testRunti
 func ExportedQueueStoreOf(deps testRuntime) *queuewiring.QueueStore {
 	return deps.queueStore
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// pane liveness checker test seams (hk-fbydv)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // PaneLivenessCheckerExported is an exported alias for the paneLivenessChecker
 // interface so tests in package daemon_test can implement stubs without naming
@@ -340,24 +268,6 @@ func ExportedHasChildProcess(pid int) bool {
 // Bead: hk-tgqy5.
 var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 
-// ─────────────────────────────────────────────────────────────────────────────
-// QueueOperatorEventConsumer test seams (hk-7urls)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// The two handler-invoking shims (ExportedQueueOpConsumerHandlePauseStatus /
-// ExportedQueueOpConsumerHandleResuming) moved to
-// internal/queuewiring/export_test.go with the consumer they drive (P2 E3a):
-// their bodies reach unexported methods package daemon can no longer see, and
-// every caller moved with them.
-
-// The brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression) moved
-// to internal/queuewiring/export_test.go as ExportedQueueLedger /
-// ExportedNewBRQueueLedger, along with the bridge and its only caller (P2 E3a).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cognition signal test seams (hk-jay1 P2-c: SS-012)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // NewLiveStateBuilderForTest constructs a LiveStateBuilder with the given
 // projectDir, projectHash and kconfig so tests in package daemon_test can
 // exercise buildCognition without a full daemon. No runs/queues/drain needed.
@@ -379,10 +289,6 @@ func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash,
 func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID string, now time.Time) *SessionCognition {
 	return lb.buildCognition(agent, liveSID, declaredSID, now)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pi billing guard test seams (hk-l1bkp PI-040/042/043)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedStrandedBeadHasOnDiskRun exposes strandedBeadHasOnDiskRun for tests
 // in package daemon_test, so the race-conservative-on-List-error behavior

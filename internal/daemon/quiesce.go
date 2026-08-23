@@ -1,43 +1,5 @@
 package daemon
 
-// quiesce.go — QuiesceArbiter: daemon quiesce-mode and wake-trigger (hk-jeby, M1).
-//
-// The QuiesceArbiter is the policy layer that sits on top of the GenuineDrain
-// oracle (M0 / hk-95uf).  When the oracle returns DRAINED the arbiter:
-//
-//  1. Writes per-session .sleeping.<session_id> markers under .harmonik/.
-//  2. Sends a comms park signal to each known LLM session (captain + crew).
-//  3. Registers per-session wake triggers: when a trigger fires the arbiter
-//     nudges the appropriate pane via the stored pane target.
-//
-// # Wake routing table (Risk 3)
-//
-// Events → target mapping is NEVER fleet-wide; each trigger names one session:
-//
-//   - QueueStore.WakeCh() + pending item for queue Q → crew bound to Q.
-//   - epic_completed                                 → captain (Risk 4).
-//   - agent_message{to="captain"}                   → captain (Risk 4).
-//   - wake --all (explicit-only)                    → NOT implemented here;
-//     that is the operator CLI surface, not an automatic trigger.
-//
-// # Wake reliability (Risk 2)
-//
-// The pane target for each session is captured once and stored in sleepRecord:
-//   - Crew sessions: crew.Record.Handle + ".0"  (matches perRunSubstrate.cachedPaneTarget convention).
-//   - Captain: resolved via resolveCaptainTarget() — keeper.ResolveTmuxTarget
-//     (canonical EvalSymlinks hash, has-session probe, returns "<session>:agent")
-//     first, then a bare-"captain" exact-match fallback, then the convention
-//     "<session>:agent" as last resort (hk-fv40; replaces the old hard-coded :0.0).
-//
-// A max-sleep-duration FAILSAFE auto-wakes every session that has been asleep
-// longer than maxSleepDuration (default 4 h).  This is the insurance mechanism:
-// if a wake trigger is missed or a new class of work appears that no trigger
-// covers, the session will self-recover within the ceiling.
-//
-// Bead ref: hk-jeby (M1 of hk-rl4b sleep-wake).
-// Spec ref: codename:sleep-wake (the specs live in the kerf bench; this
-// implementation provides the M1 daemon-side contract).
-
 import (
 	"context"
 	"encoding/json"
@@ -61,34 +23,16 @@ import (
 )
 
 const (
-	// quiesceArbiterPollInterval is how often the arbiter re-evaluates GenuineDrain.
-	// Conservative: 30 s is fast enough to detect new work quickly without burning
-	// CPU on continuous br-ready polling.
 	quiesceArbiterPollInterval = 30 * time.Second
 
-	// quiesceArbiterMaxSleepDuration is the hard auto-wake ceiling (Risk 2
-	// failsafe).  Any session that has been asleep longer than this is nudged
-	// unconditionally, regardless of the drain state, so the fleet never sleeps
-	// past a fixed wall-clock horizon.
 	quiesceArbiterMaxSleepDuration = 4 * time.Hour
 
-	// sleepingMarkerDir is the directory under .harmonik/ where per-session
-	// .sleeping.<session_id> marker files are written.  The directory is created
-	// lazily; its absence simply means no sessions are sleeping.
 	sleepingMarkerDir = ".harmonik"
 
-	// fleetSleepingMarker is the file written to .harmonik/ on `harmonik sleep`
-	// and removed on `harmonik wake --all`. External agents — Claude Code harness
-	// crons, scripts, etc. — can check for this file via `harmonik sleep-gate`
-	// (exit 0 = sleeping → suppress; exit 1 = awake → proceed). hk-xjr1n.
 	fleetSleepingMarker = ".fleet-sleeping"
 
-	// captainAgentName is the conventional captain agent name used by
-	// lifecycle.TmuxSessionName and crew registries.
 	captainAgentName = "captain"
 
-	// watchAgentName is the conventional watch agent name (WE5): the always-on
-	// triage-and-relay session that sits between the event bus and the captain.
 	watchAgentName = "watch"
 )
 
@@ -123,19 +67,11 @@ const (
 	SleepLevelFinishLane SleepLevel = "L3"
 )
 
-// defaultSleepSource / defaultSleepLevel are the backward-compatible defaults
-// applied when an on-disk marker predates the source/level fields (hk-caaf).
-// A marker with no source is treated as an operator park (the safe, sticky
-// interpretation — never auto-wake something we cannot prove was an auto-park);
-// a marker with no level is treated as an L1 drain park (the common case).
 const (
 	defaultSleepSource = SleepSourceOperator
 	defaultSleepLevel  = SleepLevelDrain
 )
 
-// sleepMarker is the on-disk shape of .harmonik/.sleeping.<session_id>.
-// JSON tags are stable; new fields MUST default cleanly so a marker written by
-// an older daemon (session_id + parked_at only) still round-trips.
 type sleepMarker struct {
 	SessionID string      `json:"session_id"`
 	ParkedAt  string      `json:"parked_at"`
@@ -143,8 +79,6 @@ type sleepMarker struct {
 	Level     SleepLevel  `json:"level"`
 }
 
-// normalize applies the backward-compatible defaults for any field a legacy
-// marker omitted, so callers always see a fully-populated record (hk-caaf).
 func (m *sleepMarker) normalize() {
 	if m.Source == "" {
 		m.Source = defaultSleepSource
@@ -154,9 +88,6 @@ func (m *sleepMarker) normalize() {
 	}
 }
 
-// paneNudger is the minimal interface the QuiesceArbiter needs from the tmux
-// adapter.  Using a narrow interface lets tests inject a simple stub without
-// implementing the full tmuxpkg.Adapter (which has ~14 methods).
 type paneNudger interface {
 	SendKeysEnter(ctx context.Context, paneTarget string) error
 }
@@ -200,7 +131,6 @@ type QuiesceArbiterConfig struct {
 	MaxSleepDuration time.Duration
 }
 
-// sessionSleepRecord tracks the sleep state for one LLM session.
 type sessionSleepRecord struct {
 	agentName  string
 	queueName  string // queue this session services (empty = captain)
@@ -223,7 +153,6 @@ type QuiesceArbiter struct {
 	wakeC chan wakeSignal
 }
 
-// wakeSignal carries the routing key for a triggered wake event.
 type wakeSignal struct {
 	// queueName, when non-empty, routes the wake to the crew bound to that queue.
 	queueName string
@@ -304,24 +233,6 @@ func (a *QuiesceArbiter) Start(ctx context.Context) {
 	go a.run(ctx)
 }
 
-// reconcileOrphanedMarkers re-loads on-disk .sleeping.<sid> markers into the
-// in-memory sleeping map at daemon boot (hk-x03v / codename:fleet-state).
-//
-// If the daemon dies while sessions are parked, the in-memory map and the
-// max-sleep failsafe timer are gone, but the marker files persist — so the
-// keeper's IsSleeping gate keeps suppressing those sessions with nothing left to
-// ever wake them. This pass restores the map (keeping the ORIGINAL parked_at as
-// sleptAt, so the 4h max-sleep failsafe measures from the real park time and a
-// marker already past the ceiling is woken on the first tick) and resolves a
-// fresh pane target so the nudge can land.
-//
-// A marker whose session cannot be mapped to a known session (no matching crew
-// record and not the captain sentinel) is still re-loaded under its session_id
-// so the failsafe can eventually clear its file — but without a pane target the
-// nudge is skipped (the marker removal alone lifts the keeper suppression).
-//
-// Best-effort: any per-marker error is logged and skipped; the daemon never
-// fails to start over a bad marker.
 func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 	if a.cfg.ProjectDir == "" {
 		return
@@ -335,7 +246,6 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 		return // no .harmonik dir → nothing parked
 	}
 
-	// Build sessionID → crew record index for pane/queue/agent resolution.
 	crewBySID := make(map[string]crew.Record)
 	for _, r := range a.listCrewRecords() {
 		if r.SessionID != "" {
@@ -358,11 +268,9 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 		}
 		sessionID := marker.SessionID
 		if sessionID == "" {
-			// Recover the session id from the filename when the body omitted it.
 			sessionID = name[len(markerPrefix):]
 		}
 
-		// sleptAt = the ORIGINAL park time so the failsafe clock continues.
 		sleptAt := time.Now()
 		if marker.ParkedAt != "" {
 			if t, perr := time.Parse(time.RFC3339, marker.ParkedAt); perr == nil {
@@ -370,7 +278,6 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 			}
 		}
 
-		// Resolve agentName / queue / pane for this session.
 		var agentName, queueName, paneTarget string
 		if r, ok := crewBySID[sessionID]; ok {
 			agentName = r.Name
@@ -382,8 +289,6 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 			agentName = captainAgentName
 			paneTarget = a.resolveCaptainTarget(ctx)
 		} else {
-			// Unknown session: key the map by session id so the failsafe can still
-			// clear the marker; no pane target → nudge is skipped.
 			agentName = sessionID
 		}
 
@@ -410,7 +315,6 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 	}
 }
 
-// run is the main loop of the QuiesceArbiter.
 func (a *QuiesceArbiter) run(ctx context.Context) {
 	poll := a.cfg.PollInterval
 	if poll <= 0 {
@@ -438,8 +342,6 @@ func (a *QuiesceArbiter) run(ctx context.Context) {
 			a.tick(ctx, maxSleep)
 
 		case <-submitWakeC:
-			// Queue submission: check all queues for pending items and wake
-			// the crew bound to each queue that has pending work.
 			a.handleQueueSubmit(ctx)
 
 		case sig := <-a.wakeC:
@@ -448,15 +350,7 @@ func (a *QuiesceArbiter) run(ctx context.Context) {
 	}
 }
 
-// tick runs one drain-check + failsafe-wake cycle.
 func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
-	// Max-sleep failsafe (Risk 2): unconditionally wake sessions that have slept
-	// past the ceiling, regardless of drain state.  Runs even when Drain is nil.
-	// The delete happens here, inside the same lock that selects the record, so
-	// this caller obeys wakeSession's contract like the other three: the session
-	// is out of a.sleeping before anyone nudges it. Selecting under the lock and
-	// deleting after the wake would leave a window in which the socket handler
-	// could pick the same record and nudge it a second time.
 	a.mu.Lock()
 	var expired []sessionSleepRecord
 	for _, rec := range a.sleeping {
@@ -476,22 +370,12 @@ func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 	}
 }
 
-// parkAllSessions writes sleep markers and sends park comms signals to every
-// known LLM session (captain + all crews) that is not already sleeping.
-// source/level record the park provenance/depth on each marker (hk-caaf).
 func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource, level SleepLevel) {
 	records := a.listCrewRecords()
 
-	// Captain: resolve the live pane target (hk-fv40 / codename:fleet-state).
-	// The old code hard-coded "<convention-session>:0.0", which missed whenever
-	// the live captain session is the BARE name "captain" — the wake nudge then
-	// landed on a dead pane and the session stayed asleep until the 4h failsafe
-	// (which re-nudged the SAME wrong pane). resolveCaptainTarget now probes
-	// liveness and returns the target of whichever session is actually live.
 	captainTarget := a.resolveCaptainTarget(ctx)
 	a.parkSession(ctx, captainAgentName, "", "captain-session", captainTarget, source, level)
 
-	// Each crew session.
 	for _, r := range records {
 		if r.Handle == "" || r.SessionID == "" {
 			continue
@@ -501,51 +385,21 @@ func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource
 	}
 }
 
-// resolveCaptainTarget determines the tmux target for the captain's wake nudge
-// (hk-fv40 / codename:fleet-state).
-//
-// Resolution order:
-//  1. keeper.ResolveTmuxTarget(projectDir, "captain", ...) — derives the
-//     conventional "harmonik-<hash>-captain" session, probes it with
-//     `tmux has-session`, and returns "<session>:agent" (the AGENT window's
-//     active pane) when live. This is the same idiom the keeper itself uses.
-//  2. Bare "captain" session fallback — the live captain is sometimes the bare
-//     session name "captain" (not the hashed name); probe it directly and use
-//     it when live.
-//  3. Convention-derived "<session>:agent" — last resort so the failsafe still
-//     has a plausible target even when no probe confirmed a live session
-//     (e.g. tmux unavailable in this environment).
-//
-// ctx bounds the tmux probe in step 2. A cancelled ctx makes that probe report
-// "not live", so resolution falls to step 3 and still returns a plausible
-// target. ctx is only cancelled when the daemon is going down, and the marker
-// this target lands on is re-resolved by the next boot's reconcile pass.
 func (a *QuiesceArbiter) resolveCaptainTarget(ctx context.Context) string {
 	if a.cfg.ProjectDir != "" {
 		if t := keeper.ResolveTmuxTarget(a.cfg.ProjectDir, captainAgentName, "", nil); t != "" {
 			return t
 		}
 	}
-	// Fallback: the bare "captain" session (the comms-wake pane-mismatch case).
 	if tmuxHasSession(ctx, captainAgentName) {
 		return captainAgentName
 	}
-	// Last resort: convention-derived name with the AGENT window's active pane.
 	if a.cfg.ProjectDir != "" {
 		return keeper.HarmonikSessionName(a.cfg.ProjectDir, captainAgentName) + ":agent"
 	}
 	return lifecycle.TmuxSessionName(a.cfg.ProjectHash, captainAgentName) + ":agent"
 }
 
-// tmuxHasSession reports whether a tmux session whose name EXACTLY equals name
-// is live, via `tmux has-session -t "=<name>"`. The "=" anchor forces an exact
-// match (mirrors keeper.tmuxSessionLive, which is unexported). A non-zero exit
-// (absent session / no tmux server) reports false.
-//
-// ctx bounds the probe. A wedged tmux server can make `has-session` block, so a
-// caller that gives up — a cancelled state request, a daemon that is shutting
-// down — must be able to abort it. A cancelled ctx reports false, which is the
-// same answer every other probe failure gives.
 func tmuxHasSession(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
@@ -555,8 +409,6 @@ func tmuxHasSession(ctx context.Context, name string) bool {
 	return cmd.Run() == nil
 }
 
-// parkSession parks one session: writes the sleep marker file and sends a comms
-// park signal.  No-op when the session is already sleeping.
 func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, sessionID, paneTarget string, source SleepSource, level SleepLevel) {
 	if source == "" {
 		source = defaultSleepSource
@@ -581,12 +433,10 @@ func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, 
 	a.sleeping[agentName] = rec
 	a.mu.Unlock()
 
-	// Write .sleeping.<session_id> marker.
 	if sessionID != "" && a.cfg.ProjectDir != "" {
 		a.writeSleepMarker(sessionID, source, level)
 	}
 
-	// Emit comms park signal (best-effort; log on failure; never fatal).
 	if a.cfg.CommsBus != nil {
 		parkBody := fmt.Sprintf(`{"type":"park","reason":"drain_detected","drained_at":%q}`, time.Now().UTC().Format(time.RFC3339))
 		_, emitErr := a.cfg.CommsBus.EmitAgentMessage(ctx, core.AgentMessagePayload{
@@ -601,15 +451,6 @@ func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, 
 	}
 }
 
-// handleQueueSubmit is called when a queue submission arrives (via WakeCh).
-// It checks each queue for pending items and wakes the crew assigned to that queue.
-//
-// Two routing paths:
-//  1. Crew registry: if a crew.Record exists for the queue, use its name for
-//     the log message.
-//  2. Sleeping-map fallback: executeWake routes by queueName regardless of
-//     whether the crew registry is populated, so pending items always wake
-//     sleeping sessions bound to that queue.
 func (a *QuiesceArbiter) handleQueueSubmit(ctx context.Context) {
 	if a.cfg.QueueStore == nil {
 		return
@@ -617,7 +458,6 @@ func (a *QuiesceArbiter) handleQueueSubmit(ctx context.Context) {
 	queues := a.cfg.QueueStore.AllQueues()
 	records := a.listCrewRecords()
 
-	// Build queueName → crew name index (for log messages only).
 	queueToCrewName := make(map[string]string, len(records))
 	for _, r := range records {
 		if r.Queue != "" {
@@ -629,7 +469,6 @@ func (a *QuiesceArbiter) handleQueueSubmit(ctx context.Context) {
 		if q == nil || qName == "" {
 			continue
 		}
-		// Check for pending items in this queue.
 		hasPending := false
 		for gi := range q.Groups {
 			for _, item := range q.Groups[gi].Items {
@@ -646,9 +485,6 @@ func (a *QuiesceArbiter) handleQueueSubmit(ctx context.Context) {
 			continue
 		}
 
-		// Wake any session sleeping for this queue.
-		// executeWake matches sleeping records by queueName; crew registry is
-		// optional — used only to enrich the log message.
 		crewName, ok := queueToCrewName[qName]
 		var reason string
 		if ok {
@@ -660,21 +496,14 @@ func (a *QuiesceArbiter) handleQueueSubmit(ctx context.Context) {
 	}
 }
 
-// handleEpicCompleted is the event handler for epic_completed (Risk 4 / captain interlock).
 func (a *QuiesceArbiter) handleEpicCompleted(ctx context.Context, evt core.Event) error {
-	// Route to captain — epic completion always wakes the captain.
 	select {
 	case a.wakeC <- wakeSignal{captainWake: true, reason: "epic_completed"}:
 	default:
-		// Channel full: best-effort; the tick's failsafe catches any missed wakes.
 	}
 	return nil
 }
 
-// handleAgentMessage is the event handler for agent_message (Risk 4 / captain interlock).
-// Wakes the captain when the message is directed at the captain; wakes the watch
-// session when the message is directed at "watch" (WE5 — parked-watch wake path).
-// All other destinations are silently ignored (no fleet-wide wake).
 func (a *QuiesceArbiter) handleAgentMessage(ctx context.Context, evt core.Event) error {
 	var payload core.AgentMessagePayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
@@ -685,25 +514,16 @@ func (a *QuiesceArbiter) handleAgentMessage(ctx context.Context, evt core.Event)
 		select {
 		case a.wakeC <- wakeSignal{captainWake: true, reason: fmt.Sprintf("agent_message from %q to captain", payload.From)}:
 		default:
-			// Channel full: best-effort.
 		}
 	case watchAgentName:
-		// WE5: a message directed at the watch wakes the parked watch session.
 		select {
 		case a.wakeC <- wakeSignal{agentName: watchAgentName, reason: fmt.Sprintf("agent_message from %q to watch", payload.From)}:
 		default:
-			// Channel full: best-effort.
 		}
 	}
 	return nil
 }
 
-// executeWake wakes the session identified by sig.
-//
-// Wake routing:
-//   - sig.captainWake → wake captain (if sleeping).
-//   - sig.queueName non-empty → wake crew for that queue (if sleeping).
-//   - sig.agentName non-empty → wake the named sleeping agent directly (WE5).
 func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 	a.mu.Lock()
 	var targets []sessionSleepRecord
@@ -723,7 +543,6 @@ func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 			targets = append(targets, rec)
 		}
 	}
-	// Remove from sleeping map before releasing lock so concurrent wakes don't double-nudge.
 	for _, rec := range targets {
 		delete(a.sleeping, rec.agentName)
 	}
@@ -735,39 +554,11 @@ func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 	}
 }
 
-// wakeSession clears a session's sleep marker and then nudges its pane.
-//
-// THE ORDER IS THE POINT, and it is the opposite of the obvious one.
-//
-// Every wake path used to nudge first and remove the marker second. That leaves
-// a window: a daemon that dies between the two calls leaves the marker on disk
-// with the keeper still suppressing the session, and nothing in memory left to
-// wake it. That is exactly the state reconcileOrphanedMarkers exists to clean up
-// at the next boot — so the old order manufactured, on every single wake, the
-// condition the boot-time repair pass was written to undo.
-//
-// Clearing first makes the crash window benign. A daemon that dies after the
-// clear and before the nudge leaves a session that is merely un-nudged: the
-// keeper is no longer suppressing it, so it is reachable again. Losing a
-// keystroke is recoverable. Losing the marker removal is not.
-//
-// The same reorder closes a test race. The old sequence let an observer that
-// waited on the nudge read the marker before the removal ran — measured at 6
-// failures per 1000 under load, with zero nudge timeouts, which is what a race
-// on the removal looks like and not what a failing wake looks like. Do not
-// "fix" that by polling for the marker's absence or lengthening a timeout;
-// both hide the race and leave the crash window open (hk-zt68b).
-//
-// Callers must remove the session from a.sleeping under the lock BEFORE calling
-// this, so concurrent wakes cannot double-nudge.
 func (a *QuiesceArbiter) wakeSession(ctx context.Context, agentName, paneTarget, sessionID string) {
 	a.clearSleepMarker(sessionID)
 	a.nudgePane(ctx, agentName, paneTarget)
 }
 
-// nudgePane sends an Enter key to paneTarget to wake a parked session.
-// Best-effort: errors are logged but never fatal (the max-sleep failsafe
-// provides an upper bound on how long a wake failure can persist).
 func (a *QuiesceArbiter) nudgePane(ctx context.Context, agentName, paneTarget string) {
 	if a.cfg.Adapter == nil || paneTarget == "" {
 		return
@@ -777,10 +568,6 @@ func (a *QuiesceArbiter) nudgePane(ctx context.Context, agentName, paneTarget st
 	}
 }
 
-// writeSleepMarker creates .harmonik/.sleeping.<sessionID>.
-// The file body is a JSON object with the session_id, parked_at time, and the
-// park source/level (hk-caaf); it is written best-effort and used by external
-// observers (e.g. the captain's crew-launch loop) to detect parked state.
 func (a *QuiesceArbiter) writeSleepMarker(sessionID string, source SleepSource, level SleepLevel) {
 	dir := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir)
 	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
@@ -806,9 +593,6 @@ func (a *QuiesceArbiter) writeSleepMarker(sessionID string, source SleepSource, 
 	}
 }
 
-// readSleepMarker reads and parses .harmonik/.sleeping.<sessionID>, applying the
-// backward-compatible defaults (hk-caaf) so a marker written by an older daemon
-// (session_id + parked_at only) still yields a fully-populated record.
 func (a *QuiesceArbiter) readSleepMarker(path string) (sleepMarker, error) {
 	var m sleepMarker
 	//nolint:gosec // G304: path is composed from the trusted ProjectDir + a fixed marker prefix.
@@ -823,8 +607,6 @@ func (a *QuiesceArbiter) readSleepMarker(path string) (sleepMarker, error) {
 	return m, nil
 }
 
-// clearSleepMarker removes .harmonik/.sleeping.<sessionID>.
-// Best-effort: errors are logged but never fatal.
 func (a *QuiesceArbiter) clearSleepMarker(sessionID string) {
 	if sessionID == "" || a.cfg.ProjectDir == "" {
 		return
@@ -870,21 +652,12 @@ func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) erro
 			return err
 		}
 	}
-	// CLI `harmonik sleep` is an explicit operator command: source=operator so
-	// the resulting park is sticky against event-reflex auto-wake (hk-caaf).
 	a.parkAllSessions(ctx, SleepSourceOperator, SleepLevelDrain)
-	// Suspend all enabled schedule jobs so no timer-driven work fires while the
-	// fleet is parked. Write the fleet-sleeping marker for external gate checks
-	// (harness crons via `harmonik sleep-gate`). hk-xjr1n.
 	a.suspendScheduleJobs()
 	a.writeFleetSleepingMarker()
 	return nil
 }
 
-// vetoCheck runs GatherDrainFacts (SS-INV-005 veto gate) and returns a
-// non-nil error when the sleep request should be refused.  Returns nil when
-// the drain detector is nil (gate skipped; test mode / no brcli adapter
-// wired) or when the fleet is confirmed empty on all active-work axes.
 func (a *QuiesceArbiter) vetoCheck(ctx context.Context) error {
 	a.mu.Lock()
 	drain := a.drain
@@ -898,9 +671,6 @@ func (a *QuiesceArbiter) vetoCheck(ctx context.Context) error {
 		return fmt.Errorf("sleep vetoed: cannot determine fleet state: %w", err)
 	}
 
-	// Project the gathered FleetFacts into the narrow snapshot the pure veto
-	// predicate reads, then evaluate the SS-INV-005 decision (policy.SleepVeto).
-	// All fact GATHERING stayed above; only the DECISION moved to internal/policy.
 	res := policy.SleepVeto(drainSnapshot(facts))
 	if res.Unsure {
 		return fmt.Errorf("sleep vetoed: fleet state uncertain (%s); use --force to override",
@@ -929,7 +699,6 @@ func (a *QuiesceArbiter) HandleDaemonWake(ctx context.Context, agentName string,
 		a.wakeAllSessions(ctx)
 		return nil
 	}
-	// Wake a specific named agent.
 	a.mu.Lock()
 	rec, ok := a.sleeping[agentName]
 	if ok {
@@ -937,7 +706,6 @@ func (a *QuiesceArbiter) HandleDaemonWake(ctx context.Context, agentName string,
 	}
 	a.mu.Unlock()
 	if !ok {
-		// Not currently sleeping — informational, not fatal.
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: wake: %q is not currently sleeping\n", agentName)
 		return nil
 	}
@@ -946,8 +714,6 @@ func (a *QuiesceArbiter) HandleDaemonWake(ctx context.Context, agentName string,
 	return nil
 }
 
-// wakeAllSessions wakes every sleeping session unconditionally.
-// Used by HandleDaemonWake(--all) and the operator CLI surface.
 func (a *QuiesceArbiter) wakeAllSessions(ctx context.Context) {
 	a.mu.Lock()
 	targets := make([]sessionSleepRecord, 0, len(a.sleeping))
@@ -962,14 +728,10 @@ func (a *QuiesceArbiter) wakeAllSessions(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (operator wake --all)\n", rec.agentName)
 		a.wakeSession(ctx, rec.agentName, rec.paneTarget, rec.sessionID)
 	}
-	// Restore schedule jobs that were suspended by sleep and remove the fleet
-	// marker so external gate checks (harness crons) resume normally. hk-xjr1n.
 	a.restoreScheduleJobs()
 	a.clearFleetSleepingMarker()
 }
 
-// listCrewRecords loads the current crew registry.  Returns nil on error
-// (logged; non-fatal — the arbiter simply skips crews it cannot enumerate).
 func (a *QuiesceArbiter) listCrewRecords() []crew.Record {
 	if a.cfg.ProjectDir == "" {
 		return nil
@@ -982,9 +744,6 @@ func (a *QuiesceArbiter) listCrewRecords() []crew.Record {
 	return records
 }
 
-// suspendScheduleJobs disables all currently-enabled schedule jobs and records
-// which ones were disabled in .harmonik/sleep-suspended-jobs.json. Best-effort:
-// errors are logged but never fatal (the session park already happened). hk-xjr1n.
 func (a *QuiesceArbiter) suspendScheduleJobs() {
 	a.mu.Lock()
 	store := a.cfg.ScheduleStore
@@ -1002,9 +761,6 @@ func (a *QuiesceArbiter) suspendScheduleJobs() {
 	}
 }
 
-// restoreScheduleJobs re-enables the schedule jobs that were suspended by sleep,
-// reading the suspended set from .harmonik/sleep-suspended-jobs.json. Best-effort:
-// errors are logged but never fatal. hk-xjr1n.
 func (a *QuiesceArbiter) restoreScheduleJobs() {
 	a.mu.Lock()
 	store := a.cfg.ScheduleStore
@@ -1022,9 +778,6 @@ func (a *QuiesceArbiter) restoreScheduleJobs() {
 	}
 }
 
-// writeFleetSleepingMarker creates .harmonik/.fleet-sleeping so external agents
-// (harness crons, scripts) can detect the sleeping state via `harmonik sleep-gate`
-// without connecting to the daemon socket. Best-effort. hk-xjr1n.
 func (a *QuiesceArbiter) writeFleetSleepingMarker() {
 	if a.cfg.ProjectDir == "" {
 		return
@@ -1036,7 +789,6 @@ func (a *QuiesceArbiter) writeFleetSleepingMarker() {
 	}
 }
 
-// clearFleetSleepingMarker removes .harmonik/.fleet-sleeping. Best-effort. hk-xjr1n.
 func (a *QuiesceArbiter) clearFleetSleepingMarker() {
 	if a.cfg.ProjectDir == "" {
 		return

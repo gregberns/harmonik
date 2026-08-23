@@ -29,13 +29,6 @@ func Hold(r Resource, release func() error) *Lease {
 // Resource returns what this lease holds.
 func (l *Lease) Resource() Resource { return l.resource }
 
-// spent reports whether the lease has been given back, disarmed, or was born
-// with nothing to call. A spent lease will never call anything.
-//
-// It is deliberately not exported. A release site that asks whether the release
-// already happened is the shape this package exists to remove (RSM-036); the
-// answer is always "call Release and let the lease decide". The tests in this
-// package are the only readers.
 func (l *Lease) spent() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -54,12 +47,6 @@ func (l *Lease) Release() error {
 	return err
 }
 
-// take spends the lease, makes its give-back call, and reports whether this
-// call is the one that spent it.
-//
-// The lock is released before the call, because the call reaches the world —
-// it kills a process or removes a directory — and a lock held across that is
-// held for an unbounded time.
 func (l *Lease) take() (took bool, err error) {
 	release := l.spend()
 	if release == nil {
@@ -68,14 +55,8 @@ func (l *Lease) take() (took bool, err error) {
 	return true, release()
 }
 
-// disarm spends the lease and drops its give-back call without making it. It
-// reports whether this call is the one that spent it. Disarming reaches
-// nothing, so unlike [Lease.take] it cannot fail.
 func (l *Lease) disarm() bool { return l.spend() != nil }
 
-// spend takes the give-back call out of the lease, leaving it spent, and
-// returns it. A second caller gets nil, which is what makes every path through
-// this type run the call at most once.
 func (l *Lease) spend() func() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -101,9 +82,6 @@ func (l *Lease) spend() func() error {
 // nothing and reports nothing.
 func (l *Lease) Give(d Disposition) Report { return l.give(d) }
 
-// give implements held. A lease the disposition keeps is disarmed rather than
-// left armed, so no later caller can give back what the run decided to leave
-// standing.
 func (l *Lease) give(d Disposition) Report {
 	if !d.Releases(l.resource) {
 		if l.disarm() {

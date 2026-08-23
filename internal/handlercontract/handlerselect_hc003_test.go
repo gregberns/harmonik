@@ -8,63 +8,24 @@ import (
 	"testing"
 )
 
-// handlerselect_hc003_test.go — sensor asserting HC-003 (handler selection is
-// config-level). The daemon MUST carry zero conditional logic that varies on
-// handler-is-twin; real/twin selection is config-level only.
-//
-// Spec refs: specs/handler-contract.md §4.1.HC-003 and §4.8 (twin parity);
-// bead hk-8i31.3.
-//
-// Helper prefix: handlerselectFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-
-// handlerselectFixtureForbiddenPatterns enumerates the source-code patterns
-// that constitute runtime real/twin branching. Each pattern entry is a
-// substring search over non-test Go source files in the daemon tree.
-//
-// The patterns are derived from the normative verification statement in
-// specs/handler-contract.md §4.8:
-//
-//	"Verification: reviewing the daemon codebase yields zero `if isTwin` /
-//	`if agent_type == "*-twin"` branches."
-//
-// Each pattern is chosen to be unambiguous in daemon production code: its
-// presence in a non-test .go file indicates conditional logic that varies on
-// handler-is-twin, which violates HC-003. Patterns that could appear in
-// legitimate string literals (e.g., config-resolution code referencing the
-// twin binary name as a resolved value) are intentionally omitted; the
-// forbidden set covers only the identifier and runtime-discriminant forms
-// named in the spec's verification clause.
 var handlerselectFixtureForbiddenPatterns = []string{
-	// Identifier forms named directly by the spec's verification statement.
 	"isTwin",
 	"isTwinHandler",
 
-	// Equality test against the twin agent_type suffix pattern named in the
-	// spec's verification statement.
 	`agent_type == "*-twin"`,
 
-	// Common Go idiom for twin-suffix discrimination at runtime.
 	`HasSuffix(agentType, "-twin")`,
 	`HasSuffix(agent_type, "-twin")`,
 }
 
-// handlerselectFixtureScannedRoots is the set of source-tree subdirectories
-// that constitute the daemon codebase for HC-003 purposes. Test files
-// (_test.go) are excluded by the walker.
 var handlerselectFixtureScannedRoots = []string{
 	"internal",
 	"cmd",
 }
 
-// handlerselectFixtureRepoRoot resolves the absolute path of the repo root
-// (the directory containing `go.mod`) by walking upward from the test file's
-// location. Returns t.Fatalf on failure.
 func handlerselectFixtureRepoRoot(t *testing.T) string {
 	t.Helper()
 
-	// Start from the package directory (determined at build time by the Go
-	// toolchain via os.Getwd when tests run). Walk upward to find go.mod.
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("handlerselectFixtureRepoRoot: os.Getwd: %v", err)
@@ -82,8 +43,6 @@ func handlerselectFixtureRepoRoot(t *testing.T) string {
 	}
 }
 
-// handlerselectFixtureCollectGoSources walks root and returns all non-test
-// .go files found under it.
 func handlerselectFixtureCollectGoSources(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -129,9 +88,6 @@ func TestHandlerSelect_HC003_NoDaemonRuntimeBranching(t *testing.T) {
 	for _, rel := range handlerselectFixtureScannedRoots {
 		root := filepath.Join(repoRoot, rel)
 		if _, err := os.Stat(root); os.IsNotExist(err) {
-			// Root doesn't exist yet (e.g., cmd/ before any cmd is added);
-			// skip silently — the test is still meaningful for whichever
-			// roots do exist.
 			continue
 		}
 		sourceFiles = append(sourceFiles, handlerselectFixtureCollectGoSources(t, root)...)
@@ -153,7 +109,6 @@ func TestHandlerSelect_HC003_NoDaemonRuntimeBranching(t *testing.T) {
 				}
 
 				if strings.Contains(string(content), pattern) {
-					// Report relative path for readability.
 					rel, relErr := filepath.Rel(repoRoot, filePath)
 					if relErr != nil {
 						rel = filePath

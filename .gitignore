@@ -70,6 +70,7 @@
 # bv (beads viewer) local config and caches
 .bv/
 /harmonik
+/commentcut
 /harmonik-twin-claude
 /twin-fail
 /twin-hang

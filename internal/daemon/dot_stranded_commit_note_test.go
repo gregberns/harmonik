@@ -1,24 +1,5 @@
 package daemon
 
-// dot_stranded_commit_note_test.go — a red gate that bounces a real commit
-// must not be reported as "the implementer landed nothing".
-//
-// Measured live on 2026-08-10 at b49210d6 and recorded on hk-rqxz3: a codex
-// implementer made a real change, committed it, and exited 0. `make full` ran
-// 75001 tests across 108 packages, ONE of them failed, and it was racy rather
-// than broken. The graph took the commit_gate→implement back edge seven minutes
-// later, the implementer had nothing to add, and the run ended on a no-progress
-// terminal whose reason says only that HEAD did not advance.
-//
-// The commit is still on run/<run_id> and on no other branch. The reason does
-// not say so, so the run reads exactly like a harness that never landed
-// anything — and the investigation went to the harness. That misdirection is
-// the cost this guards against.
-//
-// The rule under test is strandedCommitNote. It is deliberately narrow: it
-// speaks ONLY when the gate is what routed the implementer back. A no-progress
-// loop with no gate in it has nothing to preserve and must stay silent.
-
 import (
 	"strings"
 	"testing"
@@ -27,8 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// strandedHeadSHA is the commit the gate bounced — the one that gets left on
-// the run branch.
 const strandedHeadSHA = "7482bfc0ad5faf7a98ca6ab2012e1466f769c3eb"
 
 func TestStrandedCommitNote_GateBouncedARealCommit(t *testing.T) {
@@ -138,13 +117,6 @@ func TestGateFailureTail_KeepsTheEnd(t *testing.T) {
 	if !strings.Contains(got, "…") {
 		t.Errorf("a 1.5 KB gate output produced an un-truncated excerpt, so the head was never dropped:\n%s", got)
 	}
-	// THE LITERAL STAYS A LITERAL. gateFailureTailPrefix holds this same string
-	// and using it here would read tidier, and would delete the only check in
-	// the tree that catches a change to the prefix ITSELF. The tests next to
-	// gateFailureTail derive their bound from that constant, so widening the
-	// prefix widens their bound with it and they stay green; this line does not
-	// move, so it is what fails. Measured: one byte added to the prefix is
-	// reported here, at 219, and nowhere else.
 	if len(got) > gateFailureTailMaxBytes+len("; gate output: ")+len("…") {
 		t.Errorf("the excerpt is unbounded at %d bytes; it travels into run_failed, which is read one line at a time", len(got))
 	}
@@ -186,6 +158,4 @@ func TestStrandedCommitNote_RunIDIsNotConfusedWithTheCommit(t *testing.T) {
 	}
 }
 
-// runIDIsCoreRunID keeps the seam honest: strandedCommitNote takes the typed
-// run id, not a string, so a caller cannot hand it a worktree path by mistake.
 var _ func(core.RunID, bool, bool, string, string, string, string) string = strandedCommitNote

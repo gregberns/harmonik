@@ -10,20 +10,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// workspaceEventsFixtureRecorder is a simple in-process event recorder used
-// by WM-015 tests to capture which events would be emitted (and in what order)
-// at each §7.1 lifecycle-transition point.
-//
-// The real event bus (hk-hqwn.57) is deferred; this recorder captures the WHEN
-// contract without depending on a live bus. The pattern mirrors
-// TestWM027_SubsequentSessionsDoNotReemitWorkspaceLeased.
-//
-// Helper prefix: workspaceEventsFixture (bead hk-8mwo.25).
 type workspaceEventsFixtureRecorder struct {
 	events []workspaceEventsFixtureEntry
 }
 
-// workspaceEventsFixtureEntry is one recorded event emission.
 type workspaceEventsFixtureEntry struct {
 	// EventType is the string event-type name per event-model.md §8.5 row.
 	EventType string
@@ -33,12 +23,10 @@ type workspaceEventsFixtureEntry struct {
 	Extra map[string]string
 }
 
-// workspaceEventsFixtureNewRecorder returns an initialised recorder.
 func workspaceEventsFixtureNewRecorder() *workspaceEventsFixtureRecorder {
 	return &workspaceEventsFixtureRecorder{}
 }
 
-// record appends an event to the recorder's log.
 func (r *workspaceEventsFixtureRecorder) record(eventType string, state core.WorkspaceState, extra map[string]string) {
 	r.events = append(r.events, workspaceEventsFixtureEntry{
 		EventType: eventType,
@@ -47,7 +35,6 @@ func (r *workspaceEventsFixtureRecorder) record(eventType string, state core.Wor
 	})
 }
 
-// countOf returns the number of recorded events with the given type.
 func (r *workspaceEventsFixtureRecorder) countOf(eventType string) int {
 	n := 0
 	for _, e := range r.events {
@@ -58,7 +45,6 @@ func (r *workspaceEventsFixtureRecorder) countOf(eventType string) int {
 	return n
 }
 
-// firstOf returns the first recorded event with the given type, or nil.
 func (r *workspaceEventsFixtureRecorder) firstOf(eventType string) *workspaceEventsFixtureEntry {
 	for i := range r.events {
 		if r.events[i].EventType == eventType {
@@ -68,8 +54,6 @@ func (r *workspaceEventsFixtureRecorder) firstOf(eventType string) *workspaceEve
 	return nil
 }
 
-// positionOf returns the zero-based index of the first event with the given
-// type, or -1 if absent.
 func (r *workspaceEventsFixtureRecorder) positionOf(eventType string) int {
 	for i, e := range r.events {
 		if e.EventType == eventType {
@@ -79,8 +63,6 @@ func (r *workspaceEventsFixtureRecorder) positionOf(eventType string) int {
 	return -1
 }
 
-// positionOfNth returns the zero-based index of the nth occurrence (0-based n)
-// of the given event type, or -1 if absent.
 func (r *workspaceEventsFixtureRecorder) positionOfNth(eventType string, n int) int {
 	count := 0
 	for i, e := range r.events {
@@ -94,16 +76,6 @@ func (r *workspaceEventsFixtureRecorder) positionOfNth(eventType string, n int) 
 	return -1
 }
 
-// --- Payload fixture structs --------------------------------------------------
-//
-// These structs mirror the field sets declared in event-model.md §8.5 for each
-// workspace lifecycle event. They are test-fixture types only — the production
-// payload schema is owned by EV per EV-025. The shapes here are used to verify
-// that the workspace manager can populate all required fields at the correct
-// state-transition point.
-
-// workspaceEventsFixtureCreatedPayload mirrors event-model.md §8.5.1
-// workspace_created payload fields.
 type workspaceEventsFixtureCreatedPayload struct {
 	EventType    string // "workspace_created"
 	WorkspaceID  string // "ws-" + run_id per WM-004
@@ -112,8 +84,6 @@ type workspaceEventsFixtureCreatedPayload struct {
 	ParentCommit string // commit SHA the workspace was branched from
 }
 
-// workspaceEventsFixtureLeasedPayload mirrors event-model.md §8.5.2
-// workspace_leased payload fields.
 type workspaceEventsFixtureLeasedPayload struct {
 	EventType   string    // "workspace_leased"
 	WorkspaceID string    // "ws-" + run_id per WM-004
@@ -121,9 +91,6 @@ type workspaceEventsFixtureLeasedPayload struct {
 	LeasedAt    time.Time // RFC 3339 wall-clock of lease acquisition
 }
 
-// workspaceEventsFixtureMergeStatusPayload mirrors event-model.md §8.5.3
-// workspace_merge_status payload fields (covers both pending and merged phases
-// per the paired-phase single-event rule in §8.9(h)).
 type workspaceEventsFixtureMergeStatusPayload struct {
 	EventType       string    // "workspace_merge_status"
 	WorkspaceID     string    // "ws-" + run_id
@@ -135,8 +102,6 @@ type workspaceEventsFixtureMergeStatusPayload struct {
 	ChangedAt       time.Time // RFC 3339 with millisecond resolution per §8.9(h)
 }
 
-// workspaceEventsFixtureDiscardedPayload mirrors event-model.md §8.5.4
-// workspace_discarded payload fields.
 type workspaceEventsFixtureDiscardedPayload struct {
 	EventType   string // "workspace_discarded"
 	WorkspaceID string // "ws-" + run_id
@@ -144,8 +109,6 @@ type workspaceEventsFixtureDiscardedPayload struct {
 	Reason      string // discard reason
 }
 
-// workspaceEventsFixtureConflictEscalationPayload mirrors event-model.md §8.5.6
-// merge_conflict_escalation payload fields.
 type workspaceEventsFixtureConflictEscalationPayload struct {
 	EventType     string    // "merge_conflict_escalation"
 	WorkspaceID   string    // "ws-" + run_id
@@ -154,11 +117,6 @@ type workspaceEventsFixtureConflictEscalationPayload struct {
 	EscalatedAt   time.Time // RFC 3339 timestamp of escalation
 }
 
-// --- Fixture helpers ----------------------------------------------------------
-
-// workspaceEventsFixtureMakeWorkspace returns a *Workspace in the initial
-// (pre-create) state ready for threading through Transition calls.
-// The WorkspaceID, RunID, BranchName, and Path fields are deterministic.
 func workspaceEventsFixtureMakeWorkspace(runID, repoPath string) *Workspace {
 	return &Workspace{
 		WorkspaceID:    "ws-" + runID,
@@ -177,18 +135,6 @@ func workspaceEventsFixtureMakeWorkspace(runID, repoPath string) *Workspace {
 	}
 }
 
-// workspaceEventsFixtureTransitionAndRecord calls Transition and, if allowed by
-// the §7.1 emission rules, records the associated event into rec.
-//
-// Emission rules per WM-015 / §7.1:
-//   - entry to created       → workspace_created
-//   - entry to leased        → workspace_leased (AFTER WM-016 gates)
-//   - entry to merge-pending → workspace_merge_status (status=pending)
-//   - entry to merged        → workspace_merge_status (status=merged)
-//   - entry to discarded     → workspace_discarded
-//
-// merge_conflict_escalation is NOT tied to a state transition; it fires when the
-// implementer-resolution path is exhausted (WM-023). It is tested separately.
 func workspaceEventsFixtureTransitionAndRecord(
 	t *testing.T,
 	ws *Workspace,
@@ -201,15 +147,10 @@ func workspaceEventsFixtureTransitionAndRecord(
 		t.Fatalf("workspaceEventsFixtureTransitionAndRecord: Transition(%q → %q): %v",
 			ws.State, next, err)
 	}
-	// Emit the event the spec requires on entry to this state.
-	// State has already advanced (Transition mutates ws.State).
 	switch next {
 	case core.WorkspaceStateCreated:
 		rec.record("workspace_created", next, extra)
 	case core.WorkspaceStateLeased:
-		// WM-016: workspace_leased fires AFTER sidecar + lease-lock fsynced.
-		// The ordering gate is tested in TestWM015_LeasedEmittedAfterWM016Gates;
-		// here we record the emission point.
 		rec.record("workspace_leased", next, extra)
 	case core.WorkspaceStateMergePending:
 		e := map[string]string{"status": "pending"}
@@ -226,14 +167,8 @@ func workspaceEventsFixtureTransitionAndRecord(
 	case core.WorkspaceStateDiscarded:
 		rec.record("workspace_discarded", next, extra)
 	case core.WorkspaceStateReady, core.WorkspaceStateConflictResolving:
-		// No lifecycle event is emitted on entry to these two states per §7.1.
-		// Named explicitly rather than left to the default so that a newly added
-		// workspace state fails the exhaustiveness check here instead of
-		// silently recording nothing.
 	}
 }
-
-// --- Tests -------------------------------------------------------------------
 
 // TestWM015_CreatedEmittedOnEntryToCreated verifies that workspace_created is
 // emitted on entry to the created state (the initial transition per §7.1).
@@ -248,26 +183,21 @@ func TestWM015_CreatedEmittedOnEntryToCreated(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Advance to created: §7.1 initial transition.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
 
-	// workspace_created must have fired exactly once.
 	if rec.countOf("workspace_created") != 1 {
 		t.Errorf("WM-015: workspace_created emitted %d times on entry to created, want 1",
 			rec.countOf("workspace_created"))
 	}
 
-	// workspace_created must be the first event.
 	if pos := rec.positionOf("workspace_created"); pos != 0 {
 		t.Errorf("WM-015: workspace_created at position %d, want 0 (first event)", pos)
 	}
 
-	// workspace_leased must NOT have fired yet.
 	if rec.countOf("workspace_leased") != 0 {
 		t.Errorf("WM-015: workspace_leased emitted before leased state; want 0 at created entry")
 	}
 
-	// Verify payload fields can be populated per EV §8.5.1.
 	payload := workspaceEventsFixtureCreatedPayload{
 		EventType:    "workspace_created",
 		WorkspaceID:  ws.WorkspaceID,
@@ -309,7 +239,6 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Step (a)+(b): git worktree add -b creates the worktree and task branch atomically.
 	branch := ws.BranchName
 	worktreePath := ws.Path
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
@@ -322,20 +251,16 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 		t.Fatalf("WM-015: git worktree add: %v\n%s", err, out)
 	}
 
-	// Advance workspace state to created (§7.1 initial transition).
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
-	// Advance to ready (no emission per §7.1).
 	if err := Transition(ws, core.WorkspaceStateReady); err != nil {
 		t.Fatalf("WM-015: Transition(created → ready): %v", err)
 	}
 
-	// WM-013a: lease-lock MUST NOT exist before leased.
 	leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 		t.Errorf("WM-015/WM-013a: lease-lock present before leased state; want absent")
 	}
 
-	// Step (c): write first session sidecar atomically (WM-026 discipline).
 	sessionID := "sess-" + runID + "-01"
 	sessionDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
@@ -347,30 +272,24 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 		t.Fatalf("WM-015: sidecar write: %v", err)
 	}
 
-	// Assert sidecar is on disk BEFORE workspace_leased fires.
 	if _, err := os.Stat(sidecarPath); err != nil {
 		t.Errorf("WM-015/WM-016: sidecar not on disk before workspace_leased: %v", err)
 	}
 
-	// Step (d): write lease-lock atomically (WM-013a discipline).
 	leaseFixtureWriteLockAtomic(t, leaseLockPath,
 		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
-	// Assert lease-lock is on disk BEFORE workspace_leased fires.
 	if _, err := os.Stat(leaseLockPath); err != nil {
 		t.Errorf("WM-015/WM-016: lease-lock not on disk before workspace_leased: %v", err)
 	}
 
-	// Now transition to leased — workspace_leased emits after the gates above.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateLeased, rec, nil)
 
-	// workspace_leased must have fired exactly once.
 	if rec.countOf("workspace_leased") != 1 {
 		t.Errorf("WM-015: workspace_leased emitted %d times, want exactly 1",
 			rec.countOf("workspace_leased"))
 	}
 
-	// workspace_created must precede workspace_leased (ordering check).
 	posCreated := rec.positionOf("workspace_created")
 	posLeased := rec.positionOf("workspace_leased")
 	if posCreated >= posLeased {
@@ -378,7 +297,6 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 			posCreated, posLeased)
 	}
 
-	// Verify payload fields can be populated per EV §8.5.2.
 	leasedPayload := workspaceEventsFixtureLeasedPayload{
 		EventType:   "workspace_leased",
 		WorkspaceID: ws.WorkspaceID,
@@ -417,22 +335,16 @@ func TestWM015_LeasedNotReemittedOnSubsequentSessions(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Drive to leased state.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
 	if err := Transition(ws, core.WorkspaceStateReady); err != nil {
 		t.Fatalf("WM-015: Transition(created → ready): %v", err)
 	}
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateLeased, rec, nil)
 
-	// Simulate two subsequent session launches: these write sidecars but do
-	// NOT call Transition (workspace stays in leased) and do NOT record
-	// workspace_leased.
 	for i := 0; i < 2; i++ {
-		// No state transition, no event for subsequent sessions.
 		_ = i // additional sessions are no-ops at the emission layer
 	}
 
-	// workspace_leased must have fired exactly once total.
 	if rec.countOf("workspace_leased") != 1 {
 		t.Errorf("WM-015/WM-016: workspace_leased emitted %d times across 3 sessions, want exactly 1",
 			rec.countOf("workspace_leased"))
@@ -453,7 +365,6 @@ func TestWM015_MergeStatusPendingOnEntryToMergePending(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Drive to merge-pending.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
 	if err := Transition(ws, core.WorkspaceStateReady); err != nil {
 		t.Fatalf("WM-015: created → ready: %v", err)
@@ -461,7 +372,6 @@ func TestWM015_MergeStatusPendingOnEntryToMergePending(t *testing.T) {
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateLeased, rec, nil)
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateMergePending, rec, nil)
 
-	// workspace_merge_status must have fired once with status=pending.
 	if rec.countOf("workspace_merge_status") != 1 {
 		t.Errorf("WM-015: workspace_merge_status emitted %d times on merge-pending entry, want 1",
 			rec.countOf("workspace_merge_status"))
@@ -479,7 +389,6 @@ func TestWM015_MergeStatusPendingOnEntryToMergePending(t *testing.T) {
 			e.State, core.WorkspaceStateMergePending)
 	}
 
-	// workspace_merge_status(pending) must come AFTER workspace_leased.
 	posLeased := rec.positionOf("workspace_leased")
 	posPending := rec.positionOf("workspace_merge_status")
 	if posLeased >= posPending {
@@ -487,7 +396,6 @@ func TestWM015_MergeStatusPendingOnEntryToMergePending(t *testing.T) {
 			posLeased, posPending)
 	}
 
-	// Verify payload fields per EV §8.5.3.
 	payload := workspaceEventsFixtureMergeStatusPayload{
 		EventType:    "workspace_merge_status",
 		WorkspaceID:  ws.WorkspaceID,
@@ -500,7 +408,6 @@ func TestWM015_MergeStatusPendingOnEntryToMergePending(t *testing.T) {
 	if payload.Status != "pending" {
 		t.Errorf("WM-015: pending payload status = %q, want %q", payload.Status, "pending")
 	}
-	// merge_commit_hash MUST be absent/empty at pending phase.
 	if payload.MergeCommitHash != "" {
 		t.Errorf("WM-015: pending payload merge_commit_hash should be empty; got %q",
 			payload.MergeCommitHash)
@@ -522,7 +429,6 @@ func TestWM015_MergeStatusMergedOnEntryToMerged(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Drive to merged.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
 	if err := Transition(ws, core.WorkspaceStateReady); err != nil {
 		t.Fatalf("WM-015: created → ready: %v", err)
@@ -530,19 +436,15 @@ func TestWM015_MergeStatusMergedOnEntryToMerged(t *testing.T) {
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateLeased, rec, nil)
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateMergePending, rec, nil)
 
-	// Record a synthetic merge commit hash for the merged payload.
 	mergeHash := "deadbeef" + "deadbeef" + "deadbeef" + "deadbeef" + "deadb"
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateMerged, rec,
 		map[string]string{"merge_commit_hash": mergeHash})
 
-	// workspace_merge_status must have fired exactly twice total:
-	// once with status=pending and once with status=merged.
 	if rec.countOf("workspace_merge_status") != 2 {
 		t.Errorf("WM-015: workspace_merge_status emitted %d times total, want exactly 2 (pending + merged)",
 			rec.countOf("workspace_merge_status"))
 	}
 
-	// The first workspace_merge_status must be pending.
 	pos0 := rec.positionOfNth("workspace_merge_status", 0)
 	pos1 := rec.positionOfNth("workspace_merge_status", 1)
 	if pos0 < 0 {
@@ -560,19 +462,16 @@ func TestWM015_MergeStatusMergedOnEntryToMerged(t *testing.T) {
 			rec.events[pos1].Extra["status"], "merged")
 	}
 
-	// pending must precede merged (ordering check).
 	if pos0 >= pos1 {
 		t.Errorf("WM-015: workspace_merge_status(pending) at %d >= merged at %d; want pending before merged",
 			pos0, pos1)
 	}
 
-	// The merged emission must carry the merge_commit_hash.
 	gotHash := rec.events[pos1].Extra["merge_commit_hash"]
 	if gotHash != mergeHash {
 		t.Errorf("WM-015: merged payload merge_commit_hash = %q, want %q", gotHash, mergeHash)
 	}
 
-	// Verify payload shape per EV §8.5.3.
 	mergedPayload := workspaceEventsFixtureMergeStatusPayload{
 		EventType:       "workspace_merge_status",
 		WorkspaceID:     ws.WorkspaceID,
@@ -603,8 +502,6 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 	t.Run("leased-to-discarded", func(t *testing.T) {
 		t.Parallel()
 
-		// Models: run reaches terminal failure per §7.1 row:
-		// "leased → discarded (run reaches terminal failure)".
 		runID := "0196b200-0000-7000-8000-00000000150a"
 		repo, _ := tempRepo(t)
 		ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
@@ -636,7 +533,6 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 				e.Extra["reason"], "run_failed")
 		}
 
-		// workspace_discarded must come AFTER workspace_leased.
 		posLeased := rec.positionOf("workspace_leased")
 		posDisc := rec.positionOf("workspace_discarded")
 		if posLeased >= posDisc {
@@ -644,12 +540,10 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 				posLeased, posDisc)
 		}
 
-		// workspace_merge_status must NOT have fired (no merge on this path).
 		if rec.countOf("workspace_merge_status") != 0 {
 			t.Errorf("WM-015: workspace_merge_status emitted on leased→discarded path; want 0")
 		}
 
-		// Verify payload shape per EV §8.5.4.
 		payload := workspaceEventsFixtureDiscardedPayload{
 			EventType:   "workspace_discarded",
 			WorkspaceID: ws.WorkspaceID,
@@ -668,9 +562,6 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 	t.Run("conflict-resolving-to-discarded", func(t *testing.T) {
 		t.Parallel()
 
-		// Models: implementer re-dispatch exhausted per §7.1 row:
-		// "conflict-resolving → discarded (implementer re-dispatch exhausted OR
-		// all-mechanical per WM-022a)".
 		runID := "0196b200-0000-7000-8000-00000000150b"
 		repo, _ := tempRepo(t)
 		ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
@@ -685,15 +576,11 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 		if err := Transition(ws, core.WorkspaceStateConflictResolving); err != nil {
 			t.Fatalf("WM-015: merge-pending → conflict-resolving: %v", err)
 		}
-		// merge_conflict_escalation fires here (WM-023) before discard —
-		// modelled as a direct record call since it is not tied to a state
-		// transition but to the exhaustion of the resolution budget.
 		rec.record("merge_conflict_escalation", core.WorkspaceStateConflictResolving,
 			map[string]string{"reason": "budget_exhausted"})
 		workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateDiscarded, rec,
 			map[string]string{"reason": "post_escalation"})
 
-		// merge_conflict_escalation must appear before workspace_discarded.
 		posEsc := rec.positionOf("merge_conflict_escalation")
 		posDisc := rec.positionOf("workspace_discarded")
 		if posEsc < 0 {
@@ -707,7 +594,6 @@ func TestWM015_DiscardedEmittedOnEntryToDiscarded(t *testing.T) {
 				posEsc, posDisc)
 		}
 
-		// workspace_discarded must fire exactly once.
 		if rec.countOf("workspace_discarded") != 1 {
 			t.Errorf("WM-015: workspace_discarded emitted %d times on escalation path, want 1",
 				rec.countOf("workspace_discarded"))
@@ -782,7 +668,6 @@ func TestWM015_FullLifecycleMergedPath(t *testing.T) {
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateMerged, rec,
 		map[string]string{"merge_commit_hash": "aaaa" + "bbbb" + "cccc" + "dddd" + "eeee" + "ff00"})
 
-	// Expected event sequence in order.
 	want := []string{
 		"workspace_created",
 		"workspace_leased",
@@ -799,7 +684,6 @@ func TestWM015_FullLifecycleMergedPath(t *testing.T) {
 		}
 	}
 
-	// Verify the status values of the two merge-status events.
 	mergeEvents := make([]workspaceEventsFixtureEntry, 0, 2)
 	for _, e := range rec.events {
 		if e.EventType == "workspace_merge_status" {
@@ -816,7 +700,6 @@ func TestWM015_FullLifecycleMergedPath(t *testing.T) {
 		t.Errorf("WM-015: second merge_status = %q, want %q", mergeEvents[1].Extra["status"], "merged")
 	}
 
-	// No workspace_discarded on the happy path.
 	if rec.countOf("workspace_discarded") != 0 {
 		t.Errorf("WM-015: workspace_discarded emitted on merged path; want 0")
 	}
@@ -836,7 +719,6 @@ func TestWM015_CreatedStateHasNoLeaseLock(t *testing.T) {
 	ws := workspaceEventsFixtureMakeWorkspace(runID, repo)
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Create the worktree (WM-003).
 	branch := ws.BranchName
 	worktreePath := ws.Path
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
@@ -849,10 +731,8 @@ func TestWM015_CreatedStateHasNoLeaseLock(t *testing.T) {
 		t.Fatalf("WM-015: git worktree add: %v\n%s", err, out)
 	}
 
-	// Advance to created (workspace_created emits here).
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateCreated, rec, nil)
 
-	// At workspace_created emission, lease-lock MUST NOT exist.
 	leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 		t.Errorf("WM-015/WM-013a: lease-lock present at workspace_created emission; want absent")

@@ -1,24 +1,5 @@
 package daemon
 
-// scheduletick.go — work-loop integration for the generic recurring-job
-// primitive (codename:schedule, hk-0es).
-//
-// The tick runs IN the supervise loop (runWorkLoop), after the dispatch-context
-// check and before the capacity gate, so it reuses the existing 2s poll +
-// wake-channel cadence and the claim-write serialisation already in place — it
-// does NOT add a competing goroutine/ticker.
-//
-// Each pass, for every Enabled job whose next fire is due (pure schedule.Decide),
-// the tick honours the job's overlap policy, fires the action (command via a
-// detached process whose env is os.Environ()+handlerEnv with credential
-// deny-list keys scrubbed — see fireCommandAction, NOT a pre-sanitised env — or
-// spawn-crew via the SAME HandleCrewStart path `harmonik crew start` uses),
-// records LastFire/LastPID, and persists.
-//
-// GENERIC: no project-codename literals here. spawn-crew billing guards apply by
-// construction because the action reuses HandleCrewStart (which builds the launch
-// spec with --remote-control and the no-credential-keys baseEnv).
-
 import (
 	"context"
 	"encoding/json"
@@ -35,21 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// scrubCredentialEnv returns env with every credential deny-list key
-// (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH* per
-// specs/credential-isolation.md §4 CI-002) removed. It reuses the single
-// canonical deny-list predicate handler.IsCredentialDenyListKey so the schedule
-// command-action path and the claude handler path strip the SAME keys — there is
-// one deny-list, not two that can drift.
-//
-// This is defense-in-depth: by CI-001 the daemon's own environment already holds
-// no credential key, so os.Environ() should be clean. But the 2026-05-30
-// credit-burn incident (hk-f2nm1) was precisely a daemon mis-launched WITH
-// ANTHROPIC_API_KEY in its env; under that failure mode a scheduled command would
-// inherit it. The claude path applies a belt-and-braces strip at ClaudeEnvVars;
-// this gives the command path the same guard. Unlike the claude path, command
-// actions do not re-emit empty overrides (they spawn a detached child directly,
-// not into an additive tmux server env), so a plain strip is sufficient.
 func scrubCredentialEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
@@ -65,31 +31,14 @@ func scrubCredentialEnv(env []string) []string {
 	return out
 }
 
-// crewStarter is the minimal subset of crewrun.CrewHandler the schedule tick
-// needs to fire a spawn-crew action. crewrun.CrewHandler (crewrun/wire.go)
-// satisfies it. Extracting the narrow interface keeps the tick testable with a
-// lightweight double and avoids a hard dependency on the full handler in tests
-// that don't spawn.
 type crewStarter interface {
 	HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
 
-// commsSendFunc fires a comms-send schedule action. Production: shellCommsSend
-// (execs harmonik comms send directly — no bash -c wrapper, per WE6 operator ruling 3).
-// Tests: inject a recording double through schedulePort.commsSend.
 type commsSendFunc func(ctx context.Context, to, from, body, topic string) error
 
-// commsWhoQuerier returns the set of presence-online agent names. Production
-// shells out to `harmonik comms who --json`; tests inject a double. Returning a
-// set keeps the spawn-crew overlap check a simple membership test.
 type commsWhoQuerier func(ctx context.Context) (map[string]struct{}, error)
 
-// schedulePort is the recurring-job path's complete dependency set. It is built
-// once at boot from the loaded store. The quiesce arbiter holds the same store
-// pointer, so sleep and wake update the jobs that this tick reads.
-//
-// It deliberately does not own the event bus. Schedule actions do not emit
-// directly, and the queue wake channel remains on the queue dispatch surface.
 type schedulePort struct {
 	store           *schedule.Store
 	wakeC           <-chan struct{}
@@ -100,9 +49,6 @@ type schedulePort struct {
 	handlerEnv      []string
 }
 
-// newSchedulePort projects the schedule path's dependencies at the composition
-// seam. The caller supplies the one loaded store that both the tick and quiesce
-// arbiter use.
 func newSchedulePort(daemonBinaryPath, projectDir string, handlerEnv []string, store *schedule.Store, crewHandler crewStarter) schedulePort {
 	port := schedulePort{
 		store:           store,
@@ -118,33 +64,21 @@ func newSchedulePort(daemonBinaryPath, projectDir string, handlerEnv []string, s
 	return port
 }
 
-// runScheduleTick evaluates every job in the store once and fires those that are
-// due and not blocked by their overlap policy. It is invoked once per work-loop
-// poll iteration. Errors on individual jobs are logged and skipped — one bad job
-// never stalls the others or the dispatch loop.
-//
-// port.store nil → no-op (legacy / unit-test daemons without the surface).
 func runScheduleTick(ctx context.Context, port schedulePort) {
 	if port.store == nil {
 		return
 	}
-	// Pick up out-of-process mutations (the CLI writes schedules.json directly
-	// whether or not the daemon is running). Cheap stat-then-maybe-read.
 	if _, err := port.store.ReloadIfChanged(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: reload: %v\n", err)
-		// Keep going with the in-memory state on a transient read error.
 	}
 	nowUTC := time.Now().UTC()
 	for _, job := range port.store.List() {
-		// A run-now request fires regardless of Enabled/due, honouring overlap.
 		if job.ForceNext {
 			if skipped, reason := overlapBlocks(ctx, port, job); skipped {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: run-now skip-on-overlap (%s)\n", job.ID, reason)
 			} else if err := doFireAction(ctx, port, job, nowUTC); err != nil {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: run-now fire: %v\n", job.ID, err)
 			}
-			// Clear the flag whether or not the fire succeeded/was-skipped so it is a
-			// genuine one-shot (a failed fire is logged; the operator can re-issue).
 			if _, cErr := port.store.ClearForceNext(job.ID); cErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: clear run-now flag: %v\n", job.ID, cErr)
 			}
@@ -157,9 +91,6 @@ func runScheduleTick(ctx context.Context, port schedulePort) {
 	}
 }
 
-// fireScheduledJobIfDue evaluates one job at nowUTC and fires it when due.
-// The ad-hoc run-now path is handled in runScheduleTick via the ForceNext flag
-// (it bypasses the due check but still honours the overlap policy).
 func fireScheduledJobIfDue(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time) {
 	decision, err := schedule.Decide(job, nowUTC)
 	if err != nil {
@@ -167,8 +98,6 @@ func fireScheduledJobIfDue(ctx context.Context, port schedulePort, job schedule.
 		return
 	}
 	if decision.MissedSkipped {
-		// A missed fire fell outside the catch-up window; advance LastFire past it
-		// so we don't re-evaluate it forever, and log.
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: skipping missed fire at %s (outside catch-up window)\n",
 			job.ID, decision.FireInstant.UTC().Format(time.RFC3339))
 		if _, mErr := port.store.MarkFired(job.ID, decision.FireInstant.UTC().Format(time.RFC3339), job.LastPID); mErr != nil {
@@ -182,7 +111,6 @@ func fireScheduledJobIfDue(ctx context.Context, port schedulePort, job schedule.
 	fireScheduledJob(ctx, port, job, nowUTC, decision.Catchup)
 }
 
-// fireScheduledJob applies the overlap policy then fires; logs and returns.
 func fireScheduledJob(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time, isCatchup bool) {
 	if skipped, reason := overlapBlocks(ctx, port, job); skipped {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: skip-on-overlap (%s)\n", job.ID, reason)
@@ -196,11 +124,6 @@ func fireScheduledJob(ctx context.Context, port schedulePort, job schedule.Sched
 	}
 }
 
-// overlapBlocks reports whether the job's overlap policy blocks a fire right now.
-//
-//   - OverlapPolicyAllow: never blocks.
-//   - command action: blocks iff LastPID is still alive.
-//   - spawn-crew action: blocks iff a crew named Action.Crew is presence-online.
 func overlapBlocks(ctx context.Context, port schedulePort, job schedule.ScheduledJob) (blocked bool, reason string) {
 	if job.OverlapPolicy == schedule.OverlapPolicyAllow {
 		return false, ""
@@ -220,9 +143,6 @@ func overlapBlocks(ctx context.Context, port schedulePort, job schedule.Schedule
 		}
 		online, err := port.commsWhoQuerier(ctx)
 		if err != nil {
-			// Fail-open on a query error: we'd rather risk a duplicate spawn than
-			// silently never fire. HandleCrewStart's own collision check is the
-			// backstop (it refuses a name+queue conflict).
 			fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: comms who query failed (%v); not blocking\n", job.ID, err)
 			return false, ""
 		}
@@ -231,48 +151,17 @@ func overlapBlocks(ctx context.Context, port schedulePort, job schedule.Schedule
 		}
 		return false, ""
 	case schedule.ActionKindCommsSend:
-		// comms-send is a fire-and-forget message: no PID or crew-presence concept;
-		// overlap policy is always allow regardless of the job's OverlapPolicy field.
 		return false, ""
 	default:
 		return false, ""
 	}
 }
 
-// doFireAction performs the action, records the fire, and then reports the
-// action's error. It records the spawned pid for a command action and pid 0 for
-// spawn-crew, comms-send, and an unrecognised kind. LastFire is set to nowUTC
-// (RFC3339 UTC).
-//
-// The fire is recorded whether the action succeeded or failed, and that ordering
-// is the whole point of the function (hk-pbdti). LastFire is the only thing that
-// makes a due job stop being due: schedule.Decide's interval branch returns
-// Fire:true unconditionally while LastFire is empty (decideInterval's !hadLast
-// case), and its daily branch returns Fire:true until LastFire is at or past the
-// most-recent scheduled instant. An action that ran, failed, and recorded nothing
-// therefore stayed due, and the work loop re-ran it every workloopPollInterval
-// (2s), with no backoff and no cap, for as long as the failure lasted — measured
-// at 50 attempts in 50 ticks. It hit every action kind, because each case and the
-// default returned before the record. A scheduled job's retry cadence is its
-// schedule; the job now waits for its next boundary.
-//
-// The action error is still returned, so fireScheduledJob and the run-now path
-// still log it. Recording the fire changes WHEN the job runs again, not WHETHER
-// the operator is told it failed — for a comms-send action that stderr line is
-// the only sign the message reached nobody. When MarkFired also fails, the two
-// errors are joined so the recording failure does not swallow the action's.
-//
-// The overlap-skip path never reaches here: fireScheduledJob returns as soon as
-// overlapBlocks reports a skip, so a skipped fire still records nothing and
-// LastFire still does not advance.
 func doFireAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time) error {
 	var firedPID int
 	var fireErr error
 	switch job.Action.Kind {
 	case schedule.ActionKindCommand:
-		// A failed start yields pid 0, which is the right record for the skip
-		// overlap policy: overlapBlocks treats only LastPID > 0 as a prior run that
-		// may still be alive, so a start that produced no process blocks nothing.
 		firedPID, fireErr = fireCommandAction(port, job)
 	case schedule.ActionKindSpawnCrew:
 		fireErr = fireSpawnCrewAction(ctx, port, job)
@@ -287,14 +176,6 @@ func doFireAction(ctx context.Context, port schedulePort, job schedule.Scheduled
 	return fireErr
 }
 
-// fireCommandAction spawns Argv as a fresh detached process. Its environment is
-// os.Environ() plus port.handlerEnv (HARMONIK_PROJECT_HASH prepended), then run
-// through scrubCredentialEnv so no credential deny-list key (ANTHROPIC_API_KEY
-// etc.) reaches the child — the same defense-in-depth the claude path applies at
-// ClaudeEnvVars. By CI-001 os.Environ() should already be credential-free; the
-// scrub is the belt-and-braces guard against the 2026-05-30 mis-launch failure
-// mode (hk-f2nm1). It does NOT block the loop on the process. Returns the spawned
-// pid.
 func fireCommandAction(port schedulePort, job schedule.ScheduledJob) (int, error) {
 	if len(job.Action.Argv) == 0 {
 		return 0, fmt.Errorf("command action has empty argv")
@@ -307,28 +188,16 @@ func fireCommandAction(port schedulePort, job schedule.ScheduledJob) (int, error
 	//nolint:gosec // G204: argv is operator-authored schedule config, not untrusted input.
 	cmd := exec.Command(job.Action.Argv[0], job.Action.Argv[1:]...)
 	cmd.Dir = port.projectDir
-	// os.Environ()+handlerEnv made credential-safe by CI-001 (the daemon env holds
-	// no key) AND the scrub below (belt-and-braces strip of the deny-list keys,
-	// matching the claude path). handlerEnv is the same base env passed to handler
-	// subprocesses; appended last so HARMONIK_PROJECT_HASH wins.
 	cmd.Env = scrubCredentialEnv(append(os.Environ(), port.handlerEnv...))
-	// Detach into its own process group so it survives a daemon restart and is not
-	// signalled by the daemon's own process-group teardown.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("start command %q: %w", strings.Join(job.Action.Argv, " "), err)
 	}
 	pid := cmd.Process.Pid
-	// Reap asynchronously so the detached process does not become a zombie; do
-	// NOT block the work loop.
 	go func() { _ = cmd.Wait() }() //nolint:errcheck // detached; exit status not actionable
 	return pid, nil
 }
 
-// fireSpawnCrewAction drives the daemon's crew-start path with the job's
-// {crew,queue,mission}. Reusing HandleCrewStart is what enforces the
-// subscription-billing baseline (--remote-control, no credential keys) by
-// construction — the schedule tick never execs claude directly.
 func fireSpawnCrewAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob) error {
 	if port.crewHandler == nil {
 		return fmt.Errorf("spawn-crew action but no crew handler wired")
@@ -351,11 +220,6 @@ func fireSpawnCrewAction(ctx context.Context, port schedulePort, job schedule.Sc
 	return nil
 }
 
-// fireCommsSendAction sends a comms message via port.commsSend (WE6). The
-// commsSend func is the production shellCommsSend (execs harmonik comms send
-// directly) or a test double. No PID is recorded (firedPID=0): comms-send is
-// fire-and-forget, and the overlap policy is always allow for this action kind
-// (overlapBlocks returns false unconditionally for ActionKindCommsSend).
 func fireCommsSendAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob) error {
 	if port.commsSend == nil {
 		return fmt.Errorf("comms-send action but no commsSend func wired")
@@ -366,11 +230,6 @@ func fireCommsSendAction(ctx context.Context, port schedulePort, job schedule.Sc
 	return port.commsSend(ctx, job.Action.To, job.Action.From, job.Action.Body, job.Action.Topic)
 }
 
-// commsSendArgv builds the argv slice for `harmonik comms send`.  Body is
-// emitted as a positional arg after "--" because the CLI's runCommsSendSubcommand
-// has no --body flag (it treats any unrecognised flag as an error).  From
-// defaults to "daemon" when empty so the CLI's --from-required check always
-// passes, even for watch jobs that set no explicit sender.
 func commsSendArgv(to, from, body, topic, projectDir string) []string {
 	effectiveFrom := from
 	if effectiveFrom == "" {
@@ -384,10 +243,6 @@ func commsSendArgv(to, from, body, topic, projectDir string) []string {
 	return args
 }
 
-// shellCommsSend returns the production commsSendFunc: execs `harmonik comms send`
-// directly (not via bash -c) with body as a positional arg (after "--") and
-// --from defaulted to "daemon" when the action carries no explicit sender.
-// This is the native comms-send action per WE6 operator ruling 3 — no shell wrapper.
 func shellCommsSend(daemonBinaryPath, projectDir string) commsSendFunc {
 	bin := daemonBinaryPath
 	if bin == "" {
@@ -404,7 +259,6 @@ func shellCommsSend(daemonBinaryPath, projectDir string) commsSendFunc {
 	}
 }
 
-// pidAlive reports whether pid refers to a live process (signal 0 probe).
 func pidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -412,21 +266,11 @@ func pidAlive(pid int) bool {
 	return syscall.Kill(pid, syscall.Signal(0)) == nil
 }
 
-// commsWhoEntry is one `comms who --json` row: the agent name and its presence
-// status. Only status=="online" agents block an overlapping spawn-crew fire.
 type commsWhoEntry struct {
 	Agent  string `json:"agent"`
 	Status string `json:"status"`
 }
 
-// parseCommsWho parses `harmonik comms who --json` output into the set of
-// presence-online agent names. The verified production shape is NDJSON (one JSON
-// object per line), so the line-by-line parse is the primary path. To avoid
-// silently failing OPEN if the output shape ever changes to a single JSON array
-// (which would drop every entry and let a duplicate crew spawn through), the
-// parse is tolerant: if NO line parses as an object, it retries by unmarshalling
-// the whole output as a JSON array. A parse failure on BOTH shapes returns an
-// error so the caller fails LOUD rather than silently treating nobody as online.
 func parseCommsWho(out []byte) (map[string]struct{}, error) {
 	online := make(map[string]struct{})
 	anyLineParsed := false
@@ -447,10 +291,6 @@ func parseCommsWho(out []byte) (map[string]struct{}, error) {
 	if anyLineParsed {
 		return online, nil
 	}
-	// No NDJSON object line parsed. Either the output was empty (nobody online → an
-	// empty set is correct), or the shape changed to a JSON array. Try the array
-	// form so a future shape change fails LOUD on a genuine parse error instead of
-	// fail-OPEN with an empty set.
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {
 		return online, nil // genuinely empty: nobody online
@@ -467,15 +307,6 @@ func parseCommsWho(out []byte) (map[string]struct{}, error) {
 	return online, nil
 }
 
-// shellCommsWho is the production commsWhoQuerier: it shells out to
-// `harmonik comms who --json` and returns the set of agents whose status is
-// "online" (NOT stale/dead) via parseCommsWho. It uses the running daemon binary
-// path so the correct project's presence registry is read.
-//
-// Returns an empty set (not an error) when the command exits 0 with no output —
-// `comms who` exits 0 with no output when nobody is online — and an error when
-// the command exits non-zero or emits output that parses as neither NDJSON nor a
-// JSON array.
 func shellCommsWho(daemonBinaryPath, projectDir string) commsWhoQuerier {
 	bin := daemonBinaryPath
 	if bin == "" {

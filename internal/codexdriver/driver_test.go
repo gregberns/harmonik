@@ -1,11 +1,5 @@
 package codexdriver_test
 
-// L2-style isolation tests for the structured Codex driver. Twin-blindness
-// (AIS-015): the driver is exercised through its exported surface against a
-// twin process speaking the same NDJSON wire on stdio — the test binary
-// re-execs itself as the twin (TestMain helper-process pattern). The driver
-// never sees a test branch.
-
 import (
 	"bufio"
 	"context"
@@ -37,27 +31,17 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// emitPostureMarker prints a stderr marker echoing the sandbox + approvalPolicy
-// the driver stamped on a thread/start or thread/resume request (hk-5h759). A
-// test asserts the headless posture (danger-full-access / never) reached the
-// wire; empty values prove the omit path (NFR7 default posture).
 func emitPostureMarker(tag string, params json.RawMessage) {
 	var p struct {
 		Sandbox        string `json:"sandbox"`
 		ApprovalPolicy string `json:"approvalPolicy"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		// Best-effort: on a decode failure p stays zero-valued and the marker
-		// reports empty posture — surface the error for debugging but still emit.
 		fmt.Fprintf(os.Stderr, "%s decode-error: %v\n", tag, err)
 	}
 	fmt.Fprintf(os.Stderr, "%s sandbox=%s approval=%s\n", tag, p.Sandbox, p.ApprovalPolicy)
 }
 
-// emitWritableRootsMarker prints a stderr marker echoing the runtimeWorkspaceRoots
-// the driver stamped on a thread/start or thread/resume request (hk-daegv). A test
-// asserts the worktree cwd + git common dir reached the wire; an empty list proves
-// the omit path (no WritableRoots hook / empty cwd).
 func emitWritableRootsMarker(tag string, params json.RawMessage) {
 	var p struct {
 		RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
@@ -68,28 +52,6 @@ func emitWritableRootsMarker(tag string, params json.RawMessage) {
 	fmt.Fprintf(os.Stderr, "%s roots=%s\n", tag, strings.Join(p.RuntimeWorkspaceRoots, ","))
 }
 
-// runTwin speaks the codex app-server NDJSON wire on stdio.
-//
-// Modes:
-//   - "happy":       full handshake; turn/start → turn/started + delta + turn/completed
-//   - "reject":      full handshake; turn/start → JSON-RPC error response
-//   - "silent":      full handshake; turn/start → nothing (stale probe)
-//   - "nohandshake": never answers initialize (handshake-timeout probe)
-//   - "openturn":    full handshake; turn/start → turn/started + delta but NO
-//     turn/completed (turn stays OPEN so a mid-turn CloseInput exercises the
-//     graceful turn/interrupt path, AIS-017). On turn/interrupt the twin marks
-//     stderr TWIN_INTERRUPT_RECEIVED, replies, then completes the turn.
-//   - "silentthenhappy": first turn/start → silent (caller A parks in
-//     AwaitingAck); second turn/start → full happy turn (caller B). Drives the
-//     ctx-cancel-then-resubmit regression (A resolves via its stale timeout).
-//   - "latedistinctturn": every turn/start emits a DELAYED full turn whose turn
-//     id is turn_<N> (distinct per turn). The delay lets caller A be cancelled
-//     while AwaitingAck, then turn_1's turn/started arrives LATE (after abandon).
-//     Drives the mis-attribution regression: B must ack with turn_2, never turn_1.
-//   - "stalethenlate": the stale-then-revive mis-attribution race. Caller A's
-//     turn/start gets a RESPONSE (turn_1) but NO turn/started, so A stales and
-//     frees the reactor; caller B's turn/start then emits turn_1's genuinely-late
-//     turn/started BEFORE B's own turn_2. B must ack with turn_2, never turn_1.
 func runTwin(mode string) {
 	turnStarts := 0
 	in := bufio.NewScanner(os.Stdin)
@@ -99,8 +61,6 @@ func runTwin(mode string) {
 			os.Exit(1) // driver closed our stdout; twin is done
 		}
 	}
-	// emitTurn plays a full turn (started → delta → completed) with the given
-	// turn id — the ack anchor is turn/started, so the driver's Ack.Token is tid.
 	emitTurn := func(tid string) {
 		emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 		emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"ok"}}`, tid)
@@ -116,11 +76,6 @@ func runTwin(mode string) {
 		if json.Unmarshal(line, &env) != nil {
 			continue
 		}
-		// Approval-reply detection: in "approval" mode the twin sends the driver a
-		// server-originated JSON-RPC request (id 999). The driver MUST answer it —
-		// a dropped request would hang the turn. When the driver's response for id
-		// 999 arrives (empty method), record a positive stderr marker and complete
-		// the outstanding turn so the session drains cleanly (RU-07).
 		if mode == "approval" && env.Method == "" && env.ID != nil && *env.ID == 999 {
 			fmt.Fprintln(os.Stderr, "TWIN_APPROVAL_REPLY_RECEIVED")
 			emit(`{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"turn_%d","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, turnStarts)
@@ -133,29 +88,15 @@ func runTwin(mode string) {
 			}
 			emit(`{"id":%d,"result":{"userAgent":"twin","codexHome":"/tmp","platformFamily":"test","platformOs":"test"}}`, *env.ID)
 		case "initialized":
-			// notification; no reply
 		case "thread/start":
-			// hk-5h759: echo the posture the driver stamped (sandbox +
-			// approvalPolicy) so a test can assert the headless posture reached the
-			// wire. Empty fields prove the omit path (NFR7 default posture).
 			emitPostureMarker("TWIN_POSTURE_START", env.Params)
 			emitWritableRootsMarker("TWIN_WRITABLE_ROOTS_START", env.Params)
 			emit(`{"id":%d,"result":{"thread":{"id":"th_1"},"model":"twin"}}`, *env.ID)
 			if mode == "dieafterhandshake" {
-				// Let the driver process the thread result → reach Ready and latch
-				// the thread id, THEN die — the idle-child death the resident
-				// watchdog must proactively revive (hk-160yb G4b). The respawn
-				// re-attaches via thread/resume (handled above), which does NOT
-				// re-trigger this death, so the revived child stays live.
 				time.Sleep(200 * time.Millisecond)
 				os.Exit(0)
 			}
 		case "thread/resume":
-			// Re-attach to an existing thread (hk-160yb G1). Positive stderr
-			// marker proves the driver took the resume branch (not thread/start),
-			// and the reply echoes the REQUESTED threadId so a test can assert the
-			// session re-adopted the prior thread. Shape mirrors thread/start
-			// (ThreadResumeResult == ThreadStartResult).
 			var rp struct {
 				ThreadID string `json:"threadId"`
 			}
@@ -170,38 +111,21 @@ func runTwin(mode string) {
 			turnStarts++
 			tid := fmt.Sprintf("turn_%d", turnStarts)
 			reqID := *env.ID
-			// respondTurnStart replays the real server's turn/start RESPONSE,
-			// which carries the created turn's id and arrives BEFORE the
-			// turn/started notification (corpus raw-session-01 lines 11→13). The
-			// driver binds this turn id → the submission seq for correlation.
 			respondTurnStart := func(id string) {
 				emit(`{"id":%d,"result":{"turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, reqID, id)
 			}
 			effMode := mode
 			switch mode {
 			case "openturn":
-				// Open the turn (response + started + delta) but DO NOT complete
-				// it: the driver stays InTurn so a subsequent CloseInput
-				// exercises the graceful turn/interrupt path (AIS-017), not a
-				// SIGKILL.
 				respondTurnStart(tid)
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 				emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"working"}}`, tid)
 				continue
 			case "dieafterturn":
-				// Play one full turn, then exit — the child death that drives the
-				// resident owner's respawn+resume path (hk-160yb G1b). A respawned
-				// twin re-execs in this same mode: it re-attaches via thread/resume
-				// (top-level case above) and then dies again after its own turn.
 				respondTurnStart(tid)
 				emitTurn(tid)
 				os.Exit(0)
 			case "approval":
-				// Ack the submission (turn/started), then send a server-originated
-				// approval request (id+method) that the driver must answer. The turn
-				// is completed only once the driver's reply for id 999 arrives (see
-				// the approval-reply detection above) — proving the request was NOT
-				// silently dropped (RU-07).
 				respondTurnStart(tid)
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 				emit(`{"jsonrpc":"2.0","id":999,"method":"execCommandApproval","params":{"command":"ls"}}`)
@@ -213,30 +137,16 @@ func runTwin(mode string) {
 					effMode = "happy" // caller B: served
 				}
 			case "latedistinctturn":
-				// Delay so caller A is cancelled while AwaitingAck; turn_1's
-				// response+turn/started then arrive late (after abandon). turn_2
-				// for B.
 				time.Sleep(400 * time.Millisecond)
 				respondTurnStart(tid)
 				emitTurn(tid)
 				continue
 			case "stalethenlate":
-				// The stale-then-revive mis-attribution race (AIS-INV-001).
-				//   turn/start #1 (caller A): send the turn/start RESPONSE (so the
-				//     turn_1 binding exists) but NEVER the turn/started anchor —
-				//     A stales via a short InputAckTimeout, freeing the reactor.
-				//   turn/start #2 (caller B): send B's response (turn_2), THEN
-				//     turn_1's genuinely-LATE turn/started (the abandoned turn's
-				//     anchor), THEN B's own full turn_2. A mutable-inFlightSeq
-				//     driver mis-acks B with turn_1; the turn-id-correlated driver
-				//     FENCES the late turn_1 anchor and acks B with turn_2.
 				if turnStarts == 1 {
 					respondTurnStart(tid) // turn_1 bound to A; no anchor → A stales
 					continue
 				}
 				respondTurnStart(tid) // turn_2 bound to B
-				// The late anchor for the abandoned turn_1, injected AFTER B is
-				// AwaitingAck and BEFORE B's own anchor.
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`)
 				emitTurn(tid) // B's own turn_2
 				continue
@@ -245,26 +155,18 @@ func runTwin(mode string) {
 			case "reject":
 				emit(`{"id":%d,"error":{"code":-32000,"message":"twin says no"}}`, *env.ID)
 			case "silent":
-				// stale probe: no ack anchor ever arrives.
 			default: // happy
 				respondTurnStart(tid)
 				emitTurn(tid)
 			}
 		case "turn/interrupt":
-			// Positive marker on stderr (captured into Outcome.StderrTail) so a
-			// test can PROVE the graceful turn/interrupt frame arrived — i.e. the
-			// driver wound the turn down via interrupt, not a SIGKILL.
 			fmt.Fprintln(os.Stderr, "TWIN_INTERRUPT_RECEIVED")
 			emit(`{"id":%d,"result":{}}`, *env.ID)
-			// Graceful drain: complete the interrupted turn so the reactor leaves
-			// InTurn, then the stdin EOF (from CloseInput) ends the run at exit 0.
 			emit(`{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"turn_%d","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, turnStarts)
 		}
 	}
-	// stdin EOF: exit 0 (graceful end-of-input).
 }
 
-// emitRecorder collects the driver's durable-event emissions.
 type emitRecorder struct {
 	mu    sync.Mutex
 	emits []codexdriver.Emission
@@ -286,7 +188,6 @@ func (r *emitRecorder) types() []codexinput.EmitType {
 	return out
 }
 
-// countType returns how many recorded emissions have the given type.
 func (r *emitRecorder) countType(ty codexinput.EmitType) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -299,7 +200,6 @@ func (r *emitRecorder) countType(ty codexinput.EmitType) int {
 	return n
 }
 
-// spawnTwin spawns a driver session against the twin in the given mode.
 func spawnTwin(t *testing.T, mode string, cfg codexinput.Config, rec *emitRecorder) handler.SubstrateSession {
 	t.Helper()
 	opts := codexdriver.Options{Config: cfg}
@@ -361,7 +261,6 @@ func TestSubmitAckedDelivered(t *testing.T) {
 		t.Fatalf("token = %q, want turn_1 (turn/started ack anchor)", ack.Token)
 	}
 
-	// Second submission on the same session (Ready again after turn_completed).
 	ack2, err := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("again")})
 	if err != nil {
 		t.Fatalf("second SubmitInput: %v", err)
@@ -449,8 +348,6 @@ func TestSubmitRejected(t *testing.T) {
 
 func TestSubmitStaleTerminal(t *testing.T) {
 	rec := &emitRecorder{}
-	// Short ack bound so the stale terminal fires fast (bounded liveness,
-	// AIS-INV-001). The window is honored via ClockPort inside the driver.
 	sess := spawnTwin(t, "silent", codexinput.Config{InputAckTimeout: 200 * time.Millisecond}, rec)
 	port := asPort(t, sess)
 
@@ -461,29 +358,11 @@ func TestSubmitStaleTerminal(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInputStale", err)
 	}
 
-	// The session stays usable after a stale terminal (reactor returns Ready);
-	// a second submission must again reach a terminal, not silence.
 	_, err = port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("again")})
 	if !errors.Is(err, codexdriver.ErrInputStale) {
 		t.Fatalf("second err = %v, want ErrInputStale", err)
 	}
 
-	// SubmitInput returning ErrInputStale does not mean the matching emission
-	// has been recorded: the caller is released on its own goroutine and the
-	// emit lands on the reactor's. Reading the recorder straight after the
-	// second return therefore saw the second stale about one run in a hundred,
-	// and the failure looked like a product defect —
-	//
-	//	stale emissions = 1 (all: [agent_input_submitted agent_input_stale
-	//	agent_input_submitted]), want 2
-	//
-	// — a missing terminal, not a missing synchronisation. It went red inside a
-	// live commit gate on 2026-08-10 and sent a correct, committed codex change
-	// back to the implementer to fix a defect that was not there.
-	//
-	// Wait for the emission instead of assuming it has landed, the same way the
-	// concurrent-caller tests below wait for agent_input_submitted. The property
-	// under test is unchanged: two stale terminals, and no more than two.
 	deadline := time.Now().Add(10 * time.Second)
 	for rec.countType(codexinput.EmitInputStale) < 2 {
 		if time.Now().After(deadline) {
@@ -543,7 +422,6 @@ func TestCloseMidTurnGracefulInterrupt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Submit: the turn opens (turn/started) and stays open — the driver is InTurn.
 	ack, err := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("start work")})
 	if err != nil {
 		t.Fatalf("SubmitInput: %v", err)
@@ -552,7 +430,6 @@ func TestCloseMidTurnGracefulInterrupt(t *testing.T) {
 		t.Fatalf("ack = %+v, want Delivered/turn_1", ack)
 	}
 
-	// Close mid-turn: reactor emits turn/interrupt (graceful) + stdin close.
 	if err := port.CloseInput(ctx); err != nil {
 		t.Fatalf("CloseInput: %v", err)
 	}
@@ -655,15 +532,9 @@ func TestConcurrentSubmitsSerialize(t *testing.T) {
 // against a still-AwaitingAck reactor with no scheduled terminal.
 func TestCancelThenResubmitReachesTerminal(t *testing.T) {
 	rec := &emitRecorder{}
-	// Short ack timeout: caller A's abandoned (silent) turn resolves via its
-	// REAL stale terminal, which returns the reactor to Ready and unblocks
-	// caller B's phase-gated front-stop. B's wait is bounded by this timeout,
-	// which is the correct behaviour (Option B) — NOT a hang.
 	sess := spawnTwin(t, "silentthenhappy", codexinput.Config{InputAckTimeout: 1500 * time.Millisecond}, rec)
 	port := asPort(t, sess)
 
-	// Caller A: submit under a cancelable ctx, then cancel once the reactor is
-	// confirmed in AwaitingAck (agent_input_submitted emitted for seq 1).
 	ctxA, cancelA := context.WithCancel(context.Background())
 	aDone := make(chan error, 1)
 	go func() {
@@ -689,9 +560,6 @@ func TestCancelThenResubmitReachesTerminal(t *testing.T) {
 		t.Fatalf("caller A did not return after cancel")
 	}
 
-	// Caller B: MUST reach a terminal (not hang) even though A left the reactor
-	// in AwaitingAck. Bound B's own ctx generously; the assertion is that B
-	// resolves well within it.
 	ctxB, cancelB := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelB()
 	bDone := make(chan struct {
@@ -729,8 +597,6 @@ func TestCancelThenResubmitReachesTerminal(t *testing.T) {
 // and B only ever sees turn_2.
 func TestCancelThenLateTurnStartedNoMisAck(t *testing.T) {
 	rec := &emitRecorder{}
-	// Long ack timeout: A's turn is merely SLOW (400 ms twin delay), not silent,
-	// so A must not stale first — its late turn_1 must actually arrive.
 	sess := spawnTwin(t, "latedistinctturn", codexinput.Config{InputAckTimeout: 30 * time.Second}, rec)
 	port := asPort(t, sess)
 
@@ -741,8 +607,6 @@ func TestCancelThenLateTurnStartedNoMisAck(t *testing.T) {
 		aDone <- err
 	}()
 
-	// Cancel A as soon as it is AwaitingAck (turn_1's turn/started is still 400 ms
-	// out in the twin), so A is genuinely abandoned mid-flight.
 	deadline := time.Now().Add(10 * time.Second)
 	for rec.countType(codexinput.EmitInputSubmitted) < 1 {
 		if time.Now().After(deadline) {
@@ -755,8 +619,6 @@ func TestCancelThenLateTurnStartedNoMisAck(t *testing.T) {
 		t.Fatalf("caller A err = %v, want context.Canceled", err)
 	}
 
-	// Caller B: blocks until A's real terminal (turn_1 completed) returns the
-	// reactor to Ready, then runs turn_2. Its token MUST be turn_2.
 	ctxB, cancelB := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancelB()
 	ack, err := port.SubmitInput(ctxB, handler.InputRequest{Payload: []byte("caller B")})
@@ -789,23 +651,17 @@ func TestCancelThenLateTurnStartedNoMisAck(t *testing.T) {
 // turn_1 anchor matches no live binding and is FENCED; B acks with its own turn_2.
 func TestStaleThenLateTurnStartedNoMisAck(t *testing.T) {
 	rec := &emitRecorder{}
-	// Short ack timeout so caller A genuinely stales (its turn_1 anchor never
-	// arrives) and the reactor returns to Ready before caller B submits.
 	sess := spawnTwin(t, "stalethenlate", codexinput.Config{InputAckTimeout: 300 * time.Millisecond}, rec)
 	port := asPort(t, sess)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Caller A: MUST reach the stale terminal (never an ack) — turn_1 has no
-	// anchor within the bound.
 	_, errA := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("caller A")})
 	if !errors.Is(errA, codexdriver.ErrInputStale) {
 		t.Fatalf("caller A err = %v, want ErrInputStale (no anchor within bound)", errA)
 	}
 
-	// Caller B: the twin now injects turn_1's LATE turn/started (abandoned-turn
-	// anchor) before B's own turn_2. B MUST ack with turn_2, never turn_1.
 	ack, errB := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("caller B")})
 	if errB != nil {
 		t.Fatalf("caller B err = %v, want Delivered", errB)

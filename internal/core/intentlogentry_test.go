@@ -10,8 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// intentEntryValid returns a fully-populated IntentLogEntry with all required
-// fields set to valid values. Tests mutate individual fields to probe Valid().
 func intentEntryValid(t *testing.T) IntentLogEntry {
 	t.Helper()
 	return IntentLogEntry{
@@ -222,7 +220,6 @@ func TestIntentLogEntryJSONForwardCompat(t *testing.T) {
 		t.Fatalf("json.Marshal error: %v", err)
 	}
 
-	// Inject a hypothetical future field into the JSON blob.
 	var raw map[string]any
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("json.Unmarshal into map error: %v", err)
@@ -240,15 +237,11 @@ func TestIntentLogEntryJSONForwardCompat(t *testing.T) {
 		t.Fatalf("json.Unmarshal of enriched record error: %v", err)
 	}
 
-	// SchemaVersion 2 is > 0 so Valid() must still return true.
 	if !got.Valid() {
 		t.Error("Valid() = false when parsing N+1 record with additive field, want true (N-1 compat)")
 	}
 }
 
-// intentReadFixtureWrite writes entry as JSON to a file under dir named
-// <idempotency_key_encoded>.json (colons encoded as underscores per OQ-BI-003)
-// and returns the file path. Used by ReadIntentLogEntry tests (hk-872.38.1).
 func intentReadFixtureWrite(t *testing.T, dir string, entry IntentLogEntry) string {
 	t.Helper()
 
@@ -257,7 +250,6 @@ func intentReadFixtureWrite(t *testing.T, dir string, entry IntentLogEntry) stri
 		t.Fatalf("intentReadFixtureWrite: json.Marshal: %v", err)
 	}
 
-	// Encode colons in key to underscores per OQ-BI-003 (filesystem portability).
 	encoded := ""
 	for _, ch := range entry.IdempotencyKey {
 		if ch == ':' {
@@ -362,7 +354,6 @@ func TestReadIntentLogEntry_InvalidEntry(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Construct an entry with an empty IdempotencyKey — Valid() returns false.
 	entry := intentEntryValid(t)
 	entry.IdempotencyKey = ""
 
@@ -395,8 +386,6 @@ func TestReadIntentLogEntry_SnakeCaseKeys(t *testing.T) {
 	original := intentEntryValid(t)
 	original.RequestedAt = original.RequestedAt.UTC().Truncate(time.Second)
 
-	// Write using explicit snake_case keys to simulate what the production
-	// adapter writer will produce.
 	snakeCaseJSON := `{
 		"idempotency_key":     "` + original.IdempotencyKey + `",
 		"run_id":              "` + original.RunID.String() + `",
@@ -435,21 +424,11 @@ func TestReadIntentLogEntry_SnakeCaseKeys(t *testing.T) {
 	}
 }
 
-// idempCrashRecoveryFixtureDir creates a temp directory representing
-// .harmonik/beads-intents/ and returns its path. Used by umbrella
-// crash-recovery tests (hk-872.38).
 func idempCrashRecoveryFixtureDir(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
 }
 
-// idempCrashRecoveryFixtureScan scans dir for *.json files (excluding *.tmp-*)
-// and returns all successfully decoded IntentLogEntry values. Mirrors the
-// scan logic described in BI-031: after a crash, surviving *.json files are the
-// set of writes whose completion is ambiguous.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-031 — surviving intent files
-// after crash.
 func idempCrashRecoveryFixtureScan(t *testing.T, dir string) []IntentLogEntry {
 	t.Helper()
 
@@ -464,12 +443,9 @@ func idempCrashRecoveryFixtureScan(t *testing.T, dir string) []IntentLogEntry {
 			continue
 		}
 		name := de.Name()
-		// Skip pre-rename temp files — these represent writes that crashed
-		// before rename completed; the write did not land.
 		if len(name) > 5 && name[len(name)-5:] != ".json" {
 			continue
 		}
-		// Explicitly skip .tmp- files per BI-031 scan discipline.
 		isTmp := false
 		for i := range name {
 			if i+5 <= len(name) && name[i:i+5] == ".tmp-" {
@@ -506,11 +482,8 @@ func TestIdempCrashRecovery_SingleEntryPersistsAfterCrash(t *testing.T) {
 	entry := intentEntryValid(t)
 	entry.RequestedAt = entry.RequestedAt.UTC().Truncate(time.Second)
 
-	// Simulate the adapter's pre-write step: write the intent file.
 	path := intentReadFixtureWrite(t, dir, entry)
 
-	// Simulate a crash: the adapter stops without deleting the file.
-	// On restart, scan the directory — the file must be discoverable.
 	surviving := idempCrashRecoveryFixtureScan(t, dir)
 
 	if len(surviving) != 1 {
@@ -547,7 +520,6 @@ func TestIdempCrashRecovery_MultipleEntriesAllSurvive(t *testing.T) {
 
 	dir := idempCrashRecoveryFixtureDir(t)
 
-	// Write three distinct entries with different ops and bead IDs.
 	ops := []struct {
 		op        TerminalOp
 		postState CoarseStatus
@@ -587,7 +559,6 @@ func TestIdempCrashRecovery_TmpFileSkipped(t *testing.T) {
 
 	dir := idempCrashRecoveryFixtureDir(t)
 
-	// Write a well-formed entry as a .tmp- file (simulate a crash before rename).
 	entry := intentEntryValid(t)
 	entry.RequestedAt = entry.RequestedAt.UTC().Truncate(time.Second)
 
@@ -601,7 +572,6 @@ func TestIdempCrashRecovery_TmpFileSkipped(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	// The scan must return zero entries: the .tmp- file is not a committed write.
 	surviving := idempCrashRecoveryFixtureScan(t, dir)
 	if len(surviving) != 0 {
 		t.Errorf("scan returned %d entries for .tmp- only directory, want 0", len(surviving))
@@ -624,14 +594,6 @@ func TestIdempCrashRecovery_CleanLogEmpty(t *testing.T) {
 	}
 }
 
-// cat3aEvidenceFixtureEntry returns a valid IntentLogEntry representing a
-// pending claim write, used to simulate the intent-log evidence consumed by the
-// Cat 3a detector per BI-032. The entry models the situation where the adapter
-// wrote the intent file, crashed, and the bead's status is now ambiguous.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-032 — "The intent log and
-// Beads's audit log MUST be the evidence sources consumed by the Cat 3a
-// torn-Beads-write detector."
 func cat3aEvidenceFixtureEntry(t *testing.T) IntentLogEntry {
 	t.Helper()
 	e := intentEntryValid(t)
@@ -660,7 +622,6 @@ func TestCat3aEvidence_IntentLogEntryIsDetectorInput(t *testing.T) {
 
 	entry := cat3aEvidenceFixtureEntry(t)
 
-	// All four evidence fields required by the Cat 3a detector must be populated.
 	if entry.IdempotencyKey == "" {
 		t.Error("IdempotencyKey is empty — Cat 3a detector cannot correlate audit log")
 	}
@@ -698,7 +659,6 @@ func TestCat3aEvidence_ReconciliationCategoryLinkage(t *testing.T) {
 		t.Errorf("string(ReconciliationCategoryCat3a) = %q, want %q", string(cat), "cat-3a")
 	}
 
-	// Round-trip through JSON (MarshalText / UnmarshalText paths).
 	data, err := json.Marshal(cat)
 	if err != nil {
 		t.Fatalf("json.Marshal(Cat3a): %v", err)
@@ -726,27 +686,22 @@ func TestCat3aEvidence_IntentFilePresenceSignalsTornWrite(t *testing.T) {
 	dir := idempCrashRecoveryFixtureDir(t)
 	entry := cat3aEvidenceFixtureEntry(t)
 
-	// Before any write: no surviving files = no torn write evidence.
 	before := idempCrashRecoveryFixtureScan(t, dir)
 	if len(before) != 0 {
 		t.Fatalf("pre-write scan: got %d entries, want 0", len(before))
 	}
 
-	// Write intent file (simulate adapter pre-write step).
 	intentReadFixtureWrite(t, dir, entry)
 
-	// After write + simulated crash: surviving file = torn write evidence.
 	after := idempCrashRecoveryFixtureScan(t, dir)
 	if len(after) != 1 {
 		t.Fatalf("post-crash scan: got %d entries, want 1", len(after))
 	}
 
 	surviving := after[0]
-	// The detector needs the IdempotencyKey to query the audit log.
 	if surviving.IdempotencyKey != entry.IdempotencyKey {
 		t.Errorf("IdempotencyKey = %q, want %q", surviving.IdempotencyKey, entry.IdempotencyKey)
 	}
-	// The detector needs IntendedPostState to classify the write outcome.
 	if surviving.IntendedPostState != entry.IntendedPostState {
 		t.Errorf("IntendedPostState = %q, want %q", surviving.IntendedPostState, entry.IntendedPostState)
 	}

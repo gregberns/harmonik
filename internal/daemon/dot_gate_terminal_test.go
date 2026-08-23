@@ -1,20 +1,5 @@
 package daemon_test
 
-// dot_gate_terminal_test.go — a cognition gate must be judged on what its
-// evaluator REPORTED, not only on the verdict file it left behind.
-//
-// executeCognitionGate switched on launch.Fail alone. It never read the
-// evaluator's socket outcome, its exit code, or its progress-stream watcher, so
-// an evaluator that wrote an `allow` verdict and then declared failure or
-// crashed was still believed and the workflow proceeded past the gate.
-//
-// A gate that cannot be trusted fails CLOSED: the error fails the run. That is
-// the safe direction for a gate in a way it is not for an implementer, so there
-// is no budget-kill exemption here — pasteInjectQuitOnGateFile writes no budget
-// marker, and its only deadline kill fires when no verdict exists at all.
-//
-// Bead: hk-sb8jy.
-
 import (
 	"context"
 	"encoding/json"
@@ -31,14 +16,9 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// cognitionGateAllowJSON is a well-formed allow verdict. policy.ParseGateVerdict
-// reads it, so it must carry schema_version 1 and a declared decision value.
 const cognitionGateAllowJSON = `{"schema_version":1,"decision":"allow",` +
 	`"reason":"fixture gate evaluator allows the change."}`
 
-// cognitionGateControlPoint builds the minimal cognition-tagged Gate the
-// evaluator path needs: a DelegationPath (which is what makes it cognition) and
-// Kind=Gate.
 func cognitionGateControlPoint() core.ControlPoint {
 	return core.ControlPoint{
 		Name:    "fixture-cognition-gate",
@@ -58,11 +38,6 @@ func cognitionGateControlPoint() core.ControlPoint {
 	}
 }
 
-// cognitionGateHandler writes the /bin/sh evaluator: it lands an allow verdict
-// and then exits with the supplied code.
-//
-// Writing the verdict is load-bearing. Without it the verdict read fails on its
-// own and the assertion below passes for free, proving nothing about the exit.
 func cognitionGateHandler(t *testing.T, exitCode int) string {
 	t.Helper()
 	body := "mkdir -p .harmonik\n" +
@@ -71,25 +46,13 @@ func cognitionGateHandler(t *testing.T, exitCode int) string {
 	return dotFixtureHandlerScript(t, "cognition-gate-fixture.sh", body)
 }
 
-// cognitionGateMissingReviewFile is what the hook bridge really relays when a
-// cognition gate's Stop hook fires.
-//
-// hookrelay.go branches on phase == "reviewer" and reads .harmonik/review.json.
-// The gate launches with ReviewLoopPhaseReviewer (dot_gate.go) but writes
-// gate-verdict.json, so the bridge never finds review.json and emits this: an
-// outcome_emitted carrying an error and NO kind. Every real cognition gate
-// produces it, including one that wrote a perfectly good verdict.
 const cognitionGateMissingReviewFile = `{"error":"missing_review_file"}`
 
-// runCognitionGate drives the production executeCognitionGate against a /bin/sh
-// evaluator in a scratch worktree and returns its error.
 func runCognitionGate(t *testing.T, exitCode int) error {
 	t.Helper()
 	return runCognitionGateWithOutcome(t, exitCode, "")
 }
 
-// runCognitionGateWithOutcome is runCognitionGate with an explicit
-// outcome_emitted payload standing in for what the hook bridge relayed.
 func runCognitionGateWithOutcome(t *testing.T, exitCode int, hookOutcome string) error {
 	t.Helper()
 

@@ -8,9 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// eventEnvelopeFixture returns a fully-populated EventEnvelope with all required
-// fields set to non-zero values and all optional fields set to non-nil valid
-// values. Uses the eventEnvelope helper prefix per implementer-protocol.md.
 func eventEnvelopeFixture(t *testing.T) EventEnvelope {
 	t.Helper()
 
@@ -41,8 +38,6 @@ func TestEventEnvelope_ZeroValue(t *testing.T) {
 	var env EventEnvelope
 	var ev Event
 
-	// As a true Go alias, zero values must be structurally identical.
-	// Valid() should return false for both because required fields are unset.
 	if env.Valid() {
 		t.Error("EventEnvelope zero value: Valid() = true, want false (required fields unset)")
 	}
@@ -59,13 +54,11 @@ func TestEventEnvelope_AliasInterchangeable(t *testing.T) {
 
 	env := eventEnvelopeFixture(t)
 
-	// Assign EventEnvelope to Event: no conversion required because it is an alias.
 	ev := env
 	if !ev.Valid() {
 		t.Error("Event assigned from EventEnvelope: Valid() = false, want true")
 	}
 
-	// Assign Event back to EventEnvelope.
 	env2 := ev
 	if !env2.Valid() {
 		t.Error("EventEnvelope re-assigned from Event: Valid() = false, want true")
@@ -116,7 +109,6 @@ func TestEventEnvelope_Slice_RoundTrip(t *testing.T) {
 		}
 	}
 
-	// Nil and empty slices are both valid (no invariant on length).
 	var nilTail []EventEnvelope
 	if nilTail != nil {
 		t.Error("nil []EventEnvelope should be nil")

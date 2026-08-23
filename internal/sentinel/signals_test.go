@@ -1,16 +1,5 @@
 package sentinel_test
 
-// signals_test.go — unit tests for the stall-sentinel signal library.
-//
-// Replays synthetic event streams against ComputeSnapshot to verify:
-//   - per-run last-event-age and phase transitions
-//   - lane forward-progress rollups
-//   - live-crew set derived from agent_presence beats
-//   - ExpectsProgress predicate (Layer B false-positive guard)
-//
-// Spec: .kerf/works/stall-sentinel/02-analysis.md §Signal-library-core.
-// Bead: hk-mxxsl.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,9 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// --- helpers ---
-
-// makeSignalsProjectDir creates a temp project with .harmonik/events/ ready.
 func makeSignalsProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -38,18 +24,12 @@ func makeSignalsProjectDir(t *testing.T) string {
 	return dir
 }
 
-// signalsEventsPath returns the canonical events.jsonl path for a project dir.
 func signalsEventsPath(projectDir string) string {
 	return sentinel.EventsPathForProject(projectDir)
 }
 
-// appendEvent writes one JSONL event to path, with an optional RunID on the envelope.
 func appendEvent(t *testing.T, path string, evType core.EventType, ts time.Time, runID *core.RunID, payload []byte) {
 	t.Helper()
-	// Must be a UUIDv7 (not a random v4): ComputeSnapshot derives its ScanAfter
-	// cursor from scanStart via eventIDFloorForTime, a lexicographic UUIDv7
-	// floor. A random v4 ID sorts before that floor ~50% of the time regardless
-	// of ts, silently dropping the event and flaking window-based assertions.
 	v7, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("uuid.NewV7: %v", err)
@@ -82,12 +62,10 @@ func appendEvent(t *testing.T, path string, evType core.EventType, ts time.Time,
 	}
 }
 
-// newRunID generates a fresh core.RunID.
 func newRunID() core.RunID {
 	return core.RunID(uuid.New())
 }
 
-// mustMarshal marshals v to JSON or calls t.Fatal.
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -96,8 +74,6 @@ func mustMarshal(t *testing.T, v any) []byte {
 	}
 	return b
 }
-
-// --- tests ---
 
 // TestComputeSnapshot_EmptyStream verifies that an active run with no events
 // gets phase=started and last-event-age equal to time since StartedAt.
@@ -142,7 +118,6 @@ func TestComputeSnapshot_EmptyStream(t *testing.T) {
 	if sig.LastEventAge != wantAge {
 		t.Errorf("LastEventAge = %v; want %v", sig.LastEventAge, wantAge)
 	}
-	// Lane should exist with no forward progress.
 	lane, laneOK := snap.Lanes["main"]
 	if !laneOK {
 		t.Fatal("lane 'main' not in snapshot")
@@ -150,8 +125,6 @@ func TestComputeSnapshot_EmptyStream(t *testing.T) {
 	if !lane.LastForwardProgressAt.IsZero() {
 		t.Errorf("LastForwardProgressAt should be zero for empty stream; got %v", lane.LastForwardProgressAt)
 	}
-	// A run in the active registry IS mid-flight (registry entry exists until completion).
-	// ExpectsProgress must be true even with no events confirming it yet.
 	if !lane.ExpectsProgress() {
 		t.Error("ExpectsProgress should be true: run exists in registry (mid-flight by definition)")
 	}
@@ -191,13 +164,11 @@ func TestComputeSnapshot_RunStarted(t *testing.T) {
 		t.Errorf("LastEventAt = %v; want %v", sig.LastEventAt, eventAt)
 	}
 
-	// Lane forward progress should be set.
 	lane := snap.Lanes["main"]
 	if lane.LastForwardProgressAt != eventAt {
 		t.Errorf("LastForwardProgressAt = %v; want %v", lane.LastForwardProgressAt, eventAt)
 	}
 
-	// mid-flight → ExpectsProgress true
 	if !lane.ExpectsProgress() {
 		t.Error("ExpectsProgress should be true: run is mid-flight")
 	}
@@ -223,18 +194,15 @@ func TestComputeSnapshot_PhaseTransitions(t *testing.T) {
 	t1 := startedAt.Add(5 * time.Minute)
 	t2 := startedAt.Add(10 * time.Minute)
 
-	// run_started
 	appendEvent(t, eventsPath, core.EventTypeRunStarted, t0, &rid, mustMarshal(t, map[string]any{
 		"run_id": runID.String(), "workflow_id": uuid.New().String(),
 		"workflow_version": "v1", "workspace_path": "/tmp/ws",
 	}))
 
-	// implementer_phase_complete
 	appendEvent(t, eventsPath, core.EventTypeImplementerPhaseComplete, t1, &rid, mustMarshal(t, map[string]any{
 		"run_id": runID.String(), "phase": "implementer",
 	}))
 
-	// reviewer_verdict
 	verdictAt := t2
 	appendEvent(t, eventsPath, core.EventTypeReviewerVerdict, verdictAt, &rid, mustMarshal(t, map[string]any{
 		"run_id": runID.String(), "verdict": "REQUEST_CHANGES",
@@ -250,7 +218,6 @@ func TestComputeSnapshot_PhaseTransitions(t *testing.T) {
 		t.Errorf("VerdictAt = %v; want %v", sig.VerdictAt, verdictAt)
 	}
 
-	// Now add run_completed and recompute.
 	termAt := verdictAt.Add(5 * time.Minute)
 	appendEvent(t, eventsPath, core.EventTypeRunCompleted, termAt, &rid, mustMarshal(t, map[string]any{
 		"run_id": runID.String(),
@@ -262,7 +229,6 @@ func TestComputeSnapshot_PhaseTransitions(t *testing.T) {
 	if sig2.Phase != sentinel.RunPhaseTerminal {
 		t.Errorf("after run_completed, phase = %s; want terminal", sig2.Phase)
 	}
-	// Terminal run → not in mid-flight list.
 	lane2 := snap2.Lanes["crew1"]
 	for _, id := range lane2.MidFlightRunIDs {
 		if id == runID.String() {
@@ -348,9 +314,7 @@ func TestComputeSnapshot_LiveCrew(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	ttl := 10 * time.Minute
 
-	// Active agent: last_seen 5 min ago (within TTL).
 	recentAt := now.Add(-5 * time.Minute)
-	// Stale agent: last_seen 20 min ago (beyond TTL).
 	staleAt := now.Add(-20 * time.Minute)
 
 	appendPresence := func(agent string, ts time.Time) {
@@ -367,10 +331,7 @@ func TestComputeSnapshot_LiveCrew(t *testing.T) {
 
 	snap := sentinel.ComputeSnapshot(context.Background(), eventsPath, nil, ttl, nil, now)
 
-	// captain should be live; stale-crew should not.
 	found := make(map[string]bool)
-	// LiveCrews should be in all lanes — but here no lanes exist (no runs).
-	// Let's verify via a lane we inject.
 	snap2 := sentinel.ComputeSnapshot(context.Background(), eventsPath, nil, ttl,
 		[]sentinel.LaneStateInput{{LaneName: "main", QueueNonEmpty: true}},
 		now,
@@ -439,7 +400,6 @@ func TestComputeSnapshot_ExpectsProgress_FalsePositiveGuard(t *testing.T) {
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	// Crew is live but queue is empty and no assigned bead.
 	appendEvent(t, eventsPath, core.EventType("agent_presence"), now.Add(-2*time.Minute), nil,
 		mustMarshal(t, map[string]any{
 			"agent":     "crew-idle",
@@ -522,13 +482,11 @@ func TestComputeSnapshot_MultipleRuns(t *testing.T) {
 
 	ridA, ridB := runA, runB
 
-	// Run A: heartbeat at t-5min
 	hbAt := now.Add(-5 * time.Minute)
 	appendEvent(t, eventsPath, core.EventTypeAgentHeartbeat, hbAt, &ridA, mustMarshal(t, map[string]any{
 		"session_id": uuid.New().String(), "phase": "tool_call",
 	}))
 
-	// Run B: reviewer_verdict at t-3min
 	verdictAt := now.Add(-3 * time.Minute)
 	appendEvent(t, eventsPath, core.EventTypeReviewerVerdict, verdictAt, &ridB, mustMarshal(t, map[string]any{
 		"run_id": runB.String(), "verdict": "APPROVE",
@@ -552,7 +510,6 @@ func TestComputeSnapshot_MultipleRuns(t *testing.T) {
 		t.Errorf("run B: VerdictAt = %v; want %v", sigB.VerdictAt, verdictAt)
 	}
 
-	// Both runs mid-flight → lane expects progress.
 	lane := snap.Lanes["team"]
 	if !lane.ExpectsProgress() {
 		t.Error("two mid-flight runs → ExpectsProgress should be true")
@@ -572,7 +529,6 @@ func TestComputeSnapshot_UnknownRunEvents(t *testing.T) {
 	ghostID := newRunID()
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	// Emit an event for a run that is NOT in activeRuns.
 	rid := ghostID
 	appendEvent(t, eventsPath, core.EventTypeAgentHeartbeat, now.Add(-1*time.Minute), &rid, mustMarshal(t, map[string]any{
 		"session_id": uuid.New().String(), "phase": "reasoning",

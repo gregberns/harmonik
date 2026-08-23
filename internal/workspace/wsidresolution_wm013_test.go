@@ -39,18 +39,15 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		// Deterministic path construction from run_id (WM-002).
 		derivedPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		if derivedPath != worktreePath {
 			t.Errorf("WM-013: derived path %q != actual worktree path %q", derivedPath, worktreePath)
 		}
 
-		// The path exists on disk — filesystem check confirming the workspace record.
 		if _, err := os.Stat(derivedPath); err != nil {
 			t.Errorf("WM-013: derived path %q not found on disk: %v", derivedPath, err)
 		}
 
-		// workspace_id is "ws-" + run_id (WM-004) — derivable without an index.
 		workspaceID := "ws-" + runID
 		if workspaceID == "" || workspaceID == "ws-" {
 			t.Errorf("WM-013: workspace_id derivation produced empty or prefix-only result")
@@ -60,8 +57,6 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 	t.Run("lease-lock-readable-from-derived-path", func(t *testing.T) {
 		t.Parallel()
 
-		// Given only the run_id, the daemon can reconstruct the lease-lock path
-		// deterministically (no index required).
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f0014"
 		branch := "run/" + runID
@@ -79,13 +74,11 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
-		// Reconstruct the lease-lock path from run_id alone.
 		reconstructedLeasePath := filepath.Join(repo, ".harmonik", "worktrees", runID, ".harmonik", "lease.lock")
 		if reconstructedLeasePath != leaseLockPath {
 			t.Errorf("WM-013: reconstructed lease path %q != canonical %q", reconstructedLeasePath, leaseLockPath)
 		}
 
-		// Read the lock file using the reconstructed path — no index needed.
 		data := mustReadFile(t, reconstructedLeasePath)
 		if !leaseFixtureFindSubstring(string(data), runID) {
 			t.Errorf("WM-013: lease-lock content at reconstructed path does not contain run_id %q", runID)

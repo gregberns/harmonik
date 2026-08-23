@@ -43,7 +43,6 @@ func Check(agentsDir, typeName, repoRoot string) []Defect {
 	return append(defects, checkContextRefs(agentsDir, typeName, repoRoot, tf.Manifest.Context)...)
 }
 
-// checkParentIntent implements the C-C parent-intent check from SPEC §3.
 func checkParentIntent(agentsDir, parentIntent string) []Defect {
 	if parentIntent == "operator" {
 		return nil
@@ -68,13 +67,11 @@ func checkParentIntent(agentsDir, parentIntent string) []Defect {
 	return defects
 }
 
-// checkContextRefs applies the context ref resolution rules from SPEC §6.
 func checkContextRefs(agentsDir, typeName, repoRoot string, context []ContextEntry) []Defect {
 	var defects []Defect
 	for i, c := range context {
 		field := fmt.Sprintf("context[%d].ref", i)
 		if strings.Contains(c.Ref, "/") {
-			// Path-bearing ref: taken literally, relative to repoRoot.
 			absPath := filepath.Join(repoRoot, c.Ref)
 			if _, statErr := os.Stat(absPath); statErr != nil {
 				if errors.Is(statErr, os.ErrNotExist) {
@@ -90,7 +87,6 @@ func checkContextRefs(agentsDir, typeName, repoRoot string, context []ContextEnt
 				}
 			}
 		} else {
-			// Bare ref: _skills/ first, then type folder.
 			if _, refErr := ResolveRef(agentsDir, typeName, c.Ref); refErr != nil {
 				defects = append(defects, Defect{
 					Field:   field,

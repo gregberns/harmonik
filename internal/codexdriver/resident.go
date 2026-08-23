@@ -1,31 +1,5 @@
 package codexdriver
 
-// hk-160yb G1: the per-crew resident-session owner.
-//
-// A codexSession is single-child: it winds down terminally when its child exits
-// or the wire closes (session.go finalize). A crew orchestrator, however, needs
-// ONE logical Codex session that survives child deaths across many wakes,
-// preserving the server-side thread context. ResidentSession is that supervised
-// owner:
-//
-//   - It holds the CURRENT live codexSession and presents a STABLE
-//     handler.InputPort (SubmitInput) to callers, so the child underneath can be
-//     replaced without the caller — the G3 BoundedInputQueue drainer — ever
-//     seeing a new port.
-//   - On child death it revives lazily on the next submit: it respawns and, when
-//     a prior thread id is known, re-attaches to it via the G1a thread/resume
-//     handshake (spawn(..., resumeThreadID)), so server-side context carries
-//     across the death. A submit that races the death is retried exactly once on
-//     the fresh session.
-//   - It owns a BoundedInputQueue (G3) whose drainer is exactly this
-//     SubmitInput — that is the production caller the residual-gap audit called
-//     for (it clears codexdriver's x-missing-wire-up on the queue).
-//
-// Proactive output-or-stale liveness (a watchdog that revives BEFORE the next
-// submit) is deliberately out of scope here — that is G4. This owner's revival
-// is on-demand, which for a queue-fed sidecar reconnects on the next unit of
-// work without burning an idle child.
-
 import (
 	"context"
 	"errors"
@@ -73,8 +47,6 @@ func NewResidentSession(opts Options, spawn handler.SubstrateSpawn, queueCap int
 		panic("codexdriver: NewCodexSubstrate did not return *codexSubstrate")
 	}
 	r := &ResidentSession{sub: sub, spawn: spawn, closeCh: make(chan struct{})}
-	// The queue's single drainer calls r.SubmitInput — the production caller that
-	// gives G3 its live consumer.
 	r.queue = NewBoundedInputQueue(r, queueCap)
 	return r
 }
@@ -110,8 +82,6 @@ func (r *ResidentSession) SubmitInput(ctx context.Context, req handler.InputRequ
 
 	ack, err := sess.SubmitInput(ctx, req)
 	if errors.Is(err, ErrSessionClosed) {
-		// The child died at or before this submission. Revive once and retry;
-		// the retained thread id (if any) drives a thread/resume re-attach.
 		sess, err = r.revive(ctx, sess)
 		if err != nil {
 			return handler.Ack{}, err
@@ -124,10 +94,6 @@ func (r *ResidentSession) SubmitInput(ctx context.Context, req handler.InputRequ
 	return ack, err
 }
 
-// Watchdog backoff bounds: after a child death the watchdog waits before
-// respawning, growing the delay on rapid successive deaths so a crash-looping
-// child does not spin-respawn hot. A healthy child (one that reached Ready)
-// resets the delay to the floor.
 const (
 	watchdogBackoffMin = 100 * time.Millisecond
 	watchdogBackoffMax = 5 * time.Second
@@ -164,18 +130,12 @@ func (r *ResidentSession) superviseLoop(ctx context.Context) {
 		}
 		sess, err := r.ensure(ctx)
 		if err != nil {
-			// Closed, or the (re)spawn failed (e.g. a fail-closed PreSpawn guard).
-			// Back off and retry unless shutting down.
 			if r.isClosed() || !r.backoffSleep(ctx, clock, backoff) {
 				return
 			}
 			backoff = nextBackoff(backoff)
 			continue
 		}
-		// Wait until the child is Ready so we can latch its thread id (a fresh
-		// thread/start id, or the confirmed resumed id). A non-nil error means it
-		// died/failed before Ready — fall through to the death wait, which will see
-		// loopDone and respawn.
 		if err := sess.awaitReady(ctx); err == nil {
 			r.rememberThread(sess)
 			backoff = watchdogBackoffMin // healthy: reset the crash-loop backoff
@@ -184,7 +144,6 @@ func (r *ResidentSession) superviseLoop(ctx context.Context) {
 		}
 		select {
 		case <-sess.loopDone:
-			// Child died. Back off (crash-loop guard) then loop to respawn+resume.
 			if r.isClosed() || !r.backoffSleep(ctx, clock, backoff) {
 				return
 			}
@@ -197,10 +156,6 @@ func (r *ResidentSession) superviseLoop(ctx context.Context) {
 	}
 }
 
-// backoffSleep waits for d, returning false (stop) if the watchdog should exit —
-// on ctx cancel OR Close (closeCh). Unlike a bare ClockPort.Sleep it also wakes
-// on closeCh, so Close stops the watchdog promptly instead of lingering up to a
-// full backoff interval.
 func (r *ResidentSession) backoffSleep(ctx context.Context, clock substrate.ClockPort, d time.Duration) bool {
 	tk := clock.NewTicker(d)
 	defer tk.Stop()
@@ -246,8 +201,6 @@ func (r *ResidentSession) CloseInput(ctx context.Context) error {
 	return cur.CloseInput(ctx)
 }
 
-// ensure returns a live child, spawning one (fresh, or resuming the retained
-// thread) when none exists or the current one has wound down.
 func (r *ResidentSession) ensure(ctx context.Context) (*codexSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -260,9 +213,6 @@ func (r *ResidentSession) ensure(ctx context.Context) (*codexSession, error) {
 	return r.spawnLocked(ctx)
 }
 
-// revive replaces a dead child. It is a no-op re-fetch if another concurrent
-// caller already revived past `dead` (the queue serializes callers, so this is
-// belt-and-suspenders for the InputPort contract).
 func (r *ResidentSession) revive(ctx context.Context, dead *codexSession) (*codexSession, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -275,10 +225,6 @@ func (r *ResidentSession) revive(ctx context.Context, dead *codexSession) (*code
 	return r.spawnLocked(ctx)
 }
 
-// spawnLocked spawns a new child under r.mu and adopts it as current. When a
-// prior thread id is known it re-attaches via the G1a thread/resume handshake;
-// otherwise it opens a fresh thread. The prior (dead) session is left for its
-// own goroutines to finalize — its child is already gone.
 func (r *ResidentSession) spawnLocked(ctx context.Context) (*codexSession, error) {
 	sess, err := r.sub.spawn(ctx, r.spawn, r.threadID)
 	if err != nil {
@@ -286,8 +232,6 @@ func (r *ResidentSession) spawnLocked(ctx context.Context) (*codexSession, error
 	}
 	cs, ok := sess.(*codexSession)
 	if !ok {
-		// spawn always returns *codexSession; guard the type assertion so a future
-		// refactor fails loud rather than nil-panicking.
 		_ = sess.Kill(ctx) //nolint:errcheck // best-effort teardown of the mis-typed session on an error return; the type-assertion failure is the reported error
 		return nil, fmt.Errorf("codexdriver: resident respawn: unexpected session type %T", sess)
 	}
@@ -295,9 +239,6 @@ func (r *ResidentSession) spawnLocked(ctx context.Context) (*codexSession, error
 	return cs, nil
 }
 
-// rememberThread latches the child's current thread id so a later respawn can
-// resume it. Called after a successful submit, by which point the handshake has
-// stamped the id.
 func (r *ResidentSession) rememberThread(sess *codexSession) {
 	if id := sess.currentThreadID(); id != "" {
 		r.mu.Lock()
@@ -326,7 +267,6 @@ func (r *ResidentSession) Close(ctx context.Context) error {
 	close(r.closeCh) // stop the watchdog (first-time only; closed guards idempotency)
 	r.mu.Unlock()
 
-	// Drain buffered submissions (graceful FIFO) before tearing the child down.
 	r.queue.Close()
 
 	r.mu.Lock()
@@ -342,8 +282,6 @@ func (r *ResidentSession) Close(ctx context.Context) error {
 	return cur.Wait(ctx)
 }
 
-// sessionDead reports whether the child's reactor loop has exited (child gone or
-// wire closed). loopDone is closed by finalize on wind-down.
 func sessionDead(s *codexSession) bool {
 	select {
 	case <-s.loopDone:

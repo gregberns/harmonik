@@ -115,7 +115,6 @@ func TestWM018a_MergeNodeDispatch_Valid(t *testing.T) {
 func TestWM018a_DetectSquashMergeConflict_NoConflict(t *testing.T) {
 	t.Parallel()
 
-	// Use mergeBackFixtureSetupTaskBranch (from mergedispatch_wm018a_test.go).
 	repo, sha := mergeBackFixtureSetupTaskBranch(t,
 		"0196b100-0000-7000-8000-00000028a001",
 		[]string{"clean change"},
@@ -150,7 +149,6 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 		t.Fatalf("MkdirAll task: %v", err)
 	}
 
-	// Create task branch from sha: modify shared.txt with one value.
 	gitRun := func(dir string, args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -161,14 +159,12 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 	}
 
 	gitRun(repo, "worktree", "add", "-b", taskBranch, taskPath, sha)
-	// Write conflicting change in task branch.
 	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile task: %v", err)
 	}
 	gitRun(taskPath, "add", ".")
 	gitRun(taskPath, "commit", "-m", "task: change shared.txt")
 
-	// Create integration branch from sha: modify the same file with different content.
 	integSuffix := "integ-028a-clash"
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", integSuffix)
 	if err := os.MkdirAll(filepath.Dir(integPath), 0o700); err != nil {
@@ -176,14 +172,12 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 	}
 	integBranch := "harmonik/integration/" + integSuffix
 	gitRun(repo, "worktree", "add", "-b", integBranch, integPath, sha)
-	// Write different conflicting change in integration branch.
 	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile integ: %v", err)
 	}
 	gitRun(integPath, "add", ".")
 	gitRun(integPath, "commit", "-m", "integ: change shared.txt")
 
-	// Now detect conflict: merging task branch into integ must conflict.
 	result, err := DetectSquashMergeConflict(integPath, taskBranch)
 	if err != nil {
 		t.Fatalf("WM-018a DetectConflict with-conflict: %v", err)

@@ -41,35 +41,14 @@ import (
 	"time"
 )
 
-// twinWireFixture — per-bead helper prefix for test helpers in this file.
-// (Actual test helpers are in wire_test.go; the prefix is declared here as
-// a godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
-
-// ────────────────────────────────────────────────────────────────────────────
-// Emitter
-// ────────────────────────────────────────────────────────────────────────────
-
-// wireEmitter writes NDJSON-framed progress-stream messages to a net.Conn.
-//
-// Each write method serialises one JSON object and appends a single newline
-// (0x0A), satisfying HC-007a.  The emitter is NOT goroutine-safe; callers
-// must serialise calls.
 type wireEmitter struct {
 	w io.Writer
 }
 
-// newWireEmitter wraps w in a wireEmitter.  w is typically the net.Conn
-// returned by dialSocket.  A bufio.Writer is NOT used here because the spec
-// requires each message to be flushed promptly; callers that need buffering
-// should wrap w themselves.
 func newWireEmitter(w io.Writer) *wireEmitter {
 	return &wireEmitter{w: w}
 }
 
-// emit serialises v as compact JSON and appends a newline to w.
-// It returns any write error.  The zero-overhead encoding path avoids
-// encoder.Encode (which also appends a newline) in favour of Marshal +
-// explicit newline so we keep full control of framing per HC-007a.
 func (e *wireEmitter) emit(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -80,18 +59,6 @@ func (e *wireEmitter) emit(v any) error {
 	return err
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Progress-stream message types (handler-to-daemon direction)
-// ────────────────────────────────────────────────────────────────────────────
-
-// emitHandlerCapabilities emits the handler_capabilities message.
-//
-// MUST be the FIRST message on the progress stream (HC-009).
-// Carries the twin's supported wire-protocol version list.
-//
-// Payload (event-model §8.3.9): run_id, session_id, protocol_versions_supported[].
-//
-// Cite: specs/handler-contract.md §4.2.HC-009.
 func (e *wireEmitter) emitHandlerCapabilities(runID, sessionID string, versions []int) error {
 	return e.emit(struct {
 		Type      string `json:"type"`
@@ -106,15 +73,6 @@ func (e *wireEmitter) emitHandlerCapabilities(runID, sessionID string, versions 
 	})
 }
 
-// emitSessionLogLocation emits the session_log_location message.
-//
-// MUST be emitted after handler_capabilities and before skills_provisioned /
-// agent_ready (HC-010).
-//
-// Payload (event-model §8.3.7): run_id, session_id, node_id, agent_type,
-// log_path, log_format, bead_id?.
-//
-// Cite: specs/handler-contract.md §4.2.HC-010.
 func (e *wireEmitter) emitSessionLogLocation(
 	runID, sessionID, nodeID, agentType, logPath, logFormat string,
 	beadID *string,
@@ -141,22 +99,12 @@ func (e *wireEmitter) emitSessionLogLocation(
 	})
 }
 
-// skillEntry is one provisioned skill in the skills_provisioned payload.
-//
-// Cite: specs/event-model.md §8.3.8.
 type skillEntry struct {
 	Name       string  `json:"name"`
 	SourcePath string  `json:"source_path"`
 	Version    *string `json:"version,omitempty"`
 }
 
-// emitSkillsProvisioned emits the skills_provisioned message.
-//
-// MUST be emitted after session_log_location and before agent_ready (HC-049).
-//
-// Payload (event-model §8.3.8): run_id, session_id, skills[].
-//
-// Cite: specs/handler-contract.md §4.11.HC-049.
 func (e *wireEmitter) emitSkillsProvisioned(runID, sessionID string, skills []skillEntry) error {
 	type msg struct {
 		Type      string       `json:"type"`
@@ -172,14 +120,6 @@ func (e *wireEmitter) emitSkillsProvisioned(runID, sessionID string, skills []sk
 	})
 }
 
-// emitAgentReady emits the agent_ready message.
-//
-// Signals that the handler subprocess is ready to accept work (HC-039).
-// Twin MUST emit with the same shape and timing as real handlers (HC-040).
-//
-// Payload (event-model §8.3.1): run_id, session_id, capabilities[].
-//
-// Cite: specs/handler-contract.md §4.9.HC-039, §4.9.HC-040.
 func (e *wireEmitter) emitAgentReady(runID, sessionID string, capabilities []string) error {
 	type msg struct {
 		Type         string   `json:"type"`
@@ -195,14 +135,6 @@ func (e *wireEmitter) emitAgentReady(runID, sessionID string, capabilities []str
 	})
 }
 
-// emitAgentStarted emits the agent_started message.
-//
-// Emitted after subprocess spawn and before agent_ready (§6.4).
-// MUST NOT include environment variables in payload (HC-029).
-//
-// Payload (event-model §8.3.2): run_id, session_id, node_id, agent_type, started_at.
-//
-// Cite: specs/handler-contract.md §4.7.HC-029, §6.4.
 func (e *wireEmitter) emitAgentStarted(runID, sessionID, nodeID, agentType string, startedAt time.Time) error {
 	type msg struct {
 		Type      string `json:"type"`
@@ -222,16 +154,9 @@ func (e *wireEmitter) emitAgentStarted(runID, sessionID, nodeID, agentType strin
 	})
 }
 
-// heartbeatPhase is the extensible enum of phases for the agent_heartbeat message.
-//
-// The enum is additive-only; values declared here are the set declared per HC-026a.
-// Additional handler-specific values may be declared in subsystem envelopes.
-//
-// Cite: specs/handler-contract.md §4.6.HC-026a.
 type heartbeatPhase string
 
 const (
-	// heartbeatPhaseStarting is emitted during subprocess initialisation.
 	heartbeatPhaseStarting heartbeatPhase = "starting"
 	// heartbeatPhaseReasoning is emitted while the agent is reasoning.
 	heartbeatPhaseReasoning heartbeatPhase = "reasoning"
@@ -249,16 +174,6 @@ const (
 	heartbeatPhaseShuttingDown heartbeatPhase = "shutting_down"
 )
 
-// emitAgentHeartbeat emits an agent_heartbeat message.
-//
-// MUST be emitted at ≤T/2 cadence while the subprocess is alive and has not
-// emitted outcome_emitted (HC-026a).  The scripted-mode carve-out allows
-// heartbeats to be driven at explicit relative timestamps from the script
-// rather than a wall-clock timer (HC-026a scripted-mode carve-out).
-//
-// Payload: session_id, phase (per HC-026a).
-//
-// Cite: specs/handler-contract.md §4.6.HC-026a.
 func (e *wireEmitter) emitAgentHeartbeat(sessionID string, phase heartbeatPhase) error {
 	type msg struct {
 		Type      string         `json:"type"`
@@ -272,16 +187,6 @@ func (e *wireEmitter) emitAgentHeartbeat(sessionID string, phase heartbeatPhase)
 	})
 }
 
-// emitAgentOutputChunk emits an agent_output_chunk message.
-//
-// Emitted for every output chunk produced by the agent subprocess (HC-007, §6.4).
-// The chunk stream is best-effort; exactly-once durability lives in the
-// session-log file on disk, not on the bus (HC-007b).
-//
-// Payload (event-model §8.3.3): run_id, session_id, chunk_index,
-// bytes_emitted, chunk_digest?.
-//
-// Cite: specs/handler-contract.md §4.2.HC-007; specs/event-model.md §8.3.3.
 func (e *wireEmitter) emitAgentOutputChunk(runID, sessionID string, chunkIndex, bytesEmitted int, chunkDigest *string) error {
 	type msg struct {
 		Type         string  `json:"type"`
@@ -301,17 +206,6 @@ func (e *wireEmitter) emitAgentOutputChunk(runID, sessionID string, chunkIndex, 
 	})
 }
 
-// emitAgentRateLimited emits the agent_rate_limited message.
-//
-// Emitted when the twin detects (or scripted mode triggers) rate-limit onset
-// (HC-025).  For the canonical twin, rate-limit events are emitted directly
-// per HC-OQ-011 Interpretation A: the twin emits the progress-stream message
-// directly; the adapter's DetectRateLimit is a trivial pass-through.
-//
-// Payload (event-model §8.3.6 agent_rate_limit_status, active variant):
-// run_id, session_id, rate_limit_source?, retry_after_seconds?, changed_at.
-//
-// Cite: specs/handler-contract.md §4.6.HC-025; §OQ-HC-008 (Interp. A).
 func (e *wireEmitter) emitAgentRateLimited(runID, sessionID string, rateLimitSource *string, retryAfterSeconds *int, changedAt time.Time) error {
 	type msg struct {
 		Type              string  `json:"type"`
@@ -331,16 +225,6 @@ func (e *wireEmitter) emitAgentRateLimited(runID, sessionID string, rateLimitSou
 	})
 }
 
-// emitAgentRateLimitCleared emits the agent_rate_limit_cleared message.
-//
-// Emitted when the twin detects (or scripted mode triggers) rate-limit
-// clearance (HC-025).  For the canonical twin, clearance events are emitted
-// directly per HC-OQ-011 Interpretation A.
-//
-// Payload (event-model §8.3.6 agent_rate_limit_status, cleared variant):
-// run_id, session_id, changed_at.
-//
-// Cite: specs/handler-contract.md §4.6.HC-025; §OQ-HC-008 (Interp. A).
 func (e *wireEmitter) emitAgentRateLimitCleared(runID, sessionID string, changedAt time.Time) error {
 	type msg struct {
 		Type      string `json:"type"`
@@ -356,16 +240,6 @@ func (e *wireEmitter) emitAgentRateLimitCleared(runID, sessionID string, changed
 	})
 }
 
-// emitOutcomeEmitted emits the outcome_emitted message.
-//
-// MUST be the FINAL message before a clean exit (HC-008).  Carries the run's
-// Outcome.  The daemon side translates this into the outcome_emitted bus event.
-//
-// Payload: run_id, session_id, node_id, outcome_status.
-// (Full Outcome schema deferred to execution-model.md §6.1; this stub carries
-// the minimum fields the watcher reads.)
-//
-// Cite: specs/handler-contract.md §4.2.HC-008.
 func (e *wireEmitter) emitOutcomeEmitted(runID, sessionID, nodeID, outcomeStatus string) error {
 	type msg struct {
 		Type          string `json:"type"`
@@ -383,15 +257,6 @@ func (e *wireEmitter) emitOutcomeEmitted(runID, sessionID, nodeID, outcomeStatus
 	})
 }
 
-// emitAgentCompleted emits the agent_completed message.
-//
-// Emitted on clean subprocess exit after outcome_emitted (HC-024).
-// Carries ended_at, exit_code (observational), and outcome_ref.
-//
-// Payload (event-model §8.3.4): run_id, session_id, ended_at, exit_code,
-// outcome_ref.
-//
-// Cite: specs/handler-contract.md §4.6.HC-024, §6.4.
 func (e *wireEmitter) emitAgentCompleted(runID, sessionID string, endedAt time.Time, exitCode int, outcomeRef string) error {
 	type msg struct {
 		Type       string `json:"type"`
@@ -411,15 +276,6 @@ func (e *wireEmitter) emitAgentCompleted(runID, sessionID string, endedAt time.T
 	})
 }
 
-// emitAgentFailed emits the agent_failed message.
-//
-// Emitted on crash or fatal typed error (HC-024).  The error_category maps
-// to one of the five primary sentinel classes (HC-020).
-//
-// Payload (event-model §8.3.5): run_id, session_id, ended_at, error_category,
-// reason.  sub_reason is optional; omit when empty.
-//
-// Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020.
 func (e *wireEmitter) emitAgentFailed(
 	runID, sessionID string,
 	endedAt time.Time,
@@ -445,24 +301,7 @@ func (e *wireEmitter) emitAgentFailed(
 	})
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Twin-extension message types (hk-e66ht: settings.json reader + Stop hook)
-// ────────────────────────────────────────────────────────────────────────────
-
-// emitTwinSettingsLoaded emits a twin_settings_loaded message.
-//
-// Emitted once at startup after reading (or attempting to read)
-// --worktree-path/.claude/settings.json. Provides visibility into whether the
-// twin found the permissions field and Stop hook command.
-//
-// Fields:
-//   - permissions_present: bool — true when dangerouslyAllowedPermissions key present.
-//   - stop_hook_present:   bool — true when at least one Stop hook command found.
-//   - stop_hook_command:   string — first Stop hook command, truncated to 200 chars.
-//
-// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 1 (Fix 9) + item 2 (Fix 11b).
 func (e *wireEmitter) emitTwinSettingsLoaded(permissionsPresent, stopHookPresent bool, stopHookCommand string) error {
-	// Truncate stop_hook_command for log-readability per bead spec.
 	const maxCmdLen = 200
 	if len(stopHookCommand) > maxCmdLen {
 		stopHookCommand = stopHookCommand[:maxCmdLen]
@@ -481,20 +320,6 @@ func (e *wireEmitter) emitTwinSettingsLoaded(permissionsPresent, stopHookPresent
 	})
 }
 
-// emitTwinHookCalled emits a twin_hook_called message.
-//
-// Emitted after executing a hook command on script cue. Carries the hook type
-// (always "Stop" for this bead), the exit code, and the duration.
-//
-// Hook exit code non-zero does NOT cause the twin to exit — the daemon-side
-// outcome handler decides what to do with the code per CHB.
-//
-// Fields:
-//   - hook_type:   string — always "Stop" in this bead; extensible for future hook types.
-//   - exit_code:   int    — OS exit code returned by the hook process.
-//   - duration_ms: int    — wall-clock duration of the hook execution in milliseconds.
-//
-// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 2 (Fix 11b).
 func (e *wireEmitter) emitTwinHookCalled(hookType string, exitCode, durationMs int) error {
 	type msg struct {
 		Type       string `json:"type"`
@@ -510,23 +335,6 @@ func (e *wireEmitter) emitTwinHookCalled(hookType string, exitCode, durationMs i
 	})
 }
 
-// emitTwinCommitted emits a twin_committed message.
-//
-// Emitted after the commit_on_cue script step runs git commit in the worktree.
-// Carries the resulting commit SHA (empty on failure), exit code, wall-clock
-// duration, and an optional stderr excerpt (truncated to 200 chars) when the
-// git command exits non-zero.
-//
-// Non-zero exit_code does NOT cause the twin to exit — the script continues
-// per the bead error policy (same as call_stop_hook).
-//
-// Fields:
-//   - commit_sha:     string — full SHA of the new HEAD commit; empty on failure.
-//   - exit_code:      int    — OS exit code from git commit (0 = success).
-//   - duration_ms:    int    — wall-clock duration of git add + git commit (ms).
-//   - stderr_excerpt: string — first 200 chars of combined stdout+stderr on failure; "" on success.
-//
-// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 func (e *wireEmitter) emitTwinCommitted(commitSHA string, exitCode, durationMs int, stderrExcerpt string) error {
 	type msg struct {
 		Type          string `json:"type"`
@@ -544,16 +352,6 @@ func (e *wireEmitter) emitTwinCommitted(commitSHA string, exitCode, durationMs i
 	})
 }
 
-// emitTwinError emits a twin_error message.
-//
-// Emitted when the twin encounters an unrecoverable internal error that should
-// be visible on the wire stream (e.g., call_stop_hook without a prior settings
-// load, or malformed settings.json). The caller exits 1 after emitting this.
-//
-// Fields:
-//   - reason: string — short human-readable description of the error.
-//
-// Cite: hk-e66ht error policy.
 func (e *wireEmitter) emitTwinError(reason string) error {
 	type msg struct {
 		Type   string `json:"type"`
@@ -565,36 +363,15 @@ func (e *wireEmitter) emitTwinError(reason string) error {
 	})
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Control-message reader (daemon-to-handler direction)
-// ────────────────────────────────────────────────────────────────────────────
-
-// controlMsg is the envelope for daemon-to-handler control messages received
-// on the same bidirectional socket (HC-007a, §6.4).
-//
-// Catalog (§6.4):
-//   - version_selected  {selected_version: int}
-//   - cancel            {}
-//   - shutdown          {}
-//   - rotate_account    {}
-//
-// Unknown types MUST be ignored (forward-compatibility per §6.4).
 type controlMsg struct {
 	Type            string `json:"type"`
 	SelectedVersion *int   `json:"selected_version,omitempty"`
 }
 
-// wireReader reads NDJSON-framed control messages from the daemon.
-//
-// Each line is expected to be a complete JSON object terminated by 0x0A.
-// Lines exceeding 1 MiB would abort the daemon-side session per HC-007a; the
-// daemon's own messages are well under that limit.
 type wireReader struct {
 	scanner *bufio.Scanner
 }
 
-// newWireReader wraps r in a wireReader using a bufio.Scanner set to a 1 MiB
-// max-token size, matching the HC-007a watcher cap.
 func newWireReader(r io.Reader) *wireReader {
 	s := bufio.NewScanner(r)
 	const maxLineBytes = 1 << 20 // 1 MiB per HC-007a
@@ -602,9 +379,6 @@ func newWireReader(r io.Reader) *wireReader {
 	return &wireReader{scanner: s}
 }
 
-// readControlMsg reads the next control message from the socket.
-// It returns (nil, io.EOF) at end-of-stream, or a parse error on malformed JSON.
-// Unknown message types are returned as-is; callers must ignore them per §6.4.
 func (r *wireReader) readControlMsg() (*controlMsg, error) {
 	if !r.scanner.Scan() {
 		if err := r.scanner.Err(); err != nil {

@@ -1,27 +1,5 @@
 package daemon
 
-// survive_shutdown_recovery_test.go — what actually happens to a run that asked
-// to outlive the daemon, and how its bead gets back.
-//
-// A bead run launched in a tmux session of its own writes a run registry record
-// so a later daemon boot can find the session by name. Two things then have to
-// hold, and these tests pin one each:
-//
-//   - The boot sweep must leave that session alone while an agent is working in
-//     it. The session-level sweep kills every session carrying the project
-//     prefix that is not excluded, and it applies no liveness test of its own,
-//     so the boot builds the exclusion from the run registry BEFORE the kill
-//     pass. It has to be before: the sweep runs ahead of the adoption pass, so a
-//     session killed there is already gone by the time anything asks about it.
-//   - When the session really is gone the adoption pass resets the bead and
-//     drops the record, so the work is dispatched again.
-//
-// This file used to say the sweep killed the run session and that survival was
-// fiction. It was, and the test that pinned it invited its own replacement once
-// the sweep learned to tell a live run from an orphan. That is what happened.
-//
-// Helper prefix: surviveRecovery.
-
 import (
 	"context"
 	"encoding/json"
@@ -45,17 +23,10 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// surviveRecoveryHash is the project hash every session name in this file is
-// built from.
 const surviveRecoveryHash = core.ProjectHash("abcdef012345")
 
-// surviveRecoveryRunID is a fixed run id so the derived session name is stable
-// and a reader can see it is the same one in each test.
 const surviveRecoveryRunID = "0f0e0d0c-0b0a-4908-8706-050403020100"
 
-// surviveRecoveryRunSessionName returns the tmux session name a bead run in its
-// own session carries, built by the production namer rather than by a literal,
-// so a change to the naming rule reaches these tests.
 func surviveRecoveryRunSessionName(t *testing.T) string {
 	t.Helper()
 	sub, ok := NewTmuxSubstrate(&surviveRecoveryAdapter{}, "survive-recovery-default",
@@ -70,12 +41,6 @@ func surviveRecoveryRunSessionName(t *testing.T) string {
 	return name
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The boot sweep
-// ─────────────────────────────────────────────────────────────────────────────
-
-// surviveRecoverySessions is a tmux server reduced to a list of session names
-// and a record of which ones were killed.
 type surviveRecoverySessions struct {
 	mu     sync.Mutex
 	names  []string
@@ -121,14 +86,6 @@ func (s *surviveRecoverySessions) wasKilled(name string) bool {
 	return s.wasKilledLocked(name)
 }
 
-// surviveRecoveryPanePIDs is a tmux adapter that answers the two questions the
-// boot sweep asks about a session: does it exist, and what PID is in its first
-// pane. Everything else comes from the package's shared no-op adapter.
-//
-// A pane PID of 0 is how this fixture spells "nothing is running in there". The
-// sweep reads a non-positive PID as dead without touching the process table, so
-// the dead case is decided by the fixture rather than by whatever the host
-// happens to be running.
 type surviveRecoveryPanePIDs struct {
 	noopTmuxAdapter
 	live map[string]int
@@ -150,9 +107,6 @@ func (a *surviveRecoveryPanePIDs) ListSessions(context.Context) ([]string, error
 }
 
 func (a *surviveRecoveryPanePIDs) ListWindows(_ context.Context, _ string) ([]string, error) {
-	// One window, not an idle shell, so the generic classifier has to fall
-	// through to the pane-PID question rather than calling every session orphaned
-	// on window names alone.
 	return []string{ltmux.WindowAgent}, nil
 }
 
@@ -179,9 +133,6 @@ func (a *surviveRecoveryPanePIDs) wasKilled(name string) bool {
 	return false
 }
 
-// surviveRecoveryNoProcesses answers the sweep's process-level passes with an
-// empty list, so the test never shells out to ps or pgrep and never depends on
-// what else is running on the host.
 type surviveRecoveryNoProcesses struct{}
 
 var (
@@ -244,8 +195,6 @@ func TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne(t *testing.T)
 	}
 
 	adapter := &surviveRecoveryPanePIDs{live: map[string]int{
-		// This process. The sweep asks the operating system whether the pane's PID
-		// is alive, and this is the one PID a test can name that certainly is.
 		liveSession: os.Getpid(),
 		// Nothing is running in there any more.
 		deadSession: 0,
@@ -261,9 +210,6 @@ func TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne(t *testing.T)
 			BrLister:      surviveRecoveryNoProcesses{},
 		})
 	if err != nil {
-		// The sweep reports its non-fatal step failures through this error and the
-		// daemon proceeds anyway (PL-006). Report it and keep going, because the
-		// kills below are what this test is about.
 		t.Logf("RunOrphanSweep reported non-fatal step errors: %v", err)
 	}
 
@@ -283,11 +229,6 @@ func TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne(t *testing.T)
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The adoption pass — the recovery that is real
-// ─────────────────────────────────────────────────────────────────────────────
-
-// surviveRecoveryResetter records each bead the adoption pass reset.
 type surviveRecoveryResetter struct {
 	mu    sync.Mutex
 	beads []core.BeadID
@@ -316,10 +257,6 @@ func (r *surviveRecoveryResetter) resets() []core.BeadID {
 	return out
 }
 
-// surviveRecoveryAdapter is a tmux adapter that knows about exactly the
-// sessions it was given. The adoption pass asks it one question — which
-// sessions are live — so everything else comes from the package's shared
-// noopTmuxAdapter and a silent no-op is the honest answer for all of it.
 type surviveRecoveryAdapter struct {
 	noopTmuxAdapter
 	live []string
@@ -331,8 +268,6 @@ func (a *surviveRecoveryAdapter) ListSessions(context.Context) ([]string, error)
 	return a.live, nil
 }
 
-// surviveRecoveryProject writes one run registry record into a fresh project
-// directory and returns the directory.
 func surviveRecoveryProject(t *testing.T, rec runpkg.Record) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -368,7 +303,6 @@ func TestRunSessionAdoption_ASweptSessionIsAdoptedAsDeadAndItsBeadGoesBackOnTheQ
 	})
 
 	resetter := &surviveRecoveryResetter{}
-	// The sweep already killed it, so the server no longer lists it.
 	adapter := &surviveRecoveryAdapter{live: []string{
 		lifecycle.TmuxSessionName(surviveRecoveryHash, "default"),
 	}}
@@ -503,8 +437,6 @@ func TestRunSessionAdoption_ARecordWithNoSessionNameFailsClosed(t *testing.T) {
 	})
 
 	resetter := &surviveRecoveryResetter{}
-	// Every session in the world is live. Only the missing NAME can make this
-	// record dead.
 	adapter := &surviveRecoveryAdapter{live: []string{
 		surviveRecoveryRunSessionName(t),
 		lifecycle.TmuxSessionName(surviveRecoveryHash, "default"),
@@ -520,10 +452,6 @@ func TestRunSessionAdoption_ARecordWithNoSessionNameFailsClosed(t *testing.T) {
 		t.Error("partial record was removed")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The record the whole recovery depends on
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName states the
 // storage contract the passes above consume: a record written under a run id is
@@ -568,21 +496,12 @@ func TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName(t *testing.
 			got.SessionName, runSession)
 	}
 
-	// The record is on disk under the run id, which is how a later boot with no
-	// memory of this run finds it at all.
 	path := filepath.Join(projectDir, ".harmonik", "runs", surviveRecoveryRunID+".json")
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Errorf("no record at %s: %v — a later boot enumerates this directory and would find nothing", path, statErr)
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The live half: what finally settles a run that outlived the daemon
-// ─────────────────────────────────────────────────────────────────────────────
-
-// surviveRecoveryFadingAdapter lists the run's session until it is asked once,
-// then stops. That is a session whose agent finishes shortly after the new
-// daemon adopted it.
 type surviveRecoveryFadingAdapter struct {
 	noopTmuxAdapter
 	mu    sync.Mutex
@@ -654,13 +573,6 @@ func TestRunSessionAdoption_TheLiveMonitorGivesTheBeadBackWhenTheAgentFinallyExi
 	}
 }
 
-// legacyRunRecord reads one schema-v1 run record through runpkg.ScanRegistry,
-// the only reader production has for these bytes. It returns runpkg.ErrNotFound
-// when the registry holds no record for runID, so a caller can tell an absent
-// record from an unreadable registry.
-//
-// ScanRegistry fails closed: an entry it cannot classify makes the whole read an
-// error, not a short list. Adoption sees the same thing, so the tests must too.
 func legacyRunRecord(projectDir, runID string) (runpkg.Record, error) {
 	snapshot, err := runpkg.ScanRegistry(projectDir)
 	if err != nil {
@@ -674,25 +586,11 @@ func legacyRunRecord(projectDir, runID string) (runpkg.Record, error) {
 	return runpkg.Record{}, runpkg.ErrNotFound
 }
 
-// runRecordFileExists reports whether the registry file for runID is still on
-// disk. Some cases write a run identity that ScanRegistry refuses to classify,
-// and whether that file survives is the fact under test, so these assertions
-// read the path and not the reader.
 func runRecordFileExists(projectDir, runID string) bool {
 	_, err := os.Stat(filepath.Join(projectDir, ".harmonik", "runs", runID+".json"))
 	return err == nil
 }
 
-// rawRunRecord decodes the registry file for runID WITHOUT the identity rules
-// that runpkg.ScanRegistry applies. It exists so a test can say which way a
-// record failed.
-//
-// legacyRunRecord fails closed and returns one error for several different
-// defects: nothing was written, the run id has no UUID version, the session
-// name is empty, the start time is zero. Those need different fixes, and a
-// test that only reports the reader's refusal sends the next reader to the
-// wrong place. Assert readability with legacyRunRecord, then name the broken
-// field from this record.
 func rawRunRecord(projectDir, runID string) (runpkg.Record, error) {
 	//nolint:gosec // G304: the path is t.TempDir()-based and test-controlled.
 	data, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "runs", runID+".json"))

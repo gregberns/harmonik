@@ -2,20 +2,6 @@ package workspace
 
 import "errors"
 
-// Error taxonomy for the workspace subsystem — workspace-model.md §8.
-//
-// Each sentinel names one of the twelve error classes that the workspace manager
-// (S06) MUST classify and route downstream. Three dimensions are fixed for every
-// class:
-//
-//   - Triggered-when — the detection condition the daemon observes.
-//   - Workspace transition — the lifecycle-state consequence (or absence thereof).
-//   - Downstream routing — where the error propagates after detection.
-//
-// Callers that need to inspect the class string (e.g. for event-bus payloads)
-// use [Class]. errors.Is walks the Unwrap chain, so any error that wraps one
-// of these sentinels at any depth is correctly identified.
-
 // ErrWorkspaceAlreadyExists is returned when create_workspace observes an
 // existing directory at the canonical worktree path.
 //
@@ -241,18 +227,6 @@ func Class(err error) string {
 	}
 }
 
-// withCleanupErrs annotates cause with any failures reported by the cleanup
-// steps that ran on an error path (temp-file Close, temp-file Remove, …).
-//
-// Cleanup failures used to be discarded with `_ =`, which hides the exact
-// symptom operators later see: a rename/link failed AND its temp file could not
-// be removed, so the next attempt trips over the leftover. Joining them keeps
-// that second failure visible.
-//
-// cause is returned unchanged when every cleanup step succeeded, so the common
-// path preserves the original error's message and identity verbatim. When a
-// cleanup step did fail, the result is an [errors.Join] of cause first and the
-// failures after it — errors.Is/As still find every sentinel cause wraps.
 func withCleanupErrs(cause error, cleanup ...error) error {
 	joined := make([]error, 0, len(cleanup)+1)
 	joined = append(joined, cause)

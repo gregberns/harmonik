@@ -2,14 +2,6 @@
 
 package daemon
 
-// handlerpause_sigusr1_bdvae_export_test.go — test-seam exports for the
-// SIGUSR1-based external-trigger resume (hk-bdvae).
-//
-// Build-constrained to !windows because SignalResumeWatcher uses syscall.SIGUSR1
-// which is not available on Windows.
-//
-// Bead ref: hk-bdvae.
-
 import "context"
 
 // ExportedSignalResumeWatcherHandle exposes SignalResumeWatcher.handleSignalResume

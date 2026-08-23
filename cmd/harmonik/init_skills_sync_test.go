@@ -1,14 +1,5 @@
 package main
 
-// init_skills_sync_test.go — sync-guard: embedded fleet skill files must be
-// byte-identical to their canonical counterparts in .claude/skills/.
-//
-// If this test fails, re-sync the out-of-date file with:
-//
-//	cp .claude/skills/<skill>/<file> cmd/harmonik/assets/skills/<skill>/<file>
-//
-// Bead ref: hk-7iyh (fleet-portability T11).
-
 import (
 	"bytes"
 	"os"
@@ -30,9 +21,6 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 		t.Fatalf("read embedded assets/skills: %v", err)
 	}
 
-	// Track which skills the guard actually walked, so we can assert that
-	// load-bearing additions (e.g. the orchestrator standing-rules contract)
-	// are embedded and therefore covered — not silently absent.
 	seen := map[string]bool{}
 
 	for _, skillEntry := range skillEntries {
@@ -58,7 +46,6 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 				t.Fatalf("read embedded assets/skills/%s/%s: %v", skill, fname, err)
 			}
 
-			// Navigate two levels up from cmd/harmonik/ to reach the repo root.
 			canonicalPath := filepath.Join("..", "..", ".claude", "skills", skill, fname)
 			//nolint:gosec // G304: canonicalPath is rooted at the fixed skills directory and names come from embedded assets.
 			canonical, err := os.ReadFile(canonicalPath)
@@ -77,9 +64,6 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 		}
 	}
 
-	// The orchestrator skill is the universal standing-rules contract; it must
-	// ship with the binary (and thus be guarded above). If it is missing from
-	// the embedded bundle, the sync-guard would silently never check it.
 	if !seen["orchestrator-rules"] {
 		t.Errorf("orchestrator skill is NOT embedded under assets/skills/ — " +
 			"the standing-rules contract must ship with the binary.\n" +

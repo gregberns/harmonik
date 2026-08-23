@@ -1,13 +1,5 @@
 package readiness
 
-// capture_test.go — the claims the shell makes, and the read-only ratchet.
-//
-// The headline claim of this package is a negative one: assembling readiness
-// evidence never changes fleet ledger state. A negative claim is satisfied for
-// free by any environment where nothing happens, so each test below pairs it
-// with positive evidence that the machinery actually ran, and the guard that
-// checks for a write is itself put through a failing case.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,22 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ledgerRecorder is a fake ledger that logs the verb of every call it receives,
-// in the shape those calls take when they reach `br`.
-//
-// It deliberately implements MORE than [BeadReader]. CloseBead and CreateBead
-// are here even though the port declares no such methods, and that is the whole
-// point of the read-only test below. Go lets a function widen a narrow
-// interface at runtime —
-//
-//	if w, ok := ledger.(interface{ CloseBead(context.Context, core.BeadID) error }); ok {
-//		_ = w.CloseBead(ctx, id)
-//	}
-//
-// — and that dodge compiles, reads as local and harmless, and defeats the whole
-// read-only guarantee with nothing else going red. A recorder that could only
-// record reads would make "no write happened" unfalsifiable. This one can
-// record a write, so only the production code's restraint keeps the log clean.
 type ledgerRecorder struct {
 	beads map[core.BeadID]core.BeadRecord
 	calls []string
@@ -67,9 +43,6 @@ func (r *ledgerRecorder) CreateBead(_ context.Context, title string) (core.BeadI
 	return "hk-new", nil
 }
 
-// mutatingCalls returns every logged call whose verb can change a bead. It is a
-// plain function so the guard itself can be tested; see the sub-test in
-// TestCapture_MakesNoLedgerCallThatCouldChangeABead.
 func mutatingCalls(calls []string) []string {
 	mutating := []string{"close ", "reopen ", "claim ", "create ", "update ", "delete ", "tombstone "}
 	var found []string
@@ -113,8 +86,6 @@ func captureRequest() CaptureRequest {
 	}
 }
 
-// manyItemCaptureRequest selects three items instead of one and states a run
-// shape to match. It is the request the old one-selection field could not hold.
 func manyItemCaptureRequest() CaptureRequest {
 	req := captureRequest()
 	req.Posture = Posture{Local: true, ItemCount: 3, Concurrency: 3}
@@ -164,8 +135,6 @@ func TestCapture_MakesNoLedgerCallThatCouldChangeABead(t *testing.T) {
 		t.Errorf("capture made ledger calls that can change a bead: %v", got)
 	}
 
-	// Positive evidence that the recorder really would have logged a write, so
-	// the empty result above is restraint and not a blind spot.
 	t.Run("the recorder logs a write when it takes one", func(t *testing.T) {
 		probe := recorderWithCandidates()
 		if err := probe.CloseBead(context.Background(), "hk-canary"); err != nil {
@@ -205,8 +174,6 @@ func TestCapture_FailsWhenACandidateCannotBeRead(t *testing.T) {
 	if _, err := Capture(context.Background(), rec, captureRequest()); err == nil {
 		t.Fatal("Capture succeeded with an unreadable candidate")
 	}
-	// Positive evidence that it failed at the right point: the two readable
-	// candidates ahead of it were still read.
 	if len(rec.calls) != 3 {
 		t.Errorf("ledger calls = %v, want the two good reads then the failing one", rec.calls)
 	}
@@ -314,13 +281,8 @@ func TestReadTerminalIntents_ListsEveryPendingEntrySortedByKey(t *testing.T) {
 	if err := os.MkdirAll(intentDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// The file names are deliberately in the OPPOSITE order to the keys.
-	// os.ReadDir already returns entries sorted by file name, so a fixture whose
-	// file order matched its key order would pass with the sort deleted — the
-	// first draft of this test did exactly that and proved nothing.
 	writeIntent(t, intentDir, "01-first-on-disk.json", "zulu-key", "hk-two", core.TerminalOpClose)
 	writeIntent(t, intentDir, "02-second-on-disk.json", "alpha-key", "hk-one", core.TerminalOpClaim)
-	// A non-JSON file in the same directory must not become a pending entry.
 	if err := os.WriteFile(filepath.Join(intentDir, "notes.txt"), []byte("scratch"), 0o600); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}
@@ -369,8 +331,6 @@ func TestWriteSnapshot_LeavesAFileTheAssessorCanDecode(t *testing.T) {
 
 func writeIntent(t *testing.T, dir, file, key string, bead core.BeadID, op core.TerminalOp) {
 	t.Helper()
-	// A claim or close entry must carry a run and a transition, so the fixture
-	// derives both from the key: fixed input, fixed IDs, no clock.
 	id := uuid.NewSHA1(uuid.Nil, []byte(key))
 	entry := core.IntentLogEntry{
 		IdempotencyKey:    key,

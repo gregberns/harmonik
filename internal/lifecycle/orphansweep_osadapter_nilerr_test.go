@@ -39,8 +39,5 @@ func installListerTmuxFixture(t *testing.T, output string, exitCode int) {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write tmux fixture: %v", err)
 	}
-	// Prepend rather than replace, matching the sibling fixture in
-	// internal/lifecycle/tmux: a bare replacement leaves the script's own
-	// `/bin/sh` lookup and any helper the test shells out to unresolvable.
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

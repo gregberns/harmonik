@@ -1,16 +1,5 @@
 package workspace
 
-// orphansweep_h2_test.go — H2 / H2b regressions.
-//
-// H2: a corrupt/truncated lease.lock must be treated as "lock present, state
-// unknown" (fail-safe), NEVER as absent. Mistaking it for absent routes the
-// worktree to NoLock → RemoveAgedNoLockWorktrees force-removes a possibly-live
-// worktree.
-//
-// H2b: RemoveAgedNoLockWorktrees must derive activity from the newest file mtime
-// WITHIN the tree, not the top-dir mtime, so an in-place file edit (which never
-// bumps the top-dir mtime) protects a worktree from age-based removal.
-
 import (
 	"os"
 	"path/filepath"
@@ -30,7 +19,6 @@ func TestH2_DiscoverWorktrees_CorruptLock_Unreadable(t *testing.T) {
 	}
 	worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-	// Write a truncated / non-JSON lease.lock (corrupt).
 	leaseLockPath := LeaseLockPath(worktreePath)
 	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -93,13 +81,11 @@ func TestH2_SweepStaleLeaseLocks_CorruptLock_NotNoLock(t *testing.T) {
 			t.Errorf("corrupt-lock worktree %q lease-lock was removed; want left intact", worktreePath)
 		}
 	}
-	// The lock file must still be present (not removed).
 	if _, statErr := os.Stat(leaseLockPath); statErr != nil {
 		t.Errorf("corrupt lock file removed by sweep: %v", statErr)
 	}
 }
 
-// setTreeMTime sets every entry (dir + files) under root to modTime.
 func setTreeMTime(t *testing.T, root string, modTime time.Time) {
 	t.Helper()
 	err := filepath.Walk(root, func(path string, _ os.FileInfo, err error) error {
@@ -125,20 +111,14 @@ func TestH2b_RemoveAgedNoLockWorktrees_InPlaceEditProtects(t *testing.T) {
 	}
 	worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-	// Age the ENTIRE tree (including the top dir) to 2h ago.
 	old := time.Now().Add(-2 * time.Hour)
 	setTreeMTime(t, worktreePath, old)
 
-	// Simulate an in-place edit: write to an existing file WITHOUT touching the
-	// top-dir mtime (writing to an existing file does not change the parent dir
-	// mtime). README exists from tempRepo's initial commit.
 	editPath := filepath.Join(worktreePath, "README")
 	if err := os.WriteFile(editPath, []byte("edited in place\n"), 0o600); err != nil {
 		t.Fatalf("in-place edit: %v", err)
 	}
 
-	// maxAge=1h: top-dir mtime (2h) is older, but the in-place edit is recent, so
-	// the worktree MUST be protected (not removed).
 	result := RemoveAgedNoLockWorktrees(t.Context(), repo, []string{worktreePath}, time.Hour, nil)
 	if len(result.Removed) != 0 {
 		t.Errorf("in-place-edited worktree removed: %v; want protected by recent file mtime", result.Removed)

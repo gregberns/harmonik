@@ -1,12 +1,5 @@
 package main
 
-// schedule_cmd_coverage_test.go — behavior tests for the `harmonik schedule`
-// verb surface not already covered by schedule_parse_test.go: the top-level
-// verb router, store resolution, and the add/list/remove/enable/disable/run-now
-// verbs driven against a real on-disk .harmonik/schedules.json under a temp
-// project dir. No daemon is required — every verb mutates or reads the file
-// directly, which is the whole point of the schedule CLI.
-
 import (
 	"io"
 	"os"
@@ -16,9 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// captureSchedIO redirects os.Stdout+os.Stderr around fn and returns their
-// combined text alongside fn's int return, so exit-code truth tables can also
-// assert on the message the operator sees.
 func captureSchedIO(t *testing.T, fn func() int) (out string, code int) {
 	t.Helper()
 	oldOut, oldErr := os.Stdout, os.Stderr
@@ -69,8 +59,6 @@ func TestRunScheduleSubcommand_Routing(t *testing.T) {
 }
 
 func TestResolveScheduleStore(t *testing.T) {
-	// An explicit project dir with no schedules.json yet resolves cleanly to an
-	// empty store (absent file is not an error, per Store.loadFromDisk).
 	dir := t.TempDir()
 	store, code := resolveScheduleStore(dir)
 	if code != 0 {
@@ -85,8 +73,6 @@ func TestResolveScheduleStore(t *testing.T) {
 }
 
 func TestRunScheduleAdd_ValidationErrors(t *testing.T) {
-	// Each of these must fail BEFORE touching any store, so no --project is
-	// needed and the temp dir stays untouched.
 	tests := []struct {
 		name    string
 		args    []string
@@ -130,7 +116,6 @@ func TestRunScheduleAdd_Command_Persists(t *testing.T) {
 	if !strings.Contains(out, "added: rotate (every@5m, action=command, enabled)") {
 		t.Errorf("unexpected add output %q", out)
 	}
-	// Re-read the file through a fresh store to confirm the job round-tripped.
 	store, c := resolveScheduleStore(dir)
 	if c != 0 {
 		t.Fatalf("resolve after add: code %d", c)
@@ -170,7 +155,6 @@ func TestRunScheduleAdd_SpawnCrew_Persists(t *testing.T) {
 	}
 }
 
-// seedJob adds one enabled every@5m command job for the mutating-verb tests.
 func seedJob(t *testing.T, dir, id string) {
 	t.Helper()
 	args := []string{"--id", id, "--schedule", "every@5m", "--action", "command", "--project", dir, "--", "echo", id}
@@ -183,7 +167,6 @@ func seedJob(t *testing.T, dir, id string) {
 func TestRunScheduleList(t *testing.T) {
 	dir := t.TempDir()
 
-	// Empty store — the "(no scheduled jobs)" happy path.
 	out, code := captureSchedIO(t, func() int { return runScheduleList([]string{"--project", dir}) })
 	if code != 0 || !strings.Contains(out, "(no scheduled jobs)") {
 		t.Fatalf("empty list: code=%d out=%q", code, out)
@@ -191,19 +174,16 @@ func TestRunScheduleList(t *testing.T) {
 
 	seedJob(t, dir, "alpha")
 
-	// Human table lists the job id and its action summary.
 	out, code = captureSchedIO(t, func() int { return runScheduleList([]string{"--project", dir}) })
 	if code != 0 || !strings.Contains(out, "alpha") || !strings.Contains(out, "command: echo alpha") {
 		t.Fatalf("human list: code=%d out=%q", code, out)
 	}
 
-	// --json emits one JSON object per line containing the id.
 	out, code = captureSchedIO(t, func() int { return runScheduleList([]string{"--json", "--project", dir}) })
 	if code != 0 || !strings.Contains(out, `"id":"alpha"`) {
 		t.Fatalf("json list: code=%d out=%q", code, out)
 	}
 
-	// Unexpected argument is a plain arg error.
 	out, code = captureSchedIO(t, func() int { return runScheduleList([]string{"--bogus"}) })
 	if code != 1 || !strings.Contains(out, "unexpected argument") {
 		t.Fatalf("bad-arg list: code=%d out=%q", code, out)
@@ -213,7 +193,6 @@ func TestRunScheduleList(t *testing.T) {
 func TestRunScheduleRemove(t *testing.T) {
 	dir := t.TempDir()
 
-	// Removing an absent id is an error naming the missing id.
 	out, code := captureSchedIO(t, func() int { return runScheduleRemove([]string{"ghost", "--project", dir}) })
 	if code != 1 || !strings.Contains(out, "no such job \"ghost\"") {
 		t.Fatalf("remove absent: code=%d out=%q", code, out)
@@ -234,7 +213,6 @@ func TestRunScheduleEnableDisable(t *testing.T) {
 	dir := t.TempDir()
 	seedJob(t, dir, "gamma")
 
-	// Disable then re-enable, asserting the persisted flag each time.
 	out, code := captureSchedIO(t, func() int { return runScheduleEnableDisable([]string{"gamma", "--project", dir}, false) })
 	if code != 0 || !strings.Contains(out, "disabled: gamma") {
 		t.Fatalf("disable: code=%d out=%q", code, out)
@@ -253,7 +231,6 @@ func TestRunScheduleEnableDisable(t *testing.T) {
 		t.Error("job should be enabled after enable")
 	}
 
-	// Absent id is an error under both verbs.
 	out, code = captureSchedIO(t, func() int { return runScheduleEnableDisable([]string{"ghost", "--project", dir}, true) })
 	if code != 1 || !strings.Contains(out, "no such job \"ghost\"") {
 		t.Fatalf("enable absent: code=%d out=%q", code, out)
@@ -263,7 +240,6 @@ func TestRunScheduleEnableDisable(t *testing.T) {
 func TestRunScheduleRunNow(t *testing.T) {
 	dir := t.TempDir()
 
-	// Absent id → error.
 	out, code := captureSchedIO(t, func() int { return runScheduleRunNow([]string{"ghost", "--project", dir}) })
 	if code != 1 || !strings.Contains(out, "no such job \"ghost\"") {
 		t.Fatalf("run-now absent: code=%d out=%q", code, out)

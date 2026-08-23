@@ -1,15 +1,5 @@
 package main
 
-// comms_send_test.go — client-hop contract tests for `harmonik comms send`.
-//
-// The stdout of a successful send is an API: the daemon-minted event id is what
-// the sender quotes back as --reply-to, what an operator greps for in
-// events.jsonl, and the only handle the sender ever gets on the message it just
-// wrote.
-//
-// Every test passes --no-wake. A directed send wakes the recipient's tmux pane
-// by default, and a test must never reach for the operator's real tmux server.
-
 import (
 	"net"
 	"os"
@@ -18,19 +8,12 @@ import (
 	"testing"
 )
 
-// clearCommsSessionEnv removes the ambient identity so a test does not inherit
-// the operator's own session token, which would add a session_id to the payload
-// and run two-captains conflict detection over a real events.jsonl.
 func clearCommsSessionEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("HARMONIK_SESSION_ID", "")
 	t.Setenv("HARMONIK_RUN_ID", "")
 	t.Setenv("HARMONIK_AGENT", "")
 }
-
-// ---------------------------------------------------------------------------
-// The minted event id is the whole of stdout
-// ---------------------------------------------------------------------------
 
 // TestCommsSend_PrintsMintedEventIDOnStdout verifies that a successful send
 // writes the daemon-minted event id, and only that, to stdout. A sender needs
@@ -44,8 +27,6 @@ func TestCommsSend_PrintsMintedEventIDOnStdout(t *testing.T) {
 		"ok":     true,
 		"result": map[string]any{"event_id": minted},
 	}))
-	// Declare the recipient. A send to a name this project knows nothing about
-	// exits 1 (hk-zj9nw), and this test is about the stdout of a DELIVERED send.
 	if err := os.MkdirAll(filepath.Join(d.Dir, ".harmonik", "agents", "alice"), 0o750); err != nil {
 		t.Fatalf("declare recipient alice: %v", err)
 	}
@@ -105,7 +86,6 @@ func TestCommsSend_ThreadsReplyToAndTopic(t *testing.T) {
 	if got := commsStringField(payload, "topic"); got != "status" {
 		t.Errorf("comms-send payload topic = %q, want %q", got, "status")
 	}
-	// The reply pointer is in_reply_to on the wire, matching the recv output key.
 	if got := commsStringField(payload, "in_reply_to"); got != replyTo {
 		t.Errorf("comms-send payload in_reply_to = %q, want %q — --reply-to must thread under the same key recv emits", got, replyTo)
 	}
@@ -137,10 +117,6 @@ func TestCommsSend_BroadcastAddressesTheStarSentinel(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Waking the recipient is the default for a directed send
-// ---------------------------------------------------------------------------
-
 // TestCommsShouldWake_DirectedByDefault pins the wake decision. Durable
 // delivery is only actionable if an idle agent is nudged, so a directed send
 // wakes unless the caller opts out; a broadcast never wakes.
@@ -161,10 +137,6 @@ func TestCommsShouldWake_DirectedByDefault(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Daemon down is 17, not 1
-// ---------------------------------------------------------------------------
 
 // TestCommsSendDaemonDown_ExitsSeventeen verifies that a stopped daemon gives
 // the shared daemon-down code. Callers read exit 1 as "your arguments were
@@ -190,10 +162,6 @@ func TestCommsSendDaemonDown_ExitsSeventeen(t *testing.T) {
 		t.Errorf("comms send with no daemon: exit = %d, want 17 (daemon down, not an argument error)", code)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Flag validation happens before the dial
-// ---------------------------------------------------------------------------
 
 // TestCommsSend_FlagValidationExitCodes verifies that every bad flag
 // combination exits 1 and never reaches the socket. The socket given is a live

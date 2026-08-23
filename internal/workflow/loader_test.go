@@ -14,7 +14,6 @@ import (
 )
 
 func TestLoadDotWorkflow_Success(t *testing.T) {
-	// Minimal valid .dot file per WG-033/035/027.
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
@@ -74,7 +73,6 @@ func TestLoadDotWorkflow_ParseError(t *testing.T) {
 }
 
 func TestLoadDotWorkflow_ValidationError(t *testing.T) {
-	// Parseable but invalid: missing start_node, terminal_node_ids, version.
 	src := `digraph bad {
 		schema_version="1";
 		workflow_id="loader-invalid";
@@ -143,14 +141,11 @@ func TestLoadDotWorkflowWithParamsRejectsInvalidWorkflowID(t *testing.T) {
 	}
 }
 
-// ── CP-056: policy_ref deprecation warning on stderr ─────────────────────────
-
 // TestLoadDotWorkflow_PolicyRefDeprecationWarning verifies (a): when a workflow
 // declares a policy_ref attribute (deprecated per CP-056), LoadDotWorkflow prints
 // a deprecation warning to stderr that cites CP-056 and names the typed
 // replacement attributes per CP-055.
 func TestLoadDotWorkflow_PolicyRefDeprecationWarning(t *testing.T) {
-	// A workflow node with policy_ref — rejected at parse time per CP-056 / WG-031.
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
@@ -170,23 +165,19 @@ func TestLoadDotWorkflow_PolicyRefDeprecationWarning(t *testing.T) {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
-	// Redirect stderr to capture the deprecation warning.
 	var loadErr error
 	stderrOutput := loaderCaptureStderr(t, func() {
 		_, loadErr = workflow.LoadDotWorkflow(dotPath)
 	})
 
-	// LoadDotWorkflow must fail (policy_ref is a strict error per CP-056).
 	if loadErr == nil {
 		t.Fatal("expected load error for policy_ref, got nil")
 	}
 
-	// Deprecation warning must cite CP-056.
 	if !strings.Contains(stderrOutput, "CP-056") {
 		t.Errorf("expected CP-056 in stderr deprecation warning, got: %q", stderrOutput)
 	}
 
-	// Deprecation warning must name at least one typed replacement.
 	for _, replacement := range []string{"gate_ref", "skills_ref", "freedom_profile_ref"} {
 		if strings.Contains(stderrOutput, replacement) {
 			return // at least one named — passes
@@ -219,7 +210,6 @@ func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
-	// Suppress stderr deprecation output for this test.
 	var loadErr error
 	loaderCaptureStderr(t, func() {
 		_, loadErr = workflow.LoadDotWorkflow(dotPath)
@@ -229,22 +219,16 @@ func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
 		t.Fatal("expected error for policy_ref workflow, got nil")
 	}
 
-	// CP-056 mandate: must wrap ErrDeterministic.
 	if !errors.Is(loadErr, handlercontract.ErrDeterministic) {
 		t.Errorf("expected errors.Is(err, ErrDeterministic)=true for policy_ref rejection (CP-056), got %T: %v", loadErr, loadErr)
 	}
 
-	// Must NOT be ErrWorkflowLoad (wrong error class per spec).
 	var wlErr *workflow.ErrWorkflowLoad
 	if errors.As(loadErr, &wlErr) {
 		t.Errorf("expected *ErrPolicyRefRejected (not *ErrWorkflowLoad) for policy_ref rejection, got *ErrWorkflowLoad")
 	}
 }
 
-// ── CP-057: skills_ref resolution ────────────────────────────────────────────
-
-// minimalPolicy returns a minimal PolicyDocument with a single skill_sets entry
-// named "base-tools" carrying two skills — used by CP-057 resolution tests.
 func minimalPolicy() *core.PolicyDocument {
 	return &core.PolicyDocument{
 		SkillSets: []core.PolicySkillSet{
@@ -339,7 +323,6 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefUnresolved(t *testing.T) {
 // OPTIONAL on every node type per CP-057. A workflow with nodes of all four types
 // that declare no skills_ref must load successfully with zero resolved payloads.
 func TestLoadDotWorkflowWithPolicy_SkillsRefOptional(t *testing.T) {
-	// All four node types with no skills_ref.
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
@@ -416,15 +399,6 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOnGateNode(t *testing.T) {
 	}
 }
 
-// loaderCaptureStderr runs fn with os.Stderr redirected to a pipe and returns
-// everything fn wrote there.
-//
-// The two call sites this replaces each dropped the pipe's READ end on the
-// floor (`_, w, _ := os.Pipe()` in one, an unclosed `r` in the other), leaking
-// a descriptor per call, and one of them discarded os.Pipe's error outright —
-// on failure it would have assigned a nil *os.File to os.Stderr. Draining on a
-// separate goroutine also removes the latent deadlock: a writer that outruns
-// the 64 KiB pipe buffer with nobody reading blocks forever.
 func loaderCaptureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 

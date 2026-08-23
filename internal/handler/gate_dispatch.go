@@ -108,8 +108,6 @@ func DispatchGateNode(
 	evalFn GateEvalFunc,
 	bus handlercontract.EventEmitter,
 ) (*GateDispatchResult, error) {
-	// Step 1 — validate gate_ref. A missing gate_ref is a graph-authoring /
-	// configuration error, not an evaluation outcome, so it remains a Go error.
 	if !gateRef.Valid() {
 		return nil, &ErrGateDispatch{
 			NodeID: nodeID,
@@ -117,10 +115,6 @@ func DispatchGateNode(
 		}
 	}
 
-	// Step 2 — invoke the gate evaluator. Per CP-058, a Gate that cannot be
-	// evaluated returns an Outcome with status=FAILURE, a failure_class, and NO
-	// gate_decision payload. We surface that as a FAIL Outcome (not a Go error)
-	// so the cascade routes it like any other FAIL outcome.
 	decision, err := evalFn(ctx, run, nodeID, gateRef)
 	if err != nil {
 		return gateEvalFailureResult("evaluator failed: " + err.Error()), nil
@@ -132,9 +126,6 @@ func DispatchGateNode(
 		return gateEvalFailureResult("evaluator returned invalid GateDecisionPayload"), nil
 	}
 
-	// Step 3 — build the SUCCESS Outcome. Status is SUCCESS regardless of the
-	// decision (allow/deny/escalate are all successful evaluations per CP-058).
-	// PreferredLabel carries the decision so the cascade can route on it.
 	label := string(decision.Decision)
 	outcome := core.Outcome{
 		Status:         core.OutcomeStatusSuccess,
@@ -143,7 +134,6 @@ func DispatchGateNode(
 		Payload:        decision,
 	}
 
-	// Validate the complete Outcome (defense-in-depth).
 	if !outcome.Valid() {
 		return nil, &ErrGateDispatch{
 			NodeID: nodeID,
@@ -151,8 +141,6 @@ func DispatchGateNode(
 		}
 	}
 
-	// Step 4 — emit gate_decision_recorded event (CP §6.5). Only emitted when a
-	// decision was actually produced (the eval-failure path has no decision).
 	eventPayload := core.GateDecisionRecordedPayload{
 		RunID:         run.RunID,
 		NodeID:        nodeID,
@@ -175,15 +163,6 @@ func DispatchGateNode(
 	}, nil
 }
 
-// gateEvalFailureResult builds the GateDispatchResult for a Gate that could not
-// be evaluated: a FAIL Outcome with NO gate_decision payload and a
-// failure_class, per CP-058 ("A handler that cannot evaluate the Gate ... MUST
-// return an Outcome with status = FAILURE and a failure_class ...; that Outcome
-// MUST NOT carry a gate_decision payload"). The class is `structural` — a Gate
-// whose evaluator could not run is an environment/graph-shape failure per the
-// workflow-graph.md §7 taxonomy. The Notes field records the reason for
-// observability. No gate_decision_recorded event is emitted (there is no
-// decision to record).
 func gateEvalFailureResult(reason string) *GateDispatchResult {
 	fc := core.FailureClassStructural
 	return &GateDispatchResult{
@@ -197,7 +176,6 @@ func gateEvalFailureResult(reason string) *GateDispatchResult {
 	}
 }
 
-// emitGateEvent marshals the payload and emits it on the event bus.
 func emitGateEvent(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, payload core.GateDecisionRecordedPayload) error {
 	b, err := json.Marshal(payload)
 	if err != nil {

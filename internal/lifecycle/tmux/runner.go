@@ -96,10 +96,6 @@ type SSHRunner struct {
 	Opts []string
 }
 
-// shellQuoteArg wraps s in single quotes so a POSIX remote login shell receives
-// it as exactly one literal word — neutralising spaces, `#`-comments, tmux
-// format strings (`#{pane_id}`), and every other shell metacharacter. Embedded
-// single quotes are escaped via the standard `'\”` idiom.
 func shellQuoteArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

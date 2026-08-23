@@ -55,15 +55,6 @@ func HarmonikCrewSessionName(projectDir, agentName string) string {
 	return "harmonik-" + hash12 + "-crew-" + agentName
 }
 
-// windowAgent is the tmux window name carrying the LLM (agent) pane inside an
-// agent session, per the tmux-reorg session layout (CONTRACT.md). The keeper
-// runs in a sibling "keeper" window of the same session, so it must inject /
-// gauge / measure liveness against the AGENT window's pane — never its own.
-//
-// MUST match tmux.WindowAgent ("agent") in internal/lifecycle/tmux/windowname.go.
-// Hardcoded here because the keeper package is depguard-isolated and may NOT
-// import lifecycle (hk-ekap1 / hk-fzzc6) — same local-duplication pattern as
-// HarmonikSessionName above.
 const windowAgent = "agent"
 
 // SplitTmuxTarget splits a --tmux value into its session and window components.
@@ -127,18 +118,10 @@ func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn f
 	if sessionExistsFn == nil {
 		sessionExistsFn = tmuxSessionLive
 	}
-	// Priority 2: bare convention (captain, non-crew agents).
-	// Liveness is checked against the bare SESSION name (tmuxSessionLive uses
-	// `has-session -t =<name>`, which matches a session, not a window).
 	session := HarmonikSessionName(projectDir, agentName)
 	if sessionExistsFn(session) {
-		// Target the AGENT window's active pane, not the session's focused window.
 		return session + ":" + windowAgent
 	}
-	// Priority 3: crew convention — "harmonik-<hash>-crew-<agentName>".
-	// B4 / hk-pp1in: crew agents (e.g. admiral) were missed by the bare-only
-	// probe, causing a false no_tmux_target abort in RunOnDemand despite a
-	// healthy pane-bound watcher.
 	crewSession := HarmonikCrewSessionName(projectDir, agentName)
 	if sessionExistsFn(crewSession) {
 		return crewSession + ":" + windowAgent
@@ -146,22 +129,6 @@ func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn f
 	return ""
 }
 
-// tmuxSessionLive reports whether a tmux session with the given name is live by
-// running `tmux has-session -t "=<name>"` — exits 0 only if a session whose
-// name EXACTLY equals sessionName exists.
-//
-// Two deliberate choices, both validated by the integration test in
-// tmuxresolve_integration_test.go (hk-2ojne):
-//
-//   - has-session, NOT display-message. `tmux display-message -t <name>` exits 0
-//     even for a NONEXISTENT target — it silently falls back to the current
-//     client's session — so it returns a false positive whenever a tmux server
-//     has any attached client (the normal daemon-under-supervisor environment).
-//     `has-session` exits non-zero for an absent session, which is the liveness
-//     signal we actually want.
-//   - the "=" exact-match anchor. Without it, tmux `-t <name>` does prefix/fuzzy
-//     matching (e.g. "captai" would match a live "captain"), so resolution could
-//     latch onto the wrong session. "=<name>" forces an exact name match.
 func tmuxSessionLive(sessionName string) bool {
 	// context.Background() is appropriate: this is a synchronous, sub-second
 	// liveness probe with no caller-supplied cancellation context (the public
@@ -171,18 +138,6 @@ func tmuxSessionLive(sessionName string) bool {
 	return cmd.Run() == nil
 }
 
-// operatorActiveWindow bounds how recently a tmux client must have had keyboard
-// activity to count as an actively-engaged human operator (Refs: hk-0t5s).
-//
-// A client whose last keystroke is older than this is treated as NOT present —
-// it is the hallmark of the operator's remote-control / iOS-mobile channel,
-// whose input reaches Claude directly and NEVER passes through the tmux client,
-// so that client's `#{client_activity}` is frozen at attach time even while the
-// operator drives the session. The window is generous because it only governs
-// the genuinely-local-typist case (a remote-control attach is always stale
-// regardless of window size); 5 minutes never clobbers a human typing into the
-// pane yet lifts the permanent warn-only suppression the bare any-client probe
-// imposed under the operator's mobile workflow.
 const operatorActiveWindow = 5 * time.Minute
 
 // OperatorAttached reports whether a human operator is ACTIVELY attached to the
@@ -215,20 +170,14 @@ func OperatorAttached(target string) bool {
 	if target == "" {
 		return false
 	}
-	// context.Background(): synchronous sub-second probe, mirroring tmuxSessionLive.
 	cmd := exec.CommandContext(context.Background(), "tmux", "list-clients", "-t", target, "-F", "#{client_activity}")
 	out, err := cmd.Output()
 	if err != nil {
-		// Session absent / no server / other tmux error → fail-open (not attached).
 		return false
 	}
 	return operatorActiveSince(string(out), time.Now(), operatorActiveWindow)
 }
 
-// operatorActiveSince reports whether any tmux client in listClientsOutput (one
-// `#{client_activity}` epoch-seconds value per line) had keyboard activity
-// within window of now. Empty and unparseable lines are skipped. Pure, so the
-// human-vs-remote-control distinction is unit-testable without a live tmux.
 func operatorActiveSince(listClientsOutput string, now time.Time, window time.Duration) bool {
 	for _, line := range strings.Split(listClientsOutput, "\n") {
 		line = strings.TrimSpace(line)
@@ -246,23 +195,8 @@ func operatorActiveSince(listClientsOutput string, now time.Time, window time.Du
 	return false
 }
 
-// recentTranscriptTailBytes is the tail window for recentTranscriptTurn. Most
-// recent turns are near EOF (the transcript is append-only), so bounding the
-// read to 256 KB keeps the scan O(1) for large sessions. Refs: hk-74iyd.
 const recentTranscriptTailBytes = 256 * 1024
 
-// recentTranscriptTurn scans the tail of the Claude Code transcript JSONL for
-// sessionID under transcriptDir and returns the timestamp of the most recent
-// "real" entry whose "type" field equals role:
-//
-//   - "user":      message content is NOT exclusively tool_result items (the
-//     operator typed something, rather than Claude Code returning a tool result)
-//   - "assistant": message content includes at least one "text" item (a real
-//     response to the operator, not a pure tool_use / thinking turn)
-//
-// Returns (zero, false) when no matching entry exists or the file is unreadable.
-// Pure (no time.Now() call) — the caller compares the returned timestamp to now.
-// Refs: hk-74iyd.
 func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return time.Time{}, false
@@ -279,7 +213,6 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		}
 	}()
 
-	// Seek to the tail so the scan is O(recentTranscriptTailBytes), not O(filesize).
 	partialStart := false
 	size, seekErr := f.Seek(0, io.SeekEnd)
 	if seekErr == nil && size > recentTranscriptTailBytes {
@@ -307,8 +240,6 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		found  bool
 	)
 	sc := bufio.NewScanner(f)
-	// Transcript lines can be very large (tool results embedded inline); allow up
-	// to 16 MB per line — matching the heartbeat.go scan limit.
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	if partialStart {
 		sc.Scan() // discard the partial first line
@@ -322,7 +253,6 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		if err := json.Unmarshal(raw, &e); err != nil || e.Type != role || e.Timestamp == "" {
 			continue
 		}
-		// Extract the message.content sub-document to classify the turn.
 		var msg transcriptMessage
 		if err := json.Unmarshal(e.Message, &msg); err != nil {
 			continue
@@ -330,8 +260,6 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		if !isRealTranscriptTurn(role, msg.Content) {
 			continue
 		}
-		// Try RFC3339Nano first (Claude Code timestamps include fractional seconds),
-		// then fall back to plain RFC3339.
 		ts, parseErr := time.Parse(time.RFC3339Nano, e.Timestamp)
 		if parseErr != nil {
 			ts, parseErr = time.Parse(time.RFC3339, e.Timestamp)
@@ -343,31 +271,16 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		found = true
 	}
 	if scanErr := sc.Err(); scanErr != nil {
-		// A transcript line exceeding the 16 MB scan buffer (e.g. a huge inline
-		// tool result) halts the scan early — since the tail is walked
-		// oldest→newest, the truncation drops the NEWEST entries and returns a
-		// stale/absent turn timestamp. Surface it rather than swallowing it
-		// silently so a mis-gated cycle has a breadcrumb. Refs: hk-74iyd.
 		slog.WarnContext(context.Background(), "keeper: recentTranscriptTurn: transcript scan truncated (over-long line)",
 			"path", path, "role", role, "err", scanErr)
 	}
 	return lastTs, found
 }
 
-// isRealTranscriptTurn reports whether a transcript entry with the given role
-// is a "real" operator or agent turn:
-//
-//   - "user":      NOT exclusively tool_result content items (operator text)
-//   - "assistant": includes at least one "text" content item (real response)
-//
-// An empty or nil content is treated conservatively: real for "user" (bare
-// text), not real for "assistant" (no text visible to operator). A plain JSON
-// string content is always real (old transcript format). Refs: hk-74iyd.
 func isRealTranscriptTurn(role string, content json.RawMessage) bool {
 	if len(content) == 0 {
 		return role == "user"
 	}
-	// Plain strings include operator text and text injected through tmux.
 	if content[0] == '"' {
 		var text string
 		if json.Unmarshal(content, &text) != nil {
@@ -414,8 +327,6 @@ func isOperatorText(text string) bool {
 	if strings.HasPrefix(text, AutomationEnvelopePrefix) {
 		return false
 	}
-	// Keeper submits this command itself. Claude records it as a user turn, but
-	// it is an automation effect rather than new operator activity.
 	return !strings.HasPrefix(text, "<command-name>/session-handoff</command-name>") &&
 		!strings.HasPrefix(text, "/session-handoff ")
 }

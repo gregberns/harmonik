@@ -35,47 +35,12 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// Exit code constants for handler.Outcome.ExitCode values produced by the
-// tmux substrate's runWait poll loop.
-//
-// Background (hk-cj0gm / hk-88nno): the EPERM/ESRCH distinction matters here.
-//   - ESRCH (process not found) → process is dead → exitCodeClean
-//   - EPERM (not permitted to signal) → process is alive → continue polling
-//   - ctx-cancel with process still alive → exitCodeUnknown (daemon must NOT
-//     classify this as a clean exit — it would suppress the claude_crashed branch)
-//   - ctx-cancel with ESRCH (process gone before cancel is handled) → exitCodeClean
-//   - pane gone externally (tmux kill-window) → exitCodeUnknown (process state
-//     uncertain; workloop must use the crashed/unknown branch, not close-on-exit-0)
 const (
-	// exitCodeClean is returned when the polled process is confirmed dead via
-	// ESRCH (processDead=true) or when the tmux pane's PID is no longer
-	// resolvable and the PID was already unknown.  Triggers the
-	// close-on-exit-0 fallback in the workloop.
 	exitCodeClean = 0
 
-	// exitCodeUnknown is returned when ctx is cancelled but the process is
-	// still alive (EPERM / processDead=false), or when the pane disappears
-	// externally while the PID is known.  Prevents misclassification as a
-	// clean exit; the workloop's claude_crashed branch handles this.
 	exitCodeUnknown = -1
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// pasteInjecter — optional interface for tmux-backed substrates
-// ──────────────────────────────────────────────────────────────────────────────
-
-// pasteInjecter is the optional interface implemented by perRunSubstrate.
-//
-// After SpawnWindow returns (the pane is live), callers check whether the
-// substrate implements pasteInjecter and, if so, call WriteLastPane to deliver
-// an initial instruction to the pane via the PL-021d paste mechanism.
-//
-// Implemented by perRunSubstrate (hk-012af, hk-jfh59). NOT implemented by
-// tmuxSubstrate directly — use newPerRunSubstrate(tmuxSub) to get a substrate
-// that implements this interface with per-run pane isolation.
-//
-// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
-// Bead ref: hk-zrj83, hk-jfh59.
 type pasteInjecter interface {
 	// WriteLastPane delivers payload to the pane spawned by this run's
 	// SpawnWindow call.  bufferName MUST follow the "harmonik-<session-id>-<purpose>"
@@ -84,23 +49,6 @@ type pasteInjecter interface {
 	WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
 }
 
-// tmuxSubstrate implements handler.Substrate using a tmux.Adapter.
-//
-// The daemon composition root builds one tmuxSubstrate per daemon lifetime and
-// injects it into handler.LaunchSpec.Substrate for every agent session that
-// requires tmux hosting.
-//
-// Paste-inject operations (WriteLastPane, SendEnterToLastPane,
-// SendQuitToLastPane) are NOT implemented on tmuxSubstrate directly. Instead,
-// callers MUST wrap tmuxSubstrate in a perRunSubstrate (hk-012af) before
-// calling SpawnWindow. perRunSubstrate captures the pane target of the window
-// it spawned and routes paste-inject I/O there, ensuring per-goroutine
-// isolation under MaxConcurrent>1.
-//
-// tmuxSubstrate also tracks every window it spawns in spawnedWindows so that
-// KillAllWindows can clean them up on daemon exit or wave completion (hk-j6npz).
-//
-// All methods are safe for concurrent use.
 type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
@@ -354,9 +302,6 @@ func WithSpawnCap(n int) TmuxSubstrateOption {
 //
 // Bead ref: hk-omvan (follow-up to hk-vfeeo), hk-6yrs9, hk-pcjkp.
 func (s *tmuxSubstrate) SetSpawnCap(n int) {
-	// WithSpawnCap builds the two semaphores as a pair, so either both are set
-	// or neither is; the second check keeps that pairing explicit rather than
-	// relying on it silently.
 	if s.spawnSem == nil || s.nonTerminalSem == nil || n <= 0 {
 		return
 	}
@@ -364,55 +309,27 @@ func (s *tmuxSubstrate) SetSpawnCap(n int) {
 	defer s.capResizeMu.Unlock()
 
 	if n == s.nonTerminalSem.Capacity() {
-		// Unchanged: the requested cap is already in force, so there is
-		// nothing to move.
-		// Returning here is not a shortcut, it is the fix for a ratchet. The
-		// shrink path below re-clamps spawnSem against what is in use, and
-		// while the reserved slot is occupied that clamp lands one ABOVE the
-		// current capacity — so setting the cap to the number it already holds
-		// would admit one more session every time it was asked. Repeat it and
-		// the box climbs away from the cap the operator set. Setting a cap to
-		// the value it already has has to do nothing (hk-6yrs9).
 		return
 	}
 	if n > s.nonTerminalSem.Capacity() {
-		// Raising: widen the inner bound before the outer one.
 		s.spawnSem.SetCapacityKeepingOneFree(n + 1)
 		s.capResizeGap()
 		s.nonTerminalSem.SetCapacity(n)
 		return
 	}
-	// Lowering: narrow the outer bound before the inner one.
 	s.nonTerminalSem.SetCapacity(n)
 	s.capResizeGap()
 	s.spawnSem.SetCapacityKeepingOneFree(n + 1)
 }
 
-// capResizeGap runs the mid-resize test seam when one is installed. Production
-// leaves capResizeMid nil, so this is a nil check and nothing else.
 func (s *tmuxSubstrate) capResizeGap() {
 	if s.capResizeMid != nil {
 		s.capResizeMid()
 	}
 }
 
-// errSemaphoreAcquireTimeout is returned by resizableSemaphore.Acquire when the
-// caller-supplied timeout elapses before a slot frees up. It is unexported and
-// distinct from ErrSpawnCapTimeout: acquireSpawnSlot translates it into the
-// latter (with full spawn-cap diagnostics) at the call site.
 var errSemaphoreAcquireTimeout = errors.New("daemon: resizableSemaphore: acquire timed out")
 
-// resizableSemaphore is a counting semaphore whose capacity can change while
-// callers are blocked waiting on it (hk-omvan). A buffered Go channel cannot
-// do this — its capacity is fixed at creation — which is why the spawn cap was
-// restart-only before this bead: WithSpawnCap built a fixed-size chan once at
-// daemon startup and nothing could resize it short of recreating the
-// substrate. resizableSemaphore replaces that with a mutex + condition
-// variable: capacity is just a field SetCapacity can mutate at any time, and
-// Broadcast wakes every blocked Acquire so a raised cap takes effect
-// immediately rather than only for the next SpawnWindow call.
-//
-// All methods are safe for concurrent use.
 type resizableSemaphore struct {
 	mu       sync.Mutex
 	cond     *sync.Cond
@@ -440,19 +357,12 @@ type resizableSemaphore struct {
 	desired int
 }
 
-// newResizableSemaphore returns a resizableSemaphore with the given initial
-// capacity. Capacity may be zero or negative; TryAcquire/Acquire then always
-// block/fail until SetCapacity raises it above inUse.
 func newResizableSemaphore(capacity int) *resizableSemaphore {
 	sem := &resizableSemaphore{capacity: capacity}
 	sem.cond = sync.NewCond(&sem.mu)
 	return sem
 }
 
-// newReservingSemaphore returns a resizableSemaphore that keeps one slot free
-// for a privileged caller: SetCapacityKeepingOneFree will not shrink it to or
-// below its in-use count, and Release gives the difference back as slots are
-// returned. See keepsOneFree.
 func newReservingSemaphore(capacity int) *resizableSemaphore {
 	sem := newResizableSemaphore(capacity)
 	sem.keepsOneFree = true
@@ -483,10 +393,6 @@ func (s *resizableSemaphore) Acquire(ctx context.Context, timeout time.Duration)
 		return nil
 	}
 
-	// Bridge sync.Cond (which only wakes on Broadcast/Signal) with ctx
-	// cancellation and the optional timeout: both paths call Broadcast under
-	// mu so a blocked Wait() below reliably wakes and re-checks its exit
-	// conditions.
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
@@ -533,17 +439,6 @@ func (s *resizableSemaphore) Release() {
 	if s.inUse > 0 {
 		s.inUse--
 	}
-	// A shrink held above the asked-for capacity by the reserve gives the
-	// excess back here, as the slots that earned it are returned (hk-6yrs9).
-	// The bound is max(desired, inUse-at-the-shrink + 1), so a shrink taken
-	// while the reserve is occupied can sit ONE slot above the capacity it had
-	// before, and it comes back down as those sessions drain — not while the
-	// box stays saturated.
-	// Without this the reserve is permanent: a cap of 1 that keeps admitting
-	// seventeen sessions is not a throttle. Recomputing on release and NOT on
-	// acquire is what makes it converge — a reserve recomputed on acquire feeds
-	// itself, because each acquire would raise the capacity that admits the
-	// next one.
 	if s.keepsOneFree {
 		s.capacity = capacityKeepingOneFree(s.desired, s.inUse)
 	}
@@ -590,8 +485,6 @@ func (s *resizableSemaphore) SetCapacityKeepingOneFree(n int) {
 	s.cond.Broadcast()
 }
 
-// capacityKeepingOneFree returns the capacity that honours a request for n
-// slots while leaving one free above the inUse already granted.
 func capacityKeepingOneFree(n, inUse int) int {
 	if inUse >= n {
 		return inUse + 1
@@ -622,11 +515,6 @@ func (s *resizableSemaphore) InUse() int {
 // continues to apply.
 var ErrSpawnCapTimeout = errors.New("daemon: spawn cap acquire timed out")
 
-// defaultSpawnAcquireTimeout is the default bound on how long SpawnWindow waits
-// for a free spawn slot before failing the launch (hk-4l7zs). Generous enough to
-// absorb a normal in-flight session finishing and releasing its slot, but far
-// below the 30-min implementer commit budget so a leaked-slot wedge surfaces as
-// a prompt launch failure rather than a 30-min no_commit timeout.
 const defaultSpawnAcquireTimeout = 2 * time.Minute
 
 // ErrTmuxNewWindowTimeout is the sentinel wrapped by SpawnWindow when the
@@ -656,16 +544,6 @@ var ErrTmuxNewWindowTimeout = errors.New("daemon: tmux new-window timed out (pos
 // a crew start. A caller that wants to tell the two apart can.
 var ErrTmuxNewSessionTimeout = errors.New("daemon: tmux new-session timed out (possible hung tmux invocation)")
 
-// defaultNewWindowTimeout is the default bound on how long SpawnWindow waits for
-// the underlying `tmux new-window` call to return before treating the launch as
-// failed (hk-r1rup). The actual shell call has no inherent timeout, so a hung
-// tmux invocation (the recurring "no-spawn wedge") blocks handler.Launch
-// indefinitely: launch_initiated never fires, the run wedges at
-// launch_stall_detected → run_stale forever, holding a daemon slot until the
-// 30-min implementer budget expires and it fails no_commit. Bounding the call
-// converts that indefinite hang into a prompt, observable launch failure. Far
-// below the 30-min budget so the wedge surfaces promptly, but generous enough to
-// absorb a momentarily-busy tmux server under load.
 const defaultNewWindowTimeout = 60 * time.Second
 
 // WithSpawnAcquireTimeout sets the bound on how long SpawnWindow blocks waiting
@@ -754,10 +632,6 @@ func WithCrewProjectHash(h core.ProjectHash) TmuxSubstrateOption {
 	}
 }
 
-// defaultSessionKeepaliveInterval is the default period between EnsureSession
-// probes in RunSessionKeepalive (hk-9ptu). Short enough that a killed session
-// is recreated well within the 30-min implementer commit budget; long enough
-// that the tmux round-trip overhead is negligible.
 const defaultSessionKeepaliveInterval = 30 * time.Second
 
 // WithSessionKeepalive marks the substrate as owning its spawn-target session
@@ -821,13 +695,7 @@ func (s *tmuxSubstrate) RunSessionKeepalive(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Idempotent: if the session exists, EnsureSession returns nil
-			// (duplicate-session treated as success). If the session was killed,
-			// EnsureSession recreates it so the next SpawnWindow succeeds without
-			// requiring the hk-yaj retry path.
 			if ensureErr := se.EnsureSession(ctx, s.sessionName, ""); ensureErr != nil {
-				// The session stays absent, so the next SpawnWindow fails. Say so
-				// rather than let the next spawn look like the first sign of trouble.
 				slog.WarnContext(ctx, "daemon: tmux substrate: ensure session on keepalive tick",
 					"err", ensureErr, "session", s.sessionName)
 			}
@@ -835,24 +703,6 @@ func (s *tmuxSubstrate) RunSessionKeepalive(ctx context.Context) {
 	}
 }
 
-// setDiagnosticHooks installs the spawn-cap-blocked and new-window-timed-out
-// diagnostic callbacks AFTER the substrate has been constructed (hk-oihnf).
-//
-// # Why a post-construction setter
-//
-// The substrate is built by the composition root (cmd/harmonik) inside
-// daemon.Config BEFORE daemon.Start runs — but the event bus the hooks must emit
-// onto does not exist until Start builds it. The WithSpawnCapBlockedHook /
-// WithNewWindowTimedOutHook construction options therefore could not be wired at
-// the call site (no bus in scope), which is exactly why s.spawnCapBlocked /
-// s.newWindowTimedOut were left nil and the diagnostic events never fired from
-// the substrate layer. Start probes cfg.Substrate for this setter once the bus is
-// live and installs hooks that emit the non-run-scoped diagnostic events. (The
-// run-scoped, runID-bearing emission already happens in the dispatch paths —
-// workloop / reviewloop / dot_cascade — via errors.Is on the structural launch
-// error.)
-//
-// Either fn may be nil to leave that hook unset.
 func (s *tmuxSubstrate) setDiagnosticHooks(spawnCapBlocked func(waited time.Duration, inUse, capSize int), newWindowTimedOut func(waited time.Duration)) {
 	if spawnCapBlocked != nil {
 		s.spawnCapBlocked = spawnCapBlocked
@@ -862,21 +712,12 @@ func (s *tmuxSubstrate) setDiagnosticHooks(spawnCapBlocked func(waited time.Dura
 	}
 }
 
-// substrateDiagnosticHookSetter is the optional interface a Substrate may
-// implement to receive the spawn-cap-blocked / new-window-timed-out diagnostic
-// hooks after construction (hk-oihnf). daemon.Start probes cfg.Substrate for this
-// interface once the event bus is live and wires hooks that emit the diagnostic
-// events. *tmuxSubstrate implements it.
 type substrateDiagnosticHookSetter interface {
 	setDiagnosticHooks(spawnCapBlocked func(waited time.Duration, inUse, capSize int), newWindowTimedOut func(waited time.Duration))
 }
 
-// Compile-time assertion: tmuxSubstrate implements handler.Substrate.
-// Note: tmuxSubstrate does NOT implement pasteInjecter/enterSender/quitSender —
-// those are implemented by perRunSubstrate (hk-jfh59).
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
 
-// Compile-time assertion: tmuxSubstrate implements windowCleaner.
 var _ windowCleaner = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
@@ -903,17 +744,9 @@ func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string, opts ...TmuxSubs
 	for _, opt := range opts {
 		opt(sub)
 	}
-	// hk-4l7zs: when a spawn cap is configured but no explicit acquire timeout
-	// was supplied, apply the default bound so a leaked slot surfaces as a prompt
-	// launch failure instead of an indefinite SpawnWindow hang.
 	if sub.spawnSem != nil && sub.spawnAcquireTimeout == 0 {
 		sub.spawnAcquireTimeout = defaultSpawnAcquireTimeout
 	}
-	// hk-r1rup: when no explicit new-window timeout was supplied, apply the
-	// default bound so a hung `tmux new-window` call surfaces as a prompt launch
-	// failure instead of an indefinite SpawnWindow hang. Unlike the spawn-cap
-	// acquire timeout this is NOT gated on a configured cap — the no-spawn wedge
-	// can hang any new-window call regardless of whether a spawn cap is set.
 	if sub.newWindowTimeout == 0 {
 		sub.newWindowTimeout = defaultNewWindowTimeout
 	}
@@ -947,9 +780,6 @@ func (s *tmuxSubstrate) SpawnCapSize() int {
 	return s.nonTerminalSem.Capacity()
 }
 
-// substrateSpawnStats reports (slotsInUse, capSize) for a substrate that is, or
-// wraps, a *tmuxSubstrate (hk-4l7zs). Returns (0, 0) for other substrates.
-// Used by the daemon launch paths to enrich the spawn_cap_blocked event.
 func substrateSpawnStats(sub handler.Substrate) (slotsInUse, capSize int) {
 	switch t := sub.(type) {
 	case *tmuxSubstrate:
@@ -962,11 +792,6 @@ func substrateSpawnStats(sub handler.Substrate) (slotsInUse, capSize int) {
 	return 0, 0
 }
 
-// releaseSpawnSlotFor returns the slot(s) acquired by a spawn back to the
-// semaphores. For non-terminal sessions it releases both spawnSem and
-// nonTerminalSem. For terminal sessions it releases only spawnSem (the reserved
-// slot). Called exactly once per session via the closure in
-// tmuxSubstrateSession.releaseSlot. No-op when spawnSem is nil (hk-x882o).
 func (s *tmuxSubstrate) releaseSpawnSlotFor(terminal bool) {
 	if s.spawnSem == nil {
 		return
@@ -977,13 +802,6 @@ func (s *tmuxSubstrate) releaseSpawnSlotFor(terminal bool) {
 	}
 }
 
-// makeReleaseSlotFn returns a closure that releases the slot(s) acquired for a
-// spawn. For non-terminal sessions the closure releases both spawnSem and
-// nonTerminalSem. For terminal sessions it releases only spawnSem. The closure
-// is stored in tmuxSubstrateSession.releaseSlot and called exactly once inside
-// killOnce.Do (hk-x882o).
-//
-// Returns a no-op when spawnSem is nil (no cap configured).
 func (s *tmuxSubstrate) makeReleaseSlotFn(terminal bool) func() {
 	if s.spawnSem == nil {
 		return func() {}
@@ -993,56 +811,12 @@ func (s *tmuxSubstrate) makeReleaseSlotFn(terminal bool) func() {
 	}
 }
 
-// acquireSpawnSlot acquires the semaphore slot(s) required for a spawn.
-//
-// Non-terminal spawns (terminal==false): acquires nonTerminalSem first, then
-// spawnSem. Both waits share ONE budget — spawnAcquireTimeout measured from the
-// first — so the worst case is the same as it was when only the first wait was
-// bounded. Returns ErrSpawnCapTimeout (wrapped in ErrStructural) if either wait
-// runs the budget out.
-//
-// The second wait used to be a fast-path-only TryAcquire whose miss was
-// reported as a structural error, on the claim that holding a non-terminal
-// ticket proved spawnSem had room. The claim was false. It holds only while at
-// most ONE terminal session holds a slot, and nothing bounds terminal holders:
-// the terminal arm below waits on spawnSem's own capacity, so cap+1 of them can
-// hold slots at once. One consolidate node exists per in-flight DOT run
-// (isConsolidateJoinNode in dot_cascade_helpers.go), so two parallel runs are
-// enough. An ordinary spawn then died outright for a condition that was
-// transient (hk-terminal-reserve-unbounded-wyy6y).
-//
-// It costs the reserve some of its priority, and that is worth stating plainly.
-// A non-terminal spawn now queues on spawnSem itself, and Release broadcasts
-// with no ordering, so a slot freed by a terminal session can go to a parked
-// non-terminal waiter ahead of a terminal spawn already queued for it. That
-// could not happen before, when the non-terminal path never waited here. No
-// liveness is lost — the terminal wait is unbounded and non-terminal waiters
-// are bounded by the budget and by the cap — but "reserved for terminal
-// spawns" now means a slot they cannot be crowded out of for long, rather than
-// one they are always first to.
-//
-// Waiting out the budget instead is a SAFETY NET, not the repair. It deletes a
-// wrong assertion; it does not restore the property the assertion asserted. The
-// reserve is mis-sized rather than mis-implemented — "+1" encodes one terminal
-// at a time when the real population is one per in-flight run — and sizing it
-// to that population is the fix that makes the assertion true again. That half
-// raises the number of sessions the box may exceed the operator's cap by, so it
-// waits on the operator.
-//
-// Terminal spawns (terminal==true): acquires only spawnSem, bounded by ctx
-// only (no timeout). The reserved +1 slot guarantees that a terminal spawn
-// succeeds immediately whenever all non-terminal cap slots are occupied by
-// non-terminal sessions — the incident scenario (hk-x882o).
-//
-// Returns nil when spawnSem is nil (no cap configured — no-op).
 func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) error {
 	if s.spawnSem == nil {
 		return nil
 	}
 
 	if !terminal && s.nonTerminalSem != nil {
-		// Non-terminal path: acquire nonTerminalSem first to prevent occupying
-		// the reserved slot, bounded by ctx and (when set) the acquire timeout.
 		start := time.Now()
 		if err := s.nonTerminalSem.Acquire(ctx, s.spawnAcquireTimeout); err != nil {
 			if errors.Is(err, errSemaphoreAcquireTimeout) {
@@ -1056,17 +830,12 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 			return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
 				err, handler.ErrStructural)
 		}
-		// nonTerminalSem acquired. spawnSem usually has room and the fast path
-		// takes it. When it does not, over-subscribed terminal holders are
-		// sitting on the reserve; wait them out on what is left of the budget.
 		if s.spawnSem.TryAcquire() {
 			return nil
 		}
 		return s.awaitSpawnSemHoldingNonTerminal(ctx, start)
 	}
 
-	// Terminal path: acquire only spawnSem, bounded by ctx only (no timeout so
-	// reviewed work is never discarded due to spawn-slot starvation).
 	if err := s.spawnSem.Acquire(ctx, 0); err != nil {
 		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
 			err, handler.ErrStructural)
@@ -1074,27 +843,7 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 	return nil
 }
 
-// awaitSpawnSemHoldingNonTerminal waits for a spawnSem slot on the remainder of
-// the acquire budget, while holding the nonTerminalSem ticket its caller
-// already took. It runs only when terminal holders have drawn spawnSem down
-// past the reserve (see acquireSpawnSlot).
-//
-// It releases the nonTerminalSem ticket on every failing return and on none of
-// the succeeding ones. Release only refuses to go negative — it does not panic
-// — so releasing twice would silently take a slot from another spawn rather
-// than fail loudly. Each arm here releases once and returns.
-//
-// The budget is read from the CONFIGURED timeout, never from the sign of the
-// remaining arithmetic. Acquire reads a non-positive timeout as "no timeout",
-// and a spent budget is reachable rather than theoretical: Acquire tests
-// saturation before it tests its own timer, so a waiter woken by a Release at
-// the instant the timer fires returns successfully at or past the deadline.
-// Passing that remainder through would turn a bounded wait into the indefinite
-// SpawnWindow block hk-4l7zs removed.
 func (s *tmuxSubstrate) awaitSpawnSemHoldingNonTerminal(ctx context.Context, start time.Time) error {
-	// Count the entry, not the exit: the claim a test needs to hold is that a
-	// spawn never REACHED this wait, and a wait that succeeds leaves no other
-	// trace. See spawnSemWaits (hk-6zv97).
 	s.spawnSemWaits.Add(1)
 
 	unbounded := s.spawnAcquireTimeout <= 0
@@ -1118,45 +867,6 @@ func (s *tmuxSubstrate) awaitSpawnSemHoldingNonTerminal(ctx context.Context, sta
 	return nil
 }
 
-// spawnSemSaturatedErr reports a non-terminal spawn that ran out of budget
-// waiting on spawnSem itself.
-//
-// It carries its own message rather than reusing the nonTerminalSem timeout
-// arm's. That one builds cap from nonTerminalSem and in_use from spawnSem, and
-// the mismatch (hk-spawncap-timeout-mismatched-counters-ve2nk) is occasional
-// there but would be guaranteed here: this arm fires only with spawnSem full at
-// cap+1, so every message it could emit would read "cap=8 in_use=9" — the shape
-// ve2nk calls impossible-looking. The message here names each semaphore's own
-// figures under its own name instead.
-//
-// It states what it counted and does not do the subtraction for the reader.
-// Terminal holders look like spawn_sem_in_use minus non_terminal_in_use, and
-// that is wrong whenever another non-terminal spawn is parked in this same
-// wait: such a spawn holds a nonTerminalSem ticket and no spawnSem slot, so the
-// difference understates the terminal holders by the number of waiters. The
-// figures are also sampled one after another under no common lock, and the
-// failing spawn has already given its own ticket back, so non_terminal_in_use
-// does not count it. Two honest numbers beat one derived number that is quietly
-// off.
-//
-// The spawn_cap_blocked hook gets the operator's CONFIGURED ceiling, not
-// spawnSem's capacity. The payload field is documented as that ceiling, and the
-// launch path fires the same event a second time for this failure with the
-// configured value in it — reporting spawnSem's own number here would put one
-// blocked spawn in the event stream twice with two different caps. That is the
-// ve2nk mismatch moved out of a string and into the events, which is worse.
-//
-// The sentinel stays ErrSpawnCapTimeout, which is what makes this failure
-// observable through the spawn_cap_blocked event.
-//
-// It does NOT make the failure retryable where the old one was not. Both wrap
-// handler.ErrStructural, and nothing on the launch path reads either sentinel
-// to decide a retry: the reopen in runexec finalizeReopen is unconditional, and
-// ErrSpawnCapTimeout is read only to emit spawn_cap_blocked (agentlaunch.go)
-// and to pick an event type (classifyLaunchFailure in runloop). A spawn that
-// spends the whole budget reaches the disposition it always did. What the
-// change buys is that it usually no longer spends it, and that when it does the
-// failure is legible.
 func (s *tmuxSubstrate) spawnSemSaturatedErr(waited time.Duration) error {
 	if s.spawnCapBlocked != nil {
 		s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
@@ -1184,10 +894,6 @@ func (s *tmuxSubstrate) spawnSemSaturatedErr(waited time.Duration) error {
 // Spec ref: process-lifecycle.md §4.7 PL-021b obligation 1.
 // Bead ref: hk-xb5yi (spawn cap).
 func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
-	// Local path (box A): use the shared adapter and the daemon-owned spawn-target
-	// session, unchanged. Remote runs route through spawnWindowVia with an
-	// SSH-backed adapter + a worker-scoped session (see perRunSubstrate.SpawnWindow).
-	// NFR7: the local path is byte-identical to the pre-remote behaviour.
 	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName, false /* local */, nil /* no SSH runner: local Kill uses syscall.Kill */)
 }
 
@@ -1206,21 +912,6 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 //
 //nolint:gocognit,cyclop // spawnWindowVia is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool, runner tmux.CommandRunner) (handler.SubstrateSession, error) {
-	// Acquire spawn semaphore slot(s) before creating the window. This enforces
-	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
-	// (spawnSem is nil) this block is a no-op.
-	//
-	// hk-4l7zs: bounded acquire so a slot-saturated pool surfaces as a prompt
-	// launch failure rather than an indefinite hang.
-	//
-	// hk-x882o: terminal/consolidate nodes use a reserved +1 slot so a
-	// completed+reviewed run can always get its final merge node scheduled even
-	// when all ordinary non-terminal slots are occupied. See acquireSpawnSlot.
-	//
-	// hk-hs7ex: remote runs spawn tmux on the WORKER box, not locally. They must
-	// NOT consume the local spawnSem — the cap is sized for local sessions only
-	// (spawnCap = localCap*2). Override releaseSlotFn with a no-op and skip the
-	// acquire entirely for remote runs. NFR7: local path is byte-identical.
 	releaseSlotFn := s.makeReleaseSlotFn(in.Terminal)
 	if remote {
 		releaseSlotFn = func() {}
@@ -1229,9 +920,6 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	}
 	windowName := in.WindowName
 	if windowName == "" {
-		// Fallback: derive a deterministic name from the first argv component
-		// when the caller hasn't set one. This should only happen in tests or
-		// misconfigured callers; log a note for diagnostics.
 		windowName = "hk-unnamed"
 		if len(in.Argv) > 0 {
 			parts := strings.Split(in.Argv[0], "/")
@@ -1241,17 +929,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		}
 	}
 
-	// Build the tmux.NewWindowIn from SubstrateSpawn.
-	// Argv[0] is the binary; Argv[1:] are the arguments. tmux new-window passes
-	// the joined string to `sh -c`, which re-word-splits on whitespace. Shell-
-	// quote each element with single-quotes so argv values containing spaces
-	// (e.g. the codex multi-word seed prompt) survive as a single sh token.
-	// hk-rpr6: fixes codex ARGC=15 shattering that caused immediate exit-2.
 	command := shellJoinArgv(in.Argv)
-	// hk-rpr6: ProcessExit harnesses (codex) run in a tmux pane whose PTY never
-	// sends EOF, causing codex 0.139.0 to block on stdin indefinitely. Redirect
-	// stdin from /dev/null so codex does not stall after completing its work.
-	// The claude paste-inject path is unaffected (StdinDevNull is false for claude).
 	if in.StdinDevNull {
 		if command == "" {
 			command = "< /dev/null"
@@ -1268,34 +946,15 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		Command:    command,
 	}
 
-	// hk-r1rup: bound the underlying `tmux new-window` shell call. The call has
-	// no inherent timeout, so a hung tmux invocation (the recurring "no-spawn
-	// wedge") otherwise blocks here indefinitely — handler.Launch never returns,
-	// launch_initiated never fires, and the run wedges at launch_stall_detected →
-	// run_stale forever, holding a daemon slot until the 30-min implementer budget
-	// expires and fails no_commit. callNewWindowBounded converts that indefinite
-	// hang into a prompt, observable launch failure (tmux_new_window_timeout
-	// diagnostic + ErrStructural). The semaphore slot is released on the timeout
-	// path so the leak does not compound.
 	outcome, timeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 	if timeoutErr != nil {
 		releaseSlotFn()
 		return nil, timeoutErr
 	}
 	if outcome.Err != nil {
-		// hk-yaj: if the spawn-target session was externally killed, try to
-		// re-ensure it and retry the window creation once before hard-failing.
-		// This is the lazy-recovery symmetric to the boot-time EnsureSession in
-		// main.go: boot ensures the session exists, SpawnWindow re-ensures it on
-		// the first ErrNoSession at dispatch time so the whole fleet does not stall
-		// until a daemon restart.
 		recovered := false
 		if errors.Is(outcome.Err, tmux.ErrNoSession) {
 			if se, ok := adapter.(sessionEnsurer); ok {
-				// Empty cwd preserves the box-A recovery behaviour byte-for-byte
-				// (NFR7). For the remote path the worker session is ensured up
-				// front (with the worker repo_path as cwd) in
-				// perRunSubstrate.SpawnWindow, so this lazy recovery is a backstop.
 				if ensErr := se.EnsureSession(ctx, sessionName, ""); ensErr == nil {
 					retryOutcome, retryTimeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 					if retryTimeoutErr != nil {
@@ -1310,36 +969,15 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 			}
 		}
 		if !recovered {
-			// Release the semaphore slot(s) before returning the error — the window
-			// was never created so the slot is immediately available for reuse.
 			releaseSlotFn()
 			return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
 		}
 	}
 
-	// Track the spawned window handle for cleanup on wave completion / daemon
-	// exit (hk-j6npz). Appended under lock; reads happen only in KillAllWindows
-	// (called after wg.Wait(), so no concurrent SpawnWindow calls are live).
 	s.spawnedMu.Lock()
 	s.spawnedWindows = append(s.spawnedWindows, spawnedWindow{handle: outcome.Handle, adapter: adapter})
 	s.spawnedMu.Unlock()
 
-	// Resolve the slash-free pane ID BEFORE capturing the pane PID (hk-kuxxl).
-	//
-	// Prefer the pane ID captured atomically by NewWindowIn (hk-aievp fix):
-	// outcome.PaneID is set by OSAdapter.NewWindowIn via `-P -F "#{pane_id}"`,
-	// which captures the ID in the same tmux invocation that creates the window.
-	// This avoids a follow-up WindowPaneID call that uses the slash-bearing
-	// "session:window-name" handle — tmux misparsing that handle when the window
-	// name is a filesystem path caused the stale-pane misdirect (pane %22 instead
-	// of the fresh %27).
-	//
-	// Fall back to a separate WindowPaneID call only when outcome.PaneID is empty
-	// (e.g. fake adapters in tests that do not yet set PaneID, or future adapter
-	// implementations that do not support -P -F).
-	//
-	// hk-yngq2: window name is a worktree path with slashes — tmux cannot parse
-	// "session:path/to/dir.0" as a pane target; "%NNNN" is always slash-free.
 	paneID := outcome.PaneID
 	if paneID == "" {
 		if id, paneIDErr := adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
@@ -1347,45 +985,16 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		}
 	}
 
-	// pidTarget is the handle used for all #{pane_pid} resolution (here and in
-	// runWait's secondary pane-presence check). When a slash-free pane ID was
-	// resolved, target the pane directly via "%NNNN"; otherwise fall back to the
-	// slash-bearing "session:window-name" handle.
-	//
-	// hk-kuxxl: the slash-bearing handle (window name = "<bead_id>/i<n>",
-	// windowname.go WM-002a) makes `tmux display-message -t session:bead/i1` MISPARSE
-	// the target and SILENTLY FALL BACK to the session's currently-active pane.
-	// Under MaxConcurrent>1, concurrent SpawnWindow calls then capture a SIBLING
-	// run's pane PID into s.pid. When the fast sibling's pane shell exits, the slow
-	// siblings' runWait sees the aliased s.pid as dead via processDead(s.pid),
-	// returns exitCodeClean=0, ends the implementer phase prematurely, and the
-	// no-commit guard fails the run (no_commit_during_implementer ... exit=0).
-	// Using the slash-free pane ID pins PID resolution to THIS run's pane.
 	pidTarget := outcome.Handle
 	if paneID != "" {
 		pidTarget = tmux.WindowHandle(paneID)
 	}
 
-	// Retrieve the pane PID immediately so SubstrateSession.PID() is available.
 	pid, pidErr := adapter.WindowPanePID(ctx, pidTarget)
 	if pidErr != nil {
-		// PID retrieval failure is non-fatal: the window is alive. Log and
-		// continue with pid=0; callers should not depend on PID for correctness.
 		pid = 0
 	}
 
-	// waitDone is initialized here at construction so that callers of Outcome()
-	// that arrive before Wait() is called can block on the channel rather than
-	// observe a nil-channel receive (which would block forever) or a zero struct
-	// (which is silently wrong).  waitOnce then guards only the goroutine launch,
-	// not the channel allocation — the channel is always valid after SpawnWindow
-	// returns.  See architectural review R2 (hk-9to6j).
-	//
-	// releaseSlot is the spawn-cap slot release callback (hk-xb5yi, hk-x882o).
-	// It is called exactly once inside killOnce.Do so the semaphore slot(s) are
-	// returned when the session ends. The closure captures in.Terminal so that
-	// terminal sessions release only spawnSem and non-terminal sessions release
-	// both spawnSem and nonTerminalSem.
 	sess := &tmuxSubstrateSession{
 		adapter:     adapter,
 		handle:      outcome.Handle,
@@ -1400,75 +1009,10 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	return sess, nil
 }
 
-// callNewWindowBounded invokes adapter.NewWindowIn with a bound on how long the
-// underlying `tmux new-window` shell call may take (hk-r1rup). The call runs in
-// a goroutine so a hung tmux invocation — one that returns NEITHER a value nor
-// an error — cannot block SpawnWindow forever even if the adapter ignores ctx
-// cancellation. The select races the call's completion against a bounded
-// context (newWindowTimeout) and the caller's ctx.
-//
-// Returns (outcome, nil) when the call completes in time — the caller then
-// inspects outcome.Err as before. Returns (zero, err) when the call does not
-// return within the bound (err wraps ErrTmuxNewWindowTimeout + ErrStructural,
-// firing the newWindowTimedOut diagnostic hook) or the caller's ctx is cancelled
-// (err wraps ErrStructural). A non-positive newWindowTimeout disables the bound,
-// blocking until the call returns or the caller's ctx is cancelled — the
-// pre-hk-r1rup behaviour.
-//
-// The bounded ctx is passed to NewWindowIn so a ctx-aware adapter (OSAdapter
-// uses exec.CommandContext) also gets its tmux subprocess SIGKILLed on timeout;
-// the goroutine+select wrapper is the backstop for adapters that ignore ctx.
 func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.Adapter, params tmux.NewWindowIn) (tmux.Outcome, error) {
-	// hk-oihnf: serialize the new-window exec daemon-wide. The mutex is held ONLY
-	// for the duration of this bounded call (the tmux-server-lock contention
-	// point), never across the semaphore acquire or spec-build in SpawnWindow. The
-	// defer guarantees release on EVERY return path — success, adapter error, the
-	// new-window timeout, and the caller-ctx-cancelled path below — so a hung
-	// new-window holds the mutex for at most newWindowTimeout (the bound below
-	// fires, this function returns, and the unlock runs).
 	s.newWindowMu.Lock()
 	defer s.newWindowMu.Unlock()
 
-	// hk-hzj: spawn stagger — enforce a minimum interval between consecutive
-	// window creations to reduce concurrent cold-start contention. Under a burst of
-	// N dispatches all claude agents start near-simultaneously, competing for disk
-	// I/O and CPU during cold-start; with disk at ≥90% utilisation this pushed
-	// cold-start past the (then-)30s agent_ready_timeout. Spacing window creation
-	// by spawnStagger gives each agent a head start before the next competes for
-	// the same resources.
-	//
-	// The interval is measured from the END of the previous creation attempt, so
-	// the stamp below is deferred until after callBoundedTmuxCreate: stamping it
-	// before the create would spend the creation's own duration out of the gap, and
-	// the shortfall grows as tmux slows down — it would shrink the stagger to
-	// nothing exactly when the contention it exists to relieve is worst (hk-mirga).
-	// The deferred stamp is registered AFTER the newWindowMu unlock defer, so LIFO
-	// runs it first and lastWindowAt is still written under newWindowMu.
-	//
-	// The stamp covers all four ways out of the create, and they do not all mean
-	// the same thing. A creation that RETURNED — with a handle, or with an adapter
-	// error — occupied the tmux server for its own duration, so measuring the next
-	// window's gap from that return is as close as this code can get: the stamp
-	// lands after the outcome crosses the result channel, and `tmux new-window`
-	// returning is not the agent inside it finishing its cold start. A failed
-	// creation is still a creation the server did work for. A creation ABANDONED by the
-	// new-window bound, or by the caller's ctx cancelling mid-create, has NOT
-	// finished: callBoundedTmuxCreate stopped waiting, its goroutine and the tmux
-	// client it started run on past the stamp, and the next creation therefore
-	// begins less than spawnStagger after the server truly goes quiet. Nothing
-	// here can learn when that happens, so on those two paths the stamp is
-	// deliberately early and the stagger is a floor, not a promise of an idle
-	// server. It is still strictly more than stamping at the start.
-	//
-	// The one path that stamps NOTHING is a stagger wait cancelled by ctx: it
-	// returns above this point, and no creation was attempted.
-	//
-	// The wait uses ctx (not callCtx) so an operator SIGTERM cancels a pending
-	// stagger immediately without being subject to the new-window timeout. The
-	// mutex is held during the sleep; this extends how long newWindowMu is held per
-	// call by at most spawnStagger, which is acceptable since the 60s bound
-	// (defaultNewWindowTimeout) already allows multi-second holds for slow tmux
-	// servers.
 	if s.spawnStagger > 0 && !s.lastWindowAt.IsZero() {
 		elapsed := time.Since(s.lastWindowAt)
 		if elapsed < s.spawnStagger {
@@ -1493,12 +1037,6 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 	})
 }
 
-// boundedCreate describes one tmux CREATION call for callBoundedTmuxCreate.
-//
-// The two creation shapes this substrate performs — `tmux new-window` and
-// `tmux new-session` — differ only in these four values. Everything else about
-// bounding them is identical, and identical is what it has to stay: see
-// callBoundedTmuxCreate.
 type boundedCreate struct {
 	// op names the calling surface and opens the error message, e.g.
 	// "tmuxSubstrate.SpawnWindow" or "SpawnRunSession".
@@ -1518,37 +1056,6 @@ type boundedCreate struct {
 	invoke func(ctx context.Context) tmux.Outcome
 }
 
-// callBoundedTmuxCreate runs one tmux creation call under an external bound.
-//
-// # Why the bound has to be external
-//
-// The production adapter reaches tmux through cmd.CombinedOutput. A wedged tmux
-// server returns NEITHER a value nor an error, and honouring a context is the
-// adapter's choice, not something the caller can rely on. So the call runs in a
-// goroutine and a select races its completion against a bounded context and the
-// caller's ctx. That is the only shape that holds when the adapter ignores its
-// context entirely.
-//
-// # Why the two creation paths share this
-//
-// `tmux new-window` and `tmux new-session` are two paths that agree in shape and
-// differ in detail (PRINCIPLES §5). The details that differ are in boundedCreate.
-// The details that MUST NOT differ are here: the result channel is buffered so
-// the abandoned goroutine can always finish its send and be collected, and the
-// caller's cancellation is distinguished from the bound firing by checking the
-// PARENT context first — the bound can only fire while the parent is still live.
-// Both are easy to get subtly wrong twice.
-//
-// Returns (outcome, nil) when the call completes in time; the caller then
-// inspects outcome.Err itself, which is what lets SpawnCrewSession keep its
-// ErrWindowCollision adopt branch. Returns (zero, err) wrapping create.timedOut +
-// handler.ErrStructural when the bound fires (also firing the newWindowTimedOut
-// diagnostic hook), or wrapping handler.ErrStructural alone when the caller's ctx
-// is cancelled. A non-positive newWindowTimeout disables the bound, leaving only
-// the caller's ctx.
-//
-// This function takes NO lock and applies NO stagger. Both belong to the
-// shared-session window path alone and stay in callNewWindowBounded.
 func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create boundedCreate) (tmux.Outcome, error) {
 	callCtx := ctx
 	var cancel context.CancelFunc
@@ -1557,8 +1064,6 @@ func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create bounde
 		defer cancel()
 	}
 
-	// Buffered so the goroutine never leaks if we return on the timeout path
-	// before it finishes (the hung-tmux case).
 	resCh := make(chan tmux.Outcome, 1)
 	start := time.Now()
 	go func() {
@@ -1570,9 +1075,6 @@ func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create bounde
 		return outcome, nil
 	case <-callCtx.Done():
 		waited := time.Since(start)
-		// Distinguish the caller's ctx cancellation from our own bounded timeout.
-		// The bounded timeout fires only when the caller's ctx is still live, so
-		// check the parent first.
 		if ctx.Err() != nil {
 			return tmux.Outcome{}, fmt.Errorf("daemon: %s: %s: context cancelled: %w: %w",
 				create.op, create.verb, ctx.Err(), handler.ErrStructural)
@@ -1585,70 +1087,6 @@ func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create bounde
 	}
 }
 
-// callNewSessionBounded invokes sc.NewSessionIn under the shared creation bound.
-// It is the independent-session entry point to callBoundedTmuxCreate, and it
-// exists because the production adapter's NewSessionIn is a bare
-// cmd.CombinedOutput: a wedged tmux server returns neither a value nor an error,
-// and the context down both of these call chains carries no deadline of its own.
-// For SpawnRunSession that means a hung create consumes the whole bead run. For
-// SpawnCrewSession it means an operator's crew start that never answers.
-//
-// It is a SEPARATE entry point from callNewWindowBounded, rather than a flag on
-// one function, because two behaviours of the window path are deliberately absent
-// here:
-//
-//   - newWindowMu is not taken. That mutex serializes `tmux new-window` into the
-//     ONE shared daemon session, where concurrent calls contend on the tmux
-//     server's global command lock. Independent sessions are created rarely and
-//     each under its own name, so serializing them daemon-wide would buy nothing
-//     and would let one slow crew start delay every implementer launch.
-//   - The spawn stagger is not applied. It spaces agent cold-starts inside the
-//     shared session, and it is only coherent while newWindowMu is held.
-//
-// Read the first bullet narrowly: it is about creating the SESSION. A crew start
-// goes on to create its keeper WINDOW in that new session, and that call does run
-// under callNewWindowBounded — so it does take newWindowMu and does participate in
-// the stagger. A slow crew start therefore can still delay an implementer launch,
-// one statement later and by design: the keeper window is a real `tmux new-window`
-// contending on the same server lock, and it is bounded, so the delay is bounded.
-//
-// op names the calling constructor and opens the returned error.
-//
-// # What happens to a session created after the bound fires
-//
-// Nothing, deliberately. Abandoning the call does not abandon the work: a tmux
-// server that is slow rather than dead can finish creating the session after the
-// caller has been told the creation failed. This function does NOT then kill it,
-// because at this layer it cannot tell that session apart from one that a
-// concurrent attempt legitimately owns, and killing the wrong one is far worse
-// than leaving the right one:
-//
-//   - A second attempt under a byte-identical name is ordinary here, not exotic.
-//     crewSessionName is a pure function of the project hash and the crew name, so
-//     every attempt at one crew computes the same session name. A failed scheduled
-//     crew start re-fires at its next scheduled boundary (doFireAction records a
-//     failed fire since hk-pbdti, so the retry follows the schedule rather than the
-//     2s poll it used to), the spawn-crew overlap check blocks only a crew that is
-//     presence-online, and an operator running `harmonik crew start` reaches the
-//     same name through the same HandleCrewStart path at any moment. So a killer
-//     armed by the first attempt reaps whichever later attempt succeeded. The
-//     sentinel adversary re-spawns a fixed crew name on its own cadence with the
-//     same exposure.
-//   - It is not needed. SpawnCrewSession's ErrWindowCollision branch ADOPTS an
-//     existing session under that name, so a late crew orphan is what the next
-//     attempt picks up rather than something it trips over. And a run session
-//     already has its name written to the run registry by
-//     ConfigurePerRunSubstrate BEFORE the spawn, so a late run orphan is
-//     discoverable by name too. Neither is the untracked session it looks like.
-//
-// What the caller gets instead is evidence: the returned error names the session
-// that may have been left behind, so an operator has somewhere to look. The
-// buffered result channel still guarantees the abandoned goroutine can finish its
-// send and be collected.
-//
-// Returns (outcome, nil) when the call completes in time — the caller then
-// inspects outcome.Err as before, which is what keeps SpawnCrewSession's adopt
-// branch working. See callBoundedTmuxCreate for the error shapes.
 func (s *tmuxSubstrate) callNewSessionBounded(ctx context.Context, op string, sc sessionCreator, params tmux.NewWindowIn) (tmux.Outcome, error) {
 	return s.callBoundedTmuxCreate(ctx, boundedCreate{
 		op: op,
@@ -1659,10 +1097,6 @@ func (s *tmuxSubstrate) callNewSessionBounded(ctx context.Context, op string, sc
 		invoke:   func(callCtx context.Context) tmux.Outcome { return sc.NewSessionIn(callCtx, params) },
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SrtSpawnConfig — per-run srt argv-wrap configuration (hk-rlxgx)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // SrtSpawnConfig carries the per-run configuration for an srt argv-wrap.
 //
@@ -1688,39 +1122,6 @@ type SrtSpawnConfig struct {
 	ProfileInput SandboxProfileInput
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// perRunSubstrate — per-bead-run substrate wrapper (hk-012af)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// perRunSubstrate wraps a tmuxSubstrate and captures the pane ID of the single
-// window spawned for one bead run. It implements handler.Substrate for
-// SpawnWindow (delegating to the shared substrate) and the three paste-inject
-// interfaces (pasteInjecter, enterSender, quitSender) using the captured pane
-// ID rather than the shared "lastPaneID" field on tmuxSubstrate.
-//
-// # Why this exists
-//
-// Under MaxConcurrent>1, two concurrent beadRunOne goroutines both call
-// handler.Launch → SpawnWindow. If paste-inject state were stored on the shared
-// tmuxSubstrate, the second SpawnWindow would overwrite the pane target from the
-// first, causing the first run's kick-off message to land in the wrong pane,
-// waitAgentReady to hang indefinitely, and both runs to stall. (hk-012af
-// dogfood: 7-hour stall after two run_started events at 22:29:08 UTC on
-// 2026-05-20.)
-//
-// perRunSubstrate carries per-goroutine pane state so each run targets exactly
-// the pane it spawned. The vestigial shared-state methods on tmuxSubstrate were
-// removed in hk-jfh59.
-//
-// # Usage
-//
-//	prs := newPerRunSubstrate(tmuxSub)
-//	spec.Substrate = prs                     // used for handler.Launch
-//	// ... after Launch returns ...
-//	go pasteInjectOnLaunch(ctx, prs, ...)    // safe: prs.paneID is run-local
-//	go pasteInjectQuitOnCommit(ctx, prs, ...) // same
-//
-// Bead ref: hk-012af.
 type perRunSubstrate struct {
 	// inner is the shared tmuxSubstrate. SpawnWindow is delegated here.
 	inner *tmuxSubstrate
@@ -1809,13 +1210,6 @@ type perRunSubstrate struct {
 	sandboxSpawn *SrtSpawnConfig
 }
 
-// commandRunner returns the effective CommandRunner for this run: the
-// caller-supplied runner when set, otherwise tmux.LocalRunner{} (unchanged
-// local behaviour).  Implements commandRunnerProvider so
-// pasteInjectQuitOnCommit can route git and process probes through the same
-// runner as PaneHasActiveProcess.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
 func (p *perRunSubstrate) commandRunner() tmux.CommandRunner {
 	if p.runner != nil {
 		return p.runner
@@ -1823,7 +1217,6 @@ func (p *perRunSubstrate) commandRunner() tmux.CommandRunner {
 	return tmux.LocalRunner{}
 }
 
-// Compile-time assertions for perRunSubstrate.
 var (
 	_ handler.Substrate     = (*perRunSubstrate)(nil)
 	_ handler.InputPort     = (*perRunSubstrate)(nil) // interim tmux/paste input port (AIS-001)
@@ -1835,114 +1228,42 @@ var (
 	_ commandRunnerProvider = (*perRunSubstrate)(nil)
 )
 
-// paneTargeter is an optional interface a SubstrateSession may implement to
-// expose its specific tmux pane target string (e.g. "%1964").  perRunSubstrate
-// probes for this interface on the SubstrateSession returned by SpawnWindow so
-// it can capture the pane target without a hard dependency on the concrete
-// tmuxSubstrateSession type.
-//
-// Test doubles that need per-run pane isolation (e.g. the hk-012af concurrent
-// dispatch test) implement this interface to expose the pane target assigned at
-// spawn time.
 type paneTargeter interface {
 	// PaneTarget returns the tmux pane target string for this session.
 	// Returns an empty string when no pane target is available.
 	PaneTarget() string
 }
 
-// substrateWithAdapter is an optional interface a Substrate may implement to
-// expose the underlying tmux.Adapter.  perRunSubstrate probes for this
-// interface so it can call WriteToPane/SendKeysEnter/SendKeysQuit directly on
-// the adapter using the captured per-run pane target.
-//
-// *tmuxSubstrate implements this interface.  Test doubles may implement it as
-// well to allow perRunSubstrate to route paste-inject calls to a recording
-// adapter.
 type substrateWithAdapter interface {
 	tmuxAdapter() tmux.Adapter
 }
 
-// tmuxAdapter exposes the adapter field of tmuxSubstrate so perRunSubstrate can
-// call it on the concrete type.  This satisfies substrateWithAdapter.
 func (s *tmuxSubstrate) tmuxAdapter() tmux.Adapter { return s.adapter }
 
-// substrateWithSessionName is an optional interface a Substrate may implement to
-// expose the tmux session name it spawns implementer windows into.  The boot
-// orphan sweep probes for this so it can EXCLUDE the daemon's own spawn-target
-// session from the session-level kill sweep (hk-9vp51): when the daemon falls
-// back to a freshly-created "harmonik-<hash>-default" session, that session has
-// only an idle zsh window at boot, so sessionIsOrphaned would classify it as
-// orphaned and the daemon's own sweep would kill it before the first dispatch —
-// reproducing the original sub-fix #3 "session does not exist" regression.
 type substrateWithSessionName interface {
 	daemonSessionName() string
 }
 
-// daemonSessionName exposes the session name this substrate spawns windows into,
-// satisfying substrateWithSessionName (hk-9vp51).
 func (s *tmuxSubstrate) daemonSessionName() string { return s.sessionName }
 
-// substrateWithKeepalive is an optional interface a Substrate may implement to
-// expose a background keepalive loop for its daemon-owned spawn-target session
-// (hk-9ptu). daemon.Start probes cfg.Substrate for this interface after the
-// boot orphan sweep and starts RunSessionKeepalive as a goroutine when found.
-//
-// Only tmuxSubstrate instances built with WithSessionKeepalive satisfy this
-// interface (keepaliveEnabled=true). Normal "live ambient session" substrates
-// do not implement it — their session is managed by the operator's shell.
 type substrateWithKeepalive interface {
 	RunSessionKeepalive(ctx context.Context)
 }
 
-// Compile-time assertion: *tmuxSubstrate always satisfies substrateWithKeepalive.
-// RunSessionKeepalive is a no-op when keepaliveEnabled=false (WithSessionKeepalive
-// was not passed), so daemon.Start can unconditionally start the goroutine for
-// any *tmuxSubstrate — it exits immediately for the non-keepalive path.
 var _ substrateWithKeepalive = (*tmuxSubstrate)(nil)
 
-// substrateWithSpawnCap is an optional interface a Substrate may implement to
-// expose the user-configured non-terminal spawn ceiling (cap(nonTerminalSem)).
-// daemon.Start probes cfg.Substrate for this interface when wiring the
-// HandlerAdapter so that HandleQueueSetConcurrency can reject set-concurrency
-// requests that would oversubscribe the spawn cap (hk-vfeeo).
-//
-// Returns 0 when no cap is configured.
-//
-// Bead ref: hk-vfeeo.
 type substrateWithSpawnCap interface {
 	SpawnCapSize() int
 }
 
-// Compile-time assertion: *tmuxSubstrate satisfies substrateWithSpawnCap.
-// SpawnCapSize returns 0 when no cap is configured (nonTerminalSem is nil).
 var _ substrateWithSpawnCap = (*tmuxSubstrate)(nil)
 
-// substrateWithSpawnCapSetter is an optional interface a Substrate may
-// implement to expose a LIVE spawn-cap resize (hk-omvan, follow-up to
-// hk-vfeeo). daemon.Start probes cfg.Substrate for this interface when wiring
-// the HandlerAdapter so that HandleQueueSetConcurrency can RAISE the spawn cap
-// to satisfy an oversubscribing set-concurrency request instead of refusing
-// it outright.
-//
-// SetSpawnCap(n) resizes the non-terminal spawn ceiling to n; a no-op when no
-// cap was configured at construction or n <= 0.
-//
-// Bead ref: hk-omvan.
 type substrateWithSpawnCapSetter interface {
 	SetSpawnCap(n int)
 }
 
-// Compile-time assertion: *tmuxSubstrate satisfies substrateWithSpawnCapSetter.
 var _ substrateWithSpawnCapSetter = (*tmuxSubstrate)(nil)
 
-// substrateSpawnReadier is an optional interface a Substrate may implement to
-// expose a lightweight pre-dispatch spawn-readiness probe. daemon.Start probes
-// cfg.Substrate for this interface after a restart-backoff boot (hk-bk33):
-// when the backoff delay is non-zero, Start launches ProbeSpawnReady in a
-// goroutine and closes a channel when it returns; runWorkLoop waits on that
-// channel (spawnSubstrateReadyCh) before its first dispatch tick.
-//
-// Bead ref: hk-bk33.
 type substrateSpawnReadier interface {
 	ProbeSpawnReady(ctx context.Context) error
 }
@@ -1979,19 +1300,11 @@ func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 	s.spawnedMu.Unlock()
 
 	for _, w := range windows {
-		// Kill via the adapter the window was spawned through: remote
-		// (worker-hosted) windows must be killed over the SSH-backed adapter or
-		// they leak on the worker's tmux server. Ignore errors: the window may
-		// have already been killed by tmuxSubstrateSession.Kill or by an
-		// external tmux kill-window command.
 		_ = w.adapter.KillWindow(ctx, w.handle) //nolint:errcheck // best-effort; window may already be killed by Kill or external tmux
 	}
 	return nil
 }
 
-// spawnedWindow pairs a spawned window's handle with the adapter it was
-// created through, so KillAllWindows can target the right tmux server
-// (local vs SSH-backed remote worker).
 type spawnedWindow struct {
 	handle  tmux.WindowHandle
 	adapter tmux.Adapter
@@ -2007,106 +1320,45 @@ type spawnedWindow struct {
 // Implements crewPaneStopper (crewstart.go).
 // Bead ref: hk-5tg5o (C2).
 func (s *tmuxSubstrate) StopWindowByHandle(ctx context.Context, handle string) error {
-	// Best-effort /quit: sends /quit\n to the first pane of the window.
-	// Errors here are swallowed; the KillWindow below is authoritative.
 	paneTarget := handle + ".0"
 	_ = s.adapter.SendKeysQuit(ctx, paneTarget) //nolint:errcheck // best-effort; kill is authoritative
 
-	// Grace period: wait for the crew session to exit cleanly before hard kill.
 	select {
 	case <-ctx.Done():
-		// Context cancelled — proceed to kill immediately.
 	case <-time.After(crewStopQuitGrace):
 	}
 
 	return s.adapter.KillWindow(ctx, tmux.WindowHandle(handle))
 }
 
-// crewStopQuitGrace is the grace period between sending /quit and force-killing
-// a crew window in StopWindowByHandle (C2 crew-stop path).
 const crewStopQuitGrace = 30 * time.Second
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Crew independent-session support (hk-mmlqt)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// sessionCreator is an optional interface a tmux.Adapter may implement to
-// create a new independent tmux session atomically with a running command.
-//
-// Implemented by tmux.OSAdapter (NewSessionIn method). NOT added to the
-// tmux.Adapter interface to avoid breaking existing test doubles (hk-mmlqt).
 type sessionCreator interface {
 	NewSessionIn(ctx context.Context, params tmux.NewWindowIn) tmux.Outcome
 }
 
-// sessionEnsurer is an optional interface a tmux.Adapter may implement to
-// create-or-recover the named session (idempotent). SpawnWindow uses this on
-// ErrNoSession to lazily re-create the daemon's spawn-target session when it
-// has been externally killed, rather than hard-failing.
-//
-// Implemented by tmux.OSAdapter (EnsureSession method). NOT added to the
-// tmux.Adapter interface to avoid breaking existing test doubles (hk-yaj).
 type sessionEnsurer interface {
 	EnsureSession(ctx context.Context, name, workDir string) error
 }
 
-// runnerSwapper is an optional interface a tmux.Adapter may implement to return
-// a copy of itself that tunnels every tmux command through a different
-// CommandRunner (e.g. an SSHRunner targeting a remote worker). This is the seam
-// the remote-substrate path uses so a remote run's `tmux new-window`,
-// pane-PID resolution, paste-inject, and session Wait/Kill all execute on the
-// WORKER's tmux server rather than box A's.
-//
-// Implemented by tmux.OSAdapter (WithRunner method, value receiver returning a
-// copy). NOT added to the tmux.Adapter interface to avoid breaking existing
-// test doubles.
-//
-// Bead ref: remote-substrate worker-spawn gap (worker tmux session never
-// created; `tmux new-window` targeted box A's session over the local runner).
 type runnerSwapper interface {
 	WithRunner(r tmux.CommandRunner) tmux.OSAdapter
 }
 
-// Compile-time assertion: tmux.OSAdapter (the production adapter) satisfies
-// runnerSwapper, so the remote-substrate spawn path can swap in an SSH runner.
 var _ runnerSwapper = tmux.OSAdapter{}
 
-// crewSessionSpawner is an optional interface a Substrate may implement to
-// spawn a crew member in its own independent tmux session (hk-mmlqt).
-//
-// When the substrate implements this interface, HandleCrewStart uses
-// SpawnCrewSession instead of SpawnWindow so crew sessions are independent of
-// the daemon's session and survive daemon SIGTERM / supervisor-revive cycles.
-//
-// *tmuxSubstrate implements crewSessionSpawner.
 type crewSessionSpawner interface {
 	// SpawnCrewSession creates an independent tmux session for crewName and runs
 	// spawn.Argv inside it. The session name is derived via crewSessionName.
 	SpawnCrewSession(ctx context.Context, crewName string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error)
 }
 
-// crewSessionStopper is an optional interface a Substrate may implement to
-// kill the independent tmux session for a named crew member (hk-mmlqt).
-//
-// When the substrate implements this interface, HandleCrewStop uses
-// StopCrewSession instead of StopWindowByHandle so the whole independent
-// session is cleanly torn down.
-//
-// *tmuxSubstrate implements crewSessionStopper.
 type crewSessionStopper interface {
 	// StopCrewSession sends /quit to the crew pane (best-effort), waits a grace
 	// period, then kills the crew's dedicated tmux session.
 	StopCrewSession(ctx context.Context, crewName string, handle string) error
 }
 
-// runSessionSpawner is an optional interface implemented by *tmuxSubstrate that
-// creates an independent tmux session for a single bead run (hk-o85ye).
-//
-// When a perRunSubstrate has runSessionID set, SpawnWindow delegates here
-// instead of to the shared daemon session, so the run survives a daemon SIGKILL.
-// Parallel to crewSessionSpawner but lighter-weight (no keeper window).
-//
-// *tmuxSubstrate implements runSessionSpawner.
 type runSessionSpawner interface {
 	// SpawnRunSession creates an independent tmux session named
 	// "harmonik-<hash>-run-<shortID>" and returns a session handle. The session
@@ -2114,18 +1366,6 @@ type runSessionSpawner interface {
 	SpawnRunSession(ctx context.Context, runID string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error)
 }
 
-// crewSessionName returns the deterministic tmux session name for crewName.
-//
-// The name is ALWAYS the project-qualified form
-// "harmonik-<projectHash>-crew-<crewName>" routed through
-// lifecycle.TmuxSessionName (one prefix family for the whole fleet, per the
-// tmux-session-organization CONTRACT §"Shared symbols"). The legacy
-// "hk-crew-<crewName>" no-hash form was DELETED (hk-rmy1, slice C): there is no
-// fallback. In production the project hash is always present (both daemon
-// construction sites pass WithCrewProjectHash(ComputeProjectHash(projectDir))),
-// so the error path is a defensive guard rather than a real runtime branch —
-// surfacing a missing hash as an error is strictly safer than minting a session
-// under a name outside the swept "harmonik-<hash>-*" namespace.
 func (s *tmuxSubstrate) crewSessionName(name string) (string, error) {
 	if s.projectHash == "" {
 		return "", fmt.Errorf("daemon: crewSessionName: project hash unavailable for crew %q "+
@@ -2134,21 +1374,6 @@ func (s *tmuxSubstrate) crewSessionName(name string) (string, error) {
 	return lifecycle.TmuxSessionName(s.projectHash, "crew-"+name), nil
 }
 
-// workerSpawnSessionName returns the tmux session name a REMOTE run spawns its
-// implementer/reviewer window into ON THE WORKER. This session lives on the
-// worker's own tmux server (created via the SSH-backed adapter's EnsureSession),
-// so it never collides with box A's "-default" session.
-//
-// When projectHash is set: "harmonik-<projectHash>-worker-<workerName>" — one
-// shared spawn-target session per worker, mirroring how box A shares one
-// "-default" session for all its local runs. A single shared worker session is
-// safe because each run gets its OWN window (and worktree) inside it.
-//
-// Fallback (no projectHash / no workerName): the box-A spawn-target session
-// name (s.sessionName). On the worker's own tmux server this is still a fresh,
-// collision-free session that EnsureSession creates.
-//
-// Bead ref: remote-substrate worker-spawn gap.
 func (s *tmuxSubstrate) workerSpawnSessionName(workerName string) string {
 	if s.projectHash != "" && workerName != "" {
 		return lifecycle.TmuxSessionName(s.projectHash, "worker-"+workerName)
@@ -2181,11 +1406,6 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: %w", nameErr)
 	}
 
-	// The crew's claude --remote-control always runs in the "agent" window
-	// (tmux.WindowAgent), per the tmux-session-organization CONTRACT. The keeper
-	// targets this window's active pane via "--tmux <session>:agent".
-	// Shell-quote each argv element (hk-rpr6): tmux passes the joined string to
-	// `sh -c`, which re-word-splits on whitespace.
 	command := shellJoinArgv(spawn.Argv)
 
 	params := tmux.NewWindowIn{
@@ -2196,21 +1416,12 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		Command:    command,
 	}
 
-	// Bound the `tmux new-session` call. HandleCrewStart waits on this, and the
-	// operator waits on HandleCrewStart, so an unbounded call turns a wedged tmux
-	// server into a crew start that never answers. See callNewSessionBounded.
 	outcome, boundErr := s.callNewSessionBounded(ctx, "SpawnCrewSession", sc, params)
 	if boundErr != nil {
 		return nil, boundErr
 	}
 	if outcome.Err != nil {
 		if errors.Is(outcome.Err, tmux.ErrWindowCollision) {
-			// Session already exists (crew survived a prior daemon restart, or
-			// crew-stop removed the registry but failed to kill the session).
-			// Instead of failing, re-arm the keeper window if it is absent and
-			// return the existing session so HandleCrewStart can update the
-			// registry handle and run the keeper liveness probe. This is the
-			// ctx-watchdog collision-recovery path (hk-u5tgh).
 			fmt.Fprintf(os.Stderr,
 				"daemon: SpawnCrewSession: crew %q session already exists — re-arming keeper if absent\n",
 				crewName)
@@ -2220,12 +1431,6 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: new-session for crew %q: %w", crewName, outcome.Err)
 	}
 
-	// Add the sibling "keeper" window (tmux.WindowKeeper) in the SAME session,
-	// running the per-crew session-keeper. The keeper injects into the agent
-	// window's active pane (slice K: "--tmux <session>:agent"). Because the keeper
-	// lives in its own window it survives an agent-window respawn (invariant I1)
-	// and is torn down with the session on crew-stop. Best-effort: a failed keeper
-	// window does NOT fail the crew start — the agent is already live.
 	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
 
 	paneID := outcome.PaneID
@@ -2235,7 +1440,6 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	}
 	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
 	if pidErr != nil {
-		// pid stays 0, so every later PID-based liveness probe reports "dead".
 		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
 			"err", pidErr, "target", string(pidTarget))
 	}
@@ -2252,26 +1456,6 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	return sess, nil
 }
 
-// runSessionName returns the deterministic tmux session name for a bead run:
-// "harmonik-<hash>-run-<shortID>" where shortID is the first 16 hex chars of
-// the runID UUID (hyphens stripped). Parallel to crewSessionName.
-//
-// SIXTEEN, not twelve. Run ids are UUIDv7, whose first 48 bits — hex chars 0
-// through 11 — are a millisecond timestamp. The disambiguating rand_a sequence
-// lives in the two bytes after it, hex chars 12 through 15, so a 12-char prefix
-// is a TIMESTAMP and not a run identity. The daemon dispatches beads
-// concurrently, so two runs starting in the same millisecond took the same
-// session name. Measured before the change: 2000 run ids minted across 8
-// goroutines produced 3 distinct 12-char names and 2000 distinct 16-char ones.
-//
-// That is load-bearing twice over. setUpRunSession writes this name into the
-// run registry record, so a collision put two runs' records on one session
-// name, and the readers cannot tell them apart: the boot sweep exempts one name
-// on behalf of two runs, live-session adoption fires twice on one session death,
-// and dead-session adoption credits whichever record it reaches first. It also
-// decides whether SpawnRunSession's ErrWindowCollision branch is safe, because
-// that branch KILLS the session that already exists on the reasoning that this
-// run owns it.
 func (s *tmuxSubstrate) runSessionName(runID string) (string, error) {
 	if s.projectHash == "" {
 		return "", fmt.Errorf("daemon: runSessionName: project hash unavailable"+
@@ -2303,8 +1487,6 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		return nil, fmt.Errorf("daemon: SpawnRunSession: %w", nameErr)
 	}
 
-	// Shell-quote each argv element (hk-rpr6): tmux passes the joined string to
-	// `sh -c`, which re-word-splits on whitespace.
 	command := shellJoinArgv(spawn.Argv)
 
 	params := tmux.NewWindowIn{
@@ -2315,10 +1497,6 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		Command:    command,
 	}
 
-	// Bound the `tmux new-session` call. This is on the dispatch path of a bead
-	// run and the run's context carries no deadline of its own, so an unbounded
-	// call lets a wedged tmux server consume the entire run before anything
-	// notices. See callNewSessionBounded.
 	outcome, boundErr := s.callNewSessionBounded(ctx, "SpawnRunSession", sc, params)
 	if boundErr != nil {
 		return nil, boundErr
@@ -2327,31 +1505,6 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		if !errors.Is(outcome.Err, tmux.ErrWindowCollision) {
 			return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
 		}
-		// The session is already there, and it is THIS run's: the name is derived
-		// from this run's id and nothing else can hold it. A graph run launches an
-		// agent per node into one session, and each node kills its agent as it
-		// ends, so the next node can arrive while tmux is still tearing the session
-		// down. Refusing here would fail the node, and the run with it, over a
-		// teardown already under way.
-		//
-		// Finishing that teardown is the recovery. The previous node has already
-		// been told to die — its cleanup ran before this call — so killing what is
-		// left takes nothing that was not already going.
-		//
-		// "Nothing else can hold it" is a claim about runSessionName, and it is
-		// only true because that name carries 16 hex characters of the run id
-		// rather than 12. At 12 the name is a millisecond timestamp and two
-		// concurrently dispatched runs take one name. Read the width note on
-		// runSessionName before narrowing it, and read it knowing that killing
-		// made the cost of being wrong worse than it used to be: the older
-		// recovery put this agent in the other run's session, where both survived,
-		// and this one destroys the other run's live agent.
-		//
-		// The retry deliberately goes back through new-session rather than opening
-		// a window in what is there. A window opened through the ordinary spawn
-		// path is recorded for the daemon's exit-time window sweep, which would
-		// kill this agent with the daemon — the one thing an independent session
-		// exists to prevent.
 		fmt.Fprintf(os.Stderr,
 			"daemon: SpawnRunSession: session %q still exists for run %s; finishing its teardown and retrying\n",
 			sessName, runID)
@@ -2374,7 +1527,6 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 	}
 	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
 	if pidErr != nil {
-		// pid stays 0, so every later PID-based liveness probe reports "dead".
 		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
 			"err", pidErr, "target", string(pidTarget))
 	}
@@ -2437,23 +1589,9 @@ func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []st
 		// operator's keeper: block in .harmonik/config.yaml. (No baked-in numbers.)
 		WarnAbsTokens: 0,
 		ActAbsTokens:  0,
-		// RespawnCmd left empty — see doc comment (follow-up).
 	})
 }
 
-// spawnCrewKeeperWindow creates the "keeper" window inside the crew's session
-// (already created by SpawnCrewSession) and launches the per-crew keeper in it.
-//
-// projectDir is derived from the crew spawn: spawn.Cwd is the crew's WorkDir
-// (the project root per crewrun.BuildCrewLaunchSpec), with HARMONIK_PROJECT from
-// spawn.Env as a fallback. The keeper binary is the currently-running harmonik
-// executable (os.Executable, "harmonik" on failure), matching the CLI crew
-// keeper resolution.
-//
-// Best-effort: any failure (no project dir, NewWindowIn error) is logged and
-// returns without failing the crew start — the agent window is already live and
-// an operator can attach a keeper externally (the .managed marker still records
-// the crew as keeper-managed).
 func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
 	projectDir := spawn.Cwd
 	if projectDir == "" {
@@ -2479,10 +1617,6 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 		Command:    shellJoinArgv(argv),
 	}
 
-	// Bounded, like every other window creation in this file. SpawnCrewSession
-	// calls this synchronously, so a bare adapter.NewWindowIn here would give the
-	// bound on the new-session call above nothing to protect: a wedged tmux server
-	// would simply hang the crew start one statement later instead.
 	outcome, boundErr := s.callNewWindowBounded(ctx, s.adapter, params)
 	if boundErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
@@ -2495,11 +1629,6 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 	}
 }
 
-// ensureCrewKeeperWindow checks whether a "keeper" window already exists in
-// sessName and calls spawnCrewKeeperWindow only when it is absent. Called from
-// SpawnCrewSession on a session-collision to re-arm a keeper-less surviving
-// crew (hk-u5tgh). Best-effort: if ListWindows fails, spawnCrewKeeperWindow is
-// attempted anyway (it logs its own failure as non-fatal).
 func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
 	windows, listErr := s.adapter.ListWindows(ctx, sessName)
 	if listErr != nil {
@@ -2520,10 +1649,6 @@ func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, se
 	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
 }
 
-// existingCrewSession builds a tmuxSubstrateSession for a crew session that
-// already exists. Called from SpawnCrewSession on a session-collision so that
-// HandleCrewStart can update the registry handle and run the keeper probe
-// without re-creating the agent pane (hk-u5tgh).
 func (s *tmuxSubstrate) existingCrewSession(ctx context.Context, sessName string) (handler.SubstrateSession, error) {
 	handle := tmux.WindowHandle(sessName + ":" + tmux.WindowAgent)
 	paneID, paneErr := s.adapter.WindowPaneID(ctx, handle)
@@ -2537,7 +1662,6 @@ func (s *tmuxSubstrate) existingCrewSession(ctx context.Context, sessName string
 	}
 	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
 	if pidErr != nil {
-		// pid stays 0, so every later PID-based liveness probe reports "dead".
 		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
 			"err", pidErr, "target", string(pidTarget))
 	}
@@ -2552,14 +1676,6 @@ func (s *tmuxSubstrate) existingCrewSession(ctx context.Context, sessName string
 	}, nil
 }
 
-// shellJoinArgv single-quotes each argv element and joins with spaces so the
-// command survives `tmux new-window`'s `sh -c` re-word-splitting (mirrors the
-// SpawnWindow quoting at the top of spawnWindowVia). The keeper inject target
-// "<session>:agent" contains no shell metacharacters, but the binary path and
-// project dir may contain spaces, so quote uniformly.
-//
-// Delegates to the SHARED agentlaunch.ShellJoinArgv (review outcome A) so the
-// daemon and the CLI captain launcher quote argv identically.
 func shellJoinArgv(argv []string) string {
 	return agentlaunch.ShellJoinArgv(argv)
 }
@@ -2572,13 +1688,11 @@ func shellJoinArgv(argv []string) string {
 //
 // Implements crewSessionStopper (crewstart.go).
 func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, handle string) error {
-	// Best-effort /quit to the first pane of the crew window.
 	if handle != "" {
 		paneTarget := handle + ".0"
 		_ = s.adapter.SendKeysQuit(ctx, paneTarget) //nolint:errcheck // best-effort; session kill is authoritative
 	}
 
-	// Grace period before hard kill.
 	select {
 	case <-ctx.Done():
 	case <-time.After(crewStopQuitGrace):
@@ -2588,56 +1702,16 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 	if nameErr != nil {
 		return nameErr
 	}
-	// Killing the whole crew session tears down BOTH the "agent" and "keeper"
-	// windows (and the keeper process running in the keeper window). No separate
-	// keeper-window teardown is needed on crew-stop.
 	return s.adapter.KillSession(ctx, sessName)
 }
 
-// newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
-// sub and captures the spawned pane target from the returned SubstrateSession.
-//
-// handlerBinary is the handler executable path (e.g. "claude" or a custom
-// binary).  It is used to derive agentCommandFragments for pane-liveness
-// matching via agentCommandFragmentsFor; pass "" to fall back to the global
-// livePaneCommandSubstrings default.
-//
-// runner is the CommandRunner used for liveness probes (pgrep, ps) and
-// worktree git probes (rev-parse HEAD, git status).  Pass nil to fall back to
-// tmux.LocalRunner{} (unchanged local behaviour).  For remote-substrate workers
-// (B9) pass the SSHRunner built from the worker's host config.
-//
-// When sub implements substrateWithAdapter, perRunSubstrate can forward
-// paste-inject calls to the underlying tmux.Adapter using the captured pane
-// target; this is the production path (*tmuxSubstrate).
-//
-// When sub does NOT implement substrateWithAdapter but the returned session
-// implements paneTargeter, perRunSubstrate can record the pane target — paste
-// inject calls will fail gracefully (no adapter available) but the pane routing
-// is still isolated, which is sufficient for test fixtures that do not need
-// actual paste-inject to succeed.
-//
-// Returns nil when sub is nil (safe: the caller falls back to the shared-substrate
-// path which is correct for the exec.CommandContext / no-tmux code path).
-//
-// Bead: hk-rs-b9-liveness-1m9n (runner parameter).
 func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux.CommandRunner) *perRunSubstrate {
-	// test seam (hk-fxy9 / hk-538l regression); no-op in prod. Fired with the
-	// `runner` ARG this constructor actually received — the single source of truth
-	// for the SUBSTRATE-SPAWN runner. A regression that drops a call site's 3rd arg
-	// back to nil is caught here regardless of whether sub is a *tmuxSubstrate (the
-	// review-loop/DOT test fixtures use a non-tmux substrate, so the returned *prs
-	// is nil and the stored field would be unobservable — observing the arg is not).
 	notifySubstrateRunner(runner)
 	if sub == nil {
 		return nil
 	}
 	ts, ok := sub.(*tmuxSubstrate)
 	if !ok {
-		// deps.substrate is not a *tmuxSubstrate (e.g. a test double that does not
-		// implement substrateWithAdapter). Return nil so the caller falls back to
-		// the original shared-substrate path for test doubles that don't need pane
-		// isolation (e.g. spy substrates in pasteinject_hk2hb2y_test.go).
 		return nil
 	}
 	return &perRunSubstrate{
@@ -2655,26 +1729,15 @@ func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux
 // returned session does not implement paneTargeter, the pane target remains
 // empty and paste-inject calls will fail gracefully.
 func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
-	// srt argv-wrap (hk-rlxgx): when sandbox.backend=srt and this run's harness
-	// is in sandbox.harnesses, prepend 'srt --settings <profile>' to in.Argv.
-	// Nil sandboxSpawn is the strict no-op gate — today's behaviour unchanged.
 	if p.sandboxSpawn != nil {
 		wrapped, wrapErr := p.buildSrtArgv(in.Argv)
 		if wrapErr != nil {
 			return nil, fmt.Errorf("daemon: perRunSubstrate.SpawnWindow: srt argv-wrap: %w: %w", wrapErr, handler.ErrStructural)
 		}
 		in.Argv = wrapped.Argv
-		// The env travels with the argv. srt reads CLAUDE_CODE_TMPDIR from its
-		// OWN environment to decide the sandboxed child's TMPDIR, so an argv
-		// wrapped here without this append would hand the agent a temp directory
-		// the profile never granted (hk-sandbox-no-writable-tmpdir-7484h).
-		// Appended, not assigned: in.Env is the harness's full environment.
 		in.Env = append(in.Env, wrapped.Env...)
 	}
 
-	// Independent-session path (hk-o85ye): runSessionID non-empty → spawn a
-	// dedicated tmux session so this run survives a daemon SIGKILL. The resulting
-	// session is outside the daemon's shared session and the orphan-window sweep.
 	if p.runSessionID != "" {
 		sess, err := p.inner.SpawnRunSession(ctx, p.runSessionID, in)
 		if err != nil {
@@ -2690,15 +1753,6 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 		return sess, nil
 	}
 
-	// Remote path: a non-nil runner marks this as a remote run. Route the spawn
-	// through an SSH-backed adapter + worker-scoped session so `tmux new-window`,
-	// pane-PID resolution, and the spawned session's Wait/Kill all execute on the
-	// WORKER's tmux server. Without this the inner SpawnWindow would target box
-	// A's local tmux server and the box-A "-default" session, which does NOT
-	// exist on the worker — the launch wedges at launch_initiated with no spawn.
-	//
-	// NFR7: when runner is nil (local run) we fall through to the unchanged
-	// p.inner.SpawnWindow delegation below, byte-identical to the pre-remote path.
 	if p.runner != nil {
 		sess, err := p.spawnWindowRemote(ctx, in)
 		if err != nil {
@@ -2718,8 +1772,6 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 	if err != nil {
 		return nil, err
 	}
-	// Capture the pane target from the just-spawned session via paneTargeter.
-	// tmuxSubstrateSession implements paneTargeter (PaneTarget() string).
 	if pt, ok := sess.(paneTargeter); ok {
 		if target := pt.PaneTarget(); target != "" {
 			p.paneTargetMu.Lock()
@@ -2730,50 +1782,11 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 	return sess, nil
 }
 
-// buildSrtArgv generates a per-run srt settings profile, writes it to a temp
-// file, and returns the srt-prefixed argv:
-//
-//	[SrtBinary, "--settings", profilePath, agentArgv...]
-//
-// alongside the environment entries the srt process must carry (the sandboxed
-// child's TMPDIR).
-//
-// The profile JSON is produced by GenerateSandboxProfile(p.sandboxSpawn.ProfileInput)
-// and written to os.TempDir()/harmonik-srt-<RunID>.json (mode 0600). The file is
-// NOT cleaned up here — srt reads it at startup and the OS reclaims it at reboot;
-// the daemon may arrange teardown cleanup in hk-6596l.
-//
-// Returns an error (NOT wrapped with ErrStructural — the caller wraps) when
-// profile generation or file write fails.
-//
-// Bead: hk-rlxgx.
 func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) (srtWrap, error) {
-	// hk-r4p0l: delegate to the package-level srtWrapArgv so the substrate path
-	// and the exec path (workloop, SessionIDCaptured harnesses) share ONE wrap
-	// implementation and cannot drift.
 	return srtWrapArgv(p.sandboxSpawn, agentArgv)
 }
 
-// spawnWindowRemote performs the remote-run spawn: it builds an SSH-backed
-// adapter from the inner adapter (WithRunner(p.runner)), ENSURES the worker's
-// target tmux session exists on the worker (idempotent — mirroring box A's
-// "-default" EnsureSession), then delegates to p.inner.spawnWindowVia with the
-// remote adapter + worker session so the `tmux new-window` and the spawned
-// session's pane-PID/Wait/Kill all run on the WORKER's tmux server.
-//
-// The ensured remote adapter is cached on p.remoteAdapter so the paste-inject
-// methods (WriteLastPane / SendEnterToLastPane / SendQuitToLastPane) and
-// PaneHasActiveProcess's PID resolution route through the worker too.
-//
-// Worker session name: p.workerSessionName (worker-scoped, set by the
-// workloop). Session cwd: p.workerSessionCwd (the worker's repo_path).
-//
-// Bead ref: remote-substrate worker-spawn gap.
 func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
-	// The inner adapter must support runner-swapping (OSAdapter does). A test
-	// double that does not implement runnerSwapper cannot exercise the remote
-	// path; fail closed with a structural error rather than silently spawning
-	// against box A's local tmux.
 	sw, ok := p.inner.adapter.(runnerSwapper)
 	if !ok {
 		return nil, fmt.Errorf("daemon: perRunSubstrate.spawnWindowRemote: inner adapter does not support WithRunner (cannot target worker tmux): %w", handler.ErrStructural)
@@ -2782,26 +1795,15 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 
 	sessName := p.workerSessionName
 	if sessName == "" {
-		// Defensive: a remote run without an explicit worker session name still
-		// must NOT spawn into box A's "-default". Reuse the inner (box-A
-		// project-hash-derived) session name; on the worker's own tmux server
-		// this name is collision-free, and EnsureSession below creates it.
 		sessName = p.inner.sessionName
 	}
 
-	// ENSURE the worker session exists on the worker BEFORE new-window. This is
-	// the fix: nothing else creates a target session on a remote worker, so
-	// `tmux new-window -t <session>` would fail/hang. EnsureSession is idempotent
-	// (`tmux has-session || tmux new-session -d -s <name> -c <cwd>` semantics via
-	// the duplicate-session-is-success path) and runs over the SSH runner.
 	if se, ok := remoteAdapter.(sessionEnsurer); ok {
 		if ensErr := se.EnsureSession(ctx, sessName, p.workerSessionCwd); ensErr != nil {
 			return nil, fmt.Errorf("daemon: perRunSubstrate.spawnWindowRemote: ensure worker session %q: %w: %w", sessName, ensErr, handler.ErrStructural)
 		}
 	}
 
-	// Cache the remote adapter for paste-inject + liveness PID resolution.
-	// Under paneTargetMu: pasteAdapter may read from another goroutine.
 	p.paneTargetMu.Lock()
 	p.remoteAdapter = remoteAdapter
 	p.paneTargetMu.Unlock()
@@ -2809,9 +1811,6 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName, true /* remote: worker-hosted, runWait must poll worker liveness not local kill (hk-r1zq) */, p.runner /* SSH runner: Kill forcefully terminates the worker pane PID over SSH (hk-btl1n) */)
 }
 
-// pasteAdapter returns the adapter that paste-inject and liveness PID-resolution
-// calls should target: the cached remote (SSH-backed) adapter for a remote run,
-// otherwise the shared inner adapter (unchanged local behaviour, NFR7).
 func (p *perRunSubstrate) pasteAdapter() tmux.Adapter {
 	p.paneTargetMu.Lock()
 	ra := p.remoteAdapter
@@ -2822,10 +1821,6 @@ func (p *perRunSubstrate) pasteAdapter() tmux.Adapter {
 	return p.inner.adapter
 }
 
-// paneTarget returns the tmux pane target captured at SpawnWindow time for
-// this run's pane.  Returns empty string when SpawnWindow has not yet been
-// called or when the spawned session did not expose a pane target via
-// paneTargeter.
 func (p *perRunSubstrate) paneTarget() string {
 	p.paneTargetMu.Lock()
 	defer p.paneTargetMu.Unlock()
@@ -2844,21 +1839,8 @@ func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, 
 	return p.pasteAdapter().WriteToPane(ctx, bufferName, target, payload)
 }
 
-// inputBufferPurpose is the PL-021d purpose slug the interim
-// InputPort.SubmitInput bracketed paste tags its buffer with.
 const inputBufferPurpose = "input"
 
-// inputBufferName builds the PL-021d buffer name this run's SubmitInput uses for
-// its bracketed paste: "harmonik-<run-id>-input". The <run-id> segment MUST
-// satisfy bufferNameRe ([a-z0-9-] after the "harmonik-" prefix), or LoadBuffer /
-// PasteBuffer reject it with ErrStructural — which is exactly what the retired
-// hardcoded "harmonik-input" did, wedging every tmux-substrate dispatch
-// (hk-9hvr0: implementer-initial SubmitInput failed the buffer-name invariant so
-// the task prompt never reached the worker). The minted run id is a lowercase
-// UUIDv7 that already matches; we sanitize defensively and fall back to the
-// per-run pane target (then a literal) so a shared-session or remote run with no
-// runSessionID still yields a valid, per-run-unique name. Mirrors the daemon's
-// own bufferName(sessionID, purpose) helper used by the "task"/"review" pastes.
 func (p *perRunSubstrate) inputBufferName() string {
 	id := sanitizeBufferSegment(p.runSessionID)
 	if id == "" {
@@ -2870,17 +1852,6 @@ func (p *perRunSubstrate) inputBufferName() string {
 	return bufferName(id, inputBufferPurpose)
 }
 
-// sanitizeBufferSegment lowercases s and maps every character outside [a-z0-9]
-// to '-', so the result is safe to embed as the <session-id> segment of a
-// bufferNameRe-valid buffer name. Leading/trailing hyphens are trimmed so the
-// segment never collapses the "harmonik-<id>-<purpose>" delimiters. Returns ""
-// when s has no usable characters.
-//
-// This was a byte-identical restatement of the tmux package's own sanitizer.
-// It now delegates, so the two cannot drift — the same reason tmux exports
-// ValidBufferName rather than letting callers restate the regex. The local name
-// is kept because inputBufferName below and its regression test both read as
-// prose against it.
 func sanitizeBufferSegment(s string) string {
 	return tmux.SanitizeBufferSegment(s)
 }
@@ -2935,9 +1906,6 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 	return p.pasteAdapter().SendKeysQuit(ctx, target)
 }
 
-// paneCaptureAdapter is the optional capability (satisfied by tmux.OSAdapter and
-// its WithRunner SSH-backed copies) for reading rendered pane text.  It is the
-// read seam behind the seed-paste land-verification (hk-zexsj).
 type paneCaptureAdapter interface {
 	CapturePane(ctx context.Context, paneTarget string, scrollback int) (string, error)
 }
@@ -2987,21 +1955,11 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	if target == "" {
 		return false
 	}
-	// Use a tmux.WindowHandle from the per-run pane target. WindowPanePID
-	// accepts either a "%NNNN" pane ID or a "session:window.index" handle;
-	// paneTarget() already returns the stable pane ID captured at spawn time.
-	// For a remote run pasteAdapter() resolves the pane PID on the WORKER's tmux
-	// server; the probeLivenessOrSSHFail below then checks that PID over the same
-	// SSH runner.
 	pid, err := p.pasteAdapter().WindowPanePID(ctx, tmux.WindowHandle(target))
 	if err != nil || pid <= 0 {
 		return false
 	}
 	r := p.commandRunner()
-	// Use the SSH-failure-aware probe so that an unreachable worker (exit-255)
-	// is reported to the workloop for worker_offline emission and in-memory
-	// disable (B11). The run still returns false (not wedged) and recovers via
-	// the existing run_stale path.
 	alive, connFailed := probeLivenessOrSSHFail(ctx, r, pid, p.agentCommandFragments)
 	if connFailed {
 		p.notifyConnectionFailure(ctx, "liveness probe returned ssh exit-255")
@@ -3009,7 +1967,6 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	return alive
 }
 
-// notifyConnectionFailure calls p.onConnectionFailure if set.
 func (p *perRunSubstrate) notifyConnectionFailure(ctx context.Context, detail string) {
 	if p.onConnectionFailure != nil {
 		p.onConnectionFailure(ctx, detail)
@@ -3040,13 +1997,6 @@ func (p *perRunSubstrate) PaneOutputFingerprint(ctx context.Context) (string, bo
 	if target == "" {
 		return "", false
 	}
-	// Route through the per-run CommandRunner so the probe queries the tmux
-	// server that actually hosts this run's pane: the WORKER's tmux for a REMOTE
-	// run (p.runner is an SSHRunner), box A's tmux for a LOCAL run (p.runner nil
-	// ⇒ LocalRunner, which execs the identical bare `tmux display-message` — NFR7
-	// byte-identical). A bare exec.CommandContext here would query box A's tmux
-	// for a remote run (the wrong pane), silently disabling the output-growth
-	// ceiling-kill safety probe for remote runs.
 	out, err := p.commandRunner().Command(ctx, "tmux", "display-message",
 		"-t", target, "-p", "#{history_size} #{cursor_y}").Output()
 	if err != nil {
@@ -3059,19 +2009,6 @@ func (p *perRunSubstrate) PaneOutputFingerprint(ctx context.Context) (string, bo
 	return s, true
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// tmuxSubstrateSession — handler.SubstrateSession backed by a tmux.WindowHandle
-// ─────────────────────────────────────────────────────────────────────────────
-
-// tmuxSubstrateSession implements handler.SubstrateSession for a tmux-hosted
-// subprocess. The session is identified by a tmux.WindowHandle; lifecycle
-// operations (Kill) issue tmux commands via the stored adapter.
-//
-// Wait blocks until the pane PID disappears from the OS process table (polled
-// at 500ms intervals). This is a best-effort implementation; a
-// production implementation would use tmux wait-for or a side-channel signal.
-//
-// All methods are safe for concurrent use.
 type tmuxSubstrateSession struct {
 	adapter tmux.Adapter
 	handle  tmux.WindowHandle
@@ -3134,74 +2071,19 @@ type tmuxSubstrateSession struct {
 	releaseSlot func()
 }
 
-// Kill terminates the hosted process and then destroys the tmux window.
-// Idempotent: subsequent calls return nil.
-//
-// When the session holds a pane PID (s.pid > 0), Kill sends SIGTERM to the
-// process and waits up to killGracePeriod for it to exit. If the process is
-// still alive after the grace period, Kill sends SIGKILL. It then calls
-// KillWindow to remove the tmux window regardless of whether the PID step
-// succeeded. This ensures that killing the tmux window shell alone (which
-// previously sent SIGHUP to the child) is not relied upon to terminate the
-// hosted process.
-//
-// Background: the tmux pane PID is the shell that was started by tmux
-// new-window. The hosted claude process is a child of that shell. Sending
-// SIGTERM/SIGKILL directly to the shell is more reliable than relying on
-// tmux kill-window to propagate a signal to the child process.
 const killGracePeriod = 3 * time.Second
 
 func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	var killErr error
 	s.killOnce.Do(func() {
-		// Step 1: terminate the hosted process.
-		//
-		// hk-r1zq / H8: s.pid is the tmux pane PID as observed on the process
-		// HOST. For a LOCAL session that is a daemon-host PID, so a direct
-		// syscall.Kill is correct. For a REMOTE session s.pid is the WORKER's
-		// pane PID — meaningless in the daemon host's process table, where it
-		// could name an unrelated LOCAL process. NEVER local-signal a remote
-		// session's PID (killProcessWithGrace uses syscall.Kill). Route
-		// termination through the SSH-backed adapter instead: a best-effort
-		// SendKeysQuit for a graceful stop, then the authoritative KillWindow
-		// below (both run over s.adapter, which is the run's SSH-backed worker
-		// adapter for a remote session — see runWait).
 		if s.remote {
 			if pt := s.PaneTarget(); pt != "" {
 				_ = s.adapter.SendKeysQuit(ctx, pt) //nolint:errcheck // best-effort; KillWindow is authoritative
 			}
-			// hk-btl1n: forcefully terminate the WORKER pane PID over SSH, the
-			// remote analog of the local killProcessWithGrace path. KillWindow
-			// below only sends the pane SIGHUP; an agent that survives it would
-			// leak on the worker. s.pid is the worker's pane PID (NOT a daemon-host
-			// PID — never syscall.Kill it, hk-r1zq/H8), so the kill routes through
-			// the run's SSH runner. Best-effort: KillWindow remains authoritative
-			// for window cleanup. No-op when the runner or PID is unavailable.
 			if s.runner != nil && s.pid > 0 {
 				killRemoteProcessWithGrace(ctx, s.runner, s.pid, killGracePeriod)
 			}
 		} else if s.pid > 0 {
-			// hk-bl2k6: RE-RESOLVE the pane PID from tmux immediately before
-			// signalling, and signal nothing if tmux no longer knows the pane.
-			//
-			// s.pid is captured at spawn and, without this, never re-verified —
-			// so the staleness window is spawn→kill, potentially HOURS, against
-			// a pid space that wraps in ~45 minutes on this platform. That is a
-			// provenance question ("is this pid still my pane?"), and a process
-			// group cannot answer it (HC-044(c): a group is a kill handle and
-			// carries no provenance meaning). tmux, the owner of record, can.
-			// Asking it collapses staleness from hours to microseconds.
-			//
-			// Wait already does exactly this on its liveness poll (see runWait's
-			// secondary WindowPanePID check); this is the same question asked on
-			// the kill path. panePIDTarget() rather than s.handle for the same
-			// hk-kuxxl reason Wait uses it: a slash-bearing window-name handle
-			// makes tmux fall back to the session's ACTIVE pane, which under
-			// MaxConcurrent>1 reports a SIBLING's pane — here that would mean
-			// killing another run's agent.
-			//
-			// KillWindow below remains the authoritative cleanup, so skipping
-			// the signal never leaves the window behind.
 			livePID, panePIDErr := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
 			switch {
 			case panePIDErr != nil:
@@ -3220,15 +2102,10 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 				}
 				killProcessWithGrace(ctx, livePID, killGracePeriod)
 			default:
-				// tmux answered but reported no pid. Nothing new was learned, so
-				// keep the pre-existing behaviour and use the spawn-time pid.
 				killProcessWithGrace(ctx, s.pid, killGracePeriod)
 			}
 		}
-		// Step 2: destroy the tmux window (cleans up pane/window state).
 		killErr = s.adapter.KillWindow(ctx, s.handle)
-		// Step 3: release the spawn semaphore slot (hk-xb5yi). No-op when
-		// no cap was configured (releaseSlot is nil).
 		if s.releaseSlot != nil {
 			s.releaseSlot()
 		}
@@ -3236,40 +2113,9 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	return killErr
 }
 
-// killProcessSignal is the raw signal syscall used by killProcessWithGrace.
-// It is a package-level var for ONE reason: so a test can prove that the
-// pid<=1 guard signals nothing at all (hk-bl2k6). Production always holds
-// syscall.Kill; tests that swap it must restore it and must not run in
-// parallel with anything that kills a process.
 var killProcessSignal = syscall.Kill
 
-// killProcessWithGrace terminates the tmux pane identified by pid — the pane
-// shell AND everything it spawned — by signalling the pane's PROCESS GROUP:
-// SIGTERM, then up to grace for the group to drain, then SIGKILL.
-//
-// Why the group and not the pid (hk-bl2k6): pid is the shell tmux started via
-// new-window (see the Kill doc comment above); the hosted agent process is a
-// CHILD of that shell. Signalling the shell alone reparents the agent to init,
-// where it survives the daemon's kill, keeps burning CPU and holding a provider
-// slot. In the field this leaked orphan agents for 40+ minutes after a keeper
-// restart. tmux setsid()s every pane, so a pane PID is already a session and
-// process-group leader — kill(-pid, …) therefore names a real group containing
-// the shell and the agent. No spawn-side change is needed for this path (unlike
-// the handler path, whose children deliberately JOIN the daemon's group).
-//
-// Identity is NOT this function's job. It signals whatever pid it is handed.
-// Confirming that the pid still belongs to the caller's pane belongs to the
-// caller, and tmuxSubstrateSession.Kill does it by re-resolving the pane pid
-// from tmux immediately before calling in.
-//
-// It is a best-effort helper: all signal errors are swallowed because the
-// window cleanup in KillWindow is the authoritative cleanup step.
 func killProcessWithGrace(ctx context.Context, pid int, grace time.Duration) {
-	// GUARD — the single most dangerous line in this function is
-	// killProcessSignal(-pid, …). With pid==0 that signals the CALLER'S OWN
-	// process group, i.e. the daemon and every one of its siblings; with
-	// pid==1 kill(-1, …) signals every process the daemon may signal; negative
-	// pids are nonsense here. Refuse loudly and signal nothing.
 	if pid <= 1 {
 		slog.WarnContext(ctx, "kill_process_with_grace_invalid_pid",
 			"pid", pid,
@@ -3278,32 +2124,6 @@ func killProcessWithGrace(ctx context.Context, pid int, grace time.Duration) {
 		return
 	}
 
-	// Prefer the process GROUP led by pid, but check leadership with Getpgid
-	// first. tmux setsid()s each pane, so a live pane genuinely is its own group
-	// leader and this check passes on every healthy path.
-	//
-	// WHAT THE CHECK BUYS, STATED HONESTLY (hk-3d9df): it NARROWS THE GROUP-KILL
-	// BLAST RADIUS. It is not a provenance test and must not be read as one —
-	// HC-044(c) is explicit that "a process group is a kill handle and carries
-	// no provenance meaning", and the only predicate a group could offer,
-	// "processes whose group ID equals their own process ID", is true of every
-	// group leader on the machine (measured on this box: 454 of 534 processes,
-	// 85%). Against a wrapped-around, recycled pid it therefore filters roughly
-	// one case in seven — worth having, nowhere near a guarantee.
-	//
-	// What it DOES fully close is the reaped-leader hazard: when the pane is
-	// gone but some setsid descendant still holds the old group, Getpgid returns
-	// ESRCH, so we take the single-process path and signal nothing live, whereas
-	// a bare kill(-pid) would have reached that unrelated group. It likewise
-	// keeps the daemon's own fabricated test pids (999, 1000, 1234) from
-	// becoming live group kills on an operator's machine.
-	//
-	// The identity question — "is this pid still MY pane?" — is answered by the
-	// caller re-resolving the pane pid from tmux before calling in, not here.
-	//
-	// Whichever target we settle on is used for the liveness poll and the
-	// SIGKILL escalation too, so the poll asks the same question the signal
-	// answered: "is the thing I am trying to kill still there?"
 	target := pid
 	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
 		target = -pid
@@ -3315,48 +2135,22 @@ func killProcessWithGrace(ctx context.Context, pid int, grace time.Duration) {
 	}
 	_ = killProcessSignal(target, syscall.SIGTERM) //nolint:errcheck // best-effort; the process may already be gone and KillWindow is authoritative
 
-	// Poll with kill(target, 0), which returns ESRCH once the group is empty
-	// (or, on the fallback path, once the process is gone). Polling the group
-	// rather than the leader is load-bearing: a pane shell typically dies on
-	// the first SIGTERM while a hosted agent that traps or ignores SIGTERM
-	// lives on. Polling only the leader would see ESRCH immediately, return
-	// early, and skip the SIGKILL that actually reaps the orphan.
 	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) {
 		if err := killProcessSignal(target, 0); errors.Is(err, syscall.ESRCH) {
-			// No such process/group — everything has exited.
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Grace period elapsed; escalate to SIGKILL on the same target.
 	_ = killProcessSignal(target, syscall.SIGKILL) //nolint:errcheck // best-effort; KillWindow is authoritative
 }
 
-// killRemoteProcessWithGrace forcefully terminates a WORKER pane PID over the
-// run's SSH runner: it sends SIGTERM, polls kill(pid,0) for up to grace, then
-// escalates to SIGKILL if the process is still alive. This is the remote analog
-// of killProcessWithGrace — the daemon host CANNOT syscall.Kill a worker PID
-// (it names the worker's process table, not the host's), so the whole
-// TERM→grace→KILL sequence runs as a single POSIX-sh script on the worker,
-// bounding SSH round-trips to one invocation. It is best-effort: all errors are
-// swallowed because KillWindow is the authoritative window-cleanup step
-// (hk-btl1n).
 func killRemoteProcessWithGrace(ctx context.Context, runner tmux.CommandRunner, pid int, grace time.Duration) {
-	// Poll count: match the local 100ms cadence over the grace window. The script
-	// exits early (exit 0) the instant the process is gone, so the common case —
-	// the agent already terminated by SendKeysQuit/KillWindow — returns fast; the
-	// SIGKILL escalation only runs for a process that outlives the grace window.
 	steps := int(grace / (100 * time.Millisecond))
 	if steps < 1 {
 		steps = 1
 	}
-	// Single-quote-free POSIX sh so SSHRunner's per-token single-quoting delivers
-	// it intact to the worker's login shell (see SSHRunner.Command). If the
-	// worker's sh lacks sub-second sleep, `sleep 0.1` errors (swallowed) and the
-	// loop escalates to SIGKILL near-immediately — acceptable for this best-effort
-	// path (KillWindow is the authoritative cleanup).
 	script := fmt.Sprintf(
 		"kill -TERM %d 2>/dev/null; n=0; while [ $n -lt %d ]; do kill -0 %d 2>/dev/null || exit 0; sleep 0.1; n=$((n+1)); done; kill -KILL %d 2>/dev/null",
 		pid, steps, pid, pid,
@@ -3389,8 +2183,6 @@ func killRemoteProcessWithGrace(ctx context.Context, runner tmux.CommandRunner, 
 //
 // If ctx is cancelled before the process exits, Wait returns ctx.Err().
 func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
-	// waitOnce guards only the goroutine launch.  waitDone is always non-nil
-	// because SpawnWindow initializes it at construction (hk-9to6j / R2).
 	s.waitOnce.Do(func() {
 		go s.runWait(ctx)
 	})
@@ -3402,27 +2194,14 @@ func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
 	}
 }
 
-// processDead reports whether the process with the given pid is no longer
-// alive in the OS process table.
-//
-// It sends signal 0 to the pid (kill(pid, 0)) and interprets the result:
-//   - nil error  → process exists and we own it → alive
-//   - ESRCH      → no such process                → dead
-//   - EPERM      → process exists but is owned by another user (e.g. PID
-//     recycled after the original process exited)  → treat as alive, not dead,
-//     to avoid a false "process gone" classification
-//   - any other errno → treat as alive (conservative)
 func processDead(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return errors.Is(err, syscall.ESRCH)
 }
 
-// runWait polls until the hosted process/window exits, then populates outcome.
 func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	defer close(s.waitDone)
 
-	// deadFn is the liveness predicate. Tests inject a stub via isProcessDead;
-	// production uses the package-level processDead (hk-88nno).
 	deadFn := s.isProcessDead
 	if deadFn == nil {
 		deadFn = processDead
@@ -3435,25 +2214,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// Context cancelled: do one final pid check before reporting -1.
-			// If the pid is already gone (common when claude exits cleanly and
-			// the ctx is cancelled by the grace timer or workloop teardown),
-			// report exitCode=0 so the workloop's close-on-exit-0 fallback
-			// fires instead of the claude_crashed branch.
-			// Diagnostic note (hk-cj0gm / hk-ajhqw): the 5-minute gap between
-			// claude exit (21:18) and run_failed (21:23:36) was caused by a
-			// zombie/slow-poll race where processDead returned false during the
-			// polling ticks; ctx.Done() fired first with exitCode=-1, causing
-			// a false claude_crashed classification.
 			exitCode := exitCodeUnknown
-			// hk-r1zq: only trust the local kill(s.pid,0) for a LOCAL session. A
-			// remote session's s.pid is the WORKER's pane PID — local deadFn would
-			// return ESRCH ("dead") unconditionally and falsely report exitCodeClean
-			// on a mid-flight cancel while claude is still alive on the worker, which
-			// can drive the close-on-exit-0 fallback to close an incomplete bead. For
-			// remote we leave exitCodeUnknown (honest "unverified"); the Stop-hook
-			// socket outcome, when present, takes precedence for the real
-			// classification, and otherwise the incomplete/crashed branch handles it.
 			if s.pid > 0 && !s.remote && deadFn(s.pid) {
 				exitCode = exitCodeClean
 			}
@@ -3464,18 +2225,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if s.pid > 0 && !s.remote {
-				// Fast path (LOCAL sessions only): check OS process table directly.
-				// This avoids the tmux display-message fallback that returns the
-				// active-pane PID when the window name is no longer resolvable
-				// (hk-smuku).
-				//
-				// hk-r1zq: a REMOTE session's s.pid is the WORKER's pane PID, which
-				// is NOT in the daemon host's process table — processDead(s.pid) =
-				// kill(pid,0) would return ESRCH ("dead") on the first tick and
-				// falsely conclude exitCodeClean while claude is still running on the
-				// worker. Remote sessions therefore fall through to the worker-side
-				// WindowPanePID poll below (s.adapter routes over the run's SSH
-				// runner), treating worker-pane-gone as the exit signal.
 				if deadFn(s.pid) {
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeClean,
@@ -3483,17 +2232,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 					}
 					return
 				}
-				// Secondary check: the OS process appears alive, but the tmux
-				// pane may have been killed externally (tmux kill-window, session
-				// closed, or host process survived as an orphan/zombie).  If the
-				// window is gone from tmux's perspective, unblock immediately so
-				// the daemon does not hang indefinitely emitting heartbeats for a
-				// pane that no longer exists (hk-ry3be dogfood-blocker).
-				//
-				// hk-kuxxl: resolve via the slash-free pidTarget, not s.handle —
-				// the slash-bearing window-name handle makes tmux fall back to the
-				// session's active pane, which under MaxConcurrent>1 reports a
-				// sibling's pane and produces a false "pane gone" classification.
 				if _, paneErr := s.adapter.WindowPanePID(ctx, s.panePIDTarget()); paneErr != nil {
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeUnknown, // pane gone, process state uncertain
@@ -3501,27 +2239,9 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 					}
 					return
 				}
-				// Process and pane both appear alive — continue polling.
 			} else {
-				// Worker / PID-unknown path: poll pane liveness via WindowPanePID.
-				// Reached by (a) a LOCAL session whose spawn-time PID fetch failed
-				// (s.pid==0) and (b) every REMOTE session (hk-r1zq) — for a remote
-				// run s.adapter is the SSH-backed worker adapter, so this resolves
-				// #{pane_pid} on the WORKER's tmux server, i.e. it polls the actual
-				// claude process on the worker rather than a local kill.
-				// hk-kuxxl: use the slash-free pidTarget for the same reason.
 				_, err := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
 				if err != nil {
-					// hk-cjqyn: distinguish an SSH transport drop from a genuine
-					// pane-gone. For a REMOTE session this poll runs over the SSH
-					// runner; if the tunnel blips (sshd restart, network drop) ssh
-					// exits 255 and WindowPanePID errors — but claude is still
-					// running on the worker. Latching exitCodeClean here would drive
-					// workloop's close-on-exit-0 fallback (socketOutcome==nil &&
-					// exitCode==exitCodeClean) to auto-close incomplete work as a
-					// false green (G8/H4/H5). Report exitCodeUnknown ("unverified")
-					// so the crashed/incomplete branch handles it instead, matching
-					// the ctx-cancel sibling above.
 					if tmux.IsSSHConnectionFailure(err) {
 						s.outcome = handler.Outcome{
 							ExitCode: exitCodeUnknown,
@@ -3529,15 +2249,12 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 						}
 						return
 					}
-					// Window or session gone (the worker pane closed when claude
-					// exited) — treat as process exited.
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),
 					}
 					return
 				}
-				// Window still alive — continue polling.
 			}
 		}
 	}
@@ -3564,15 +2281,6 @@ func (s *tmuxSubstrateSession) PID() int {
 	return s.pid
 }
 
-// panePIDTarget returns the handle used to resolve this session's #{pane_pid}.
-//
-// It prefers the slash-free pidTarget captured at SpawnWindow time (the
-// "%NNNN" pane ID) and falls back to the slash-bearing window-name handle only
-// when pidTarget was never populated (e.g. legacy test doubles that construct a
-// session directly without going through SpawnWindow). Using the slash-free
-// target prevents tmux from misparsing the window-name handle and falling back
-// to the session's active pane — the root cause of the concurrent-wave
-// implementer-phase-barrier failure (hk-kuxxl).
 func (s *tmuxSubstrateSession) panePIDTarget() tmux.WindowHandle {
 	if s.pidTarget != "" {
 		return s.pidTarget
@@ -3615,12 +2323,6 @@ func (s *tmuxSubstrateSession) Stdout() io.Reader {
 	return nil
 }
 
-// shellQuoteArg wraps s in POSIX single-quotes, escaping any embedded
-// single-quote characters so the argument survives `sh -c` word-splitting as a
-// single token. Used by spawnWindowVia to protect multi-word argv values (e.g.
-// the codex seed prompt) from being shattered by the sh -c join.
-//
-// Bead: hk-rpr6.
 func shellQuoteArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

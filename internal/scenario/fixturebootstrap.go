@@ -71,31 +71,18 @@ type FixtureBootstrapResult struct {
 //
 // Spec ref: specs/scenario-harness.md §4.4 SH-012.
 func BootstrapFixture(ctx context.Context, fixtureRoot, scenarioName string, twinSearchPaths []string) (*FixtureBootstrapResult, error) {
-	// Sub-step (a): synthesize the per-scenario synthetic project root.
-	// SynthesizeProjectRoot calls git init, conforming to WM-001/WM-002.
 	projectRoot, err := SynthesizeProjectRoot(ctx, fixtureRoot, scenarioName)
 	if err != nil {
 		return nil, fmt.Errorf("%w: sub-step (a) synthesize project root: %w",
 			errFixtureSetupFailed, err)
 	}
 
-	// Sub-step (b): create the isolated event-log directory.
-	// The daemon writes events.jsonl relative to its working directory; the
-	// harness pre-creates the directory so the daemon can open the file
-	// without needing to create its parent per SH-014.
 	evLogDir := EventLogDir(projectRoot)
 	if err := os.MkdirAll(evLogDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("%w: sub-step (b) create event-log dir %q: %w",
 			errFixtureSetupFailed, evLogDir, err)
 	}
 
-	// Sub-step (c): capture the twin-binary search paths.
-	// The caller (harness CLI or test driver) resolves the search-path
-	// precedence (--twin-search-path > HARMONIK_TWIN_SEARCH_PATH > default
-	// <repo-root>/twins/) before calling BootstrapFixture; we record the
-	// resolved list here so it can be threaded into resolve_twin_binary
-	// (SH-009) without re-computing precedence inside the fixture layer.
-	// An empty list is valid; absolute agent_override paths resolve directly.
 	resolvedPaths := make([]string, len(twinSearchPaths))
 	copy(resolvedPaths, twinSearchPaths)
 
@@ -106,10 +93,6 @@ func BootstrapFixture(ctx context.Context, fixtureRoot, scenarioName string, twi
 	}, nil
 }
 
-// errFixtureSetupFailed is the sentinel error whose string form signals that a
-// BootstrapFixture error should be classified as FailureClassFixtureSetupFailed
-// per specs/scenario-harness.md §8.3. It is unexported; callers inspect the
-// returned FailureClass via BootstrapFixtureFailureClass.
 var errFixtureSetupFailed = fmt.Errorf("fixture-setup-failed")
 
 // BootstrapFixtureFailureClass returns the FailureClass for the error returned

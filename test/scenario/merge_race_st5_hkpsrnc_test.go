@@ -31,13 +31,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures (mergeRaceST5 prefix — bead hk-psrnc)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeRaceST5FixtureWorkflowDot writes the two-node DOT workflow to
-// <projectDir>/workflow.dot. The daemon reads it from this location when
-// WorkflowModeDot is set and no per-bead workflow_ref label is present.
 func mergeRaceST5FixtureWorkflowDot(t *testing.T, projectDir string) {
 	t.Helper()
 	content := `digraph "merge-race-two-node" {
@@ -54,13 +47,6 @@ func mergeRaceST5FixtureWorkflowDot(t *testing.T, projectDir string) {
 	}
 }
 
-// mergeRaceST5FixtureAlphaScript writes the twin YAML script for both DOT
-// nodes and returns its absolute path. The same script drives alpha_node and
-// beta_node because (a) sequential mode shares one worktree and (b)
-// HARMONIK_NODE_ID is "bead/<id>", never the DOT node name, so per-node
-// routing via env is impossible. Both nodes commit merge-race-sentinel.txt;
-// alpha's content is commit-on-cue <ts1>, beta's is <ts2> (different ts →
-// different file content → second commit succeeds).
 func mergeRaceST5FixtureAlphaScript(t *testing.T) string {
 	t.Helper()
 	const scriptYAML = `heartbeat_mode: scripted
@@ -112,10 +98,6 @@ messages:
 	return scriptPath
 }
 
-// mergeRaceST5FixtureHandlerScript writes the wrapper shell script that
-// invokes harmonik-twin-claude with --script-path and --worktree-path.
-// The daemon-generated args (--session-id, --model, etc.) are intentionally
-// NOT forwarded: the twin parses only its own flags and rejects unknown ones.
 func mergeRaceST5FixtureHandlerScript(t *testing.T, twinBin, alphaScriptPath string) string {
 	t.Helper()
 	twinEsc := strings.ReplaceAll(twinBin, "'", "'\\''")
@@ -135,10 +117,6 @@ exec '%s' \
 	}
 	return scriptPath
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_MergeRace_ST5
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_MergeRace_ST5 is the end-to-end proof of the Layer-1 agent seam
 // (bead hk-psrnc). Assertions:
@@ -180,19 +158,15 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 
 	cancel, daemonDone := scenarioFixtureStartDaemon(t, cfg)
 
-	// Wait for a terminal event (run_completed or run_failed).
 	const terminalBudget = 120 * time.Second
 	gotTerminal := scenarioCheckRunCompleted(t, jsonlPath, terminalBudget)
 
-	// Allow bead close to propagate before shutting the daemon down.
 	if gotTerminal {
 		codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 10*time.Second)
 	}
 
 	cancel()
 	scenarioFixtureWaitDaemon(t, daemonDone, 10*time.Second)
-
-	// ── Assertions ──────────────────────────────────────────────────────────
 
 	lines := scenarioFixtureReadJSONLLines(t, jsonlPath)
 
@@ -202,7 +176,6 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 		return
 	}
 
-	// 1. Must be run_completed, not run_failed.
 	foundCompleted := false
 	for _, line := range lines {
 		if strings.Contains(line, string(core.EventTypeRunCompleted)) {
@@ -214,7 +187,6 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 		t.Errorf("run_completed not found (run_failed?); JSONL:\n%s", strings.Join(lines, "\n"))
 	}
 
-	// 2. agent_ready must appear — proves the twin binary was actually invoked.
 	agentReadyFound := false
 	for _, line := range lines {
 		if strings.Contains(line, "agent_ready") {
@@ -227,16 +199,10 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 			strings.Join(lines, "\n"))
 	}
 
-	// 3. Bead must be closed.
 	if !codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
 	}
 
-	// 4. Zero Claude API tokens: the watcher always emits budget_accrual with
-	// cost_basis:"output_bytes" for agent_output_chunk events — that is expected
-	// and NOT an API-token charge. Token-basis accruals (any cost_basis other
-	// than "output_bytes") would indicate Claude API usage; none should appear
-	// when the twin is the sole handler.
 	for _, line := range lines {
 		if strings.Contains(line, "budget_accrual") && !strings.Contains(line, `"output_bytes"`) {
 			t.Errorf("token-basis budget_accrual found — Claude API unexpectedly invoked; line: %s", line)

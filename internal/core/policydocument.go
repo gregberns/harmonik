@@ -49,8 +49,6 @@ type PolicyDocument struct {
 	sectionPresence policyDocumentSections
 }
 
-// policyDocumentSections tracks whether each required YAML section was
-// explicitly present (even if empty) in the parsed document.
 type policyDocumentSections struct {
 	metadata        bool
 	roles           bool
@@ -214,7 +212,6 @@ var ErrFreedomProfileInvalidMaxIterations = errors.New("freedom_profile max_iter
 // integer; a zero value indicates the field was absent from the YAML source.
 var ErrInvalidPolicySchemaVersion = errors.New("policy document metadata.schema_version must be a positive integer")
 
-// requiredSections lists the seven required top-level keys per CP-035.
 var requiredSections = []string{
 	"metadata",
 	"roles",
@@ -232,7 +229,6 @@ var requiredSections = []string{
 // after parsing. This separation allows test fixtures to exercise missing-section
 // detection explicitly.
 func ParsePolicyDocument(data []byte) (PolicyDocument, error) {
-	// First, extract the set of top-level keys that were present in the YAML.
 	var rawMap map[string]yaml.Node
 	if err := yaml.Unmarshal(data, &rawMap); err != nil {
 		return PolicyDocument{}, fmt.Errorf("policy document: yaml parse: %w", err)
@@ -321,7 +317,6 @@ func (d *PolicyDocument) ValidateDeferredRoleShells() error {
 		}
 		ps := r.PermissionSchema
 		if ps == nil {
-			// CP-028 catches this; skip here to avoid double-reporting.
 			continue
 		}
 		if len(ps.AllowedTools) > 0 {
@@ -358,7 +353,6 @@ func (d *PolicyDocument) ValidateRequiredRoleDefaultSkills() error {
 		}
 		ps := r.PermissionSchema
 		if ps == nil {
-			// CP-028 catches this; skip here to avoid double-reporting.
 			continue
 		}
 		found := false
@@ -428,7 +422,6 @@ func PolicyDocumentAcceptsSchemaVersion(docVersion, readerVersion int) bool {
 	return docVersion >= readerVersion-1
 }
 
-// missingSections returns the names of required sections that were absent.
 func (d *PolicyDocument) missingSections() []string {
 	type check struct {
 		name    string
@@ -480,10 +473,6 @@ type PolicyConfig struct {
 // precedence layer overwrite matching keys from lower-precedence layers.
 // Missing keys in a higher-precedence layer are filled from lower layers.
 func MergeConfigs(runtime, operatorPolicy, workflowDef, defaultConfig PolicyConfig) PolicyConfig {
-	// Build result bottom-up: start with lowest precedence, apply upward.
-	// Deep-copy ExtraFields from defaultConfig so the result map is independent
-	// of the source map; post-resolve mutation of defaultConfig.ExtraFields must
-	// not bleed into the returned snapshot (no-mid-run-reload invariant, CP-037).
 	result := defaultConfig
 	if len(defaultConfig.ExtraFields) > 0 {
 		result.ExtraFields = make(map[string]string, len(defaultConfig.ExtraFields))

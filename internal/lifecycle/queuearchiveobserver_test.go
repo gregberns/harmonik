@@ -1,16 +1,5 @@
 package lifecycle_test
 
-// queuearchiveobserver_test.go — claims defended:
-//
-//   - The observer never removes an archive, whatever the retention setting.
-//   - With no retention number set, the observer says so and marks nothing
-//     over retention. It does NOT quietly apply a number of its own.
-//   - With an operator-set number, the count over retention is per queue and
-//     names the oldest archives first.
-//   - Age comes from the injected clock, not from the wall clock.
-//
-// Every fixture is produced by queue.ArchiveFailedQueue, the real writer.
-
 import (
 	"context"
 	"os"
@@ -31,9 +20,6 @@ func observerFixtureDir(t *testing.T) string {
 	return dir
 }
 
-// archiveViaRealWriter creates a live queue file and archives it through
-// queue.ArchiveFailedQueue, then forces the archive's mtime so age and
-// ordering are deterministic.
 func archiveViaRealWriter(t *testing.T, projectDir, queueName string, at time.Time) string {
 	t.Helper()
 	live := filepath.Join(projectDir, ".harmonik", "queues", queueName+".json")
@@ -125,7 +111,6 @@ func TestObserveQueueArchives_OperatorNumberComesFromTheEnvironment(t *testing.T
 	mainOldest := archiveViaRealWriter(t, dir, "main", base)
 	mainMiddle := archiveViaRealWriter(t, dir, "main", base.Add(time.Hour))
 	archiveViaRealWriter(t, dir, "main", base.Add(2*time.Hour))
-	// crew-paul has one archive, under any retention of 1 or more.
 	archiveViaRealWriter(t, dir, "crew-paul", base.Add(3*time.Hour))
 
 	report, err := lifecycle.ObserveQueueArchives(dir, lifecycle.ObserveQueueArchivesConfig{

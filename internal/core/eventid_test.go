@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// mustParseEventID constructs an EventID from a UUID string, failing the test on error.
 func mustParseEventID(t *testing.T, s string) EventID {
 	t.Helper()
 
@@ -21,7 +20,6 @@ func mustParseEventID(t *testing.T, s string) EventID {
 }
 
 func TestEventID_String(t *testing.T) {
-	// UUIDv7 canonical form: 8-4-4-4-12 hex digits with hyphens.
 	const raw = "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f6a7b"
 
 	e := mustParseEventID(t, raw)
@@ -122,8 +120,6 @@ func TestEventID_EV002_RejectsV4(t *testing.T) {
 func TestEventID_EV002_RejectsV1(t *testing.T) {
 	u, err := uuid.NewUUID() // uuid.NewUUID returns a v1 (MAC-address + time)
 	if err != nil {
-		// v1 generation can fail when no hardware address is available (e.g. in
-		// some CI environments). Document the limitation and skip rather than fail.
 		t.Skipf("EV-002: uuid.NewUUID (v1) unavailable in this environment: %v", err)
 	}
 	e := EventID(u)

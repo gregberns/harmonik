@@ -1,18 +1,5 @@
 package main
 
-// keeper_enable_doctor_cmd.go — `harmonik keeper enable` and `harmonik keeper doctor`
-//
-// enable  — IDEMPOTENT wiring of the 3 keeper stanzas into ~/.claude/settings.json
-//           (statusLine + Stop hook + PreCompact hook), seed a handoff stub, and
-//           print the exact run command.  Never creates .managed for real agents
-//           unless --yes-destructive is passed.  Refuses known live agent names
-//           (flywheel, named-queues, controlpoints) without --yes-destructive.
-//
-// doctor  — READ-ONLY drift validator; exits non-zero on any gap.  Also runs at
-//           keeper BOOT as a loud diagnostic when a required stanza is missing.
-//
-// Spec ref: codename:session-keeper (hk-ekap1); bead hk-kzqml.
-
 import (
 	"context"
 	"encoding/json"
@@ -30,19 +17,12 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// knownLiveAgents are production agents where an accidental /clear cycle could
-// destroy in-progress work.  enable refuses these without --yes-destructive.
 var knownLiveAgents = map[string]bool{
 	"flywheel":      true,
 	"named-queues":  true,
 	"controlpoints": true,
 }
 
-// ── enableConfig ─────────────────────────────────────────────────────────────
-
-// enableConfig is the injectable configuration for runKeeperEnable.
-// Fields that would normally come from the environment (home dir, settings path)
-// are explicit so tests can override them without touching the real filesystem.
 type enableConfig struct {
 	agentName      string
 	projectDir     string // harmonik project root
@@ -52,12 +32,10 @@ type enableConfig struct {
 	yesDestructive bool   // gate for .managed creation and known-live agents
 }
 
-// runKeeperEnableSubcommand is the entry point for `harmonik keeper enable`.
 func runKeeperEnableSubcommand(args []string) int {
 	return runKeeperEnableEntry(args, os.Stdout, os.Stderr)
 }
 
-// enableArgs holds the parsed `keeper enable` argument vector.
 type enableArgs struct {
 	agentName      string
 	projectDir     string
@@ -66,31 +44,12 @@ type enableArgs struct {
 	yesDestructive bool
 }
 
-// parseKeeperEnableArgs parses the enable argument vector. FLAG-ONLY (hk-nbft):
-// the agent name MUST be supplied via `--agent <name>` / `--agent=<name>`. ANY
-// positional argument is rejected LOUDLY (exit 2) with the same message every
-// other keeper verb uses (resolveKeeperAgent) — positionals were the recurring
-// footgun where a bare token silently took the place of --agent (e.g.
-// `enable captain` parsed the agent then failed downstream on scripts-dir). An
-// UNRECOGNIZED leading-dash token is likewise rejected (exit 2) — the CLASS-A
-// bug where `doctor --agent X` checked an agent named "--agent". Every existing
-// recognized flag (including --yes-destructive, the regression that failed the
-// original hk-psds) is enumerated and kept; the reject now covers unrecognized
-// flags AND positional arguments.
-//
-// The returned code is a control signal, not just an exit code:
-//
-//	-1 → parse OK, caller should proceed
-//	 0 → --help printed, caller should return 0
-//	 1 → missing agent name (no --agent supplied)
-//	 2 → unrecognized leading-dash flag OR unexpected positional argument
 func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs, int) {
 	var (
 		pa        enableArgs
 		agentFlag string
 	)
 
-	// manual flag parse to match existing codebase convention
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -122,10 +81,6 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 		case args[i] == "--yes-destructive":
 			pa.yesDestructive = true
 		case strings.HasPrefix(args[i], "-"):
-			// Unrecognized leading-dash token: reject loudly instead of silently
-			// treating it as the positional agent name (the CLASS-A false-green).
-			// This catch-all MUST stay AFTER every recognized flag case above so
-			// --yes-destructive et al. are not swept into the reject.
 			if _, err := fmt.Fprintf(stderr, "harmonik keeper enable: unrecognized flag %q\n", args[i]); err != nil {
 				return enableArgs{}, 1
 			}
@@ -138,8 +93,6 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 		}
 	}
 
-	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
-	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
 	if len(rest) > 0 {
 		if _, err := fmt.Fprintf(stderr,
 			"harmonik keeper enable: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
@@ -165,7 +118,6 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 	return pa, -1
 }
 
-// runKeeperEnableEntry parses flags and delegates to runKeeperEnable.
 func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	pa, code := parseKeeperEnableArgs(args, stdout, stderr)
 	if code != -1 {
@@ -177,7 +129,6 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	tmuxTarget := pa.tmuxTarget
 	yesDestructive := pa.yesDestructive
 
-	// Resolve project dir.
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -197,13 +148,10 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	}
 	projectDir = absProject
 
-	// Resolve scripts dir. projectDir (resolved above) is the primary hint so a
-	// `go install`'d binary run from the repo still finds <project>/scripts.
 	if scriptsDir == "" {
 		scriptsDir = autoDetectScriptsDir(projectDir)
 	}
 
-	// Resolve settings path.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik keeper enable: cannot determine home directory: %v\n", err); writeErr != nil {
@@ -224,9 +172,7 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	return runKeeperEnable(cfg, stdout, stderr)
 }
 
-// runKeeperEnable is the testable core of `harmonik keeper enable`.
 func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
-	// Validate agent name (no path traversal).
 	if strings.Contains(cfg.agentName, "/") || strings.Contains(cfg.agentName, "..") {
 		if err := keeperWritef(stderr, "harmonik keeper enable: agent name %q must not contain '/' or '..'\n", cfg.agentName); err != nil {
 			return 1
@@ -240,7 +186,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Guard: refuse known live agents without --yes-destructive.
 	if knownLiveAgents[cfg.agentName] && !cfg.yesDestructive {
 		if err := keeperWritef(stderr,
 			"harmonik keeper enable: %q is a known live agent (flywheel/named-queues/controlpoints).\n"+
@@ -253,7 +198,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Validate scripts dir and verify scripts exist.
 	if cfg.scriptsDir == "" {
 		if err := keeperWritef(stderr,
 			"harmonik keeper enable: cannot locate scripts directory.\n"+
@@ -278,7 +222,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Read existing settings.json (or start fresh).
 	settings, err := readGlobalSettings(cfg.settingsPath)
 	if err != nil {
 		if writeErr := keeperWritef(stderr, "harmonik keeper enable: read %s: %v\n", cfg.settingsPath, err); writeErr != nil {
@@ -287,7 +230,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Back up existing file if it has content.
 	if _, statErr := os.Stat(cfg.settingsPath); statErr == nil {
 		backupPath := fmt.Sprintf("%s.bak-%s", cfg.settingsPath, time.Now().UTC().Format("20060102T150405Z"))
 		if copyErr := copyFile(cfg.settingsPath, backupPath); copyErr != nil {
@@ -301,37 +243,17 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Build canonical commands.
-	// Agent name is NOT embedded — scripts derive it from the tmux session name at
-	// runtime so a single global ~/.claude/settings.json entry works for all concurrent
-	// sessions on the machine without perturbing peer agents (hk-nm32w).
-	//
-	// ON-058b: statusLine is project-agnostic — no HARMONIK_PROJECT= prefix.
-	// Runtime routing is via the inherited HARMONIK_PROJECT env var; the script
-	// uses PROJECT="${HARMONIK_PROJECT:-${PWD}}" to resolve the correct project.
-	// All projects on the machine converge on the identical bare-path stanza.
 	statusLineCmd := filepath.Join(cfg.scriptsDir, "keeper-statusline.sh")
-	// ON-058a: Stop/PreCompact hook commands retain HARMONIK_PROJECT= so dedup can
-	// match on the (basename, HARMONIK_PROJECT=<projectDir>) pair — two distinct
-	// projects produce two sibling groups in the hooks array and coexist without
-	// one project's enable perturbing the other's group.
 	stopHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
 		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh"))
 	precompactHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
 		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-precompact-hook.sh"))
-	// SessionStart hook (hk-8prq): same project-keyed, agent-free command shape
-	// as Stop/PreCompact — HARMONIK_PROJECT= for ON-058a dedup, NO literal
-	// HARMONIK_AGENT= (the script derives the agent from the inherited env / tmux
-	// name, avoiding the hk-67k ctx-pollution regression). Provisioning the hook
-	// here is what makes the single-writer <agent>.sid channel exist for EVERY
-	// keeper-managed session.
 	sessionStartHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
 		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-sessionstart-hook.sh"))
 
-	// Merge stanzas (idempotent).
 	statusLineAction := mergeStatusLineStanza(settings, statusLineCmd)
 	stopAction := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir, stopHookCmd)
 	precompactAction := mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir, precompactHookCmd)
@@ -350,7 +272,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Write updated settings.json.
 	if err := writeGlobalSettings(cfg.settingsPath, settings); err != nil {
 		if writeErr := keeperWritef(stderr, "harmonik keeper enable: write %s: %v\n", cfg.settingsPath, err); writeErr != nil {
 			return 1
@@ -361,7 +282,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Seed HANDOFF-<agent>.md if absent.
 	handoffPath := filepath.Join(cfg.projectDir, fmt.Sprintf("HANDOFF-%s.md", cfg.agentName))
 	if _, err := os.Stat(handoffPath); os.IsNotExist(err) {
 		if writeErr := writeHandoffStub(handoffPath, cfg.agentName); writeErr != nil {
@@ -379,7 +299,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Validate tmux pane if --tmux was provided.
 	if cfg.tmuxTarget != "" {
 		ok, checkErr := tmuxPaneExists(cfg.tmuxTarget)
 		if checkErr != nil {
@@ -400,7 +319,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// .managed gating.
 	if cfg.yesDestructive {
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
 		if err := os.MkdirAll(filepath.Dir(managedPath), core.HarmonikDirMode); err != nil {
@@ -435,7 +353,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Print the run command.
 	runCmd := buildKeeperRunCmd(cfg)
 	if err := keeperWritef(stdout, "\nkeeper enable: to start the keeper, run:\n  %s\n", runCmd); err != nil {
 		return 1
@@ -449,9 +366,6 @@ func keeperWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// ── doctorConfig ─────────────────────────────────────────────────────────────
-
-// doctorConfig is the injectable configuration for runKeeperDoctor.
 type doctorConfig struct {
 	agentName    string
 	projectDir   string
@@ -467,25 +381,15 @@ type doctorConfig struct {
 	resolveTargetFn func(projectDir, agentName string) string
 }
 
-// runKeeperDoctorSubcommand is the entry point for `harmonik keeper doctor`.
 func runKeeperDoctorSubcommand(args []string) int {
 	return runKeeperDoctorEntry(args, os.Stdout, os.Stderr)
 }
 
-// doctorArgs holds the parsed `keeper doctor` argument vector.
 type doctorArgs struct {
 	agentName  string
 	projectDir string
 }
 
-// parseKeeperDoctorArgs parses the doctor argument vector. FLAG-ONLY (hk-nbft),
-// with the SAME parity as enable: the agent name MUST come via `--agent <name>` /
-// `--agent=<name>`. ANY positional argument is rejected loudly (exit 2) with the
-// shared resolveKeeperAgent message — `doctor captain` previously accepted the
-// positional and exited 0 (false-green at keeper boot). An unrecognized
-// leading-dash token is likewise rejected (exit 2). The return code follows the
-// same control-signal convention as parseKeeperEnableArgs (-1 proceed, 0 help,
-// 1 missing agent, 2 unknown flag OR unexpected positional).
 func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs, int) {
 	var (
 		da        doctorArgs
@@ -510,9 +414,6 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 		case strings.HasPrefix(args[i], "--project="):
 			da.projectDir = strings.TrimPrefix(args[i], "--project=")
 		case strings.HasPrefix(args[i], "-"):
-			// Unrecognized leading-dash token: reject loudly. THE CLASS-A killer —
-			// `doctor --agent X` previously checked an agent literally named
-			// "--agent" (false-green doctor at keeper boot; captain hit this live).
 			if err := keeperWritef(stderr, "harmonik keeper doctor: unrecognized flag %q\n", args[i]); err != nil {
 				return doctorArgs{}, 1
 			}
@@ -525,8 +426,6 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 		}
 	}
 
-	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
-	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
 	if len(rest) > 0 {
 		if err := keeperWritef(stderr,
 			"harmonik keeper doctor: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
@@ -552,7 +451,6 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 	return da, -1
 }
 
-// runKeeperDoctorEntry parses flags and delegates to runKeeperDoctor.
 func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
 	da, code := parseKeeperDoctorArgs(args, stdout, stderr)
 	if code != -1 {
@@ -597,9 +495,6 @@ func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
 	return runKeeperDoctor(cfg, stdout, stderr)
 }
 
-// runKeeperDoctor is the testable core of `harmonik keeper doctor`.
-// It is also called by runKeeperSubcommand at keeper boot for loud diagnostics.
-// Exits non-zero when any check fails.
 func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	type checkResult struct {
 		name    string
@@ -612,11 +507,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		results = append(results, checkResult{name: name, ok: ok, message: msg})
 	}
 
-	// 0. Config completeness: .harmonik/config.yaml has all required keeper keys.
-	// Missing file = all keys absent (run `harmonik keeper config --example`).
-	// A load error (malformed YAML, unsupported version) is also a hard gap.
-	// Uses empty KeeperFlags so the check reflects the config alone, matching
-	// the typical crew keeper invocation (no per-key CLI flags). Refs: hk-zou19.
 	{
 		projCfg, cfgErr := projectconfig.LoadProjectConfig(cfg.projectDir)
 		if cfgErr != nil {
@@ -632,7 +522,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 1. Binary currency: harmonik on PATH and executable.
 	{
 		exe, lookErr := exec.LookPath("harmonik")
 		if lookErr != nil {
@@ -652,11 +541,9 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Read settings.json once for hook checks.
 	settings, readErr := readGlobalSettings(cfg.settingsPath)
 	settingsPresent := readErr == nil
 
-	// 2. statusLine stanza present.
 	{
 		if !settingsPresent {
 			check("statusLine", false, fmt.Sprintf("settings.json not found at %s — run: harmonik keeper enable %s ...", cfg.settingsPath, cfg.agentName))
@@ -666,17 +553,9 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				check("statusLine", false, fmt.Sprintf("keeper-statusline.sh not found in statusLine.command — run: harmonik keeper enable %s ...", cfg.agentName))
 			} else {
 				check("statusLine", true, "keeper-statusline.sh wired")
-				// Sub-check: required "type":"command" field (hk-hs1). Without it
-				// Claude Code rejects the whole settings.json and disables all hooks.
 				if !statusLineTypeIsCommand(settings) {
 					check("statusLine.type", false, `statusLine missing "type":"command" — Claude Code will reject settings.json; run: harmonik keeper enable to normalize`)
 				}
-				// Sub-check: ctx pollution canary (hk-67k). A literal HARMONIK_AGENT=<name>
-				// in the command overrides the inherited env var for ALL concurrent Claude
-				// Code sessions — every session writes the same .ctx file, clobbering the
-				// keeper's session-binding. Shell-expansion form (${HARMONIK_AGENT:-...}) is
-				// acceptable but unnecessary; the agent name is already derived from the tmux
-				// session name. Run `harmonik keeper enable` to write a clean command.
 				if strings.Contains(cmd, "HARMONIK_AGENT=") && !strings.Contains(cmd, "HARMONIK_AGENT=${") {
 					check("statusLine.agent_pollution", false, "statusLine.command has a literal HARMONIK_AGENT= that overrides all sessions' env var (ctx pollution, hk-67k) — run: harmonik keeper enable to normalize")
 				}
@@ -684,7 +563,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 3. Stop hook present for THIS project (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	{
 		if !settingsPresent {
 			check("Stop hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
@@ -698,7 +576,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 4. PreCompact hook present for THIS project (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	{
 		if !settingsPresent {
 			check("PreCompact hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
@@ -712,10 +589,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 4b. SessionStart hook present for THIS project (hk-8prq). A keeper-managed
-	// session WITHOUT this hook produces no <agent>.sid, so the keeper silently
-	// degrades to the fallback identity path — flag it so the provisioning gap is
-	// visible. (Matched on the (basename, HARMONIK_PROJECT=<projectDir>) pair.)
 	{
 		if !settingsPresent {
 			check("SessionStart hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
@@ -729,7 +602,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 5. Gauge freshness: has <agent>.ctx been written?
 	{
 		ctxPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".ctx")
 		info, statErr := os.Stat(ctxPath)
@@ -745,13 +617,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 5b. .sid channel: has the SessionStart hook written <agent>.sid, and is it
-	// a well-formed primary id? (hk-8prq) Absent or malformed → the keeper is on
-	// the FALLBACK identity path (not an error, but flagged so the operator can
-	// confirm the SessionStart hook is provisioned and has fired). When present
-	// and well-formed, report its age and whether it AGREES with the gauge's
-	// session_id — a disagreement is the value-drift signal a time-based TTL
-	// cannot capture (the hook writes .sid only at session boundaries).
 	{
 		sid, sidMod, sidErr := keeper.ReadSessionIDFile(cfg.projectDir, cfg.agentName)
 		sidPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".sid")
@@ -762,10 +627,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			check("sid channel", false, fmt.Sprintf(".sid present but not a primary session id (%q) — keeper is on the FALLBACK identity path", sid))
 		default:
 			msg := fmt.Sprintf(".sid present and well-formed (%s old)", formatAge(time.Since(sidMod)))
-			// Cross-check against the gauge's authoritative-or-fallback id. Since
-			// ReadCtxFile applies the .sid override, agreement here means the gauge
-			// either carries the same id or was overridden — a mismatch can only
-			// arise if the gauge held a different id the override rejected.
 			if cf, _, ctxErr := keeper.ReadCtxFile(cfg.projectDir, cfg.agentName); ctxErr == nil && cf.SessionID != "" && cf.SessionID != sid {
 				msg += fmt.Sprintf("; WARNING: gauge session_id %q differs — possible drift", cf.SessionID)
 			}
@@ -773,7 +634,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 6. .idle ever written (Stop hook has fired at least once).
 	{
 		idlePath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".idle")
 		if _, statErr := os.Stat(idlePath); statErr != nil {
@@ -783,12 +643,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Watcher liveness is sampled ONCE and consumed by BOTH check 7 (.managed)
-	// and check 7c (live-watcher). LiveKeeperPresent probes the exclusive flock
-	// on .harmonik/keeper/<agent>.lock, which the kernel drops when the process
-	// dies — so it distinguishes a RUNNING keeper from a stale corpse lockfile,
-	// and from a merely-fresh gauge file (the gauge is written by the statusline
-	// hook on every Claude Code repaint, entirely independent of the watcher).
 	watcherLive := func() bool {
 		fn := cfg.liveKeeperFn
 		if fn == nil {
@@ -797,17 +651,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		return fn(cfg.projectDir, cfg.agentName)
 	}()
 
-	// 7. .managed present; and when both managed and live SIDs are set, they must agree.
-	// A mismatch means the keeper is bound to a dead session and will never act (blind).
-	//
-	// `.managed` is an OPT-IN CONSENT marker on disk. It is never evidence that
-	// anything is running, and reporting it green on its own cost a live captain
-	// most of a session: the watcher had died, every other surface stayed green
-	// (config, hooks, fresh gauge, .managed, live pane), and the captain sat at a
-	// typed-but-unsent /clear waiting for a restart cycle that could never fire.
-	// `.managed` present with NO watcher process is a SILENT DEADLOCK, not a
-	// degraded mode, so it reads RED here and names the missing watcher rather
-	// than leaving the reader to correlate two checks by eye. Refs: hk-220lv.
 	{
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
 		deadlockHint := " — but NO live keeper watcher is running: the handoff cycle is DEADLOCKED, " +
@@ -835,23 +678,12 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 7c. Live keeper watcher: does a live keeper process hold the exclusive flock?
-	// Uses LiveKeeperPresent (shared-flock probe) so it correctly distinguishes a
-	// running keeper from a stale corpse lockfile. Sampled once above, into
-	// watcherLive, because check 7 (.managed) consumes the same answer.
 	if watcherLive {
 		check("live-watcher", true, "live keeper process is running")
 	} else {
 		check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
 	}
 
-	// 7d. Tmux pane liveness: verify the auto-resolved keeper inject-target
-	// (<session>:agent) is a reachable pane. An absent session is not a failure
-	// (the agent may simply not be running); only a live session with a missing
-	// pane is flagged — that is the zsh :a modifier bug (hk-5266t): an unbraced
-	// $session:agent in a zsh context gets its `:a` suffix treated as the
-	// absolute-path modifier, rewriting the target to abspath($session)+"gent",
-	// a nonexistent pane that silently swallows every keeper inject attempt.
 	{
 		resolveFn := cfg.resolveTargetFn
 		if resolveFn == nil {
@@ -878,7 +710,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 8. ANTHROPIC_API_KEY-in-env risk.
 	{
 		if os.Getenv("ANTHROPIC_API_KEY") != "" {
 			check("api-key-risk", false, "ANTHROPIC_API_KEY is set in environment — keeper-launched claude will bill the API credit pool, not the subscription. Unset it or use 'env -u ANTHROPIC_API_KEY harmonik keeper ...'")
@@ -887,14 +718,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 9. captain-tools bash-launcher drift guard — RETIRED (ES8 / hk-877k).
-	// The bash captain launcher was deleted once native `harmonik start captain`
-	// + `harmonik captain respawn` fully replaced it; there is no longer an
-	// embedded script to compare a deployed copy against.
-
-	// 10. Last cycle outcome. This is diagnostic state, not a health gate. A
-	// parked cycle must name the reason so an operator can distinguish a safe
-	// deferral from a handoff failure.
 	{
 		cyclePath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".cycle")
 		// #nosec G304 -- projectDir and agentName passed the command boundary checks.
@@ -918,7 +741,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Print results.
 	allOK := true
 	for _, r := range results {
 		symbol := "✓"
@@ -949,15 +771,12 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	return 1
 }
 
-// runKeeperDoctorAtBoot runs doctor at keeper boot and logs warnings to stderr.
-// Non-fatal: the watcher still starts even if checks fail.
 func runKeeperDoctorAtBoot(projectDir, agentName, settingsPath string) {
 	cfg := doctorConfig{
 		agentName:    agentName,
 		projectDir:   projectDir,
 		settingsPath: settingsPath,
 	}
-	// Use a prefix writer to mark all output as boot-time diagnostics.
 	code := runKeeperDoctor(cfg, os.Stderr, os.Stderr)
 	if code != 0 {
 		if err := keeperWritef(os.Stderr, "keeper: boot doctor found gaps for agent %q (above) — some keeper features may be inactive\n", agentName); err != nil {
@@ -966,10 +785,6 @@ func runKeeperDoctorAtBoot(projectDir, agentName, settingsPath string) {
 	}
 }
 
-// ── Settings JSON helpers ─────────────────────────────────────────────────────
-
-// readGlobalSettings reads and parses a Claude Code settings.json file.
-// Returns an empty map if the file is absent.
 func readGlobalSettings(settingsPath string) (map[string]interface{}, error) {
 	raw, err := os.ReadFile(settingsPath) //nolint:gosec // G304: operator-specified path
 	if err != nil {
@@ -985,9 +800,6 @@ func readGlobalSettings(settingsPath string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-// writeGlobalSettings writes a settings map to the given path.
-// Creates the parent directory if needed. NOT atomic (suitable for user's
-// home-dir settings file; backup is taken by the caller first).
 func writeGlobalSettings(settingsPath string, settings map[string]interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil { //dirmode:allow parent of the user's ~/.claude/settings.json, not .harmonik state
 		return fmt.Errorf("MkdirAll %q: %w", filepath.Dir(settingsPath), err)
@@ -1003,8 +815,6 @@ func writeGlobalSettings(settingsPath string, settings map[string]interface{}) e
 	return nil
 }
 
-// mergeStatusLineStanza upserts the statusLine stanza in settings.
-// Returns a short action string ("added", "updated", "unchanged").
 func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string) string {
 	existing := getStatusLineCommand(settings)
 
@@ -1012,9 +822,6 @@ func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string)
 		if existing == canonicalCmd && statusLineTypeIsCommand(settings) {
 			return "unchanged"
 		}
-		// Stale, non-normalized, or missing the required "type":"command" — update
-		// in place. The "type" field is mandatory: Claude Code rejects the entire
-		// settings.json (disabling ALL hooks) if statusLine lacks it (hk-hs1).
 		sl := getOrCreateStatusLine(settings)
 		sl["type"] = "command"
 		sl["command"] = canonicalCmd
@@ -1022,8 +829,6 @@ func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string)
 		return "updated (normalized)"
 	}
 
-	// Add new stanza. "type":"command" is required alongside "command" — Claude
-	// Code rejects a statusLine missing it and disables all hooks (hk-hs1).
 	sl := getOrCreateStatusLine(settings)
 	sl["type"] = "command"
 	sl["command"] = canonicalCmd
@@ -1031,15 +836,6 @@ func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string)
 	return "added"
 }
 
-// mergeHookStanza upserts a keeper hook stanza for the given event name.
-// scriptBasename is used for deduplication (e.g. "keeper-stop-hook.sh").
-// projectDir is the harmonik project root for ON-058a project-keyed dedup:
-// an existing group matches only when BOTH the script basename AND
-// "HARMONIK_PROJECT=<projectDir>" appear in its command. A group with the same
-// basename but a different HARMONIK_PROJECT value is left untouched and a new
-// sibling group is appended — enabling two distinct projects to coexist in the
-// same hooks array (ON-058a(1–2)).
-// Returns a short action string.
 func mergeHookStanza(settings map[string]interface{}, eventName, scriptBasename, projectDir, canonicalCmd string) string {
 	found, existingCmd := findHookForScript(settings, eventName, scriptBasename, projectDir)
 
@@ -1047,17 +843,14 @@ func mergeHookStanza(settings map[string]interface{}, eventName, scriptBasename,
 		if existingCmd == canonicalCmd {
 			return "unchanged"
 		}
-		// Update existing entry to normalized form (same project, stale command).
 		updateHookCommand(settings, eventName, scriptBasename, projectDir, canonicalCmd)
 		return "updated (normalized)"
 	}
 
-	// Add new matcher group (no matching (basename, project) pair found).
 	appendHookGroup(settings, eventName, canonicalCmd)
 	return "added"
 }
 
-// getStatusLineCommand returns the current statusLine.command value, or "".
 func getStatusLineCommand(settings map[string]interface{}) string {
 	sl, ok := settings["statusLine"]
 	if !ok || sl == nil {
@@ -1074,10 +867,6 @@ func getStatusLineCommand(settings map[string]interface{}) string {
 	return cmd
 }
 
-// statusLineTypeIsCommand reports whether the statusLine stanza already carries
-// the required "type":"command" field. Claude Code rejects a statusLine that
-// lacks it (disabling ALL hooks), so enable must normalize any stanza missing
-// it even when the command string is otherwise canonical (hk-hs1).
 func statusLineTypeIsCommand(settings map[string]interface{}) bool {
 	sl, ok := settings["statusLine"]
 	if !ok || sl == nil {
@@ -1091,7 +880,6 @@ func statusLineTypeIsCommand(settings map[string]interface{}) bool {
 	return ok && t == "command"
 }
 
-// getOrCreateStatusLine returns the statusLine map, creating it if absent.
 func getOrCreateStatusLine(settings map[string]interface{}) map[string]interface{} {
 	sl, ok := settings["statusLine"]
 	if ok {
@@ -1104,11 +892,6 @@ func getOrCreateStatusLine(settings map[string]interface{}) map[string]interface
 	return m
 }
 
-// findHookForScript scans hooks[eventName] for any entry whose command contains
-// scriptBasename.  When projectDir is non-empty, the entry must also contain
-// "HARMONIK_PROJECT=<projectDir>" — the ON-058a project-keyed dedup predicate.
-// A basename match with a different HARMONIK_PROJECT value does NOT match.
-// Returns (true, matchingCommand) if found.
 func findHookForScript(settings map[string]interface{}, eventName, scriptBasename, projectDir string) (bool, string) {
 	hooksRaw, ok := settings["hooks"]
 	if !ok || hooksRaw == nil {
@@ -1151,9 +934,6 @@ func findHookForScript(settings map[string]interface{}, eventName, scriptBasenam
 			if !strings.Contains(cmd, scriptBasename) {
 				continue
 			}
-			// ON-058a: when projectDir is set, require the HARMONIK_PROJECT= value
-			// to match THIS project's root.  A basename match for a peer project's
-			// group must NOT be treated as a match for this project.
 			if projectDir != "" && !strings.Contains(cmd, "HARMONIK_PROJECT="+projectDir) {
 				continue
 			}
@@ -1163,10 +943,6 @@ func findHookForScript(settings map[string]interface{}, eventName, scriptBasenam
 	return false, ""
 }
 
-// updateHookCommand replaces the command in the first entry that contains scriptBasename
-// AND (when projectDir is non-empty) contains "HARMONIK_PROJECT=<projectDir>".
-// This is the ON-058a in-place normalize path: only the group matching THIS project's
-// (basename, HARMONIK_PROJECT) pair is rewritten; peer projects' groups are untouched.
 func updateHookCommand(settings map[string]interface{}, eventName, scriptBasename, projectDir, newCmd string) {
 	hooksMap, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
@@ -1206,9 +982,7 @@ func updateHookCommand(settings map[string]interface{}, eventName, scriptBasenam
 	}
 }
 
-// appendHookGroup adds a new matcher group to hooks[eventName].
 func appendHookGroup(settings map[string]interface{}, eventName, cmd string) {
-	// Ensure hooks map exists.
 	hooksRaw, ok := settings["hooks"]
 	if !ok || hooksRaw == nil {
 		hooksRaw = map[string]interface{}{}
@@ -1239,9 +1013,6 @@ func appendHookGroup(settings map[string]interface{}, eventName, cmd string) {
 	settings["hooks"] = hooksMap
 }
 
-// ── Misc helpers ──────────────────────────────────────────────────────────────
-
-// keeperScriptNames is the canonical list of keeper hook script filenames.
 var keeperScriptNames = []string{
 	"keeper-statusline.sh",
 	"keeper-stop-hook.sh",
@@ -1249,19 +1020,9 @@ var keeperScriptNames = []string{
 	"keeper-sessionstart-hook.sh",
 }
 
-// autoDetectScriptsDir tries to find the keeper scripts. It checks, in order:
-// any caller-supplied hint dir's scripts/ subdir (the project root / cwd), then
-// paths relative to the running harmonik binary. If still not found, it extracts
-// the embedded copies to <projectDir>/.harmonik/scripts/ and returns that path.
-//
-// The binary-relative candidates only work when harmonik is built into the repo
-// (./bin/harmonik adjacent to ./scripts). A `go install`'d binary lands in
-// $GOPATH/bin with no scripts/ nearby; the embedded-extract fallback handles that
-// case so `harmonik start captain` works on any foreign project without --scripts-dir.
 func autoDetectScriptsDir(hints ...string) string {
 	candidates := make([]string, 0, len(hints)+3)
 
-	// Caller hints first (project root, cwd) — these win for go-install'd binaries.
 	for _, h := range hints {
 		if h == "" {
 			continue
@@ -1270,11 +1031,9 @@ func autoDetectScriptsDir(hints ...string) string {
 	}
 
 	if exe, err := os.Executable(); err == nil {
-		// Resolve symlinks so that `go install`'d binaries find the real path.
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = resolved
 		}
-		// Common layouts: binary in bin/ adjacent to scripts/ (source-tree build).
 		candidates = append(candidates,
 			filepath.Join(filepath.Dir(exe), "..", "scripts"),
 			filepath.Join(filepath.Dir(exe), "scripts"),
@@ -1291,8 +1050,6 @@ func autoDetectScriptsDir(hints ...string) string {
 		}
 	}
 
-	// Fallback: extract the embedded keeper scripts to <projectDir>/.harmonik/scripts/
-	// so a go-install'd binary on a foreign project can still wire keeper hooks.
 	if len(hints) > 0 && hints[0] != "" {
 		if dir, err := extractEmbeddedKeeperScripts(hints[0]); err == nil {
 			return dir
@@ -1301,18 +1058,7 @@ func autoDetectScriptsDir(hints ...string) string {
 	return ""
 }
 
-// extractEmbeddedKeeperScripts extracts the 4 embedded keeper hook scripts to a
-// stable directory and returns that path. It is called as a fallback by
-// autoDetectScriptsDir when no on-disk scripts/ directory is found.
-//
-// Extraction target: ~/.harmonik/scripts/ (preferred) so the wired hook path
-// survives worktree and temp-directory cleanup. When HOME is unavailable the
-// fallback is <projectDir>/.harmonik/scripts/ (the original behaviour). Writing
-// to a worktree path is what caused the "missing temp path" stop-hook error:
-// worktrees are cleaned up after merging, leaving the hook pointing at a deleted
-// path. hk-xjr1n.
 func extractEmbeddedKeeperScripts(projectDir string) (string, error) {
-	// Prefer ~/.harmonik/scripts/ so the path outlives any worktree lifecycle.
 	destDir := filepath.Join(projectDir, ".harmonik", "scripts")
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
 		destDir = filepath.Join(home, ".harmonik", "scripts")
@@ -1334,8 +1080,6 @@ func extractEmbeddedKeeperScripts(projectDir string) (string, error) {
 	return destDir, nil
 }
 
-// buildKeeperRunCmd returns the `harmonik keeper` run command string for the
-// given config, suitable for printing to the user.
 func buildKeeperRunCmd(cfg enableConfig) string {
 	parts := []string{
 		"harmonik", "keeper",
@@ -1347,14 +1091,12 @@ func buildKeeperRunCmd(cfg enableConfig) string {
 	return strings.Join(parts, " ")
 }
 
-// writeHandoffStub writes a minimal HANDOFF-<agent>.md stub at path.
 func writeHandoffStub(path, agentName string) error {
 	content := fmt.Sprintf("# HANDOFF-%s\n\n## State\n<!-- keeper will populate this on handoff -->\n\n## Active Work\n<!-- fill in before each session -->\n", agentName)
 	//nolint:gosec // G306: 0644 matches conventions for doc files
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// copyFile copies src to dst.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src) //nolint:gosec // G304: operator-supplied path
 	if err != nil {
@@ -1364,10 +1106,6 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0o644)
 }
 
-// tmuxPaneExists reports whether a tmux pane with the given target exists.
-// Returns an error when tmux is not installed or when the probe itself could
-// not be run; a non-zero tmux exit means "no such pane" and is reported as
-// (false, nil), which is the only absence signal tmux gives us.
 func tmuxPaneExists(target string) (bool, error) {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
@@ -1378,16 +1116,13 @@ func tmuxPaneExists(target string) (bool, error) {
 	if runErr := cmd.Run(); runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
-			// tmux exits non-zero when the target pane does not exist.
 			return false, nil
 		}
-		// Could not execute tmux at all — that is not evidence of absence.
 		return false, fmt.Errorf("probe tmux pane %q: %w", target, runErr)
 	}
 	return true, nil
 }
 
-// formatAge returns a human-readable age string.
 func formatAge(d time.Duration) string {
 	switch {
 	case d < time.Minute:
@@ -1400,8 +1135,6 @@ func formatAge(d time.Duration) string {
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
-
-// ── Usage strings ─────────────────────────────────────────────────────────────
 
 const keeperEnableUsage = `harmonik keeper enable --agent <name> — wire keeper stanzas into ~/.claude/settings.json
 

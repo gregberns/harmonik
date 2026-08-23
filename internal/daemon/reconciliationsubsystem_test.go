@@ -1,21 +1,5 @@
 package daemon
 
-// reconciliationsubsystem_test.go — subsystem partitioning of the RC-020a
-// scheduled detector (dispatch point (c)).
-//
-// Both states are driven through the REAL config edge: a .harmonik/config.yaml
-// written to disk and read by projectconfig.LoadProjectConfig. Nothing here
-// hand-builds a SubsystemsConfig, because the thing under test is the whole
-// path from operator YAML to construction seam.
-//
-// "Off" is asserted BEHAVIOURALLY, not just as a boolean: the scheduler is given
-// a 15 ms cadence and the test then waits well past many intervals. Enabled → the
-// ticker fires and events land. Disabled → no goroutine exists, so no event can
-// ever land. A constructed-but-inert scheduler would fail the enabled case or
-// leak a ticker; an absent one emits nothing at all.
-//
-// Helper prefix: subpart (implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"io"
@@ -29,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// subpartEmitter records every event the scheduler emits.
 type subpartEmitter struct {
 	mu sync.Mutex
 	n  map[core.EventType]int
@@ -51,9 +34,6 @@ func (e *subpartEmitter) count(t core.EventType) int {
 	return e.n[t]
 }
 
-// subpartLoadConfig writes yamlContent to <tmp>/.harmonik/config.yaml and loads
-// it through the production loader, returning both the config and the project
-// root the scheduler would be pointed at.
 func subpartLoadConfig(t *testing.T, yamlContent string) (cfg projectconfig.ProjectConfig, projectRoot string) {
 	t.Helper()
 	root := t.TempDir()
@@ -131,7 +111,6 @@ subsystems:
 		t.Fatal("startReconciliationSchedulerIfEnabled = true with subsystems.reconciliation_scheduler.enabled: false; the scheduler must be ABSENT, not constructed")
 	}
 
-	// Well past many 15 ms intervals: an absent scheduler has no goroutine to tick.
 	time.Sleep(300 * time.Millisecond)
 	if got := emitter.count(core.EventTypeReconciliationStarted); got != 0 {
 		t.Errorf("reconciliation_started emitted %d times after the subsystem was switched off; want 0 (off means absent, not inert)", got)

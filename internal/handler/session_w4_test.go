@@ -1,9 +1,5 @@
 package handler
 
-// session_w4_test.go — Wave-4 regression: SendInput is ctx-bounded (a wedged
-// child that never drains stdin cannot block the caller forever), and repeated
-// Kill calls are safe (single shared reap-observer goroutine).
-
 import (
 	"context"
 	"errors"
@@ -39,10 +35,8 @@ func sessionW4Spawn(t *testing.T, name string, args ...string) Session {
 func TestSendInput_CtxBounded(t *testing.T) {
 	t.Parallel()
 
-	// A child that sleeps without ever reading stdin.
 	sess := sessionW4Spawn(t, "sleep", "30")
 
-	// Larger than any OS pipe buffer (~64 KiB) so the write must block.
 	big := strings.Repeat("x", 1<<20)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

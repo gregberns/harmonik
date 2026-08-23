@@ -1,17 +1,5 @@
 package main
 
-// dashboard_cmd.go — `harmonik dashboard [--json]` CLI command (hk-2exz9).
-//
-// Emits a DashboardSnapshot joining: live StateSnapshot, captain-curated
-// dashboard.json, lanes.json, open decisions, active stall signals, and
-// windowed session-data.jsonl throughput.
-//
-// When the daemon is up: snapshot via "dashboard" socket RPC.
-// When the daemon is down: no dashboard socket fallback (state only via disk).
-//
-// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §2.
-// Bead ref: hk-2exz9.
-
 import (
 	"context"
 	"encoding/json"
@@ -29,26 +17,8 @@ import (
 	"github.com/gregberns/harmonik/internal/dashboard"
 )
 
-// defaultDashboardUnlockDuration is the default expiry for `harmonik
-// dashboard --unlock` when --until is not given (hk-xg6rw). A mandatory
-// expiry — never an indefinite override — mirrors the sentinel
-// PhaseFlag+Expiry convention (internal/digest/sentinelconfig.go).
 const defaultDashboardUnlockDuration = 1 * time.Hour
 
-// runDashboardSubcommand implements `harmonik dashboard [--json] [--unlock
-// [--until DURATION]] [--lock]`.
-//
-// --unlock / --lock are the DESIGN §4 operator override for the staleness
-// forcing gate (hk-xg6rw): they write/clear
-// .harmonik/context/dashboard-unlock.json directly (no daemon round-trip
-// needed — the gate evaluator reads the file straight off disk). --unlock
-// always carries a mandatory expiry (default 1h, or --until) so an override
-// can never be left on indefinitely by accident.
-//
-// Exit codes:
-//
-//	0 — snapshot emitted / override applied successfully
-//	1 — fatal error (flag parse, marshal failure, daemon not running)
 func runDashboardSubcommand(args []string) int {
 	asJSON := false
 	doUnlock := false
@@ -127,7 +97,6 @@ func runDashboardSubcommand(args []string) int {
 	return 0
 }
 
-// dashboardViaSocket sends a "dashboard" RPC to the daemon and decodes the snapshot.
 func dashboardViaSocket(ctx context.Context, projectDir string) (daemon.DashboardSnapshot, error) {
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 	payload, err := json.Marshal(map[string]string{"op": "dashboard"})
@@ -153,7 +122,6 @@ func dashboardViaSocket(ctx context.Context, projectDir string) (daemon.Dashboar
 	return snap, nil
 }
 
-// printDashboardHuman renders a compact operator panel.
 func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
@@ -164,7 +132,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		return err
 	}
 
-	// Priorities from captain-curated dashboard.json.
 	if snap.Config != nil && len(snap.Config.PrioritiesCurrent) > 0 {
 		if err := writeDashboardRow(w, "\npriorities (current)\t\n"); err != nil {
 			return err
@@ -190,7 +157,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		}
 	}
 
-	// Crew-lane table with health.
 	if len(snap.Lanes) > 0 {
 		active := filterLanesByStatus(snap.Lanes, "active")
 		if len(active) > 0 {
@@ -210,7 +176,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		}
 	}
 
-	// Expected-vs-actual throughput.
 	if snap.Config != nil && len(snap.Config.ThroughputExpected) > 0 {
 		if err := writeDashboardRow(w, "\nthroughput expected\t\n"); err != nil {
 			return err
@@ -230,7 +195,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		}
 	}
 
-	// Active stall signals.
 	if len(snap.ActiveStalls) > 0 {
 		if err := writeDashboardRow(w, "\nbottlenecks (%d)\t\n", len(snap.ActiveStalls)); err != nil {
 			return err
@@ -243,9 +207,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		}
 	}
 
-	// Operator mailbox: decisions raised with topic=operator-mailbox (bead
-	// hk-pltjs, pending operator sign-off). The open-item set + its count (the
-	// unread count), sorted most-urgent first.
 	mailbox := filterDecisionsByTopic(snap.OpenDecisions, core.DecisionTopicOperatorMailbox)
 	if len(mailbox) > 0 {
 		if err := writeDashboardRow(w, "\nmailbox (%d unread)\t\n", len(mailbox)); err != nil {
@@ -270,7 +231,6 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 		}
 	}
 
-	// Notes from dashboard.json.
 	if snap.Config != nil && snap.Config.Notes != "" {
 		if err := writeDashboardRow(w, "\nnotes\t%s\n", strings.ReplaceAll(snap.Config.Notes, "\n", " ")); err != nil {
 			return err
@@ -289,9 +249,6 @@ func writeDashboardRow(w io.Writer, format string, args ...any) error {
 	return nil
 }
 
-// filterDecisionsByTopic returns the decisions matching topic, sorted
-// most-urgent first (blocker, question, fyi, then unspecified), with
-// decision_id as the stable tiebreaker.
 func filterDecisionsByTopic(decisions []daemon.DashDecision, topic string) []daemon.DashDecision {
 	var out []daemon.DashDecision
 	for _, d := range decisions {
@@ -309,8 +266,6 @@ func filterDecisionsByTopic(decisions []daemon.DashDecision, topic string) []dae
 	return out
 }
 
-// mailboxUrgencyRank orders urgency values for display: blocker first, then
-// question, then fyi, then unspecified last.
 func mailboxUrgencyRank(u string) int {
 	switch core.DecisionUrgency(u) {
 	case core.DecisionUrgencyBlocker:
@@ -335,7 +290,6 @@ func filterLanesByStatus(lanes []daemon.DashLane, status string) []daemon.DashLa
 }
 
 func laneHealth(l daemon.DashLane, snap daemon.DashboardSnapshot) string {
-	// Check if the crew has a live session.
 	if l.Crew == "" {
 		return "unstaffed"
 	}
@@ -375,10 +329,6 @@ func nvl(s string) string {
 	return s
 }
 
-// runDashboardUnlock applies the operator override for the staleness forcing
-// gate (hk-xg6rw): writes dashboard-unlock.json with a mandatory expiry.
-// Disk-only — no daemon round-trip needed, since evaluateDashboardGate reads
-// the file directly every tick.
 func runDashboardUnlock(projectDir string, until time.Duration) int {
 	expiry := time.Now().Add(until)
 	if err := dashboard.WriteUnlock(projectDir, expiry, "operator"); err != nil {
@@ -391,8 +341,6 @@ func runDashboardUnlock(projectDir string, until time.Duration) int {
 	return 0
 }
 
-// runDashboardLock clears an active --unlock override, re-arming the gate
-// immediately.
 func runDashboardLock(projectDir string) int {
 	if err := dashboard.ClearUnlock(projectDir); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik dashboard: --lock: %v\n", err)

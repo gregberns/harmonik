@@ -1,22 +1,5 @@
 package daemon
 
-// moderesolve.go — workflow-mode resolution for the daemon claim path.
-//
-// Implements execution-model.md §4.3.EM-012a: a four-tier precedence walk
-// that resolves workflow_mode exactly once at claim time, before any node in
-// the run is dispatched.
-//
-// Tier 1 — per-bead workflow:<mode> label (beads-integration.md §4.3 BI-009a)
-// Tier 2 — per-project config (reserved no-op; always absent)
-// Tier 3 — daemon default (legacy aggregate.workflowModeDefault per hk-7om2q.8)
-// Tier 4 — hard fallback: dot (hk-30vlb)
-//
-// The resolved value MUST be sealed into the Run record before dispatch and
-// MUST NOT be re-evaluated for the run's lifetime per §4.3.EM-012a.
-//
-// Spec refs: specs/execution-model.md §4.3 EM-012a.
-// Bead: hk-7om2q.9.
-
 import (
 	"context"
 	"encoding/json"
@@ -28,29 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// workflowLabelPrefix is the label prefix for per-bead workflow-mode overrides
-// per beads-integration.md §4.3 BI-009a.
 const workflowLabelPrefix = "workflow:"
 
-// dotRefLabelPrefix is the label prefix for per-bead .dot workflow-file selection
-// (hk-30q6). A bead carrying dot:<name> routes to <name>.dot in the project dir.
-// This is the tier-1 path in resolveWorkflowRef; the tier-0 per-item WorkflowRef
-// from queue.Item takes precedence over it.
 const dotRefLabelPrefix = "dot:"
 
-// resolveWorkflowMode implements the EM-012a four-tier precedence walk.
-//
-//   - bead      — carries the labels from the ready-work record (BI-013)
-//   - daemon    — the daemon-level default cached in legacy aggregate (tier 3)
-//   - bus / ctx — used to emit bead_label_conflict when tier-1 is ambiguous
-//
-// Returns the resolved WorkflowMode. The returned value is always a valid
-// WorkflowMode constant (one of single, review-loop, dot).
-//
-// Tier-1 conflict handling: when the bead carries more than one workflow:<mode>
-// label, OR carries a workflow:<mode> label whose mode value is not a declared
-// constant, the daemon MUST emit bead_label_conflict per event-model.md §8.8.6
-// and treat tier 1 as absent, continuing the walk to tier 2.
 func resolveWorkflowMode(
 	ctx context.Context,
 	bead core.BeadRecord,
@@ -60,9 +24,6 @@ func resolveWorkflowMode(
 	return resolveWorkflowModeWithAudit(ctx, bead, daemonDefault, bus, true)
 }
 
-// resolveWorkflowModeWithAudit performs the mode tier walk. The resolved graph
-// selector disables the old label-only bypass audit until it knows no tier-0
-// queue value supersedes the label.
 func resolveWorkflowModeWithAudit(
 	ctx context.Context,
 	bead core.BeadRecord,
@@ -70,9 +31,6 @@ func resolveWorkflowModeWithAudit(
 	bus handlercontract.EventEmitter,
 	emitBypassAudit bool,
 ) core.WorkflowMode {
-	// ── Tier 1: per-bead workflow:<mode> label ─────────────────────────────
-	//
-	// Collect all labels that start with "workflow:".
 	var workflowLabels []string
 	for _, lbl := range bead.Labels {
 		if strings.HasPrefix(lbl, workflowLabelPrefix) {
@@ -81,42 +39,25 @@ func resolveWorkflowModeWithAudit(
 	}
 
 	if len(workflowLabels) == 1 {
-		// Exactly one workflow label: parse the mode portion.
 		modePart := strings.TrimPrefix(workflowLabels[0], workflowLabelPrefix)
 		mode := core.WorkflowMode(modePart)
 		if mode.Valid() {
 			if mode == core.WorkflowModeSingle && emitBypassAudit {
-				// Emit review_bypassed audit event (hk-81n9r): single mode is only
-				// reachable via an explicit per-bead label; the daemon default and
-				// tier-4 fallback both resolve to dot (hk-30vlb).
 				emitReviewBypassed(ctx, bus, bead, workflowLabels[0])
 			}
 			return mode
 		}
-		// Unknown mode value — treat tier 1 as absent and emit conflict event.
 		emitBeadLabelConflict(ctx, bus, bead, workflowLabels,
 			"tier-1 input treated as absent: unknown mode value; precedence walk continues to tier 2")
 	} else if len(workflowLabels) > 1 {
-		// More than one workflow label — conflict per EM-012a.
 		emitBeadLabelConflict(ctx, bus, bead, workflowLabels,
 			"tier-1 input treated as absent: multiple workflow:<mode> labels; precedence walk continues to tier 2")
 	}
-	// len(workflowLabels) == 0: tier 1 is simply absent; no event emitted.
 
-	// ── Tier 2: per-project config (reserved no-op) ───────────────────────
-	//
-	// No per-project config mechanism exists; tier 2 is always absent.
-	// Falls through to tier 3.
-
-	// ── Tier 3: daemon default ─────────────────────────────────────────────
 	if daemonDefault.Valid() {
 		return daemonDefault
 	}
 
-	// ── Tier 4: hard fallback ──────────────────────────────────────────────
-	// hk-30vlb: dot is the system default (embedded standard-bead.dot).
-	// single is only reachable via an explicit workflow:single per-bead label
-	// or --workflow-mode single flag — NEVER via tier-3 or tier-4 resolution.
 	return core.WorkflowModeDot
 }
 
@@ -130,9 +71,6 @@ func hasExactWorkflowSingleLabel(labels []string) bool {
 	return len(workflowLabels) == 1 && workflowLabels[0] == workflowLabelPrefix+string(core.WorkflowModeSingle)
 }
 
-// emitReviewBypassed emits a review_bypassed event (hk-81n9r) when a bead's
-// explicit workflow:single label resolves at tier-1. Best-effort: emit errors
-// are silently discarded (the resolution path continues regardless).
 func emitReviewBypassed(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,
@@ -153,28 +91,11 @@ func emitReviewBypassed(
 	}
 }
 
-// resolveWorkflowRef resolves the .dot workflow file path for a bead using the
-// EM-012a tier hierarchy (hk-30q6).
-//
-// Precedence:
-//
-//	Tier 0: itemWorkflowRef — explicit per-item override from queue.Item.WorkflowRef.
-//	        If set, returned unchanged (highest priority).
-//	Tier 1: per-bead dot:<name> label.
-//	        Exactly one dot: label → resolve to <name> (appending ".dot" if absent).
-//	        Zero or multiple dot: labels → tier 1 absent; fall through.
-//	Tier 2–4: absent; returns "" so the caller falls through to project-level
-//	          workflow.dot or the embedded standard-bead.dot.
-//
-// This function is purely a string resolver: it does not validate that the
-// returned path exists on disk. Path validation happens in beadRunOne's DOT case.
 func resolveWorkflowRef(bead core.BeadRecord, itemWorkflowRef string) string {
-	// Tier 0: per-item explicit ref wins over label.
 	if itemWorkflowRef != "" {
 		return itemWorkflowRef
 	}
 
-	// Tier 1: per-bead dot:<name> label.
 	var dotLabels []string
 	for _, lbl := range bead.Labels {
 		if strings.HasPrefix(lbl, dotRefLabelPrefix) {
@@ -191,38 +112,15 @@ func resolveWorkflowRef(bead core.BeadRecord, itemWorkflowRef string) string {
 		}
 	}
 
-	// Tier 1.5: codename:eval → eval-bead.dot (hk-olzgq).
-	//
-	// Eval coding-task beads carry codename:eval but are not expected to carry an
-	// explicit dot: label (they predate eval-bead.dot). Without this tier they fall
-	// through to the project-level workflow.dot — currently sonnet-triple-review —
-	// whose heavyweight 3-reviewer cascade times out on the small diffs produced by
-	// eval tasks. Route them to the lightweight eval-bead.dot instead.
-	//
-	// This tier fires only when:
-	//   a) tier 0 is absent (no per-item WorkflowRef), AND
-	//   b) tier 1 is absent (no dot: label), AND
-	//   c) the bead carries exactly the label "codename:eval" (exact-match, not prefix).
-	//
-	// eval-bead.dot must exist in the project dir; if it does not, beadRunOne's
-	// DOT-load step will reopen the bead with a workflow_load error — same as any
-	// missing dot: ref. The project-level workflow.dot is NOT a fallback here: once
-	// tier 1.5 fires we return the eval ref, and the caller skips the workflow.dot
-	// fall-through (beadRunOne checks itemWorkflowRef != "" before using workflow.dot).
 	for _, lbl := range bead.Labels {
 		if lbl == "codename:eval" {
 			return "eval-bead.dot"
 		}
 	}
 
-	// Tier 2–4: no label present (or ambiguous / empty value); let caller fall
-	// through to the project-level workflow.dot or the embedded standard-bead.dot.
 	return ""
 }
 
-// emitBeadLabelConflict emits a bead_label_conflict event per
-// event-model.md §8.8.6. The call is best-effort: emit errors are silently
-// discarded (the resolution path continues regardless).
 func emitBeadLabelConflict(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,

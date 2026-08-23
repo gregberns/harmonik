@@ -48,16 +48,12 @@ import (
 // (T_silent_hang / 2 = 300 seconds per HC-026a).
 const HeartbeatInterval = 300 * time.Second
 
-// forbiddenClaudeFlags is the set of Claude CLI flags that MUST NOT be passed per
-// CHB-007, mapped to their prohibition reason.
 var forbiddenClaudeFlags = map[string]string{
 	"--fork-session":           "would mint a new session_id on resume (CHB-007)",
 	"--bare":                   "would disable hook auto-discovery (CHB-007)",
 	"--no-session-persistence": "would disable session persistence (CHB-007)",
 }
 
-// forbiddenClaudeEnvVars is the set of env var names that MUST NOT be set per
-// CHB-007.
 var forbiddenClaudeEnvVars = map[string]string{
 	"CLAUDE_CODE_SKIP_PROMPT_HISTORY": "same effect as --no-session-persistence (CHB-007)",
 }
@@ -119,7 +115,6 @@ type ClaudeSessionIDResult struct {
 // Spec: specs/claude-hook-bridge.md §4.3 CHB-008, CHB-009.
 func MintClaudeSessionID(phase string, priorClaudeSessionID *string) (ClaudeSessionIDResult, error) {
 	if phase == string(handlercontract.ReviewLoopPhaseImplementerResume) {
-		// Reuse prior session ID (CHB-008).
 		if priorClaudeSessionID == nil || *priorClaudeSessionID == "" {
 			return ClaudeSessionIDResult{}, fmt.Errorf(
 				"handler: claude-code: phase=implementer-resume but LaunchSpec.ClaudeSessionID is absent: %w",
@@ -132,10 +127,6 @@ func MintClaudeSessionID(phase string, priorClaudeSessionID *string) (ClaudeSess
 		}, nil
 	}
 
-	// CHB-009 enforcement: reviewer MUST NOT receive a prior session ID.
-	// A non-nil priorClaudeSessionID for reviewer is a daemon defect — fail-fast
-	// rather than silently ignoring the value, which could mask an accidental
-	// inheritance bug in the call site.
 	if phase == string(handlercontract.ReviewLoopPhaseReviewer) && priorClaudeSessionID != nil {
 		return ClaudeSessionIDResult{}, fmt.Errorf(
 			"handler: claude-code: CHB-009: phase=reviewer but priorClaudeSessionID is non-nil (%q): "+
@@ -144,7 +135,6 @@ func MintClaudeSessionID(phase string, priorClaudeSessionID *string) (ClaudeSess
 		)
 	}
 
-	// All other phases (single, implementer-initial, reviewer): mint fresh UUIDv7 (CHB-008, CHB-009).
 	id, err := uuid.NewV7()
 	if err != nil {
 		return ClaudeSessionIDResult{}, fmt.Errorf(
@@ -166,8 +156,6 @@ type ClaudeEnvConfig struct {
 	ClaudeSessionID  string // HARMONIK_CLAUDE_SESSION_ID
 	WorkflowID       string // HARMONIK_WORKFLOW_ID
 	NodeID           string // HARMONIK_NODE_ID
-
-	// HARMONIK_AGENT_TYPE is always "claude-code" per CHB-006; not configurable.
 
 	// Optional env vars (CHB-006); set when non-empty.
 	WorkflowMode   string // HARMONIK_WORKFLOW_MODE  (optional)
@@ -194,19 +182,11 @@ type ClaudeEnvConfig struct {
 	BaseEnv []string
 }
 
-// credentialDenyListExact is the set of exact env var keys on the credential
-// env deny-list per specs/credential-isolation.md §4 CI-002. Keys in this set
-// MUST be stripped from BaseEnv and actively overridden with empty values in
-// the constructed child env so that the tmux substrate's additive -e mechanism
-// cannot inherit them from the tmux server environment (CI-003).
 var credentialDenyListExact = map[string]bool{
 	"ANTHROPIC_API_KEY":    true,
 	"ANTHROPIC_AUTH_TOKEN": true,
 }
 
-// credentialDenyListPrefix is the prefix for the glob portion of the credential
-// env deny-list (CLAUDE_CODE_OAUTH* per CI-002). Any key beginning with this
-// prefix is treated as a credential env deny-list member.
 const credentialDenyListPrefix = "CLAUDE_CODE_OAUTH"
 
 // IsCredentialDenyListKey reports whether key is a member of the credential
@@ -217,15 +197,8 @@ func IsCredentialDenyListKey(key string) bool {
 	return credentialDenyListExact[key] || strings.HasPrefix(key, credentialDenyListPrefix)
 }
 
-// isCredentialDenyListKey is the unexported alias used within this package.
 func isCredentialDenyListKey(key string) bool { return IsCredentialDenyListKey(key) }
 
-// filterClaudeBaseEnv strips HARMONIK_SECRET_* and credential env deny-list keys
-// (specs/credential-isolation.md §4 CI-003) from baseEnv.
-//
-// It returns the surviving entries, the CLAUDE_CODE_OAUTH* keys that were seen
-// and stripped (so the caller can re-emit an explicit empty override for each),
-// and whether baseEnv already carried a PATH entry.
 func filterClaudeBaseEnv(baseEnv []string) (base, oauthKeysFromBase []string, hasPath bool) {
 	base = make([]string, 0, len(baseEnv))
 	for _, kv := range baseEnv {
@@ -237,8 +210,6 @@ func filterClaudeBaseEnv(baseEnv []string) (base, oauthKeysFromBase []string, ha
 			continue
 		}
 		if isCredentialDenyListKey(key) {
-			// Track CLAUDE_CODE_OAUTH* variants seen in BaseEnv so the caller can
-			// emit an explicit empty override for each one.
 			if strings.HasPrefix(key, credentialDenyListPrefix) {
 				oauthKeysFromBase = append(oauthKeysFromBase, key)
 			}
@@ -268,30 +239,14 @@ func filterClaudeBaseEnv(baseEnv []string) (base, oauthKeysFromBase []string, ha
 //
 // Spec: specs/claude-hook-bridge.md §4.2 CHB-006; specs/credential-isolation.md CI-003.
 func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
-	// Start from BaseEnv with HARMONIK_SECRET_* and credential deny-list keys
-	// stripped. Credential deny-list keys stripped from BaseEnv are tracked so
-	// CLAUDE_CODE_OAUTH* variants can be re-emitted as empty overrides below.
 	base, oauthKeysFromBase, hasPath := filterClaudeBaseEnv(cfg.BaseEnv)
 
-	// Guarantee a working PATH (hk-07jrb, same hazard as buildPiEnv's
-	// hk-6atjk fix). The tmux substrate's SubstrateSpawn fully replaces the
-	// spawned pane's environment with this slice, and cfg.BaseEnv can arrive
-	// with no PATH entry (e.g. a trimmed-down BaseEnv from a sandboxed
-	// caller). Without one, the spawned claude/codex binary resolves against
-	// the libc default PATH (/usr/bin:/bin), excluding /opt/homebrew/bin or
-	// other locations where `go`/node/etc. live, and dies with exit 127
-	// ("go: command not found" / "command not found") before the session
-	// ever starts. Fall back to the daemon process's own PATH only when
-	// BaseEnv did not already carry one (an existing PATH is preserved
-	// above via the base append loop). PATH is not a credential, so this
-	// does not weaken the CI-003 deny-list strip.
 	if !hasPath {
 		if procPath := os.Getenv("PATH"); procPath != "" {
 			base = append(base, "PATH="+procPath)
 		}
 	}
 
-	// Required vars (CHB-006).
 	required := []string{
 		"HARMONIK_RUN_ID=" + cfg.RunID,
 		"HARMONIK_DAEMON_SOCKET=" + cfg.DaemonSocket,
@@ -302,45 +257,15 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 		"HARMONIK_NODE_ID=" + cfg.NodeID,
 		"HARMONIK_AGENT_TYPE=claude-code",
 	}
-	// Copy into a slice this function owns rather than appending onto base: an
-	// append that fits base's spare capacity would write through the shared
-	// backing array, and every later append below compounds the aliasing.
 	env := make([]string, 0, len(base)+len(required)+len(cfg.SecretVars)+16)
 	env = append(env, base...)
 	env = append(env, required...)
 
-	// Shell rc-prompt suppression (hk-5s6re).
-	//
-	// The daemon spawns each implementer/reviewer claude inside a tmux window
-	// whose pane shell is an interactive login zsh. That shell sources the
-	// operator's ~/.zshrc, which under oh-my-zsh can fire an interactive
-	// `[Y/n] Would you like to update?` prompt. The spawned shell then hangs at
-	// that prompt — claude never launches, no heartbeat is emitted, and the
-	// daemon watchdog /quits the run after the budget expires. It looks exactly
-	// like a daemon spawn-wedge but is a shell prompt entirely outside harmonik
-	// code (root cause confirmed 2026-06-09 by a pane-content verifier; the
-	// historical mis-attribution saga is in the spawn-semaphore-wedge memo).
-	//
-	// Injecting these vars makes the prompt structurally unable to fire,
-	// independent of the operator's ~/.zshrc:
-	//   - DISABLE_AUTO_UPDATE=true   — oh-my-zsh short-circuits its entire
-	//     update check before any prompt logic runs (the strongest lever).
-	//   - DISABLE_UPDATE_PROMPT=true — belt-and-braces: if a config still
-	//     reaches the update path, oh-my-zsh auto-applies without the
-	//     interactive [Y/n] prompt rather than blocking on input.
-	// These are additive env entries only; they never touch PATH, the chosen
-	// shell, aliases, or rc-driven shims, so the prior exit-127/no-PATH hazard
-	// (which came from changing shell interactivity / dropping ~/.zshrc) cannot
-	// recur here. They flow to the pane via the tmux substrate's additive -e
-	// mechanism, so the prompt is neutralized at the source for every launch
-	// phase (implementer-initial, implementer-resume, reviewer) that builds its
-	// env through ClaudeEnvVars.
 	env = append(env,
 		"DISABLE_AUTO_UPDATE=true",
 		"DISABLE_UPDATE_PROMPT=true",
 	)
 
-	// Optional vars — only set when non-empty (CHB-006).
 	if cfg.WorkflowMode != "" {
 		env = append(env, "HARMONIK_WORKFLOW_MODE="+cfg.WorkflowMode)
 	}
@@ -357,14 +282,6 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 		env = append(env, "HARMONIK_AGENT="+cfg.HarmonikAgent)
 	}
 
-	// Credential env deny-list empty overrides (CI-003, CI-INV-002).
-	// Emitting KEY= (empty value) via tmux -e explicitly zeros a credential var
-	// even when the tmux server env carries a live value — unlike merely omitting
-	// the key, which leaves the server env value intact for the spawned window.
-	// The two exact deny-list keys are always emitted. CLAUDE_CODE_OAUTH* variants
-	// seen in BaseEnv are emitted too; the well-known CLAUDE_CODE_OAUTH_TOKEN is
-	// always included to cover the common case where the tmux server holds it but
-	// it was not threaded through BaseEnv.
 	env = append(env,
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=",
@@ -376,8 +293,6 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 		}
 	}
 
-	// Secret vars per HC-028 — appended last so they override any stale
-	// HARMONIK_SECRET_* values that leaked through base env.
 	for k, v := range cfg.SecretVars {
 		env = append(env, k+"="+v)
 	}
@@ -385,8 +300,6 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	return env
 }
 
-// settingsLocalJSON is the minimal shape of .claude/settings.local.json that
-// we need to inspect for CHB-024.
 type settingsLocalJSON struct {
 	DisableAllHooks bool                       `json:"disableAllHooks"`
 	Hooks           map[string]json.RawMessage `json:"hooks,omitempty"`
@@ -416,7 +329,6 @@ func CheckSettingsLocalJSON(workspacePath string) error {
 		if os.IsNotExist(err) {
 			return nil // No settings.local.json — no shadow (CHB-024).
 		}
-		// IO error reading the file: fail-fast.
 		return fmt.Errorf(
 			"handler: claude-code: CHB-024: read settings.local.json: %w: %w",
 			err, ErrStructural,
@@ -425,7 +337,6 @@ func CheckSettingsLocalJSON(workspacePath string) error {
 
 	var s settingsLocalJSON
 	if jsonErr := json.Unmarshal(data, &s); jsonErr != nil {
-		// Malformed JSON: fail-fast (a malformed file at this path is a shadow risk).
 		return fmt.Errorf(
 			"handler: claude-code: CHB-024: bridge_settings_shadowed: settings.local.json is not valid JSON: %w: %w",
 			jsonErr, ErrStructural,
@@ -490,7 +401,6 @@ func PreExecMessages(
 		skills = []handlercontract.SkillProvisionedEntry{}
 	}
 
-	// 1. handler_capabilities (CHB-018 step 1, HC-009).
 	hcMsg := handlercontract.HandlerCapabilitiesMsg{
 		Type:              handlercontract.ProgressMsgTypeHandlerCapabilities,
 		SupportedVersions: []int{1},
@@ -501,7 +411,6 @@ func PreExecMessages(
 		return nil, fmt.Errorf("handler: PreExecMessages: marshal handler_capabilities: %w: %w", err, ErrStructural)
 	}
 
-	// 2. session_log_location (CHB-018 step 2, HC-010).
 	sllMsg := handlercontract.SessionLogLocationMsg{
 		Type:      handlercontract.ProgressMsgTypeSessionLogLocation,
 		SessionID: sessionID,
@@ -516,7 +425,6 @@ func PreExecMessages(
 		return nil, fmt.Errorf("handler: PreExecMessages: marshal session_log_location: %w: %w", err, ErrStructural)
 	}
 
-	// 3. skills_provisioned (CHB-018 step 3, HC-049).
 	spMsg := handlercontract.SkillsProvisionedMsg{
 		Type:      handlercontract.ProgressMsgTypeSkillsProvisioned,
 		RunID:     runID,
@@ -528,10 +436,6 @@ func PreExecMessages(
 		return nil, fmt.Errorf("handler: PreExecMessages: marshal skills_provisioned: %w: %w", err, ErrStructural)
 	}
 
-	// 4. launch_initiated (CHB-018 step 4, HC-039).
-	// Under the interactive (tmux) substrate the handler emits launch_initiated
-	// here (not agent_ready).  The relay synthesizes agent_ready on first
-	// SessionStart receipt per CHB-013 / HC-039.
 	liMsg := handlercontract.LaunchInitiatedMsg{
 		Type:            handlercontract.ProgressMsgTypeLaunchInitiated,
 		SessionID:       sessionID,
@@ -623,14 +527,12 @@ func MapWaitReturnToTerminalEvent(sessionID string, exitCode int, waitErr error,
 	if outcome != nil {
 		switch outcome.Kind {
 		case "WORK_COMPLETE", "REVIEWER_VERDICT":
-			// Branch 1: clean or dirty exit after a valid outcome.
 			return TerminalEventPayload{
 				Type:      handlercontract.ProgressMsgTypeAgentCompleted,
 				SessionID: sessionID,
 				ExitCode:  exitCode,
 			}
 		case "FAILURE_SIGNAL":
-			// Branch 2: failure signal observed.
 			class := outcome.SuggestedClass
 			if class == "" {
 				class = "structural"
@@ -649,7 +551,6 @@ func MapWaitReturnToTerminalEvent(sessionID string, exitCode int, waitErr error,
 		}
 	}
 
-	// Branch 3: no outcome_emitted observed.
 	subReason := "claude_crashed"
 	if waitErr == nil || exitCode == 0 {
 		subReason = "claude_exit_without_outcome"
@@ -683,9 +584,6 @@ type HeartbeatEmitter func(ctx context.Context, sessionID string, phase string) 
 //
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-019; HC-026a.
 func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Duration, done <-chan struct{}, emit HeartbeatEmitter) {
-	// Emit the first heartbeat immediately so pasteInjectQuitOnCommit sees
-	// a heartbeat within its 60s launchHeartbeatTimeout window, even though
-	// the ticker interval (300s) is much longer.
 	if emitErr := emit(ctx, sessionID, string(handlercontract.HeartbeatPhaseReasoning)); emitErr != nil {
 		fmt.Fprintf(os.Stderr, "handler: claude-code: heartbeat emit error: %v\n", emitErr)
 	}
@@ -722,12 +620,8 @@ func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Durat
 //
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-018 step 2 (session_log_location).
 func DeriveClaudeTranscriptPath(workspacePath, claudeSessionID string) (string, error) {
-	// Derive the Claude project slug from the workspace path.
-	// Claude Code converts the workspace path to a slug by replacing '/' with '-'
-	// and removing the leading '-'.
 	slug := strings.ReplaceAll(workspacePath, "/", "-")
 	slug = strings.ReplaceAll(slug, " ", "-")
-	// Remove leading separator that results from the leading '/'.
 	slug = strings.TrimPrefix(slug, "-")
 
 	homeDir, err := os.UserHomeDir()

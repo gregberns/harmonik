@@ -12,23 +12,9 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// fakeInputPort is a controllable handler.InputPort for exercising the bounded
-// queue with no live codex child. Each SubmitInput blocks on `gate` (so a test
-// can hold a turn "in flight"), records the payload order, and returns a
-// per-call Ack/err.
 type fakeInputPort struct {
 	gate    chan struct{} // received-from once per SubmitInput; nil ⇒ never blocks
 	started chan struct{} // non-blocking signal at the top of each SubmitInput; nil ⇒ off
-
-	// started MUST be buffered (cap 1) by every test that reads it. The send
-	// below is non-blocking, and a non-blocking send on an UNBUFFERED channel
-	// succeeds only when a receiver is already parked. A test that enqueues and
-	// then walks to its own receive loses that race whenever the drainer gets
-	// there first: the default arm fires, the signal is gone for good, and the
-	// test waits out its whole timeout for something that already happened.
-	// That was a real 1-in-1500 flake in this file (hk-qje3l), in a package
-	// whose flakes have failed a live commit gate and thrown away good work.
-	// One space in the buffer removes the race without changing any timing.
 
 	mu    sync.Mutex
 	order []string
@@ -113,9 +99,6 @@ func TestBoundedInputQueue_CapEnforced_HK160YB(t *testing.T) {
 		q.Close()
 	}()
 
-	// First Enqueue: the drainer pulls it off the buffer and blocks in
-	// SubmitInput on the gate (in flight). Wait for the started signal so we KNOW
-	// the buffer is empty again before filling it — deterministic, no polling.
 	if _, err := q.Enqueue(context.Background(), handler.InputRequest{Payload: []byte("inflight")}); err != nil {
 		t.Fatalf("first Enqueue: %v", err)
 	}
@@ -125,13 +108,11 @@ func TestBoundedInputQueue_CapEnforced_HK160YB(t *testing.T) {
 		t.Fatal("drainer never dispatched the in-flight item")
 	}
 
-	// Buffer is empty and the drainer is busy. Fill exactly `capacity` items.
 	for i := 0; i < capacity; i++ {
 		if _, err := q.Enqueue(context.Background(), handler.InputRequest{Payload: []byte(fmt.Sprintf("b%d", i))}); err != nil {
 			t.Fatalf("Enqueue b%d within capacity: %v", i, err)
 		}
 	}
-	// Buffer now full (capacity items) + 1 in flight. Next Enqueue must be rejected.
 	_, err := q.Enqueue(context.Background(), handler.InputRequest{Payload: []byte("overflow")})
 	if !errors.Is(err, codexdriver.ErrQueueFull) {
 		t.Fatalf("Enqueue past capacity err = %v, want ErrQueueFull", err)
@@ -147,8 +128,6 @@ func TestBoundedInputQueue_CtxCancelShortCircuits_HK160YB(t *testing.T) {
 	q := codexdriver.NewBoundedInputQueue(port, 8)
 	defer q.Close()
 
-	// Hold the drainer on a first, valid submission so the second is still
-	// buffered when we cancel its context.
 	gate <- struct{}{} // allow exactly the first submit to proceed after it starts
 	firstCtx := context.Background()
 	if _, err := q.Enqueue(firstCtx, handler.InputRequest{Payload: []byte("first")}); err != nil {
@@ -162,7 +141,6 @@ func TestBoundedInputQueue_CtxCancelShortCircuits_HK160YB(t *testing.T) {
 	}
 	cancel() // cancel before the drainer reaches it
 
-	// Let the drainer proceed: first completes, second is short-circuited.
 	select {
 	case res := <-ch:
 		if !errors.Is(res.Err, context.Canceled) {
@@ -171,7 +149,6 @@ func TestBoundedInputQueue_CtxCancelShortCircuits_HK160YB(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled submission never resolved")
 	}
-	// The cancelled payload must NOT have reached the port.
 	for _, p := range port.snapshotOrder() {
 		if p == "cancelled" {
 			t.Fatal("cancelled submission was delivered to the port — short-circuit failed")
@@ -203,7 +180,6 @@ func TestBoundedInputQueue_CloseDrainsBuffered_HK160YB(t *testing.T) {
 	port := &fakeInputPort{gate: gate, started: started}
 	q := codexdriver.NewBoundedInputQueue(port, 8)
 
-	// Hold the drainer on an in-flight first item so the next two stay buffered.
 	if _, err := q.Enqueue(context.Background(), handler.InputRequest{Payload: []byte("d0")}); err != nil {
 		t.Fatalf("Enqueue d0: %v", err)
 	}
@@ -218,8 +194,6 @@ func TestBoundedInputQueue_CloseDrainsBuffered_HK160YB(t *testing.T) {
 		}
 	}
 
-	// Close concurrently, then release the gate so the drainer can finish. Close
-	// must block until d0, d1, d2 have ALL reached the port.
 	closed := make(chan struct{})
 	go func() { q.Close(); close(closed) }()
 	close(gate) // let every (in-flight + buffered) submit proceed

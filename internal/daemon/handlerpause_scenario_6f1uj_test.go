@@ -1,45 +1,5 @@
 package daemon_test
 
-// handlerpause_scenario_6f1uj_test.go — scenario test: HandlerPause policy goroutine
-// wired end-to-end in daemon.Start (hk-6f1uj).
-//
-// # What this test covers
-//
-// Regression guard for the hk-37zy8 half-built-systems pattern: the
-// HandlerPausePolicyGoroutine existed and was unit-tested in isolation, but was
-// never Subscribe()d to the bus inside daemon.Start.  A budget_exhausted event
-// therefore never reached the policy goroutine in production, so
-// HandlerPauseController.IsPaused(AgentTypeClaudeCode) would always return false
-// after a real handler exhausted its budget.
-//
-// This test exercises the full composition root via daemon.Start:
-//
-//   1. daemon.StartForTesting is called with BrPath="" (no work loop) and
-//      ProjectDir="" (no filesystem dependencies). A WithBusObserver callback
-//      intercepts the sealed bus and subscribes a test consumer for handler_paused events.
-//
-//   2. After Start returns, a synthetic budget_exhausted event is emitted on the
-//      captured bus. The event exercises the same handler-pause policy goroutine
-//      code path that a real twin (--scenario budget-exhausted) would trigger via
-//      its NDJSON stdout stream.
-//
-//   3. bus.Drain() waits for all asynchronous consumer goroutines to complete.
-//
-//   4. The test asserts that exactly one handler_paused event was received, with
-//      AgentType=claude-code and FailureClass=budget_exhausted.
-//
-// If HandlerPausePolicyGoroutine.Subscribe() is ever removed from daemon.Start,
-// no handler_paused event will arrive and the test will time-out on the channel
-// receive, then fail with "handler_paused event never received".
-//
-// Helper prefix: hpScenario (bead hk-6f1uj, per implementer-protocol
-// §Helper-prefix discipline).
-//
-// Spec refs: specs/handler-pause.md §4 HP-ENV-001, §5.2 HP-012, §7.1 HP-030;
-// specs/execution-model.md §4.6; specs/scenario-harness.md §4.
-// Source: docs/scenario-test-gap-audit-2026-05-18.md #1.
-// Bead: hk-6f1uj.
-
 import (
 	"context"
 	"encoding/json"
@@ -53,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// hpScenarioMakeRunID returns a UUIDv7-based RunID for use in synthetic events.
 func hpScenarioMakeRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -63,8 +22,6 @@ func hpScenarioMakeRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// hpScenarioBudgetExhaustedPayload builds a minimal budget_exhausted event
-// payload matching core.BudgetExhaustedEventPayload.Valid() constraints.
 func hpScenarioBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 	t.Helper()
 	payload := core.BudgetExhaustedEventPayload{
@@ -78,10 +35,6 @@ func hpScenarioBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 	}
 	return b
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_HandlerPause_EventTripsPolicy
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_HandlerPause_EventTripsPolicy is the end-to-end scenario test for
 // the HandlerPause policy goroutine wired in daemon.Start (hk-6f1uj).
@@ -98,33 +51,15 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
-	// handlerPausedCh receives payloads of handler_paused events delivered to
-	// the test's observer subscription. Buffered with capacity 4 so the async
-	// dispatch goroutine never blocks.
 	handlerPausedCh := make(chan core.HandlerPausedPayload, 4)
 
-	// captureBus holds the EventBus reference extracted from the WithBusObserver hook.
-	// Populated before startWithHooks calls bus.Seal().
 	var captureBus eventbus.EventBus
 
-	// captureBusSet is closed once captureBus is populated so the emitter goroutine
-	// can proceed after StartForTesting exits.
 	captureBusSet := make(chan struct{})
 
-	// WithBusObserver fires inside startWithHooks after all pre-Seal subscriptions
-	// are registered and BEFORE bus.Seal() is called. We:
-	//   (a) save the bus reference for post-Start event injection;
-	//   (b) subscribe our test observer for handler_paused events.
-	//
-	// This verifies that HandlerPausePolicyGoroutine.Subscribe was called by
-	// daemon.Start — if it was not, no handler_paused event will ever arrive.
 	busObserver := func(bus eventbus.EventBus) {
 		captureBus = bus
 
-		// Subscribe a test observer consumer for handler_paused events.
-		// ConsumerClass=Asynchronous matches how daemon.Start wires production
-		// consumers; Observer class would also work here but Asynchronous is
-		// consistent with the other policy-goroutine tests.
 		sub := core.Subscription{
 			ConsumerID:    "test-handler-paused-observer-hk6f1uj",
 			ConsumerClass: core.ConsumerClassAsynchronous,
@@ -142,24 +77,17 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 				select {
 				case handlerPausedCh <- payload:
 				default:
-					// Channel full — test has received enough; drop.
 				}
 				return nil
 			},
 		}
 		if _, err := bus.Subscribe(sub); err != nil {
-			// Cannot call t.Fatalf from a goroutine that is not the test goroutine.
-			// Panic here — the test framework recovers and fails the test.
 			panic("hpScenario: bus.Subscribe handler_paused: " + err.Error())
 		}
 
 		close(captureBusSet)
 	}
 
-	// daemon.StartForTesting with BrPath="" skips the work loop; ProjectDir=""
-	// skips the filesystem-dependent paths (pidfile, socket, WAL checkpoint).
-	// This exercises the composition root's bus setup and subscription wiring
-	// without requiring a real br binary or project directory.
 	cfg := daemon.Config{
 		BrPath:              "", // no work loop; no bead ledger required
 		ProjectDir:          "", // no filesystem-dependent paths
@@ -173,17 +101,12 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		)
 	}()
 
-	// Wait for the observer to fire (captureBus populated) with a generous
-	// deadline — Start should complete within milliseconds in unit-test mode.
 	select {
 	case <-captureBusSet:
-		// Observer fired; captureBus is set.
 	case <-time.After(5 * time.Second):
 		t.Fatal("hpScenario: WithBusObserver did not fire within 5s; daemon.startWithHooks may be stalled")
 	}
 
-	// Wait for daemon.Start to return. With BrPath="" and ProjectDir="" it returns
-	// promptly after emitting daemon_started.
 	select {
 	case startErr := <-startDone:
 		if startErr != nil {
@@ -193,11 +116,6 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		t.Fatalf("hpScenario: daemon.Start did not return within %s in no-op mode", daemon.ExportedDaemonExitHangBudget)
 	}
 
-	// Emit a synthetic budget_exhausted event on the captured (sealed) bus.
-	// This exercises the same path as harmonik-twin-claude --scenario budget-exhausted:
-	// the twin would emit the event on its NDJSON stdout, the watcher would route it
-	// to the bus, and the policy goroutine would trip the pause. Here we inject the
-	// event directly so the test is self-contained and fast.
 	runID := hpScenarioMakeRunID(t)
 	payloadBytes := hpScenarioBudgetExhaustedPayload(t, runID)
 
@@ -208,10 +126,6 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		t.Fatalf("hpScenario: emit budget_exhausted: %v", err)
 	}
 
-	// Drain the bus to wait for all asynchronous consumer goroutines to complete.
-	// This includes the HandlerPausePolicyGoroutine's budget_exhausted handler
-	// (which calls HandlerPauseController.Pause) and the controller's subsequent
-	// handler_paused emission (which our test consumer receives).
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer drainCancel()
 
@@ -219,14 +133,8 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		t.Fatalf("hpScenario: bus.Drain: %v", err)
 	}
 
-	// Assert: handler_paused event was received.
-	//
-	// If HandlerPausePolicyGoroutine.Subscribe() was never called in daemon.Start
-	// (the hk-37zy8 bug), no handler_paused event would be emitted and this
-	// select would fall through to the timeout branch.
 	select {
 	case got := <-handlerPausedCh:
-		// Validate the payload shape.
 		if got.AgentType != core.AgentTypeClaudeCode {
 			t.Errorf("hpScenario: handler_paused.agent_type=%q; want %q",
 				got.AgentType, core.AgentTypeClaudeCode)

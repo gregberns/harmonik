@@ -6,21 +6,8 @@ import (
 	"strings"
 )
 
-// exitUnknownSubcommand is the exit code for an argument that names no
-// subcommand. It matches the code `harmonik agent brief` already documents for
-// an unrecognised verb.
 const exitUnknownSubcommand = 2
 
-// unknownSubcommand reports the first argument, and true, when that argument is
-// a positional word rather than a flag.
-//
-// It is only correct at the END of run's subcommand chain. Every block in that
-// chain returns, so an argument still in hand at the end of it matched no verb.
-// The chain stays the single source of truth for which verbs exist. A second
-// list of verb names here would drift out of step with it.
-//
-// A leading "-" is never a subcommand, so a flag-first argv is declined here and
-// caught by the daemon-start refusal instead — see daemonStartRefusal.
 func unknownSubcommand(args []string) (string, bool) {
 	if len(args) < 2 {
 		return "", false
@@ -32,14 +19,6 @@ func unknownSubcommand(args []string) (string, bool) {
 	return arg, true
 }
 
-// daemonStartRefusal is the message for an argv that reached the end of the verb
-// chain without naming a daemon. It tells the operator what they typed, what it
-// used to do, and the one spelling that starts a daemon now.
-//
-// The trailing-word case is worth its own sentence. `harmonik --project DIR
-// status` reads as a status check and there is no `status` subcommand, so the
-// word was silently ignored and a daemon started instead. Naming the ignored
-// word is what turns a confusing refusal into an obvious one.
 func daemonStartRefusal(args []string) string {
 	var b strings.Builder
 
@@ -48,10 +27,6 @@ func daemonStartRefusal(args []string) string {
 	} else {
 		b.WriteString("harmonik: no subcommand given, only flags — this does not start a daemon\n")
 		if trailing := trailingPositional(args); trailing != "" {
-			// Do NOT suggest `harmonik <trailing> …` here. The word that lands in
-			// this position is usually one that is not a subcommand at all —
-			// `status` is the case that caused the bug — so echoing it back as a
-			// command recommends something that does not exist.
 			fmt.Fprintf(&b, "  %q was ignored: a subcommand must come first, before any flags (see SUBCOMMANDS below)\n", trailing)
 		}
 	}
@@ -60,10 +35,6 @@ func daemonStartRefusal(args []string) string {
 	return b.String()
 }
 
-// trailingPositional reports the first bare word after a flag, which is the
-// shape of `harmonik --project DIR status`. It is a hint for the error message
-// and deliberately approximate: a flag VALUE is a bare word too, so only the
-// LAST argument is considered, and only when it is not itself a flag.
 func trailingPositional(args []string) string {
 	if len(args) < 3 {
 		return ""
@@ -72,10 +43,6 @@ func trailingPositional(args []string) string {
 	if last == "" || strings.HasPrefix(last, "-") {
 		return ""
 	}
-	// The last word is a flag's value when the argument before it is a flag that
-	// takes one. Distinguishing those needs the flag set, which is not built yet,
-	// so require a preceding bare word: `--project DIR status` has one, and
-	// `--project DIR` does not.
 	prev := args[len(args)-2]
 	if strings.HasPrefix(prev, "-") {
 		return ""
@@ -83,9 +50,6 @@ func trailingPositional(args []string) string {
 	return last
 }
 
-// harmonikUsage prints the top-level help for the harmonik command and is
-// assigned to flag.Usage so that both "harmonik --help" and flag parse errors
-// show the full subcommand listing instead of the bare flag default.
 func harmonikUsage() {
 	fmt.Fprint(os.Stderr, `harmonik — agent-driven bead execution daemon
 

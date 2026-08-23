@@ -1,13 +1,5 @@
 package keeper_test
 
-// interiorevents_t8_test.go — T8 acceptance at the SHELL level: the four §8.20
-// durable interior events (session_keeper_handoff_written / model_done /
-// clear_sent / new_session_up) are emitted at their named transitions with the
-// in-flight cycle_id and the pinned payload shapes (SK-012, 00b R1/R2), and
-// the model-done signal works end-to-end through the reactive harness:
-// .idle-marker primary, transcript backstop, and the 60s-class fail-open
-// model_done_timeout (SK-014, here shrunk for a fast deterministic run).
-
 import (
 	"context"
 	"encoding/json"
@@ -19,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// newModelDoneCycler builds a reactive-harness Cycler with explicit control
-// over the T8 model-done detection knobs (idle-marker read, transcript
-// backstop, fail-open bound). Mirrors newReactiveCyclerWithBackstop.
 func newModelDoneCycler(
 	agent, projectDir, cycleID string,
 	rs *reactiveSession,
@@ -68,14 +57,10 @@ func newModelDoneCycler(
 	})
 }
 
-// noIdleMarker models an agent whose Stop hook is not wired.
 func noIdleMarker(_, _ string) (time.Time, bool) { return time.Time{}, false }
 
-// noTranscriptTurn models an empty/absent session transcript.
 func noTranscriptTurn(_, _, _ string) (time.Time, bool) { return time.Time{}, false }
 
-// firstIndexOfType returns the global emission index of the first recorded
-// event of the given type, or -1.
 func firstIndexOfType(em *keeper.RecordingEmitter, typ core.EventType) int {
 	for i, e := range em.Events {
 		if e.Type == typ {
@@ -85,7 +70,6 @@ func firstIndexOfType(em *keeper.RecordingEmitter, typ core.EventType) int {
 	return -1
 }
 
-// runReactiveModelDoneCycle drives one full cycle and returns the recorder.
 func runReactiveModelDoneCycle(
 	t *testing.T,
 	agent, cycleID string,
@@ -110,10 +94,6 @@ func runReactiveModelDoneCycle(
 	return em, rs, s1
 }
 
-// assertInteriorOrdering asserts SR3/SR4/SR6 over the emitted stream: the four
-// interior events are present exactly once, share the in-flight cycle_id, and
-// appear in handoff_written < model_done < clear_sent < new_session_up <
-// cycle_complete order.
 func assertInteriorOrdering(t *testing.T, em *keeper.RecordingEmitter, cycleID string) {
 	t.Helper()
 	order := []core.EventType{
@@ -244,7 +224,6 @@ func TestCycler_InteriorEvents_ModelDoneTimeout_FailOpen(t *testing.T) {
 	}
 }
 
-// mustUnmarshalPayload decodes the single recorded event of the given type.
 func mustUnmarshalPayload(t *testing.T, em *keeper.RecordingEmitter, typ core.EventType, dst any) {
 	t.Helper()
 	evts := em.EventsOfType(typ)

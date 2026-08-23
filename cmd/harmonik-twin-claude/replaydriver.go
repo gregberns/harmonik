@@ -38,11 +38,6 @@ import (
 	"time"
 )
 
-// runReplay reads the NDJSON capture at replayPath and writes each line to out
-// unchanged. When preserveTiming is true the capture's inter-line envelope
-// delays are reproduced by a context-aware sleep. It returns an error on a
-// malformed line, an invalid handshake first line, or a write/scan failure —
-// the caller maps a non-nil error to exit code 1.
 func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTiming bool) error {
 	//nolint:gosec // G304: replayPath is operator-supplied via --replay-path; provenance is a captured fixture.
 	f, err := os.Open(replayPath)
@@ -56,8 +51,6 @@ func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTi
 	}()
 
 	scanner := bufio.NewScanner(f)
-	// Match the watcher's 1 MiB max-line cap (HC-007a) so replay never accepts a
-	// line the daemon-side reader would reject.
 	const maxLineBytes = 1 << 20
 	scanner.Buffer(make([]byte, 4096), maxLineBytes)
 
@@ -73,7 +66,6 @@ func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTi
 			continue // tolerate stray blank lines; they carry no message.
 		}
 
-		// Validate the line is a JSON object. Malformed → exit-1 path.
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &obj); err != nil {
 			return fmt.Errorf("replay line %d not a JSON object: %w", lineNo, err)
@@ -86,7 +78,6 @@ func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTi
 			first = false
 		}
 
-		// --preserve-timing: sleep the inter-line delta before emitting this line.
 		if err := pacer.wait(ctx, obj); err != nil {
 			return err
 		}
@@ -99,15 +90,11 @@ func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTi
 		return fmt.Errorf("replay scan: %w", err)
 	}
 	if first {
-		// No non-blank lines at all: an empty capture is not a valid stream.
 		return fmt.Errorf("replay capture %s contained no messages", replayPath)
 	}
 	return nil
 }
 
-// writeVerbatim writes the captured line to out unchanged (raw bytes + one
-// 0x0A), no restamp. A fresh copy is written because scanner.Bytes() may be
-// overwritten on the next Scan; appending the newline forces a copy anyway.
 func writeVerbatim(out io.Writer, raw []byte) error {
 	lineOut := make([]byte, 0, len(raw)+1)
 	lineOut = append(lineOut, raw...)
@@ -116,17 +103,12 @@ func writeVerbatim(out io.Writer, raw []byte) error {
 	return err
 }
 
-// replayPacer reproduces a capture's inter-line envelope delays when enabled.
-// When disabled (or a line carries no timestamp) wait is a no-op.
 type replayPacer struct {
 	enabled  bool
 	havePrev bool
 	prevTS   time.Time
 }
 
-// wait sleeps the delta between this line's timestamp and the previous line's,
-// updating the pacer's running previous-timestamp. It returns ctx.Err() if the
-// context is cancelled mid-sleep.
 func (p *replayPacer) wait(ctx context.Context, obj map[string]json.RawMessage) error {
 	if !p.enabled {
 		return nil
@@ -147,16 +129,11 @@ func (p *replayPacer) wait(ctx context.Context, obj map[string]json.RawMessage) 
 	return nil
 }
 
-// isHandshakeMessage reports whether the decoded line is a valid first message
-// on a progress stream: handler_capabilities (HC-009) or a handshake envelope.
 func isHandshakeMessage(obj map[string]json.RawMessage) bool {
 	kind := messageType(obj)
 	return kind == "handler_capabilities" || kind == "handshake"
 }
 
-// messageType extracts the wire message type, preferring the envelope
-// "event_type" and falling back to the raw-payload "type" (the dual-field rule
-// used across the parity surface).
 func messageType(obj map[string]json.RawMessage) string {
 	for _, field := range []string{"event_type", "type"} {
 		if raw, ok := obj[field]; ok {
@@ -169,9 +146,6 @@ func messageType(obj map[string]json.RawMessage) string {
 	return ""
 }
 
-// replayTimestamp extracts a line's envelope timestamp for --preserve-timing,
-// trying the common timestamp-bearing fields in priority order. ok=false when
-// no parseable timestamp is present (e.g. wire-tap captures carry none).
 func replayTimestamp(obj map[string]json.RawMessage) (time.Time, bool) {
 	for _, field := range []string{"timestamp", "emitted_at", "transitioned_at"} {
 		raw, ok := obj[field]
@@ -192,8 +166,6 @@ func replayTimestamp(obj map[string]json.RawMessage) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// sleepCtx sleeps for d or returns ctx.Err() if the context is cancelled first,
-// mirroring the startup_delay_ms select pattern in main.go.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()

@@ -1,20 +1,5 @@
 package workers
 
-// bootwire_test.go — boot-wiring tests for the remote-substrate worker registry
-// (remote-substrate B4/B6).
-//
-// These tests prove the BOOT path — BuildRegistry, the helper that the daemon's
-// newWorkLoopDeps calls to populate deps.workerRegistry — activates remote
-// routing. Prior to the wire, deps.workerRegistry was always nil in production
-// (NewRegistry/RunHealthCheck were never invoked outside tests), so every bead
-// ran local regardless of .harmonik/workers.yaml.
-//
-// Gate-runnable: the B6 health-check probes are intercepted by a RecordingRunner
-// whose CmdFunc delegates to exec.Command("true")/("false") — no real ssh or
-// remote host is needed.
-//
-// Bead ref: hk-rs-b4-bootwire-b44z, hk-rs-b6-healthcheck-isda.
-
 import (
 	"context"
 	"os/exec"
@@ -25,17 +10,11 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// bootwireCollector records the type of every event emitted through its EmitFunc
-// so a test can assert on emissions. It stands in for
-// handlercontract.CollectingEmitter, which this package deliberately does not
-// import: the boot wiring takes the package's own EmitFunc (P2 E4c) rather than
-// widening internal/workers' dependency closure with a handlercontract edge.
 type bootwireCollector struct {
 	mu    sync.Mutex
 	types []string
 }
 
-// emitFunc returns the EmitFunc handed to the code under test.
 func (c *bootwireCollector) emitFunc() EmitFunc {
 	return func(_ context.Context, eventType core.EventType, _ []byte) error {
 		c.mu.Lock()
@@ -52,7 +31,6 @@ func (c *bootwireCollector) EventTypes() []string {
 	return append([]string(nil), c.types...)
 }
 
-// oneWorkerCfg returns a v1 Config with a single worker.
 func oneWorkerCfg(enabled bool) Config {
 	return Config{
 		Version: 1,
@@ -70,8 +48,6 @@ func oneWorkerCfg(enabled bool) Config {
 	}
 }
 
-// passingRunner intercepts every health probe with exec.Command("true") so all
-// four probes succeed (worker stays healthy).
 func passingRunner() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -80,8 +56,6 @@ func passingRunner() *tmux.RecordingRunner {
 	}
 }
 
-// failingRunner intercepts every health probe with exec.Command("false") so the
-// first probe (tmux_version) fails, marking the worker unhealthy.
 func failingRunner() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -100,7 +74,6 @@ func TestBuildWorkerRegistry_EnabledWorkerActivatesRemoteRouting(t *testing.T) {
 	ctx := context.Background()
 	bus := &bootwireCollector{}
 
-	// Boot path with a healthy worker (all probes pass).
 	reg := BuildRegistryWithRunner(ctx, oneWorkerCfg(true), bus.emitFunc(), passingRunner())
 
 	if reg == nil {
@@ -115,7 +88,6 @@ func TestBuildWorkerRegistry_EnabledWorkerActivatesRemoteRouting(t *testing.T) {
 	}
 	reg.ReleaseSlot()
 
-	// A passing health check must NOT emit a worker_unhealthy event.
 	for _, et := range bus.EventTypes() {
 		if et == string(core.EventTypeWorkerUnhealthy) {
 			t.Fatalf("passing boot health check emitted unexpected %q event", et)
@@ -133,7 +105,6 @@ func TestBuildWorkerRegistry_NoWorkerStaysLocal(t *testing.T) {
 	ctx := context.Background()
 	bus := &bootwireCollector{}
 
-	// Zero-value config (the missing-workers.yaml case) — the ONLY nil case.
 	if reg := BuildRegistryWithRunner(ctx, Config{}, bus.emitFunc(), passingRunner()); reg != nil {
 		t.Fatalf("BuildRegistry: expected nil registry for empty config (NFR7 local-only), got %#v", reg)
 	}
@@ -155,19 +126,14 @@ func TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal(t *testin
 	if reg == nil {
 		t.Fatal("BuildRegistry: expected NON-nil registry for a configured-but-disabled worker (hk-xjbvi: live-enable needs a registry to flip), got nil")
 	}
-	// Dispatch is local-only while disabled: SelectWorker must return nil,
-	// identical to the old nil-registry path.
 	if w := reg.SelectWorker(); w != nil {
 		t.Fatalf("SelectWorker: expected nil for a disabled worker (local-only, unchanged dispatch), got %q", w.Name)
 	}
-	// A boot health check must NOT have run (no enabled worker → nil runner →
-	// no probes), so no worker_unhealthy event is emitted.
 	for _, et := range bus.EventTypes() {
 		if et == string(core.EventTypeWorkerUnhealthy) {
 			t.Fatalf("all-disabled config ran a boot health check (emitted %q) — probes must be skipped when no worker is enabled", et)
 		}
 	}
-	// Live-enable: now selectable WITHOUT a restart/rebuild.
 	name, err := reg.SetEnabledByName("gb-mbp", true)
 	if err != nil {
 		t.Fatalf("SetEnabledByName(gb-mbp, true): unexpected error %v", err)
@@ -184,7 +150,6 @@ func TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal(t *testin
 	}
 	reg.ReleaseSlot()
 
-	// Unknown-name toggle is rejected.
 	if _, err := reg.SetEnabledByName("nope", true); err == nil {
 		t.Fatal("SetEnabledByName(nope, true): expected an error for an unknown worker name, got nil")
 	}
@@ -207,7 +172,6 @@ func TestBuildWorkerRegistry_UnhealthyWorkerSkippedAndEventEmitted(t *testing.T)
 		t.Fatalf("SelectWorker: expected nil after a failing boot health check (worker disabled), got %q", w.Name)
 	}
 
-	// The failing boot health check MUST emit exactly one worker_unhealthy event.
 	got := 0
 	for _, et := range bus.EventTypes() {
 		if et == string(core.EventTypeWorkerUnhealthy) {

@@ -13,28 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// postreadycat0_rc012a_test.go — sensor tests for RC-012a
-// (Post-`ready` Cat 0 does not transition daemon state).
-//
-// Spec refs: specs/reconciliation/spec.md §4.2 RC-012a.
-// Bead: hk-63oh.17.
-//
-// Verifies:
-//
-//	(a) DaemonDegradedReasonCat0PostReady constant exists and is a valid
-//	    DaemonDegradedReason.
-//	(b) A post-ready Cat 0 failure is modelled via the socket-stub: the daemon
-//	    status remains "ready" while the daemon_degraded event payload carries
-//	    reason=infrastructure_unavailable (the post-ready variant).
-//	(c) Post-ready Cat 0 failures do NOT reuse the pre-ready "degraded" enum
-//	    state; daemon status remains "ready" at the JSON-RPC status endpoint.
-//	(d) Spec-corpus sensor: reconciliation/spec.md contains RC-012a and the
-//	    "MUST NOT transition" constraint.
-//
-// Helper prefix: cat0PostReadyFixture (per implementer-protocol.md).
-
-// cat0PostReadyFixtureModuleRoot returns the module root by walking upward from
-// this file's directory.
 func cat0PostReadyFixtureModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -54,9 +32,6 @@ func cat0PostReadyFixtureModuleRoot(t *testing.T) string {
 	}
 }
 
-// cat0PostReadyFixtureStubState is the mutable state for the post-ready Cat 0
-// scenario stub. The daemon is `ready` but reports a daemon_degraded event
-// for any post-ready Cat 0 failure.
 type cat0PostReadyFixtureStubState struct {
 	// status is the JSON-RPC status endpoint response value; it MUST remain
 	// "ready" even when Cat 0 fails post-ready (RC-012a).
@@ -66,9 +41,6 @@ type cat0PostReadyFixtureStubState struct {
 	lastDegradedReason string
 }
 
-// cat0PostReadyFixtureServeState starts a stub daemon that reports the given
-// status and returns daemon_degraded metadata when queried. The server runs
-// until the listener is closed.
 func cat0PostReadyFixtureServeState(t *testing.T, ln net.Listener, state *cat0PostReadyFixtureStubState) {
 	t.Helper()
 	go func() {
@@ -85,8 +57,6 @@ func cat0PostReadyFixtureServeState(t *testing.T, ln net.Listener, state *cat0Po
 	}()
 }
 
-// cat0PostReadyFixtureServeConn handles one connection for the post-ready Cat 0
-// stub. Reads a JSON-RPC request and writes back status + degraded metadata.
 func cat0PostReadyFixtureServeConn(conn net.Conn, state *cat0PostReadyFixtureStubState) {
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
@@ -119,8 +89,6 @@ func cat0PostReadyFixtureServeConn(conn net.Conn, state *cat0PostReadyFixtureStu
 	_, _ = fmt.Fprintf(conn, "%s\n", respBytes) //nolint:errcheck // stub: write errors intentionally ignored
 }
 
-// cat0PostReadyFixtureProbeStatus queries the stub daemon's JSON-RPC status
-// endpoint and returns the status string and last_degraded_reason.
 func cat0PostReadyFixtureProbeStatus(t *testing.T, projectDir string) (status, lastDegradedReason string, err error) {
 	t.Helper()
 	conn, dialErr := (&net.Dialer{}).DialContext(t.Context(), "unix", plFixtureSocketPath(projectDir))
@@ -156,10 +124,6 @@ func cat0PostReadyFixtureProbeStatus(t *testing.T, projectDir string) (status, l
 	return resp.Result.Status, resp.Result.LastDegradedReason, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RC-012a: DaemonDegradedReasonCat0PostReady constant
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRC012a_Cat0PostReadyReasonIsValid verifies that
 // DaemonDegradedReasonCat0PostReady is a declared, valid DaemonDegradedReason
 // constant per event-model.md §8.7.5.
@@ -184,10 +148,6 @@ func TestRC012a_Cat0PostReadyReasonValue(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RC-012a: post-ready Cat 0 does NOT transition daemon-status enum
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRC012a_DaemonStatusRemainsReadyAfterCat0Failure verifies that after the
 // daemon reaches `ready`, a Cat 0 prerequisite failure does NOT transition the
 // daemon-status enum to `degraded`.
@@ -204,8 +164,6 @@ func TestRC012a_DaemonStatusRemainsReadyAfterCat0Failure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
-	// The stub models the correct RC-012a behavior: daemon is `ready` and
-	// the Cat 0 failure is surfaced via daemon_degraded (not a status change).
 	state := &cat0PostReadyFixtureStubState{
 		status:             "ready",
 		lastDegradedReason: string(core.DaemonDegradedReasonInfrastructureUnavailable),
@@ -230,10 +188,6 @@ func TestRC012a_DaemonStatusRemainsReadyAfterCat0Failure(t *testing.T) {
 func TestRC012a_DaemonDegradedPayloadForPostReadyCat0(t *testing.T) {
 	t.Parallel()
 
-	// A post-ready Cat 0 failure emits daemon_degraded with reason=infrastructure_unavailable
-	// per RC-012a (not cat0_post_ready — the reason encodes the infrastructure condition,
-	// not the detection path). The DaemonDegradedReasonCat0PostReady constant is the
-	// reason used when the detection context needs to be communicated separately.
 	payload := core.DaemonDegradedPayload{
 		DetectedAt: "2026-05-10T00:00:00Z",
 		Reason:     core.DaemonDegradedReasonInfrastructureUnavailable,
@@ -242,8 +196,6 @@ func TestRC012a_DaemonDegradedPayloadForPostReadyCat0(t *testing.T) {
 		t.Error("RC-012a: DaemonDegradedPayload{infrastructure_unavailable}.Valid() = false; want true")
 	}
 
-	// The cat0_post_ready variant is also a valid daemon_degraded reason (used
-	// to distinguish the detection context in diagnostics).
 	payloadCat0 := core.DaemonDegradedPayload{
 		DetectedAt: "2026-05-10T00:00:00Z",
 		Reason:     core.DaemonDegradedReasonCat0PostReady,
@@ -261,11 +213,6 @@ func TestRC012a_DaemonDegradedPayloadForPostReadyCat0(t *testing.T) {
 func TestRC012a_PostReadyCat0DoesNotUsePreReadyDegradedState(t *testing.T) {
 	t.Parallel()
 
-	// In the fixture model: a daemon that has reached `ready` and then encounters
-	// a Cat 0 failure maintains its `ready` status. The fixture verifies this
-	// structural invariant by asserting that "ready" + Cat 0 failure (via
-	// daemon_degraded emission) is the correct post-ready model, NOT
-	// "degraded" + Cat 0 failure (which is the pre-ready model from PL-010).
 	projectDir := plFixtureTempProjectDir(t)
 	ln, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
@@ -273,7 +220,6 @@ func TestRC012a_PostReadyCat0DoesNotUsePreReadyDegradedState(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
-	// Scenario: daemon was ready, Cat 0 fails post-ready. Status MUST stay "ready".
 	state := &cat0PostReadyFixtureStubState{
 		status:             "ready",
 		lastDegradedReason: string(core.DaemonDegradedReasonCat0PostReady),
@@ -293,10 +239,6 @@ func TestRC012a_PostReadyCat0DoesNotUsePreReadyDegradedState(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RC-012a: Spec-corpus sensor
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRC012a_SpecCorpusClause verifies that reconciliation/spec.md contains
 // RC-012a and the "MUST NOT transition" constraint.

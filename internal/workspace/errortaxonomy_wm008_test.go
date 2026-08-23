@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// Tests for the workspace error taxonomy per workspace-model.md §8.
-//
-// Helper prefix: wmErrorFixture (bead hk-8mwo.64; avoids collision with
-// sibling-bead helpers such as leaseFixture, stateMachineFixture, etc.).
-
-// wmErrorFixtureAllSentinels returns the complete ordered set of the 12 error
-// sentinel vars defined by workspace-model.md §8, paired with their canonical
-// class string as returned by [Class].
 func wmErrorFixtureAllSentinels() []struct {
 	sentinel  error
 	wantClass string
@@ -170,7 +162,6 @@ func TestWM008_TransitionConsequences(t *testing.T) {
 			if tc.wantClass == "" {
 				t.Fatalf("WM-008: wantClass for sentinel %v is empty; must be non-empty", tc.sentinel)
 			}
-			// errors.Is must return true for the sentinel against itself.
 			if !errors.Is(tc.sentinel, tc.sentinel) {
 				t.Errorf("WM-008: errors.Is(%v, self) = false; sentinel is not self-matching", tc.sentinel)
 			}

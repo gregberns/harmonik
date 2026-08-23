@@ -1,13 +1,3 @@
-// harness.go — Harness interface + CompletionMode/SessionIDPolicy enums (codex-harness T1, hk-e8omz).
-//
-// A Harness abstracts the per-implementation-harness behaviors within a harmonik run so that
-// a second harness (OpenAI codex) can be selected per-run while all shared infrastructure
-// (tmux substrate, worktree mgmt, commit-detection, merge, review-loop control flow) stays
-// untouched.
-//
-// Spec: specs/harness-contract.md §2 (normative contract).
-// See also: C1-harness-interface-spec.md for the full AC set.
-
 package handlercontract
 
 import (

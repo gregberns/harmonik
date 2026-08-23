@@ -1,11 +1,5 @@
 package handler_test
 
-// launch_runner_m4c4_test.go — remote-substrate M4-C4 (T6): handler.Launch's
-// direct exec path (Substrate == nil) must build the subprocess *exec.Cmd through
-// LaunchSpec.Runner when one is set, so a worker-selected argv-driven harness
-// (pi/codex) spawns its process ON THE WORKER via the SSHRunner. A nil Runner
-// keeps the byte-identical local exec.CommandContext path (NFR7).
-
 import (
 	"context"
 	"os/exec"
@@ -17,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// recordingRunner is a handler.CommandRunner that records the (name, args) of each
-// Command call and produces a benign local process that emits agent_ready so the
-// watcher exits cleanly.
 type recordingRunner struct {
 	mu       sync.Mutex
 	called   bool
@@ -33,7 +24,6 @@ func (r *recordingRunner) Command(ctx context.Context, name string, args ...stri
 	r.lastName = name
 	r.lastArgs = append([]string(nil), args...)
 	r.mu.Unlock()
-	// Stand in for the remote spawn: emit a terminal event so the watcher closes.
 	return exec.CommandContext(ctx, "sh", "-c", `printf '{"type":"agent_ready"}\n'`)
 }
 
@@ -101,7 +91,6 @@ func TestHandler_Launch_ExecPath_NilRunnerSpawnsLocally(t *testing.T) {
 		Env:     []string{},
 		WorkDir: t.TempDir(),
 		Role:    "implementer",
-		// Runner intentionally nil — LOCAL byte-identical path.
 	}
 
 	sess, watcher, err := h.Launch(t.Context(), spec)

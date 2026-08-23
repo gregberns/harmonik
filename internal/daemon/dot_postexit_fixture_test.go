@@ -1,18 +1,5 @@
 package daemon_test
 
-// dot_postexit_fixture_test.go — one hermetic fixture for the DOT post-exit
-// region.
-//
-// The graph path is the production default and it carries essentially all
-// traffic, but almost every test that drives a real graph run sits behind the
-// `scenario` build tag, so the gate never sees it. This fixture runs ONE bead
-// through the real work loop in DOT mode with a three-node graph, a shell
-// implementer that commits, and stubbed hook state. It needs no tmux, no ssh and
-// no `go` toolchain, so it runs untagged and in -short.
-//
-// Every test built on it asserts on what the run DID — which bead transition it
-// reached, which events it emitted — and not on the shape of the code.
-
 import (
 	"context"
 	"encoding/json"
@@ -32,13 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// dotFixtureGraph is a minimal valid DOT workflow: start (non-agentic noop) →
-// implement (agentic implementer, commit required) → close (success terminal).
-//
-// It carries no reviewer node (a reviewer needs a review.json verdict a shell
-// stub cannot write) and no commit_gate tool node (that needs `go` and the test
-// suite), so the run is hermetic while still walking every post-exit probe the
-// graph node makes.
 const dotFixtureGraph = `digraph "dot-postexit-fixture" {
     schema_version="1";
     version="1.0";
@@ -85,12 +65,6 @@ const dotFixtureGraph = `digraph "dot-postexit-fixture" {
 }
 `
 
-// dotFixtureHookStore is a hook store that answers with a fixed outcome_emitted
-// payload. It replaces the real store so a test can state what the agent
-// reported through the socket without standing up the relay, and so the run
-// never pays the 3-second stop-hook grace window.
-//
-// A nil Outcome means "the agent reported nothing" — CHB-020 branch 3.
 type dotFixtureHookStore struct {
 	Outcome json.RawMessage
 }
@@ -120,16 +94,10 @@ func (dotFixtureHookStore) SetAgentReadyCallback(_, _ string, cb func()) {
 	}
 }
 
-// dotFixtureFailureSignal is the outcome_emitted payload a Claude agent produces
-// when its Stop hook reports failure (CHB-020 branch 2).
 const dotFixtureFailureSignal = `{"kind":"FAILURE_SIGNAL","sub_reason":"claude_reported_failure","suggested_class":"structural"}`
 
-// dotFixtureWorkComplete is the outcome_emitted payload of a clean agent turn
-// (CHB-020 branch 1).
 const dotFixtureWorkComplete = `{"kind":"WORK_COMPLETE"}`
 
-// dotFixtureOpts are the knobs a post-exit test turns. Everything else about the
-// run is fixed.
 type dotFixtureOpts struct {
 	// RunContext replaces the fixture's ordinary timeout context. Tests use it
 	// to stop a live graph run at a precise point, such as after its handler
@@ -216,16 +184,12 @@ type dotFixtureOpts struct {
 	ObserveTerminalStep func(string)
 }
 
-// dotFixtureResult is what the caller asserts on.
 type dotFixtureResult struct {
 	ProjectDir string
 	Ledger     *stubBeadLedger
 	Bus        *stubEventCollector
 }
 
-// dotFixtureLedger is stubBeadLedger with a bead body. The body is what carries
-// a `## Branching` block, and that block is how a bead declares the target_repo
-// a cross-repo run lands in.
 type dotFixtureLedger struct {
 	*stubBeadLedger
 	description string
@@ -242,35 +206,22 @@ func (l *dotFixtureLedger) ShowBead(ctx context.Context, id core.BeadID) (core.B
 	return rec, nil
 }
 
-// dotFixtureCommittingHandler writes a /bin/sh implementer that commits a file
-// in its working directory (the run worktree, set from spec.WorkDir), so the
-// node's HEAD advances DURING the node the way a real implementer's does. The
-// commit carries the bead's `Refs:` trailer, which the subsumption and
-// no-commit guards read.
 func dotFixtureCommittingHandler(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-implementer.sh", dotFixtureCommitLines(bead)+"exit 0\n")
 }
 
-// dotFixtureCommitThenCrashHandler writes an implementer that commits real work
-// and then exits non-zero with nothing reported through the socket — CHB-020
-// branch 3 with a crash.
 func dotFixtureCommitThenCrashHandler(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-crash.sh", dotFixtureCommitLines(bead)+"exit 3\n")
 }
 
-// dotFixtureCommitThenGarbageHandler writes an implementer that commits real
-// work and then writes a line the NDJSON progress-stream reader cannot parse,
-// which puts the watcher into a structural error.
 func dotFixtureCommitThenGarbageHandler(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-garbage.sh",
 		dotFixtureCommitLines(bead)+"printf 'this line is not NDJSON\\n'\nexit 0\n")
 }
 
-// dotFixtureCommitLines is the shell prologue that makes the run worktree's HEAD
-// advance, shared by every handler that must look like an agent which did work.
 func dotFixtureCommitLines(bead core.BeadID) string {
 	return "set -e\n" +
 		"echo \"work for " + string(bead) + " $$\" > fixture-work.txt\n" +
@@ -278,7 +229,6 @@ func dotFixtureCommitLines(bead core.BeadID) string {
 		"git commit -m \"feat: dot fixture work\n\nRefs: " + string(bead) + "\" >/dev/null 2>&1\n"
 }
 
-// dotFixtureHandlerScript writes body as an executable /bin/sh script.
 func dotFixtureHandlerScript(t *testing.T, name, body string) string {
 	t.Helper()
 	scriptPath := filepath.Join(t.TempDir(), name)
@@ -289,15 +239,11 @@ func dotFixtureHandlerScript(t *testing.T, name, body string) string {
 	return scriptPath
 }
 
-// dotFixtureNoCommitHandler writes a /bin/sh implementer that does nothing and
-// exits 0 — the shape of an agent that produced no work.
 func dotFixtureNoCommitHandler(t *testing.T) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-nowork.sh", "exit 0\n")
 }
 
-// runDotFixtureBead drives ONE bead through the real work loop in DOT mode and
-// returns when the bead reaches a terminal transition (closed or reopened).
 func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) dotFixtureResult {
 	t.Helper()
 

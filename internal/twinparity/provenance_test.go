@@ -50,19 +50,11 @@ import (
 	"testing"
 )
 
-// knownPlaceholderCorpora names every twin-parity corpus that is hand-authored
-// rather than captured from a live agent, with what it would take to replace it.
-//
-// Removing a name here is the whole point of capturing real fixtures. Adding one
-// is a deliberate act that says: this gate is green and it proves nothing yet.
 var knownPlaceholderCorpora = map[string]string{
 	"claude/happy-path-sample": "replace by running `make capture-claude-fixtures` on an authenticated, tmux-capable box",
 	"pi/happy-path-sample":     "replace by running `make test-pi-live` with PI_LIVE=1 on a box with pi provider auth",
 }
 
-// corpusMeta is the part of a corpus meta.yaml that says where the corpus came
-// from. Parsed by hand rather than with a YAML library because depguard confines
-// this package to core/handlercontract/stdlib, and these are flat scalar keys.
 type corpusMeta struct {
 	agent        string
 	handAuthored bool
@@ -72,9 +64,6 @@ type corpusMeta struct {
 	captureDate          string
 }
 
-// parseCorpusMeta reads the flat scalar keys off a meta.yaml. It deliberately
-// ignores the nested `excludes:` block: those lines are indented, and only
-// top-level keys are read.
 func parseCorpusMeta(path string) (corpusMeta, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is built from a walk of the committed testdata tree
 	if err != nil {
@@ -82,7 +71,6 @@ func parseCorpusMeta(path string) (corpusMeta, error) {
 	}
 	var m corpusMeta
 	for _, line := range strings.Split(string(raw), "\n") {
-		// Top-level keys only: an indented line belongs to a nested block.
 		if line != strings.TrimLeft(line, " \t") {
 			continue
 		}
@@ -90,7 +78,6 @@ func parseCorpusMeta(path string) (corpusMeta, error) {
 		if !found || strings.HasPrefix(strings.TrimSpace(key), "#") {
 			continue
 		}
-		// Trim the trailing `# ...` comment the sample files carry, then quotes.
 		if hash := strings.Index(value, "#"); hash >= 0 {
 			value = value[:hash]
 		}
@@ -112,11 +99,6 @@ func parseCorpusMeta(path string) (corpusMeta, error) {
 	return m, nil
 }
 
-// discoverCorpora walks testdata/twin-parity and returns every corpus directory
-// as "<agent>/<scn>", the same spelling knownPlaceholderCorpora uses.
-//
-// A corpus is a directory holding a meta.yaml. Walking for the file rather than
-// listing two known agent names is what lets a newly added corpus be caught.
 func discoverCorpora(t *testing.T) []string {
 	t.Helper()
 	root := filepath.Join("..", "..", "testdata", "twin-parity")
@@ -186,14 +168,8 @@ func TestTwinParityCorpusPlaceholdersAreTheOnesWeSaidTheyWere(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: parse meta.yaml: %v", name, err)
 		}
-		// An undeclared corpus counts as a placeholder. The safe reading of "we
-		// do not know where this came from" is that it proves nothing.
 		onDisk[name] = meta.handAuthored || !meta.handAuthoredDeclared
 
-		// The two fields have to agree. A sample carrying a real date, or a
-		// capture still carrying the placeholder date, means one of them was
-		// edited without the other — and whichever way round it is, the corpus no
-		// longer says what it is.
 		datePlaceheld := meta.captureDate == "" || strings.Contains(meta.captureDate, "PLACEHOLDER")
 		if onDisk[name] && !datePlaceheld {
 			t.Errorf("%s declares hand_authored but stamps capture_date %q; one of the two is wrong",

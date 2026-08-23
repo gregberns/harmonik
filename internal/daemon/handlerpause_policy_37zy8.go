@@ -41,13 +41,6 @@ import (
 	"github.com/gregberns/harmonik/internal/policy"
 )
 
-// rateLimitHysteresisCount is the number of consecutive rate-limit active
-// events required to trip a pause.  Two consecutive hits (without clearance)
-// trigger a pause.  This is the minimum hysteresis per hk-37zy8.
-//
-// The trip decision itself is the pure policy.StepRateLimit reducer; this const
-// mirrors policy.DefaultRateLimitThreshold as the threshold this goroutine feeds
-// in.
 const rateLimitHysteresisCount = policy.DefaultRateLimitThreshold
 
 // HandlerPausePolicyConfig carries the configuration parameters for
@@ -137,39 +130,17 @@ func (p *HandlerPausePolicyGoroutine) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// handleRateLimitStatus — rate-limit hysteresis logic
-// ---------------------------------------------------------------------------
-
-// handleRateLimitStatus is the event handler for agent_rate_limit_status events.
-//
-// Hysteresis rule:
-//   - On status=active: increment the consecutive counter for the event's agent type.
-//     If the counter reaches rateLimitHysteresisCount, trip the pause.
-//   - On status=cleared: reset the consecutive counter to 0 for the event's agent type.
-//
-// The counter resets on any cleared event.  A single active event does not trip;
-// two consecutive active events without clearance do.
 func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context, evt core.Event) error {
 	var payload core.AgentRateLimitStatusPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
-		// Malformed payload — skip; the bus dead-letter path handles persistent failures.
 		return fmt.Errorf("handler-pause-policy: rate-limit: unmarshal: %w", err)
 	}
 	if !payload.Valid() {
 		return nil // silently skip invalid payloads
 	}
 
-	// Use the configured agent type for policy decisions.
-	// All beads use claude-code; if the payload's run_id belongs to a
-	// different type we still apply to our configured agent type since AgentType
-	// is not on the payload.
 	agentType := p.cfg.AgentType
 
-	// Project the payload into the pure reducer's event shape (keeps uuid/payload
-	// out of internal/policy), step the hysteresis reducer under the lock, and
-	// write the new counter back.  The reducer owns the decision; this shell owns
-	// the state map + the effects.
 	ev := policy.RateLimitEvent{
 		Cleared: payload.Status == core.AgentRateLimitStatusCleared,
 		Active:  payload.Status == core.AgentRateLimitStatusActive,
@@ -184,7 +155,6 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 	p.mu.Unlock()
 
 	if verdict.Trip {
-		// Trip condition met: pause the handler.
 		cause := core.HandlerPauseCause{
 			FailureClass: core.FailureClassTransient,
 			SubReason:    "rate_limit",
@@ -196,8 +166,6 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 		if err := p.cfg.Controller.Pause(ctx, agentType, cause, inFlight); err != nil {
 			return fmt.Errorf("handler-pause-policy: rate-limit: Pause: %w", err)
 		}
-		// Schedule auto-resume if the provider reported a retry_after window
-		// (hk-0otqs).  The controller applies flap-backoff internally.
 		if payload.RetryAfterSeconds != nil && *payload.RetryAfterSeconds > 0 {
 			after := time.Duration(*payload.RetryAfterSeconds) * time.Second
 			p.cfg.Controller.Schedule(ctx, agentType, after)
@@ -206,17 +174,6 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// handleBudgetExhausted — budget-exhaustion single-hit logic
-// ---------------------------------------------------------------------------
-
-// handleBudgetExhausted is the event handler for budget_exhausted events.
-//
-// Single-hit rule: any budget_exhausted event trips a pause immediately.
-// The controller's Pause is idempotent on double-trip.
-//
-// Sub-reason: "budget_exhausted_handler_account" per the specs/handler-pause.md
-// §5 trigger taxonomy.
 func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context, evt core.Event) error {
 	var payload core.BudgetExhaustedEventPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
@@ -246,34 +203,12 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// buildInFlightList — snapshot RunRegistry for the freeze-list
-// ---------------------------------------------------------------------------
-
-// buildInFlightList returns the set of in-flight runs for the configured agent
-// type at the moment the pause is triggered.
-//
-// All runs use AgentTypeClaudeCode, so this is effectively "all in-flight
-// runs".  Later, once per-bead agent-type resolution lands (see
-// ResolvedAgentType future-work comment in handlerpause_9hwbw.go), this can be
-// filtered by the run's actual agent type.
 func (p *HandlerPausePolicyGoroutine) buildInFlightList() []InFlightBeadRecord {
-	// Snapshot the registry under its own read lock.
 	type runEntry struct {
 		runID  core.RunID
 		handle *RunHandle
 	}
 
-	// RunRegistry.Snapshot returns []*RunHandle but not the keys; we need to
-	// iterate in a way that preserves runID.  Use the internal snap approach.
-	// Since RunRegistry exports only Snapshot (which drops keys), we iterate via
-	// a helper that accesses the map directly.  Snapshot is the only
-	// public accessor; we build the freeze-list from it.
-	//
-	// NOTE: RunRegistry.Snapshot does not return the runID keys.  We use a
-	// workaround: snapshot returns []*RunHandle; for the freeze-list we need
-	// (runID, handle) pairs.  Since RunRegistry does not expose an iterator with
-	// keys, we use an internal accessor added here via snapshotWithKeys.
 	snap := p.cfg.Registry.snapshotWithKeys()
 
 	out := make([]InFlightBeadRecord, 0, len(snap))

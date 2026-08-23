@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// --- LLMFreedom ---
-
 func TestLLMFreedomValid(t *testing.T) {
 	t.Parallel()
 
@@ -106,8 +104,6 @@ func TestLLMFreedomUnmarshalText(t *testing.T) {
 		})
 	}
 }
-
-// --- IODeterminism ---
 
 func TestIODeterminismValid(t *testing.T) {
 	t.Parallel()
@@ -209,8 +205,6 @@ func TestIODeterminismUnmarshalText(t *testing.T) {
 	}
 }
 
-// --- ReplaySafety ---
-
 func TestReplaySafetyValid(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +305,6 @@ func TestReplaySafetyUnmarshalText(t *testing.T) {
 		})
 	}
 }
-
-// --- AxisIdempotency ---
 
 func TestAxisIdempotencyValid(t *testing.T) {
 	t.Parallel()
@@ -424,8 +416,6 @@ func TestAxisIdempotencyUnmarshalText(t *testing.T) {
 	}
 }
 
-// --- AxisTags struct ---
-
 func TestAxisTagsBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -499,7 +489,6 @@ func TestAxisTagsMarshalJSON(t *testing.T) {
 		t.Fatalf("json.Marshal(BaselineAxisTags) error: %v", err)
 	}
 
-	// Unmarshal back and compare to verify round-trip.
 	var rt AxisTags
 	if err := json.Unmarshal(got, &rt); err != nil {
 		t.Fatalf("round-trip Unmarshal error: %v", err)
@@ -508,7 +497,6 @@ func TestAxisTagsMarshalJSON(t *testing.T) {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", rt, BaselineAxisTags)
 	}
 
-	// Confirm invalid AxisTags are rejected.
 	invalid := AxisTags{LLMFreedom: "bogus", IODeterminism: IODeterminismDeterministic, ReplaySafety: ReplaySafetySafe, Idempotency: AxisIdempotencyIdempotent}
 	if _, err := json.Marshal(invalid); err == nil {
 		t.Error("json.Marshal accepted AxisTags with invalid LLMFreedom")

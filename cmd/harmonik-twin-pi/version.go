@@ -21,19 +21,8 @@ import (
 	"io"
 )
 
-// commitHash is stamped at build time via:
-//
-//	-ldflags "-X main.commitHash=$(git rev-parse HEAD)"
-//
-// It is the zero string when the binary is built without the stamp.
 var commitHash string
 
-// versionLine returns the human-readable version string for this binary.
-//
-// Output format:
-//
-//	harmonik-twin-pi commit=<sha>        (stamped)
-//	harmonik-twin-pi commit=(unstamped)  (plain build / test)
 func versionLine() string {
 	stamp := commitHash
 	if stamp == "" {
@@ -42,7 +31,6 @@ func versionLine() string {
 	return fmt.Sprintf("harmonik-twin-pi commit=%s", stamp)
 }
 
-// writeVersion writes the version line followed by a newline to w.
 func writeVersion(w io.Writer) {
 	_, _ = fmt.Fprintln(w, versionLine()) //nolint:errcheck // best-effort
 }

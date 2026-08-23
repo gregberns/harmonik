@@ -1,32 +1,5 @@
 package main
 
-// resolve_pi_config.go — the Pi harness config resolver (hk-v7q5u).
-//
-// # OPERATOR-FACING CHOKEPOINT — imposes NO built-in defaults.
-//
-// ResolvePiConfig is the validation gate for the harnesses.pi block in
-// .harmonik/config.yaml. Per the R1 de-hardcode mandate and PI-051, the product
-// imposes ZERO baked Pi defaults (provider, model, or key): EVERY required value
-// must be set by the operator. When a required value is unset the resolver
-// AGGREGATES all the missing keys and returns a single *PiConfigMissingError so
-// the Pi harness REFUSES TO START — it never silently defaults.
-//
-// Why it lives in cmd/harmonik (NOT internal/daemon): the resolver needs
-// daemon.PiHarnessConfig (the parsed .harmonik/config.yaml harnesses.pi block),
-// and the depguard bans internal packages from importing internal/daemon
-// (.golangci.yml). This mirrors the keeper resolver pattern (resolve_keeper_config.go).
-//
-// # Precedence
-//
-// For Pi, all config is config-only (no CLI flags for provider/model/api_key_env):
-//
-//	CONFIG (required) — missing → refuse to start
-//
-// # Spec refs
-//
-// specs/pi-harness.md §5 (PI-050, PI-051, PI-052).
-// Bead ref: hk-v7q5u.
-
 import (
 	"fmt"
 	"net/url"
@@ -38,11 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// piModelShapeRe is the HC-055a shape validation regex for Pi model fields.
-// Allows any provider/model string matching ^[A-Za-z0-9._:/-]+$, ≤128 chars.
-// Value-validation (checking the model is actually supported by the provider) is
-// intentionally NOT done here — the authoritative check is handler-side launch
-// failure (PI-052).
 var piModelShapeRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
 
 // PiConfigMissingError is returned by ResolvePiConfig when one or more REQUIRED
@@ -106,9 +74,6 @@ func (e *PiConfigError) Error() string {
 // start. Model shape is validated; model VALUE is never validated — Pi's full
 // provider/model range is selectable (PI-052 / HC-055a value-opacity invariant).
 func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (projectconfig.PiHarnessConfig, error) { //nolint:gocognit,cyclop // ResolvePiConfig is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
-	// ── Missing-value gate (checked first, aggregates ALL missing keys). ──
-	// Required: provider, model, api_key_env. No defaults — R1 mandate.
-	// Profiles' required keys are aggregated here too (same gate, one error).
 	var missing []string
 	if cfg.Provider == "" {
 		missing = append(missing, "harnesses.pi.provider")
@@ -119,7 +84,6 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 	if cfg.APIKeyEnv == "" {
 		missing = append(missing, "harnesses.pi.api_key_env")
 	}
-	// When the fallback block is present, all three fallback fields are required.
 	if cfg.HasFallback {
 		if cfg.Fallback.Provider == "" {
 			missing = append(missing, "harnesses.pi.fallback.provider")
@@ -131,7 +95,6 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 			missing = append(missing, "harnesses.pi.fallback.api_key_env")
 		}
 	}
-	// Each profile block's presence implies all three required fields must be set.
 	for name, prof := range cfg.Profiles {
 		pfx := "harnesses.pi.profiles." + name
 		if prof.Provider == "" {
@@ -151,9 +114,6 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 		}
 	}
 
-	// ── api_key_file validation (PI-040/PI-050, hk-xmfoi). ──
-	// OPTIONAL: when set, expand ~ and validate the file is readable and non-empty.
-	// Fail loud (PiConfigError) if set-but-unreadable/empty — R1 mandate.
 	if cfg.APIKeyFile != "" {
 		expanded, err := resolvePiAPIKeyFile("harnesses.pi.api_key_file", cfg.APIKeyFile)
 		if err != nil {
@@ -162,18 +122,12 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 		cfg.APIKeyFile = expanded
 	}
 
-	// ── base_url shape validation (hk-z13jz). ──
-	// OPTIONAL: when set, must look like scheme://host[:port][/path] and be ≤512
-	// chars. Absent is always valid. API needs no validation.
 	if cfg.BaseURL != "" {
 		if err := validatePiBaseURL("harnesses.pi.base_url", cfg.BaseURL); err != nil {
 			return projectconfig.PiHarnessConfig{}, err
 		}
 	}
 
-	// ── Shape validation (HC-055a, PI-052). ──
-	// Value-validated by shape only — never against a curated enum. Field and value
-	// are pre-assigned so no if-branch line triggers SH-INV-001.
 	piModelField := "harnesses.pi.model"
 	piModelVal := cfg.Model
 	if err := validatePiModelShape(piModelField, piModelVal); err != nil {
@@ -187,9 +141,6 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 		}
 	}
 
-	// ── Per-profile validation (pi-provider-switch C2). ──
-	// Shape + base_url + api_key_file for each named profile.
-	// Missing-required-key check already ran above (same gate). api: untouched.
 	for name, prof := range cfg.Profiles {
 		pfx := "harnesses.pi.profiles." + name
 		if err := validatePiModelShape(pfx+".provider", prof.Provider); err != nil {
@@ -216,10 +167,6 @@ func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (proj
 	return cfg, nil
 }
 
-// validatePiModelShape enforces the HC-055a shape invariant:
-// ^[A-Za-z0-9._:/-]+$, ≤128 chars. Returns *PiConfigError on violation.
-// Value-validation is intentionally absent — the full Pi provider/model range
-// MUST be selectable (PI-052).
 func validatePiModelShape(field, model string) error {
 	if len(model) > 128 {
 		return &PiConfigError{
@@ -236,8 +183,6 @@ func validatePiModelShape(field, model string) error {
 	return nil
 }
 
-// validatePiBaseURL validates that baseURL is ≤512 chars and parses as a valid
-// scheme://host URL. field is the dotted yaml path used in error messages.
 func validatePiBaseURL(field, baseURL string) error {
 	if len(baseURL) > 512 {
 		return &PiConfigError{
@@ -255,9 +200,6 @@ func validatePiBaseURL(field, baseURL string) error {
 	return nil
 }
 
-// resolvePiAPIKeyFile expands ~ in apiKeyFile and validates the file is readable
-// and non-empty. Returns the expanded path on success. field is the dotted yaml
-// path used in error messages.
 func resolvePiAPIKeyFile(field, apiKeyFile string) (string, error) {
 	expanded, expErr := expandHomePath(apiKeyFile)
 	if expErr != nil {
@@ -282,8 +224,6 @@ func resolvePiAPIKeyFile(field, apiKeyFile string) (string, error) {
 	return expanded, nil
 }
 
-// expandHomePath expands a leading ~ to the user's home directory.
-// Returns the path unchanged when it does not start with ~.
 func expandHomePath(p string) (string, error) {
 	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
 		return p, nil
@@ -298,9 +238,6 @@ func expandHomePath(p string) (string, error) {
 	return filepath.Join(home, p[2:]), nil
 }
 
-// piConfigExampleYAML returns the complete harnesses.pi: block template for
-// 'harmonik pi config --example'. The comment text serves as operator documentation;
-// no value here is a baked runtime default.
 func piConfigExampleYAML() string {
 	return `harnesses:
   pi:

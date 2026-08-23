@@ -107,21 +107,15 @@ func (c TwinLaunchConfig) Validate() error {
 //
 // Cite: specs/handler-contract.md §4.10.HC-045.
 func VerifyTwinLaunch(repoRoot string, cfg TwinLaunchConfig) (string, error) {
-	// Step 1: structural completeness check.
 	if err := cfg.Validate(); err != nil {
 		return "", err
 	}
 
-	// Step 2: path resolution — twins are always in-repo binaries (not system
-	// handlers), so systemHandler=false enforces repo-relative-only resolution.
-	// Any path-resolution failure (missing ref, absolute ref bypassing repo-root)
-	// is a structural configuration defect per HC-042/HC-045.
 	absPath, err := ResolveLaunchPath(repoRoot, cfg.BinaryRef, false)
 	if err != nil {
 		return "", fmt.Errorf("VerifyTwinLaunch: resolve path: %w: %w", err, ErrStructural)
 	}
 
-	// Step 3: commit-hash check — same gate as HC-043 for real handlers.
 	if err := VerifyCommitHash(absPath, cfg.ExpectedHash); err != nil {
 		return "", fmt.Errorf("VerifyTwinLaunch: %w", err)
 	}

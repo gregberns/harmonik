@@ -1,22 +1,5 @@
 package queuewiring_test
 
-// queueledger_bridge_hkdv8qv_test.go — regression coverage for hk-dv8qv.
-//
-// hk-dv8qv: the daemon's brQueueLedger.BlocksEdge had the Beads dependency
-// edge direction REVERSED. A "blocks" dependency is stored in Beads with
-// issue_id = the BLOCKED (dependent) bead and depends_on_id = the BLOCKER bead
-// (verified against live `br dep list` and brcli/listdependencies_test.go). The
-// queue.BeadLedger contract is BlocksEdge(blocker, blocked) == true iff blocker
-// must complete before blocked may start (i.e. blocked DEPENDS ON blocker).
-//
-// The prior impl listed dependencies of blocker and matched
-// FromBeadID==blocker / ToBeadID==blocked, making BlocksEdge(a,b) true when a
-// DEPENDS ON b — exactly inverted. That deferred chain roots while dispatching
-// leaves with open blockers out of order.
-//
-// These tests pin the direction at the production-bridge boundary (a real
-// brcli.Adapter over a mock `br` binary) so a future re-inversion fails CI.
-
 import (
 	"context"
 	"fmt"
@@ -29,17 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// hkdv8qvMockBr writes a mock `br` shell script that answers the two read
-// commands brQueueLedger issues:
-//
-//   - `br dep list <id> --direction both --format json` → the dep-list JSON for
-//     <id> looked up in depListByID (default: empty array).
-//   - `br show <id> --format json` → the show JSON for <id> looked up in
-//     showByID (default: ISSUE_NOT_FOUND envelope, exit 1).
-//
-// The script dispatches on $1 (the subcommand) and $2 (the bead ID). Chains are
-// modeled the way Beads actually stores them: an edge "X depends on Y" appears
-// in `br dep list X` as {"issue_id":"X","depends_on_id":"Y","type":"blocks"}.
 func hkdv8qvMockBr(t *testing.T, depListByID, showByID map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -47,20 +19,15 @@ func hkdv8qvMockBr(t *testing.T, depListByID, showByID map[string]string) string
 
 	var b []byte
 	b = append(b, []byte("#!/bin/sh\n")...)
-	// Arg layout (brcli.runFormatJSON appends --format json):
-	//   br dep list <id> --direction both --format json   → $1=dep $2=list $3=<id>
-	//   br show <id> --format json                         → $1=show $2=<id>
 	b = append(b, []byte("subcmd=\"$1\"\n")...)
 	b = append(b, []byte("case \"$subcmd\" in\n")...)
 
-	// dep list branch (bead ID is $3).
 	b = append(b, []byte("  dep)\n    case \"$3\" in\n")...)
 	for id, js := range depListByID {
 		b = append(b, []byte(fmt.Sprintf("      %s) printf '%%s' %q ; exit 0 ;;\n", id, js))...)
 	}
 	b = append(b, []byte("      *) printf '%s' '[]' ; exit 0 ;;\n    esac ;;\n")...)
 
-	// show branch (bead ID is $2).
 	b = append(b, []byte("  show)\n    case \"$2\" in\n")...)
 	for id, js := range showByID {
 		b = append(b, []byte(fmt.Sprintf("      %s) printf '%%s' %q ; exit 0 ;;\n", id, js))...)
@@ -76,9 +43,6 @@ func hkdv8qvMockBr(t *testing.T, depListByID, showByID map[string]string) string
 	return path
 }
 
-// depListBlocks renders the Beads `br dep list` JSON for a single bead `id`
-// that depends-on each blocker in blockers (a "blocks" edge each, stored as
-// issue_id=id, depends_on_id=blocker).
 func depListBlocks(id string, blockers ...string) string {
 	out := "["
 	for i, blk := range blockers {
@@ -114,13 +78,11 @@ func TestBlocksEdge_Direction_hkdv8qv(t *testing.T) {
 	ledger := queuewiring.ExportedNewBRQueueLedger(adapter)
 	ctx := context.Background()
 
-	// Contract: BlocksEdge(blocker, blocked) == true iff blocked depends on blocker.
 	cases := []struct {
 		name             string
 		blocker, blocked core.BeadID
 		want             bool
 	}{
-		// True direction: the dependency parent (blocker) must finish first.
 		{"R blocks A (A depends on R)", R, A, true},
 		{"A blocks B (B depends on A)", A, B, true},
 		// Inverse direction must be FALSE — this is exactly what regressed.
@@ -164,7 +126,6 @@ func TestBlocksEdge_RootHasNoBlocker_hkdv8qv(t *testing.T) {
 	ledger := queuewiring.ExportedNewBRQueueLedger(adapter)
 	ctx := context.Background()
 
-	// No in-queue bead should be reported as a blocker of the root.
 	for _, blocker := range []core.BeadID{root, leaf} {
 		got, err := ledger.BlocksEdge(ctx, blocker, root)
 		if err != nil {
@@ -175,7 +136,6 @@ func TestBlocksEdge_RootHasNoBlocker_hkdv8qv(t *testing.T) {
 		}
 	}
 
-	// The leaf, conversely, IS blocked by the root.
 	got, err := ledger.BlocksEdge(ctx, root, leaf)
 	if err != nil {
 		t.Fatalf("BlocksEdge(root, leaf): %v", err)

@@ -11,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// newIdleCycler builds a Cycler for idle-restart tests. Mirrors the
-// newPrecompactCycler / newTestCycler helpers: same fakes, no real disk/tmux.
-// The helper uses the constants below so the tests share a fixed threshold
-// split without depending on production defaults.
 func newIdleCycler(
 	t *testing.T,
 	projectDir string,
@@ -66,15 +62,10 @@ func newIdleCycler(
 	})
 }
 
-// defaultIdleTokenThreshold is the default IdleRestartAbsTokens (150_000).
 const defaultIdleTokenThreshold = 150_000
 
-// aboveIdleButBelowAct is a token count above the idle threshold but below
-// the act threshold used in tests (200_000 < 300_000).
 const aboveIdleButBelowAct = 200_000
 
-// actAbsForIdleTests is the act threshold used in idle tests. Set higher than
-// aboveIdleButBelowAct so tests can control the above/below split.
 const actAbsForIdleTests = 300_000
 
 // TestCycler_RunForIdle_EmitsEventBelowThreshold verifies that when tokens are
@@ -91,18 +82,15 @@ func TestCycler_RunForIdle_EmitsEventBelowThreshold(t *testing.T) {
 		nil, nil,
 	)
 
-	// tokens = 100K < 150K threshold → notification, no restart.
 	cf := &keeper.CtxFile{Pct: 10.0, Tokens: 100_000, WindowSize: 200_000, SessionID: "sess-idle"}
 	if err := cycler.RunForIdle(context.Background(), cf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect session_keeper_idle_crew event.
 	idleEvents := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew)
 	if len(idleEvents) != 1 {
 		t.Fatalf("want 1 session_keeper_idle_crew event, got %d", len(idleEvents))
 	}
-	// Verify payload fields.
 	var payload map[string]any
 	if err := json.Unmarshal(idleEvents[0].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal idle_crew payload: %v", err)
@@ -111,7 +99,6 @@ func TestCycler_RunForIdle_EmitsEventBelowThreshold(t *testing.T) {
 		t.Errorf("payload[reason] = %v, want %q", got, "below_idle_threshold")
 	}
 
-	// Cycle must NOT have fired.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(got) != 0 {
 		t.Errorf("handoff_started emitted unexpectedly: %d events", len(got))
 	}
@@ -150,13 +137,11 @@ func TestCycler_RunForIdle_FiresAboveThreshold(t *testing.T) {
 		readHandoff, readGaugeFn,
 	)
 
-	// tokens = 200K → above 150K threshold, below 300K act threshold.
 	cf := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: prevSID}
 	if err := cycler.RunForIdle(context.Background(), cf); err != nil {
 		t.Fatalf("RunForIdle: %v", err)
 	}
 
-	// Cycle must have fired.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(got) == 0 {
 		t.Error("expected handoff_started event; got none")
 	}
@@ -164,7 +149,6 @@ func TestCycler_RunForIdle_FiresAboveThreshold(t *testing.T) {
 		t.Error("expected cycle_complete event; got none")
 	}
 
-	// No idle_crew event should be emitted (tokens >= threshold).
 	if got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew); len(got) != 0 {
 		t.Errorf("session_keeper_idle_crew emitted unexpectedly: %d events", len(got))
 	}
@@ -183,17 +167,14 @@ func TestCycler_RunForIdle_SkipsAboveActThreshold(t *testing.T) {
 		nil, nil,
 	)
 
-	// tokens = 350K → above act threshold (300K).
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 350_000, WindowSize: 1_000_000, SessionID: "sess-above-act"}
 	if err := cycler.RunForIdle(context.Background(), cf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// No handoff cycle.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(got) != 0 {
 		t.Errorf("handoff_started emitted unexpectedly: %d events", len(got))
 	}
-	// No idle_crew event (tokens >= threshold).
 	if got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew); len(got) != 0 {
 		t.Errorf("session_keeper_idle_crew emitted unexpectedly: %d events", len(got))
 	}
@@ -245,7 +226,6 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 		return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: sid}, time.Now(), nil
 	}
 
-	// Use a 1-hour cooldown so the second call is always within the window.
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,        // crispIdle
 		false,       // holdingDispatch
@@ -256,7 +236,6 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 	cf := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: prevSID}
 	ctx := context.Background()
 
-	// First call: should fire.
 	if err := cycler.RunForIdle(ctx, cf); err != nil {
 		t.Fatalf("first RunForIdle: %v", err)
 	}
@@ -265,7 +244,6 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 		t.Fatal("expected first RunForIdle to fire a cycle")
 	}
 
-	// Second call immediately after: cooldown suppresses.
 	cf2 := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: "sess-cool-after2"}
 	if err := cycler.RunForIdle(ctx, cf2); err != nil {
 		t.Fatalf("second RunForIdle: %v", err)
@@ -287,8 +265,6 @@ func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
 	t.Parallel()
 
 	em := &keeper.RecordingEmitter{}
-	// readHandoff returns NO keeper nonce, so pollForNonce times out and runCycle
-	// ABORTS (the handoff_timeout path) on every call.
 	readHandoff := func(_ string) (string, error) {
 		return "# Handoff\n\n(no nonce here)\n", nil
 	}
@@ -296,8 +272,6 @@ func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
 		return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: "sess-abort-gauge"}, time.Now(), nil
 	}
 
-	// 1-hour cooldown: if the abort start-stamped it, the second call would be
-	// gated for the whole window. The fix unwinds the stamp on abort.
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,        // crispIdle
 		false,       // holdingDispatch
@@ -306,7 +280,6 @@ func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	// First call: attempts, then aborts (no nonce confirmed).
 	cf1 := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: "sess-abort-1"}
 	if err := cycler.RunForIdle(ctx, cf1); err != nil {
 		t.Fatalf("first RunForIdle: %v", err)
@@ -321,9 +294,6 @@ func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
 		t.Fatalf("first attempt must not complete: got %d cycle_complete", got)
 	}
 
-	// Second call on the next tick with a DIFFERENT session_id (clears Gate-7
-	// anti-loop, isolating the cooldown gate). With the start-stamp bug this is
-	// suppressed for the whole cooldown; after the fix it attempts again.
 	cf2 := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: "sess-abort-2"}
 	if err := cycler.RunForIdle(ctx, cf2); err != nil {
 		t.Fatalf("second RunForIdle: %v", err)
@@ -352,7 +322,6 @@ func TestCycler_RunForIdle_AntiLoop(t *testing.T) {
 		return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: newSID}, time.Now(), nil
 	}
 
-	// Use a zero cooldown so cooldown doesn't interfere.
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
@@ -360,10 +329,8 @@ func TestCycler_RunForIdle_AntiLoop(t *testing.T) {
 		readHandoff, readGaugeFn,
 	)
 
-	// Set lastFiredSID to prevSID by pre-arming via the export helper.
 	keeper.SetCyclerLastFiredSID(cycler, prevSID)
 
-	// Call RunForIdle with the same session_id → anti-loop should suppress.
 	cf := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: prevSID}
 	if err := cycler.RunForIdle(context.Background(), cf); err != nil {
 		t.Fatalf("RunForIdle: %v", err)
@@ -392,14 +359,12 @@ func TestCycler_RunForIdle_DeduplicatesIdleBelowThreshold(t *testing.T) {
 	cf := &keeper.CtxFile{Pct: 10.0, Tokens: 100_000, WindowSize: 200_000, SessionID: "sess-dedup"}
 	ctx := context.Background()
 
-	// Three consecutive polls with the same session_id below threshold.
 	for i := range 3 {
 		if err := cycler.RunForIdle(ctx, cf); err != nil {
 			t.Fatalf("call %d: unexpected error: %v", i+1, err)
 		}
 	}
 
-	// Expect exactly ONE event — transition, not per-poll.
 	got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew)
 	if len(got) != 1 {
 		t.Fatalf("want 1 session_keeper_idle_crew event (transition-only), got %d", len(got))
@@ -424,7 +389,6 @@ func TestCycler_RunForIdle_ReemitsOnNewSID(t *testing.T) {
 	cfA := &keeper.CtxFile{Pct: 10.0, Tokens: 100_000, WindowSize: 200_000, SessionID: "sess-a"}
 	cfB := &keeper.CtxFile{Pct: 10.0, Tokens: 80_000, WindowSize: 200_000, SessionID: "sess-b"}
 
-	// First session below threshold — expect 1 event.
 	if err := cycler.RunForIdle(ctx, cfA); err != nil {
 		t.Fatalf("sess-a RunForIdle: %v", err)
 	}
@@ -435,7 +399,6 @@ func TestCycler_RunForIdle_ReemitsOnNewSID(t *testing.T) {
 		t.Fatalf("after sess-a: want 1 idle_crew event, got %d", len(got))
 	}
 
-	// New session, also below threshold — must emit again.
 	if err := cycler.RunForIdle(ctx, cfB); err != nil {
 		t.Fatalf("sess-b RunForIdle: %v", err)
 	}

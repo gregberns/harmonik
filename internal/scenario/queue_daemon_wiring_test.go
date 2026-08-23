@@ -1,29 +1,5 @@
 package scenario
 
-// queue_daemon_wiring_test.go — integration test for the daemon composition-root
-// queue wiring: QueueStore instantiation, PL-005 step-8a load, and
-// CompleteAndUnlink (queue.json unlink on completion).
-//
-// This test exercises the three gaps described in bead hk-gi471:
-//   1. QueueStore is instantiated and populated from LoadQueueAtStartup.
-//   2. LoadQueueAtStartup (PL-005 step 8a) loads queue.json BEFORE dispatch.
-//   3. CompleteAndUnlink removes queue.json when the last group reaches
-//      complete-success (QM-003 / QM-053).
-//
-// The test drives the path entirely at the library level (no real daemon process,
-// no real `br` binary) using a fake BeadLedger stub.  This keeps the test
-// deterministic and fast while exercising the exact code paths wired into
-// daemon.Start (queueStore + LoadQueueAtStartup + CompleteAndUnlink).
-//
-// Helper prefix: queueDaemonWiring (this file).
-//
-// Spec refs:
-//   - specs/queue-model.md §3.2 QM-002 (startup load)
-//   - specs/queue-model.md §3.3 QM-003 (unlink on completion)
-//   - specs/queue-model.md §8.4 QM-053 (CompleteAndUnlink sequence)
-//   - specs/queue-model.md §9.1 QM-060 (single-writer QueueStore)
-//   - specs/process-lifecycle.md §4.2 PL-005 step 8a
-
 import (
 	"context"
 	"errors"
@@ -37,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// queueDaemonWiring fixture helpers
-// ---------------------------------------------------------------------------
-
-// queueDaemonWiringProjectDir creates a temporary project root with a
-// .harmonik/ subdirectory for queue.json I/O. Registered for t.Cleanup.
 func queueDaemonWiringProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -54,15 +24,10 @@ func queueDaemonWiringProjectDir(t *testing.T) string {
 	return dir
 }
 
-// queueDaemonWiringQueueJSON returns the expected path to the per-queue file
-// for the "main" queue under projectDir. After NQ-A2 (hk-tigaf.3) queues live
-// at .harmonik/queues/<name>.json, not at the legacy .harmonik/queue.json.
 func queueDaemonWiringQueueJSON(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
-// queueDaemonWiringSingleItemQueue builds a minimal Queue with one group and
-// one item — sufficient to exercise the submit → drain → unlink path.
 func queueDaemonWiringSingleItemQueue(t *testing.T) queue.Queue {
 	t.Helper()
 	now := time.Now().UTC()
@@ -88,8 +53,6 @@ func queueDaemonWiringSingleItemQueue(t *testing.T) queue.Queue {
 	}
 }
 
-// queueDaemonWiringFakeLedger is a minimal lifecycle.BeadLedger stub.
-// ShowBead returns not-found for all IDs; ListInFlightBeads returns empty.
 type queueDaemonWiringFakeLedger struct{}
 
 func (f *queueDaemonWiringFakeLedger) ShowBead(_ context.Context, _ core.BeadID) (core.BeadRecord, error) {
@@ -100,16 +63,11 @@ func (f *queueDaemonWiringFakeLedger) ListInFlightBeads(_ context.Context) ([]co
 	return nil, nil
 }
 
-// queueDaemonWiringFakeEmitter is a no-op lifecycle.QueueEventEmitter stub.
 type queueDaemonWiringFakeEmitter struct{}
 
 func (f *queueDaemonWiringFakeEmitter) Emit(_ context.Context, _ core.EventType, _ []byte) error {
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// TestQueueDaemonWiring_LoadAtStartup
-// ---------------------------------------------------------------------------
 
 // TestQueueDaemonWiring_LoadAtStartup exercises PL-005 step 8a (QM-002):
 // queue.json written before daemon startup is loaded by LoadQueueAtStartup
@@ -127,19 +85,14 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 	projectDir := queueDaemonWiringProjectDir(t)
 	q := queueDaemonWiringSingleItemQueue(t)
 
-	// "Submit": persist the queue as if queue-submit wrote it.
 	if err := queue.Persist(context.Background(), projectDir, &q); err != nil {
 		t.Fatalf("(submit) Persist: %v", err)
 	}
 
-	// Verify queue.json was written.
 	if _, err := os.Stat(queueDaemonWiringQueueJSON(projectDir)); err != nil {
 		t.Fatalf("queue.json absent after Persist: %v", err)
 	}
 
-	// "Step 8a": daemon startup calls LoadQueueAtStartup.
-	// NQ-A2 (hk-tigaf.3): LoadQueueAtStartup now returns []*queue.Queue,
-	// one entry per queue file found under .harmonik/queues/.
 	ledger := &queueDaemonWiringFakeLedger{}
 	emitter := &queueDaemonWiringFakeEmitter{}
 	loadedQueues, err := lifecycle.LoadQueueAtStartup(
@@ -155,7 +108,6 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 	if len(loadedQueues) == 0 {
 		t.Fatal("LoadQueueAtStartup: returned empty slice; expected at least one queue (queue.json was present)")
 	}
-	// Find the "main" queue in the returned slice.
 	var loaded *queue.Queue
 	for _, lq := range loadedQueues {
 		if lq != nil && queue.NormaliseQueueName(lq.Name) == queue.QueueNameMain {
@@ -180,10 +132,6 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestQueueDaemonWiring_Absent_ReturnsNil
-// ---------------------------------------------------------------------------
-
 // TestQueueDaemonWiring_Absent_ReturnsNil verifies that LoadQueueAtStartup
 // returns (nil, nil) when no queue.json is present — the daemon starts with no
 // active queue (QM-002 file-absent outcome).
@@ -193,7 +141,6 @@ func TestQueueDaemonWiring_Absent_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueDaemonWiringProjectDir(t)
-	// No queue.json written.
 
 	ledger := &queueDaemonWiringFakeLedger{}
 	loadedQueues, err := lifecycle.LoadQueueAtStartup(
@@ -206,15 +153,10 @@ func TestQueueDaemonWiring_Absent_ReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadQueueAtStartup (absent): %v", err)
 	}
-	// NQ-A2: returns empty slice when no queue files present (not nil).
 	if len(loadedQueues) != 0 {
 		t.Errorf("LoadQueueAtStartup (absent): want empty slice, got %d queues", len(loadedQueues))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestQueueDaemonWiring_DrainAndUnlink
-// ---------------------------------------------------------------------------
 
 // TestQueueDaemonWiring_DrainAndUnlink exercises the full submit → drain →
 // unlink cycle:
@@ -243,13 +185,10 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 	projectDir := queueDaemonWiringProjectDir(t)
 	q := queueDaemonWiringSingleItemQueue(t)
 
-	// ── Step 1: Submit — persist the queue as if queue-submit ran. ─────────────
 	if err := queue.Persist(context.Background(), projectDir, &q); err != nil {
 		t.Fatalf("(submit) Persist: %v", err)
 	}
 
-	// ── Step 2: Load — daemon startup calls LoadQueueAtStartup (PL-005 step 8a). ──
-	// NQ-A2: LoadQueueAtStartup returns []*queue.Queue; find the main queue.
 	ledger := &queueDaemonWiringFakeLedger{}
 	emitter := &queueDaemonWiringFakeEmitter{}
 	loadedQueues, err := lifecycle.LoadQueueAtStartup(
@@ -276,16 +215,12 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 		t.Fatal("(load) main queue not found in LoadQueueAtStartup result")
 	}
 
-	// ── Step 3: Drain — simulate the work loop dispatching and completing the item. ──
-	// Mark item 0 as dispatched (QueueStore.LockForMutation path in workloop.go).
 	runID := "00000000-0000-0000-0000-000000000001"
 	loaded.Groups[0].Items[0].Status = queue.ItemStatusDispatched
 	loaded.Groups[0].Items[0].RunID = &runID
 
-	// Mark item 0 as completed (evaluateGroupAdvanceWithOutcome path).
 	loaded.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 
-	// Advance group 0: all items terminal → complete-success (QM-030).
 	now := time.Now().UTC()
 	newGroupStatus, events, advErr := queue.AdvanceGroup(
 		context.Background(),
@@ -305,22 +240,18 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 	}
 	loaded.Groups[0].Status = newGroupStatus
 
-	// All groups terminal → queue itself can be completed.
 	loaded.Status = queue.QueueStatusCompleted
 
-	// ── Step 4: Unlink — CompleteAndUnlink persists final status then removes queue.json. ──
 	if err := queue.CompleteAndUnlink(context.Background(), projectDir, loaded); err != nil {
 		t.Fatalf("(unlink) CompleteAndUnlink: %v", err)
 	}
 
-	// main.json MUST be absent after CompleteAndUnlink (QM-003).
 	if _, statErr := os.Stat(queueDaemonWiringQueueJSON(projectDir)); statErr == nil {
 		t.Error("(unlink QM-003) queues/main.json still present after CompleteAndUnlink; want absent")
 	} else if !os.IsNotExist(statErr) {
 		t.Errorf("(unlink QM-003) queues/main.json stat error (not IsNotExist): %v", statErr)
 	}
 
-	// Verify reload returns nil (main.json absent → no active main queue).
 	reloaded, reloadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if reloadErr != nil {
 		t.Fatalf("(unlink) post-unlink Load: %v", reloadErr)

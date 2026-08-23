@@ -7,28 +7,12 @@ import (
 	supervisecmd "github.com/gregberns/harmonik/cmd/harmonik/supervise"
 )
 
-// runSuperviseSubcommand dispatches `harmonik supervise <verb> [flags]`.
-//
-// Pre-flag.Parse dispatch per PL-028d: this runs before flag.Parse so the
-// global flag set does not reject subcommand-specific flags.
-//
-// Exit codes:
-//
-//	0  — success
-//	1  — argument or operational error
-//	2  — unrecognised verb
-//	17 — daemon not running (start/restart only)
-//	24 — flywheel session already exists (start only)
-//	25 — supervisor already running (start only)
-//
-// Spec ref: process-lifecycle.md §4.10 PL-028d.
 func runSuperviseSubcommand(args []string) int {
 	verb := ""
 	if len(args) > 0 {
 		verb = args[0]
 	}
 
-	// --help/-h on verb position.
 	if verb == "--help" || verb == "-h" || verb == "" {
 		fmt.Print(superviseTopUsage)
 		return 0
@@ -61,7 +45,6 @@ func runSuperviseSubcommand(args []string) int {
 	case "reap":
 		return supervisecmd.RunReap(subArgs, os.Stdout, os.Stderr)
 	case "_shim":
-		// Internal subcommand: runs inside the flywheel tmux pane.
 		return supervisecmd.RunShim(subArgs, os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr,

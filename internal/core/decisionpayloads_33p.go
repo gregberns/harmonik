@@ -1,29 +1,5 @@
 package core
 
-// decisionpayloads_33p.go — event-bus payload types for the hitl-decisions
-// typed events (hitl-decisions SPEC §1, bead hk-33p, component K1):
-//
-//   - decision_needed    (§1.1) — an agent's request for a human decision
-//   - decision_resolved  (§1.2) — a human's answer (chosen option) to a decision
-//   - decision_withdrawn (§1.3) — a decision closed without an answer (self-obsoleted or orphaned)
-//
-// All three ride the standard EV-001 envelope (event.go) and are the agent→human
-// dual of agent-comms. They are F-class (fsync-boundary per
-// eventbus.fsyncBoundaryEventTypes / SPEC §6 N1) — a lost terminal would leave
-// the blocked agent waiting forever (Risk R1, load-bearing). Modeled on
-// AgentMessagePayload (agentcommspayloads_djqc9.go).
-//
-// decision_id is the decision_needed event's own bus-minted event_id (UUIDv7);
-// the producing code (component K2) fills it. The two terminals carry it as
-// payload.decision_id — distinct from their own event_id (SPEC C7). K1 defines
-// the schema only (no raise/answer/projection — those land in later components).
-//
-// These are DISTINCT from the pre-existing §8.12 decision_required /
-// decision_acknowledged daemon-escalation family.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §1, §6.
-// Bead ref: hk-33p.
-
 // DecisionWithdrawnReason is the typed discriminator for the reason field of a
 // decision_withdrawn event (hitl-decisions SPEC §1.3). v1 accepts exactly two
 // reasons: an agent self-obsoleting its own decision, or the keeper reaping an

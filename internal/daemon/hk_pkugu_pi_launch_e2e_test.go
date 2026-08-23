@@ -1,35 +1,5 @@
 package daemon_test
 
-// hk_pkugu_pi_launch_e2e_test.go — ISOLATED end-to-end regression for the
-// pi-model-leak bug (hk-pkugu, codename:pi-model-leak), driving the REAL daemon
-// launch path (no mock of the model resolver).
-//
-// # What "real launch path" means here
-//
-// This test wires the exact production seam that was broken, in isolation:
-//
-//	resolveHarnessAgentTypeQuiet(bead, "", "", globalDefault)   ← claim-time (workloop.go)
-//	    → ResolveModelPreference(labels, agentType, ...)          ← seals rc.model
-//	        → routedLaunchSpecBuilder(reg, bead, "", "", global)  ← real builder
-//	            → buildCodexRoutedLaunchSpec → PiHarness.LaunchSpec
-//	                → buildPiLaunchSpec (argv + buildPiModelsJSON) ← real argv/models.json
-//
-// Nothing here is stubbed except the temp dirs and the dummy provider key (so the
-// PI-040/PI-042 billing guard passes without a live provider). The model that ends
-// up in the pi argv and models.json is whatever the production resolution seam
-// produces — precisely the value the bug corrupted.
-//
-// # The bug it reproduces
-//
-// Claim-time model resolution hardcoded agentType=claude-code, sealing the claude
-// tier-3 default ("sonnet") into rc.model. PiHarness.LaunchSpec's
-// `if rc.Model != "" { model = rc.Model }` then overrode the configured pi model
-// ("ornith") with "sonnet" → the pi provider was asked for a claude model → fail.
-//
-// Helper prefix: hkpkuguE2E (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-pkugu.
-
 import (
 	"context"
 	"os"
@@ -45,8 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// hkpkuguE2EArgFlagValue returns the token following the first occurrence of flag
-// in args, or "" if flag is absent or has no following token.
 func hkpkuguE2EArgFlagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
@@ -56,7 +24,6 @@ func hkpkuguE2EArgFlagValue(args []string, flag string) string {
 	return ""
 }
 
-// hkpkuguE2EArgsContain reports whether any arg equals want.
 func hkpkuguE2EArgsContain(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
@@ -66,9 +33,6 @@ func hkpkuguE2EArgsContain(args []string, want string) bool {
 	return false
 }
 
-// hkpkuguE2EKeyFile writes a dummy provider key to a temp file so the PI-040
-// billing guard (which requires a non-empty resolved key) passes without a live
-// provider. Returns the file path.
 func hkpkuguE2EKeyFile(t *testing.T) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "pi.key")
@@ -78,9 +42,6 @@ func hkpkuguE2EKeyFile(t *testing.T) string {
 	return f
 }
 
-// hkpkuguE2ERunCtx builds an ExportedClaudeRunCtx for a single-mode initial-turn
-// dispatch with the given workspace and the (claim-time-resolved) model sealed in.
-// PriorClaudeSessID is nil → initial turn → buildPiLaunchSpec generates models.json.
 func hkpkuguE2ERunCtx(t *testing.T, ws, model string) daemon.ExportedClaudeRunCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
@@ -105,8 +66,6 @@ func hkpkuguE2ERunCtx(t *testing.T, ws, model string) daemon.ExportedClaudeRunCt
 // model ("ornith") in both the argv and the generated models.json — never the
 // leaked claude default.
 func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
-	// Not t.Parallel: t.Setenv makes the PI-042 on-disk credential check hermetic
-	// by pointing HOME at a fresh temp dir (no ~/.pi/auth.json → guard is a no-op).
 	t.Setenv("HOME", t.TempDir())
 
 	ctx := context.Background()
@@ -131,7 +90,6 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
 	}
 
-	// ── The production claim-time seam (workloop.go), verbatim ─────────────────
 	agentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypePi,
 	)
@@ -145,7 +103,6 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		t.Fatalf("pi run sealed model = %q; want empty (no pi tier-3 default → config fallback)", sealedModel)
 	}
 
-	// ── The real routed launch path ───────────────────────────────────────────
 	build := daemon.ExportedRoutedLaunchSpecBuilder(
 		reg, bead,
 		core.AgentType(""), core.AgentType(""), core.AgentTypePi,
@@ -157,7 +114,6 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		t.Fatalf("routed launch spec build (pi): %v", err)
 	}
 
-	// argv: --model ornith, and NEVER the claude default.
 	if got := hkpkuguE2EArgFlagValue(spec.Args, "--model"); got != wantModel {
 		t.Errorf("pi argv --model = %q; want %q\nargv=%v", got, wantModel, spec.Args)
 	}
@@ -167,7 +123,6 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		}
 	}
 
-	// models.json: contains the ornith model id, never the claude default.
 	modelsPath := filepath.Join(ws, ".harmonik", "pi-agent", "models.json")
 	data, err := os.ReadFile(modelsPath)
 	if err != nil {
@@ -183,11 +138,6 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		}
 	}
 
-	// ── Adversarial counterfactual: prove the seam is real and the fix matters ─
-	// Had claim-time kept the OLD hardcoded agentType=claude-code, the sealed model
-	// would be "sonnet", and the SAME real launch path would carry it into the pi
-	// argv — exactly the failure mode. This proves the assertions above are not
-	// vacuous (the path genuinely threads rc.model into pi's --model).
 	leakedModel, _ := daemon.ExportedResolveModelPreference(
 		ctx, bead.Labels, core.AgentTypeClaudeCode, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
@@ -223,7 +173,6 @@ func TestPkuguClaudeLaunchPath_ModelUnchanged(t *testing.T) {
 		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
 	}
 
-	// Production claim-time seam with global default = claude-code.
 	agentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypeClaudeCode,
 	)
@@ -237,7 +186,6 @@ func TestPkuguClaudeLaunchPath_ModelUnchanged(t *testing.T) {
 		t.Fatalf("claude tier-3 default = (%q,%q); want (sonnet,medium) — claude path changed", sealedModel, sealedEffort)
 	}
 
-	// Real routed claude launch path (needs a .claude/ dir in the workspace).
 	build := daemon.ExportedRoutedLaunchSpecBuilder(
 		reg, bead,
 		core.AgentType(""), core.AgentType(""), core.AgentTypeClaudeCode,

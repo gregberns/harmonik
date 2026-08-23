@@ -61,9 +61,6 @@ func TestWorkflowModeMarshalText(t *testing.T) {
 		t.Errorf("MarshalText = %q, want %q", string(got), "single")
 	}
 
-	// "review-loop" used to marshal successfully; since its retirement
-	// (execution-model.md §4.3.EM-015d) MarshalText must reject it, and the
-	// error must point the operator at dot.
 	if _, err := WorkflowMode(WorkflowModeRetiredReviewLoop).MarshalText(); err == nil {
 		t.Error("MarshalText accepted the retired review-loop value")
 	} else if !strings.Contains(err.Error(), "dot") {

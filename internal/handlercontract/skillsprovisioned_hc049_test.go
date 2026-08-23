@@ -11,20 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// skillsprovisioned_hc049_test.go — sensor tests for HC-049 (emit
-// skills_provisioned before agent_ready) per bead hk-8i31.58.
-//
-// Verifies:
-//   (a) ProgressMsgTypeSkillsProvisioned constant value.
-//   (b) SkillsProvisionedMsg wire struct shape and JSON field names.
-//   (c) SkillProvisionedEntry wire struct (including optional version field).
-//   (d) Spec-corpus ordering: handler-contract.md §4.11.HC-049 / §5 HC-INV-004
-//       must state that skills_provisioned precedes agent_ready.
-//
-// Helper prefix: skillsProvisionedFixture (per implementer-protocol.md).
-
-// skillsProvisionedFixtureModuleRoot returns the module root by walking
-// upward from this test file until a go.mod is found.
 func skillsProvisionedFixtureModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -44,8 +30,6 @@ func skillsProvisionedFixtureModuleRoot(t *testing.T) string {
 	}
 }
 
-// skillsProvisionedFixtureValidMsg returns a well-formed SkillsProvisionedMsg
-// for shape tests.
 func skillsProvisionedFixtureValidMsg(t *testing.T) handlercontract.SkillsProvisionedMsg {
 	t.Helper()
 	version := "1.2.3"
@@ -63,10 +47,6 @@ func skillsProvisionedFixtureValidMsg(t *testing.T) handlercontract.SkillsProvis
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-049: ProgressMsgTypeSkillsProvisioned constant
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSkillsProvisioned_ConstantValue verifies that ProgressMsgTypeSkillsProvisioned
 // equals "skills_provisioned" per §4.11.HC-049.
 func TestSkillsProvisioned_ConstantValue(t *testing.T) {
@@ -77,10 +57,6 @@ func TestSkillsProvisioned_ConstantValue(t *testing.T) {
 			handlercontract.ProgressMsgTypeSkillsProvisioned)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-049: SkillsProvisionedMsg wire struct
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSkillsProvisioned_MsgJSONFieldNames verifies that SkillsProvisionedMsg
 // marshals with the spec-mandated wire field names per event-model.md §8.3.8.
@@ -159,10 +135,6 @@ func TestSkillsProvisioned_MsgSkillsIsArrayNotNull(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-049: SkillProvisionedEntry wire struct
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSkillsProvisioned_EntryJSONFieldNames verifies that SkillProvisionedEntry
 // marshals with the spec-mandated wire field names per event-model.md §8.3.8.
 func TestSkillsProvisioned_EntryJSONFieldNames(t *testing.T) {
@@ -219,10 +191,6 @@ func TestSkillsProvisioned_EntryVersionOmittedWhenNil(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-049: Ordering invariant — spec-corpus sensor
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSkillsProvisioned_SpecCorpusOrderingClause verifies that the handler-
 // contract spec (specs/handler-contract.md) contains the HC-049 ordering
 // obligation: skills_provisioned MUST precede agent_ready.
@@ -246,14 +214,10 @@ func TestSkillsProvisioned_SpecCorpusOrderingClause(t *testing.T) {
 
 	specText := string(content)
 
-	// HC-049 must be present.
 	if !strings.Contains(specText, "HC-049") {
 		t.Error("handler-contract.md missing HC-049 clause; skills_provisioned ordering obligation may have been removed from spec")
 	}
 
-	// The ordering clause must state skills_provisioned precedes agent_ready.
-	// We check for the canonical ordering string from §5 HC-INV-004:
-	//   handler_capabilities → session_log_location → skills_provisioned → agent_ready
 	orderingIndicator := "skills_provisioned"
 	agentReadyIndicator := "agent_ready"
 	skillsIdx := strings.Index(specText, orderingIndicator)
@@ -266,18 +230,12 @@ func TestSkillsProvisioned_SpecCorpusOrderingClause(t *testing.T) {
 		t.Error("handler-contract.md missing \"agent_ready\" token")
 	}
 
-	// Verify there's a section where skills_provisioned appears before agent_ready
-	// in the ordering sequence (both appear in the same ordering clause in §5).
-	// We look for the sequence in the HC-INV-004 invariant text.
 	inv004 := "HC-INV-004"
 	inv004Idx := strings.Index(specText, inv004)
 	if inv004Idx < 0 {
 		t.Error("handler-contract.md missing HC-INV-004 invariant; ordering invariant may have been removed")
 	}
 
-	// Search for the HC-INV-004 invariant definition section (not just first
-	// mention). The definition is at the "#### HC-INV-004" heading; search all
-	// occurrences and check each window for the skills_provisioned reference.
 	const lookAheadWindow = 1024
 	found := false
 	searchFrom := 0

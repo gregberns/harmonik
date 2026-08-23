@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// ON-047: Category defaults for resource budgets — 5-row table.
-// specs/operator-nfr.md §4.11.ON-047
-// ---------------------------------------------------------------------------
-
 // TestDefaultCategoryBudgets_ReturnsFour verifies that DefaultCategoryBudgets
 // returns exactly four entries — one per budget category in the ON-047 table
 // (the fifth row, warning-threshold, is the DefaultBudgetWarningThreshold
@@ -207,7 +202,6 @@ func TestDefaultCategoryBudgets_ImmutableSlice(t *testing.T) {
 	a := DefaultCategoryBudgets()
 	b := DefaultCategoryBudgets()
 
-	// Mutate the first slice.
 	a[0].Name = "mutated"
 
 	if b[0].Name == "mutated" {

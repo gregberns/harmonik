@@ -1,17 +1,5 @@
 package hooksystem_test
 
-// dispatcher_cp015_test.go — conformance tests for CP-015 error typing.
-//
-// CP-015 requires that errors at the evaluator boundary are typed:
-//   - timeout / resource-exhaustion (context cancellation) → ErrorCategoryTransient
-//   - schema-violation / type-check / compile errors      → ErrorCategoryDeterministic
-//
-// Spec ref: specs/control-points.md §4.3 CP-015.
-// Bead ref: hk-a8bg.14
-//
-// All package-level identifiers use the cp015Fixture prefix per the
-// implementer-protocol.md helper-prefix discipline.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// cp015FixtureCollectFailedCategories subscribes a synchronous consumer that
-// collects the ErrorCategory from every hook_failed event. Returns the collector
-// slice pointer and the subscription function to pass to cp012FixtureBuildBus.
 func cp015FixtureCollectFailedCategories(categories *[]core.ErrorCategory, mu *sync.Mutex) func(eventbus.EventBus) error {
 	return func(b eventbus.EventBus) error {
 		_, err := b.Subscribe(core.Subscription{
@@ -60,7 +45,6 @@ func cp015FixtureCollectFailedCategories(categories *[]core.ErrorCategory, mu *s
 func TestCP015_EvalErrorDeterministicOnCompileFailure(t *testing.T) {
 	t.Parallel()
 
-	// Expression references an undefined variable → compile-time type error.
 	cp := cp012FixtureMakeHookCP(
 		"hook-compile-err",
 		"on_agent_started",
@@ -111,9 +95,6 @@ func TestCP015_EvalErrorDeterministicOnCompileFailure(t *testing.T) {
 func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	// A syntactically valid expression that requires evaluation (not just compile).
-	// Using "true" so the compile step succeeds; the evaluator will be hit with a
-	// canceled context.
 	cp := cp012FixtureMakeHookCP(
 		"hook-ctx-cancel",
 		"on_agent_started",
@@ -126,7 +107,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 	var categories []core.ErrorCategory
 	var mu sync.Mutex
 
-	// Build bus manually so we can emit with a pre-canceled context.
 	bus := eventbus.NewBusImpl()
 	disp := hooksystem.NewDispatcher(reg, bus)
 	if err := disp.Subscribe(); err != nil {
@@ -158,7 +138,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// Emit with a pre-canceled context so the dispatcher receives it canceled.
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately before Emit
 
@@ -177,10 +156,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 	mu.Unlock()
 
 	if len(got) == 0 {
-		// If no hook_failed was emitted, the hook may have fired successfully
-		// (expression "true" may evaluate before context is checked). This is
-		// acceptable: the test only asserts that IF a failure occurs, it is typed
-		// as transient. Skip rather than fail if no failure occurred.
 		t.Skip("CP-015: no hook_failed emitted with canceled context (hook may have succeeded before ctx checked)")
 	}
 	for _, cat := range got {
@@ -197,7 +172,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 func TestCP015_SubscriptionFilterDeterministicOnCompileFailure(t *testing.T) {
 	t.Parallel()
 
-	// subscription_filter references an undefined variable → compile-time error.
 	cp := cp012FixtureMakeHookCPWithFilter(
 		"hook-filter-compile-err",
 		"on_agent_started",

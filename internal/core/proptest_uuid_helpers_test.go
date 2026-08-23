@@ -5,9 +5,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// drawNonNilUUID draws a random uuid.UUID guaranteed not to equal uuid.Nil.
-// Packs a rapid-drawn int64 >= 1 into the low 8 bytes; high 8 bytes are zero
-// but that is fine — uuid.Nil requires ALL bytes to be zero.
 func drawNonNilUUID(rt *rapid.T, label string) uuid.UUID {
 	n := rapid.Int64Range(1, 1<<62).Draw(rt, label)
 	var b [16]byte
@@ -22,7 +19,6 @@ func drawNonNilUUID(rt *rapid.T, label string) uuid.UUID {
 	return uuid.UUID(b)
 }
 
-// drawValidAgentType draws one of the declared AgentType constants.
 func drawValidAgentType(rt *rapid.T, label string) AgentType {
 	return rapid.SampledFrom([]AgentType{
 		AgentTypeClaudeCode,
@@ -32,7 +28,6 @@ func drawValidAgentType(rt *rapid.T, label string) AgentType {
 	}).Draw(rt, label)
 }
 
-// drawValidFailureClass draws one of the declared FailureClass constants.
 func drawValidFailureClass(rt *rapid.T, label string) FailureClass {
 	return rapid.SampledFrom([]FailureClass{
 		FailureClassTransient,
@@ -44,7 +39,6 @@ func drawValidFailureClass(rt *rapid.T, label string) FailureClass {
 	}).Draw(rt, label)
 }
 
-// drawValidHandlerPauseCause draws a fully-valid HandlerPauseCause.
 func drawValidHandlerPauseCause(rt *rapid.T, label string) HandlerPauseCause {
 	return HandlerPauseCause{
 		FailureClass: drawValidFailureClass(rt, label+"_fc"),

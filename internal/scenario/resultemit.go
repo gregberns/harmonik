@@ -134,7 +134,6 @@ func EmitSuiteResult(w io.Writer, format SuiteResultOutputFormat, sr SuiteResult
 	}
 }
 
-// emitSuiteResultHuman writes a human-readable summary of sr to w.
 func emitSuiteResultHuman(w io.Writer, sr SuiteResult) error {
 	passed, failed := 0, 0
 	for _, r := range sr.Results {

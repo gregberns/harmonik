@@ -1,22 +1,5 @@
 package daemon
 
-// harnessregistry_pi_remote_runner_m4c4_test.go — remote-substrate M4-C4 (T6):
-// the Pi harness onto the SSH runner.
-//
-// A worker-selected Pi run must spawn the Pi PROCESS on the remote box via the
-// SAME SSHRunner the tmux/Claude path uses, WITHOUT altering Pi's landed provider
-// wiring ({Provider, BaseURL, API} — decision 6). Pi is a SessionIDCaptured,
-// argv-driven ProcessExit harness, so the dispatch path forces spec.Substrate=nil
-// (exec path) to expose a stdout pipe for session-id capture. handler.Launch's
-// exec path consults spec.Runner: nil ⇒ exec.CommandContext (LOCAL, byte-identical
-// NFR7); non-nil ⇒ the runner builds the *exec.Cmd (an SSHRunner tunnels it to the
-// worker host).
-//
-// buildCodexRoutedLaunchSpec is the shared builder for every non-claude harness
-// (codex + pi). These tests drive it directly with a PiHarness and a
-// RecordingRunner standing in for the per-run worker runner (no real ssh / worker
-// touched — same idiom as harnessregistry_remote_hkr36v_test.go).
-
 import (
 	"context"
 	"encoding/json"
@@ -31,8 +14,6 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// piRemoteRunCtx builds a fully-configured pi shared.LaunchCtx (provider tuple +
-// base_url) so buildPiLaunchSpec succeeds and emits the base_url wiring.
 func piRemoteRunCtx(t *testing.T, ws string, runner tmux.CommandRunner) shared.LaunchCtx {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(ws, ".harmonik"), 0o750); err != nil {
@@ -116,7 +97,6 @@ func TestPiSSHRunner_RoutesProcessToWorkerHost(t *testing.T) {
 	const workerHost = "gb-mbp"
 	runner := tmux.SSHRunner{Host: workerHost}
 
-	// The exact call handler.Launch's exec path makes: Runner.Command(binary, args...).
 	cmd := runner.Command(context.Background(), "pi", "--mode", "json", "task text")
 	if filepath.Base(cmd.Path) != "ssh" {
 		t.Fatalf("SSHRunner.Command produced %q; want an ssh invocation (process routed to worker)", cmd.Path)

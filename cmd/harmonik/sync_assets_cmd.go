@@ -1,73 +1,5 @@
 package main
 
-// sync_assets_cmd.go — `harmonik sync-assets` subcommand: the ONGOING update path
-// that reconciles a project's on-disk instruction files against the binary's
-// embedded asset bundle.
-//
-// # Purpose (hk-i7i3)
-//
-// `harmonik init` writes the embedded assets into a project ONCE. After a newer
-// harmonik is `go install`ed, the project's instruction files (.claude/skills/*,
-// AGENTS.md, .harmonik/context/*) are frozen at the version that ran init. This
-// command pulls the improvements down via a class-aware 3-way reconcile:
-//
-//	embed_sha = BuildManifest()[path].Sha256   # what the binary ships now
-//	lock_sha  = .harmonik/assets.lock          # what we last installed
-//	disk_sha  = sha256(project file)           # what's there now (may be edited)
-//
-// The planner (Reconcile, asset_reconcile.go) is reused verbatim; this file is
-// the EXECUTOR. SAFETY is the priority: it must never silently clobber a
-// project's local edits or a content-owned body.
-//
-// # Flags
-//
-//	--dry-run   (DEFAULT) print the plan, write NOTHING.
-//	--apply     execute the plan per the class policy below.
-//	--commit    --apply + git commit the result.
-//	--force     bypass the daemon-lull gate.
-//	--project   target project dir (default: cwd; same resolution as init).
-//
-// # Per-class apply policy (the safety core)
-//
-//	Managed (skills):
-//	    FastForward/Create → overwrite from embed.
-//	    Conflict → write <dest>.harmonik-new + report; NEVER touch the edited file.
-//	ManagedRegion (AGENTS.md):
-//	    FastForward/Conflict → replace ONLY the <!-- BEGIN harmonik:managed … -->
-//	    … <!-- END harmonik:managed --> region(s) from the embed template; preserve
-//	    everything OUTSIDE the markers. If the markers are missing/corrupt → treat
-//	    as Conflict: write .harmonik-new + report, don't clobber.
-//	    Create → write the whole template if absent.
-//	ContentOwned (context tiers):
-//	    Create → write from template if absent.
-//	    FastForward → refresh ONLY the self-describing header region (the leading
-//	    <!-- TIER: … --> block); NEVER touch the body.
-//	    Conflict → report only, write nothing.
-//	Scaffold:
-//	    Create → write once if absent; otherwise Leave.
-//	Leave → never touch.
-//	Skip → no write; BUT a stale Skip (disk already == embed, lock behind) is
-//	    re-stamped into the lock so it does not recur.
-//
-// After a successful --apply the lock is re-stamped from the PRIOR lock + the
-// per-item outcomes (lockFromOutcomes): written / already-current files advance
-// to the embed sha, but CONFLICTED files keep their prior entry so the conflict
-// re-surfaces every run until the operator reconciles it (it is NOT buried).
-//
-// # Daemon-lull gate (LOAD-BEARING)
-//
-// A merge writes the MAIN working tree. After it pushes, the daemon refreshes
-// every path the merged commit touched (EM-054), which overwrites an
-// uncommitted local edit on any of those paths and emits
-// working_tree_local_edits_overwritten. So an --apply that lands mid-dispatch
-// can be silently thrown away. Before --apply: if the daemon is up AND a queue
-// is actively dispatching, REFUSE unless --force. Daemon down → proceed.
-//
-// This gate used to cite the worktree-escape detector instead. That detector is
-// deleted — it never ran for a graph workload, which is every real run.
-//
-// Bead ref: hk-i7i3 (sync-assets command). Design: plans/2026-06-20-doc-instruction-audit/10-asset-sync.md.
-
 import (
 	"context"
 	"crypto/sha256"
@@ -87,57 +19,29 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// agentsManagedBeginPrefix / agentsManagedEndMarker delimit the product-owned
-// region of the AGENTS router. The BEGIN marker carries a region label after
-// "harmonik:managed " (e.g. "agents-router"); we match on the prefix so any
-// labelled region is recognised. The END marker is unlabelled.
 const (
 	agentsManagedBeginPrefix = "<!-- BEGIN harmonik:managed"
 	agentsManagedEndMarker   = "<!-- END harmonik:managed -->"
 )
 
-// contentTierHeaderOpen opens the self-describing header comment block of every
-// content-owned tier file. The header opens with "<!-- TIER:" and the FIRST
-// "-->" closes it. The body is everything after that line.
 const contentTierHeaderOpen = "<!-- TIER:"
 
-// runSyncAssetsSubcommand dispatches `harmonik sync-assets [flags]`.
-//
-// Exit codes:
-//
-//	0  — success (dry-run printed, or apply completed; conflicts are NOT errors —
-//	     they are written as .harmonik-new and reported, exit 0)
-//	1  — argument, precondition, or I/O error
-//	3  — daemon-lull gate refused (daemon dispatching, no --force)
 func runSyncAssetsSubcommand(args []string) int {
 	return runSyncAssets(args, os.Stdout, os.Stderr)
 }
 
-// destFor maps an embed asset path (e.g. "assets/skills/keeper/SKILL.md") to its
-// project-relative destination, mirroring how init writes assets:
-//
-//	assets/skills/*                     → .claude/skills/*
-//	assets/templates/AGENTS.template.md → AGENTS.md
-//	assets/context/<x>.tmpl             → .harmonik/context/<x>     (HANDOFF.md.tmpl → HANDOFF.md at root)
-//	assets/scaffolds/*                  → <repo root>/*
-//
-// Returns ("", false) for any path that has no init-defined destination (e.g.
-// an Unclassified asset), so the executor can skip it safely.
 func destFor(embedPath string) (string, bool) {
 	rel := strings.TrimPrefix(embedPath, assetEmbedRoot+"/")
 	switch {
 	case strings.HasPrefix(rel, "skills/"):
-		// assets/skills/<name>/<file> → .claude/skills/<name>/<file>
 		return filepath.Join(".claude", "skills", strings.TrimPrefix(rel, "skills/")), true
 	case rel == "templates/AGENTS.template.md":
 		return "AGENTS.md", true
 	case strings.HasPrefix(rel, "context/"):
 		base := strings.TrimPrefix(rel, "context/")
-		// HANDOFF.md.tmpl is special-cased to the repo root (init does the same).
 		if base == "HANDOFF.md.tmpl" {
 			return "HANDOFF.md", true
 		}
-		// <x>.tmpl → .harmonik/context/<x>
 		return filepath.Join(".harmonik", "context", strings.TrimSuffix(base, ".tmpl")), true
 	case strings.HasPrefix(rel, "scaffolds/"):
 		return strings.TrimPrefix(rel, "scaffolds/"), true
@@ -146,9 +50,6 @@ func destFor(embedPath string) (string, bool) {
 	}
 }
 
-// sha256File returns the hex sha256 of the file at path, or "" when the file is
-// absent (the reconcile planner's "disk absent" sentinel). Any other read error
-// is returned.
 func sha256File(path string) (string, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path derived from the embed manifest + project dir
 	if err != nil {
@@ -161,16 +62,11 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// buildDiskHashes computes the on-disk sha256 for every manifest path, keyed by
-// the EMBED path (so it lines up with the manifest + lock keys the planner uses).
-// Absent files map to "" per the planner's contract.
 func buildDiskHashes(projectDir string, m Manifest) (map[string]string, error) {
 	disk := make(map[string]string, len(m.Files))
 	for _, f := range m.Files {
 		dest, ok := destFor(f.Path)
 		if !ok {
-			// No init-defined destination: record absent so the planner does not
-			// fabricate a conflict against a path we never write.
 			disk[f.Path] = ""
 			continue
 		}
@@ -183,8 +79,6 @@ func buildDiskHashes(projectDir string, m Manifest) (map[string]string, error) {
 	return disk, nil
 }
 
-// applyOutcome records the concrete file operation taken for one ReconcileItem,
-// for the post-apply summary.
 type applyOutcome struct {
 	item    ReconcileItem
 	dest    string // project-relative destination ("" if none)
@@ -235,12 +129,10 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	// --apply / --commit override the dry-run default.
 	if apply {
 		dryRun = false
 	}
 
-	// Resolve project directory (same resolution as init).
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -266,7 +158,6 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Compute the plan.
 	manifest, err := BuildManifest()
 	if err != nil {
 		if syncAssetsWritef(stderr, "harmonik sync-assets: build manifest: %v\n", err) != nil {
@@ -306,7 +197,6 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// --apply / --commit: daemon-lull gate FIRST (unless --force).
 	if !force {
 		dispatching, reason, gerr := daemonDispatchGate(projectDir)
 		if gerr != nil {
@@ -334,13 +224,6 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Re-stamp the lock from per-item OUTCOMES, NOT blindly from the manifest.
-	// A blind LockFromManifest stamps EVERY path to the embed sha — including
-	// files that came back ActionConflict (written to <dest>.harmonik-new with
-	// the original untouched). The next run would then see lock==embed → Skip →
-	// the conflict is silently buried forever. Building from outcomes preserves a
-	// conflicted file's PRIOR lock entry so the conflict re-surfaces every run
-	// until the operator reconciles it (disk hash matches embed).
 	newLock := lockFromOutcomes(lock, outcomes)
 	if err := WriteLock(projectDir, newLock); err != nil {
 		if syncAssetsWritef(stderr, "harmonik sync-assets: write lock: %v\n", err) != nil {
@@ -369,9 +252,6 @@ func syncAssetsWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// applyPlan executes each ReconcileItem per its class policy. It returns the
-// per-item outcomes (for the summary) and an exit code (non-zero only on a real
-// I/O error — conflicts are reported, not errors).
 func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stderr io.Writer) ([]applyOutcome, int) {
 	outcomes := make([]applyOutcome, 0, len(plan))
 	for _, item := range plan {
@@ -379,7 +259,6 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 		dest, hasDest := destFor(item.Path)
 		out.dest = dest
 
-		// Leave / no-destination / Skip → never write.
 		if item.Action == ActionLeave || !hasDest {
 			out.skipped = true
 			out.note = "left untouched"
@@ -401,9 +280,6 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 			}
 			return outcomes, 1
 		}
-		// Render template substitutions for the AGENTS template (matches init).
-		// Content/scaffold templates are written verbatim by init, so we do not
-		// substitute there.
 
 		switch item.Class {
 		case Managed:
@@ -427,8 +303,6 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 				return outcomes, code
 			}
 		default:
-			// Unclassified with a destination should not occur (destFor returns
-			// false for them), but be conservative: leave untouched.
 			out.skipped = true
 			out.note = "unclassified; left untouched"
 		}
@@ -437,21 +311,6 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 	return outcomes, 0
 }
 
-// lockFromOutcomes builds the lock to stamp after an apply from the PRIOR lock
-// plus the per-item outcomes — instead of blindly LockFromManifest, which would
-// bury conflicts (see runSyncAssets). Per item:
-//
-//   - written or already-current (Skip because disk==embed): advance the entry to
-//     the embed sha — the file now matches the embed.
-//   - CONFLICT (a .harmonik-new was written / content-owned conflict reported;
-//     original NOT updated): PRESERVE the prior lock entry unchanged (or omit it
-//     when there was none) so the file re-surfaces as a conflict on every run
-//     until the operator reconciles it (its disk hash matches the embed).
-//   - Leave (project-authored, not in embed): no lock entry.
-//
-// Items with no embed sha (no manifest entry) and items we left untouched carry
-// forward whatever prior entry existed (if any), so we never lose unrelated
-// lock state.
 func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 	out := Lock{
 		FormatVersion: LockFormatVersion,
@@ -461,26 +320,17 @@ func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 		path := o.item.Path
 		switch {
 		case o.conflic || o.item.Action == ActionConflict:
-			// Conflict (either a .harmonik-new was written, or a content-owned
-			// conflict was reported with the original untouched): preserve the
-			// prior entry unchanged so the conflict re-surfaces next run; omit if
-			// there was none. NEVER advance to the embed sha — that buries it.
 			if pe, ok := prior.Files[path]; ok {
 				out.Files[path] = LockEntry{Path: path, Sha256: pe.Sha256}
 			}
 		case o.item.Action == ActionLeave:
-			// Project-authored, not in the embed: no lock entry.
 		case o.written || o.item.Action == ActionSkip || o.item.Action == ActionFastForward:
-			// Written, or already-current (Skip because disk==embed): the file
-			// now matches the embed → stamp the embed sha when we have it.
 			if o.item.EmbedSha != "" {
 				out.Files[path] = LockEntry{Path: path, Sha256: o.item.EmbedSha}
 			} else if pe, ok := prior.Files[path]; ok {
 				out.Files[path] = LockEntry{Path: path, Sha256: pe.Sha256}
 			}
 		default:
-			// Anything else (e.g. an item we skipped without a clear class
-			// outcome): carry the prior entry forward if present.
 			if pe, ok := prior.Files[path]; ok {
 				out.Files[path] = LockEntry{Path: path, Sha256: pe.Sha256}
 			}
@@ -489,8 +339,6 @@ func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 	return out
 }
 
-// applyManaged handles product-owned skill files: overwrite on FastForward/Create;
-// on Conflict write <dest>.harmonik-new and NEVER touch the edited file.
 func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionFastForward, ActionCreate:
@@ -514,9 +362,6 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 		out.conflic = true
 		out.note = "CONFLICT: local edits — embed written to " + dest + ".harmonik-new (original untouched)"
 	case ActionSkip, ActionLeave:
-		// applyPlan filters both of these out before dispatch. Reaching here means
-		// that filter and this switch have drifted apart, which would silently
-		// write nothing while reporting success.
 		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyManaged for %s\n", action, dest) != nil {
 			return 1
 		}
@@ -525,12 +370,7 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 	return 0
 }
 
-// applyManagedRegion handles the AGENTS router: replace only the marker-delimited
-// managed region(s); preserve everything outside the markers. Markers missing →
-// treat as Conflict.
 func applyManagedRegion(projectDir, full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
-	// Render template substitutions exactly as init does, so the managed region
-	// we splice in matches what init would have written.
 	rendered := renderAgentsTemplate(string(embedData), projectDir)
 
 	if action == ActionCreate {
@@ -546,10 +386,8 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		return 0
 	}
 
-	// FastForward or Conflict → splice the managed region into the on-disk file.
 	current, rerr := os.ReadFile(full) //nolint:gosec // G304: full is under the resolved project dir
 	if rerr != nil {
-		// Disk missing where the planner thought it present: fall back to create.
 		if os.IsNotExist(rerr) {
 			if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
 				if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
@@ -570,8 +408,6 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 
 	merged, ok := spliceManagedRegions(string(current), rendered)
 	if !ok {
-		// Markers missing/corrupt on disk OR in the template → don't clobber the
-		// project's file; write the fresh template alongside for manual reconcile.
 		newPath := full + ".harmonik-new"
 		if err := writeFileEnsureDir(newPath, dest, []byte(rendered)); err != nil {
 			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err) != nil {
@@ -600,9 +436,6 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 	return 0
 }
 
-// applyContentOwned handles the project-owned context tiers: Create writes the
-// template; FastForward refreshes ONLY the TIER header region, body untouched;
-// Conflict reports only.
 func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionCreate:
@@ -637,7 +470,6 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		}
 		merged, ok := replaceTierHeader(string(current), string(embedData))
 		if !ok {
-			// Can't locate a header in either file → report only, body is owned.
 			out.skipped = true
 			out.note = "header region not found; body owned — left untouched"
 			return 0
@@ -656,13 +488,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		out.written = true
 		out.note = "TIER header refreshed; body preserved"
 	case ActionConflict:
-		// Body is project-owned: report only, write nothing.
 		out.skipped = true
 		out.note = "CONFLICT on content-owned file — body is project-owned; left untouched (reconcile manually)"
 	case ActionSkip, ActionLeave:
-		// applyPlan filters both of these out before dispatch. Reaching here means
-		// that filter and this switch have drifted apart, which would silently
-		// write nothing while reporting success.
 		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyContentOwned for %s\n", action, dest) != nil {
 			return 1
 		}
@@ -671,9 +499,6 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 	return 0
 }
 
-// applyScaffold handles create-once stub files: write only on Create; otherwise
-// leave (the planner only emits Create/Skip/Leave/Conflict for these — Conflict
-// and FastForward on a create-once stub are treated as leave-untouched).
 func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	if action == ActionCreate {
 		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
@@ -687,28 +512,16 @@ func applyScaffold(full, dest string, embedData []byte, action Action, out *appl
 		out.note = "scaffold written"
 		return 0
 	}
-	// FastForward / Conflict on a create-once scaffold → leave the project's file.
 	out.skipped = true
 	out.note = "scaffold present; left untouched"
 	return 0
 }
 
-// renderAgentsTemplate mirrors init's renderAgentsMD substitution so the managed
-// region spliced into AGENTS.md matches what init would write.
 func renderAgentsTemplate(tmpl, projectDir string) string {
 	rendered := strings.ReplaceAll(tmpl, "$PROJECT_DIR", projectDir)
-	// $TARGET_BRANCH lives outside the managed region in practice; default to the
-	// project's configured target where unknown is harmless. We leave it as-is so
-	// re-splicing never rewrites a project's branch choice; init owns first write.
 	return rendered
 }
 
-// spliceManagedRegions replaces each <!-- BEGIN harmonik:managed … --> …
-// <!-- END harmonik:managed --> region in current with the SAME-INDEX region
-// from template, preserving everything outside the markers in current. Returns
-// (merged, true) on success; (current, false) when the marker structure can't be
-// matched (counts differ, or a BEGIN has no matching END) — the caller treats
-// that as a conflict and never clobbers.
 func spliceManagedRegions(current, template string) (string, bool) {
 	curRegions := findManagedRegions(current)
 	tplRegions := findManagedRegions(template)
@@ -716,10 +529,8 @@ func spliceManagedRegions(current, template string) (string, bool) {
 		return current, false
 	}
 	if len(curRegions) != len(tplRegions) {
-		// Structural mismatch: don't risk a wrong splice.
 		return current, false
 	}
-	// Replace from the LAST region backwards so earlier offsets stay valid.
 	merged := current
 	for i := len(curRegions) - 1; i >= 0; i-- {
 		c := curRegions[i]
@@ -729,16 +540,11 @@ func spliceManagedRegions(current, template string) (string, bool) {
 	return merged, true
 }
 
-// region is a half-open [start,end) byte span covering a full managed block
-// INCLUDING the BEGIN and END marker lines.
 type region struct {
 	start int
 	end   int
 }
 
-// findManagedRegions locates every managed block in s. Each region spans from the
-// first byte of the BEGIN marker line to the byte just after the END marker line.
-// Returns nil when an unbalanced marker structure is found (a BEGIN with no END).
 func findManagedRegions(s string) []region {
 	var regions []region
 	idx := 0
@@ -750,11 +556,9 @@ func findManagedRegions(s string) []region {
 		bstart := idx + bi
 		ei := strings.Index(s[bstart:], agentsManagedEndMarker)
 		if ei < 0 {
-			// BEGIN without a matching END → unbalanced.
 			return nil
 		}
 		eend := bstart + ei + len(agentsManagedEndMarker)
-		// Extend end to include the rest of the END marker's line (trailing \n).
 		if eend < len(s) && s[eend] == '\n' {
 			eend++
 		}
@@ -764,11 +568,6 @@ func findManagedRegions(s string) []region {
 	return regions
 }
 
-// replaceTierHeader replaces the leading TIER header comment block of current
-// with the one from template, preserving current's body byte-for-byte. The
-// header is the span from contentTierHeaderOpen to the first "-->" (inclusive),
-// plus a trailing newline. Returns (merged, true) on success; (current, false)
-// when either file lacks a locatable header.
 func replaceTierHeader(current, template string) (string, bool) {
 	ch, cok := tierHeaderSpan(current)
 	th, tok := tierHeaderSpan(template)
@@ -779,16 +578,11 @@ func replaceTierHeader(current, template string) (string, bool) {
 	return merged, true
 }
 
-// tierHeaderSpan locates the leading TIER header comment in s: from the
-// contentTierHeaderOpen sentinel to the first "-->" (plus a trailing newline if
-// present). Returns (span, true) only when the header begins within the first
-// non-whitespace content of the file.
 func tierHeaderSpan(s string) (region, bool) {
 	open := strings.Index(s, contentTierHeaderOpen)
 	if open < 0 {
 		return region{}, false
 	}
-	// The header must be at the very top (only whitespace may precede it).
 	if strings.TrimSpace(s[:open]) != "" {
 		return region{}, false
 	}
@@ -803,17 +597,8 @@ func tierHeaderSpan(s string) (region, bool) {
 	return region{start: open, end: end}, true
 }
 
-// claudeAssetDirMode is the directory mode for the NON-.harmonik half of the
-// sync-assets destination set: .claude/skills/<name>/ and any parent a scaffold
-// needs under the repo root. 0o755, matching what `harmonik init` already
-// writes for .claude/skills/ (provisionSkills, init_cmd.go) and what the agent
-// harness and the operator's editor create siblings under. See
-// writeFileEnsureDir for why this is deliberately NOT core.HarmonikDirMode.
 const claudeAssetDirMode fs.FileMode = 0o755
 
-// destUnderHarmonik reports whether a project-relative destination lands inside
-// the .harmonik/ state tree. Segment-wise, so a ".harmonik-new" sidecar name or
-// a file merely called "x.harmonik" never counts.
 func destUnderHarmonik(dest string) bool {
 	for _, seg := range strings.Split(filepath.ToSlash(dest), "/") {
 		if seg == ".harmonik" {
@@ -823,27 +608,6 @@ func destUnderHarmonik(dest string) bool {
 	return false
 }
 
-// writeFileEnsureDir writes data to path, creating the parent directory tree.
-// dest is the project-relative destination destFor returned (path is that dest
-// joined onto the project dir, possibly with a ".harmonik-new" suffix), and it
-// selects the directory mode.
-//
-// sync-assets is a GENERIC writer spanning two trees with two different owners,
-// and each parent must be created at the mode ITS owner uses. os.MkdirAll does
-// not chmod a directory that already exists, so a mismatch makes the final mode
-// depend on which creator ran first:
-//
-//   - .harmonik/... → core.HarmonikDirMode. internal/dashboard creates
-//     .harmonik/context/ at that mode, and WriteLock (asset_reconcile.go)
-//     creates .harmonik/ itself at that mode in THIS command's own run — an
-//     --apply that wrote a context tier used to leave .harmonik/context/ at
-//     0o755 while the lock write left .harmonik/ at 0o750, from one process.
-//   - everything else (.claude/skills/..., repo-root scaffolds) →
-//     claudeAssetDirMode. Deliberately not the constant: .claude/ is Claude
-//     Code's config tree, not harmonik state, and `harmonik init` creates
-//     .claude/skills/ at 0o755. Tightening it here alone would reproduce on the
-//     .claude side exactly the first-creator-wins split that HarmonikDirMode
-//     exists to remove on the .harmonik side.
 func writeFileEnsureDir(path, dest string, data []byte) error {
 	dir := filepath.Dir(path)
 	if destUnderHarmonik(dest) {
@@ -857,19 +621,11 @@ func writeFileEnsureDir(path, dest string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// ---------------------------------------------------------------------------
-// Daemon-lull gate
-// ---------------------------------------------------------------------------
-
-// daemonDispatchGate reports whether the daemon is up AND actively dispatching.
-// Returns (dispatching, reason, err). When the daemon socket is absent or refuses
-// the connection, the daemon is down → (false, "", nil) and apply proceeds.
 func daemonDispatchGate(projectDir string) (dispatching bool, reason string, err error) {
 	up := daemonSocketUp(projectDir)
 	if !up {
 		return false, "", nil
 	}
-	// Daemon up: load every queue and decide via the pure check.
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
 		return false, "", fmt.Errorf("enumerate queues: %w", err)
@@ -890,9 +646,6 @@ func daemonDispatchGate(projectDir string) (dispatching bool, reason string, err
 	return false, "", nil
 }
 
-// daemonSocketUp reports whether the daemon Unix socket exists AND accepts a
-// connection. A present-but-refused socket (stale file from a killed daemon)
-// counts as DOWN so apply can proceed.
 func daemonSocketUp(projectDir string) bool {
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
 	if _, err := os.Stat(sockPath); err != nil {
@@ -908,16 +661,6 @@ func daemonSocketUp(projectDir string) bool {
 	return true
 }
 
-// dispatchingQueue is the PURE daemon-lull decision: a daemon is "actively
-// dispatching" when any loaded ACTIVE queue holds at least one item that is
-// pending or already dispatched — REGARDLESS of its enclosing group's status.
-//
-// We deliberately do NOT gate on GroupStatusActive (the prior behavior): a group
-// already marked complete-with-failures or in a transitioning state can still
-// hold a Dispatched/pending item mid-flight, and that item's merge can still
-// refresh the main working tree over what --apply just wrote. So ANY in-flight
-// item in an active queue blocks --apply (unless --force). Returns
-// (true, reason) on the first such item, else (false, "").
 func dispatchingQueue(queues []*queue.Queue) (dispatching bool, reason string) {
 	for _, q := range queues {
 		if q == nil || q.Status != queue.QueueStatusActive {
@@ -934,7 +677,6 @@ func dispatchingQueue(queues []*queue.Queue) (dispatching bool, reason string) {
 	return false, ""
 }
 
-// queueLabel returns a human label for a queue (Name, or QueueID fallback).
 func queueLabel(q *queue.Queue) string {
 	if q.Name != "" {
 		return q.Name
@@ -945,16 +687,10 @@ func queueLabel(q *queue.Queue) string {
 	return "main"
 }
 
-// ---------------------------------------------------------------------------
-// Output
-// ---------------------------------------------------------------------------
-
-// printPlanTable prints the dry-run plan as a path | class | action table.
 func printPlanTable(plan []ReconcileItem, out io.Writer) error {
 	p := syncAssetsPrinter{out: out}
 	p.println("harmonik sync-assets — plan (dry-run)")
 	p.println("")
-	// Column widths.
 	maxPath := len("PATH")
 	for _, it := range plan {
 		dest, ok := destFor(it.Path)
@@ -968,7 +704,6 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) error {
 	}
 	p.printf("  %-*s  %-14s  %s\n", maxPath, "PATH", "CLASS", "ACTION")
 	p.printf("  %-*s  %-14s  %s\n", maxPath, strings.Repeat("-", maxPath), "--------------", "------")
-	// Sort by destination for stable, readable output.
 	rows := make([]ReconcileItem, len(plan))
 	copy(rows, plan)
 	sort.Slice(rows, func(i, j int) bool {
@@ -987,8 +722,6 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) error {
 	return p.err
 }
 
-// printApplySummary prints the applied/created/conflicted/skipped tallies and
-// prominently lists any .harmonik-new conflicts the operator must reconcile.
 func printApplySummary(outcomes []applyOutcome, out io.Writer) error {
 	var applied, created, conflicted, skipped int
 	var conflicts []applyOutcome
@@ -1039,9 +772,6 @@ func (p *syncAssetsPrinter) println(args ...any) {
 	_, p.err = fmt.Fprintln(p.out, args...)
 }
 
-// commitSync stages and commits the applied changes. The orchestrator normally
-// owns commits; --commit is the convenience path for the manual post-go-install
-// step. Only runs when something was written.
 func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Writer) int {
 	anyChange := false
 	for _, o := range outcomes {
@@ -1056,10 +786,6 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 		return 0
 	}
-	// Stage ONLY the paths this run touched — NEVER `git add -A`, which would
-	// sweep up unrelated dirty files in the working tree. For each written or
-	// conflicted outcome stage its dest, and (when a .harmonik-new was written)
-	// the .harmonik-new sidecar too.
 	for _, o := range outcomes {
 		if o.dest == "" {
 			continue
@@ -1077,11 +803,6 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 	}
 	msg := "chore(assets): sync embedded instruction assets via harmonik sync-assets"
-	// context.Background(), deliberately NOT a cancellable context: killing git
-	// between the index write and the ref update leaves a stale .git/index.lock
-	// and a half-staged tree in the operator's main working copy. `git commit`
-	// is short and must be allowed to finish, so this call is uncancellable by
-	// construction rather than by a nolint directive.
 	commit := exec.CommandContext(context.Background(), "git", "-C", projectDir, "commit", "-m", msg)
 	commit.Stdout = stdout
 	commit.Stderr = stderr
@@ -1097,13 +818,7 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 	return 0
 }
 
-// gitAddPath stages exactly one project-relative path via `git add -- <path>`,
-// using `--` so a path that looks like a flag is never misinterpreted. Returns
-// 0 on success, 1 on failure (after printing the error).
 func gitAddPath(projectDir, relPath string, stdout, stderr io.Writer) int {
-	// context.Background(): same reasoning as commitSync — `git add` takes the
-	// index lock, and killing it mid-write strands .git/index.lock in the
-	// operator's main working copy.
 	add := exec.CommandContext(context.Background(), "git", "-C", projectDir, "add", "--", relPath)
 	add.Stdout = stdout
 	add.Stderr = stderr

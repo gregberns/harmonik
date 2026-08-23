@@ -46,10 +46,6 @@ func RegisterPi(reg *handlercontract.AdapterRegistry) error {
 	return reg.Register(core.AgentTypePi, NewPiAdapter())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handlercontract.Adapter implementation
-// ─────────────────────────────────────────────────────────────────────────────
-
 // DetectReady reports whether event is the agent_ready signal for a Pi session.
 //
 // Returns true ONLY when event.Type is "agent_ready".  MUST NOT return true
@@ -91,8 +87,6 @@ func (PiAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
 // PI-073: Pi's rate-limit signal MUST be isolated from the global bandwidthtuner.
 // The isolation point is per-queue backoff in the workloop, not this adapter.
 func (PiAdapter) DetectRateLimit(_ handlercontract.EventEnvelope) (bool, time.Duration) {
-	// UNCONFIRMED channel (findings.md §7, PI-071): return (false, 0) until the
-	// Pi NDJSON rate-limit event shape is confirmed by test.
 	return false, 0
 }
 

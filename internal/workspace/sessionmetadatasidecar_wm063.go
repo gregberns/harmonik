@@ -161,7 +161,6 @@ func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar)
 			f.Close(), os.Remove(tmpPath))
 	}
 
-	// Step 3: fsync temp file before rename.
 	if err := f.Sync(); err != nil {
 		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Sync (pre-rename): %w", err),
 			f.Close(), os.Remove(tmpPath))
@@ -171,7 +170,6 @@ func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar)
 			os.Remove(tmpPath))
 	}
 
-	// Step 4: atomic rename.
 	if err := os.Rename(tmpPath, target); err != nil {
 		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Rename %q → %q: %w", tmpPath, target, err),
 			os.Remove(tmpPath))

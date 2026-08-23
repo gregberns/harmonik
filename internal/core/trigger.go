@@ -32,7 +32,5 @@ type Trigger struct {
 // Kind-level validation of name semantics is delegated to the registration
 // sequence per specs/control-points.md §7.1.
 func (t Trigger) Valid() bool {
-	// Name may be empty for Guard; structural validity is always true at this level.
-	// Registration rejects triggers that are invalid for their Kind per §7.1.
 	return true
 }

@@ -411,18 +411,6 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 			fmt.Errorf("replace intent: %w", errors.Join(install.Err, cleanupErr)),
 		)
 	case noReplaceRefused:
-		// Refused means our intent was not installed. Three producers reach here:
-		// the path already held different bytes, a conflicting record appeared
-		// while we were installing, or the path could not be read at all. The first
-		// two leave another transaction's intent on disk. The third establishes
-		// nothing about the path — so do not lean on "the intent belongs to
-		// somebody else" as the reason.
-		//
-		// The reason removal is safe in all three is narrower: the candidate
-		// basename carries THIS transaction's id, and this transaction did not
-		// install an intent, so no intent on disk can name this candidate. Nothing
-		// will come back for it. Remove it, or a queue that keeps refusing grows
-		// one orphan file per attempt, forever.
 		cleanupErr := ops.remove(candidatePath)
 		return replacementFailure(
 			intent,
@@ -430,35 +418,12 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 			fmt.Errorf("replace intent refused: %w", errors.Join(install.Err, cleanupErr)),
 		)
 	case noReplaceIndeterminate:
-		// Indeterminate deliberately KEEPS the candidate, and this asymmetry with
-		// the refused case above is the whole point. Indeterminate does not mean
-		// the intent failed — classifyNoReplaceCleanupFailure returns it even when
-		// the record IS installed and only the temp cleanup failed.
-		//
-		// Measured by driving this branch and then running the real startup sweep.
-		// Keeping the candidate makes RecoverReplaceIntents resolve the intent as
-		// ReplaceRetryRename, so a transaction whose intent was durably installed
-		// COMPLETES. Removing it makes the same sweep resolve as ReplaceNotCommitted
-		// instead, so that transaction silently ROLLS BACK. Neither outcome wedges
-		// the queue — both resolve. The cost of removing is therefore a discarded
-		// commit the system had already durably decided to make, which is the real
-		// reason to keep it. Do not upgrade this to a wedge; that was measured and
-		// it is not what happens.
-		//
-		// So the candidate can leak here, and nothing collects it. There is no
-		// general orphan-candidate sweep: RecoverReplaceIntents enumerates
-		// .replace-intent files only, so a candidate is cleared only while a
-		// decodable intent still names it. In the sub-case where link failed and
-		// the re-read also errored, the intent may be absent and this candidate
-		// then leaks permanently. That is accepted as cheaper than discarding an
-		// installed commit — but it is a real leak, not a swept one.
 		return replacementFailure(
 			intent,
 			OutcomeCommitIndeterminate,
 			fmt.Errorf("replace intent indeterminate: %w", install.Err),
 		)
 	case noReplaceInstalled:
-		// Continue only after the exact predecessor entry is selected.
 	default:
 		return replacementFailure(intent, OutcomeCommitIndeterminate, errors.New("unknown no-replace result"))
 	}
@@ -533,9 +498,6 @@ func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
 	return prepareReplacementWithIDs(plan, transactionID, successorID)
 }
 
-// prepareReplacementWithIDs makes the allocation-before-serialization order
-// explicit and gives tests a deterministic seam. Production callers use
-// prepareReplacement, which allocates canonical UUIDv7 values first.
 func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID string) (ReplaceIntentV1, []byte, error) {
 	plan.TransactionID = transactionID
 	name := NormaliseQueueName(plan.NormalizedName)
@@ -741,10 +703,6 @@ func validateCompletionReceiptBinding(
 	return nil
 }
 
-// decodeBoundCompletionReceipt returns the receipt a binding carries. The
-// binding holds the exact receipt bytes, so a caller that has already
-// validated the binding gets the same receipt back without a second copy of
-// the decode rules.
 func decodeBoundCompletionReceipt(binding *CompletionReceiptBinding) (CompletionReceipt, error) {
 	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
 	if err != nil || len(data) == 0 || digestHex(data) != binding.SHA256 {
@@ -950,8 +908,6 @@ func validRecoveryTimestamp(value string) bool {
 	return ok
 }
 
-// parseRecoveryTimestamp accepts only the one canonical millisecond UTC form a
-// recovery record may carry, and reports whether the text was that form.
 func parseRecoveryTimestamp(value string) (time.Time, bool) {
 	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value)
 	if err != nil || parsed.UTC().Format("2006-01-02T15:04:05.000Z") != value {
@@ -1430,14 +1386,6 @@ func classifyFailedRecoveryIntent(
 	}
 }
 
-// recoverFailedReplaceIntent completes a failed-recovery transaction after a
-// restart. It accepts only the exact durable intent bytes for the named queue.
-// It does not install memory or wake dispatch. The startup owner does that only
-// after this function returns a durable action.
-//
-// RecoverReplaceIntents is the way in. There used to be an exported
-// single-intent wrapper here as well, for a caller outside the package that
-// never appeared; the startup sweep replaced it.
 func recoverFailedReplaceIntent(
 	projectDir string,
 	intent ReplaceIntentV1,
@@ -1562,7 +1510,6 @@ func installBoundArchiveIntent(
 	case noReplaceRefused, noReplaceIndeterminate:
 		return NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: install.Err}
 	case noReplaceInstalled:
-		// Continue to establish parent durability.
 	default:
 		return NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: errors.New("unknown no-replace result")}
 	}
@@ -2060,7 +2007,6 @@ func syncDirectory(path string, ops namespaceOps) error {
 	if err := ops.syncDir(dir); err != nil {
 		return errors.Join(err, ops.closeDir(dir))
 	}
-	// Close after a successful fsync is diagnostic: durability is already known.
 	_ = ops.closeDir(dir) //nolint:errcheck // successful directory fsync fixes the outcome
 	return nil
 }

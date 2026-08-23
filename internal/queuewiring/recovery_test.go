@@ -1,13 +1,5 @@
 package queuewiring
 
-// recovery_test.go — claims defended for QueueStore.RecoverFailed (QM-052b).
-//
-// Each test name states the claim it defends. The claims are:
-//   - a paused-by-failure queue comes back active with its failed items re-armed
-//   - each refusal path returns its own typed reason and wire code
-//   - the ledger preflight runs BEFORE any mutation, so a refused preflight
-//     leaves the queue exactly as it was
-
 import (
 	"context"
 	"encoding/json"
@@ -21,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// stubRecoveryLedger answers LookupStatus from a fixed map. A bead absent from
-// the map answers with err when err is non-nil, otherwise BeadStatusNotFound.
 type stubRecoveryLedger struct {
 	status map[core.BeadID]queue.BeadStatus
 	err    error
@@ -38,9 +28,6 @@ func (s stubRecoveryLedger) LookupStatus(_ context.Context, id core.BeadID) (que
 	return queue.BeadStatusNotFound, nil
 }
 
-// failureParkedFixture builds a store holding one queue parked at
-// paused-by-failure with one failed item and one completed item, plus a project
-// dir whose canonical queue file matches.
 func failureParkedFixture(t *testing.T) (store *QueueStore, projectDir string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -82,16 +69,12 @@ func failureParkedFixture(t *testing.T) (store *QueueStore, projectDir string) {
 	return store, projectDir
 }
 
-// recoveryFacts carries the context fields of a refusal. It is a plain value,
-// not an error, so a test that only cares about the reason may ignore it.
 type recoveryFacts struct {
 	ObservedStatus queue.QueueStatus
 	BeadID         core.BeadID
 	BeadStatus     queue.BeadStatus
 }
 
-// requireRecoveryReason asserts err is a *queue.RecoveryError carrying want,
-// and that its wire code is the code allocated to want.
 func requireRecoveryReason(t *testing.T, err error, want queue.RecoveryReason, wantCode int) recoveryFacts {
 	t.Helper()
 	var rec *queue.RecoveryError
@@ -217,7 +200,6 @@ func TestRecoverFailed_RefusesNonOpenBeadBeforeTouchingTheQueue(t *testing.T) {
 		t.Fatalf("bead status = %q, want %q", facts.BeadStatus, queue.BeadStatusInProgress)
 	}
 
-	// The preflight runs before any mutation, so the park must be intact.
 	got := store.QueueByName(queue.QueueNameMain)
 	if got.Status != queue.QueueStatusPausedByFailure {
 		t.Fatalf("queue status = %q, want it left at %q", got.Status, queue.QueueStatusPausedByFailure)
@@ -243,8 +225,6 @@ func TestRecoverFailed_RefusesUnwritableProjectDirWithRecoveryWriteFailed(t *tes
 	t.Parallel()
 	store, projectDir := failureParkedFixture(t)
 
-	// Make the queues directory unwritable so the atomic replacement fails at
-	// I/O rather than being refused before it.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.Chmod(queuesDir, 0o500); err != nil { //nolint:gosec // a directory needs the execute bit to stay traversable
 		t.Fatalf("chmod queues dir: %v", err)
@@ -264,14 +244,6 @@ func TestRecoverFailed_RefusesUnwritableProjectDirWithRecoveryWriteFailed(t *tes
 	}
 }
 
-// quarantineByFailedWrite parks a real QM-001 quarantine on the fixture queue
-// by letting one recovery write fail against a read-only queues directory, then
-// repairs the directory. It returns with the queue quarantined and still parked
-// at paused-by-failure.
-//
-// It seeds the quarantine through the production write path on purpose. Writing
-// the quarantine map directly would prove the refusal branch and nothing about
-// whether a failed write reaches it.
 func quarantineByFailedWrite(t *testing.T, store *QueueStore, projectDir string) {
 	t.Helper()
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")

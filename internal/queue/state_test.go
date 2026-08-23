@@ -1,23 +1,5 @@
 package queue_test
 
-// state_test.go — transition-table conformance tests for the group state
-// machine (specs/queue-model.md §5).
-//
-// Coverage:
-//   - Every row in §5.1 transition table (pending→active, active→complete-success,
-//     active→complete-with-failures, terminal no-op).
-//   - QM-030: all-terminal gate blocks active→terminal until every item is done.
-//   - QM-031: pending→active guard: queue must be active.
-//   - QM-032: no re-entry of terminal states.
-//   - QM-034: failed items do not interrupt sibling dispatches
-//     (active group with in-flight items stays active).
-//   - QM-035: stream out-of-order dispatch — deferred items skipped, not HOL-blocking (hk-cb5ow, hk-9a27q).
-//   - QM-036: wave unordered admission with deferred siblings skipped.
-//   - ErrGroupNil / ErrQueueIDEmpty sentinel errors.
-//
-// Helper prefix: stateFixture (derived from "state.go" concept per
-// implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"encoding/json"
@@ -29,15 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// -----------------------------------------------------------------------
-// helpers
-// -----------------------------------------------------------------------
-
 const stateFixtureQueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001"
 
 var stateFixtureNow = time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 
-// stateFixtureItem returns an Item with the given BeadID and status.
 func stateFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	return queue.Item{
 		BeadID: core.BeadID(beadID),
@@ -45,7 +22,6 @@ func stateFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	}
 }
 
-// stateFixtureGroup builds a minimal Group record for a wave or stream.
 func stateFixtureGroup(idx int, kind queue.GroupKind, status queue.GroupStatus, items []queue.Item) queue.Group {
 	return queue.Group{
 		GroupIndex: idx,
@@ -56,8 +32,6 @@ func stateFixtureGroup(idx int, kind queue.GroupKind, status queue.GroupStatus, 
 	}
 }
 
-// stateFixtureAdvance is a convenience wrapper that calls AdvanceGroup with
-// stateFixtureNow and stateFixtureQueueID.
 func stateFixtureAdvance(
 	t *testing.T,
 	g *queue.Group,
@@ -77,7 +51,6 @@ func stateFixtureAdvance(
 	return newStatus, events
 }
 
-// stateFixtureEventType returns the Type field of events[i], failing if out of bounds.
 func stateFixtureEventType(t *testing.T, events []queue.EventIntent, i int) string {
 	t.Helper()
 	if i >= len(events) {
@@ -86,8 +59,6 @@ func stateFixtureEventType(t *testing.T, events []queue.EventIntent, i int) stri
 	return string(events[i].Type)
 }
 
-// stateFixturePayloadFinalStatus unmarshals the FinalStatus field from a
-// queue_group_completed event's payload, failing on any error.
 func stateFixturePayloadFinalStatus(t *testing.T, e queue.EventIntent) string {
 	t.Helper()
 	var p core.QueueGroupCompletedPayload
@@ -97,8 +68,6 @@ func stateFixturePayloadFinalStatus(t *testing.T, e queue.EventIntent) string {
 	return p.FinalStatus
 }
 
-// stateFixturePayloadPausedReason unmarshals the Reason field from a
-// queue_paused event's payload, failing on any error.
 func stateFixturePayloadPausedReason(t *testing.T, e queue.EventIntent) string {
 	t.Helper()
 	var p core.QueuePausedPayload
@@ -107,10 +76,6 @@ func stateFixturePayloadPausedReason(t *testing.T, e queue.EventIntent) string {
 	}
 	return p.Reason
 }
-
-// -----------------------------------------------------------------------
-// §5.1 row 1 — pending → active (queue-submit: group_index 0)
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_PendingToActive_QueueActive verifies that a pending group
 // transitions to active when the queue is active (QM-031).
@@ -164,10 +129,6 @@ func TestAdvanceGroup_PendingToActive_QueuePausedByDrain(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
-// §5.1 row 3 — active → complete-success
-// -----------------------------------------------------------------------
-
 // TestAdvanceGroup_ActiveToCompleteSuccess verifies that an active group with
 // all completed items transitions to complete-success (QM-030).
 func TestAdvanceGroup_ActiveToCompleteSuccess(t *testing.T) {
@@ -206,10 +167,6 @@ func TestAdvanceGroup_ActiveToCompleteSuccess_EmptyItems(t *testing.T) {
 		t.Fatalf("event count = %d, want 1", len(events))
 	}
 }
-
-// -----------------------------------------------------------------------
-// §5.1 row 4 — active → complete-with-failures
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_ActiveToCompleteWithFailures verifies that an active group
 // with at least one failed item transitions to complete-with-failures and emits
@@ -261,10 +218,6 @@ func TestAdvanceGroup_ActiveToCompleteWithFailures_AllFailed(t *testing.T) {
 		t.Errorf("newStatus = %q, want %q", newStatus, queue.GroupStatusCompleteWithFailures)
 	}
 }
-
-// -----------------------------------------------------------------------
-// QM-030 — all-terminal gate
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_QM030_DispatchedBlocksTransition verifies that an active
 // group with a still-dispatched item stays active (QM-030, QM-034).
@@ -321,10 +274,6 @@ func TestAdvanceGroup_QM030_PendingBlocksTransition(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
-// QM-032 — no re-entry of terminal states
-// -----------------------------------------------------------------------
-
 // TestAdvanceGroup_QM032_CompleteSuccessIsAbsorbing verifies that calling
 // AdvanceGroup on a complete-success group returns unchanged with no events.
 func TestAdvanceGroup_QM032_CompleteSuccessIsAbsorbing(t *testing.T) {
@@ -358,10 +307,6 @@ func TestAdvanceGroup_QM032_CompleteWithFailuresIsAbsorbing(t *testing.T) {
 		t.Errorf("event count = %d, want 0 (terminal state must be absorbing)", len(events))
 	}
 }
-
-// -----------------------------------------------------------------------
-// QM-034 — failed items do not interrupt sibling dispatches
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_QM034_FailedSiblingDoesNotInterrupt verifies that a group
 // with one failed item and one still-dispatched sibling remains active.
@@ -399,10 +344,6 @@ func TestAdvanceGroup_QM034_AllTerminalWithFailure(t *testing.T) {
 		t.Fatalf("event count = %d, want 2", len(events))
 	}
 }
-
-// -----------------------------------------------------------------------
-// QM-035 — stream out-of-order dispatch (hk-cb5ow)
-// -----------------------------------------------------------------------
 
 // TestEligibleItems_Stream_DeferredHeadSkipped verifies that a stream with a
 // deferred-for-ledger-dep head item skips it and returns the next pending
@@ -510,10 +451,6 @@ func TestEligibleItems_Stream_SkipTerminatedHead(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
-// QM-036 — wave unordered admission
-// -----------------------------------------------------------------------
-
 // TestEligibleItems_Wave_AllPending verifies that a wave returns all pending
 // items; order is preserved from the items list (QM-036).
 func TestEligibleItems_Wave_AllPending(t *testing.T) {
@@ -564,10 +501,6 @@ func TestEligibleItems_Wave_NoneEligibleWhenAllDispatched(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
-// EligibleItems — nil and inactive group guards
-// -----------------------------------------------------------------------
-
 // TestEligibleItems_NilGroup verifies that EligibleItems returns nil for a nil
 // group.
 func TestEligibleItems_NilGroup(t *testing.T) {
@@ -588,10 +521,6 @@ func TestEligibleItems_PendingGroup(t *testing.T) {
 		t.Errorf("EligibleItems on pending group = %v, want nil", eligible)
 	}
 }
-
-// -----------------------------------------------------------------------
-// Sentinel error cases
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_NilGroup verifies that AdvanceGroup returns ErrGroupNil for
 // a nil group.
@@ -632,10 +561,6 @@ func TestAdvanceGroup_CancelledContext(t *testing.T) {
 		t.Error("expected error from cancelled context, got nil")
 	}
 }
-
-// -----------------------------------------------------------------------
-// Event shape checks — ensure returned events carry correct payload fields
-// -----------------------------------------------------------------------
 
 // TestAdvanceGroup_GroupStartedPayload verifies the queue_group_started payload
 // fields are populated correctly from the Group record.

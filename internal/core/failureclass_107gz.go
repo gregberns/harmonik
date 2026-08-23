@@ -47,19 +47,12 @@ const (
 	HandlerFatalSubReasonHandlerAccount HandlerFatalSubReason = "handler-account"
 )
 
-// handlerFatalEntry records a row in the closed taxonomy table of
-// handler-fatal classes (HC-020a).
 type handlerFatalEntry struct {
 	class     FailureClass
 	subReason HandlerFatalSubReason
 	fatal     HandlerFatalClass
 }
 
-// handlerFatalTaxonomy is the closed table of handler-fatal class × sub-reason
-// combinations per handler-contract.md §4.5a HC-020a.
-//
-// Classification MUST be deterministic from structured fields; no cognition
-// participates (HC-023).
 var handlerFatalTaxonomy = []handlerFatalEntry{
 	{
 		class:     FailureClassTransient,

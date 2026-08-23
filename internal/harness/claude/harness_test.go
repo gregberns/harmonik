@@ -1,17 +1,5 @@
 package claude_test
 
-// harness_test.go — claude.Harness unit tests (hk-3kyh3 C1/T2).
-//
-// Two test categories:
-//
-//  1. Pure-LaunchSpec golden: claude.Harness.LaunchSpec returns a SpawnSpec whose
-//     Binary/Args/Env/WorkDir match what BuildLaunchSpec returns for the
-//     equivalent shared.LaunchCtx.  Covers all four workflow phases.
-//
-//  2. Shared-scaffolding side-effect parity: calling claude.Harness.LaunchSpec
-//     produces the same workspace side-effects (settings.json, agent-task.md) as
-//     calling BuildLaunchSpec directly.
-
 import (
 	"context"
 	"os"
@@ -27,7 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
-// claudeHarnessFixtureWorkspace mirrors claudeLaunchSpecFixtureWorkspace.
 func claudeHarnessFixtureWorkspace(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,8 +24,6 @@ func claudeHarnessFixtureWorkspace(t *testing.T) string {
 	return dir
 }
 
-// claudeHarnessFixtureRunCtx builds an ExportedClaudeRunCtx for the given phase,
-// reusing the same fixture builder pattern as claudelaunchspec_test.go.
 func claudeHarnessFixtureRunCtx(
 	t *testing.T,
 	workspacePath string,
@@ -65,17 +50,6 @@ func claudeHarnessFixtureRunCtx(
 	}
 }
 
-// claudeHarnessRunCtxFrom converts a shared.LaunchCtx into the
-// handlercontract.RunCtx shape expected by claude.Harness.LaunchSpec. This
-// allows the harness-golden tests to use the same fixture builders as the
-// BuildLaunchSpec tests and compare outputs side-by-side.
-//
-// Relocated verbatim from internal/daemon/export_test.go's
-// ExportedRunCtxFromClaudeRunCtx by P2 unit E1b. It reads nothing unexported,
-// so it is a plain test helper here rather than an export_test.go seam; its
-// only callers are the tests in this file.
-//
-// Bead ref: hk-3kyh3.
 func claudeHarnessRunCtxFrom(rc shared.LaunchCtx) handlercontract.RunCtx {
 	return handlercontract.RunCtx{
 		RunID:            rc.RunID,
@@ -97,31 +71,16 @@ func claudeHarnessRunCtxFrom(rc shared.LaunchCtx) handlercontract.RunCtx {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. Pure-LaunchSpec golden tests
-//
-// These tests deliberately do NOT call t.Parallel(): they all invoke
-// BuildLaunchSpec (via claude.Harness.LaunchSpec) which calls
-// EnsureWorktreeTrust and writes to ~/.claude.json under a file lock.
-// Running them in parallel with each other and with the integration-test suite
-// (TestT4_ConcurrentLoops, TestParallelSmoke_TwoBeadsConcurrent) creates
-// excessive contention on that lock, causing unrelated tests to hit the
-// "write-lock acquire timed out" deadline and fail spuriously.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestClaudeHarness_LaunchSpec_Single verifies SpawnSpec parity for single-mode.
 func TestClaudeHarness_LaunchSpec_Single(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 
-	// Reference: what BuildLaunchSpec returns.
 	refSpec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("reference BuildLaunchSpec: %v", err)
 	}
 
-	// Harness: must produce a matching SpawnSpec.
-	// Use a fresh workspace so side-effect collision (WriteAgentTask) is avoided.
 	ws2 := claudeHarnessFixtureWorkspace(t)
 	rc2 := claudeHarnessFixtureRunCtx(t, ws2, "", nil, 0)
 	hrc := claudeHarnessRunCtxFrom(rc2)
@@ -186,9 +145,7 @@ func TestClaudeHarness_LaunchSpec_ImplementerResume(t *testing.T) {
 		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
-	// implementer-resume uses --resume (CHB-008).
 	claudeHarnessAssertResumeFlag(t, spawn.Args)
-	// Session ID in --resume arg must be the prior session ID.
 	claudeHarnessAssertArgValue(t, spawn.Args, "--resume", priorSessID)
 }
 
@@ -280,7 +237,6 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 			}
 		}
 	}
-	// Empty override must be present.
 	for _, dk := range denyKeys {
 		want := dk + "="
 		found := false
@@ -295,10 +251,6 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Shared-scaffolding side-effect parity tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeHarness_LaunchSpec_SettingsJSON_Created verifies that calling
 // claude.Harness.LaunchSpec materializes .claude/settings.json in the workspace
@@ -355,10 +307,6 @@ func TestClaudeHarness_LaunchSpec_WorkDir(t *testing.T) {
 		t.Errorf("SpawnSpec.WorkDir = %q; want %q", spawn.WorkDir, ws)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. Constant-method tests (AgentType, SessionIDPolicy, Completion, DetectReady)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeHarness_AgentType verifies AgentType returns AgentTypeClaudeCode.
 func TestClaudeHarness_AgentType(t *testing.T) {
@@ -426,12 +374,6 @@ func TestClaudeHarness_DetectReady_OtherEvent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// assertion helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// claudeHarnessAssertSpawnSpecShape verifies the SpawnSpec has the expected binary
-// and a --session-id flag (when wantResume is false).
 func claudeHarnessAssertSpawnSpecShape(t *testing.T, label string, spawn handlercontract.SpawnSpec, wantBinary string, wantResume bool) {
 	t.Helper()
 	if spawn.Binary != wantBinary {
@@ -441,7 +383,6 @@ func claudeHarnessAssertSpawnSpecShape(t *testing.T, label string, spawn handler
 		t.Errorf("%s: SpawnSpec.WorkDir is empty", label)
 	}
 	if !wantResume {
-		// Expect --session-id flag.
 		found := false
 		for i, a := range spawn.Args {
 			if a == "--session-id" {
@@ -463,7 +404,6 @@ func claudeHarnessAssertSpawnSpecShape(t *testing.T, label string, spawn handler
 	}
 }
 
-// claudeHarnessAssertResumeFlag verifies --resume is present and --session-id absent.
 func claudeHarnessAssertResumeFlag(t *testing.T, args []string) {
 	t.Helper()
 	for i, a := range args {
@@ -482,7 +422,6 @@ func claudeHarnessAssertResumeFlag(t *testing.T, args []string) {
 	t.Errorf("--resume not found in args %v; required for implementer-resume (CHB-008)", args)
 }
 
-// claudeHarnessAssertArgValue asserts that flag is followed by wantValue in args.
 func claudeHarnessAssertArgValue(t *testing.T, args []string, flag, wantValue string) {
 	t.Helper()
 	for i, a := range args {
@@ -500,8 +439,6 @@ func claudeHarnessAssertArgValue(t *testing.T, args []string, flag, wantValue st
 	t.Errorf("%s not found in args %v", flag, args)
 }
 
-// claudeHarnessAssertEnvKey verifies that env contains at least one entry with the
-// given key prefix "KEY=".
 func claudeHarnessAssertEnvKey(t *testing.T, env []string, key string) {
 	t.Helper()
 	prefix := key + "="

@@ -1,17 +1,5 @@
 package daemon
 
-// decisionshandler_mailbox_pltjs_test.go — unit tests for the operator-mailbox
-// topic + urgency extension of the hitl-decisions surface (bead hk-pltjs,
-// pending operator sign-off — this EXTENDS the FINALIZED hitl-decisions SPEC,
-// see internal/core.DecisionTopicOperatorMailbox).
-//
-// Asserts: raise carries topic/urgency through to the K3 projection; the
-// decisions-list op's topic filter narrows the result; an invalid urgency is
-// rejected (schema-level Valid()); an unset topic/urgency stays wire-compatible
-// with the prior (untagged) behavior.
-//
-// Reuses the dk4* helpers from decisionshandler_k4_kba_test.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -20,8 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// dk4RaiseMailbox raises a decision with a topic + urgency and returns its
-// decision_id.
 func dk4RaiseMailbox(t *testing.T, s *dk4Setup, question, topic, urgency string) string {
 	t.Helper()
 	req := DecisionsRaiseRequest{
@@ -48,7 +34,6 @@ func dk4RaiseMailbox(t *testing.T, s *dk4Setup, question, topic, urgency string)
 	return res.DecisionID
 }
 
-// dk4ListByTopic calls HandleDecisionsList with a topic filter.
 func dk4ListByTopic(t *testing.T, s *dk4Setup, topic string) DecisionsListResult {
 	t.Helper()
 	payload, err := json.Marshal(DecisionsListRequest{Topic: topic})

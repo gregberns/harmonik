@@ -1,25 +1,5 @@
 package supervisecmd
 
-// on056_explore_rnlxh_test.go — exploratory test for specs/operator-nfr.md §4.3 ON-056.
-//
-// ON-056 agent-callable pause/resume command verb:
-//
-//   "harmonik supervise pause/resume" is the single canonical verb form for the
-//   daemon pause/resume control surface.  The loop (or any agent driving it) MAY
-//   itself issue the command without human intervention; no human-only gate exists.
-//   [operator-nfr.md §4.3 ON-056]
-//
-// Observable (this file):
-//   - RunPause / RunResume accept the --project flag and dial the daemon socket;
-//     no TTY check, no interactive prompt, no human-gate.
-//   - Both commands exit 0 when the daemon socket responds Ok=true.
-//   - Both commands exit 17 when the socket is absent (daemon not running).
-//   - Both commands exit 17 with the same stderr message whether invoked by a
-//     human or an agent (identical command surface).
-//   - The stdout confirmation line is machine-readable (single line, no ANSI).
-//
-// Bead: hk-rnlxh.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -31,11 +11,6 @@ import (
 	"testing"
 )
 
-// socketSafeTempDir returns a temporary directory whose path is short enough
-// for a Unix domain socket (macOS limit: 104 chars).  The socket will live at
-// <dir>/.harmonik/daemon.sock (+17 chars), so the dir itself must be ≤87 chars.
-// t.TempDir() on macOS produces paths under /var/folders/… that exceed this
-// limit.  Using /tmp as the base always stays well within it.
 func socketSafeTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hkt-*")
@@ -50,23 +25,14 @@ func socketSafeTempDir(t *testing.T) string {
 	return dir
 }
 
-// ---------------------------------------------------------------------------
-// helpers — minimal fake daemon socket
-// ---------------------------------------------------------------------------
-
-// fakeSocketResp is the JSON the fake daemon returns.
 type fakeSocketResp struct {
 	Ok    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
 
-// startFakeSocketServer starts a Unix-socket listener that reads a JSON op
-// request and responds with {ok: true}. The server closes after the first response.
 func startFakeSocketServer(t *testing.T, dir string) {
 	t.Helper()
 
-	// Replicate the socket path that RunPause/RunResume compute internally:
-	// lifecycle.SocketPath(projectDir) == projectDir/.harmonik/daemon.sock.
 	sockDir := filepath.Join(dir, ".harmonik")
 	if err := os.MkdirAll(sockDir, 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
@@ -114,10 +80,6 @@ func startFakeSocketServer(t *testing.T, dir string) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// TestON056_AgentAndHumanSameCommandSurface_Pause
-// ---------------------------------------------------------------------------
-
 // TestON056_AgentAndHumanSameCommandSurface_Pause confirms that RunPause uses
 // no interactive / human-only gate: it dials the socket and returns exit 0
 // with a single-line machine-readable confirmation.
@@ -143,15 +105,10 @@ func TestON056_AgentAndHumanSameCommandSurface_Pause(t *testing.T) {
 	if out == "" {
 		t.Error("ON-056: RunPause wrote nothing to stdout; want a confirmation line")
 	}
-	// Confirmation must not contain ANSI escape sequences (machine-readable).
 	if strings.Contains(out, "\x1b[") {
 		t.Errorf("ON-056: RunPause stdout contains ANSI escape sequences; want plain text: %q", out)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestON056_AgentAndHumanSameCommandSurface_Resume
-// ---------------------------------------------------------------------------
 
 // TestON056_AgentAndHumanSameCommandSurface_Resume mirrors the pause test for
 // the resume verb, confirming identical behaviour (ON-056 covers both).
@@ -179,10 +136,6 @@ func TestON056_AgentAndHumanSameCommandSurface_Resume(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestON056_DaemonNotRunning_Exit17_Pause
-// ---------------------------------------------------------------------------
-
 // TestON056_DaemonNotRunning_Exit17_Pause confirms that RunPause returns exit
 // 17 (not 1) when no daemon socket is present.  The same exit code must be
 // produced regardless of whether the caller is a human or an agent so that
@@ -191,7 +144,6 @@ func TestON056_DaemonNotRunning_Exit17_Pause(t *testing.T) {
 	t.Parallel()
 
 	dir := socketSafeTempDir(t)
-	// Do NOT start a socket server; the socket file is absent.
 
 	var stdout, stderr bytes.Buffer
 	code := RunPause([]string{"--project", dir}, &stdout, &stderr)
@@ -203,10 +155,6 @@ func TestON056_DaemonNotRunning_Exit17_Pause(t *testing.T) {
 		t.Errorf("ON-056: RunPause (no daemon) must not write to stdout; got %q", stdout.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestON056_DaemonNotRunning_Exit17_Resume
-// ---------------------------------------------------------------------------
 
 // TestON056_DaemonNotRunning_Exit17_Resume mirrors the pause/no-daemon test
 // for the resume verb.
@@ -225,10 +173,6 @@ func TestON056_DaemonNotRunning_Exit17_Resume(t *testing.T) {
 		t.Errorf("ON-056: RunResume (no daemon) must not write to stdout; got %q", stdout.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestON056_NoPauseOrResumeInUsageText_NoInteractivePrompt
-// ---------------------------------------------------------------------------
 
 // TestON056_NoPauseOrResumeInUsageText_NoInteractivePrompt confirms that the
 // --help output for both verbs contains no interactive/human-only gate

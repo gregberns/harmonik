@@ -1,32 +1,5 @@
 package core
 
-// verdictretrycap_rc026a.go — Cat 3b re-execution retry cap (RC-026a).
-//
-// RC-026a requires that a Cat 3b verdict-execution that fails on a fresh
-// staleness check (RC-024) be retried with a durable attempt counter. The
-// counter is recorded in .harmonik/reconciliation-attempts/<target_run_id>.json
-// (atomic temp+rename+fsync per workspace-model.md §4.7 WM-026). The retry cap
-// defaults to N=5; on cap exceeded, the run escalates to Cat 6b (operator
-// escalation) per spec §8.11. Each retry emits
-// reconciliation_verdict_execution_retry{target_run_id, attempt}.
-//
-// This file declares the pure, I/O-free layer:
-//
-//   - VerdictExecutionAttemptRecord — JSON record written to the durable
-//     attempt-counter file per RC-026a.
-//   - VerdictRetryCapDefault — the default cap (N=5).
-//   - VerdictRetryDecision — the outcome of CheckVerdictRetryCap.
-//   - CheckVerdictRetryCap — pure function mapping an existing record and a cap
-//     to a decision (allowed / cap-exceeded → Cat 6b).
-//
-// The actual file I/O (read/write the counter JSON atomically) is performed by
-// the lifecycle package (lifecycle/verdictretrycap_rc026a.go), which consumes
-// these types. The separation mirrors the CheckVerdictStaleness /
-// VerdictStalenessResult split for RC-024.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-026a;
-// specs/workspace-model.md §4.7 WM-026 (atomic write discipline).
-
 // VerdictRetryCapDefault is the default maximum number of Cat 3b re-execution
 // retries per RC-026a.
 //

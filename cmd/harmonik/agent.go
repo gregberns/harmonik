@@ -1,22 +1,5 @@
 package main
 
-// agent.go — `harmonik agent` CLI subcommand block.
-//
-// Verbs:
-//
-//	brief [--agent NAME] [--wake REASON] [--format FMT] [--project DIR] [--override]
-//	    Resolve an agent → its type → manifest and emit the ordered boot document.
-//	    SPEC §4 order: identity → wake → operating+skills → triggers → handoff.
-//	    Exit 0 on success; non-zero on resolution or I/O error.
-//
-//	check <type> [--project DIR]
-//	    Validate an agent type folder: manifest schema, file presence,
-//	    context[].ref resolution, parent_intent reachability.
-//	    Exit 0 + "ok" when well-formed; non-zero + defect list otherwise.
-//
-// Spec ref: .kerf/works/agent-manifest/SPEC.md §3–§4.
-// Bead ref: hk-j784q (T3 — brief command), hk-9cheh (T5 — check verb).
-
 import (
 	"fmt"
 	"os"
@@ -27,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 )
 
-// runAgentSubcommand routes `harmonik agent <verb> [args]`.
-// subArgs is os.Args[2:].
 func runAgentSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -50,7 +31,6 @@ func runAgentSubcommand(subArgs []string) int {
 	}
 }
 
-// briefArgs holds the resolved inputs to `harmonik agent brief`.
 type briefArgs struct {
 	agentName   string // from --agent or $HARMONIK_AGENT
 	wake        string // --wake value (fresh | keeper-restart | trigger:<id>)
@@ -61,7 +41,6 @@ type briefArgs struct {
 	usageErr    string
 }
 
-// resolveAgentBriefArgs parses the arg list for `harmonik agent brief`.
 func resolveAgentBriefArgs(args []string) briefArgs {
 	var out briefArgs
 	for i := 0; i < len(args); i++ {
@@ -103,10 +82,8 @@ func resolveAgentBriefArgs(args []string) briefArgs {
 	return out
 }
 
-// validBriefFormats is the set of accepted --format values.
 var validBriefFormats = map[string]bool{"markdown": true, "json": true, "yaml": true, "toon": true}
 
-// runAgentBrief implements `harmonik agent brief [--agent NAME] [flags]`.
 func runAgentBrief(args []string) int {
 	parsed := resolveAgentBriefArgs(args)
 	if parsed.showHelp {
@@ -119,7 +96,6 @@ func runAgentBrief(args []string) int {
 		return 1
 	}
 
-	// Name resolution: --agent vs $HARMONIK_AGENT (SPEC §3 load-bearing safety check).
 	envAgent := os.Getenv("HARMONIK_AGENT")
 	agentName := parsed.agentName
 	switch {
@@ -164,7 +140,6 @@ func runAgentBrief(args []string) int {
 
 	agentsDir := filepath.Join(absProject, ".harmonik", "agents")
 
-	// Instance → type resolution (T2: crew.ResolveType).
 	typeName, err := crew.ResolveType(absProject, agentsDir, agentName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik agent brief: cannot resolve type for %q: %v\n", agentName, err)
@@ -194,8 +169,6 @@ func runAgentBrief(args []string) int {
 	return 0
 }
 
-// resolveAgentCheckArgs parses the arg list for `harmonik agent check`.
-// Returns (typeName, projectFlag, showHelp, usageErr).
 func resolveAgentCheckArgs(args []string) (typeName, projectFlag string, showHelp bool, usageErr string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -222,7 +195,6 @@ func resolveAgentCheckArgs(args []string) (typeName, projectFlag string, showHel
 	return
 }
 
-// runAgentCheck implements `harmonik agent check <type> [--project DIR]`.
 func runAgentCheck(args []string) int {
 	typeName, projectFlag, showHelp, usageErr := resolveAgentCheckArgs(args)
 	if showHelp {

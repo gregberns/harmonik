@@ -6,14 +6,10 @@ import (
 	"testing"
 )
 
-// fixtureSetupFixtureEmpty returns a zero-value FixtureSetup (all nil fields).
-// A zero-value is valid per the spec: all fields are optional (|None).
 func fixtureSetupFixtureEmpty() FixtureSetup {
 	return FixtureSetup{}
 }
 
-// fixtureSetupFixtureFull returns a fully-populated FixtureSetup with all
-// three fields set to non-nil, non-empty values using valid sibling types.
 func fixtureSetupFixtureFull(t *testing.T) FixtureSetup {
 	t.Helper()
 	return FixtureSetup{
@@ -29,7 +25,6 @@ func fixtureSetupFixtureFull(t *testing.T) FixtureSetup {
 	}
 }
 
-// fixtureSetupFixtureGitOnly returns a FixtureSetup with only GitSeed set.
 func fixtureSetupFixtureGitOnly(t *testing.T) FixtureSetup {
 	t.Helper()
 	return FixtureSetup{
@@ -37,7 +32,6 @@ func fixtureSetupFixtureGitOnly(t *testing.T) FixtureSetup {
 	}
 }
 
-// fixtureSetupFixtureFilesOnly returns a FixtureSetup with only Files set.
 func fixtureSetupFixtureFilesOnly(t *testing.T) FixtureSetup {
 	t.Helper()
 	return FixtureSetup{
@@ -47,8 +41,6 @@ func fixtureSetupFixtureFilesOnly(t *testing.T) FixtureSetup {
 	}
 }
 
-// fixtureSetupFixtureSkillPathsOnly returns a FixtureSetup with only
-// SkillSearchPaths set.
 func fixtureSetupFixtureSkillPathsOnly(t *testing.T) FixtureSetup {
 	t.Helper()
 	return FixtureSetup{
@@ -146,7 +138,6 @@ func TestFixtureSetupValid(t *testing.T) {
 			name: "GitSeedOp with missing required key is invalid",
 			input: FixtureSetup{
 				GitSeed: []GitSeedOp{
-					// commit requires "message" key
 					{Op: GitSeedOpCommit, Args: map[string]string{"parent": "abc"}},
 				},
 			},
@@ -202,7 +193,6 @@ func TestFixtureSetupJSONRoundTrip(t *testing.T) {
 func TestFixtureSetupOmitEmptyFields(t *testing.T) {
 	t.Parallel()
 
-	// A zero-value FixtureSetup must marshal with no keys present (all omitempty).
 	f := FixtureSetup{}
 	data, err := json.Marshal(f)
 	if err != nil {
@@ -224,7 +214,6 @@ func TestFixtureSetupOmitEmptyFields(t *testing.T) {
 func TestFixtureSetupNilVsEmpty(t *testing.T) {
 	t.Parallel()
 
-	// nil and non-nil-empty behave the same for Valid() — both are valid.
 	nilSetup := FixtureSetup{}
 	emptySetup := FixtureSetup{
 		GitSeed:          []GitSeedOp{},
@@ -239,8 +228,6 @@ func TestFixtureSetupNilVsEmpty(t *testing.T) {
 		t.Error("empty-field FixtureSetup.Valid() = false, want true")
 	}
 
-	// But nil and non-nil-empty are distinguishable via reflect (Go idiom
-	// for the caller that needs None vs. empty discrimination).
 	if reflect.DeepEqual(nilSetup, emptySetup) {
 		t.Error("nil-field and empty-field FixtureSetup are DeepEqual; Go nil-vs-empty semantics require them to differ")
 	}

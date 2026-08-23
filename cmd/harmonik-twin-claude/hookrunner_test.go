@@ -10,19 +10,12 @@ import (
 	"time"
 )
 
-// Test helpers use the per-bead prefix declared in implementer-protocol.md:
-// twinHookFixture (bead hk-e66ht).
-
-// twinHookFixtureEmitter returns a wireEmitter writing to a bytes.Buffer plus
-// the buffer itself, for round-trip message inspection.
 func twinHookFixtureEmitter(t *testing.T) (*wireEmitter, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	return newWireEmitter(&buf), &buf
 }
 
-// twinHookFixtureDecode decodes the emitted NDJSON line from buf into a
-// map[string]any. Calls t.Fatalf if the line is missing or malformed.
 func twinHookFixtureDecode(t *testing.T, buf *bytes.Buffer) map[string]any {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
@@ -61,9 +54,6 @@ func twinHookFixtureBool(t *testing.T, m map[string]any, key string) bool {
 	return value
 }
 
-// trueCmd returns the path to the "true" binary (which returns exit 0).
-// On macOS the binary is at /usr/bin/true; on Linux it is at /bin/true or
-// /usr/bin/true. exec.LookPath is used to find the canonical location.
 func trueCmd(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("true")
@@ -73,7 +63,6 @@ func trueCmd(t *testing.T) string {
 	return p
 }
 
-// falseCmd returns the path to the "false" binary (which returns exit 1).
 func falseCmd(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("false")
@@ -137,7 +126,6 @@ func TestRunCallStopHook_NilSettings(t *testing.T) {
 		t.Fatal("runCallStopHook nil settings: expected error, got nil")
 	}
 
-	// Verify that a twin_error message was emitted.
 	m := twinHookFixtureDecode(t, buf)
 	if got := twinHookFixtureString(t, m, "type"); got != "twin_error" {
 		t.Errorf("emitted type = %q, want %q", got, "twin_error")
@@ -190,7 +178,6 @@ func TestRunCallStopHook_TrueCommand(t *testing.T) {
 	if got := twinHookFixtureString(t, m, "hook_type"); got != "Stop" {
 		t.Errorf("hook_type = %q, want %q", got, "Stop")
 	}
-	// exit_code is JSON number → float64 in map[string]any.
 	if code, ok := m["exit_code"].(float64); !ok || int(code) != 0 {
 		t.Errorf("exit_code = %v (type %T), want 0 float64", m["exit_code"], m["exit_code"])
 	}

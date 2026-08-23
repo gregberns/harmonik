@@ -2,16 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// hookevents_hqwn59.go — event-bus payload types for §8.2.1-§8.2.3 hook-system
-// lifecycle events: hook_fired, hook_failed, hook_verdict_persisted.
-//
-// These are DISTINCT from HookPayload (specs/control-points.md §6.1.2), which
-// is the configuration payload embedded in a ControlPoint. The types in this
-// file are the event-bus wire payloads emitted on the cross-subsystem bus.
-//
-// Spec ref: specs/event-model.md §8.2.1, §8.2.2, §8.2.3.
-// Bead refs: hk-hqwn.59.12, hk-hqwn.59.13, hk-hqwn.59.14.
-
 // HookFiredPayload is the typed event payload for the hook_fired event
 // (event-model.md §8.2.1).
 //

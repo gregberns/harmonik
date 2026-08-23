@@ -1,18 +1,5 @@
 package core
 
-// upgradeDisciplineFixture — spec-level harness for hk-63oh.10.
-//
-// Covers: RC-006 (upgrade discipline — daemon code and library ship together),
-// with specific focus on the split-release prohibition and the co-ship
-// obligation (detector + action-map entry + workflow-library addition in S01
-// in the same harmonik release).
-//
-// The WorkflowClass enum-fence test (TestRC006_WorkflowClassIsOnlyReconciliation)
-// lives in reconciliationworkflow_rc001_test.go. This file adds spec-artifact
-// and co-ship-obligation tests scoped to hk-63oh.10.
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-006.
-
 import (
 	"os"
 	"path/filepath"
@@ -21,27 +8,17 @@ import (
 	"testing"
 )
 
-// upgradeDisciplineFixtureCoShipObligation models one component that RC-006
-// requires to ship together in the same harmonik release.
-//
-// Spec ref: reconciliation/spec.md §4.1 RC-006 — "MUST ship a daemon-code
-// change (detector + action-map entry per §8 taxonomy) AND a workflow-library
-// addition in S01 … in the same harmonik release."
 type upgradeDisciplineFixtureCoShipObligation struct {
 	Component string
 	SpecRef   string
 }
 
-// upgradeDisciplineFixtureCoShipObligations is the authoritative fixture
-// encoding of the three co-ship components declared by RC-006.
 var upgradeDisciplineFixtureCoShipObligations = []upgradeDisciplineFixtureCoShipObligation{
 	{"detector (daemon-code change)", "RC-006 — §8 taxonomy detector"},
 	{"action-map entry (daemon-code change)", "RC-006 — §8 action-map entry"},
 	{"workflow-library addition in S01 (for investigator-required categories)", "RC-006 — S01 library"},
 }
 
-// upgradeDisciplineFixtureReadSpec reads specs/reconciliation/spec.md and
-// returns its content. Fails the test if the file cannot be read.
 func upgradeDisciplineFixtureReadSpec(t *testing.T) string {
 	t.Helper()
 

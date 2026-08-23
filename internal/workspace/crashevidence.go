@@ -75,13 +75,11 @@ func ClassifyCrashEvidence(worktreePath string) (OrphanEvidenceType, error) {
 	_, err := os.Stat(leaseLockPath)
 	switch {
 	case err == nil:
-		// Lease-lock is present — not a crash-evidence state.
 		return "", fmt.Errorf("workspace: ClassifyCrashEvidence: lease-lock present at %q; not an orphan evidence state", leaseLockPath)
 	case !os.IsNotExist(err):
 		return "", fmt.Errorf("workspace: ClassifyCrashEvidence: Stat lease-lock %q: %w", leaseLockPath, err)
 	}
 
-	// Lease-lock is absent. Check for session sidecars under the sessions root.
 	sidecarFound, err := hasSidecar(worktreePath)
 	if err != nil {
 		return "", fmt.Errorf("workspace: ClassifyCrashEvidence: sidecar check: %w", err)
@@ -93,10 +91,6 @@ func ClassifyCrashEvidence(worktreePath string) (OrphanEvidenceType, error) {
 	return EvidenceBareWorktreeNoLease, fmt.Errorf("%w: %q", ErrBareWorktreeNoLease, worktreePath)
 }
 
-// hasSidecar reports whether at least one harmonik.meta.json sidecar exists
-// under ${workspace_path}/.harmonik/sessions/<session_id>/harmonik.meta.json.
-//
-// Returns (false, nil) when the sessions root does not exist.
 func hasSidecar(worktreePath string) (bool, error) {
 	sessionsRoot := SessionLogRootPath(worktreePath)
 	entries, err := os.ReadDir(sessionsRoot)

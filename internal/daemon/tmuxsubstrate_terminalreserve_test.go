@@ -1,47 +1,5 @@
 package daemon_test
 
-// tmuxsubstrate_terminalreserve_test.go — regression tests for the terminal-node
-// reserved-slot fix (hk-x882o).
-//
-// # The bug
-//
-// The spawn semaphore was a single, node-type-BLIND, GLOBAL pool. When cap=2 and
-// two non-terminal sessions held both slots, the terminal (consolidate) node of a
-// completed+reviewed run timed out after 2 min and the entire reviewed run was
-// discarded. The self-diagnosis "possible slot leak" in the error string was
-// misleading — there was no leak, only saturation.
-//
-// # Fix
-//
-// WithSpawnCap(n) now sizes the semaphore at n+1 and adds a second
-// nonTerminalSem of size n. Non-terminal spawns must acquire BOTH semaphores
-// (nonTerminalSem first, then spawnSem). Terminal spawns acquire only spawnSem,
-// drawing from the reserved +1 slot that non-terminal sessions cannot occupy.
-//
-// # What is tested
-//
-//   - TestSpawnCap_TerminalNodeNotStarvedBySaturation: with cap non-terminal
-//     sessions holding all cap slots, a terminal-marked spawn (in.Terminal=true)
-//     acquires the reserved +1 slot and returns a live session within timeout.
-//     This is the RED test: before the fix, SpawnWindow times out with
-//     ErrSpawnCapTimeout. After the fix, it returns nil.
-//
-//   - TestSpawnCap_NonTerminalStillBlocksAtCap: a non-terminal spawn with all
-//     cap slots held still times out with ErrSpawnCapTimeout. The reserved slot
-//     must NOT widen the cap for ordinary nodes.
-//
-//   - TestSpawnCap_LeakInvariantUnchanged: adapter for the existing round-trip
-//     guard — a sequence of acquire/Kill round-trips (non-terminal sessions)
-//     returns SpawnSlotsInUse()==0 after each. The reserved slot must not leak.
-//
-// # Helper prefix
-//
-// Helpers use the prefix "terminalReserveFixture" per implementer-protocol.md.
-//
-// # Bead
-//
-//   - hk-x882o (terminal-node spawn-cap starvation)
-
 import (
 	"context"
 	"errors"
@@ -54,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// terminalReserveFixtureAdapter is a concurrency-safe fake tmux adapter for the
-// terminal-reserve tests. NewWindowIn always succeeds with a unique handle.
 type terminalReserveFixtureAdapter struct {
 	mu          sync.Mutex
 	windowCount int
@@ -133,28 +89,22 @@ func TestSpawnCap_TerminalNodeNotStarvedBySaturation(t *testing.T) {
 
 	adapter := &terminalReserveFixtureAdapter{}
 	const capN = 2
-	// Short acquire timeout so the test is fast; production default is minutes.
 	sub := daemon.NewTmuxSubstrate(adapter, "termres-session",
 		daemon.WithSpawnCap(capN),
 		daemon.WithSpawnAcquireTimeout(200*time.Millisecond))
 
 	ctx := context.Background()
 
-	// Saturate the pool by acquiring all cap non-terminal slots and HOLDING them
-	// (not killing — mimics two concurrent DOT runs at their implementer nodes).
 	for i := 0; i < capN; i++ {
 		if _, err := terminalReserveFixtureSpawnNonTerminal(ctx, sub); err != nil {
 			t.Fatalf("saturating non-terminal spawn %d failed: %v", i, err)
 		}
 	}
 
-	// Both non-terminal slots are in use.
 	if got := daemon.ExportedSpawnSlotsInUse(sub); got != capN {
 		t.Fatalf("pool not saturated: SpawnSlotsInUse()=%d want %d", got, capN)
 	}
 
-	// A terminal spawn MUST succeed within the acquire timeout: the reserved +1
-	// slot is available exclusively for terminal nodes.
 	done := make(chan error, 1)
 	go func() {
 		_, err := terminalReserveFixtureSpawnTerminal(ctx, sub)
@@ -164,7 +114,6 @@ func TestSpawnCap_TerminalNodeNotStarvedBySaturation(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			// Pre-fix: ErrSpawnCapTimeout. Post-fix: nil (reserved slot acquired).
 			t.Fatalf("terminal spawn failed when cap was saturated by non-terminal sessions: %v\n"+
 				"(want nil — reserved +1 slot should be available for terminal/consolidate nodes)",
 				err)
@@ -189,14 +138,12 @@ func TestSpawnCap_NonTerminalStillBlocksAtCap(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Saturate the pool with cap non-terminal sessions (no Kill).
 	for i := 0; i < capN; i++ {
 		if _, err := terminalReserveFixtureSpawnNonTerminal(ctx, sub); err != nil {
 			t.Fatalf("saturating spawn %d failed: %v", i, err)
 		}
 	}
 
-	// A new non-terminal spawn must time out — the reserved slot is terminal-only.
 	done := make(chan error, 1)
 	go func() {
 		_, err := terminalReserveFixtureSpawnNonTerminal(ctx, sub)
@@ -234,7 +181,6 @@ func TestSpawnCap_LeakInvariantUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	for round := 0; round < 10; round++ {
-		// Non-terminal round-trip.
 		sess, err := terminalReserveFixtureSpawnNonTerminal(ctx, sub)
 		if err != nil {
 			t.Fatalf("round %d: non-terminal spawn failed: %v", round, err)
@@ -246,7 +192,6 @@ func TestSpawnCap_LeakInvariantUnchanged(t *testing.T) {
 			t.Fatalf("round %d: after non-terminal Kill, SpawnSlotsInUse()=%d want 0 — slot leaked", round, got)
 		}
 
-		// Terminal round-trip.
 		tSess, err := terminalReserveFixtureSpawnTerminal(ctx, sub)
 		if err != nil {
 			t.Fatalf("round %d: terminal spawn failed: %v", round, err)

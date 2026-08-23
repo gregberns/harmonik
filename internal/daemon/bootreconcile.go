@@ -20,9 +20,6 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
-// reconcileState threads the intermediate values produced by
-// buildReconcileAdapters into the sweep/adopt/reconcile phase of the startup
-// orphan-reconcile (P7). Extracted for giant-retirement boot-config B4.
 type reconcileState struct {
 	projectHash core.ProjectHash
 
@@ -44,11 +41,6 @@ type reconcileState struct {
 	dispatchOwnership DispatchReplayOwnership
 }
 
-// runStartupReconcile prepares the queue namespace before PL-005 / PL-006 step
-// 3. It then runs the boot orphan sweep and in-flight-run reconciliation before
-// any socket or listener bind. Queue namespace recovery errors are fatal.
-// The BI-024a `br` existence check is also fatal. Later sweep and reconciliation
-// errors remain non-fatal.
 func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime time.Time, resolvedTargetBranch string) error {
 	cfg := bs.cfg
 	if cfg.ProjectDir == "" {
@@ -229,12 +221,6 @@ func intentForRun(intents []dispatch.Intent, runID core.RunID) (dispatch.Intent,
 	return dispatch.Intent{}, false
 }
 
-// buildReconcileAdapters constructs the BI bead adapter (with the BI-024a `br`
-// existence check), reads the raw queue.json bead-provenance sets, and extracts
-// the tmux adapter + daemon-own session name from the substrate. It returns a
-// fatal error only when `br` cannot be run at all (exit code 8); no version
-// relationship is checked, and an adapter-construction failure is classified +
-// emitted (non-fatal, queue-less proceed).
 func (bs *bootState) buildReconcileAdapters(ctx context.Context, st *reconcileState) error {
 	cfg := bs.cfg
 
@@ -243,15 +229,10 @@ func (bs *bootState) buildReconcileAdapters(ctx context.Context, st *reconcileSt
 	}
 	bs.loadQueueProvenance(ctx, st)
 
-	// Extract the TmuxAdapter so the sweep can reap windows left by a prior
-	// SIGKILL/OOM/crash (hk-xb5yi), via the package-private substrateWithAdapter.
 	if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
 		st.sweepTmuxAdapter = sa.tmuxAdapter()
 	}
 
-	// hk-9vp51: extract the daemon's own spawn-target session so the orphan sweep
-	// EXCLUDES it (a fresh fallback session has only an idle window at boot and
-	// would otherwise be classified orphaned and killed by the daemon's own sweep).
 	if ss, ok := cfg.Substrate.(substrateWithSessionName); ok {
 		st.daemonOwnSession = ss.daemonSessionName()
 	}
@@ -259,10 +240,6 @@ func (bs *bootState) buildReconcileAdapters(ctx context.Context, st *reconcileSt
 	return nil
 }
 
-// buildBeadAdapters constructs the BI bead adapter and, on success, confirms
-// `br` is runnable per BI-024a and populates the reconcile ledgers/resetters.
-// An adapter-construction failure is classified + emitted (non-fatal); only an
-// unrunnable `br` is fatal (exit code 8).
 func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) error {
 	cfg := bs.cfg
 	if cfg.BrPath == "" {
@@ -270,7 +247,6 @@ func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) 
 	}
 	brAdapter, brAdapterErr := newBrAdapter(bs.hooks, cfg.BrPath, cfg.ProjectDir)
 	if brAdapterErr != nil {
-		// Classify + emit divergence_inconclusive per BI-031b. Non-fatal.
 		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bs.bus)
 		return nil
 	}
@@ -288,16 +264,6 @@ func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) 
 	return nil
 }
 
-// ensureBrRunnable confirms `br` is present and runnable at daemon startup per
-// BI-024a. That is the whole check: the daemon cannot reach the bead ledger
-// without `br`, so an unrunnable `br` emits daemon_startup_failed and returns
-// the exit-code-8 error.
-//
-// No version relationship is asserted. The version pin and the banner parse were
-// removed by operator direction (2026-08-04) — see
-// [brcli.Adapter.CheckBrRunnable] for the evidence. Version skew is now invisible
-// to startup, and a real `br` surface change surfaces as BrSchemaMismatch or
-// BrOther on the call that trips over it.
 func (bs *bootState) ensureBrRunnable(ctx context.Context, brAdapter *brcli.Adapter) error {
 	banner, runnableErr := brAdapter.CheckBrRunnable(ctx)
 	if runnableErr == nil {
@@ -317,25 +283,7 @@ func (bs *bootState) ensureBrRunnable(ctx context.Context, brAdapter *brcli.Adap
 	return fmt.Errorf("daemon.Start: br is not runnable (BI-024a, exit code 8): %w", runnableErr)
 }
 
-// loadQueueProvenance reads every named queue's queue.json (hk-2ty0g, widened to
-// all queues by hk-nddg1) into the QueueOwned / QueueDispatched provenance sets for
-// the orphan-sweep bead-reset. Non-fatal: enumerate/load errors yield partial (or
-// empty) sets and the sweep falls back to intent-log provenance only (PL-006 sixth
-// bullet).
 func (bs *bootState) loadQueueProvenance(ctx context.Context, st *reconcileState) {
-	// hk-nddg1: aggregate provenance across ALL named queues, not just main.
-	// Dispatch happens from every named queue (queue.EnumerateQueueNames — see
-	// LoadStartupQueues and the Class-B reconcile pass in reconciliationcadence),
-	// so a bead dispatched via a crew queue (e.g. queues/paul.json) must contribute
-	// to QueueOwned / QueueDispatched. Reading main.json alone let the orphan sweep
-	// miss a crew-queue bead's dispatched-sentinel: SweepStaleInProgressBeads reset
-	// it in_progress->open (the a-queue exclusion at orphansweepbeads.go did not
-	// fire because the bead was absent from the main-only QueueDispatched set), and
-	// LoadStartupQueues then re-dispatched it from its still-"dispatched" crew queue
-	// = double-dispatch (the hk-2ty0g regression reintroduced for every non-main
-	// queue). Non-fatal: enumerate/load errors fall back to whatever provenance was
-	// gathered (or intent-log-only if none). EnumerateQueueNames includes main
-	// (main.json lives in .harmonik/queues/), so this strictly widens coverage.
 	names, enumErr := queue.EnumerateQueueNames(bs.cfg.ProjectDir)
 	if enumErr != nil {
 		log.Printf("warn: pre-sweep EnumerateQueueNames failed: %v — falling back to intent-log-only provenance", enumErr)
@@ -363,11 +311,6 @@ func (bs *bootState) loadQueueProvenance(ctx context.Context, st *reconcileState
 	}
 }
 
-// runOrphanSweepAndAdopt runs the orphan sweep, emits daemon_orphan_sweep_completed,
-// adopts dead run-sessions, reconciles pre-restart in-flight runs, and emits the
-// RC-020a reconciliation_started/completed markers. All steps are non-fatal
-// (PL-006: never abort Start on sweep error). Runs BEFORE loadStartupQueues so
-// QM-002a sees open (not in_progress) beads (QM-002a ordering, hk-o85ye).
 func (bs *bootState) runOrphanSweepAndAdopt(ctx context.Context, daemonStartTime time.Time, st *reconcileState) {
 	cfg := bs.cfg
 	bus := bs.bus
@@ -381,21 +324,15 @@ func (bs *bootState) runOrphanSweepAndAdopt(ctx context.Context, daemonStartTime
 	)
 	st.sweepResult = sweepResult
 
-	// Build and emit daemon_orphan_sweep_completed (§8.7.14, O-class). Do NOT
-	// abort Start on sweep error per PL-006.
 	sweepPayloadBytes, sweepMarshalErr := json.Marshal(sweepResult.ToPayload())
 	if sweepMarshalErr != nil {
 		sweepPayloadBytes = []byte(`{}`)
 	}
 	if sweepEmitErr := bus.Emit(ctx, core.EventTypeDaemonOrphanSweepCompleted, sweepPayloadBytes); sweepEmitErr != nil {
-		// Non-fatal: bus emit failure at this stage does not block startup.
 		_ = sweepEmitErr
 	}
-	// Sweep errors are non-fatal (PL-006): recorded, never abort Start.
 	_ = sweepErr
 
-	// hk-o85ye: reset beads for bead-runs whose independent tmux sessions have
-	// already exited. Must run before LoadQueueAtStartup (QM-002a). Non-fatal.
 	adoptDeadRunSessions(
 		ctx,
 		cfg.ProjectDir,
@@ -406,10 +343,8 @@ func (bs *bootState) runOrphanSweepAndAdopt(ctx context.Context, daemonStartTime
 		st.beadResetter,
 	)
 
-	// Reconcile pre-restart in-flight runs (hk-r73qr / hk-iwu8a).
 	bs.reconcileInFlightRuns(ctx, daemonStartTime, st)
 
-	// RC-020a dispatch point (a): reconciliation_started + _completed markers.
 	bs.emitReconciliationMarkers(ctx, sweepResult)
 }
 
@@ -440,34 +375,13 @@ func (bs *bootState) orphanSweepConfig(daemonStartTime time.Time, st *reconcileS
 	}
 }
 
-// reconcileInFlightRuns reconciles pre-restart in-flight runs: for any run with
-// run_started but no terminal event, emit run_failed (hk-r73qr). Orphans are also
-// sourced from the live dispatch-tracker (queueDispatched) so a bead crashed-on
-// before any run_started still clears its dispatch-lock (hk-iwu8a); genuinely-live
-// runs (in .harmonik/runs/) are excluded. Skipped when no JSONL log is configured,
-// and skipped whole when the run registry cannot be read (see below).
 func (bs *bootState) reconcileInFlightRuns(ctx context.Context, daemonStartTime time.Time, st *reconcileState) {
 	cfg := bs.cfg
 	if cfg.JSONLLogPath == "" {
 		return
 	}
-	// The registry is the only statement that an agent is still working a bead.
-	// runpkg.ScanRegistry is all-or-nothing: one torn write under .harmonik/runs/
-	// and it answers with an error rather than the records it could parse. The
-	// empty set that error leaves behind reads exactly like "no run survived the
-	// restart", and every use of liveRunBeadIDs below is an EXCLUSION — so an
-	// empty set excludes nothing and the reconcile reports a live run failed and
-	// puts its bead back on the queue. A second agent is then dispatched onto
-	// work that is already in hand.
-	//
-	// So the reconcile stands down for this boot. It emits no run_failed and it
-	// resets no bead, because both effects need a live run to be excluded and
-	// this boot cannot name one. The cost is a wedged queue item that waits for
-	// the next boot, which any later boot can still clear.
 	registry, liveErr := runpkg.ScanRegistry(cfg.ProjectDir)
 	if liveErr != nil {
-		// The daemon injects no logger here, so this goes to the standard one.
-		// A message routed anywhere else is silent in the deployment that needs it.
 		log.Printf("daemon: reconcileInFlightRuns: THE RUN REGISTRY COULD NOT BE READ (%v). "+
 			"This boot cannot tell a live run from one the crash left behind, so it will mark no "+
 			"run failed and reset no bead. A queue item held by a crashed run stays dispatched "+
@@ -484,9 +398,6 @@ func (bs *bootState) reconcileInFlightRuns(ctx context.Context, daemonStartTime 
 	for _, rec := range registry.Dispatch {
 		liveRunBeadIDs[rec.BeadID] = struct{}{}
 	}
-	// hk-hju8n: snapshot the resettable-bead set in two bulk `br list` calls so the
-	// reconcile does an O(1) map lookup per bead. On any bulk-list error the cache
-	// is nil and we fall back to the per-bead reader.
 	reconcileStatusReader := st.orphanStatusReader
 	if lister, ok := st.orphanStatusReader.(bulkBeadLister); ok && lister != nil {
 		if cached := newCachedOrphanStatusReader(ctx, lister); cached != nil {
@@ -507,9 +418,6 @@ func (bs *bootState) reconcileInFlightRuns(ctx context.Context, daemonStartTime 
 	)
 }
 
-// emitReconciliationMarkers emits reconciliation_started{trigger:"startup"} then
-// reconciliation_completed immediately after, so a hung startup reconciliation is
-// detectable (F6/hk-mptxw, hk-63oh.21). Non-fatal.
 func (bs *bootState) emitReconciliationMarkers(ctx context.Context, sweepResult OrphanSweepResult) {
 	startupRunUID, startupUIDErr := uuid.NewV7()
 	if startupUIDErr != nil {
@@ -540,9 +448,6 @@ func (bs *bootState) emitReconciliationMarkers(ctx context.Context, sweepResult 
 	}
 }
 
-// runCatBLSweeps runs the RC-020a Cat-BL1 (child-bead orphan) and Cat-BL3
-// (merge-conflict-log audit) startup sweeps. Both are non-fatal and do not block
-// daemon startup.
 func (bs *bootState) runCatBLSweeps(ctx context.Context, resolvedTargetBranch string) {
 	cfg := bs.cfg
 	bus := bs.bus

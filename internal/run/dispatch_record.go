@@ -98,8 +98,6 @@ func (r DispatchRecord) Validate() error {
 	return validateStartedAt(r.StartedAt)
 }
 
-// validateIdentity checks the facts that name the run: the record schema, the
-// run and queue identifiers, the bead, and the queue name.
 func (r DispatchRecord) validateIdentity() error {
 	if r.SchemaVersion != dispatchRecordSchemaVersion {
 		return fmt.Errorf("run: dispatch record schema_version must be %d", dispatchRecordSchemaVersion)
@@ -120,9 +118,6 @@ func (r DispatchRecord) validateIdentity() error {
 	return nil
 }
 
-// validateClaim checks the facts the claim wrote: the position in the queue, the
-// transition that took the item, the commit the run starts from, and the
-// repository the run works in.
 func (r DispatchRecord) validateClaim() error {
 	if r.GroupIndex < 0 || r.ItemIndex < 0 {
 		return errors.New("run: dispatch record indexes must be non-negative")
@@ -139,8 +134,6 @@ func (r DispatchRecord) validateClaim() error {
 	return nil
 }
 
-// validateExecutionLocation accepts a record that names no location yet, and
-// holds a named location to its own rules and to this record's repository.
 func (r DispatchRecord) validateExecutionLocation() error {
 	if r.Location == nil {
 		return nil
@@ -151,9 +144,6 @@ func (r DispatchRecord) validateExecutionLocation() error {
 	return r.Location.validateRepository(r.RepositoryPath)
 }
 
-// validateTargetBinding checks the tmux session and window. The two names are
-// bound together, they come after the execution location, and neither may carry
-// surrounding space or a control character.
 func (r DispatchRecord) validateTargetBinding() error {
 	if (r.SessionName != "" || r.WindowName != "") && r.Location == nil {
 		return errors.New("run: dispatch record cannot bind a target before execution location")

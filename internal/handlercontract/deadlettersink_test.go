@@ -16,7 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// deadLetterFixtureMakeEnvelope builds a minimal valid EventEnvelope for tests.
 func deadLetterFixtureMakeEnvelope(t *testing.T) core.EventEnvelope {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -44,8 +43,6 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDeadLetterSink: %v", err)
 	}
-	// Safety net for the t.Fatalf paths below; the happy path closes explicitly
-	// and this second Close then reports os.ErrClosed, which is expected.
 	defer func() {
 		if cerr := sink.Close(); cerr != nil && !errors.Is(cerr, os.ErrClosed) {
 			t.Errorf("deferred sink.Close: %v", cerr)
@@ -102,7 +99,6 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 			}
 		}
 
-		// recorded_at must parse as RFC3339Nano.
 		var recordedAt string
 		if err := json.Unmarshal(obj["recorded_at"], &recordedAt); err != nil {
 			t.Errorf("line %d: recorded_at not a string: %v", i+1, err)
@@ -110,7 +106,6 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 			t.Errorf("line %d: recorded_at not RFC3339Nano: %v", i+1, err)
 		}
 
-		// reason must match expected.
 		var gotReason string
 		if err := json.Unmarshal(obj["reason"], &gotReason); err != nil {
 			t.Errorf("line %d: reason not a string: %v", i+1, err)
@@ -118,7 +113,6 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 			t.Errorf("line %d: reason = %q, want %q", i+1, gotReason, reasons[i])
 		}
 
-		// envelope must be a non-empty object.
 		var env map[string]json.RawMessage
 		if err := json.Unmarshal(obj["envelope"], &env); err != nil {
 			t.Errorf("line %d: envelope not a JSON object: %v", i+1, err)

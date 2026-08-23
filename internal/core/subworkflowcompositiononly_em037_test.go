@@ -2,16 +2,6 @@ package core
 
 import "testing"
 
-// subwfCompositionOnlyFixture returns a Workflow that composes behavior via a
-// sub-workflow node referencing a named sub-workflow, per EM-037.
-//
-// EM-037: A workflow MUST NOT extend, inherit, or runtime-rewrite another
-// workflow. Composition MUST be exclusively via sub-workflow nodes referencing
-// named sub-workflows resolved at workflow-load time.
-//
-// The fixture encodes a parent workflow "orchestrator" containing one
-// sub-workflow node referencing a child workflow "review-pipeline". The
-// sub-workflow node is the only composition mechanism present.
 func subwfCompositionOnlyFixture(t *testing.T) Workflow {
 	t.Helper()
 
@@ -28,13 +18,6 @@ func subwfCompositionOnlyFixture(t *testing.T) Workflow {
 	}
 }
 
-// subwfCompositionOnlyFixtureSubWorkflowNode returns a Node of type
-// sub-workflow — the ONLY node type permitted to encode workflow composition
-// per EM-037. Its SubWorkflowRef names the sub-workflow resolved at
-// workflow-load time.
-//
-// The node is built from b3f73NodeSubWorkflow and has its SubWorkflowRef
-// overridden to "review-pipeline" to name the composed sub-workflow.
 func subwfCompositionOnlyFixtureSubWorkflowNode(t *testing.T) Node {
 	t.Helper()
 
@@ -88,9 +71,6 @@ func TestSubWorkflowCompositionOnly_NoExtensionField(t *testing.T) {
 
 	w := subwfCompositionOnlyFixture(t)
 
-	// A workflow may only reference other workflows via sub-workflow nodes.
-	// Enumerate all nodes and confirm only NodeTypeSubWorkflow nodes carry
-	// sub-workflow references; no other node type may reference another workflow.
 	for i, n := range w.Nodes {
 		if n.Type != NodeTypeSubWorkflow && n.SubWorkflowRef != nil {
 			t.Errorf("node[%d] type=%q has non-nil SubWorkflowRef, want nil (EM-037: only sub-workflow nodes may reference another workflow)",

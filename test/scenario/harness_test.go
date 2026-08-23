@@ -47,10 +47,8 @@ import (
 	"github.com/gregberns/harmonik/internal/testhelpers/hermetic"
 )
 
-// twinBinaryPath is set by TestMain after the twin binary is built once.
 var twinBinaryPath string
 
-// codexTwinBinaryPath is set by TestMain after harmonik-twin-codex is built.
 var codexTwinBinaryPath string
 
 // TestMain builds the harmonik-twin-claude and harmonik-twin-codex binaries
@@ -89,17 +87,12 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// scenarioFixtureBuildTwin builds cmd/harmonik-twin-claude into a temp directory
-// and returns its absolute path.
-//
-// On failure, a descriptive error is returned and TestMain fails the tier.
 func scenarioFixtureBuildTwin() (string, error) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
 		return "", err
 	}
 
-	// Derive the module root from go env GOMOD.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -132,10 +125,6 @@ func scenarioFixtureBuildTwin() (string, error) {
 	return binPath, nil
 }
 
-// scenarioFixtureBuildCodexTwin builds cmd/harmonik-twin-codex into a temp
-// directory and returns its absolute path.
-//
-// On failure, a descriptive error is returned and TestMain fails the tier.
 func scenarioFixtureBuildCodexTwin() (string, error) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
@@ -174,7 +163,6 @@ func scenarioFixtureBuildCodexTwin() (string, error) {
 	return binPath, nil
 }
 
-// buildError wraps a go-build failure with its combined output.
 type buildError struct {
 	out string
 	err error
@@ -184,57 +172,15 @@ func (e *buildError) Error() string {
 	return "go build failed: " + e.err.Error() + "\n" + e.out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// scenarioFixtureProjectDir — per-test temp project directory
-// ─────────────────────────────────────────────────────────────────────────────
-
-// scenarioFixtureProjectResult holds paths for a single scenario's project tree.
 type scenarioFixtureProjectResult struct {
 	projectDir string
 	jsonlPath  string
 	sockPath   string
 }
 
-// scenarioFixtureProjectDir creates a minimal harmonik project directory:
-//   - .harmonik/events/    (for events.jsonl)
-//   - .harmonik/beads-intents/  (intent-log protocol)
-//
-// Returns paths for the project dir, JSONL log, and daemon socket.
-//
-// # The returned projectDir is ALREADY SYMLINK-RESOLVED. Do not re-derive it.
-//
-// The socket path has to fit the platform sun_path limit, and the string that
-// has to fit is the one the kernel is handed — not the one t.TempDir() returned.
-// On darwin those differ: t.TempDir() hands back a path under /var, /var is a
-// symlink to /private/var, and resolving it adds exactly 8 bytes. The /tmp
-// fallback below has the same property (/tmp → /private/tmp, also 8 bytes).
-//
-// This helper used to measure the UNRESOLVED path and then hand callers a
-// directory they resolved themselves before building the socket path from it.
-// Guard and use were therefore measuring two different strings, with the guard
-// always the more optimistic of the two by those 8 bytes. That is not a
-// theoretical margin: a test named TestPathProbe produces an unresolved path of
-// 98 bytes, which the old guard accepted, and a resolved path of 106 bytes,
-// which the kernel rejects. Every scenario test name currently in the tree happens
-// to be long enough to force the /tmp fallback, which is the only reason this
-// never fired — it was one short test name from a bind failure reported as
-// "isolated daemon socket did not start".
-//
-// So: resolve first, then measure, and return the resolved path so no caller
-// has to resolve it again. Use lifecycle.ValidateSocketPathLength rather than
-// re-spelling the limit, because a second copy of the number is how the two
-// strings drifted apart in the first place. Note it is NOT a pre-flight the
-// daemon itself runs: daemon.Serve binds with no length check, and the only
-// production caller of this validator is the remote-tunnel pre-flight in
-// workloop_runplan.go. It is the right shared spelling of the limit, not a
-// mirror of something on the bind path.
-//
-// All created paths are under a directory registered for t.Cleanup removal.
 func scenarioFixtureProjectDir(t *testing.T) scenarioFixtureProjectResult {
 	t.Helper()
 
-	// resolve returns the symlink-resolved form of dir, which is what the
-	// kernel will actually see when the socket under it is bound.
 	resolve := func(dir string) string {
 		resolved, err := filepath.EvalSymlinks(dir)
 		if err != nil {
@@ -257,9 +203,6 @@ func scenarioFixtureProjectDir(t *testing.T) scenarioFixtureProjectResult {
 	}
 
 	sockPath := sockUnder(projectDir)
-	// Say it here, in one line. Without this the same mistake surfaces seconds
-	// later as "isolated daemon socket did not start", which points at the
-	// daemon instead of at the path it was given.
 	if err := lifecycle.ValidateSocketPathLength(sockPath); err != nil {
 		t.Fatalf("scenarioFixtureProjectDir: no bindable socket path for this test: %v", err)
 	}
@@ -281,12 +224,6 @@ func scenarioFixtureProjectDir(t *testing.T) scenarioFixtureProjectResult {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// JSONL event capture and assertion helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// scenarioFixtureReadJSONLLines reads all non-empty JSONL lines from path.
-// Returns nil (not an error) when the file does not yet exist.
 func scenarioFixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -309,9 +246,6 @@ func scenarioFixtureReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// scenarioFixturePollJSONLForEvent polls the JSONL log at path at 10 ms
-// intervals for up to budget. Returns true if any line contains all of the
-// provided needles.
 func scenarioFixturePollJSONLForEvent(t *testing.T, path string, needles []string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -327,7 +261,6 @@ func scenarioFixturePollJSONLForEvent(t *testing.T, path string, needles []strin
 	return false
 }
 
-// scenarioFixtureLineContainsAll reports whether line contains every needle.
 func scenarioFixtureLineContainsAll(line string, needles []string) bool {
 	for _, n := range needles {
 		if !strings.Contains(line, n) {
@@ -337,14 +270,6 @@ func scenarioFixtureLineContainsAll(line string, needles []string) bool {
 	return true
 }
 
-// scenarioEventSequence asserts that the JSONL lines collected in jsonlLines
-// contain eventTypes as a subsequence (each type appears in order; additional
-// events between them are tolerated).
-//
-// The "type" field in each JSONL object is matched against eventTypes[i].
-//
-// Returns true if the full sequence is matched; callers use this for test
-// assertions.
 func scenarioEventSequence(t *testing.T, jsonlLines []string, eventTypes []string) bool {
 	t.Helper()
 
@@ -362,7 +287,6 @@ func scenarioEventSequence(t *testing.T, jsonlLines []string, eventTypes []strin
 			_ = json.Unmarshal(raw, &et)
 		}
 		if et == "" {
-			// Progress-stream NDJSON uses "type" (not "event_type").
 			if raw, ok := obj["type"]; ok {
 				_ = json.Unmarshal(raw, &et)
 			}
@@ -374,15 +298,6 @@ func scenarioEventSequence(t *testing.T, jsonlLines []string, eventTypes []strin
 	return wi >= len(eventTypes)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// daemon.Start wrapper: boots the daemon in a goroutine, returns cancel + done
-// ─────────────────────────────────────────────────────────────────────────────
-
-// scenarioFixtureStartDaemon launches daemon.Start in a goroutine with the
-// supplied Config. Returns a cancel function and a channel that receives the
-// Start error when the daemon exits.
-//
-// Callers MUST call cancel() (or defer it) to shut the daemon down cleanly.
 func scenarioFixtureStartDaemon(t *testing.T, cfg daemon.Config) (cancel func(), done <-chan error) {
 	t.Helper()
 	ctx, cancelFn := context.WithCancel(t.Context())
@@ -393,9 +308,6 @@ func scenarioFixtureStartDaemon(t *testing.T, cfg daemon.Config) (cancel func(),
 	return cancelFn, ch
 }
 
-// scenarioFixtureWaitDaemon waits for the daemon goroutine to exit within
-// budget after cancel() has been called. Fails the test if the deadline is
-// exceeded or the daemon returned a non-nil error.
 func scenarioFixtureWaitDaemon(t *testing.T, done <-chan error, budget time.Duration) {
 	t.Helper()
 	select {
@@ -408,9 +320,6 @@ func scenarioFixtureWaitDaemon(t *testing.T, done <-chan error, budget time.Dura
 	}
 }
 
-// scenarioFixturePollSocket polls for a Unix-domain socket file at sockPath at
-// 5 ms intervals for up to budget. Returns true if the socket is found with
-// mode 0600.
 func scenarioFixturePollSocket(sockPath string, budget time.Duration) bool {
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
@@ -423,20 +332,6 @@ func scenarioFixturePollSocket(sockPath string, budget time.Duration) bool {
 	return false
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// stubScenarioLedger — in-memory bead ledger for scenario tests
-// ─────────────────────────────────────────────────────────────────────────────
-
-// These are re-declared here so the scenario package is self-contained and does
-// not import internal/daemon's test-only stubs.
-
-// The stubScenarioLedger and stubScenarioCollector below are used by scenarios
-// that exercise the work loop via ExportedTestRuntime / ExportedRunWorkLoop
-// rather than daemon.Start. Scenarios that test the full Start path use the
-// real daemon.Config with BrPath="" (skips the work loop).
-
-// scenarioCheckRunCompleted polls the JSONL log for a run_completed or run_failed
-// event within budget.
 func scenarioCheckRunCompleted(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)

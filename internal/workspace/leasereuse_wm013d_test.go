@@ -24,8 +24,6 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 	t.Run("new-run-gets-new-canonical-path", func(t *testing.T) {
 		t.Parallel()
 
-		// Run A is released. Run B (same bead, new run_id per WM-034) MUST get
-		// a fresh canonical path derived from its new run_id.
 		repo, sha := tempRepo(t)
 
 		runIDA := "0196a1b2-c3d4-713d-8a1b-aaaaaaaaaaaa"
@@ -43,24 +41,19 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
 		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 
-		// Release run A's lease.
 		leaseFixtureReleaseLock(t, leaseLockPathA)
 
-		// Run A's directory MAY persist on disk per WM-031.
 		if _, err := os.Stat(worktreePathA); err != nil {
 			t.Fatalf("WM-013d: run A worktree dir absent after release; WM-031 allows it to persist: %v", err)
 		}
-		// But run A's lease-lock is absent.
 		if _, err := os.Stat(leaseLockPathA); !os.IsNotExist(err) {
 			t.Errorf("WM-013d: run A lease-lock still present after release; want absent")
 		}
 
-		// Run B: fresh run_id, fresh canonical path.
 		runIDB := "0196a1b2-c3d4-713d-8a1b-bbbbbbbbbbbb"
 		worktreePathB := filepath.Join(repo, ".harmonik", "worktrees", runIDB)
 		branchB := "run/" + runIDB
 
-		// Run B's canonical path MUST differ from run A's.
 		if worktreePathA == worktreePathB {
 			t.Errorf("WM-013d: run A and run B canonical paths are identical %q; want distinct", worktreePathA)
 		}
@@ -77,7 +70,6 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		leaseLockPathB := leaseFixtureLeaseLockPath(worktreePathB)
 		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now()))
 
-		// Run B's lease is at its own canonical path, not run A's.
 		if _, err := os.Stat(leaseLockPathB); err != nil {
 			t.Errorf("WM-013d: run B lease-lock absent at %q: %v", leaseLockPathB, err)
 		}
@@ -89,12 +81,6 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 	t.Run("reuse-of-released-path-for-different-run-id-violates-invariant", func(t *testing.T) {
 		t.Parallel()
 
-		// Negative test: assert that attempting to write a lease-lock for a
-		// DIFFERENT run_id into an existing worktree directory (run A's path) is
-		// detectable as an invariant violation.
-		//
-		// Spec ref: WM-INV-005 (canonical-path invariant) — the canonical path is
-		// a function of run_id; two distinct run_ids MUST yield distinct paths.
 		repo, sha := tempRepo(t)
 
 		runIDA := "0196a1b2-c3d4-713d-8a1b-cccccccccccc"
@@ -113,29 +99,18 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 		leaseFixtureReleaseLock(t, leaseLockPathA) // release run A
 
-		// A new run B tries to REUSE run A's path by writing its own run_id to
-		// the lease-lock at run A's canonical path. This is an invariant violation.
-		// Detect it by verifying that the run_id in the lock at that path would
-		// not match the path's embedded run_id.
 		runIDB := "0196a1b2-c3d4-713d-8a1b-dddddddddddd"
-		// If B's canonical path were constructed correctly, it would be a different directory.
 		expectedPathForB := filepath.Join(repo, ".harmonik", "worktrees", runIDB)
 		if expectedPathForB == worktreePathA {
 			t.Fatalf("WM-013d: run B canonical path accidentally equals run A path; test setup error")
 		}
 
-		// Simulate the violation: write run B's lock data at run A's path.
-		// In production, the workspace manager MUST NOT do this. We write it here
-		// to verify that the path/run_id disagreement is detectable.
 		badLockContent := leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now())
 		if err := os.WriteFile(leaseLockPathA, badLockContent, 0o600); err != nil {
 			t.Fatalf("WM-013d: WriteFile (simulated violation): %v", err)
 		}
 
-		// Detection: the lock file at run A's path contains run B's run_id.
-		// A well-formed workspace manager would detect this mismatch.
 		data := mustReadFile(t, leaseLockPathA)
-		// The path contains runIDA but the content claims runIDB — a violation.
 		if leaseFixtureFindSubstring(string(data), runIDA) {
 			t.Errorf("WM-013d: lock at run A's path claims run A's run_id; want run B's (simulated violation)")
 		}

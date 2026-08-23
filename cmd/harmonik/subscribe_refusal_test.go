@@ -1,38 +1,5 @@
 package main
 
-// subscribe_refusal_test.go — the daemon can REFUSE a subscribe request, and a
-// client that never reads the response envelope cannot tell that refusal from a
-// normal empty stream.
-//
-// The refusal is a single JSON object written by writeSocketResponse, after
-// which the daemon closes the connection:
-//
-//	{"ok":false,"error":"daemon: SubscribeHandler not registered"}
-//
-// A client that decodes stream lines as EVENTS sees an object with no "type",
-// skips it as unrecognised, reads EOF, and reports a clean finish. The daemon
-// is correct here; every defect below is downstream, in cmd/harmonik.
-//
-// Three clients already guard the envelope (`comms recv --follow`,
-// `comms recv --wait`, `subscribe --follow`). The four tested here do not:
-//
-//   - `harmonik subscribe` (non-follow) io.Copy's the refusal to stdout as if it
-//     were an event line and exits 0. Anything consuming that stream — including
-//     the scratch batch's event capture — folds a refusal into "no events".
-//   - `harmonik decisions wait` exits 0 with no output, so a blocked agent
-//     silently unblocks. specs/hitl-decisions.md N5/N8 make waiting on an open
-//     subscribe stream a MUST for a blocked agent, so this is a conformance
-//     break and not only a bad message.
-//   - `harmonik smoke` reports a timeout, blaming the daemon for never emitting
-//     the signals it was never subscribed to.
-//   - `harmonik run` (via daemon) exits 1 but names no cause.
-//
-// Bead ref: hk-1dwk2.
-//
-// These tests are written BEFORE the fix and are EXPECTED TO FAIL on the commit
-// that introduces them. What turns them green is an envelope guard shared by
-// every subscribe client.
-
 import (
 	"bytes"
 	"context"
@@ -45,29 +12,10 @@ import (
 	"time"
 )
 
-// refusalReply is the exact envelope internal/daemon/socket.go handleSubscribe
-// writes when no SubscribeHandler is registered (the subsystem is switched off).
 func refusalReply() map[string]any {
 	return map[string]any{"ok": false, "error": "daemon: SubscribeHandler not registered"}
 }
 
-// captureStd redirects os.Stdout and os.Stderr for the duration of fn and
-// returns what was written to each. It mutates process globals, so no test
-// using it may call t.Parallel().
-//
-// EVERY DESCRIPTOR IT OPENS, IT CLOSES. This helper used to close the two WRITE
-// ends and drop the two READ ends on the floor. Six callers, so twelve
-// descriptors leaked for the life of the cmd/harmonik test binary. The write
-// ends had to be closed because closing them is what delivers EOF to the
-// readers; the read ends had nothing forcing the issue, and so nobody noticed.
-//
-// That is the same shape as the leak repaired in
-// internal/daemon/run_terminal_writer_lifetime_test.go, where an unclosed FIFO
-// write end was inherited by a forked child and wedged a test for 58 seconds. It
-// is milder here — os.Pipe descriptors are close-on-exec, so no child inherits
-// these — but "milder" is a property of this call site, not of the habit. A test
-// helper that opens four descriptors and closes two is one refactor away from
-// being the expensive kind.
 func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 	outR, outW, err := os.Pipe()
@@ -78,21 +26,9 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	if err != nil {
 		t.Fatalf("pipe stderr: %v", err)
 	}
-	// Closed after the drains finish, not deferred: a deferred close would race
-	// the ReadAll goroutines, which are still reading when this function returns
-	// its values.
 	origOut, origErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outW, errW
 
-	// A read fault here truncates the captured stream, and a truncated stream is
-	// indistinguishable from "the command printed nothing".
-	//
-	// An earlier version of this appended the error text to the captured string.
-	// A reviewer showed that was only half a fix: every stderr assertion in this
-	// file is a POSITIVE Contains, so a truncated stderr does fail — but the
-	// stdout assertion is a NEGATIVE Contains, and a truncated stdout satisfies
-	// it silently. So the read error is reported here instead, where it cannot
-	// depend on the polarity of a downstream assertion.
 	type capture struct {
 		text string
 		err  error
@@ -113,7 +49,6 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	_ = outW.Close()
 	_ = errW.Close()
 	outCap, errCap := <-outCh, <-errCh
-	// Both ReadAll calls have returned, so nothing is reading these any more.
 	_ = outR.Close()
 	_ = errR.Close()
 	if outCap.err != nil {
@@ -192,12 +127,6 @@ func TestSmokeWatchSignals_DaemonRefusalIsReported(t *testing.T) {
 	}
 }
 
-// The three clients below already guarded the envelope before this change
-// (landed as hk-62r8w) but had NO test — the mutation that proved the four
-// tests above are load-bearing turned nothing else red. They now share the same
-// predicate as everything else, so a change to it must fail here too, otherwise
-// consolidating the guard would have removed the only reason to keep it right.
-
 // TestSubscribeFollow_DaemonRefusalStopsInsteadOfReconnecting pins that a
 // refusal ends `subscribe --follow` rather than sending it round the reconnect
 // loop. A refusal is permanent for this connection: the daemon is up and has
@@ -205,8 +134,6 @@ func TestSmokeWatchSignals_DaemonRefusalIsReported(t *testing.T) {
 func TestSubscribeFollow_DaemonRefusalStopsInsteadOfReconnecting(t *testing.T) {
 	d := startFakeDaemon(t, replyOnce(refusalReply()))
 
-	// The context bounds a regression: without the guard this reconnects for
-	// ever, and the test must fail rather than hang.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -290,8 +217,6 @@ func TestRunViaDaemon_DaemonRefusalIsNamed(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// The fake daemon replies only after it decodes one request, so send the
-	// same subscribe request runViaDaemon sends.
 	req, err := json.Marshal(map[string]any{
 		"op":                "subscribe",
 		"types":             []string{"queue_group_completed"},

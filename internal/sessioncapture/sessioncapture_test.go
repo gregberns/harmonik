@@ -33,7 +33,6 @@ func TestInputVerbatim(t *testing.T) {
 	ws := t.TempDir()
 	s := mustOpen(t, Config{WorkspacePath: ws, SessionID: "sess-in"})
 
-	// A payload that LOOKS like it holds a secret: INPUT must NOT scrub it.
 	payload := `{"method":"turn/start","apiKey":"sk-ant-shouldNOTbescrubbed12345"}` + "\n"
 	if _, err := s.Input().Write([]byte(payload)); err != nil {
 		t.Fatalf("input write: %v", err)
@@ -72,7 +71,6 @@ func TestOutputScrub(t *testing.T) {
 	if !strings.Contains(got, redactedSentinel) {
 		t.Fatalf("OUTPUT missing the redaction sentinel: %q", got)
 	}
-	// The non-secret surrounding structure survives.
 	if !strings.Contains(got, `"event":"log"`) {
 		t.Fatalf("OUTPUT over-scrubbed non-secret content: %q", got)
 	}
@@ -87,7 +85,6 @@ func TestOutputScrubEscapedQuoteInValue(t *testing.T) {
 	ws := t.TempDir()
 	s := mustOpen(t, Config{WorkspacePath: ws, SessionID: "sess-esc"})
 
-	// The secret value is `abc"def` JSON-encoded as `abc\"def`.
 	line := `{"event":"log","token":"abc\"def"}` + "\n"
 	if _, err := s.Output().Write([]byte(line)); err != nil {
 		t.Fatalf("output write: %v", err)
@@ -95,14 +92,12 @@ func TestOutputScrubEscapedQuoteInValue(t *testing.T) {
 	mustClose(t, s)
 
 	got := readFile(t, filepath.Join(s.Dir(), wireOutFile))
-	// The tail after the escaped quote must NOT leak.
 	if strings.Contains(got, "def") {
 		t.Fatalf("OUTPUT leaked the secret tail past the escaped quote: %q", got)
 	}
 	if !strings.Contains(got, redactedSentinel) {
 		t.Fatalf("OUTPUT missing the redaction sentinel: %q", got)
 	}
-	// Non-secret surrounding structure survives.
 	if !strings.Contains(got, `"event":"log"`) {
 		t.Fatalf("OUTPUT over-scrubbed non-secret content: %q", got)
 	}
@@ -141,7 +136,6 @@ func TestCaptureLogWritten(t *testing.T) {
 	if !strings.Contains(ledger, "sess-a") || !strings.Contains(ledger, "sess-b") {
 		t.Fatalf("CAPTURE-LOG missing a session row:\n%s", ledger)
 	}
-	// Header present exactly once (append-not-clobber).
 	if n := strings.Count(ledger, "Session capture ledger"); n != 1 {
 		t.Fatalf("CAPTURE-LOG header count = %d, want 1", n)
 	}
@@ -155,7 +149,6 @@ func TestRetentionKeepN(t *testing.T) {
 	root := filepath.Join(ws, ".harmonik", "sessions")
 	clk := substrate.NewFakeClock(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC))
 
-	// Open 5 sessions with KeepN=2. Stagger mtimes so "recency" is deterministic.
 	base := time.Now().Add(-time.Hour)
 	for i := 0; i < 5; i++ {
 		id := "sess-" + string(rune('0'+i))
@@ -163,14 +156,11 @@ func TestRetentionKeepN(t *testing.T) {
 		if err := s.Close(); err != nil {
 			t.Fatalf("close: %v", err)
 		}
-		// Bump mtime so later sessions are strictly newer.
 		mt := base.Add(time.Duration(i) * time.Minute)
 		if err := os.Chtimes(s.Dir(), mt, mt); err != nil {
 			t.Fatalf("chtimes: %v", err)
 		}
 	}
-	// The final Open ran retention over the prior dirs; run one more to prune
-	// against the freshly-staged mtimes.
 	s := mustOpen(t, Config{WorkspacePath: ws, SessionID: "sess-final", KeepN: 2, Clock: clk})
 	mustClose(t, s)
 
@@ -180,10 +170,6 @@ func TestRetentionKeepN(t *testing.T) {
 	}
 }
 
-// setModTime back-dates dir and returns the mod-time the FILESYSTEM actually
-// wrote, which is not always the one asked for — a filesystem may truncate it.
-// Every age in this file is measured from the value that came back, so the
-// arithmetic is exact rather than approximately right.
 func setModTime(t *testing.T, dir string, want time.Time) time.Time {
 	t.Helper()
 	if err := os.Chtimes(dir, want, want); err != nil {
@@ -230,24 +216,16 @@ func TestRetentionAgePrune(t *testing.T) {
 	ws := t.TempDir()
 	root := filepath.Join(ws, ".harmonik", "sessions")
 
-	// Stage both dirs with the age arm OFF (MaxAge unset), so nothing is pruned
-	// while the fixture is still being built.
 	oldSess := mustOpen(t, Config{WorkspacePath: ws, SessionID: "old", KeepN: 100})
 	mustClose(t, oldSess)
 	freshSess := mustOpen(t, Config{WorkspacePath: ws, SessionID: "fresh", KeepN: 100})
 	mustClose(t, freshSess)
 
-	// Plant the two mtimes, then read back what landed and anchor virtual now on
-	// it. The trigger Open below stamps its own dir at real now, so the anchor
-	// has to track real time — that is what makes the two clocks commensurate.
 	freshMT := setModTime(t, freshSess.Dir(), time.Now().Add(-freshAge))
 	now := freshMT.Add(freshAge)
 	oldMT := setModTime(t, oldSess.Dir(), now.Add(-staleAge))
 	clk := substrate.NewFakeClock(now)
 
-	// Fixture guards. Without these a filesystem that truncated a mod-time, or a
-	// future edit that moved an age across the limit, would quietly turn this
-	// test back into one that cannot fail.
 	if got := now.Sub(oldMT); got <= maxAge {
 		t.Fatalf("fixture: stale dir age %v is not past the %v limit", got, maxAge)
 	}
@@ -255,7 +233,6 @@ func TestRetentionAgePrune(t *testing.T) {
 		t.Fatalf("fixture: fresh dir age %v is not inside (0, %v)", got, maxAge)
 	}
 
-	// A third Open is the trigger: it runs retention over the two staged dirs.
 	trigger := mustOpen(t, Config{WorkspacePath: ws, SessionID: "trigger", KeepN: 100, MaxAge: maxAge, Clock: clk})
 	mustClose(t, trigger)
 
@@ -266,9 +243,6 @@ func TestRetentionAgePrune(t *testing.T) {
 		t.Fatalf("age-prune wrongly removed the fresh dir (age %v, limit %v): %v",
 			now.Sub(freshMT), maxAge, err)
 	}
-	// The trigger dir carries a real mtime stamped by the filesystem moments
-	// ago. It survives only while virtual now tracks real time; an anchor set to
-	// some other calendar date deletes it or reports a negative age for it.
 	if _, err := os.Stat(filepath.Join(root, "trigger")); err != nil {
 		t.Fatalf("age-prune removed the dir it had just created — the injected clock is not commensurate with the filesystem: %v", err)
 	}

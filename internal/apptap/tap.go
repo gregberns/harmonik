@@ -111,36 +111,27 @@ func (t *Tap) Run() error {
 		return err
 	}
 
-	// inDst: bytes from caller stdin go to child stdin and (optionally) InCapture.
 	inDst := io.Writer(childIn)
 	if t.InCapture != nil {
 		inDst = io.MultiWriter(childIn, t.InCapture)
 	}
 
-	// outDst: bytes from child stdout go to caller stdout and (optionally) OutCapture.
 	outDst := stdout
 	if t.OutCapture != nil {
 		outDst = io.MultiWriter(stdout, t.OutCapture)
 	}
 
-	// inErr receives the result of the stdin→child goroutine.
 	inErr := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(inDst, stdin)
-		// Close child stdin so the child sees EOF when the caller closes its
-		// end. The close error is immaterial (child may have already exited) —
-		// log and continue.
 		if closeErr := childIn.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "apptap: close child stdin", "err", closeErr)
 		}
 		inErr <- err
 	}()
 
-	// Drain child stdout → outDst. Blocks until child closes its stdout (exit).
 	_, copyOutErr := io.Copy(outDst, childOut)
 
-	// Wait for the stdin goroutine to finish. Its error is secondary — a broken
-	// pipe (child exited before draining stdin) is not a tap failure.
 	<-inErr
 
 	if err := cmd.Wait(); err != nil {

@@ -7,25 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// offerableskipset_test.go — the daemon half of the head-of-line fallback
-// (hk-nown4). offerableSkipSet owns the clock so the pure selector does not:
-// it merges the loop's two refusal sets into the plain set SelectNextQueue
-// reads, and purges what has expired.
-//
-// The two sets differ in a way the types do not show, and the difference is
-// load-bearing:
-//
-//   - refusedUntil is clock-based and outlives the tick. It holds a bead a
-//     sibling queue is running, on the five-minute in-progress cooldown
-//     (hk-403fw).
-//   - tickRefusals has NO clock and covers one tick's walk. A clock there
-//     would let the earliest refusal lapse while the loop is still walking the
-//     later ones, so the loop would re-offer a bead it already refused and the
-//     walk would never end.
-//
-// These tests pin that difference. Give tickRefusals a window and
-// TestOfferableSkipSet_TickRefusalsIgnoreTheClock goes red.
-
 func TestOfferableSkipSet_RefusesOnlyWhileTheWindowIsOpen(t *testing.T) {
 	t.Parallel()
 
@@ -58,8 +39,6 @@ func TestOfferableSkipSet_TickRefusalsIgnoreTheClock(t *testing.T) {
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	tickRefusals := map[core.BeadID]bool{"held-this-tick": true}
 
-	// Far past any window the clock-based set could carry. The tick set must be
-	// unmoved by it.
 	for _, at := range []time.Time{now, now.Add(time.Hour), now.Add(72 * time.Hour)} {
 		if skip := offerableSkipSet(nil, tickRefusals, at); !skip["held-this-tick"] {
 			t.Fatalf("at %v past the arming the tick refusal lapsed. It must have no clock at all: "+

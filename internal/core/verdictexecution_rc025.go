@@ -5,26 +5,6 @@ import (
 	"fmt"
 )
 
-// verdictexecution_rc025.go — VerdictExecutionPlan and PlanForVerdict (RC-025).
-//
-// RC-025 requires the daemon's verdict-executor to perform the mechanical action
-// for each of the seven verdicts per the verdict-execution table at
-// [reconciliation/schemas.md §6.2]. This file declares:
-//
-//   - VerdictActionKind — discriminator for the class of mechanical action.
-//   - VerdictExecutionPlan — describes what the verdict-executor must do for a
-//     given verdict: which action kind to perform, the idempotency mechanism per
-//     schemas.md §6.2, and the ActionSummary to embed in VerdictExecutedPayload.
-//   - PlanForVerdict — maps a VerdictEvent to its VerdictExecutionPlan.
-//
-// This is a pure, I/O-free layer. The actual adapter calls, git commits, and event
-// emissions are performed by the daemon's verdict-executor (RC-025a), which consumes
-// this plan. The separation mirrors the CheckVerdictStaleness / staleness-result
-// split for RC-024: pure logic here, I/O in the daemon.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-025;
-// specs/reconciliation/schemas.md §6.2 Verdict-execution table.
-
 // VerdictActionKind is the discriminator for the class of mechanical action the
 // verdict-executor must perform (RC-025, schemas.md §6.2).
 //

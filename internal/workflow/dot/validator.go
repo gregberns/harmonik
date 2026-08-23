@@ -27,8 +27,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// currentSchemaVersion is the schema version this engine understands.
-// Graphs at this version and (currentSchemaVersion - 1) are accepted per WG-034.
 const currentSchemaVersion = 1
 
 // DiagnosticSeverity classifies a validation finding.
@@ -78,17 +76,13 @@ func (d Diagnostic) String() string {
 func Validate(g *Graph) []Diagnostic {
 	var diags []Diagnostic
 
-	// WG-034: schema_version N-1 readability.
 	diags = append(diags, checkSchemaVersion(g)...)
 
-	// WG-035: workflow version must be present.
 	if strings.TrimSpace(g.Version) == "" {
 		diags = append(diags, diagError(0, "WG-035",
 			"workflow must declare a top-level \"version\" attribute (WG-035)"))
 	}
 
-	// WG-055: workflow_id is a required typed graph identity. It is checked
-	// after template substitution so a valid parameter value can supply it.
 	if strings.TrimSpace(g.WorkflowID.String()) == "" {
 		diags = append(diags, diagError(0, "WG-055",
 			"workflow must declare a graph-level \"workflow_id\" attribute (WG-055)"))
@@ -98,27 +92,21 @@ func Validate(g *Graph) []Diagnostic {
 		g.WorkflowID = workflowID
 	}
 
-	// WG-024/WG-002/WG-005/WG-008: per-node required/forbidden attribute checks.
 	for _, n := range g.Nodes {
 		diags = append(diags, checkNodeAttrs(n)...)
 	}
 
-	// Build node index for cross-node checks.
 	nodeIndex := make(map[string]*Node, len(g.Nodes))
 	for _, n := range g.Nodes {
 		nodeIndex[n.ID] = n
 	}
 
-	// WG-027: well-formedness checks.
 	diags = append(diags, checkWellFormedness(g, nodeIndex)...)
 
-	// WG-028: cycle bounding.
 	diags = append(diags, checkCycleBounds(g)...)
 
 	return diags
 }
-
-// ── WG-034/035 schema version ─────────────────────────────────────────────────
 
 func checkSchemaVersion(g *Graph) []Diagnostic {
 	raw := strings.TrimSpace(g.SchemaVersion)
@@ -131,7 +119,6 @@ func checkSchemaVersion(g *Graph) []Diagnostic {
 		return []Diagnostic{diagError(0, "WG-033",
 			fmt.Sprintf("schema_version %q must be a positive integer (WG-033)", raw))}
 	}
-	// WG-034: accept current and N-1.
 	if v < currentSchemaVersion-1 || v > currentSchemaVersion {
 		return []Diagnostic{diagError(0, "WG-034",
 			fmt.Sprintf("schema_version %d is outside the accepted range [%d, %d] (WG-034 N-1 readability)",
@@ -140,18 +127,12 @@ func checkSchemaVersion(g *Graph) []Diagnostic {
 	return nil
 }
 
-// ── WG-024/WG-002/WG-005/WG-008 per-node required/forbidden attrs ────────────
-
 func checkNodeAttrs(n *Node) []Diagnostic {
 	var diags []Diagnostic
-	// CP-056: policy_ref is deprecated and MUST be rejected on any node type.
-	// Checked here for defense-in-depth; the parser also rejects it via ParseError.
 	if _, ok := n.UnknownAttrs["policy_ref"]; ok {
 		diags = append(diags, diagError(n.Line, "CP-056",
 			fmt.Sprintf("node %q: attribute \"policy_ref\" is deprecated and must not be used (CP-056); use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055)", n.ID)))
 	}
-	// Parser already rejected unknown type values (WG-001) and policy_ref (CP-056).
-	// We handle the remaining per-type required/forbidden contracts here.
 	switch n.Type {
 	case core.NodeTypeAgentic:
 		diags = append(diags, checkAgentic(n)...)
@@ -162,27 +143,21 @@ func checkNodeAttrs(n *Node) []Diagnostic {
 	case core.NodeTypeSubWorkflow:
 		diags = append(diags, checkSubWorkflow(n)...)
 	default:
-		// Unknown type: parser already raised a ParseError; nothing to add here.
 	}
 	return diags
 }
 
-// checkAgentic validates an agentic node per WG-002/WG-008/WG-024.
 func checkAgentic(n *Node) []Diagnostic {
 	var diags []Diagnostic
-	// Required: agent_type (WG-002).
 	if strings.TrimSpace(n.AgentType) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (agentic): \"agent_type\" is required on agentic nodes (WG-002/WG-024)", n.ID)))
 	}
-	// Required: handler_ref (WG-002).
 	if strings.TrimSpace(n.HandlerRef) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (agentic): \"handler_ref\" is required on agentic nodes (WG-002/WG-024)", n.ID)))
 	}
-	// Required: idempotency_class (WG-008/EM-010).
 	checkIdempotencyClass(n.ID, n.Line, n.IdempotencyClass, &diags)
-	// Forbidden: gate_ref, sub_workflow_ref (WG-024).
 	if strings.TrimSpace(n.GateRef) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (agentic): \"gate_ref\" is forbidden on agentic nodes (WG-024)", n.ID)))
@@ -194,22 +169,17 @@ func checkAgentic(n *Node) []Diagnostic {
 	return diags
 }
 
-// checkNonAgentic validates a non-agentic node per WG-002/WG-008/WG-024.
 func checkNonAgentic(n *Node) []Diagnostic {
 	var diags []Diagnostic
-	// Required: handler_ref (WG-002/WG-024 EM-007 amendment).
 	if strings.TrimSpace(n.HandlerRef) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (non-agentic): \"handler_ref\" is required on non-agentic nodes (WG-024 / EM-007 amendment)", n.ID)))
 	}
-	// Required: idempotency_class (WG-008/EM-010).
 	checkIdempotencyClass(n.ID, n.Line, n.IdempotencyClass, &diags)
-	// Forbidden: agent_type (WG-024).
 	if strings.TrimSpace(n.AgentType) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (non-agentic): \"agent_type\" is forbidden on non-agentic nodes (WG-024)", n.ID)))
 	}
-	// Forbidden: gate_ref, sub_workflow_ref (WG-024).
 	if strings.TrimSpace(n.GateRef) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (non-agentic): \"gate_ref\" is forbidden on non-agentic nodes (WG-024)", n.ID)))
@@ -218,8 +188,6 @@ func checkNonAgentic(n *Node) []Diagnostic {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (non-agentic): \"sub_workflow_ref\" is forbidden on non-agentic nodes (WG-024)", n.ID)))
 	}
-	// WG-039 / WG-031: tool_command on a non-shell handler is a v1 warning
-	// (reserved-strict at next major version). The run MAY start.
 	if strings.TrimSpace(n.ToolCommand) != "" && strings.TrimSpace(n.HandlerRef) != "shell" {
 		diags = append(diags, diagWarning(n.Line, "WG-031",
 			fmt.Sprintf("node %q (non-agentic): \"tool_command\" is only interpreted by handler_ref=\"shell\"; on handler_ref=%q it is ignored at v1 (reserved-strict at next major)", n.ID, n.HandlerRef)))
@@ -227,30 +195,24 @@ func checkNonAgentic(n *Node) []Diagnostic {
 	return diags
 }
 
-// checkGate validates a gate node per WG-005/WG-008/WG-024.
 func checkGate(n *Node) []Diagnostic {
 	var diags []Diagnostic
-	// Required: gate_ref (WG-005).
 	if strings.TrimSpace(n.GateRef) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (gate): \"gate_ref\" is required on gate nodes (WG-005/WG-024)", n.ID)))
 	}
-	// Required: handler_ref (WG-005/WG-024 EM-007 amendment).
 	if strings.TrimSpace(n.HandlerRef) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (gate): \"handler_ref\" is required on gate nodes (WG-005/WG-024 EM-007 amendment)", n.ID)))
 	}
-	// Forbidden: agent_type (WG-024).
 	if strings.TrimSpace(n.AgentType) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (gate): \"agent_type\" is forbidden on gate nodes (WG-024)", n.ID)))
 	}
-	// Forbidden: idempotency_class (WG-008).
 	if strings.TrimSpace(n.IdempotencyClass) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (gate): \"idempotency_class\" is forbidden on gate nodes (WG-008/WG-024)", n.ID)))
 	}
-	// Forbidden: sub_workflow_ref (WG-024).
 	if strings.TrimSpace(n.SubWorkflowRef) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (gate): \"sub_workflow_ref\" is forbidden on gate nodes (WG-024)", n.ID)))
@@ -258,30 +220,24 @@ func checkGate(n *Node) []Diagnostic {
 	return diags
 }
 
-// checkSubWorkflow validates a sub-workflow node per WG-006/WG-008/WG-024.
 func checkSubWorkflow(n *Node) []Diagnostic {
 	var diags []Diagnostic
-	// Required: sub_workflow_ref (WG-006).
 	if strings.TrimSpace(n.SubWorkflowRef) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (sub-workflow): \"sub_workflow_ref\" is required (WG-006/WG-024)", n.ID)))
 	}
-	// Required: workflow_version (WG-006).
 	if strings.TrimSpace(n.WorkflowVersion) == "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (sub-workflow): \"workflow_version\" is required (WG-006/WG-024)", n.ID)))
 	}
-	// Forbidden: agent_type (WG-024).
 	if strings.TrimSpace(n.AgentType) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (sub-workflow): \"agent_type\" is forbidden on sub-workflow nodes (WG-024)", n.ID)))
 	}
-	// Forbidden: idempotency_class (WG-008).
 	if strings.TrimSpace(n.IdempotencyClass) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (sub-workflow): \"idempotency_class\" is forbidden on sub-workflow nodes (WG-008/WG-024)", n.ID)))
 	}
-	// Forbidden: gate_ref.
 	if strings.TrimSpace(n.GateRef) != "" {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (sub-workflow): \"gate_ref\" is forbidden on sub-workflow nodes (WG-024)", n.ID)))
@@ -289,8 +245,6 @@ func checkSubWorkflow(n *Node) []Diagnostic {
 	return diags
 }
 
-// checkIdempotencyClass validates idempotency_class per WG-008/EM-010.
-// Appends an error to diags when invalid.
 func checkIdempotencyClass(nodeID string, line int, raw string, diags *[]Diagnostic) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -305,12 +259,9 @@ func checkIdempotencyClass(nodeID string, line int, raw string, diags *[]Diagnos
 	}
 }
 
-// ── WG-027 well-formedness ────────────────────────────────────────────────────
-
 func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 	var diags []Diagnostic
 
-	// start_node must be present and refer to a declared node.
 	startID := strings.TrimSpace(g.StartNodeID)
 	if startID == "" {
 		diags = append(diags, diagError(0, "WG-027",
@@ -320,7 +271,6 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 			fmt.Sprintf("start_node %q is not declared as a node (WG-027)", startID)))
 	}
 
-	// terminal_node_ids must be non-empty and all refer to declared nodes.
 	if len(g.TerminalNodeIDs) == 0 {
 		diags = append(diags, diagError(0, "WG-027",
 			"workflow must declare a non-empty \"terminal_node_ids\" list (WG-027)"))
@@ -332,13 +282,11 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 		}
 	}
 
-	// Build terminal set.
 	terminalSet := make(map[string]bool, len(g.TerminalNodeIDs))
 	for _, tid := range g.TerminalNodeIDs {
 		terminalSet[tid] = true
 	}
 
-	// Every edge's from/to must refer to declared nodes.
 	for _, e := range g.Edges {
 		if _, ok := nodeIndex[e.FromNodeID]; !ok {
 			diags = append(diags, diagError(e.Line, "WG-027",
@@ -350,7 +298,6 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 		}
 	}
 
-	// WG-023: terminal nodes must have no outgoing edges.
 	outEdges := make(map[string]bool)
 	for _, e := range g.Edges {
 		outEdges[e.FromNodeID] = true
@@ -362,12 +309,10 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 		}
 	}
 
-	// Reachability checks require a valid start node.
 	if startID == "" {
 		return diags
 	}
 
-	// Build adjacency for forward and backward reachability.
 	forward := make(map[string][]string)
 	backward := make(map[string][]string)
 	for _, e := range g.Edges {
@@ -375,10 +320,8 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 		backward[e.ToNodeID] = append(backward[e.ToNodeID], e.FromNodeID)
 	}
 
-	// Forward BFS from start_node.
 	reachableFromStart := bfsReach(startID, forward)
 
-	// Reverse BFS from terminal nodes.
 	canReachTerminal := make(map[string]bool)
 	for _, t := range g.TerminalNodeIDs {
 		for n := range bfsReach(t, backward) {
@@ -388,17 +331,14 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 	}
 
 	for _, n := range g.Nodes {
-		// Every non-terminal node must be reachable from start_node (WG-027).
 		if !terminalSet[n.ID] && !reachableFromStart[n.ID] {
 			diags = append(diags, diagError(n.Line, "WG-027",
 				fmt.Sprintf("node %q is not reachable from start_node %q (WG-027)", n.ID, startID)))
 		}
-		// Every terminal node must be reachable from start_node (WG-027).
 		if terminalSet[n.ID] && !reachableFromStart[n.ID] {
 			diags = append(diags, diagError(n.Line, "WG-027",
 				fmt.Sprintf("terminal node %q is not reachable from start_node %q (WG-027)", n.ID, startID)))
 		}
-		// Every node must be able to reach a terminal (WG-027).
 		if !canReachTerminal[n.ID] && !terminalSet[n.ID] {
 			diags = append(diags, diagError(n.Line, "WG-027",
 				fmt.Sprintf("node %q cannot reach any terminal_node_id (WG-027)", n.ID)))
@@ -408,7 +348,6 @@ func checkWellFormedness(g *Graph, nodeIndex map[string]*Node) []Diagnostic {
 	return diags
 }
 
-// bfsReach returns the set of nodes reachable from start in adj.
 func bfsReach(start string, adj map[string][]string) map[string]bool {
 	visited := make(map[string]bool)
 	queue := []string{start}
@@ -426,10 +365,6 @@ func bfsReach(start string, adj map[string][]string) map[string]bool {
 	return visited
 }
 
-// ── WG-028 cycle bounding ─────────────────────────────────────────────────────
-
-// checkCycleBounds verifies that every cycle has at least one edge with
-// traversal_cap > 0 per WG-028 / EM-043.
 func checkCycleBounds(g *Graph) []Diagnostic {
 	if len(g.Edges) == 0 {
 		return nil
@@ -474,8 +409,6 @@ func hasSelfLoopInGraph(g *Graph, nodeID string) bool {
 	}
 	return false
 }
-
-// ── Tarjan SCC ────────────────────────────────────────────────────────────────
 
 type sccState struct {
 	index   map[string]int
@@ -538,8 +471,6 @@ func (st *sccState) connect(v string, adj map[string][]string) {
 		st.sccs = append(st.sccs, scc)
 	}
 }
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 func diagError(line int, code, message string) Diagnostic {
 	return Diagnostic{Severity: SeverityError, Line: line, Code: code, Message: message}

@@ -1,37 +1,5 @@
 package keeper_test
 
-// cycle_scenario_reactive_wave2_test.go — a SECOND wave of offline reactive
-// scenario tests for the session keeper, built on the SAME reactive harness as
-// cycle_scenario_reactive_test.go (type reactiveSession in
-// cycle_reactive_harness_test.go). These prove END-TO-END, through a session
-// fake that MUTATES gauge + handoff state in reaction to the injected command,
-// what the cycle_test.go / precompact_test.go unit tests fake with call-count
-// gauges:
-//
-//   1. ClearSettleUnconfirmed   — /clear IS injected but no new SID ever
-//      appears (flipOnClear=false). The non-fatal clear_unconfirmed path:
-//      clear_unconfirmed emitted, managed binding cleared (empty) so the
-//      .sid channel can rebind it, and complete carries NO bogus new SID.
-//   2. ForcedClearAboveHardThreshold — context above the FORCE threshold with
-//      CrispIdle FALSE: cycle fires anyway (CrispIdle bypassed), Escape lands
-//      BEFORE /session-handoff, and /clear is STILL gated on the nonce.
-//   3. AntiLoopReArm — full reactive cycle to complete (S1→S2), suppressed on
-//      a second high-context tick on S2, re-armed only after a below-warn
-//      reading on S2. Multi-tick, causally driven.
-//   4. PreCompactBackstop — the RunForPrecompact path runs the cycle while
-//      SKIPPING the CrispIdle/act gates and clears the .precompact marker.
-//
-// NOTE — scenario "CrashRecoveryReplaysResume" (phase=cleared → /session-resume
-// on recovery) is intentionally OMITTED: it would exactly duplicate the
-// existing unit test TestCycler_BootRecovery_PhaseCleared (cycle_test.go ~707),
-// which already asserts the resume injection, journal→complete, and
-// cycle_recovered{phase_at_crash:"cleared"}. RecoverFromCrash has no reactive
-// seam (it reads the journal and injects once; it polls neither gauge nor
-// handoff), so the reactive harness adds no causal/end-to-end value there.
-//
-// Fast offline unit tests — NO build tag. All harness symbols are reused from
-// cycle_reactive_harness_test.go; this file declares NONE of them.
-
 import (
 	"context"
 	"encoding/json"
@@ -68,12 +36,8 @@ func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	jc := &journalCapture{}
-	// Seed the binding non-empty so an assertion of "" is meaningful (the cycle
-	// must actively clear it, not merely leave it untouched).
 	managedBinding := "stale-binding-sentinel"
 
-	// writeNonce=true → handoff confirms → /clear IS injected.
-	// flipOnClear=false → /clear NEVER rotates the SID → ClearSettle times out.
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, false /*flipOnClear*/)
 
 	cycler := newReactiveCycler(
@@ -87,12 +51,10 @@ func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) /clear WAS injected — the handoff confirmed, so the safety gate opened.
 	if !rs.sawClear() {
 		t.Fatal("/clear was not injected; expected it after handoff confirmation (writeNonce=true)")
 	}
 
-	// (b) session_keeper_clear_unconfirmed emitted exactly once (no new SID seen).
 	unconfirmed := em.EventsOfType(core.EventTypeSessionKeeperClearUnconfirmed)
 	if len(unconfirmed) != 1 {
 		t.Fatalf("want 1 clear_unconfirmed; got %d", len(unconfirmed))
@@ -105,12 +67,10 @@ func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
 		t.Errorf("clear_unconfirmed.session_id = %q; want %q (S1 — never rotated)", up.SessionID, s1)
 	}
 
-	// (c) the .managed binding is CLEARED ("") so the .sid channel can rebind it.
 	if managedBinding != "" {
 		t.Errorf("managed binding = %q; want \"\" (cleared for .sid rebind; not a bogus new SID)", managedBinding)
 	}
 
-	// (d) cycle_complete fired but carries an EMPTY new_session_id — no bogus SID.
 	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(completeEvts) != 1 {
 		t.Fatalf("want 1 cycle_complete; got %d", len(completeEvts))
@@ -126,7 +86,6 @@ func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
 		t.Errorf("cycle_complete.new_session_id = %q; want \"\" (no SID confirmed — must NOT fabricate %q)", cp.NewSessionID, s2)
 	}
 
-	// (e) the live gauge SID never rotated (flipOnClear=false): stays S1.
 	if rs.liveSID() != s1 {
 		t.Errorf("live gauge SID = %q; want %q (S1 — flipOnClear=false)", rs.liveSID(), s1)
 	}
@@ -161,12 +120,8 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=true (so /clear is reachable — proving the nonce gate is NOT
-	// skipped on the force path) and flipOnClear=true (so /clear causally
-	// rotates S1→S2).
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
 
-	// Single ordered witness recording "escape" and "inject:<prefix>" in call order.
 	var mu sync.Mutex
 	var order []string
 	escapeFn := func(_ context.Context, _ string) error {
@@ -175,8 +130,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		order = append(order, "escape")
 		return nil
 	}
-	// Wrap the reactive inject so the witness records ordering while the harness
-	// still mutates gauge/handoff state (the reaction is what makes /clear causal).
 	injectFn := func(ctx context.Context, target, text string) error {
 		mu.Lock()
 		prefix := text
@@ -210,13 +163,11 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		}}
 	})
 
-	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) The cycle fired despite CrispIdle=false (full happy-path phases).
 	wantPhases := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
 	got := jc.snapshot()
 	if len(got) != len(wantPhases) {
@@ -228,7 +179,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		}
 	}
 
-	// (b) Escape lands BEFORE the /session-handoff inject (ordered witness).
 	mu.Lock()
 	snap := make([]string, len(order))
 	copy(snap, order)
@@ -252,9 +202,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		t.Errorf("Escape (idx=%d) must precede /session-handoff inject (idx=%d); order=%v", escapeIdx, handoffIdx, snap)
 	}
 
-	// (c) /clear was STILL gated on the nonce — it ran only because the handoff
-	// confirmed. The causal witness proves the SID flip was caused by /clear, so
-	// /clear (a) actually ran and (b) is what rotated S1→S2 on the force path.
 	if !rs.sawClear() {
 		t.Fatal("/clear was never injected on the force path — nonce gate may have been skipped")
 	}
@@ -265,7 +212,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		t.Error("a new SID appeared before /clear was injected — nonce gate / causality violated on force path")
 	}
 
-	// (d) cycle_complete carries S1→S2 and the binding updated to S2.
 	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(completeEvts) != 1 {
 		t.Fatalf("want 1 cycle_complete; got %d", len(completeEvts))
@@ -316,7 +262,6 @@ func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Tick 1: high context on S1 → full cycle fires; /clear rotates S1→S2.
 	cf1 := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(ctx, cf1); err != nil {
 		t.Fatalf("tick 1 MaybeRun: %v", err)
@@ -328,8 +273,6 @@ func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
 		t.Fatalf("tick 1: SID flip caused by %q; want \"/clear\"", rs.flipCause())
 	}
 
-	// Tick 2: NEW session S2 but context still ABOVE warn → suppressed (re-arm
-	// requires a below-warn observation on S2 first). No second cycle.
 	cf2 := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s2}
 	if err := cycler.MaybeRun(ctx, cf2); err != nil {
 		t.Fatalf("tick 2 MaybeRun: %v", err)
@@ -338,8 +281,6 @@ func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
 		t.Errorf("after tick 2 (S2 high, not yet re-armed): cycle_complete = %d; want 1 (suppressed)", n)
 	}
 
-	// Tick 3: drop BELOW warn on S2 — this is the re-arm observation. The cycle
-	// must NOT fire here (below act threshold), but the cycler is now re-armed.
 	cf3 := &keeper.CtxFile{Pct: 40.0, Tokens: 60_000, WindowSize: 1_000_000, SessionID: s2}
 	if err := cycler.MaybeRun(ctx, cf3); err != nil {
 		t.Fatalf("tick 3 MaybeRun: %v", err)
@@ -348,7 +289,6 @@ func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
 		t.Errorf("after tick 3 (S2 below warn): cycle_complete = %d; want 1 (re-arm observation, no fire)", n)
 	}
 
-	// Tick 4: raise context above act on S2 → a SECOND cycle now fires (re-armed).
 	cf4 := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s2}
 	if err := cycler.MaybeRun(ctx, cf4); err != nil {
 		t.Fatalf("tick 4 MaybeRun: %v", err)
@@ -411,14 +351,11 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		}}
 	})
 
-	// Context BELOW the act threshold (pct 50, well under ActPct=90) AND
-	// CrispIdle=false. MaybeRun would NOT fire on this; RunForPrecompact must.
 	cf := &keeper.CtxFile{Pct: 50.0, Tokens: 100_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {
 		t.Fatalf("RunForPrecompact: %v", err)
 	}
 
-	// (a) precompact_blocked emitted with action "cycle_triggered" (gates skipped).
 	pcEvents := em.EventsOfType(core.EventTypeSessionKeeperPrecompactBlocked)
 	if len(pcEvents) != 1 {
 		t.Fatalf("want 1 precompact_blocked; got %d", len(pcEvents))
@@ -427,7 +364,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		t.Errorf("precompact action = %q; want \"cycle_triggered\" (CrispIdle/act gates must be skipped)", got)
 	}
 
-	// (b) the cycle ran to completion despite CrispIdle=false and below-act context.
 	wantPhases := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
 	got := jc.snapshot()
 	if len(got) != len(wantPhases) {
@@ -439,7 +375,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		}
 	}
 
-	// (c) the SID flip was CAUSED by /clear (reactive end-to-end).
 	if rs.flipCause() != "/clear" {
 		t.Errorf("SID flip caused by %q; want \"/clear\"", rs.flipCause())
 	}
@@ -458,7 +393,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		t.Errorf("managed binding = %q; want %q (S2)", managedBinding, s2)
 	}
 
-	// (d) the .precompact marker was cleared afterward.
 	if !markerCleared {
 		t.Error("context store did not clear the .precompact marker after the cycle")
 	}
@@ -510,15 +444,9 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=true (handoff confirms promptly) + flipOnClear=true, but the
-	// flip is DELAYED past a single clearSettle window via withClearDelay.
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/).
 		withClearDelay(clearDelay)
 
-	// briefSawFlippedSID is set at the moment the brief command is injected,
-	// recording whether the gauge had ALREADY rotated to S2 by then. This is
-	// the load-bearing hard-gate witness: it must be true (never false, never
-	// "brief injected while still S1").
 	var briefInjected atomic.Bool
 	var briefSawFlippedSID atomic.Bool
 	witnessInject := func(ctx context.Context, target, text string) error {
@@ -560,20 +488,14 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) the brief WAS injected at all.
 	if !briefInjected.Load() {
 		t.Fatal("agent brief was never injected")
 	}
 
-	// (b) THE HARD GATE: the brief must have been injected only after the gauge
-	// had already rotated to S2. This is the exact race from the bug report —
-	// pre-fix, this is false (brief fires during the still-S1 window).
 	if !briefSawFlippedSID.Load() {
 		t.Fatal("agent brief was injected BEFORE the gauge session_id rotated to S2 — the clear->brief hand-off is not hard-gated (hk-vdqe2 regression)")
 	}
 
-	// (c) /clear was re-injected at least once (proving Step 5 actually retried
-	// past the first missed ClearSettle poll rather than firing immediately).
 	clearCount := 0
 	for _, cmd := range rs.snapshotInjected() {
 		if cmd == "/clear" {
@@ -584,12 +506,10 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		t.Errorf("/clear injected %d time(s); want >=2 (defensive retry within the backstop window)", clearCount)
 	}
 
-	// (d) confirmation landed within the backstop: NO clear_unconfirmed emitted.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperClearUnconfirmed)); n != 0 {
 		t.Errorf("want 0 clear_unconfirmed (confirmation should land within the %s backstop); got %d", clearConfirmBackstop, n)
 	}
 
-	// (e) the cycle completed cleanly with prev=S1/new=S2.
 	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(completeEvts) != 1 {
 		t.Fatalf("want 1 cycle_complete; got %d", len(completeEvts))

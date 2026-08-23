@@ -1,15 +1,5 @@
 package supervisecmd
 
-// coverage_drain_test.go — behaviour tests for pure-logic surfaces of the
-// supervise verbs that do NOT require a live daemon or a spawned process:
-//   - ps.go:      RunPs / printPsResult formatting (read-only)
-//   - status.go:  buildStatusWithProbe metadata population; supervisorProjectHash
-//   - pause.go:   opVerb, isSocketAbsentOrRefused, sendOperatorOp socket paths
-//   - config.go:  WriteSentinel round-trip
-//   - assetskew:  notifyCaptainSkew body selection; execCommsSend test-binary guard
-//
-// Chunk I coverage drain (hk-z646k neighbourhood).
-
 import (
 	"bytes"
 	"context"
@@ -22,8 +12,6 @@ import (
 	"testing"
 	"time"
 )
-
-// --- ps.go ------------------------------------------------------------------
 
 // TestPrintPsResult_RendersAllSections verifies the human-readable ps rendering
 // emits the project, hash, and every process/tmux signature line.
@@ -123,8 +111,6 @@ func TestCanonicalProjectDir_Missing(t *testing.T) {
 	}
 }
 
-// --- status.go --------------------------------------------------------------
-
 // TestBuildStatusWithProbe_PopulatesMetadata verifies the sentinel/config/
 // loop-status file surfaces flow into the StatusResult (the top branches of
 // buildStatusWithProbe that the keeper-loop tests do not touch).
@@ -151,7 +137,6 @@ func TestBuildStatusWithProbe_PopulatesMetadata(t *testing.T) {
 		t.Fatalf("WriteLoopStatusAtomic: %v", err)
 	}
 
-	// No pidfile, keeper probe false → stopped, but metadata must still populate.
 	res := buildStatusWithProbe(dir, func(string) bool { return false })
 	if !res.SentinelOK {
 		t.Error("expected SentinelOK=true")
@@ -187,8 +172,6 @@ func TestSupervisorProjectHash_StableAndHex(t *testing.T) {
 		t.Errorf("FlywheelSessionName %q should embed hash %q", FlywheelSessionName(dir), h1)
 	}
 }
-
-// --- pause.go ---------------------------------------------------------------
 
 // TestOpVerb verifies the op→verb mapping incl. the passthrough default.
 func TestOpVerb(t *testing.T) {
@@ -226,8 +209,6 @@ func TestIsSocketAbsentOrRefused(t *testing.T) {
 	}
 }
 
-// shortSocket returns a unix-socket path short enough to stay under the ~104
-// char sun_path limit (t.TempDir() names are too long on macOS).
 func shortSocket(t *testing.T) string {
 	t.Helper()
 	d, err := os.MkdirTemp("", "hks")
@@ -273,7 +254,6 @@ func TestSendOperatorOp_Acked(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		// Read the request op to confirm the client actually sent it.
 		var req struct {
 			Op string `json:"op"`
 		}
@@ -326,8 +306,6 @@ func TestSendOperatorOp_DaemonError(t *testing.T) {
 	}
 }
 
-// --- config.go --------------------------------------------------------------
-
 // TestWriteSentinel_RoundTrip verifies WriteSentinel creates the cognition dir
 // and writes the exclusion marker content, and RemoveSentinel clears it (and is
 // idempotent on a second call).
@@ -350,13 +328,10 @@ func TestWriteSentinel_RoundTrip(t *testing.T) {
 	if _, err := os.Stat(SentinelPath(dir)); !os.IsNotExist(err) {
 		t.Errorf("expected sentinel removed; stat err = %v", err)
 	}
-	// Idempotent: removing an absent sentinel is not an error.
 	if err := RemoveSentinel(dir); err != nil {
 		t.Errorf("RemoveSentinel (absent) should be nil; got %v", err)
 	}
 }
-
-// --- assetskew.go -----------------------------------------------------------
 
 // TestNotifyCaptainSkew_BodySelection verifies the never-synced vs behind-binary
 // body is chosen by the verdict, delegating to the injected CommsSendNotifier.
@@ -391,7 +366,6 @@ func TestNotifyCaptainSkew_SendErrorSwallowed(t *testing.T) {
 	saved := CommsSendNotifier
 	defer func() { CommsSendNotifier = saved }()
 	CommsSendNotifier = func(_, _ string) error { return errors.New("no captain") }
-	// Must not panic; log is nil so the error path is exercised silently.
 	notifyCaptainSkew("/p", AssetSkewVerdict{Skewed: true, ChangedCount: 1}, nil, nil)
 }
 
@@ -405,8 +379,6 @@ func TestExecCommsSend_RefusesTestBinary(t *testing.T) {
 		t.Fatalf("expected test-binary refusal; got %v", err)
 	}
 }
-
-// --- pause/resume arg parsing -----------------------------------------------
 
 // TestRunPause_Help verifies --help prints usage and exits 0 (no socket dial).
 func TestRunPause_Help(t *testing.T) {
@@ -455,8 +427,6 @@ func TestRunResume_UnknownArg(t *testing.T) {
 		t.Errorf("expected unknown-argument message; got %q", errB.String())
 	}
 }
-
-// --- status.go RunStatus ----------------------------------------------------
 
 // TestRunStatus_Help verifies --help prints usage and exits 0.
 func TestRunStatus_Help(t *testing.T) {
@@ -527,8 +497,6 @@ func TestRunStatus_Human(t *testing.T) {
 	}
 }
 
-// --- logs.go arg parsing ----------------------------------------------------
-
 // TestRunLogs_Help verifies --help prints usage and exits 0 (no tmux call).
 func TestRunLogs_Help(t *testing.T) {
 	t.Parallel()
@@ -559,8 +527,6 @@ func TestRunLogs_InvalidLines(t *testing.T) {
 	}
 }
 
-// --- stop.go arg parsing ----------------------------------------------------
-
 // TestRunStop_Help verifies --help prints usage and exits 0.
 func TestRunStop_Help(t *testing.T) {
 	t.Parallel()
@@ -586,8 +552,6 @@ func TestRunStop_NoPidfile(t *testing.T) {
 		t.Errorf("expected idempotent not-running message; got:\n%s", out.String())
 	}
 }
-
-// --- start.go probeDaemonSocket ---------------------------------------------
 
 // TestProbeDaemonSocket_Absent verifies probing an absent daemon socket returns
 // the daemon-down exit code (17) and writes the start hint.

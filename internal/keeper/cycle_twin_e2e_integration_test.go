@@ -2,67 +2,6 @@
 
 package keeper_test
 
-// cycle_twin_e2e_integration_test.go — bead hk-sav, Part B.
-//
-// The TRUE send-keys / bracketed-paste end-to-end test for the session keeper's
-// clear→restart ("context clean") cycle. Every existing cycle test FAKES the
-// loop:
-//
-//   - cycle_test.go uses a spy InjectFn that merely records "/clear" as a string
-//     and flips the gauge SID on a fixed call count — nothing reacts.
-//   - cycle_scenario_reactive_*_test.go (Part A) closes the *causal* loop with an
-//     in-process reactiveSession fake, but injection is still a plain Go function
-//     call — no tmux, no real script, no real subprocess.
-//
-// This file closes the LAST gap: it runs the faithful session twin
-// (cmd/harmonik-twin-session, also hk-sav Part A) in a REAL tmux pane, emits
-// statusLine JSON through the REAL scripts/keeper-statusline.sh →
-// <project>/.harmonik/keeper/<agent>.ctx pipeline, touches the REAL
-// <agent>.idle marker via scripts/keeper-stop-hook.sh, and drives the REAL
-// keeper.Cycler with the REAL keeper.InjectText (tmux load-buffer →
-// paste-buffer → send-keys Enter). The only fakes left are the wall-clock and
-// the LLM itself; the file/stdin/tmux contracts the keeper depends on are all
-// real.
-//
-// What is REAL here (vs. Part A's in-process fakes):
-//   - keeper.Cycler.MaybeRun — the production gate + 7-step cycle.
-//   - keeper.InjectText — real tmux paste-buffer + send-keys into a real pane.
-//   - keeper.ReadCtxFile — reads the .ctx the real bash script wrote.
-//   - keeper.CrispIdle / keeper.HoldingDispatch / keeper.IsManaged — real
-//     marker-file gates against the twin's real .idle / .dispatching / .managed.
-//   - scripts/keeper-statusline.sh + scripts/keeper-stop-hook.sh — the real
-//     pipeline, invoked by the twin on every emit.
-//
-// No injection adaptation: this test uses the production keeper.InjectText
-// verbatim as its InjectFn. The production cycle.go emits the /session-handoff
-// directive as a MULTI-LINE string (nonce on a later line), and keeper.InjectText
-// delivers it via tmux paste-buffer (bracketed paste). The twin parses that
-// real multi-line shape natively (hk-fan: it arms on the "/session-handoff"
-// trigger and scans the following lines of the same paste for the
-// <!-- KEEPER:<nonce> --> marker, modeling a real Claude REPL ingesting the
-// whole bracketed paste as one prompt — see internal/daemon/pasteinject.go:112-114).
-// The earlier twFlattenInjectFn workaround (which collapsed the directive's
-// embedded newlines to spaces before injection) is therefore GONE — every
-// command travels through the REAL, unmodified tmux send-keys path.
-//
-// # Safety contract (load-bearing — a live daemon/keeper/crew fleet runs here)
-//
-// This test creates and destroys ONLY its own uniquely-named throwaway tmux
-// sessions. Session names use the prefix "hksav-twin-" (which no harmonik
-// machinery ever produces) plus two rand/v2 suffixes, and every teardown kills
-// THAT session BY EXACT NAME via `tmux kill-session -t <name>`. There is NO
-// kill-server, NO glob/pattern kill, NO list-and-kill. It can never touch
-// harmonik-daemon, hk-daemon-supervise, harmonik-<hash>-default, *-flywheel,
-// crew panes, harmonik-pi/main/kerf, or any other pre-existing session. If tmux
-// is not on PATH the whole test t.Skip()s.
-//
-// Teardown discipline (the hk-dju "directory not empty" class): the twin's
-// emitter goroutine writes into the temp project dir on every tick. Cleanup
-// kills the session AND BLOCKS until the pane is gone (twKillAndWait) BEFORE the
-// test body returns, so nothing writes into t.TempDir() during its removal.
-//
-// Helper prefix: tw (twin). Bead: hk-sav.
-
 import (
 	"context"
 	"encoding/json"
@@ -79,10 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// twReadRawCtxSID reads the .ctx file directly and returns the raw session_id
-// embedded in it, bypassing ReadCtxFile's .sid override. Used to detect when
-// the twin has emitted a rotated session_id after an external /clear, before
-// we have written the new .sid file that would make ReadCtxFile report it.
 func twReadRawCtxSID(project, agent string) string {
 	path := filepath.Join(project, ".harmonik", "keeper", agent+".ctx")
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: test-local temp path
@@ -96,8 +31,6 @@ func twReadRawCtxSID(project, agent string) string {
 	return cf.SessionID
 }
 
-// twRequireTmux skips the calling test when tmux is not installed. The real
-// send-keys E2E is meaningless without it.
 func twRequireTmux(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -105,9 +38,6 @@ func twRequireTmux(t *testing.T) {
 	}
 }
 
-// twRepoRoot returns the repository root, two directories up from the
-// internal/keeper test working directory. Used to locate cmd/harmonik-twin-session
-// and the scripts/ directory.
 func twRepoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -117,9 +47,6 @@ func twRepoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
 }
 
-// twBuildTwin compiles cmd/harmonik-twin-session into dir and returns the binary
-// path. Building once per test keeps the test hermetic against an out-of-date
-// installed binary.
 func twBuildTwin(t *testing.T, dir string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "harmonik-twin-session")
@@ -131,8 +58,6 @@ func twBuildTwin(t *testing.T, dir string) string {
 	return bin
 }
 
-// twScripts returns the absolute paths to the real keeper statusLine and stop
-// (idle) hooks under scripts/. It fails the test if either is missing.
 func twScripts(t *testing.T) (statusline, idleHook string) {
 	t.Helper()
 	root := twRepoRoot(t)
@@ -146,28 +71,17 @@ func twScripts(t *testing.T) (statusline, idleHook string) {
 	return statusline, idleHook
 }
 
-// twUniqueSessionName returns a throwaway tmux session name guaranteed not to
-// collide with any real harmonik/captain/crew session. The "hksav-twin-" prefix
-// is never produced by harmonik machinery; two rand/v2 suffixes make it unique.
 func twUniqueSessionName() string {
 	return fmt.Sprintf("hksav-twin-%d-%d", rand.Int64(), rand.Int64()) //nolint:gosec // G404: test-local session-name uniqueness, no security relevance
 }
 
-// twPaneAlive reports whether the named tmux session still exists, using the
-// exact-match "=" anchor so a prefix collision can never report a false live.
 func twPaneAlive(name string) bool {
 	err := exec.Command("tmux", "has-session", "-t", "="+name).Run() //nolint:gosec // G204: name is a test-local generated session name
 	return err == nil
 }
 
-// twKillAndWait kills the named session BY EXACT NAME and BLOCKS until tmux no
-// longer reports it live (or a short timeout elapses). This is the load-bearing
-// teardown discipline: the twin's emitter goroutine writes into the temp project
-// dir every tick, so the pane MUST be fully gone before t.TempDir() is removed,
-// or cleanup races the writer ("directory not empty", the hk-dju class).
 func twKillAndWait(t *testing.T, name string) {
 	t.Helper()
-	// kill-session by EXACT name only. An already-dead session is a no-op.
 	_ = exec.Command("tmux", "kill-session", "-t", "="+name).Run() //nolint:gosec,errcheck // G204: test-local name; best-effort
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -179,7 +93,6 @@ func twKillAndWait(t *testing.T, name string) {
 	t.Logf("tw: WARNING session %q still alive after kill+5s wait", name)
 }
 
-// twTwinSpec configures a twin pane.
 type twTwinSpec struct {
 	project     string
 	agent       string
@@ -222,11 +135,6 @@ type twTwinSpec struct {
 	sessionName string
 }
 
-// twStartTwin launches the twin binary as the foreground process of a new,
-// uniquely-named, detached tmux session and registers a blocking teardown. The
-// twin reads injected commands from its stdin (the pane), so the real keeper
-// InjectText (paste-buffer + send-keys) reaches it. Returns the session name,
-// which doubles as the keeper's TmuxTarget.
 func twStartTwin(t *testing.T, spec twTwinSpec) string {
 	t.Helper()
 	if spec.model == "" {
@@ -237,14 +145,11 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 		sess = twUniqueSessionName()
 	}
 
-	// Build the twin command line. All paths are test-local temp/repo paths.
 	cmd := fmt.Sprintf(
 		"exec %s --project %s --agent %s --statusline %s --idle-hook %s --model %q --window %d --growth %d --start-tokens %d --emit-interval %s",
 		spec.twin, spec.project, spec.agent, spec.statusline, spec.idleHook,
 		spec.model, spec.window, spec.growth, spec.startTokens, spec.emitEvery,
 	)
-	// Optional gauge-liveness knobs (off by default; the happy-path E2E above
-	// passes neither). Single definition — downstream beads set the spec fields.
 	if spec.emitNA {
 		cmd += " --emit-na"
 	}
@@ -256,8 +161,6 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 	}
 
 	args := []string{"new-session", "-d", "-s", sess}
-	// Inject extra env via tmux's -e flag (tmux 3.2+) so the statusline script
-	// sees it. Each entry is KEY=VALUE.
 	for _, e := range spec.extraEnv {
 		args = append(args, "-e", e)
 	}
@@ -266,16 +169,10 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil { //nolint:gosec // G204: test-local generated args
 		t.Fatalf("tw: tmux new-session %q: %v\n%s", sess, err, out)
 	}
-	// Blocking teardown — kill by EXACT name and wait for the pane to die BEFORE
-	// the test returns and t.TempDir() is removed.
 	t.Cleanup(func() { twKillAndWait(t, sess) })
 	return sess
 }
 
-// twWaitForCtxTokens polls the REAL .ctx (written by the real bash script) until
-// the absolute token count reaches atLeast, or fails after timeout. Returns the
-// observed CtxFile. This is how the test waits for the twin's emitter to grow
-// context over the keeper's act threshold without faking the gauge.
 func twWaitForCtxTokens(t *testing.T, project, agent string, atLeast int64, timeout time.Duration) *keeper.CtxFile {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -298,11 +195,6 @@ func twWaitForCtxTokens(t *testing.T, project, agent string, atLeast int64, time
 	return nil
 }
 
-// twWatchForReset polls the .ctx until stop closes, recording the MINIMUM token
-// count observed on a session_id that differs from prevSID (i.e. the rotated,
-// post-/clear session). It sends that minimum on resetCh exactly once when stop
-// closes (or -1 if no rotated-session reading was ever seen). This witnesses the
-// /clear token RESET directly, immune to the twin emitter's subsequent regrowth.
 func twWatchForReset(project, agent, prevSID string, stop <-chan struct{}, resetCh chan<- int64) {
 	minTokens := int64(-1)
 	ticker := time.NewTicker(40 * time.Millisecond)
@@ -352,14 +244,10 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	twin := twBuildTwin(t, project)
 	statusline, idleHook := twScripts(t)
 
-	// Opt the agent in (.managed) so the REAL IsManaged gate passes.
 	if err := keeper.WriteManagedSessionID(project, agent, ""); err != nil {
 		t.Fatalf("tw: WriteManagedSessionID: %v", err)
 	}
 
-	// window=1M so the gauge sees an absolute-token window; growth pushes tokens
-	// over the act threshold (default 215k, capped by 0.85*1M) within a couple
-	// of seconds at 50k/200ms.
 	sess := twStartTwin(t, twTwinSpec{
 		project:     project,
 		agent:       agent,
@@ -373,7 +261,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		emitEvery:   200 * time.Millisecond,
 	})
 
-	// Wait (via the REAL .ctx) for tokens to cross the act threshold.
 	seed := twWaitForCtxTokens(t, project, agent, 300_000, 8*time.Second)
 	seedSID := seed.SessionID
 	if seedSID == "" {
@@ -382,7 +269,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	if seed.WindowSize != 1_000_000 {
 		t.Fatalf("tw: seed .ctx window_size = %d; want 1000000", seed.WindowSize)
 	}
-	// The twin fired the real stop hook on each emit → .idle exists → CrispIdle.
 	if !keeper.CrispIdle(project, agent) {
 		t.Fatal("tw: CrispIdle false at seed — the twin's .idle marker did not register a crisp boundary")
 	}
@@ -415,12 +301,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// Watch the gauge concurrently with the cycle so we capture the post-/clear
-	// token RESET directly. The twin's emitter keeps growing tokens after /clear
-	// resets them to start-tokens, so a single post-cycle read would race the
-	// regrowth; this watcher records the minimum tokens seen on the NEW (rotated)
-	// session, which is the reset value the /clear caused. Stops when stopWatch
-	// closes (after MaybeRun returns).
 	stopWatch := make(chan struct{})
 	resetCh := make(chan int64, 1)
 	go twWatchForReset(project, agent, seedSID, stopWatch, resetCh)
@@ -432,8 +312,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	close(stopWatch)
 	minPostClearTokens := <-resetCh
 
-	// (a) The nonce landed in the twin's HANDOFF file (handoff confirmed — the
-	// safety precondition for /clear).
 	handoffPath := filepath.Join(project, "HANDOFF-"+agent+".md")
 	hb, err := os.ReadFile(handoffPath) //nolint:gosec // G304: test-local temp path
 	if err != nil {
@@ -443,8 +321,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		t.Fatalf("tw: HANDOFF file missing keeper nonce; got:\n%s", hb)
 	}
 
-	// (b) A NEW, valid UUIDv4 session_id was minted on /clear (prev→new) and
-	// tokens dropped below the pre-clear high-water mark.
 	final, _, err := keeper.ReadCtxFile(project, agent)
 	if err != nil {
 		t.Fatalf("tw: read final .ctx: %v", err)
@@ -455,12 +331,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	if !twIsValidUUIDv4(final.SessionID) {
 		t.Fatalf("tw: rotated session_id %q is not a valid UUIDv4 (keeper rejects v7)", final.SessionID)
 	}
-	// The /clear reset tokens to start-tokens on the NEW session. The concurrent
-	// watcher captured the minimum tokens observed on that rotated session — the
-	// reset value — before the emitter grew it again. That minimum must be BELOW
-	// the pre-clear high-water mark (proving context was dropped by /clear), and
-	// at/near the twin's start-tokens reset point (50k; allow headroom for a few
-	// emit ticks that may have grown it before the watcher first sampled).
 	if minPostClearTokens < 0 {
 		t.Errorf("tw: never observed a reading on the rotated session — cannot confirm the token reset")
 	} else {
@@ -472,13 +342,11 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		}
 	}
 
-	// (c) .idle exists (await-input boundary touched by the real stop hook).
 	idlePath := filepath.Join(project, ".harmonik", "keeper", agent+".idle")
 	if _, err := os.Stat(idlePath); err != nil {
 		t.Errorf("tw: .idle marker missing after cycle: %v", err)
 	}
 
-	// (d) cycle_complete emitted with prev==seed and new==rotated; NO park.
 	complete := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(complete) != 1 {
 		t.Fatalf("tw: want 1 cycle_complete; got %d (events imply the cycle did not finish cleanly)", len(complete))
@@ -497,7 +365,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		t.Errorf("tw: cycle_complete.new_session_id = %q; want %q (the rotated .ctx SID)", cp.NewSessionID, final.SessionID)
 	}
 
-	// (e) handoff_started emitted exactly once (cycle was auditable).
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
 		t.Errorf("tw: want 1 handoff_started; got %d", n)
 	}
@@ -545,16 +412,10 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	twin := twBuildTwin(t, project)
 	statusline, idleHook := twScripts(t)
 
-	// Opt the agent in (.managed) so the REAL IsManaged gate passes. The binding
-	// starts empty; the .sid channel is responsible for populating .managed.
 	if err := keeper.WriteManagedSessionID(project, agent, ""); err != nil {
 		t.Fatalf("tw: WriteManagedSessionID: %v", err)
 	}
 
-	// (1) HIGH CONTEXT on a 1M window: start low and grow past Act 215k, then
-	// (2) FREEZE the gauge after suppressAfter while keeping the pane alive, and
-	// resume emitting on /clear so the post-clear rotated SID becomes observable
-	// (the operator's stale-gauge-then-recover path).
 	const emitEvery = 150 * time.Millisecond
 	sess := twStartTwin(t, twTwinSpec{
 		project:                 project,
@@ -571,8 +432,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		resumeStatuslineOnClear: true,
 	})
 
-	// Wait (via the REAL .ctx) for tokens to cross the act threshold while the
-	// gauge is still fresh — this is the seed reading the keeper acts on.
 	seed := twWaitForCtxTokens(t, project, agent, 300_000, 8*time.Second)
 	seedSID := seed.SessionID
 	if seedSID == "" {
@@ -585,9 +444,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatal("tw: CrispIdle false at seed — the twin's .idle marker did not register a crisp boundary")
 	}
 
-	// (2) Prove the gauge is now STALE while the pane is ALIVE: wait past the
-	// suppression deadline, then confirm the .ctx modTime is FROZEN across a
-	// sampling window while the .idle marker keeps ADVANCING.
 	time.Sleep(2500*time.Millisecond + 4*emitEvery)
 	_, ctxMod1, err := keeper.ReadCtxFile(project, agent)
 	if err != nil {
@@ -616,11 +472,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatal("tw: CrispIdle false under the stale gauge — a live pane must still present a crisp boundary")
 	}
 
-	// (3) IDLE / REMOTE-CONTROL CLIENT: feed a STALE #{client_activity} line to the
-	// PRODUCTION distinction logic with the PRODUCTION window. operatorActiveSince
-	// must read NOT-active (the client is attached but idle), so the cycle proceeds
-	// rather than false-suppressing (hk-0t5s). Exercising the real parser keeps the
-	// gate faithful; the live attached-client soak is the human-verifier step.
 	operatorAttached := func(_ string) bool {
 		staleClient := fmt.Sprintf("%d\n", time.Now().Add(-10*time.Minute).Unix())
 		return keeper.OperatorActiveSinceForTest(staleClient, time.Now(), keeper.OperatorActiveWindowForTest)
@@ -629,9 +480,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatal("tw: idle/remote-control client mis-read as ACTIVE — it would false-suppress the cycle")
 	}
 
-	// Recording wrappers around the PRODUCTION fns so the no-auto-clear and
-	// SetManagedSession-called-once invariants are observable while still driving
-	// the REAL tmux injection + REAL .managed write.
 	var injects []string
 	recInject := func(ctx context.Context, target, text string) error {
 		injects = append(injects, text)
@@ -660,8 +508,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		}}
 	})
 
-	// Watch for the post-/clear token RESET on the rotated session (immune to the
-	// resumed emitter's regrowth), exactly as the happy-path E2E does.
 	stopWatch := make(chan struct{})
 	resetCh := make(chan int64, 1)
 	go twWatchForReset(project, agent, seedSID, stopWatch, resetCh)
@@ -673,7 +519,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	close(stopWatch)
 	minPostClearTokens := <-resetCh
 
-	// (a) Nonce landed in the HANDOFF file (handoff confirmed — the /clear precondition).
 	handoffPath := filepath.Join(project, "HANDOFF-"+agent+".md")
 	hb, err := os.ReadFile(handoffPath) //nolint:gosec // G304: test-local temp path
 	if err != nil {
@@ -683,7 +528,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatalf("tw: HANDOFF file missing keeper nonce; got:\n%s", hb)
 	}
 
-	// (b) SESSION-ID FLIP: a new, valid UUIDv4 (keeper rejects v7) replaced the seed.
 	final, _, err := keeper.ReadCtxFile(project, agent)
 	if err != nil {
 		t.Fatalf("tw: read final .ctx: %v", err)
@@ -695,15 +539,12 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatalf("tw: rotated session_id %q is not a valid UUIDv4", final.SessionID)
 	}
 
-	// (c) Tokens dropped after /clear (context was actually shed).
 	if minPostClearTokens < 0 {
 		t.Errorf("tw: never observed a reading on the rotated session — cannot confirm the token reset")
 	} else if minPostClearTokens >= seed.Tokens {
 		t.Errorf("tw: tokens did not drop after /clear: min-on-new-session=%d >= seed=%d", minPostClearTokens, seed.Tokens)
 	}
 
-	// (d) IDENTITY REBOUND: .managed now holds the rotated session_id, and IsManaged
-	// stays true (the opt-in marker is preserved across the cycle).
 	if !keeper.IsManaged(project, agent) {
 		t.Error("tw: agent no longer .managed after the cycle — the opt-in marker must be preserved")
 	}
@@ -715,9 +556,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Errorf("tw: .managed rebound to %q; want the rotated SID %q", boundSID, final.SessionID)
 	}
 
-	// (e) cycle_complete with prev==seed and new==rotated; NO park. The idle
-	// remote-control client must not read as a live operator turn, so the
-	// operator_turn_recent park must not fire here either.
 	complete := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(complete) != 1 {
 		t.Fatalf("tw: want 1 cycle_complete; got %d", len(complete))
@@ -736,15 +574,10 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Errorf("tw: cycle_complete.new_session_id = %q; want %q", cp.NewSessionID, final.SessionID)
 	}
 
-	// (f) NO operator-attached suppression (the idle/remote-control client was
-	// correctly read as not-a-live-typist).
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached)); n != 0 {
 		t.Errorf("tw: want 0 operator_attached events for an IDLE/remote-control client; got %d", n)
 	}
 
-	// (g) NO-AUTO-CLEAR invariant: EXACTLY ONE /clear, injected only AFTER the
-	// handoff and before the resume — the deterministic 7-step cycle, with the old
-	// heuristic auto-clear loop dead.
 	handoffIdx, clearIdx, briefIdx := -1, -1, -1
 	clears := 0
 	for i, text := range injects {
@@ -767,7 +600,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Errorf("tw: inject order must be handoff(%d) < clear(%d) < brief(%d): %v", handoffIdx, clearIdx, briefIdx, injects)
 	}
 
-	// (h) SetManagedSession called EXACTLY ONCE, with the rotated SID.
 	if len(setManagedSIDs) != 1 {
 		t.Fatalf("tw: want SetManagedSession called exactly once; got %d (%v)", len(setManagedSIDs), setManagedSIDs)
 	}
@@ -775,7 +607,6 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Errorf("tw: SetManagedSession called with %q; want the rotated SID %q", setManagedSIDs[0], final.SessionID)
 	}
 
-	// (i) handoff_started emitted exactly once (the cycle was auditable).
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
 		t.Errorf("tw: want 1 handoff_started; got %d", n)
 	}
@@ -812,8 +643,6 @@ func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
 		}
 	}
 
-	// Operator idle/remote-control-vs-live-typist distinction (the guard the
-	// headline relies on to NOT false-suppress). Exercises the production parser.
 	now := time.Now()
 	w := keeper.OperatorActiveWindowForTest
 	live := fmt.Sprintf("%d\n", now.Unix())                      // keystroke just now → live typist.
@@ -917,8 +746,6 @@ func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
 
 	const startTokens int64 = 50_000
 
-	// Start the twin emitting a [1m] gauge. Growth at 50k/200ms crosses
-	// startTokens within one tick, making the /clear gate open.
 	sess := twStartTwin(t, twTwinSpec{
 		project:     project,
 		agent:       agent,
@@ -932,29 +759,20 @@ func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
 		emitEvery:   200 * time.Millisecond,
 	})
 
-	// Wait for the gauge to grow past startTokens so the /clear will fire
-	// (the twin's /clear is a no-op when tokens <= startTokens).
 	seed := twWaitForCtxTokens(t, project, agent, startTokens+1, 5*time.Second)
 	seedSID := seed.SessionID
 	if seedSID == "" {
 		t.Fatal("tw: seed .ctx has empty session_id")
 	}
 
-	// Simulate a prior watcher that latched seedSID into .managed.
 	if err := keeper.WriteManagedSessionID(project, agent, seedSID); err != nil {
 		t.Fatalf("tw: WriteManagedSessionID(seedSID): %v", err)
 	}
 
-	// Inject /clear EXTERNALLY — directly into the twin pane, bypassing the
-	// keeper cycle. The twin processes this via its stdin REPL, resets tokens
-	// to startTokens, and mints a fresh UUIDv4 (SID-B).
 	if err := keeper.InjectText(context.Background(), sess, "/clear"); err != nil {
 		t.Fatalf("tw: inject /clear into twin pane: %v", err)
 	}
 
-	// Poll the RAW .ctx for the rotated session_id. No .sid file exists yet so
-	// ReadCtxFile falls back to the gauge's session_id — the rotation is visible
-	// as soon as the twin re-emits SID-B after /clear.
 	var newSID string
 	sidDeadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(sidDeadline) {
@@ -971,20 +789,8 @@ func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
 		t.Fatalf("tw: rotated session_id %q is not a valid UUIDv4", newSID)
 	}
 
-	// Write newSID to .sid, simulating what the real SessionStart hook
-	// (scripts/keeper-sessionstart-hook.sh) produces when the session resumes
-	// after /clear. Once .sid carries a valid UUIDv4, ReadCtxFile overrides
-	// the gauge's raw session_id with it — the watcher's re-resolve gate then
-	// confirms .sid == gauge and re-adopts without emitting foreign_session.
 	writeSidFile(t, project, agent, newSID)
 
-	// State at watcher start:
-	//   .managed = seedSID (stale latch — the "prior session")
-	//   gauge    = newSID  (rotated by the external /clear)
-	//   .sid     = newSID  (endorses the gauge as primary identity)
-	// The watcher detects the mismatch, confirms .sid endorses the gauge,
-	// and re-adopts by calling WriteManagedSessionFn(newSID) without emitting
-	// any foreign_session event.
 	em := &keeper.RecordingEmitter{}
 	adoptedCh := make(chan string, 1)
 
@@ -1020,15 +826,10 @@ func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
 	}
 	watchCancel()
 
-	// (a) The adopted SID is the rotated one (not the stale seed).
 	if gotSID != newSID {
 		t.Errorf("tw: watcher re-adopted %q; want the rotated SID %q", gotSID, newSID)
 	}
 
-	// (b) NO foreign_session events: the watcher must recognise the mismatch as
-	// "same agent, new session after external /clear" (endorsed by .sid) and
-	// re-adopt cleanly. Even one foreign_session emit means the re-resolve gate
-	// rejected a valid same-agent rotation as if it were a concurrent intruder.
 	for _, ev := range em.EventsOfType(core.EventTypeSessionKeeperNoGauge) {
 		var payload core.SessionKeeperNoGaugePayload
 		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
@@ -1040,9 +841,6 @@ func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
 	}
 }
 
-// twIsValidUUIDv4 checks the canonical 8-4-4-4-12 layout with the version nibble
-// '4' at index 14 and the RFC-4122 variant (8/9/a/b) at index 19. Mirrors the
-// twin's own newUUIDv4 contract (keeper rejects UUIDv7).
 func twIsValidUUIDv4(s string) bool {
 	if len(s) != 36 {
 		return false

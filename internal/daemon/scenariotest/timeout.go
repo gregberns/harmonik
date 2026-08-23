@@ -1,7 +1,5 @@
 package scenariotest
 
-// timeout.go — MustCompleteWithin harness for scenario tests (hk-8uy6m).
-
 import (
 	"bufio"
 	"context"
@@ -15,8 +13,6 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// daemonLogPatterns are recovery-path log signatures from the pasteinject and
-// merge-conflict recovery paths (hk-trjef, hk-5s7tg, hk-cwxow).
 var daemonLogPatterns = []string{
 	"pasteinject quit-on-commit",
 	"context cancelled during reviewer wait",
@@ -80,8 +76,6 @@ func MustCompleteWithin(
 	t.Fatal(sb.String())
 }
 
-// tailLines returns the last n lines of the file at path as a single string
-// (newline-terminated), or "" if the file cannot be read.
 func tailLines(path string, n int) string {
 	//nolint:gosec // G304: path is t.TempDir()-based or test-config; not user input
 	f, err := os.Open(path)
@@ -108,8 +102,6 @@ func tailLines(path string, n int) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// appendTmuxWindows lists all tmux windows whose name starts with "hk-" and
-// appends them to sb. Reports an error line if listing fails.
 func appendTmuxWindows(sb *strings.Builder, adapter tmuxPkg.Adapter) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -138,8 +130,6 @@ func appendTmuxWindows(sb *strings.Builder, adapter tmuxPkg.Adapter) {
 	}
 }
 
-// appendDaemonLogMatches greps daemonLog for known recovery-path signatures
-// and appends matched lines to sb.
 func appendDaemonLogMatches(sb *strings.Builder, daemonLog string) {
 	//nolint:gosec // G304: path is test-config; not user input
 	f, err := os.Open(daemonLog)

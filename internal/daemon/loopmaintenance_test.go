@@ -21,15 +21,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// recordingReapAdapter is an ltmux.Adapter that records whether the coordinator
-// reap reached tmux.
-//
-// The embedded interface is nil on purpose. Only ListSessions is implemented,
-// because that is the first and only adapter method reapDeadCoordinatorSession
-// calls before it decides there is nothing to kill. Any OTHER method the code
-// under test starts calling panics on the nil interface, which is the outcome we
-// want: a silent new tmux call in a maintenance pass should fail this test, not
-// be absorbed by a permissive stub.
 type recordingReapAdapter struct {
 	ltmux.Adapter
 	listSessionsCalls int
@@ -42,18 +33,6 @@ func (a *recordingReapAdapter) ListSessions(context.Context) ([]string, error) {
 	return nil, nil
 }
 
-// haltFixture builds the deps, coordinator-reap port, and maintenance state the
-// two subtests share.
-//
-// projectDir is a real temp dir with no coordinator sentinel file in it, so
-// probeCoordinatorSentinel reports "not live" and the reap proceeds to the
-// adapter. That is what makes the negative assertion below meaningful: the reap
-// WOULD call tmux on this fixture, so observing no call proves the short-circuit
-// rather than proving the fixture is inert.
-//
-// diskFreeBytesFunc is injected well above the watermark so the disk job takes
-// its healthy path here. The disk-LOW branch is covered separately by
-// TestDiskLowBranch below.
 func haltFixture(t *testing.T) (coordinatorReapPort, diskReclaimPort, *recordingReapAdapter) {
 	t.Helper()
 	adapter := &recordingReapAdapter{}
@@ -136,18 +115,14 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 		if !obs.halt {
 			t.Fatalf("armed governor halt: want observation.halt = true, got %+v", obs)
 		}
-		// The load-bearing assertion: the reap must not have run.
 		if adapter.listSessionsCalls != 0 {
 			t.Errorf("halt tick ran the coordinator reap: ListSessions called %d times, want 0",
 				adapter.listSessionsCalls)
 		}
-		// The reap's clock must be untouched too. A stamped clock would mean the
-		// job ran even if the adapter somehow was not reached.
 		if !m.state.lastCoordinatorReap.IsZero() {
 			t.Errorf("halt tick stamped lastCoordinatorReap = %v, want zero",
 				m.state.lastCoordinatorReap)
 		}
-		// Same for the disk job: no probe, so no latch and no clock.
 		if !m.state.lastDiskCheck.IsZero() {
 			t.Errorf("halt tick ran the disk check: lastDiskCheck = %v, want zero",
 				m.state.lastDiskCheck)
@@ -157,8 +132,6 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 		}
 	})
 
-	// Positive control. Without this, the assertions above would still pass if the
-	// fixture simply could not reach tmux, and the test would prove nothing.
 	t.Run("same fixture without the halt does run the reap", func(t *testing.T) {
 		port, diskReclaim, adapter := haltFixture(t)
 		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: &movementGovernor{haltRequested: false}}
@@ -181,9 +154,6 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 		}
 	})
 
-	// A nil governor is the switched-off subsystem. It must read as "no halt"
-	// rather than panicking, which is what lets runWorkLoop hold one code path for
-	// both configurations.
 	t.Run("absent governor subsystem never halts", func(t *testing.T) {
 		port, diskReclaim, adapter := haltFixture(t)
 		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: nil}
@@ -200,25 +170,6 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	})
 }
 
-// diskLowFixture builds deps that drive the disk probe BELOW the watermark with
-// the one remaining subprocess seam stubbed.
-//
-// worktreeReclaimFunc stands in for the `git worktree remove` /
-// `worktree prune` sequence (runWorktreeReclaim prefers it when non-nil). It is
-// wired even though it is unreachable on this fixture, so that if the branch
-// ever grows a new route to that subprocess the test records a call instead of
-// spawning one.
-//
-// There is no go-cache seam. The daemon no longer runs `go clean -cache`, and
-// TestDiskLowNeverDeletesTheGoBuildCache holds that property.
-//
-// runRegistry is nil on purpose: mergeOrRunInFlight reports "idle", so the
-// branch takes the reclaim path rather than the run-in-flight warning path, and
-// reclaimStaleWorktrees returns 0 immediately, so the reclaim-was-sufficient
-// early return is skipped and the probe reaches the report step.
-//
-// bus is nil, so the disk_low event emit is skipped. The event payload is not
-// what this test is about.
 func diskLowFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamCalls) {
 	t.Helper()
 	calls := &diskSeamCalls{}
@@ -230,28 +181,14 @@ func diskLowFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamC
 			return nil
 		},
 	}
-	// Fire on the first tick instead of waiting out diskCheckInterval.
 	ExportedDiskCheckSetCheckInterval(&port, time.Nanosecond)
 	return port, calls
 }
 
-// diskSeamCalls counts the stubbed subprocess seams. A named field rather than a
-// bare *int, so a call site cannot silently transpose it with a future sibling.
 type diskSeamCalls struct {
 	worktreeReclaim int
 }
 
-// staleWorktreeFixture is diskLowFixture with the stale-worktree reclaim made
-// REACHABLE: a real (empty) run registry plus one UUID-named directory under
-// .harmonik/worktrees/.
-//
-// The reclaim stub counts the call and returns nil WITHOUT removing the
-// directory. Two things follow, and both are wanted. reclaimStaleWorktrees
-// counts zero directories actually gone, so the "reclaim was enough" early
-// return is not taken and the probe reaches the report step. And the directory
-// is still reclaimable on the NEXT probe, which is what makes
-// "the healthy path reclaimed nothing" a real assertion rather than a
-// restatement of an empty fixture.
 func staleWorktreeFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamCalls) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -284,7 +221,6 @@ func staleWorktreeFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *dis
 // is cheap. The false claim is recorded here because a comment that talks a
 // reader out of a test they could have written is worse than no comment.
 func TestDiskLowBranch(t *testing.T) {
-	// Below the watermark: latch set, no real subprocess.
 	t.Run("below watermark sets diskLow", func(t *testing.T) {
 		port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
@@ -294,18 +230,11 @@ func TestDiskLowBranch(t *testing.T) {
 		if !ExportedDiskCheckDiskLow(ms) {
 			t.Error("free space one byte below the watermark: want diskLow = true")
 		}
-		// Nil runRegistry means no stale worktrees are enumerated, so the reclaim
-		// seam is not reached on this path. Asserted so the fixture's shape stays
-		// visible rather than implied.
 		if calls.worktreeReclaim != 0 {
 			t.Errorf("worktree-reclaim seam called %d times, want 0 on a nil run registry", calls.worktreeReclaim)
 		}
 	})
 
-	// The low path reclaims the daemon's OWN stale worktrees. This is the
-	// positive control for the recovery subtest below: without it, "the healthy
-	// path reclaimed nothing" would pass on a fixture that could never reclaim
-	// anything at all.
 	t.Run("below watermark reclaims the daemon's own stale worktrees", func(t *testing.T) {
 		port, calls := staleWorktreeFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
@@ -321,8 +250,6 @@ func TestDiskLowBranch(t *testing.T) {
 		}
 	})
 
-	// The latch must CLEAR when the disk recovers, using the same state handle.
-	// This is the transition, not two independent probes.
 	t.Run("recovery clears the diskLow latch and reclaims nothing", func(t *testing.T) {
 		port, calls := staleWorktreeFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
@@ -335,9 +262,6 @@ func TestDiskLowBranch(t *testing.T) {
 			t.Fatalf("setup: worktree-reclaim seam called %d times on the low probe, want 1", calls.worktreeReclaim)
 		}
 
-		// Same deps, same state handle, disk now healthy. The stale worktree is
-		// still on disk and still reclaimable, so a healthy path that reclaimed
-		// would push this counter to 2.
 		port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
 		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 
@@ -350,9 +274,6 @@ func TestDiskLowBranch(t *testing.T) {
 		}
 	})
 
-	// The branch must be reachable through the new maintenance seam, not only by
-	// calling runPeriodicDiskCheck directly, and the observation must carry the
-	// latch out to the loop.
 	t.Run("tickBeforeDispatch reports diskLow to the loop", func(t *testing.T) {
 		port, _ := diskLowFixture(t, diskLowWatermarkDefault-1)
 		m := &loopMaintenance{diskReclaim: port}
@@ -418,14 +339,6 @@ func TestDiskLowNeverDeletesTheGoBuildCache(t *testing.T) {
 	}
 }
 
-// goToolchainCleanCalls returns the literal argument list of every exec call in
-// file that runs `go` with a `clean` subcommand.
-//
-// It matches on the string literals passed to os/exec rather than on a helper
-// name, so restoring the reap under a fresh function name is still caught. A
-// caller that assembles the argument list at run time is NOT caught; that is a
-// deliberate limit, because the file-level comment on diskcheck_hksxlb.go — not
-// this scan — is what tells the next reader why the reap is gone.
 func goToolchainCleanCalls(file *ast.File) [][]string {
 	var found [][]string
 	ast.Inspect(file, func(node ast.Node) bool {

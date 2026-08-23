@@ -1,20 +1,5 @@
 package daemon
 
-// runregistry.go — in-flight run registry for the harmonik daemon (hk-7s9z9).
-//
-// RunRegistry tracks all currently executing bead runs inside the daemon
-// process. It is a field on the Daemon struct (NOT a package-level variable —
-// package-level globals break concurrent tests per
-// POST_OPERATIONAL_PARALLELISM_ROADMAP.md §6 anti-pattern).
-//
-// The registry is the foundation for concurrent throughput (roadmap row #4 /
-// blocker E). Once the work loop (row #5) launches goroutine-per-bead it will
-// Register on claim and Unregister after the bead closes. MaxConcurrent
-// enforcement (row #6) reads Len() before accepting a new claim.
-//
-// Spec ref: POST_OPERATIONAL_PARALLELISM_ROADMAP.md §1 blocker E, §3 row #4.
-// Bead: hk-7s9z9.
-
 import (
 	"context"
 	"sync"
@@ -375,13 +360,6 @@ func (r *RunRegistry) HasBeadRun(beadID core.BeadID) bool {
 	return false
 }
 
-// snapshotWithKeys returns a stable map copy of all currently registered
-// (runID → *RunHandle) entries.  This is the key-preserving variant of
-// Snapshot, used internally by HandlerPausePolicyGoroutine to build the
-// in-flight freeze-list (hk-37zy8).
-//
-// The map is a shallow copy: keys are value-copied (RunID is a UUIDv7 value
-// type), and RunHandle pointers are copied (not the structs they point to).
 func (r *RunRegistry) snapshotWithKeys() map[core.RunID]*RunHandle {
 	r.mu.RLock()
 	out := make(map[core.RunID]*RunHandle, len(r.handles))

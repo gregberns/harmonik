@@ -11,7 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
-// exitScript returns a shell one-liner that exits with the given code.
 func exitScript(code int) []string {
 	return []string{"sh", "-c", "exit " + itoa(code)}
 }
@@ -141,10 +140,6 @@ func TestMaxRestartsCap_CrashLoop(t *testing.T) {
 	}
 }
 
-// waitForStatus polls the supervisor snapshot until it reaches want or the
-// deadline elapses. It returns the last snapshot observed and whether want was
-// reached. The poll interval is short so timing-sensitive transitions are
-// caught promptly.
 func waitForStatus(sv *supervise.Supervisor, want supervise.Status, within time.Duration) (supervise.State, bool) {
 	deadline := time.Now().Add(within)
 	var last supervise.State
@@ -167,7 +162,6 @@ func TestHeartbeatStaleness(t *testing.T) {
 	dir := t.TempDir()
 	hbPath := filepath.Join(dir, "heartbeat.json")
 
-	// Write a heartbeat file with a very old mtime (2 minutes ago) → stale.
 	if err := os.WriteFile(hbPath, nil, 0o600); err != nil {
 		t.Fatalf("create heartbeat: %v", err)
 	}
@@ -176,7 +170,6 @@ func TestHeartbeatStaleness(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	// Long-running child (sleep) so it doesn't exit before the probe fires.
 	spec := supervise.Spec{
 		Command:             []string{"sh", "-c", "sleep 30"},
 		Policy:              supervise.PolicyOnFailure,
@@ -200,8 +193,6 @@ func TestHeartbeatStaleness(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- sv.Run(ctx) }()
 
-	// With a 25ms probe interval and a 2-min-stale file, the supervisor must
-	// transition to unhealthy well within 2s.
 	snap, ok := waitForStatus(sv, supervise.StatusUnhealthy, 2*time.Second)
 	if !ok {
 		if stopErr := sv.Stop(0); stopErr != nil {
@@ -210,7 +201,6 @@ func TestHeartbeatStaleness(t *testing.T) {
 		<-done
 		t.Fatalf("expected status unhealthy from stale heartbeat, last seen %s", snap.Status)
 	}
-	// Health failure must NOT restart.
 	if snap.RestartCount != 0 {
 		t.Errorf("heartbeat failure should not restart; got %d restarts", snap.RestartCount)
 	}
@@ -257,7 +247,6 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- sv.Run(ctx) }()
 
-	// Keep the heartbeat fresh for ~400ms (many probe ticks), bumping mtime.
 	bumpStop := make(chan struct{})
 	bumpDone := make(chan struct{})
 	go func() {
@@ -277,18 +266,11 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 			}
 		}
 	}()
-	// Signalling bumpStop is not enough: the goroutine calls t.Errorf on its
-	// Chtimes failure path, and a t.Errorf that lands after the test function
-	// returns panics with "Log in goroutine after test has completed", killing
-	// the whole package test binary. Every stop site must JOIN.
-	// Exactly one of the three call sites below runs (the other two t.Fatal),
-	// so closing bumpStop once is safe.
 	stopBump := func() {
 		close(bumpStop)
 		<-bumpDone
 	}
 
-	// Confirm it reaches running and stays healthy across several probe ticks.
 	if _, ok := waitForStatus(sv, supervise.StatusRunning, 1*time.Second); !ok {
 		stopBump()
 		if stopErr := sv.Stop(0); stopErr != nil {
@@ -324,7 +306,6 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 // old hardcoded 10s window, governs escalation.
 func TestStopTimeoutHonored(t *testing.T) {
 	spec := supervise.Spec{
-		// trap+ignore SIGTERM, then sleep — only SIGKILL ends it.
 		Command:         []string{"sh", "-c", "trap '' TERM; sleep 30"},
 		Policy:          supervise.PolicyOnFailure,
 		StartTimeout:    20 * time.Millisecond,
@@ -361,8 +342,6 @@ func TestStopTimeoutHonored(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	// Must escalate near stopTimeout, not the old hardcoded 10s. Allow slack
-	// for scheduling/reap latency but require it to be well under 10s.
 	if elapsed < stopTimeout {
 		t.Errorf("Stop returned before the SIGTERM window elapsed (%s < %s)", elapsed, stopTimeout)
 	}

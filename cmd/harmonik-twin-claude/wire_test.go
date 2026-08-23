@@ -10,20 +10,12 @@ import (
 	"time"
 )
 
-// Test helpers use the per-bead prefix declared in implementer-protocol.md:
-// twinWireFixture (this bead: hk-ahvq.48.2).
-
-// twinWireFixtureEmitter returns a wireEmitter writing to a bytes.Buffer plus
-// the buffer itself, for round-trip message inspection.
 func twinWireFixtureEmitter(t *testing.T) (*wireEmitter, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	return newWireEmitter(&buf), &buf
 }
 
-// twinWireFixtureDecode decodes the sole NDJSON line from buf into a
-// map[string]any. It calls t.Fatalf if the line does not exist or is not valid
-// JSON.
 func twinWireFixtureDecode(t *testing.T, buf *bytes.Buffer) map[string]any {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
@@ -64,8 +56,6 @@ func twinWireFixtureObject(t *testing.T, value any, field string) map[string]any
 	return object
 }
 
-// twinWireFixtureAssertType checks that a decoded message map has the expected
-// "type" field value.
 func twinWireFixtureAssertType(t *testing.T, m map[string]any, want string) {
 	t.Helper()
 	got, ok := m["type"].(string)
@@ -76,10 +66,6 @@ func twinWireFixtureAssertType(t *testing.T, m map[string]any, want string) {
 		t.Errorf("message type = %q, want %q", got, want)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// NDJSON framing tests (HC-007a)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireEmitFraming verifies that each emitted message is exactly one JSON
 // object terminated by a single newline (0x0A) with no extra whitespace
@@ -96,13 +82,10 @@ func TestWireEmitFraming(t *testing.T) {
 
 	raw := buf.String()
 
-	// Each line must end with exactly one newline.
 	lines := strings.Split(raw, "\n")
-	// The last split element is "" because the string ends with \n.
 	if lines[len(lines)-1] != "" {
 		t.Errorf("buffer does not end with newline; last segment = %q", lines[len(lines)-1])
 	}
-	// Strip the trailing empty segment; should have exactly 2 messages.
 	lines = lines[:len(lines)-1]
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 NDJSON lines, got %d", len(lines))
@@ -113,16 +96,11 @@ func TestWireEmitFraming(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &obj); err != nil {
 			t.Errorf("line %d is not valid JSON: %v — %q", i, err, line)
 		}
-		// No embedded unescaped newline inside a JSON object per HC-007a.
 		if strings.Contains(line, "\n") {
 			t.Errorf("line %d contains embedded newline", i)
 		}
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// handler_capabilities (HC-009)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitHandlerCapabilities verifies the type field and required payload
 // fields of the handler_capabilities message (HC-009, event-model §8.3.9).
@@ -147,10 +125,6 @@ func TestEmitHandlerCapabilities(t *testing.T) {
 		t.Errorf("protocol_versions_supported missing or empty: %v", m["protocol_versions_supported"])
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// session_log_location (HC-010)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitSessionLogLocation verifies the type, required fields, and optional
 // bead_id omission/inclusion for session_log_location (HC-010, event-model §8.3.7).
@@ -187,10 +161,6 @@ func TestEmitSessionLogLocation(t *testing.T) {
 	})
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// skills_provisioned (HC-049)
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestEmitSkillsProvisioned verifies the type field and skills array encoding
 // (event-model §8.3.8).
 func TestEmitSkillsProvisioned(t *testing.T) {
@@ -212,7 +182,6 @@ func TestEmitSkillsProvisioned(t *testing.T) {
 	if !ok || len(arr) != 2 {
 		t.Fatalf("skills field: want 2-element array, got %v", m["skills"])
 	}
-	// Second skill has version; first does not.
 	s0 := twinWireFixtureObject(t, arr[0], "skills[0]")
 	if _, hasVer := s0["version"]; hasVer {
 		t.Errorf("first skill should have no version field, got %v", s0)
@@ -222,10 +191,6 @@ func TestEmitSkillsProvisioned(t *testing.T) {
 		t.Errorf("second skill version = %v, want 1.2.3", s1["version"])
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_ready (HC-039, HC-040)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentReady verifies the type and capabilities array (HC-039/HC-040,
 // event-model §8.3.1).
@@ -245,10 +210,6 @@ func TestEmitAgentReady(t *testing.T) {
 	}
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// agent_started (HC-007, §6.4)
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestEmitAgentStarted verifies that the agent_started message does NOT
 // include environment variables (HC-029) and carries the required fields
 // (event-model §8.3.2).
@@ -263,14 +224,12 @@ func TestEmitAgentStarted(t *testing.T) {
 	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "agent_started")
 
-	// HC-029: no environment variables in the payload.
 	for _, forbidden := range []string{"env", "environment", "environ"} {
 		if _, exists := m[forbidden]; exists {
 			t.Errorf("agent_started carries forbidden env field %q (HC-029)", forbidden)
 		}
 	}
 
-	// started_at must be a parseable RFC3339 timestamp.
 	sat, ok := m["started_at"].(string)
 	if !ok {
 		t.Fatalf("started_at missing or not string: %v", m["started_at"])
@@ -279,10 +238,6 @@ func TestEmitAgentStarted(t *testing.T) {
 		t.Errorf("started_at %q not RFC3339Nano: %v", sat, err)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_heartbeat (HC-026a)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentHeartbeat verifies the heartbeat message type, required
 // session_id and phase fields (HC-026a).
@@ -313,10 +268,6 @@ func TestEmitAgentHeartbeat(t *testing.T) {
 		})
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_output_chunk (HC-007, event-model §8.3.3)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentOutputChunk verifies the type, required fields, and optional
 // chunk_digest omission/inclusion for agent_output_chunk (HC-007, §6.4;
@@ -353,10 +304,6 @@ func TestEmitAgentOutputChunk(t *testing.T) {
 		}
 	})
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_rate_limited (HC-025, HC-OQ-011 Interp. A)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentRateLimited verifies the type, required fields, and optional
 // field omission for agent_rate_limited (HC-025; event-model §8.3.6).
@@ -399,10 +346,6 @@ func TestEmitAgentRateLimited(t *testing.T) {
 	})
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// agent_rate_limit_cleared (HC-025, HC-OQ-011 Interp. A)
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestEmitAgentRateLimitCleared verifies the type and required fields for
 // agent_rate_limit_cleared (HC-025; event-model §8.3.6).
 func TestEmitAgentRateLimitCleared(t *testing.T) {
@@ -422,17 +365,12 @@ func TestEmitAgentRateLimitCleared(t *testing.T) {
 	if got, ok := m["changed_at"].(string); !ok || got == "" {
 		t.Errorf("changed_at missing or empty: %v", m["changed_at"])
 	}
-	// Verify changed_at is parseable RFC3339Nano.
 	if cat, ok := m["changed_at"].(string); ok {
 		if _, err := time.Parse(time.RFC3339Nano, cat); err != nil {
 			t.Errorf("changed_at %q not RFC3339Nano: %v", cat, err)
 		}
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// outcome_emitted (HC-008)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitOutcomeEmitted verifies the outcome_emitted message type and
 // required fields (HC-008).
@@ -450,10 +388,6 @@ func TestEmitOutcomeEmitted(t *testing.T) {
 		t.Errorf("outcome_status = %q, want success", got)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_completed (HC-024)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentCompleted verifies the type and payload of agent_completed
 // (HC-024, event-model §8.3.4).
@@ -475,16 +409,11 @@ func TestEmitAgentCompleted(t *testing.T) {
 		t.Errorf("outcome_ref = %q, want outcome-ref-001", got)
 	}
 
-	// ended_at must parse as RFC3339Nano.
 	eat := twinWireFixtureString(t, m, "ended_at")
 	if _, err := time.Parse(time.RFC3339Nano, eat); err != nil {
 		t.Errorf("ended_at %q not RFC3339Nano: %v", eat, err)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// agent_failed (HC-024)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestEmitAgentFailed verifies the type, error_category, reason, and
 // optional sub_reason field (HC-024, event-model §8.3.5).
@@ -500,7 +429,6 @@ func TestEmitAgentFailed(t *testing.T) {
 		if got := twinWireFixtureString(t, m, "error_category"); got != "structural" {
 			t.Errorf("error_category = %q, want structural", got)
 		}
-		// sub_reason must be omitted when empty (omitempty).
 		if _, exists := m["sub_reason"]; exists {
 			t.Error("sub_reason present for empty value; want omitempty")
 		}
@@ -518,10 +446,6 @@ func TestEmitAgentFailed(t *testing.T) {
 		}
 	})
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Control message reader (daemon-to-handler direction)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireReaderVersionSelected verifies that the wireReader correctly decodes
 // the version_selected control message sent by the daemon after the handshake

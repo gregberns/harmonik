@@ -1,14 +1,5 @@
 package daemon
 
-// statetypes.go — normative Go types for the harmonik system-state snapshot.
-//
-// All types here are NORMATIVE per specs/system-state.md §4.1 (hk-gv04 /
-// codename:fleet-state). The JSON tags are stable; no field may be removed or
-// renamed once emitted in a released binary.
-//
-// Bead ref: hk-gv04 (P2-a: harmonik state aggregator command).
-// Spec ref: specs/system-state.md §4 (SS-001..SS-001b).
-
 import "time"
 
 // ActivityLabel is the fleet-level activity roll-up.  Four values, priority
@@ -154,10 +145,8 @@ type LoopDetectedSignal struct {
 	Note       string  `json:"note"`
 }
 
-// onDiskSleepMarkerPrefix is the prefix for sleep marker files under .harmonik/.
 const onDiskSleepMarkerPrefix = ".sleeping."
 
-// formatRFC3339 formats t as RFC-3339, or "" for zero.
 func formatRFC3339(t time.Time) string {
 	if t.IsZero() {
 		return ""

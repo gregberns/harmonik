@@ -1,15 +1,5 @@
 package daemon
 
-// T5 — golden wire-byte table (MANDATORY, package daemon, over net.Pipe, no
-// daemon boot). Drives handleSocketConn and asserts the EXACT JSON bytes and the
-// presence/absence of the trailing '\n' for every distinct envelope shape. This
-// is the sole byte-identity proof (the round-trip suites json.Decode into a
-// struct and are order-/newline-/null-blind — wire-F1).
-//
-// The last three rows (success/no-result/error_code-absent) exercise the only
-// real drift surface — resultToResponse + adapter Result population (wire-F2).
-// Rows 5/6 pin both newline directions (wire-F3).
-
 import (
 	"context"
 	"encoding/json"
@@ -21,8 +11,6 @@ import (
 	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
 	"github.com/gregberns/harmonik/internal/queue"
 )
-
-// --- stub handlers -----------------------------------------------------------
 
 type t5RequestHandler struct {
 	result json.RawMessage
@@ -77,8 +65,6 @@ func (s *t5QueueHandler) HandleQueueCancel(_ context.Context, _ json.RawMessage)
 	return s.result, nil
 }
 
-// driveConn runs handleSocketConn over a net.Pipe with the given router, writes
-// reqBytes, and returns the exact raw response bytes.
 func driveConn(t *testing.T, router *socketrouter.Router, hr HookRelayHandler, sub SubscribeHandler, reqBytes []byte) []byte {
 	t.Helper()
 	serverConn, clientConn := net.Pipe()
@@ -97,8 +83,6 @@ func driveConn(t *testing.T, router *socketrouter.Router, hr HookRelayHandler, s
 }
 
 func TestHandleSocketConn_WireBytes(t *testing.T) {
-	// Precompute the two dynamic-error strings so the assertions are byte-exact
-	// yet robust to encoding/json's exact wording.
 	var junkReq SocketRequest
 	decodeReqErr := json.Unmarshal([]byte(`{"op":123}`), &junkReq)
 	if decodeReqErr == nil {
@@ -178,8 +162,6 @@ func TestHandleSocketConn_WireBytes(t *testing.T) {
 	}
 }
 
-// jsonEscape returns s as it would appear inside a JSON string literal (minus the
-// surrounding quotes), matching encoding/json's escaping used by writeSocketResponse.
 func jsonEscape(s string) string {
 	b, _ := json.Marshal(s) //nolint:errcheck,errchkjson // marshal of a string cannot fail
 	return string(b[1 : len(b)-1])

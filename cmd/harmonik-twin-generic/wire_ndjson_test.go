@@ -1,18 +1,5 @@
 package main
 
-// NDJSON wire-protocol fixture tests (hk-8i31.78).
-//
-// Six scenarios per §10.2 (HC-005..HC-010 + HC-007a + HC-007b):
-//
-//  1. Well-formed message sequence — emitter produces valid NDJSON.
-//  2. Embedded-newline-rejection — emitter never embeds unescaped newlines.
-//  3. 1-MiB line-cap rejection — wireReader rejects lines exceeding 1 MiB.
-//  4. Partial-message-on-EOF discard — wireReader discards incomplete lines.
-//  5. Malformed-JSON close-with-ErrStructural — wireReader surfaces unmarshal error.
-//  6. LaunchSpec round-trip — JSON encoding survives both stdin and file-path delivery.
-//
-// Cite: specs/handler-contract.md §10.2, §4.2.HC-005, §4.2.HC-007a, §4.2.HC-007b.
-
 import (
 	"bufio"
 	"bytes"
@@ -50,7 +37,6 @@ func wireFixtureLaunchSpec() map[string]any {
 	}
 }
 
-// wireFixtureEncodeJSON encodes v as compact JSON and calls t.Fatalf on error.
 func wireFixtureEncodeJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -60,7 +46,6 @@ func wireFixtureEncodeJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-// wireFixtureDecodeJSON decodes b into a map[string]any and calls t.Fatalf on error.
 func wireFixtureDecodeJSON(t *testing.T, b []byte) map[string]any {
 	t.Helper()
 	var m map[string]any
@@ -70,8 +55,6 @@ func wireFixtureDecodeJSON(t *testing.T, b []byte) map[string]any {
 	return m
 }
 
-// wireFixtureWriteTempFile writes content to a new file in t.TempDir() and
-// returns its absolute path.
 func wireFixtureWriteTempFile(t *testing.T, name string, content []byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -81,10 +64,6 @@ func wireFixtureWriteTempFile(t *testing.T, name string, content []byte) string 
 	}
 	return p
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 1 — Well-formed message sequence (HC-007a positive case)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireFixtureWellFormedSequence verifies that a canonical handler_capabilities →
 // session_log_location → outcome_emitted sequence produces valid NDJSON: each
@@ -109,12 +88,10 @@ func TestWireFixtureWellFormedSequence(t *testing.T) {
 
 	raw := buf.Bytes()
 
-	// The buffer must end with exactly one 0x0A.
 	if len(raw) == 0 || raw[len(raw)-1] != '\n' {
 		t.Fatalf("buffer does not end with 0x0A; last byte = %#x", raw[len(raw)-1])
 	}
 
-	// Split on newline; last element is "" due to trailing \n.
 	lines := bytes.Split(bytes.TrimRight(raw, "\n"), []byte("\n"))
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 NDJSON lines, got %d", len(lines))
@@ -122,17 +99,14 @@ func TestWireFixtureWellFormedSequence(t *testing.T) {
 
 	wantTypes := []string{"handler_capabilities", "session_log_location", "outcome_emitted"}
 	for i, line := range lines {
-		// Each line must be a valid JSON object.
 		var obj map[string]any
 		if err := json.Unmarshal(line, &obj); err != nil {
 			t.Errorf("line %d is not valid JSON: %v — %q", i, err, string(line))
 			continue
 		}
-		// No embedded unescaped newline (HC-007a).
 		if bytes.Contains(line, []byte{'\n'}) {
 			t.Errorf("line %d contains embedded newline (HC-007a violation)", i)
 		}
-		// Type field must match expected order.
 		gotType, ok := obj["type"].(string)
 		if !ok {
 			t.Errorf("line %d: missing or non-string 'type' field", i)
@@ -143,10 +117,6 @@ func TestWireFixtureWellFormedSequence(t *testing.T) {
 		}
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 2 — Embedded-newline-rejection (HC-007a)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireFixtureEmbeddedNewlineRejection verifies that the wireEmitter never
 // embeds a raw 0x0A byte inside a JSON object, even when the input string
@@ -160,34 +130,27 @@ func TestWireFixtureEmbeddedNewlineRejection(t *testing.T) {
 	var buf bytes.Buffer
 	e := newWireEmitter(&buf)
 
-	// Emit a chunk with a newline character embedded in a string field (e.g. a
-	// log excerpt) to exercise the JSON escaping path.
 	if err := e.emitAgentOutputChunk("run-1", "sess-1\nmalicious", 0, 64, nil); err != nil {
 		t.Fatalf("emitAgentOutputChunk: %v", err)
 	}
 
 	raw := buf.Bytes()
 
-	// The full buffer must contain exactly ONE newline (the NDJSON terminator).
 	newlines := bytes.Count(raw, []byte{'\n'})
 	if newlines != 1 {
 		t.Errorf("emitted bytes contain %d newlines, want exactly 1 (HC-007a); raw=%q", newlines, raw)
 	}
 
-	// The single newline must be the last byte.
 	if raw[len(raw)-1] != '\n' {
 		t.Errorf("trailing byte = %#x, want 0x0A (HC-007a)", raw[len(raw)-1])
 	}
 
-	// The JSON body (everything before the trailing \n) must be parseable.
 	body := raw[:len(raw)-1]
 	var obj map[string]any
 	if err := json.Unmarshal(body, &obj); err != nil {
 		t.Errorf("JSON body is not valid: %v — %q", err, string(body))
 	}
 
-	// session_id must be present and contain the escaped newline as a Go string
-	// (i.e. json.Unmarshal turns \n back into the newline character in-memory).
 	sidRaw, ok := obj["session_id"].(string)
 	if !ok {
 		t.Fatalf("session_id missing or not string: %v", obj["session_id"])
@@ -196,10 +159,6 @@ func TestWireFixtureEmbeddedNewlineRejection(t *testing.T) {
 		t.Errorf("session_id in decoded map should contain newline char; got %q", sidRaw)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 3 — 1-MiB line-cap rejection (HC-007a)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireFixtureLineCap1MiBRejection verifies that wireReader rejects a line
 // that exceeds the 1-MiB cap declared in HC-007a.
@@ -211,9 +170,6 @@ func TestWireFixtureEmbeddedNewlineRejection(t *testing.T) {
 func TestWireFixtureLineCap1MiBRejection(t *testing.T) {
 	const oneMiB = 1 << 20
 
-	// Build a line that just exceeds 1 MiB when including the terminating \n.
-	// Content is a JSON-like payload padded with 'x' characters; it need not
-	// be valid JSON — the scanner cap fires before unmarshal.
 	oversize := make([]byte, oneMiB+1)
 	oversize[0] = '{'
 	for i := 1; i < len(oversize)-2; i++ {
@@ -231,15 +187,10 @@ func TestWireFixtureLineCap1MiBRejection(t *testing.T) {
 	if errors.Is(err, io.EOF) {
 		t.Errorf("readControlMsg returned io.EOF for oversized line; want scan error, not EOF (HC-007a)")
 	}
-	// The error must wrap bufio.ErrTooLong, confirming the line-cap path.
 	if !errors.Is(err, bufio.ErrTooLong) {
 		t.Errorf("readControlMsg error = %v; want to wrap bufio.ErrTooLong (HC-007a cap)", err)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 4 — Partial-message-on-EOF discard (HC-007b)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireFixturePartialMessageOnEOFDiscard documents the HC-007b partial-message
 // boundary at stream close for the handler-to-daemon (progress-stream) direction.
@@ -260,14 +211,10 @@ func TestWireFixtureLineCap1MiBRejection(t *testing.T) {
 // data), the wireReader returns the message cleanly and then io.EOF on the
 // next call — confirming the "nothing to discard" case.
 func TestWireFixturePartialMessageOnEOFDiscard(t *testing.T) {
-	// Complete NDJSON line with terminating \n followed immediately by EOF.
-	// The wireEmitter always produces this shape; the test confirms that no
-	// ghost discard occurs when the stream is correctly framed.
 	complete := []byte(`{"type":"version_selected","selected_version":1}` + "\n")
 
 	r := newWireReader(bytes.NewReader(complete))
 
-	// First call: must decode the complete message.
 	msg, err := r.readControlMsg()
 	if err != nil {
 		t.Fatalf("readControlMsg complete line: unexpected error %v", err)
@@ -279,15 +226,11 @@ func TestWireFixturePartialMessageOnEOFDiscard(t *testing.T) {
 		t.Errorf("message type = %q, want version_selected", msg.Type)
 	}
 
-	// Second call: stream is exhausted; must return io.EOF (nothing to discard).
 	_, err = r.readControlMsg()
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("readControlMsg after last message: got %v, want io.EOF", err)
 	}
 
-	// Emitter-side guarantee: wireEmitter always appends \n, so a partial
-	// frame (HC-007b discard scenario) can only arise from a bug in the
-	// emitter or an abnormal socket close.  Verify the emitter guarantee:
 	var buf bytes.Buffer
 	e := newWireEmitter(&buf)
 	if err2 := e.emitAgentHeartbeat("sess-partial-test", heartbeatPhaseStarting); err2 != nil {
@@ -298,10 +241,6 @@ func TestWireFixturePartialMessageOnEOFDiscard(t *testing.T) {
 		t.Errorf("wireEmitter output does not end with 0x0A; HC-007b partial-discard scenario is prevented by the emitter guarantee")
 	}
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 5 — Malformed-JSON close-with-ErrStructural (HC-007b)
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestWireFixtureMalformedJSONClosesWithError verifies that wireReader surfaces
 // a non-nil, non-EOF error when a complete NDJSON line contains syntactically
@@ -349,10 +288,6 @@ func TestWireFixtureMalformedJSONClosesWithError(t *testing.T) {
 	}
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Scenario 6 — LaunchSpec round-trip: stdin and file-path delivery modes (HC-005)
-// ────────────────────────────────────────────────────────────────────────────
-
 // TestWireFixtureLaunchSpecStdinRoundTrip verifies that a LaunchSpec can be
 // serialised to JSON, delivered via a simulated stdin byte stream (io.Reader),
 // and decoded back with all required fields intact (HC-005 stdin delivery mode,
@@ -365,10 +300,8 @@ func TestWireFixtureLaunchSpecStdinRoundTrip(t *testing.T) {
 	spec := wireFixtureLaunchSpec()
 	encoded := wireFixtureEncodeJSON(t, spec)
 
-	// Simulate stdin: wrap encoded JSON in a bytes.Reader (io.Reader).
 	r := bytes.NewReader(encoded)
 
-	// Read back: json.NewDecoder simulates how the handler reads from stdin.
 	var decoded map[string]any
 	if err := json.NewDecoder(r).Decode(&decoded); err != nil {
 		t.Fatalf("stdin round-trip decode: %v", err)
@@ -385,7 +318,6 @@ func TestWireFixtureLaunchSpecFilePathRoundTrip(t *testing.T) {
 	spec := wireFixtureLaunchSpec()
 	encoded := wireFixtureEncodeJSON(t, spec)
 
-	// Simulate file-path delivery: write to temp file.
 	p := wireFixtureWriteTempFile(t, "launch-spec.json", encoded)
 
 	// Read back: simulate what the handler binary does with --launch-spec.
@@ -399,9 +331,6 @@ func TestWireFixtureLaunchSpecFilePathRoundTrip(t *testing.T) {
 	wireFixtureAssertLaunchSpecFields(t, decoded)
 }
 
-// wireFixtureAssertLaunchSpecFields validates that the required LaunchSpec
-// fields per HC-006 and specs/handler-contract.md §6.1 are present and
-// non-empty in decoded.
 func wireFixtureAssertLaunchSpecFields(t *testing.T, decoded map[string]any) {
 	t.Helper()
 

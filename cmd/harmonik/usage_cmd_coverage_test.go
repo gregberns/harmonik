@@ -1,10 +1,5 @@
 package main
 
-// usage_cmd_coverage_test.go — behavior tests for `harmonik usage` flag parsing
-// and validation. Every error path returns before any daemon/network work; the
-// happy paths run the analysis over an empty temp project (which degrades to
-// warnings, never a hard error) and assert exit 0 + well-formed output.
-
 import (
 	"encoding/json"
 	"io"
@@ -14,7 +9,6 @@ import (
 	"testing"
 )
 
-// captureUsageIO redirects both os.Stdout and os.Stderr around fn.
 func captureUsageIO(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 	oldOut, oldErr := os.Stdout, os.Stderr

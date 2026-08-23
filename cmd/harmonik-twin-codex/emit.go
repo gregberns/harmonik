@@ -16,20 +16,14 @@ import (
 	"io"
 )
 
-// codexEmitter writes codex JSONL events to an io.Writer (typically os.Stdout).
-//
-// Each write method serialises one JSON object and appends a single newline,
-// matching the codex --json JSONL framing.  NOT goroutine-safe.
 type codexEmitter struct {
 	w io.Writer
 }
 
-// newCodexEmitter wraps w in a codexEmitter.
 func newCodexEmitter(w io.Writer) *codexEmitter {
 	return &codexEmitter{w: w}
 }
 
-// emitRaw marshals v as compact JSON followed by a newline.
 func (e *codexEmitter) emitRaw(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -40,11 +34,6 @@ func (e *codexEmitter) emitRaw(v any) error {
 	return err
 }
 
-// emitThreadStarted emits {"type":"thread.started","thread_id":"<id>"}.
-//
-// This is the first event codex emits on stdout under --json. The harmonik
-// codex adapter captures the thread_id from this event for session tracking
-// (SessionIDPolicy==SessionIDCaptured; C2-codex-adapter-spec.md §AC2.1).
 func (e *codexEmitter) emitThreadStarted(threadID string) error {
 	return e.emitRaw(map[string]any{
 		"type":      "thread.started",
@@ -52,10 +41,6 @@ func (e *codexEmitter) emitThreadStarted(threadID string) error {
 	})
 }
 
-// emitTurnCompleted emits {"type":"turn.completed","usage":{...}}.
-//
-// This is the terminal success event. The harmonik codex adapter watches for
-// process exit + this event to close the run (C2 AC2.3).
 func (e *codexEmitter) emitTurnCompleted() error {
 	return e.emitRaw(map[string]any{
 		"type": "turn.completed",
@@ -66,10 +51,6 @@ func (e *codexEmitter) emitTurnCompleted() error {
 	})
 }
 
-// emitTurnFailed emits {"type":"turn.failed","error":{"message":"<msg>"}}.
-//
-// This is the terminal failure event. The harmonik codex adapter maps this to
-// run_failed (C2 AC2.5; C6 variant: turn.failed).
 func (e *codexEmitter) emitTurnFailed(message string) error {
 	return e.emitRaw(map[string]any{
 		"type": "turn.failed",

@@ -1,27 +1,11 @@
 package codex_test
 
-// codexjsonlparser_test.go — unit tests for the codex `exec --json` JSONL parser
-// (codex-harness C2/T8, hk-m57va).
-//
-// Coverage:
-//   - parseCodexJSONLEvent classifies thread.started / turn.started /
-//     turn.completed / turn.failed / unmodelled types (table-driven).
-//   - thread.started captures the thread_id.
-//   - turn.failed carries the error message.
-//   - malformed / empty lines return an error.
-//   - captureCodexThreadID folds a realistic JSONL sequence into run artifacts:
-//     first thread.started wins; turn.completed / turn.failed set flags.
-
 import (
 	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestParseCodexJSONLEvent_Table — per-line classification.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestParseCodexJSONLEvent_Table(t *testing.T) {
 	t.Parallel()
@@ -151,10 +135,6 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestParseCodexJSONLEvent_Errors — malformed input.
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestParseCodexJSONLEvent_Errors(t *testing.T) {
 	t.Parallel()
 
@@ -179,10 +159,6 @@ func TestParseCodexJSONLEvent_Errors(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestCaptureCodexThreadStream — folding a realistic sequence into run state.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCaptureCodexThreadStream_HappyPath verifies that a normal initial-turn
 // JSONL stream captures the thread_id from thread.started and records turn
@@ -347,8 +323,6 @@ func TestCaptureCodexThreadStream_NoThreadStarted(t *testing.T) {
 	}
 }
 
-// codexStreamLines is a small helper that turns variadic JSONL strings into a
-// [][]byte for ExportedCaptureCodexThreadStream.
 func codexStreamLines(lines ...string) [][]byte {
 	out := make([][]byte, 0, len(lines))
 	for _, l := range lines {

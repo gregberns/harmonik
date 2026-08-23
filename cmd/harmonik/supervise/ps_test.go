@@ -66,9 +66,6 @@ func TestBuildPsResult_PrintsCanonicalSignaturesAndSessions(t *testing.T) {
 	}
 }
 
-// daemonPattern returns the `daemon` process signature that `supervise ps`
-// prints for dir, and the resolved project directory it printed alongside it.
-// It fails the test when the signature is absent.
 func daemonPattern(t *testing.T, dir string) (pattern, realDir string) {
 	t.Helper()
 	result, err := buildPsResult(dir)
@@ -105,9 +102,6 @@ func TestPsDaemonPatternMatchesTheRevivalArgv(t *testing.T) {
 	if argv == nil {
 		t.Fatal("buildDaemonCmd returned nil; cannot resolve the executable")
 	}
-	// The test binary is not named harmonik. In the field the deployed binary
-	// is, and the printed signature names it, so put the deployed name in
-	// argv[0] and keep every later word that buildDaemonCmd produced.
 	argv[0] = "/usr/local/bin/harmonik"
 	cmdline := strings.Join(argv, " ")
 
@@ -115,9 +109,6 @@ func TestPsDaemonPatternMatchesTheRevivalArgv(t *testing.T) {
 		t.Fatalf("`pgrep -f %q` would not find a live daemon.\n  pattern: %s\n  argv:    %s", pattern, pattern, cmdline)
 	}
 
-	// Positive evidence that the match is not free: the same pattern must
-	// refuse an ordinary CLI call against the same project. Adjacency of the
-	// verb and --project is what excludes it.
 	cliCall := "/usr/local/bin/harmonik queue submit --project " + realDir + " --bead hk-1"
 	if strings.Contains(cliCall, pattern) {
 		t.Errorf("pattern %q also matches a plain CLI call %q; it would over-count daemons", pattern, cliCall)

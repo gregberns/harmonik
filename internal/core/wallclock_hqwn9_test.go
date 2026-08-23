@@ -42,9 +42,6 @@ import (
 	"testing"
 )
 
-// wallClockSensorSpecContent reads specs/event-model.md, locates the EV-006
-// anchor, and returns the paragraph that contains it. It fails the test if
-// the file is unreadable or the anchor is missing.
 func wallClockSensorSpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -52,7 +49,6 @@ func wallClockSensorSpecContent(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed — cannot locate repo root")
 	}
-	// Walk up: internal/core/<file> → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "event-model.md")
 
@@ -62,15 +58,12 @@ func wallClockSensorSpecContent(t *testing.T) string {
 	}
 	content := string(raw)
 
-	// Confirm the EV-006 section header is present.
 	const anchor = "EV-006 — Wall clock is advisory"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
 		t.Fatalf("spec %s does not contain %q; EV-006 may have been removed or renamed", specPath, anchor)
 	}
 
-	// Return the paragraph starting at the anchor (up to the next section
-	// boundary) so callers can assert on its contents.
 	paragraph := content[idx:]
 	if end := strings.Index(paragraph, "\n####"); end > 0 {
 		paragraph = paragraph[:end]
@@ -78,13 +71,6 @@ func wallClockSensorSpecContent(t *testing.T) string {
 	return paragraph
 }
 
-// wallClockSensorEventGoContent reads internal/core/event.go and returns the
-// godoc block for the TimestampWall field. It fails the test if the file is
-// unreadable or the field declaration is absent.
-//
-// The search locates the field declaration line (the line where "TimestampWall"
-// appears followed by its type, preceded by whitespace), then walks the
-// preceding lines to collect the associated comment block.
 func wallClockSensorEventGoContent(t *testing.T) string {
 	t.Helper()
 
@@ -99,9 +85,6 @@ func wallClockSensorEventGoContent(t *testing.T) string {
 		t.Fatalf("cannot read %s: %v", eventGoPath, err)
 	}
 
-	// Split into lines and find the field declaration line: a line whose
-	// trimmed form starts with "TimestampWall" followed by whitespace
-	// (i.e. not the comment line "// TimestampWall is …").
 	lines := strings.Split(string(raw), "\n")
 	fieldLineIdx := -1
 	for i, line := range lines {
@@ -115,7 +98,6 @@ func wallClockSensorEventGoContent(t *testing.T) string {
 		t.Fatal("event.go does not contain a TimestampWall field declaration; field may have been renamed")
 	}
 
-	// Walk backwards from the field declaration line to collect the comment block.
 	var commentLines []string
 	for i := fieldLineIdx - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])

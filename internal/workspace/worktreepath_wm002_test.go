@@ -18,7 +18,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("canonical-path-shape-default-root", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-002: default root is <repo>/.harmonik/worktrees/
 		repoRoot := "/home/op/repos/myproject"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0002"
 
@@ -33,7 +32,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("canonical-path-shape-override-root-absolute", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-002 + CP-037: operator-configurable worktree root (absolute override).
 		repoRoot := "/home/op/repos/myproject"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0003"
 		override := "/mnt/fast-ssd/harmonik-worktrees"
@@ -49,8 +47,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("canonical-path-shape-override-root-relative", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-002 + CP-037: operator-configurable worktree root (relative override
-		// is joined against repoRoot).
 		repoRoot := "/home/op/repos/myproject"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0004"
 		override := "scratch/worktrees"
@@ -66,7 +62,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("empty-override-is-treated-as-no-override", func(t *testing.T) {
 		t.Parallel()
 
-		// An empty string override falls through to the default.
 		repoRoot := "/home/op/repos/myproject"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0005"
 
@@ -81,7 +76,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("run-id-embedded-at-final-segment", func(t *testing.T) {
 		t.Parallel()
 
-		// The run_id MUST be the final path segment (per-run subdirectory is fixed).
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0006"
 
@@ -96,7 +90,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("default-root-contains-harmonik-worktrees", func(t *testing.T) {
 		t.Parallel()
 
-		// The default root segment sequence MUST be .harmonik/worktrees under repo root.
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0007"
 
@@ -107,7 +100,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 			t.Errorf("WM-002: WorktreeRootPath(default) = %q, want %q", gotRoot, wantRoot)
 		}
 
-		// WorktreePath must start with the default root.
 		gotPath := WorktreePath(repoRoot, runID, NoWorktreeRootOverride())
 		if filepath.Dir(gotPath) != wantRoot {
 			t.Errorf("WM-002: WorktreePath parent dir = %q, want %q", filepath.Dir(gotPath), wantRoot)
@@ -117,8 +109,6 @@ func TestWM002_WorktreePath(t *testing.T) {
 	t.Run("path-is-per-leaselock-sibling-convention", func(t *testing.T) {
 		t.Parallel()
 
-		// WorktreePath output feeds into LeaseLockPath; the composite path must
-		// equal <repo>/.harmonik/worktrees/<run_id>/.harmonik/lease.lock.
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0008"
 

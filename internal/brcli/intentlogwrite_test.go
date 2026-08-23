@@ -1,16 +1,5 @@
 package brcli
 
-// intentlogwrite_test.go — BI-030 steps 1–4 and step 6: write IntentLogEntry
-// to temp file, fsync(temp_fd), rename(2) to canonical path,
-// fsync(parent_dir_fd) on create, and unlink + fsync(parent_dir_fd) on delete.
-//
-// Tests are in package brcli (white-box) to access intentLogEntryWire,
-// intentLogRandHex, intentLogSyncFile, intentLogRenameFile, intentLogSyncDir,
-// and intentLogUnlinkFile directly.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–6; §6.1 RECORD
-// IntentLogEntry; §6.2 on-disk layout.
-
 import (
 	"encoding/json"
 	"errors"
@@ -26,9 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// intentLogWriteFixtureEntry returns a fully-populated core.IntentLogEntry
-// with all required fields set to valid values, suitable for WriteIntentLogTmp
-// tests.
 func intentLogWriteFixtureEntry(t *testing.T) core.IntentLogEntry {
 	t.Helper()
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
@@ -47,8 +33,6 @@ func intentLogWriteFixtureEntry(t *testing.T) core.IntentLogEntry {
 	}
 }
 
-// --- Happy-path tests ---
-
 // TestWriteIntentLogTmpHappyPath verifies that WriteIntentLogTmp creates a
 // temp file with the correct naming shape and encodes the entry as JSON with
 // spec-compliant snake_case keys.
@@ -62,12 +46,10 @@ func TestWriteIntentLogTmpHappyPath(t *testing.T) {
 		t.Fatalf("WriteIntentLogTmp: unexpected error: %v", err)
 	}
 
-	// Returned path must be within dir.
 	if filepath.Dir(tmpPath) != dir {
 		t.Errorf("tmpPath dir = %q; want %q", filepath.Dir(tmpPath), dir)
 	}
 
-	// Filename must end with ".json.tmp-" followed by 8 hex chars.
 	name := filepath.Base(tmpPath)
 	if !strings.Contains(name, ".json.tmp-") {
 		t.Errorf("tmpPath base %q does not contain .json.tmp-", name)
@@ -86,13 +68,11 @@ func TestWriteIntentLogTmpHappyPath(t *testing.T) {
 		}
 	}
 
-	// Encoded key in filename (colons replaced with underscores per §6.2 OQ-BI-003).
 	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
 	if !strings.HasPrefix(name, encodedKey) {
 		t.Errorf("filename %q does not start with encoded key %q", name, encodedKey)
 	}
 
-	// File must exist on disk.
 	if _, statErr := os.Stat(tmpPath); statErr != nil {
 		t.Fatalf("temp file %q does not exist: %v", tmpPath, statErr)
 	}
@@ -147,8 +127,6 @@ func TestWriteIntentLogTmpJSONContent(t *testing.T) {
 		t.Errorf("schema_version = %d; want %d", wire.SchemaVersion, entry.SchemaVersion)
 	}
 
-	// Verify JSON keys are snake_case (not PascalCase) — confirm the wire struct
-	// controls serialisation format.
 	if strings.Contains(string(data), `"IdempotencyKey"`) {
 		t.Errorf("JSON contains PascalCase key 'IdempotencyKey'; want snake_case 'idempotency_key'")
 	}
@@ -163,8 +141,6 @@ func TestWriteIntentLogTmpColonEncoding(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	entry := intentLogWriteFixtureEntry(t)
-	// The fixture entry already uses the canonical "<run_id>:<transition_id>:<op>"
-	// format with two colons. Verify both are encoded.
 
 	tmpPath, err := WriteIntentLogTmp(dir, entry)
 	if err != nil {
@@ -219,8 +195,6 @@ func TestWriteIntentLogTmpFileMode(t *testing.T) {
 	}
 }
 
-// --- Error-path tests ---
-
 // TestWriteIntentLogTmpInvalidEntry verifies that WriteIntentLogTmp returns an
 // error when the entry fails Valid() — no file must be written.
 func TestWriteIntentLogTmpInvalidEntry(t *testing.T) {
@@ -252,8 +226,6 @@ func TestWriteIntentLogTmpDirNotExist(t *testing.T) {
 		t.Errorf("WriteIntentLogTmp: expected empty tmpPath on error, got %q", tmpPath)
 	}
 }
-
-// --- Unit tests for intentLogRandHex ---
 
 // TestIntentLogRandHexLength verifies that intentLogRandHex returns exactly n
 // lowercase hex characters.
@@ -293,8 +265,6 @@ func TestIntentLogRandHexNotConstant(t *testing.T) {
 		t.Errorf("two calls returned the same value %q; collision probability is ~6e-10", a)
 	}
 }
-
-// --- BI-030 step 2: fsync(temp_fd) tests (hk-872.37.2) ---
 
 // TestWriteIntentLogTmpFsyncCalled verifies that WriteIntentLogTmp calls
 // intentLogSyncFile (fsync(2)) on the temp file fd before closing it
@@ -354,7 +324,6 @@ func TestWriteIntentLogTmpFsyncErrorRemovesTmpFile(t *testing.T) {
 		t.Errorf("WriteIntentLogTmp: expected empty tmpPath on error, got %q", tmpPath)
 	}
 
-	// Temp file must be cleaned up on sync failure.
 	if capturedPath == "" {
 		t.Fatal("sync hook was not called (capturedPath empty)")
 	}
@@ -362,16 +331,11 @@ func TestWriteIntentLogTmpFsyncErrorRemovesTmpFile(t *testing.T) {
 		t.Errorf("temp file %q still exists after fsync failure; want removed", capturedPath)
 	}
 
-	// Error message must mention fsync.
 	if !strings.Contains(err.Error(), "fsync") {
 		t.Errorf("error %q does not mention 'fsync'", err.Error())
 	}
 }
 
-// --- BI-030 step 3: rename(2) to canonical <key>.json tests (hk-872.37.3) ---
-
-// intentLogRenameFixture creates a temp file in dir with a .json.tmp-<rand>
-// suffix and returns its path, simulating the output of WriteIntentLogTmp.
 func intentLogRenameFixture(t *testing.T, dir string) string {
 	t.Helper()
 	suffix, err := intentLogRandHex(8)
@@ -405,24 +369,20 @@ func TestRenameIntentLogTmpToFinalHappyPath(t *testing.T) {
 		t.Fatalf("RenameIntentLogTmpToFinal: unexpected error: %v", err)
 	}
 
-	// Final file must exist.
 	if _, statErr := os.Stat(finalPath); statErr != nil {
 		t.Errorf("final file %q does not exist: %v", finalPath, statErr)
 	}
 
-	// Temp file must be gone.
 	if _, statErr := os.Stat(tmpPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("tmp file %q still exists after rename; want removed", tmpPath)
 	}
 
-	// Final filename must be <encoded_key>.json (colons encoded as underscores).
 	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
 	wantName := encodedKey + ".json"
 	if filepath.Base(finalPath) != wantName {
 		t.Errorf("final filename = %q; want %q", filepath.Base(finalPath), wantName)
 	}
 
-	// Final path must live in dir.
 	if filepath.Dir(finalPath) != dir {
 		t.Errorf("finalPath dir = %q; want %q", filepath.Dir(finalPath), dir)
 	}
@@ -463,7 +423,6 @@ func TestRenameIntentLogTmpToFinalOverwriteExisting(t *testing.T) {
 	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
 	existingFinal := filepath.Join(dir, encodedKey+".json")
 
-	// Pre-create the canonical file to simulate a prior partial write.
 	if err := os.WriteFile(existingFinal, []byte(`{"schema_version":1}`), 0o600); err != nil {
 		t.Fatalf("pre-create canonical file: %v", err)
 	}
@@ -478,12 +437,10 @@ func TestRenameIntentLogTmpToFinalOverwriteExisting(t *testing.T) {
 		t.Errorf("finalPath = %q; want %q", finalPath, existingFinal)
 	}
 
-	// Canonical file must still exist.
 	if _, statErr := os.Stat(finalPath); statErr != nil {
 		t.Errorf("final file %q does not exist after overwrite rename: %v", finalPath, statErr)
 	}
 
-	// Temp file must be gone.
 	if _, statErr := os.Stat(tmpPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("tmp file %q still exists after overwrite rename", tmpPath)
 	}
@@ -514,18 +471,14 @@ func TestRenameIntentLogTmpToFinalErrorLeavesTmpFile(t *testing.T) {
 		t.Errorf("RenameIntentLogTmpToFinal: expected empty finalPath on error, got %q", finalPath)
 	}
 
-	// Temp file must still be present (caller can retry or recover it).
 	if _, statErr := os.Stat(tmpPath); statErr != nil {
 		t.Errorf("tmp file %q missing after rename failure; want retained for recovery: %v", tmpPath, statErr)
 	}
 
-	// Error message must identify the rename operation.
 	if !strings.Contains(err.Error(), "rename") {
 		t.Errorf("error %q does not mention 'rename'", err.Error())
 	}
 }
-
-// --- BI-030 step 4: fsync(parent_directory_fd) tests (hk-872.37.4) ---
 
 // TestFsyncIntentLogParentDirHappyPath verifies that FsyncIntentLogParentDir
 // succeeds on a real directory and calls intentLogSyncDir exactly once
@@ -564,7 +517,6 @@ func TestFsyncIntentLogParentDirDirNotExist(t *testing.T) {
 		t.Fatal("FsyncIntentLogParentDir: expected error for nonexistent dir, got nil")
 	}
 
-	// Error message must identify the directory and mention the open failure.
 	if !strings.Contains(err.Error(), dir) {
 		t.Errorf("error %q does not contain dir path %q", err.Error(), dir)
 	}
@@ -590,7 +542,6 @@ func TestFsyncIntentLogParentDirSyncError(t *testing.T) {
 		t.Fatal("FsyncIntentLogParentDir: expected error on dir fsync failure, got nil")
 	}
 
-	// Error message must contain "fsync" and the directory path.
 	if !strings.Contains(err.Error(), "fsync") {
 		t.Errorf("error %q does not mention 'fsync'", err.Error())
 	}
@@ -599,11 +550,6 @@ func TestFsyncIntentLogParentDirSyncError(t *testing.T) {
 	}
 }
 
-// --- BI-030 step 6: unlink + fsync(parent_directory_fd) tests (hk-872.37.6) ---
-
-// intentLogDeleteFixture creates the canonical intent-log file for
-// idempotencyKey in dir and returns the file path, simulating the state after
-// a successful rename (steps 3–4) and `br` invocation (step 5).
 func intentLogDeleteFixture(t *testing.T, dir, idempotencyKey string) string {
 	t.Helper()
 	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
@@ -638,12 +584,10 @@ func TestDeleteIntentLogAndSyncParentHappyPath(t *testing.T) {
 		t.Fatalf("DeleteIntentLogAndSyncParent: unexpected error: %v", err)
 	}
 
-	// Intent file must be gone.
 	if _, statErr := os.Stat(canonicalPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("intent file %q still exists after delete; want removed", canonicalPath)
 	}
 
-	// Parent-dir fsync must be called exactly once.
 	if n := syncDirCallCount.Load(); n != 1 {
 		t.Errorf("intentLogSyncDir called %d times; want exactly 1", n)
 	}
@@ -658,14 +602,12 @@ func TestDeleteIntentLogAndSyncParentColonEncoding(t *testing.T) {
 	dir := t.TempDir()
 	keyWithColons := "run-abc:trans-xyz:claim"
 
-	// Create the file using the encoded name so unlink can find it.
 	canonicalPath := intentLogDeleteFixture(t, dir, keyWithColons)
 
 	if err := DeleteIntentLogAndSyncParent(dir, keyWithColons); err != nil {
 		t.Fatalf("DeleteIntentLogAndSyncParent: unexpected error: %v", err)
 	}
 
-	// Canonical (encoded) file must be gone.
 	if _, statErr := os.Stat(canonicalPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("encoded intent file %q still exists after delete", canonicalPath)
 	}
@@ -701,12 +643,10 @@ func TestDeleteIntentLogAndSyncParentUnlinkError(t *testing.T) {
 		t.Fatal("DeleteIntentLogAndSyncParent: expected error on unlink failure, got nil")
 	}
 
-	// Error message must identify the unlink operation.
 	if !strings.Contains(err.Error(), "unlink") {
 		t.Errorf("error %q does not mention 'unlink'", err.Error())
 	}
 
-	// Parent-dir fsync must NOT be called when unlink fails.
 	if n := syncDirCallCount.Load(); n != 0 {
 		t.Errorf("intentLogSyncDir called %d times on unlink failure; want 0", n)
 	}
@@ -722,12 +662,10 @@ func TestDeleteIntentLogAndSyncParentFsyncError(t *testing.T) {
 	dir := t.TempDir()
 	entry := intentLogWriteFixtureEntry(t)
 
-	// Stub unlink to succeed without touching the filesystem.
 	origUnlink := intentLogUnlinkFile
 	t.Cleanup(func() { intentLogUnlinkFile = origUnlink })
 	intentLogUnlinkFile = func(_ string) error { return nil }
 
-	// Stub parent-dir fsync to fail.
 	origSync := intentLogSyncDir
 	t.Cleanup(func() { intentLogSyncDir = origSync })
 	intentLogSyncDir = func(_ *os.File) error {
@@ -739,7 +677,6 @@ func TestDeleteIntentLogAndSyncParentFsyncError(t *testing.T) {
 		t.Fatal("DeleteIntentLogAndSyncParent: expected error on parent-dir fsync failure, got nil")
 	}
 
-	// Error message must mention "fsync".
 	if !strings.Contains(err.Error(), "fsync") {
 		t.Errorf("error %q does not mention 'fsync'", err.Error())
 	}

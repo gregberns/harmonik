@@ -45,10 +45,6 @@ func RegisterCodex(reg *handlercontract.AdapterRegistry) error {
 	return reg.Register(core.AgentTypeCodex, NewCodexAdapter())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// handlercontract.Adapter implementation
-// ─────────────────────────────────────────────────────────────────────────────
-
 // DetectReady reports whether event is the agent_ready signal for a codex session.
 //
 // Returns true ONLY when event.Type is "agent_ready".  MUST NOT return true

@@ -1,43 +1,5 @@
 package projectconfig
 
-// subsystems.go — the `subsystems:` block of .harmonik/config.yaml.
-//
-// # Purpose
-//
-// Configuration-driven partitioning: an operator names a subsystem here and
-// switches it OFF, and the composition root then never CONSTRUCTS it. "Off"
-// means ABSENT, not constructed-and-inert. Inert code still holds the
-// composition root hostage and still costs; absent code forces the nil-guard
-// question to be answered at the seam.
-//
-// # Shape
-//
-//	subsystems:
-//	  reconciliation_scheduler:
-//	    enabled: false
-//
-// A map keyed by subsystem name, each entry carrying an `enabled:` switch.
-// The map shape (rather than a struct with one field per subsystem) is what
-// makes adding the NEXT subsystem a one-line change: append a SubsystemName
-// constant to knownSubsystems below, and gate its constructor at the seam.
-//
-// # Defaults and fail-loud
-//
-//   - Absent block, absent entry, or absent `enabled:` key → ENABLED. Every
-//     subsystem is on until an operator explicitly turns it off, so an existing
-//     deployment's behaviour is unchanged by this block appearing.
-//   - An UNKNOWN subsystem name is a HARD ERROR (ErrUnknownSubsystem), and an
-//     unknown key INSIDE an entry is a HARD ERROR too (ErrUnknownConfigKey,
-//     the hk-9f3f precedent). A typo must never silently mean the wrong thing:
-//     `enbaled: false` that is silently ignored leaves the operator believing a
-//     subsystem was partitioned away while it kept running.
-//
-// The `enabled: *bool` idiom (nil = absent = default) matches the settled
-// watchdog.enabled / keeper.self_service.crews_enabled precedent in
-// projectconfig.go — deliberately not a new idiom.
-//
-// Codename: subsystem-partition-01.
-
 import (
 	"fmt"
 	"reflect"
@@ -255,9 +217,6 @@ const (
 	SubsystemSupervisorWatchdog SubsystemName = "supervisor_watchdog"
 )
 
-// knownSubsystems is the closed set of names the `subsystems:` block accepts.
-// Adding a switchable subsystem is a one-line addition here (plus the gate at
-// its construction seam). Any name outside this set is rejected loudly.
 var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemReconciliationScheduler: {},
 	SubsystemSocketListener:          {},
@@ -291,8 +250,6 @@ func (e *ErrUnknownSubsystem) Error() string {
 		"(known: %s)", e.Path, e.Name, knownSubsystemsList())
 }
 
-// knownSubsystemsList renders the accepted names for the error message, sorted
-// so the message is deterministic. Mirrors agentTypeNamesForError.
 func knownSubsystemsList() string {
 	names := make([]string, 0, len(knownSubsystems))
 	for name := range knownSubsystems {
@@ -302,9 +259,6 @@ func knownSubsystemsList() string {
 	return strings.Join(names, ", ")
 }
 
-// rawSubsystemEntry is one entry under the subsystems: block. Enabled is a
-// *bool so nil (absent) resolves to the default (true) while an explicit false
-// is honoured without ambiguity — the watchdog.enabled idiom.
 type rawSubsystemEntry struct {
 	Enabled *bool `yaml:"enabled"`
 }
@@ -330,14 +284,6 @@ func (c SubsystemsConfig) Enabled(name SubsystemName) bool {
 	return !off
 }
 
-// parseSubsystemsBlock converts the raw subsystems: map into a SubsystemsConfig.
-// The daemon MUST refuse to start on either error it returns:
-//   - *ErrUnknownSubsystem — the map key names no known subsystem.
-//   - *ErrUnknownConfigKey — an entry carries a key other than `enabled:`.
-//
-// Entries arrive as yaml.Node (not a decoded struct) precisely so the second
-// check is possible: the top-level unmarshal is deliberately tolerant, so a
-// mistyped inner key would otherwise vanish without trace.
 func parseSubsystemsBlock(path string, raw map[string]yaml.Node) (SubsystemsConfig, error) {
 	if len(raw) == 0 {
 		return SubsystemsConfig{}, nil
@@ -360,8 +306,6 @@ func parseSubsystemsBlock(path string, raw map[string]yaml.Node) (SubsystemsConf
 		if err := node.Decode(&entry); err != nil {
 			return SubsystemsConfig{}, &ErrMalformedConfigYAML{Path: path, Cause: err}
 		}
-		// Absent enabled: → default (on). Explicit true → on. Only an explicit
-		// false records a disable.
 		if entry.Enabled != nil && !*entry.Enabled {
 			if cfg.disabled == nil {
 				cfg.disabled = make(map[SubsystemName]struct{}, len(raw))

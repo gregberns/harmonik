@@ -1,38 +1,5 @@
 package main
 
-// promote_cmd.go — `harmonik promote` subcommand.
-//
-// Implements two promotion modes:
-//
-//  1. push-mode: `harmonik promote <sha>...`
-//     Cherry-picks the given reviewed SHA(s) onto the target branch in a temp
-//     worktree, runs a build gate, and pushes race-safely with up to 3
-//     fetch-and-rebase retries on a retryable push refusal (see
-//     runmerge.IsRetryablePushRejection). Formalises the captain bypass-SOP.
-//
-//  2. PR-mode: `harmonik promote --pr`
-//     Opens a PR from --from (default "integration") onto the target branch via
-//     `gh pr create`. Never pushes directly to the target. Required when the
-//     target branch is protected.
-//
-// Protection gate (fail-closed, both modes):
-//
-//	If the resolved target branch is present in the project's protect_branches
-//	(from .harmonik/branching.yaml or --protect-branch flags), push-mode is
-//	refused with a clear message directing the operator to --pr.
-//
-// Exit codes:
-//
-//	0   success
-//	1   argument / flag / config error, and a --dry-run input that does not exist
-//	2   conflict during cherry-pick
-//	3   build gate failed
-//	4   push failed (all retries exhausted)
-//	5   protection gate: push-mode refused on protected branch
-//
-// Spec ref: specs/promote.md.
-// Bead ref: hk-pk3p1 (promote push-mode + PR-mode, reconciles hk-gax8v).
-
 import (
 	"context"
 	"errors"
@@ -47,13 +14,8 @@ import (
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
-// beadIDInSubjectRE matches a harmonik bead ID parenthetical anywhere in a
-// commit subject, e.g. "(hk-abc123)".  Used to auto-detect the bead ID from
-// the source commit when --bead is not explicitly provided.
 var beadIDInSubjectRE = regexp.MustCompile(`\((hk-[a-z0-9]+)\)`)
 
-// extractBeadIDFromSubject returns the last bead ID found in subject as
-// "(hk-xxx)", or "" if none is present.
 func extractBeadIDFromSubject(subject string) string {
 	matches := beadIDInSubjectRE.FindAllStringSubmatch(subject, -1)
 	if len(matches) == 0 {
@@ -104,12 +66,8 @@ EXAMPLES
 
 const maxPromotePushAttempts = 3
 
-// noMatchingRemoteRefExitCode is the exit code `git ls-remote --exit-code`
-// returns when the remote has no ref that matches the pattern.
 const noMatchingRemoteRefExitCode = 2
 
-// runPromoteSubcommand dispatches `harmonik promote [flags] [sha...]`.
-// subArgs is os.Args[2:].
 func runPromoteSubcommand(subArgs []string) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
 		fmt.Print(promoteUsage)
@@ -122,7 +80,6 @@ func runPromoteSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve project root.
 	projectDir := cfg.projectDir
 	if projectDir == "" {
 		if v := os.Getenv("HARMONIK_PROJECT"); v != "" {
@@ -143,7 +100,6 @@ func runPromoteSubcommand(subArgs []string) int {
 	}
 	projectDir = absProject
 
-	// Load branching config and resolve target.
 	branchingDefaults, branchingErr := branching.Load(projectDir)
 	if branchingErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik promote: load .harmonik/branching.yaml: %v\n", branchingErr)
@@ -158,13 +114,11 @@ func runPromoteSubcommand(subArgs []string) int {
 		target = "main"
 	}
 
-	// Merge protect_branches: yaml then flag overrides.
 	protectBranches := branchingDefaults.ProtectBranches
 	if len(cfg.protectBranches) > 0 {
 		protectBranches = cfg.protectBranches
 	}
 
-	// Protection gate: refuse push-mode for protected branches.
 	if !cfg.prMode {
 		for _, pb := range protectBranches {
 			if target == pb {
@@ -184,7 +138,6 @@ func runPromoteSubcommand(subArgs []string) int {
 	return runPromotePush(ctx, projectDir, target, cfg)
 }
 
-// promoteConfig holds parsed flags for the promote subcommand.
 type promoteConfig struct {
 	projectDir      string
 	target          string
@@ -198,14 +151,12 @@ type promoteConfig struct {
 	protectBranches []string // from --protect-branch flags (operator override)
 }
 
-// parsePromoteFlags parses promote subcommand flags from args (os.Args[2:]).
 func parsePromoteFlags(args []string) (promoteConfig, error) {
 	var cfg promoteConfig
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "--help" || arg == "-h":
-			// handled before parsePromoteFlags is called
 		case arg == "--project" && i+1 < len(args):
 			i++
 			cfg.projectDir = args[i]
@@ -252,16 +203,13 @@ func parsePromoteFlags(args []string) (promoteConfig, error) {
 		}
 	}
 
-	// Mutual-exclusion: --pr and positional SHA args.
 	if cfg.prMode && len(cfg.shas) > 0 {
 		return promoteConfig{}, fmt.Errorf("--pr and positional SHA arguments are mutually exclusive")
 	}
-	// push-mode requires at least one SHA.
 	if !cfg.prMode && len(cfg.shas) == 0 {
 		return promoteConfig{}, fmt.Errorf("push-mode requires at least one SHA argument (or use --pr for PR-mode)")
 	}
 
-	// Default --from for PR-mode.
 	if cfg.from == "" {
 		cfg.from = "integration"
 	}
@@ -269,32 +217,13 @@ func parsePromoteFlags(args []string) (promoteConfig, error) {
 	return cfg, nil
 }
 
-// promoteDryRunPreflight checks the inputs that push-mode needs, and it changes
-// nothing. It answers one question: with these arguments, does the real run get
-// past its own setup?
-//
-// Every command here only reads. `git rev-parse` and `git remote` read the local
-// repository. `git ls-remote` asks origin for its branch list and writes no ref.
-// A dry run must not fetch, lock, or move a ref, so this function runs no
-// command that writes.
-//
-// It returns the FIRST problem that stops the promotion, or nil when all the
-// inputs resolve. A problem here always means an input does not exist. A
-// promotion that policy refuses is a different answer with a different message
-// and a different exit code. The protection gate in runPromoteSubcommand reports
-// that one, and it runs before this function.
 func promoteDryRunPreflight(ctx context.Context, projectDir, target string, shas []string) error {
-	// The project directory must be a git work tree. Every later step runs git
-	// in it.
 	gitDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
 	gitDirCmd.Dir = projectDir
 	if _, gitDirErr := gitDirCmd.Output(); gitDirErr != nil {
 		return fmt.Errorf("project %s is not a git repository", projectDir)
 	}
 
-	// Each SHA must name a commit that this repository holds. The real run
-	// cherry-picks in a temp worktree that shares this object database, so a
-	// commit that does not resolve here does not resolve there.
 	for _, sha := range shas {
 		// #nosec G204 -- sha is passed as a discrete git revision argument, never through a shell.
 		revCmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", sha+"^{commit}")
@@ -304,7 +233,6 @@ func promoteDryRunPreflight(ctx context.Context, projectDir, target string, shas
 		}
 	}
 
-	// The real run fetches from origin and pushes to it.
 	remoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
 	remoteCmd.Dir = projectDir
 	if _, remoteErr := remoteCmd.Output(); remoteErr != nil {
@@ -318,8 +246,6 @@ func promoteDryRunPreflight(ctx context.Context, projectDir, target string, shas
 	lsCmd.Dir = projectDir
 	if lsOut, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
 		var exitErr *exec.ExitError
-		// git ls-remote --exit-code answers "no such branch" with exit code 2.
-		// Any other failure means the command could not ask origin at all.
 		if errors.As(lsErr, &exitErr) && exitErr.ExitCode() == noMatchingRemoteRefExitCode {
 			return fmt.Errorf("branch %q does not exist on origin", target)
 		}
@@ -329,13 +255,6 @@ func promoteDryRunPreflight(ctx context.Context, projectDir, target string, shas
 	return nil
 }
 
-// runPromotePushDryRun checks the inputs of a push-mode promotion and then
-// prints the plan. It returns 1 and prints one reason when an input does not
-// exist, and 0 with the plan when the promotion could start.
-//
-// The check comes first on purpose. A plan that prints for inputs that do not
-// exist tells the operator nothing, which was the defect this function fixes
-// (hk-promote-dryrun-validates-nothing-975nt).
 func runPromotePushDryRun(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
 	if preflightErr := promoteDryRunPreflight(ctx, projectDir, target, cfg.shas); preflightErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik promote (dry-run): %v\n", preflightErr)
@@ -351,10 +270,6 @@ func runPromotePushDryRun(ctx context.Context, projectDir, target string, cfg pr
 	} else {
 		fmt.Printf("harmonik promote (dry-run): would auto-detect bead ID from commit subject (hk-xxx) and stamp Harmonik-Bead-ID trailer if found\n")
 	}
-	// The real build gate runs in a temp worktree taken from the tip of
-	// origin/<target>, and it only runs when that tree holds a go.mod. The dry
-	// run makes no worktree, so it reads the project tree. Both trees come from
-	// one repository, so the project tree is a good guide to the gate that runs.
 	if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
 		fmt.Printf("harmonik promote (dry-run): would run: go build ./... && go vet ./...\n")
 	} else {
@@ -365,10 +280,6 @@ func runPromotePushDryRun(ctx context.Context, projectDir, target string, cfg pr
 	return 0
 }
 
-// runPromotePush implements push-mode: cherry-pick SHA(s) into a temp worktree
-// at origin/<target>, run build gate, race-safe push (up to 3 retries on any
-// refusal runmerge.IsRetryablePushRejection accepts, which includes a lost
-// compare-and-swap race, not only a non-fast-forward).
 func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
 	if cfg.dryRun {
 		return runPromotePushDryRun(ctx, projectDir, target, cfg)
@@ -383,7 +294,6 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		return 1
 	}
 
-	// Resolve the remote tip SHA.
 	remoteRef := "refs/remotes/origin/" + target
 	// #nosec G204 -- remoteRef is a discrete git ref argument constructed from the target branch.
 	remoteRevCmd := exec.CommandContext(ctx, "git", "rev-parse", remoteRef)
@@ -395,16 +305,11 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 	}
 	remoteTip := strings.TrimSpace(string(remoteRevOut))
 
-	// Step 2: create a temp worktree rooted at the remote tip (detached HEAD).
 	tmpDir, tmpErr := os.MkdirTemp("", "hk-promote-*")
 	if tmpErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik promote: MkdirTemp: %v\n", tmpErr)
 		return 1
 	}
-	// Always clean up the temp worktree on exit. If `git worktree remove`
-	// fails (e.g. a dirty tree from an aborted cherry-pick), removing the
-	// directory alone leaves a stale registration behind, so follow up with
-	// `git worktree prune` to drop it.
 	defer func() {
 		// #nosec G204 -- tmpDir is generated by os.MkdirTemp and passed as a discrete git argument.
 		rmCmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", tmpDir)
@@ -429,13 +334,11 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		return 1
 	}
 
-	// Step 3: cherry-pick each SHA in order (-x records provenance).
 	for _, sha := range cfg.shas {
 		// #nosec G204 -- sha is passed as a discrete git revision argument, never through a shell.
 		cpCmd := exec.CommandContext(ctx, "git", "cherry-pick", "-x", sha)
 		cpCmd.Dir = tmpDir
 		if cpOut, cpErr := cpCmd.CombinedOutput(); cpErr != nil {
-			// Abort the cherry-pick to leave the worktree clean for removal.
 			abortCmd := exec.CommandContext(ctx, "git", "cherry-pick", "--abort")
 			abortCmd.Dir = tmpDir
 			if abortErr := abortCmd.Run(); abortErr != nil {
@@ -445,19 +348,6 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 			return 2
 		}
 
-		// Step 3a: stamp Harmonik-Bead-ID trailer so 'harmonik reconcile' can
-		// auto-close the salvaged bead.  Without this trailer the cherry-picked
-		// commit is a plain commit that reconcile.go:GitMergeCommitScanner cannot
-		// match, leaving the bead stranded in_progress forever (hk-53p3).
-		//
-		// hk-tnui (accepted exception): Reviewed-By / Review-Verdict trailers are
-		// NOT re-stamped here. git cherry-pick -x preserves the full source-commit
-		// message, so any trailers already present on the source commit are
-		// inherited verbatim. When the source commit lacks trailers (older runs
-		// before hk-dyim, or DOT runs before hk-tnui), the cherry-pick also lacks
-		// them — re-synthesising a verdict with no backing workspace file would
-		// produce misleading audit data. Accept this as a known gap: future
-		// promotes of daemon-merged commits will carry trailers automatically.
 		beadID := cfg.beadID
 		if beadID == "" {
 			// Auto-detect from the source commit's subject "(hk-xxx)" parenthetical.
@@ -473,7 +363,6 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 				"--trailer", "Harmonik-Bead-ID: "+beadID)
 			amendCmd.Dir = tmpDir
 			if amendOut, amendErr := amendCmd.CombinedOutput(); amendErr != nil {
-				// Non-fatal: push proceeds; warn that reconcile auto-close will not work.
 				fmt.Fprintf(os.Stderr,
 					"harmonik promote: warning: failed to stamp Harmonik-Bead-ID: %s trailer on cherry-pick of %s: %v\n%s\n",
 					beadID, sha, amendErr, amendOut)
@@ -483,9 +372,7 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		}
 	}
 
-	// Step 4 + retry loop: build gate → race-safe push.
 	for attempt := 1; attempt <= maxPromotePushAttempts; attempt++ {
-		// Build gate: go build + go vet (only when go.mod is present).
 		if _, goModErr := os.Stat(filepath.Join(tmpDir, "go.mod")); goModErr == nil {
 			for _, buildArgs := range [][]string{
 				{"build", "./..."},
@@ -508,7 +395,6 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		pushCmd.Dir = tmpDir
 		pushOut, pushErr := pushCmd.CombinedOutput()
 		if pushErr == nil {
-			// Print the pushed tip.
 			tipCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
 			tipCmd.Dir = tmpDir
 			if tipOut, tipErr := tipCmd.Output(); tipErr == nil {
@@ -518,20 +404,12 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 			return 0
 		}
 
-		// One predicate decides whether a refused push is worth another
-		// attempt, and it lives in internal/runmerge (hk-z0bms). This used to
-		// be a hand-written copy of the two-token test that missed a lost
-		// concurrent push — git tells the loser "[remote rejected] ... (failed
-		// to update ref)", which does not contain "[rejected]" — so promote
-		// gave up on the exact race its own retry loop exists to recover from.
 		if !runmerge.IsRetryablePushRejection(string(pushOut)) || attempt >= maxPromotePushAttempts {
 			fmt.Fprintf(os.Stderr, "harmonik promote: push failed (attempt %d/%d): %v\n%s\n",
 				attempt, maxPromotePushAttempts, pushErr, pushOut)
 			return 4
 		}
 
-		// Recoverable refusal (stale target, or a lost push race): fetch, rebase
-		// the cherry-picks onto the new remote tip, and try again.
 		fmt.Fprintf(os.Stderr, "harmonik promote: push refused as retryable (attempt %d/%d); fetching and rebasing\n",
 			attempt, maxPromotePushAttempts)
 
@@ -557,17 +435,13 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 				attempt, rebaseErr, rebaseOut)
 			return 4
 		}
-		// Loop: re-run build gate + push with the rebased tree.
 	}
 
-	// Should not be reached due to loop logic above.
 	fmt.Fprintln(os.Stderr, "harmonik promote: push failed after all retries")
 	return 4
 }
 
-// runPromotePR implements PR-mode: open a PR via `gh pr create`.
 func runPromotePR(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
-	// Verify gh is on PATH.
 	ghPath, ghErr := exec.LookPath("gh")
 	if ghErr != nil {
 		fmt.Fprintln(os.Stderr, "harmonik promote --pr: 'gh' not found on PATH; install the GitHub CLI to use PR-mode")

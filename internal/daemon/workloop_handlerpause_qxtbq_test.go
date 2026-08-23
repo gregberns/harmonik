@@ -1,31 +1,5 @@
 package daemon_test
 
-// workloop_handlerpause_qxtbq_test.go — handler-fatal → pause-trip → queue-held scenario
-// test (hk-qxtbq).
-//
-// Acceptance criteria from bead spec:
-//   - Boot ExportedRunWorkLoop with a two-bead stub ledger and a twin in
-//     --scenario handler-fatal mode (emits agent_ready then agent_failed).
-//   - (a) First bead reaches agent_failed and is reopened by the work loop.
-//   - (b) After bead-1 fails, HandlerPausePolicyGoroutine is tripped (two
-//     consecutive rate-limit active events) so HandlerPauseController.IsPaused()
-//     becomes true.
-//   - (c) Second bead is held with queue_item_held_for_handler_pause rather
-//     than dispatched.
-//
-// Implementation note: the twin NDJSON stream cannot directly trip
-// HandlerPausePolicyGoroutine because agent_rate_limit_status is not in
-// knownProgressMsgTypes (watcher_hc011.go).  The test trips the policy
-// directly via ExportedPolicyHandleRateLimitStatus after observing bead-1's
-// reopen.
-//
-// To avoid a race between bead-1's goroutine finishing and bead-2 being
-// dequeued, bead-2 is added to the ledger only AFTER the pause is confirmed
-// active.  The ledger implementation here (hfatalLedger) provides a
-// concurrent-safe AddReady method.
-//
-// Bead ref: hk-qxtbq.
-
 import (
 	"context"
 	"encoding/json"
@@ -44,13 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hfatalLedger — concurrent-safe stub ledger with AddReady
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hfatalLedger is a concurrent-safe stub bead ledger for hk-qxtbq.
-// Unlike stubBeadLedger, it exposes AddReady so the test can add bead-2
-// only after the pause is confirmed.
 type hfatalLedger struct {
 	mu     sync.Mutex
 	ready  []core.BeadID
@@ -114,20 +81,11 @@ func (l *hfatalLedger) closedIDs() []core.BeadID {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hfatalFixtureTwinPath resolves the harmonik-twin-claude binary that
-// `make twins` writes to the checkout root. It used to look only at this
-// worktree's root, so in a worktree it found nothing and the test skipped
-// silently. scenariotest.CheckoutBinaryPath also tries the main checkout.
 func hfatalFixtureTwinPath() string {
 	path, _ := scenariotest.CheckoutBinaryPath("harmonik-twin-claude")
 	return path
 }
 
-// hfatalFixtureMakeRunID returns a UUIDv7-based RunID for synthetic events.
 func hfatalFixtureMakeRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -137,9 +95,6 @@ func hfatalFixtureMakeRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// hfatalFixtureEmitRateLimitActive delivers one synthetic agent_rate_limit_status
-// (status=active) event directly to the policy goroutine handler.  Two calls
-// are required to reach the hysteresis threshold (rateLimitHysteresisCount = 2).
 func hfatalFixtureEmitRateLimitActive(t *testing.T, policy *daemon.HandlerPausePolicyGoroutine) {
 	t.Helper()
 	runID := hfatalFixtureMakeRunID(t)
@@ -170,8 +125,6 @@ func hfatalFixtureEmitRateLimitActive(t *testing.T, policy *daemon.HandlerPauseP
 	}
 }
 
-// hfatalFixturePollReopen polls until the ledger records at least one reopened
-// bead or the deadline elapses.
 func hfatalFixturePollReopen(t *testing.T, ledger *hfatalLedger, deadline time.Duration) {
 	t.Helper()
 	timer := time.NewTimer(deadline)
@@ -188,8 +141,6 @@ func hfatalFixturePollReopen(t *testing.T, ledger *hfatalLedger, deadline time.D
 	}
 }
 
-// hfatalFixturePollIsPaused polls until ctrl.IsPaused(AgentTypeClaudeCode)
-// is true or the deadline elapses.
 func hfatalFixturePollIsPaused(t *testing.T, ctrl *daemon.HandlerPauseController, deadline time.Duration) {
 	t.Helper()
 	timer := time.NewTimer(deadline)
@@ -206,8 +157,6 @@ func hfatalFixturePollIsPaused(t *testing.T, ctrl *daemon.HandlerPauseController
 	}
 }
 
-// hfatalFixturePollHeldEvent polls the bus until at least one
-// queue_item_held_for_handler_pause event appears or the deadline elapses.
 func hfatalFixturePollHeldEvent(t *testing.T, bus *stubEventCollector, deadline time.Duration) {
 	t.Helper()
 	timer := time.NewTimer(deadline)
@@ -225,10 +174,6 @@ func hfatalFixturePollHeldEvent(t *testing.T, bus *stubEventCollector, deadline 
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_WorkLoop_HandlerFatalTripsGate
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_WorkLoop_HandlerFatalTripsGate boots ExportedRunWorkLoop with
 // a one-bead stub ledger and a twin in --scenario handler-fatal mode, then
@@ -253,7 +198,6 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
-	// HandlerPauseController backed by a sealed bus so it can emit its own events.
 	ctrlBus := eventbus.NewBusImpl()
 	if err := ctrlBus.Seal(); err != nil {
 		t.Fatalf("ctrlBus.Seal: %v", err)
@@ -262,7 +206,6 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 
 	reg := daemon.NewRunRegistry()
 
-	// Policy goroutine — tripped directly via ExportedPolicyHandleRateLimitStatus.
 	policy := daemon.ExportedNewHandlerPausePolicyGoroutine(daemon.ExportedHandlerPausePolicyConfig{
 		AgentType:  core.AgentTypeClaudeCode,
 		Controller: ctrl,
@@ -274,12 +217,8 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		bead2 = core.BeadID("hk-qxtbq-bead2-held")
 	)
 
-	// Start with only bead-1 ready.  bead-2 is added only after the pause is
-	// confirmed active, eliminating the race between bead-1 finishing and
-	// bead-2 being dequeued.
 	ledger := &hfatalLedger{ready: []core.BeadID{bead1}}
 
-	// stubEventCollector records events emitted by the work loop.
 	bus := &stubEventCollector{}
 
 	p := daemon.TestRuntimeParams{
@@ -304,8 +243,6 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// (a) Wait for bead-1 to be reopened — proves agent_failed reached the
-	// work loop and triggered ReopenBead rather than CloseBead.
 	hfatalFixturePollReopen(t, ledger, 30*time.Second)
 
 	reopened := ledger.reopenedIDs()
@@ -316,21 +253,15 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		t.Fatalf("bead-1 was closed; expected reopen on agent_failed")
 	}
 
-	// (b) Trip the handler pause: deliver two consecutive rate-limit active
-	// events directly to the policy goroutine (hysteresis count = 2).
 	hfatalFixtureEmitRateLimitActive(t, policy)
 	hfatalFixtureEmitRateLimitActive(t, policy)
 
 	hfatalFixturePollIsPaused(t, ctrl, 5*time.Second)
 
-	// Now that the pause is confirmed, expose bead-2 to the work loop.
-	// The loop will dequeue it on the next br-ready poll and see the pause gate.
 	ledger.AddReady(bead2)
 
-	// (c) Poll for queue_item_held_for_handler_pause.
 	hfatalFixturePollHeldEvent(t, bus, 15*time.Second)
 
-	// Validate the held event payload.
 	var foundBead2Held bool
 	for _, e := range bus.allEvents() {
 		if e.EventType != string(core.EventTypeQueueItemHeldForHandlerPause) {
@@ -351,7 +282,6 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		t.Fatalf("no queue_item_held_for_handler_pause event found for bead-2 (%q)", bead2)
 	}
 
-	// bead-2 must NOT have been dispatched (closed) while the pause is active.
 	for _, id := range ledger.closedIDs() {
 		if id == bead2 {
 			t.Fatalf("bead-2 was dispatched (closed) while handler was paused; expected hold")

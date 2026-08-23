@@ -1,52 +1,5 @@
 package main
 
-// crashRecov_hc024_test.go — fixture and scenario harness for crash-recovery,
-// dirty-exit, socket-I/O, and orphan-workspace scenarios.
-//
-// Spec refs:
-//   - specs/handler-contract.md §4.2.HC-008a (post-outcome shutdown window)
-//   - specs/handler-contract.md §4.6.HC-024 (subprocess crash emits agent_failed)
-//   - specs/handler-contract.md §4.6.HC-024a (socket-level I/O error distinct
-//     from subprocess crash)
-//   - specs/handler-contract.md §4.10.HC-044a (orphan-held workspace fail-fast)
-//   - specs/handler-contract.md §5.HC-INV-005 (no subprocess without verified path)
-//   - specs/handler-contract.md §5.HC-INV-006 (exactly one terminal event per session)
-//   - specs/handler-contract.md §8.2 ErrStructural sub_reason taxonomy
-//   - specs/handler-contract.md §10.2 HC-008a/HC-024/HC-024a/HC-044a obligations
-//
-// Bead: hk-8i31.80.
-//
-// Helper prefix: crashRecovFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-//
-// What this file provides:
-//
-//  1. crashRecovFixtureKillPoint — an enum of subprocess kill points from the
-//     §10.2 HC-024 obligation (after outcome_emitted; before outcome_emitted;
-//     mid-message; mid-handshake).
-//
-//  2. crashRecovFixtureKillPointScript — for each kill point, a ScriptFile
-//     whose messages stop at the kill point, simulating what the twin emits
-//     before a crash.
-//
-//  3. crashRecovFixtureSocketIOError — a table of named socket-level I/O error
-//     conditions from §4.6.HC-024a (ECONNRESET, EPIPE, socket-unlinked).
-//
-//  4. crashRecovFixtureOrphanPidfile — a struct encoding the orphan-pidfile
-//     scenario from §4.10.HC-044a: a pidfile exists, the PID is live, and the
-//     process belongs to a prior daemon generation.
-//
-//  5. crashRecovFixtureExpectedSubReason — a map from each kill-point scenario
-//     to the expected agent_failed sub_reason per §8.2, encoding the spec's
-//     sub_reason taxonomy for load-bearing assertion by downstream tests.
-//
-//  6. Static sensor tests asserting:
-//     - agent_failed payload shape for every sub_reason declared in §8.2 and
-//       required by this bead's scenario set.
-//     - HC-INV-006 one-terminal-event invariant naming (no double emission).
-//     - HC-024a socket-I/O sub_reasons are distinct from subprocess-crash sub_reasons.
-//     - HC-044a orphan-workspace sub_reason is "workspace_held_by_orphan".
-
 import (
 	"bytes"
 	"encoding/json"
@@ -73,75 +26,28 @@ func crashRecovFixtureFloat64(t *testing.T, m map[string]any, key string) float6
 	return value
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Kill-point enum and sub_reason mapping (HC-024 + §8.2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// crashRecovFixtureKillPoint names the four kill points from §10.2 HC-024
-// obligation: "kill subprocess at specific points."
 type crashRecovFixtureKillPoint string
 
 const (
-	// crashRecovFixtureKillAfterOutcome represents a kill AFTER outcome_emitted.
-	// The outcome is durable; the watcher enters the post-outcome shutdown window
-	// (HC-008a).  Clean process exit in that window → agent_completed.
-	// SIGKILL before exit → agent_failed(post_outcome_shutdown_timeout) per HC-008a.
 	crashRecovFixtureKillAfterOutcome crashRecovFixtureKillPoint = "kill_after_outcome_emitted"
 
-	// crashRecovFixtureKillBeforeOutcome represents a kill BEFORE outcome_emitted.
-	// Per HC-INV-006: dirty exit without prior agent_completed or agent_failed →
-	// watcher MUST emit agent_failed.  Class: ErrStructural, sub_reason: crash_before_outcome.
-	// The spec does not pin "crash_before_outcome" as a literal; §8.2 non-exhaustive
-	// list says "crash without outcome" maps to ErrStructural.
 	crashRecovFixtureKillBeforeOutcome crashRecovFixtureKillPoint = "kill_before_outcome_emitted"
 
-	// crashRecovFixtureKillMidMessage represents a kill during message emission
-	// (partial-message-on-EOF scenario per §4.2.HC-007b).
-	// Watcher MUST emit agent_failed(class=structural, sub_reason=partial-message).
 	crashRecovFixtureKillMidMessage crashRecovFixtureKillPoint = "kill_mid_message"
 
-	// crashRecovFixtureKillMidHandshake represents a kill during the launch
-	// handshake (§7.2), before handler_capabilities is received.
-	// Watcher MUST emit ErrProtocolMismatch(no handler_capabilities received).
 	crashRecovFixtureKillMidHandshake crashRecovFixtureKillPoint = "kill_mid_handshake"
 )
 
-// crashRecovFixtureExpectedSubReason maps each kill point to the expected
-// agent_failed sub_reason per §8.2 + §4.2.HC-007b + §7.2.
-//
-// This map is load-bearing for downstream watcher tests (hk-8i31.28): each
-// scenario MUST produce agent_failed carrying exactly the sub_reason listed
-// here.  Empty string means no sub_reason is expected (the crash maps to a
-// primary class only).
 var crashRecovFixtureExpectedSubReason = map[crashRecovFixtureKillPoint]string{
-	// After outcome: shutdown-window timeout is the terminal classification.
-	// (Only fires if SIGKILL is applied before the process exits within T_shutdown.)
 	crashRecovFixtureKillAfterOutcome: "post_outcome_shutdown_timeout",
 
-	// Before outcome: dirty crash — ErrStructural, no pinned sub_reason in §8.2
-	// non-exhaustive list for this case, but watcher MUST emit agent_failed.
-	// The map records "" to indicate "sub_reason is implementation-specific";
-	// the normative constraint is error_category = "structural".
 	crashRecovFixtureKillBeforeOutcome: "",
 
-	// Mid-message: partial-message → ErrStructural, sub_reason "partial-message".
 	crashRecovFixtureKillMidMessage: "partial-message",
 
-	// Mid-handshake: ErrProtocolMismatch → no agent_failed on the progress stream
-	// (the launch fails before the session is established); the watcher returns
-	// ErrProtocolMismatch from Launch.  Records "protocol_mismatch" for clarity.
 	crashRecovFixtureKillMidHandshake: "protocol_mismatch",
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Kill-point scripts
-// ─────────────────────────────────────────────────────────────────────────────
-
-// crashRecovFixtureKillPointScript returns a ScriptFile whose messages stop
-// at the given kill point, modelling what the twin emits before a crash.
-//
-// The scripts use heartbeat_mode "scripted" so that scenario tests produce
-// byte-reproducible event streams (HC-026a scripted-mode carve-out).
 func crashRecovFixtureKillPointScript(kp crashRecovFixtureKillPoint) *ScriptFile {
 	switch kp {
 	case crashRecovFixtureKillAfterOutcome:
@@ -153,18 +59,10 @@ func crashRecovFixtureKillPointScript(kp crashRecovFixtureKillPoint) *ScriptFile
 	case crashRecovFixtureKillMidHandshake:
 		return crashRecovFixtureScriptMidHandshake()
 	default:
-		// Unreachable in well-formed tests; caller error if reached.
 		return &ScriptFile{HeartbeatMode: heartbeatModeScripted, Messages: nil}
 	}
 }
 
-// crashRecovFixtureScriptAfterOutcome returns a script that emits the full
-// normal sequence including outcome_emitted — the kill happens externally
-// after this message, before the process exits.
-//
-// Post-kill, the watcher is in the post-outcome shutdown window.  If the
-// process does not exit within T_shutdown, the watcher emits
-// agent_failed(structural, sub_reason=post_outcome_shutdown_timeout) per HC-008a.
 func crashRecovFixtureScriptAfterOutcome() *ScriptFile {
 	now := time.Now().UTC()
 	return &ScriptFile{
@@ -207,17 +105,10 @@ func crashRecovFixtureScriptAfterOutcome() *ScriptFile {
 					"outcome_status": "success",
 				},
 			},
-			// No agent_completed follows — the kill happens here.
 		},
 	}
 }
 
-// crashRecovFixtureScriptBeforeOutcome returns a script that stops mid-session
-// before outcome_emitted — the kill happens while work is in progress.
-//
-// Per HC-INV-006: any dirty exit (non-zero exit code, no prior terminal event,
-// no outcome_emitted received) MUST cause the watcher to emit agent_failed.
-// Class: ErrStructural.
 func crashRecovFixtureScriptBeforeOutcome() *ScriptFile {
 	now := time.Now().UTC()
 	return &ScriptFile{
@@ -259,24 +150,10 @@ func crashRecovFixtureScriptBeforeOutcome() *ScriptFile {
 				},
 				RelativeTimestampMs: 10,
 			},
-			// Script ends here; no outcome_emitted. The twin crashes before completing.
 		},
 	}
 }
 
-// crashRecovFixtureScriptMidMessage returns a script whose last message is
-// deliberately truncated (no terminating newline) — simulating a subprocess
-// that dies while emitting a NDJSON line.
-//
-// Per §4.2.HC-007b: "socket EOF with bytes buffered before the terminating \n
-// [...] MUST be discarded; the watcher MUST emit agent_failed with class
-// ErrStructural, sub_reason partial-message."
-//
-// This script uses the heartbeat_mode "scripted" but records only valid
-// messages.  The "mid-message kill" is simulated by the scenario harness by
-// closing the socket after partial bytes — not by the script driver itself
-// (which always appends '\n').  The script establishes the session state
-// before the harness injects the truncation.
 func crashRecovFixtureScriptMidMessage() *ScriptFile {
 	now := time.Now().UTC()
 	return &ScriptFile{
@@ -308,91 +185,37 @@ func crashRecovFixtureScriptMidMessage() *ScriptFile {
 				},
 				RelativeTimestampMs: 5,
 			},
-			// The scenario harness injects a partial (no-newline) byte sequence
-			// immediately after this message to simulate mid-message death.
 		},
 	}
 }
 
-// crashRecovFixtureScriptMidHandshake returns a minimal script that emits
-// NO progress-stream messages — simulating a subprocess that crashes before
-// sending handler_capabilities during the §7.2 handshake.
-//
-// Per §7.2: "IF cap_msg IS None: watcher.kill_subprocess(); RETURN (None,
-// ErrProtocolMismatch.wrap("no handler_capabilities received"))."
-//
-// The launch fails before a Session is established; HC-INV-006 does not apply
-// (no session crossed the agent_ready threshold).
 func crashRecovFixtureScriptMidHandshake() *ScriptFile {
 	return &ScriptFile{
-		// Wall-clock mode: the subprocess exits immediately without emitting
-		// anything, so no scripted timing is needed.
 		HeartbeatMode: heartbeatModeWallClock,
 		Messages:      nil,
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Socket-I/O error conditions (HC-024a)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// crashRecovFixtureSocketIOError names the socket-level I/O error conditions
-// from §4.6.HC-024a that MUST be distinguishable from subprocess crashes.
 type crashRecovFixtureSocketIOError string
 
 const (
-	// crashRecovFixtureSocketIOECONNRESET is a connection-reset error (ECONNRESET).
-	// Per HC-024a: watcher emits agent_failed(transient, socket_io_error) on
-	// first occurrence, then attempts ONE reconnect within 500ms.
 	crashRecovFixtureSocketIOECONNRESET crashRecovFixtureSocketIOError = "ECONNRESET"
 
-	// crashRecovFixtureSocketIOEPIPE is a broken-pipe error (EPIPE).
-	// Same handling as ECONNRESET under HC-024a.
 	crashRecovFixtureSocketIOEPIPE crashRecovFixtureSocketIOError = "EPIPE"
 
-	// crashRecovFixtureSocketIOUnlinked is a socket-file unlinked condition.
-	// Per HC-024a: the socket file may be unlinked under foot (filesystem
-	// unmount or operator intervention).  Same first-occurrence handling applies.
 	crashRecovFixtureSocketIOUnlinked crashRecovFixtureSocketIOError = "socket_unlinked"
 )
 
-// crashRecovFixtureSocketIOConditions is the normative list of socket-level I/O
-// error conditions from §4.6.HC-024a.  Used by sensor tests to assert all
-// named conditions are covered by the fixture.
 var crashRecovFixtureSocketIOConditions = []crashRecovFixtureSocketIOError{
 	crashRecovFixtureSocketIOECONNRESET,
 	crashRecovFixtureSocketIOEPIPE,
 	crashRecovFixtureSocketIOUnlinked,
 }
 
-// crashRecovFixtureSocketIOFirstOccurrenceSubReason is the sub_reason the
-// watcher emits on the FIRST socket-level I/O error occurrence per HC-024a.
-//
-// "On the FIRST occurrence of such an error without a prior agent_completed or
-// agent_failed for the session, the watcher MUST: (a) emit agent_failed with
-// class ErrTransient and sub_reason socket_io_error."
 const crashRecovFixtureSocketIOFirstOccurrenceSubReason = "socket_io_error"
 
-// crashRecovFixtureSocketIOSustainedSubReason is the sub_reason the watcher
-// emits after a reconnect fails OR the subsequent stream emits another
-// socket-level error per HC-024a.
-//
-// "If reconnect fails OR the subsequent stream emits another socket-level
-// error before a clean terminal event, the watcher MUST reclassify to
-// ErrStructural with sub_reason progress_stream_broken."
 const crashRecovFixtureSocketIOSustainedSubReason = "progress_stream_broken"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Orphan-workspace scenario (HC-044a)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// crashRecovFixtureOrphanPidfile describes the orphan-pidfile scenario from
-// §4.10.HC-044a.
-//
-// Normative definition: "if the pidfile exists AND the recorded PID is live
-// (liveness probe via kill(pid, 0) or platform equivalent) AND the live process
-// is NOT owned by the current daemon generation, Launch MUST return ErrStructural
-// with sub-reason workspace_held_by_orphan."
 type crashRecovFixtureOrphanPidfile struct {
 	// WorkspacePath is the target workspace path in the pidfile (used in test
 	// assertions to confirm the correct workspace is identified).
@@ -412,13 +235,6 @@ type crashRecovFixtureOrphanPidfile struct {
 	OrphanPID int
 }
 
-// crashRecovFixtureOrphanScenario returns a crashRecovFixtureOrphanPidfile
-// representing a typical orphan-held-workspace scenario for use in assertions.
-//
-// The PID is a placeholder (1 = init/launchd on UNIX) so that scenario harness
-// tests can verify the detection logic shape without requiring a real orphan
-// process.  Live-PID scenarios are tested by the integration test in hk-8i31.52
-// which has OS-level process control.
 func crashRecovFixtureOrphanScenario() crashRecovFixtureOrphanPidfile {
 	return crashRecovFixtureOrphanPidfile{
 		WorkspacePath: "/workspace/run-prior-001",
@@ -428,15 +244,7 @@ func crashRecovFixtureOrphanScenario() crashRecovFixtureOrphanPidfile {
 	}
 }
 
-// crashRecovFixtureOrphanSubReason is the sub_reason the watcher/launcher
-// MUST emit when an orphan-held workspace is detected per §4.10.HC-044a.
-//
-// Spec: §8.2 "workspace_held_by_orphan".
 const crashRecovFixtureOrphanSubReason = "workspace_held_by_orphan"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: kill-point enum coverage
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCrashRecov_HC024_KillPointEnumCoverage asserts that
 // crashRecovFixtureExpectedSubReason covers every value in the
@@ -460,7 +268,6 @@ func TestCrashRecov_HC024_KillPointEnumCoverage(t *testing.T) {
 		})
 	}
 
-	// Assert the map has no extra keys beyond the enum set.
 	enumSet := make(map[crashRecovFixtureKillPoint]bool, len(allKillPoints))
 	for _, kp := range allKillPoints {
 		enumSet[kp] = true
@@ -471,10 +278,6 @@ func TestCrashRecov_HC024_KillPointEnumCoverage(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: kill-point scripts are well-formed
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCrashRecov_HC024_KillPointScriptsWellFormed verifies that each kill-point
 // script returned by crashRecovFixtureKillPointScript passes load-time
@@ -548,10 +351,6 @@ func TestCrashRecov_HC024_MidHandshakeScriptHasNoMessages(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: agent_failed payload for crash sub_reasons (HC-024 + §8.2)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCrashRecov_HC024_AgentFailedPayloadShape verifies that the wireEmitter
 // produces correctly shaped agent_failed messages for every sub_reason declared
 // in §8.2 and required by the crash-recovery scenario set.
@@ -561,14 +360,12 @@ func TestCrashRecov_HC024_MidHandshakeScriptHasNoMessages(t *testing.T) {
 func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 	t.Parallel()
 
-	// Sub-reasons from §8.2 relevant to crash-recovery scenarios in hk-8i31.80.
 	crashSubReasons := []struct {
 		name          string
 		errorCategory string
 		reason        string
 		subReason     string
 	}{
-		// kill_before_outcome → dirty crash without outcome; ErrStructural.
 		{
 			name:          "crash_without_outcome",
 			errorCategory: "structural",
@@ -612,19 +409,15 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 				t.Fatalf("unmarshal: %v", err)
 			}
 
-			// Type.
 			if got := crashRecovFixtureString(t, m, "type"); got != "agent_failed" {
 				t.Errorf("%q: type = %q, want agent_failed", tc.name, got)
 			}
-			// error_category.
 			if got := crashRecovFixtureString(t, m, "error_category"); got != tc.errorCategory {
 				t.Errorf("%q: error_category = %q, want %q", tc.name, got, tc.errorCategory)
 			}
-			// reason.
 			if got := crashRecovFixtureString(t, m, "reason"); got != tc.reason {
 				t.Errorf("%q: reason = %q, want %q", tc.name, got, tc.reason)
 			}
-			// sub_reason: present iff non-empty.
 			if tc.subReason == "" {
 				if _, exists := m["sub_reason"]; exists {
 					t.Errorf("%q: sub_reason present, want omitted (omitempty)", tc.name)
@@ -634,7 +427,6 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 					t.Errorf("%q: sub_reason = %v, want %q", tc.name, m["sub_reason"], tc.subReason)
 				}
 			}
-			// ended_at must parse as RFC3339.
 			if eat, ok := m["ended_at"].(string); !ok || eat == "" {
 				t.Errorf("%q: ended_at missing or empty", tc.name)
 			} else if _, err := time.Parse(time.RFC3339Nano, eat); err != nil {
@@ -643,10 +435,6 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: socket-I/O sub_reasons are distinct from subprocess-crash sub_reasons
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCrashRecov_HC024a_SocketIOSubReasonDistinct verifies that the first-
 // occurrence and sustained socket-I/O sub_reasons (socket_io_error,
@@ -659,12 +447,10 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 func TestCrashRecov_HC024a_SocketIOSubReasonDistinct(t *testing.T) {
 	t.Parallel()
 
-	// Sub-reasons that MUST belong exclusively to socket-I/O path.
 	socketIOSubReasons := []string{
 		crashRecovFixtureSocketIOFirstOccurrenceSubReason, // "socket_io_error"
 		crashRecovFixtureSocketIOSustainedSubReason,       // "progress_stream_broken"
 	}
-	// Sub-reasons that belong to subprocess-crash path (not socket-I/O).
 	crashSubReasons := []string{
 		"partial-message",
 		"protocol_mismatch",
@@ -690,7 +476,6 @@ func TestCrashRecov_HC024a_SocketIOSubReasonDistinct(t *testing.T) {
 func TestCrashRecov_HC024a_SocketIOConditionsAllNamed(t *testing.T) {
 	t.Parallel()
 
-	// §4.6.HC-024a names three conditions: EPIPE, ECONNRESET, socket-unlinked.
 	const wantCount = 3
 	if len(crashRecovFixtureSocketIOConditions) != wantCount {
 		t.Errorf("crashRecovFixtureSocketIOConditions has %d entries, want %d (ECONNRESET, EPIPE, socket_unlinked)",
@@ -703,7 +488,6 @@ func TestCrashRecov_HC024a_SocketIOConditionsAllNamed(t *testing.T) {
 		}
 	}
 
-	// Check each named constant is present.
 	present := make(map[crashRecovFixtureSocketIOError]bool)
 	for _, c := range crashRecovFixtureSocketIOConditions {
 		present[c] = true
@@ -784,10 +568,6 @@ func TestCrashRecov_HC024a_SustainedIsStructural(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: orphan-workspace sub_reason (HC-044a)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCrashRecov_HC044a_OrphanSubReasonValue asserts that
 // crashRecovFixtureOrphanSubReason equals the literal string
 // "workspace_held_by_orphan" declared in §8.2.
@@ -836,17 +616,12 @@ func TestCrashRecov_HC044a_OrphanPayloadShape(t *testing.T) {
 		t.Errorf("orphan: reason = %q, want workspace_held_by_orphan (HC-044a)", got)
 	}
 
-	// Confirm scenario struct has the expected pidfile path shape.
 	const pidfileSuffix = "/.lock"
 	if !strings.HasSuffix(scenario.PidfilePath, pidfileSuffix) {
 		t.Errorf("orphan scenario pidfile path %q does not end with %q (HC-044a: .harmonik/worktrees/<run_id>/.lock)",
 			scenario.PidfilePath, pidfileSuffix)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-INV-006 one-terminal-event invariant
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCrashRecov_HCINV006_TerminalEventSetComplete asserts that the two
 // terminal event types named in HC-INV-006 are {agent_completed, agent_failed}
@@ -857,14 +632,12 @@ func TestCrashRecov_HC044a_OrphanPayloadShape(t *testing.T) {
 func TestCrashRecov_HCINV006_TerminalEventSetComplete(t *testing.T) {
 	t.Parallel()
 
-	// Normative terminal event set per HC-INV-006.
 	terminalEvents := []string{"agent_completed", "agent_failed"}
 
 	if len(terminalEvents) != 2 {
 		t.Errorf("HC-INV-006 terminal event set has %d members, want exactly 2 {agent_completed, agent_failed}", len(terminalEvents))
 	}
 
-	// Both must be emittable by the wireEmitter (confirming twin can exercise both paths).
 	var bufC bytes.Buffer
 	eC := newWireEmitter(&bufC)
 	if err := eC.emitAgentCompleted("run-inv6-001", "sess-inv6-001", time.Now().UTC(), 0, "outcome-ref-001"); err != nil {
@@ -905,8 +678,6 @@ func TestCrashRecov_HCINV006_DirtyExitWithNoOutcomeMustEmitFailed(t *testing.T) 
 
 	sf := crashRecovFixtureKillPointScript(crashRecovFixtureKillBeforeOutcome)
 
-	// The script must contain no terminal events (agent_completed or agent_failed).
-	// The twin subprocess ending after this script => dirty exit.
 	for i, msg := range sf.Messages {
 		if msg.Type == "agent_completed" || msg.Type == "agent_failed" {
 			t.Errorf(
@@ -925,10 +696,6 @@ func TestCrashRecov_HCINV006_DirtyExitWithNoOutcomeMustEmitFailed(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: HC-INV-005 no subprocess without verified binary path
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCrashRecov_HCINV005_BinaryPathVerificationShape asserts the fixture
 // encodes the HC-INV-005 constraint by naming the relevant §4.10 requirements.
 //
@@ -942,12 +709,6 @@ func TestCrashRecov_HCINV006_DirtyExitWithNoOutcomeMustEmitFailed(t *testing.T) 
 func TestCrashRecov_HCINV005_BinaryPathVerificationShape(t *testing.T) {
 	t.Parallel()
 
-	// The daemon-side launch check should produce an agent_failed with
-	// error_category = "structural" and an appropriate sub_reason when the
-	// binary path check fails.  The spec does not pin a sub_reason for
-	// "binary path unverified" explicitly, but §8.2 says ErrStructural applies
-	// for "the plan is wrong (wrong tool selected, missing precondition)".
-	// This fixture names the expected class for watcher implementation.
 	const expectedClass = "structural"
 
 	var buf bytes.Buffer
@@ -971,10 +732,6 @@ func TestCrashRecov_HCINV005_BinaryPathVerificationShape(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: dirty-exit inside shutdown window → agent_completed (HC-008a)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted asserts the
 // HC-INV-006 exception for dirty exits inside the post-outcome shutdown window.
 //
@@ -987,9 +744,6 @@ func TestCrashRecov_HCINV005_BinaryPathVerificationShape(t *testing.T) {
 func TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted(t *testing.T) {
 	t.Parallel()
 
-	// Non-zero exit code inside shutdown window → still agent_completed per
-	// HC-INV-006 + HC-008a: the outcome is durable; the non-zero exit is
-	// observational only.
 	var buf bytes.Buffer
 	e := newWireEmitter(&buf)
 	endedAt := time.Now().UTC()
@@ -1002,7 +756,6 @@ func TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// Type is still agent_completed (not agent_failed).
 	if got := crashRecovFixtureString(t, m, "type"); got != "agent_completed" {
 		t.Errorf(
 			"dirty-exit-in-shutdown-window: type = %q, want agent_completed "+
@@ -1010,11 +763,9 @@ func TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted(t *testing.T) {
 			got,
 		)
 	}
-	// exit_code must carry the non-zero value.
 	if got := crashRecovFixtureFloat64(t, m, "exit_code"); int(got) != shutdownExitCode {
 		t.Errorf("dirty-exit-in-shutdown-window: exit_code = %v, want %d (shutdown_exit_code per HC-008a)", got, shutdownExitCode)
 	}
-	// outcome_ref must be non-empty (outcome is durable).
 	if got, ok := m["outcome_ref"].(string); !ok || got == "" {
 		t.Errorf("dirty-exit-in-shutdown-window: outcome_ref missing or empty; outcome must be durable (HC-008a)")
 	}

@@ -1,51 +1,5 @@
 package main
 
-// silentHang_hc026_test.go — fixture and scenario harness for HC-026 + HC-026a
-// + §7.1 (silent-hang detection state machine + heartbeat obligation).
-//
-// Spec refs:
-//   - specs/handler-contract.md §4.6.HC-026 (silent-hang state machine)
-//   - specs/handler-contract.md §4.6.HC-026a (handler heartbeat obligation)
-//   - specs/handler-contract.md §7.1 (state machine table)
-//   - specs/handler-contract.md §10.2 HC-026 obligations
-//
-// Bead: hk-8i31.79.
-//
-// Helper prefix: silentHangFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// What this file provides:
-//
-//  1. silentHangFixtureStateTable — a table representation of every transition
-//     in §7.1; used by TestSilentHang_HC026_StateTableCoverage to assert the
-//     fixture encodes every normative row.
-//
-//  2. silentHangFixtureHeartbeatScript — a ScriptFile whose messages emit
-//     heartbeats at short scripted intervals; used by false-positive resilience
-//     tests (twin emitting heartbeats MUST NOT trigger silent-hang).
-//
-//  3. silentHangFixtureNoMessageScript — a ScriptFile with no messages at all
-//     (not even heartbeats); used by false-negative detection tests (twin
-//     emitting nothing MUST trigger within T + tick-jitter).
-//
-//  4. silentHangFixtureRateLimitScript — a ScriptFile that emits
-//     agent_rate_limited, then heartbeats (phase: waiting_input), then
-//     agent_rate_limit_cleared; exercises the independence of rate-limit and
-//     silent-hang regimes per HC-026a.
-//
-//  5. silentHangFixturePostOutcomeScript — a ScriptFile that emits
-//     outcome_emitted followed by silence; asserts that the shutdown window is
-//     the correct regime, not silent-hang.
-//
-//  6. Static sensor tests asserting that the emitter produces correctly shaped
-//     messages for every state-machine-related message type, confirming the
-//     fixture shapes will exercise the right watcher paths when the watcher
-//     implementation lands (hk-8i31.31).
-//
-// None of these tests wire up the actual daemon watcher; the fixture types and
-// sensor assertions are load-bearing for the downstream beads that implement
-// the watcher state machine and scenario tests.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -62,12 +16,6 @@ func silentHangFixtureString(t *testing.T, m map[string]any, key string) string 
 	return value
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §7.1 state machine constants (normative from spec)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// silentHangFixtureState mirrors the states named in §7.1 for use in the
-// transition table below.
 type silentHangFixtureState string
 
 const (
@@ -78,7 +26,6 @@ const (
 	silentHangFixtureStateTerminated      silentHangFixtureState = "terminated"
 )
 
-// silentHangFixtureEvent mirrors the event labels in the §7.1 table.
 type silentHangFixtureEvent string
 
 const (
@@ -87,7 +34,6 @@ const (
 	silentHangFixtureEventSubprocExit silentHangFixtureEvent = "subprocess_exit"
 )
 
-// silentHangFixtureTransition is one row from the §7.1 FSM table.
 type silentHangFixtureTransition struct {
 	// From is the source state.
 	From silentHangFixtureState
@@ -102,12 +48,7 @@ type silentHangFixtureTransition struct {
 	Emits string
 }
 
-// silentHangFixtureStateTable is the exhaustive transition table from
-// specs/handler-contract.md §7.1.  Every normative row is represented.
-//
-// Spec: §7.1 "Silent-hang detection state machine".
 var silentHangFixtureStateTable = []silentHangFixtureTransition{
-	// Row 1: active → active on any message (timestamp reset, no emission)
 	{
 		From:  silentHangFixtureStateActive,
 		Event: silentHangFixtureEventMessage,
@@ -165,26 +106,9 @@ var silentHangFixtureStateTable = []silentHangFixtureTransition{
 	},
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: heartbeat script (false-positive resilience — HC-026a positive case)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// silentHangFixtureHeartbeatScript returns a ScriptFile that emits heartbeats
-// at a tight scripted cadence, simulating an agent reasoning for an extended
-// period while still meeting the ≤T/2 heartbeat obligation.
-//
-// Per §10.2 HC-026 obligations: "false-positive resilience test: twin emitting
-// heartbeats during long reasoning MUST NOT trigger silent-hang".
-//
-// The returned script uses heartbeat_mode: scripted so that scenario tests
-// produce byte-reproducible event streams (HC-026a scripted-mode carve-out).
-//
-// Downstream watcher test (hk-8i31.31) MUST verify that running this script
-// against the watcher does not fire agent_warning_silent_hang.
 func silentHangFixtureHeartbeatScript(heartbeatIntervalMs, count int) *ScriptFile {
 	msgs := make([]ScriptMessage, 0, count+2)
 
-	// Preamble: agent_started and agent_ready.
 	msgs = append(msgs, ScriptMessage{
 		Type: "agent_started",
 		Payload: map[string]any{
@@ -203,7 +127,6 @@ func silentHangFixtureHeartbeatScript(heartbeatIntervalMs, count int) *ScriptFil
 		},
 	})
 
-	// Heartbeats during "long reasoning" — each with the declared interval.
 	for range count {
 		msgs = append(msgs, ScriptMessage{
 			Type: "agent_heartbeat",
@@ -215,7 +138,6 @@ func silentHangFixtureHeartbeatScript(heartbeatIntervalMs, count int) *ScriptFil
 		})
 	}
 
-	// Terminal outcome.
 	msgs = append(msgs, ScriptMessage{
 		Type: "outcome_emitted",
 		Payload: map[string]any{
@@ -232,19 +154,6 @@ func silentHangFixtureHeartbeatScript(heartbeatIntervalMs, count int) *ScriptFil
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: no-message script (false-negative detection — HC-026 must fire)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// silentHangFixtureNoMessageScript returns a ScriptFile that emits nothing
-// after agent_ready (i.e., no heartbeats, no output chunks, no messages of
-// any kind).
-//
-// Per §10.2 HC-026 obligations: "false-negative detection test: twin emitting
-// no messages (no heartbeats) MUST trigger silent-hang within T + tick-jitter".
-//
-// The watcher (hk-8i31.31) MUST fire agent_warning_silent_hang within T seconds
-// after agent_ready when this script is in use.
 func silentHangFixtureNoMessageScript() *ScriptFile {
 	return &ScriptFile{
 		HeartbeatMode: heartbeatModeWallClock,
@@ -267,28 +176,10 @@ func silentHangFixtureNoMessageScript() *ScriptFile {
 					"capabilities": []string{"scripted"},
 				},
 			},
-			// Deliberate: no messages follow. The subprocess would then hang.
-			// In scenario tests (hk-8i31.31), the script driver exits after
-			// emitting the above two messages; the connection stays open but
-			// the twin process blocks, leaving the watcher to detect silence.
 		},
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: rate-limit + heartbeat script (HC-026a independence)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// silentHangFixtureRateLimitScript returns a ScriptFile that models the
-// rate-limit window: the twin emits agent_rate_limited, then continues to emit
-// heartbeats (phase: waiting_input), then emits agent_rate_limit_cleared.
-//
-// Per HC-026a: "during rate-limited windows, handlers MUST continue to emit
-// heartbeats (natural phase: waiting_input); rate-limit and silent-hang are
-// independent regimes."
-//
-// The watcher (hk-8i31.31) MUST NOT treat the rate-limited interval as a
-// silent-hang window; heartbeats during that window reset the silence timer.
 func silentHangFixtureRateLimitScript() *ScriptFile {
 	src := "anthropic"
 	retryAfter := 30
@@ -375,23 +266,6 @@ func silentHangFixtureRateLimitScript() *ScriptFile {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture: post-outcome shutdown window (HC-008a — silent-hang suspended)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// silentHangFixturePostOutcomeScript returns a ScriptFile that emits
-// outcome_emitted and then nothing further (no heartbeats, no explicit agent_completed).
-//
-// Per §7.1: "Silent-hang detection is SUSPENDED during the post-outcome
-// shutdown window of §4.2.HC-008a (distinct regime)."
-// Per HC-008a: the watcher applies the T_shutdown = 10s post-outcome window,
-// NOT silent-hang detection, after outcome_emitted.
-// Per HC-026a: "During the post-outcome shutdown window, heartbeat emission is
-// not required (silent-hang is suspended in that regime)."
-//
-// The watcher (hk-8i31.31 / hk-8i31.9) MUST NOT emit agent_warning_silent_hang
-// after outcome_emitted; it MUST emit agent_failed(post_outcome_shutdown_timeout)
-// or agent_completed if the process exits within T_shutdown.
 func silentHangFixturePostOutcomeScript() *ScriptFile {
 	return &ScriptFile{
 		HeartbeatMode: heartbeatModeScripted,
@@ -439,10 +313,6 @@ func silentHangFixturePostOutcomeScript() *ScriptFile {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: state table coverage
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSilentHang_HC026_StateTableCoverage asserts that silentHangFixtureStateTable
 // contains exactly the seven transitions declared in §7.1, and that each
 // normative (from, event, to) triple is represented exactly once.
@@ -454,14 +324,12 @@ func silentHangFixturePostOutcomeScript() *ScriptFile {
 func TestSilentHang_HC026_StateTableCoverage(t *testing.T) {
 	t.Parallel()
 
-	// §7.1 declares exactly 7 transitions.  Assert count first.
 	const wantRows = 7
 	if len(silentHangFixtureStateTable) != wantRows {
 		t.Errorf("silentHangFixtureStateTable has %d rows, want %d (§7.1 declares 7 transitions)",
 			len(silentHangFixtureStateTable), wantRows)
 	}
 
-	// Assert every normative (from, event, to) triple from §7.1 is present.
 	type triple struct {
 		from  silentHangFixtureState
 		event silentHangFixtureEvent
@@ -477,7 +345,6 @@ func TestSilentHang_HC026_StateTableCoverage(t *testing.T) {
 		{silentHangFixtureStateHardTerminating, silentHangFixtureEventSubprocExit, silentHangFixtureStateTerminated},
 	}
 
-	// Build a set from the fixture for O(1) lookup.
 	present := make(map[triple]bool, len(silentHangFixtureStateTable))
 	for _, row := range silentHangFixtureStateTable {
 		k := triple{row.From, row.Event, row.To}
@@ -537,18 +404,12 @@ func TestSilentHang_HC026_TerminalTransitionsEmitAgentFailed(t *testing.T) {
 func TestSilentHang_HC026a_ThresholdConstants(t *testing.T) {
 	t.Parallel()
 
-	// This is a schema sensor: the constants are captured as named values so
-	// that downstream watcher tests (hk-8i31.31) and OQ-HC-001 resolution can
-	// import them without duplication.
-	//
-	// Fixtures use these names; mismatches here flag a drift from §7.1 prose.
 	const (
 		silentHangFixtureT     = 600 * time.Second // default per §7.1
 		silentHangFixtureMSoft = 2 * silentHangFixtureT
 		silentHangFixtureMHard = 4 * silentHangFixtureT
 	)
 
-	// The tick cadence must be ≤ T/10 per §7.1.
 	const silentHangFixtureTickMax = silentHangFixtureT / 10
 
 	if silentHangFixtureMSoft != 2*silentHangFixtureT {
@@ -561,10 +422,6 @@ func TestSilentHang_HC026a_ThresholdConstants(t *testing.T) {
 		t.Errorf("tick cadence max %v exceeds T/10 = %v (§7.1 tick rule)", silentHangFixtureTickMax, silentHangFixtureT/10)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: heartbeat script shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026a_HeartbeatScriptShape verifies that the heartbeat
 // fixture script (silentHangFixtureHeartbeatScript) produces the correct
@@ -581,23 +438,19 @@ func TestSilentHang_HC026a_HeartbeatScriptShape(t *testing.T) {
 		t.Errorf("heartbeat script: heartbeat_mode = %q, want %q", sf.HeartbeatMode, heartbeatModeScripted)
 	}
 
-	// Must have: agent_started, agent_ready, 3×agent_heartbeat, outcome_emitted = 6 messages.
 	const wantCount = 6
 	if len(sf.Messages) != wantCount {
 		t.Fatalf("heartbeat script: message count = %d, want %d", len(sf.Messages), wantCount)
 	}
 
-	// First: agent_started.
 	if sf.Messages[0].Type != "agent_started" {
 		t.Errorf("messages[0].type = %q, want agent_started", sf.Messages[0].Type)
 	}
 
-	// Second: agent_ready.
 	if sf.Messages[1].Type != "agent_ready" {
 		t.Errorf("messages[1].type = %q, want agent_ready", sf.Messages[1].Type)
 	}
 
-	// Messages [2..4]: heartbeats with correct phase and interval.
 	for i := 2; i <= 4; i++ {
 		msg := sf.Messages[i]
 		if msg.Type != "agent_heartbeat" {
@@ -614,7 +467,6 @@ func TestSilentHang_HC026a_HeartbeatScriptShape(t *testing.T) {
 		}
 	}
 
-	// Last: outcome_emitted.
 	last := sf.Messages[len(sf.Messages)-1]
 	if last.Type != "outcome_emitted" {
 		t.Errorf("last message type = %q, want outcome_emitted", last.Type)
@@ -630,9 +482,6 @@ func TestSilentHang_HC026a_HeartbeatScriptLoadsClean(t *testing.T) {
 
 	sf := silentHangFixtureHeartbeatScript(50, 3)
 
-	// Validate via loadScriptFile by serialising to YAML and re-loading.
-	// This confirms the script passes load-time checks (empty type rejection,
-	// mode validation) and is suitable for use with --script-path.
 	if !sf.HeartbeatMode.Valid() {
 		t.Errorf("heartbeat script heartbeat_mode %q is not valid (heartbeatMode.Valid = false)", sf.HeartbeatMode)
 	}
@@ -642,10 +491,6 @@ func TestSilentHang_HC026a_HeartbeatScriptLoadsClean(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: no-message script shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026_NoMessageScriptShape verifies that the no-message
 // fixture script (silentHangFixtureNoMessageScript) is a well-formed script
@@ -662,7 +507,6 @@ func TestSilentHang_HC026_NoMessageScriptShape(t *testing.T) {
 		t.Errorf("no-message script: heartbeat_mode = %q, want %q (§10.2: resilience tests use wall-clock)", sf.HeartbeatMode, heartbeatModeWallClock)
 	}
 
-	// Must have exactly agent_started + agent_ready (2 messages); no heartbeats.
 	const wantCount = 2
 	if len(sf.Messages) != wantCount {
 		t.Fatalf("no-message script: message count = %d, want %d (agent_started + agent_ready only)", len(sf.Messages), wantCount)
@@ -675,8 +519,6 @@ func TestSilentHang_HC026_NoMessageScriptShape(t *testing.T) {
 		t.Errorf("no-message script messages[1].type = %q, want agent_ready", sf.Messages[1].Type)
 	}
 
-	// Confirm mode validates (no heartbeat emission is correct by construction,
-	// not a load error).
 	if !sf.HeartbeatMode.Valid() {
 		t.Errorf("no-message script heartbeat_mode %q is not valid", sf.HeartbeatMode)
 	}
@@ -686,10 +528,6 @@ func TestSilentHang_HC026_NoMessageScriptShape(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: rate-limit script shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026a_RateLimitScriptShape verifies that the rate-limit
 // fixture script emits the correct sequence: agent_rate_limited, then
@@ -706,7 +544,6 @@ func TestSilentHang_HC026a_RateLimitScriptShape(t *testing.T) {
 		t.Errorf("rate-limit script: heartbeat_mode = %q, want scripted", sf.HeartbeatMode)
 	}
 
-	// Find messages by type.
 	var foundRateLimited, foundRateLimitCleared bool
 	var heartbeatsDuringRL []ScriptMessage
 	inRateLimited := false
@@ -736,7 +573,6 @@ func TestSilentHang_HC026a_RateLimitScriptShape(t *testing.T) {
 		t.Error("rate-limit script: no heartbeats during rate-limited window (HC-026a requires waiting_input heartbeats)")
 	}
 
-	// Heartbeats during rate-limited window must have phase "waiting_input".
 	for i, hb := range heartbeatsDuringRL {
 		phase, ok := hb.Payload["phase"].(string)
 		if !ok || phase != "waiting_input" {
@@ -744,10 +580,6 @@ func TestSilentHang_HC026a_RateLimitScriptShape(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: post-outcome script shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026_PostOutcomeScriptShape verifies that the post-outcome
 // fixture script ends with outcome_emitted and contains no heartbeats after it.
@@ -761,7 +593,6 @@ func TestSilentHang_HC026_PostOutcomeScriptShape(t *testing.T) {
 
 	sf := silentHangFixturePostOutcomeScript()
 
-	// Last message must be outcome_emitted.
 	if len(sf.Messages) == 0 {
 		t.Fatal("post-outcome script: no messages")
 	}
@@ -770,7 +601,6 @@ func TestSilentHang_HC026_PostOutcomeScriptShape(t *testing.T) {
 		t.Errorf("post-outcome script: last message type = %q, want outcome_emitted", last.Type)
 	}
 
-	// No messages after outcome_emitted (the silence is intentional).
 	foundOutcome := false
 	for _, msg := range sf.Messages {
 		if foundOutcome && msg.Type == "agent_heartbeat" {
@@ -784,10 +614,6 @@ func TestSilentHang_HC026_PostOutcomeScriptShape(t *testing.T) {
 		t.Error("post-outcome script: outcome_emitted not found")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: emitter produces FSM-relevant message shapes
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026_WatcherEmittedMessageShapes verifies that the wire
 // emitter produces correctly-shaped messages for every message type the §7.1
@@ -808,7 +634,6 @@ func TestSilentHang_HC026_PostOutcomeScriptShape(t *testing.T) {
 func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 	t.Parallel()
 
-	// agent_failed with silent_hang sub_reason (§8.2 + §7.1 soft-terminating exit).
 	t.Run("agent_failed_silent_hang", func(t *testing.T) {
 		t.Parallel()
 		var buf bytes.Buffer
@@ -830,13 +655,11 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 		if got := silentHangFixtureString(t, m, "reason"); got != "silent_hang" {
 			t.Errorf("reason = %q, want silent_hang (§8.2)", got)
 		}
-		// sub_reason absent for empty string (omitempty).
 		if _, exists := m["sub_reason"]; exists {
 			t.Error("sub_reason present; want omitted for empty string (omitempty)")
 		}
 	})
 
-	// agent_failed with silent_hang_hard_kill sub_reason (§8.2 + §7.1 hard-terminating exit).
 	t.Run("agent_failed_silent_hang_hard_kill", func(t *testing.T) {
 		t.Parallel()
 		var buf bytes.Buffer
@@ -854,8 +677,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 		}
 	})
 
-	// agent_heartbeat with all normative phases confirms the emitter covers
-	// every phase the silent-hang FSM's heartbeat-reset path may observe.
 	t.Run("heartbeat_all_phases_reset_timer", func(t *testing.T) {
 		t.Parallel()
 		phasesReset := []heartbeatPhase{
@@ -881,8 +702,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 				if got := silentHangFixtureString(t, m, "type"); got != "agent_heartbeat" {
 					t.Errorf("phase %q: type = %q, want agent_heartbeat", phase, got)
 				}
-				// Per §4.6.HC-026: "emitting a heartbeat resets the silent-hang timer
-				// per §7.1" — ALL phases are valid timer-reset events.
 				if got := silentHangFixtureString(t, m, "phase"); got != string(phase) {
 					t.Errorf("phase field = %q, want %q", got, phase)
 				}
@@ -890,10 +709,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 		}
 	})
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sensor: FSM suspension conditions
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSilentHang_HC026_SuspensionConditionsDocumented asserts that the fixture
 // captures the two conditions under which silent-hang detection is SUSPENDED
@@ -908,10 +723,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 func TestSilentHang_HC026_SuspensionConditionsDocumented(t *testing.T) {
 	t.Parallel()
 
-	// Condition 1: post-outcome shutdown window.
-	// Verified via silentHangFixturePostOutcomeScript: after outcome_emitted,
-	// the script ends without heartbeats; the watcher must not fire
-	// agent_warning_silent_hang.
 	postOutcome := silentHangFixturePostOutcomeScript()
 	if len(postOutcome.Messages) == 0 {
 		t.Fatal("suspension condition 1: post-outcome script is empty")
@@ -921,13 +732,6 @@ func TestSilentHang_HC026_SuspensionConditionsDocumented(t *testing.T) {
 		t.Errorf("suspension condition 1: last message = %q, want outcome_emitted (suspension starts at outcome)", lastType)
 	}
 
-	// Condition 2: ctx cancellation — no twin script needed; this is a watcher
-	// internal condition that the watcher must enforce. Document via a
-	// descriptive assertion that the condition is named.
-	//
-	// The guard: "ctx cancellation supersedes silent-hang escalation; a
-	// cancellation during warning/soft-terminating state produces ErrCanceled,
-	// not ErrStructural" (§7.1 prose + §8.4).
 	const ctxCancellationSupersedesSilentHang = true
 	if !ctxCancellationSupersedesSilentHang {
 		t.Error("suspension condition 2: ctx cancellation must supersede silent-hang (§7.1 + HC-018 + §8.4)")

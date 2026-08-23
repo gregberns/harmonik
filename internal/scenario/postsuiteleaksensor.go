@@ -106,38 +106,24 @@ type PostSuiteLeakParams struct {
 func CheckPostSuiteLeaks(ctx context.Context, params PostSuiteLeakParams) (*PostSuiteLeakReport, error) {
 	report := &PostSuiteLeakReport{}
 
-	// Check (i): descendant process tree with HARMONIK_RUN_ID marker.
 	processLeaks, err := checkLeakedProcesses(ctx, params.ExecutedRunIDs)
 	if err != nil {
 		return nil, fmt.Errorf("post-suite leak sensor (process check): %w", err)
 	}
 	report.Leaks = append(report.Leaks, processLeaks...)
 
-	// Check (ii): worktree-lease registry scan.
 	leaseLeaks, err := checkLeakedLeases(params.FixtureRoot, params.ExecutedRunIDs)
 	if err != nil {
 		return nil, fmt.Errorf("post-suite leak sensor (lease check): %w", err)
 	}
 	report.Leaks = append(report.Leaks, leaseLeaks...)
 
-	// Check (iii): open file descriptors under the fixture root.
 	fdLeaks := checkLeakedFDs(ctx, params.FixtureRoot)
 	report.Leaks = append(report.Leaks, fdLeaks...)
 
 	return report, nil
 }
 
-// checkLeakedLeases walks the fixture root for lease.lock files whose run_id
-// matches any executed scenario's run_id, implementing SH-INV-002(ii).
-//
-// Per-fixture-root scan: searches for files named "lease.lock" anywhere under
-// fixtureRoot. Each found file is parsed via workspace.ReadLeaseLock; absent or
-// malformed files are silently skipped (not a valid held lease). Only files
-// whose run_id is in executedRunIDs are reported as leaks.
-//
-// Returns nil, nil when fixtureRoot is empty or executedRunIDs is empty.
-//
-// Spec ref: specs/scenario-harness.md §5 SH-INV-002(ii).
 func checkLeakedLeases(fixtureRoot string, executedRunIDs []core.RunID) ([]LeakDescriptor, error) {
 	if fixtureRoot == "" || len(executedRunIDs) == 0 {
 		return nil, nil
@@ -174,19 +160,6 @@ func checkLeakedLeases(fixtureRoot string, executedRunIDs []core.RunID) ([]LeakD
 	return leaks, nil
 }
 
-// checkLeakedFDs uses lsof to enumerate open file descriptors pointing at
-// regular files under the fixture root, implementing SH-INV-002(iii).
-//
-// Returns nil (no error) when:
-//   - fixtureRoot is empty
-//   - lsof is not installed on the system
-//   - lsof finds no open regular files (exits with code 1 and empty stdout)
-//
-// The spec names event-log files (events.jsonl) as the primary FD leak target.
-// This implementation reports all open regular files under fixtureRoot as a
-// comprehensive superset, giving the operator full visibility.
-//
-// Spec ref: specs/scenario-harness.md §5 SH-INV-002(iii).
 func checkLeakedFDs(ctx context.Context, fixtureRoot string) []LeakDescriptor {
 	if fixtureRoot == "" {
 		return nil
@@ -197,17 +170,12 @@ func checkLeakedFDs(ctx context.Context, fixtureRoot string) []LeakDescriptor {
 		if lsofNotFound(err) {
 			return nil // lsof not installed: skip check
 		}
-		// lsof exits 1 when no files are found — that is the clean case.
 		if exitCodeIs(err, 1) && len(out) == 0 {
 			return nil
 		}
-		// Other errors (permission, signal, etc.): skip rather than fail.
 		return nil
 	}
 
-	// lsof default output columns:
-	//   COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-	// Indices (0-based): 0=COMMAND 1=PID 2=USER 3=FD 4=TYPE … N-1=NAME
 	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	leaks := make([]LeakDescriptor, 0, len(lines)-1)
 	for _, line := range lines[1:] { // skip header
@@ -232,7 +200,6 @@ func checkLeakedFDs(ctx context.Context, fixtureRoot string) []LeakDescriptor {
 	return leaks
 }
 
-// lsofNotFound reports whether err indicates lsof is not installed.
 func lsofNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -242,7 +209,6 @@ func lsofNotFound(err error) bool {
 		strings.Contains(msg, "no such file or directory")
 }
 
-// exitCodeIs reports whether err is an *exec.ExitError with the given exit code.
 func exitCodeIs(err error, code int) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

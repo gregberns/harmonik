@@ -81,21 +81,8 @@ type TrailerSpec struct {
 	Description string
 }
 
-// trailerRegistry is the ordered, authoritative list of all known checkpoint-commit
-// trailers. Declared order is the canonical iteration order for RegistryEntries().
-//
-// The seven primary registry rows are defined by execution-model §6.2.
-// Harmonik-Verdict-Executed is a known extension owned by the reconciliation spec;
-// its inclusion here ensures trailer-lint never rejects it as unknown.
-//
-// Role of trailers (EM-017): trailers are a cheap index for git-log scanning.
-// They are NOT the authoritative source of truth for transition data; authoritative
-// fields live in the transition-record sibling file per §4.4.EM-018
-// (`.harmonik/transitions/<run_id>/<transition_id>.json`). Readers that need
-// complete field data MUST retrieve the sibling file, not parse trailers.
 var trailerRegistry = []TrailerSpec{
 	{
-		// execution-model.md §6.2; EM-017 (required trailer)
 		Key:         "Harmonik-Bead-ID",
 		Type:        TrailerTypeString,
 		Requirement: TrailerConditional,
@@ -103,7 +90,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "Bead identifier; MUST be present when the run is tied to a bead per EM-014, absent otherwise.",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer); EM-013 (join-key invariant)
 		Key:         "Harmonik-Run-ID",
 		Type:        TrailerTypeUUID,
 		Requirement: TrailerRequired,
@@ -111,7 +97,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "UUIDv7 identifying the run; present on every checkpoint commit (EM-013 join key across git, Beads, and JSONL).",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer); EM-022 (N-1 readable)
 		Key:         "Harmonik-Schema-Version",
 		Type:        TrailerTypeInteger,
 		Requirement: TrailerRequired,
@@ -119,7 +104,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "Integer version of the transition-record sibling file schema; must match sibling file's schema_version field per EM-018; N-1 readable per EM-022.",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer)
 		Key:         "Harmonik-State-ID",
 		Type:        TrailerTypeUUID,
 		Requirement: TrailerRequired,
@@ -127,9 +111,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "UUIDv7 identifying the run state after the transition; present on every checkpoint commit.",
 	},
 	{
-		// execution-model.md §6.2; conditional, RC-owned
-		// Payload semantics live in reconciliation per EM v0.3.3 §6.2 informative
-		// ownership annotation (discipline v0.7 §2.11(d.1)).
 		Key:         "Harmonik-Target-Run-ID",
 		Type:        TrailerTypeUUID,
 		Requirement: TrailerConditional,
@@ -137,7 +118,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "UUIDv7 of the run being reconciled; MUST be present when Harmonik-Workflow-Class=reconciliation, absent otherwise.",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer)
 		Key:         "Harmonik-Transition-ID",
 		Type:        TrailerTypeUUID,
 		Requirement: TrailerRequired,
@@ -145,9 +125,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "UUIDv7 identifying the specific transition recorded by this commit; present on every checkpoint commit.",
 	},
 	{
-		// execution-model.md §6.2; conditional, RC-owned (see §6.2 informative annotation)
-		// Payload semantics live in reconciliation per EM v0.3.3 §6.2 informative
-		// ownership annotation (discipline v0.7 §2.11(d.1)).
 		Key:         "Harmonik-Workflow-Class",
 		Type:        TrailerTypeEnum,
 		Requirement: TrailerConditional,
@@ -156,16 +133,6 @@ var trailerRegistry = []TrailerSpec{
 		Description: "Workflow class; MUST be present on reconciliation-workflow checkpoint commits. Enum values: {reconciliation}.",
 	},
 	{
-		// Known extension owned by the reconciliation spec (schemas.md §6.4; RC-023; RC-026).
-		// Type is TrailerTypeEnum with a single permitted value "true": the spec defines a
-		// fixed literal (schemas.md §6.4: "value: \"true\" — fixed literal; any other value
-		// is malformed per RC-023"). A 1-value enum reuses existing validation machinery
-		// without adding a new TrailerValueType (option (a) per hk-63oh.59 design decision).
-		// Placement and emission rules are runtime-enforced (not registry-enforced):
-		//   - MUST appear on a descendant of the verdict commit on the same investigator branch.
-		//   - MUST NOT appear on the verdict commit itself.
-		//   - Emitted exactly once per executed reconciliation verdict; Cat 3b re-execution
-		//     (RC-026) appends a new commit rather than rewriting the prior one.
 		Key:         "Harmonik-Verdict-Executed",
 		Type:        TrailerTypeEnum,
 		Requirement: TrailerKnownExtension,
@@ -175,7 +142,6 @@ var trailerRegistry = []TrailerSpec{
 	},
 }
 
-// trailerIndex is a map built at init time for O(1) lookup.
 var trailerIndex map[string]TrailerSpec
 
 func init() {
@@ -258,7 +224,6 @@ func ValidateTrailerValue(spec TrailerSpec, value string) error {
 		return fmt.Errorf("trailer %q: value %q not in permitted values [%s]",
 			spec.Key, value, strings.Join(spec.EnumValues, ", "))
 	case TrailerTypeString:
-		// Any non-empty string is valid; empty is rejected above.
 		return nil
 	default:
 		return fmt.Errorf("trailer %q: unknown TrailerValueType %d", spec.Key, spec.Type)

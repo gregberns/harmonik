@@ -1,18 +1,5 @@
 package lifecycle_test
 
-// happypath_hxrygh_test.go — scenario tests for the per-session lifecycle FSM
-// (HC-064..HC-067, hk-xrygh acceptance criteria).
-//
-// Scenarios:
-//   1. Happy-path: Spawning→Initializing→Ready→Executing→Terminating→Terminated
-//   2. Silent-hang: Ready→Failed(reason=silent_hang) BEFORE terminal transition
-//   3. Agent failed during initializing: Initializing→Failed(reason=error)
-//   4. hk-za5mz (iter-2 stuck-in-Ready): Ready→Failed(reason=silent_hang)
-//      surfaces as a deterministic FSM transition, not a 10-min timeout.
-//
-// Spec ref: handler-contract.md §4.13 HC-064..HC-067.
-// Bead ref: hk-xrygh.
-
 import (
 	"testing"
 
@@ -35,32 +22,26 @@ func TestLifecycleFSM_HappyPath(t *testing.T) {
 
 	m := lifecycle.New("sess-happy", "run-happy")
 
-	// Initial state must be Spawning.
 	if got := m.Current(); got != lifecycle.StateSpawning {
 		t.Fatalf("initial state: got %s, want %s", got, lifecycle.StateSpawning)
 	}
 
-	// Spawning → Initializing (cmd.Start succeeded per HC-065).
 	if err := m.Transition(lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted, "", ""); err != nil {
 		t.Fatalf("Spawning→Initializing: %v", err)
 	}
 
-	// Initializing → Ready (agent_ready progress-stream message).
 	if err := m.Transition(lifecycle.StateReady, lifecycle.ReasonInitComplete, "", ""); err != nil {
 		t.Fatalf("Initializing→Ready: %v", err)
 	}
 
-	// Ready → Executing (agent_started progress-stream message).
 	if err := m.Transition(lifecycle.StateExecuting, lifecycle.ReasonCommandStarted, "", ""); err != nil {
 		t.Fatalf("Ready→Executing: %v", err)
 	}
 
-	// Executing → Terminating (SIGTERM sent per HC-065).
 	if err := m.Transition(lifecycle.StateTerminating, lifecycle.ReasonTerminateRequested, "", ""); err != nil {
 		t.Fatalf("Executing→Terminating: %v", err)
 	}
 
-	// Terminating → Terminated (Wait return, exit 0 per HC-065).
 	if err := m.Transition(lifecycle.StateTerminated, lifecycle.ReasonTerminateComplete, "", ""); err != nil {
 		t.Fatalf("Terminating→Terminated: %v", err)
 	}
@@ -69,7 +50,6 @@ func TestLifecycleFSM_HappyPath(t *testing.T) {
 		t.Errorf("expected terminal state, got %s", m.Current())
 	}
 
-	// Verify full transition history in order.
 	hist := m.History()
 	want := []struct {
 		from   lifecycle.LifecycleState
@@ -107,7 +87,6 @@ func TestLifecycleFSM_SilentHang(t *testing.T) {
 
 	m := buildMachineAt(t, lifecycle.StateReady)
 
-	// HC-065: Ready→Failed (silent_hang) — the session became unresponsive.
 	if err := m.Transition(lifecycle.StateFailed, lifecycle.ReasonSilentHang, "silent_hang", "agent unresponsive"); err != nil {
 		t.Fatalf("Ready→Failed(silent_hang): %v", err)
 	}
@@ -116,7 +95,6 @@ func TestLifecycleFSM_SilentHang(t *testing.T) {
 		t.Errorf("current: got %s, want %s", got, lifecycle.StateFailed)
 	}
 
-	// Verify history captures the silent-hang transition.
 	hist := m.History()
 	last := hist[len(hist)-1]
 	if last.To != lifecycle.StateFailed {
@@ -129,7 +107,6 @@ func TestLifecycleFSM_SilentHang(t *testing.T) {
 		t.Errorf("last transition ErrCode: got %q, want %q", last.ErrCode, "silent_hang")
 	}
 
-	// Terminal state: no further transitions allowed.
 	if err := m.Transition(lifecycle.StateTerminating, lifecycle.ReasonTerminateRequested, "", ""); err == nil {
 		t.Error("transition from Failed: expected error (terminal), got nil")
 	}
@@ -147,17 +124,13 @@ func TestLifecycleFSM_HkZa5mz_Iter2StuckInReady(t *testing.T) {
 
 	m := buildMachineAt(t, lifecycle.StateReady)
 
-	// Heartbeats call RecordActivity without transitioning.
 	m.RecordActivity()
 	m.RecordActivity()
 
-	// Machine must still be in Ready.
 	if got := m.Current(); got != lifecycle.StateReady {
 		t.Fatalf("after RecordActivity: state=%s, want Ready", got)
 	}
 
-	// When the supervisor determines the hang threshold is exceeded, it
-	// transitions to Failed(silent_hang) — a deterministic event, not a timeout.
 	if err := m.Transition(lifecycle.StateFailed, lifecycle.ReasonSilentHang, "silent_hang", "iter-2 stuck in Ready"); err != nil {
 		t.Fatalf("Ready→Failed(silent_hang): %v", err)
 	}
@@ -173,12 +146,10 @@ func TestLifecycleFSM_AgentFailedDuringInitializing(t *testing.T) {
 	t.Parallel()
 
 	m := lifecycle.New("sess-init-fail", "run-init-fail")
-	// cmd.Start → Initializing
 	if err := m.Transition(lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted, "", ""); err != nil {
 		t.Fatalf("Spawning→Initializing: %v", err)
 	}
 
-	// agent_failed before agent_ready
 	if err := m.Transition(lifecycle.StateFailed, lifecycle.ReasonError, "agent_failed", "process exited before ready"); err != nil {
 		t.Fatalf("Initializing→Failed: %v", err)
 	}

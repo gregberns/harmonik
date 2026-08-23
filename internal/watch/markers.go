@@ -1,14 +1,5 @@
 package watch
 
-// markers.go — T12: watch marker-check on the event stream.
-//
-// Watch checks each type's declared markers.never_emits against the event stream
-// (not transcripts). On a violation it returns a friendly reminder string at
-// PULL-DIGEST severity — callers pass it to appendDigestFlag, not SendEscalation.
-//
-// Spec: .kerf/works/agent-manifest/SPEC.md §2 (markers field) + 07-tasks.md T12.
-// Declarative-only wiring: manifest.yaml is the truth; no transcript grepping.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -101,7 +92,6 @@ func (mc *MarkerChecker) Check(ev core.Event) string {
 		return "" // type has no never_emits constraints
 	}
 
-	// Build the qualified key first (e.g. "queue_submit:main").
 	qualifiedKey := mc.qualifiedKey(ev)
 	violated := ""
 	if qualifiedKey != "" {
@@ -109,7 +99,6 @@ func (mc *MarkerChecker) Check(ev core.Event) string {
 			violated = qualifiedKey
 		}
 	}
-	// Fall through to bare event type if qualified key didn't match.
 	if violated == "" {
 		if _, hit := markerSet[string(ev.Type)]; hit {
 			violated = string(ev.Type)
@@ -125,13 +114,6 @@ func (mc *MarkerChecker) Check(ev core.Event) string {
 	)
 }
 
-// resolveEmitter extracts the emitter name and type from the event payload.
-//
-// Resolution:
-//  1. Extract the 'from' (or synonymous) field from the payload.
-//  2. If the name is a known type folder name, the type equals the name (singleton agents).
-//  3. If the name is unrecognised, assume it is a crew instance (type = "crew").
-//  4. If no name can be found, return ("", "") — the event is unskippable.
 func (mc *MarkerChecker) resolveEmitter(ev core.Event) (name, typeName string) {
 	name = mc.emitterName(ev)
 	if name == "" {
@@ -140,12 +122,9 @@ func (mc *MarkerChecker) resolveEmitter(ev core.Event) (name, typeName string) {
 	if _, known := mc.typeNames[name]; known {
 		return name, name
 	}
-	// Unknown name → crew instance (named by instance, not by type).
 	return name, "crew"
 }
 
-// emitterName extracts the first non-empty string value from a set of known
-// payload fields that identify the emitting agent.
 func (mc *MarkerChecker) emitterName(ev core.Event) string {
 	if len(ev.Payload) == 0 {
 		return ""
@@ -162,11 +141,6 @@ func (mc *MarkerChecker) emitterName(ev core.Event) string {
 	return ""
 }
 
-// qualifiedKey builds the type:qualifier key for ev.
-//
-// For example, if ev.Type == "queue_submit" and the payload contains
-// queue == "main", qualifiedKey returns "queue_submit:main".
-// Returns "" when no qualifier can be derived from the payload.
 func (mc *MarkerChecker) qualifiedKey(ev core.Event) string {
 	if len(ev.Payload) == 0 {
 		return ""

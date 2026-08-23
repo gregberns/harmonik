@@ -1,21 +1,10 @@
 package core
 
-// Property tests for the Valid() methods in handlerpauseevents_ifqnj.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Bead ref: hk-z02yj (part of hk-j3hrn core coverage uplift).
-
 import (
 	"testing"
 
 	"pgregory.net/rapid"
 )
-
-// ---------------------------------------------------------------------------
-// HandlerPauseCause
-// ---------------------------------------------------------------------------
 
 func TestProp_HandlerPauseCause_Valid_AcceptsFullCause(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -101,10 +90,6 @@ func TestProp_HandlerPauseCause_Valid_RejectsEmptyTrippedAt(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// HandlerResumedBy
-// ---------------------------------------------------------------------------
-
 func TestProp_HandlerResumedBy_Valid_AcceptsDeclaredConstants(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		b := rapid.SampledFrom([]HandlerResumedBy{
@@ -122,7 +107,6 @@ func TestProp_HandlerResumedBy_Valid_RejectsArbitraryStrings(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		raw := rapid.StringN(1, 64, -1).Draw(rt, "raw")
 		b := HandlerResumedBy(raw)
-		// Only reject if not one of the declared constants.
 		if b == HandlerResumedByOperator || b == HandlerResumedByAutoBackoff || b == HandlerResumedBySignal {
 			return
 		}
@@ -131,10 +115,6 @@ func TestProp_HandlerResumedBy_Valid_RejectsArbitraryStrings(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// HandlerPausedPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_HandlerPausedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -192,10 +172,6 @@ func TestProp_HandlerPausedPayload_Valid_RejectsZeroPausedEpoch(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// HandlerResumedPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_HandlerResumedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := HandlerResumedPayload{
@@ -237,10 +213,6 @@ func TestProp_HandlerResumedPayload_Valid_RejectsZeroPausedEpoch(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// QueueItemHeldForHandlerPausePayload
-// ---------------------------------------------------------------------------
 
 func TestProp_QueueItemHeldForHandlerPausePayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

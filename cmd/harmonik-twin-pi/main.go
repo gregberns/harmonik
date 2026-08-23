@@ -47,19 +47,12 @@ func main() {
 	os.Exit(run())
 }
 
-// run is the testable entry-point; it returns an exit code.
-//
-// Exit codes:
-//
-//	0 — scenario completed successfully.
-//	1 — precondition failure (unknown scenario, missing required flag, etc.).
 func run() int {
 	fs := flag.NewFlagSet("harmonik-twin-pi", flag.ContinueOnError)
 
 	showVersion := fs.Bool("version", false, "print the build-time commit hash and exit (HC-043)")
 	scenarioName := fs.String("scenario", "", "canned scenario name (one of: happy-path, empty-turn)")
 
-	// pi --mode json interface flags — accepted for CLI compatibility.
 	_ = fs.String("mode", "", "pi output mode (accepted; twin always emits NDJSON)")
 	_ = fs.Bool("no-extensions", false, "pi --no-extensions (accepted; ignored by twin)")
 	_ = fs.String("provider", "", "pi provider (accepted; ignored by twin)")

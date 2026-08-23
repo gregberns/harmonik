@@ -1,15 +1,5 @@
 package daemon
 
-// export_dotrun_test.go — dot_cascade.go / dot_gate.go test-seam exports.
-//
-// Split out of export_test.go (RT19.3, P2 E5 export_test.go split) so the DOT
-// run-path shims (driveDotWorkflow family, cognition-gate execution and verdict
-// readers, per-node model resolution) live in one topic file. Same package
-// (daemon), so every daemon_test caller resolves daemon.ExportedX
-// byte-identically after the move.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"fmt"

@@ -34,8 +34,6 @@ const (
 	RateLimitSourceOpenAI RateLimitSource = "openai"
 )
 
-// rateLimitSourceRegex enforces the shape: lowercase letter start, followed by
-// zero or more lowercase alphanumeric characters and hyphens.
 var rateLimitSourceRegex = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Valid reports whether s matches the rate-limit-source regex shape.

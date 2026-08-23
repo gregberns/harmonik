@@ -10,15 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// adapterRegistry — per-bead helper prefix for test helpers in this file
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.14).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// adapterRegistryFixtureAdapter returns a minimal no-op Adapter for use in
-// registry tests where the adapter's behaviour is not under test.
 type adapterRegistryFixtureAdapter struct{}
 
 func (adapterRegistryFixtureAdapter) DetectReady(_ core.EventEnvelope) bool { return false }
@@ -34,19 +25,13 @@ func (adapterRegistryFixtureAdapter) Diagnose(_ context.Context) (handlercontrac
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }
 
-// adapterRegistryFixtureNewAdapter returns a fresh no-op adapter value.
 func adapterRegistryFixtureNewAdapter() handlercontract.Adapter {
 	return adapterRegistryFixtureAdapter{}
 }
 
-// adapterRegistryFixtureValidType returns a valid AgentType for tests.
 func adapterRegistryFixtureValidType(suffix string) core.AgentType {
 	return core.AgentType("test-adapter-" + suffix)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-012 — AdapterRegistry construction
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdapterRegistry_NewAdapterRegistry_NotSealed verifies that a freshly
 // created registry is not sealed.
@@ -70,10 +55,6 @@ func TestAdapterRegistry_NewAdapterRegistry_EmptyTypes(t *testing.T) {
 		t.Errorf("NewAdapterRegistry: RegisteredTypes() = %v, want empty slice", types)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-012 — Register
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdapterRegistry_Register_Success verifies that a valid registration
 // succeeds and the type appears in RegisteredTypes.
@@ -137,7 +118,6 @@ func TestAdapterRegistry_Register_InvalidAgentTypeReturnsError(t *testing.T) {
 
 	r := handlercontract.NewAdapterRegistry()
 
-	// Invalid: starts with digit, violates AR-027 ^[a-z][a-z0-9-]{1,62}$
 	invalidType := core.AgentType("1invalid")
 
 	if err := r.Register(invalidType, adapterRegistryFixtureNewAdapter()); err == nil {
@@ -157,12 +137,10 @@ func TestAdapterRegistry_Register_AfterSealReturnsError(t *testing.T) {
 		t.Fatalf("Register before seal: unexpected error: %v", err)
 	}
 
-	// Seal by calling ForAgent.
 	if _, err := r.ForAgent(agentType); err != nil {
 		t.Fatalf("ForAgent before seal: unexpected error: %v", err)
 	}
 
-	// Now the registry is sealed; Register MUST fail.
 	if err := r.Register(adapterRegistryFixtureValidType("after-seal"), adapterRegistryFixtureNewAdapter()); err == nil {
 		t.Error("Register after seal: got nil error, want non-nil (sealed registry rejects registrations)")
 	}
@@ -192,10 +170,6 @@ func TestAdapterRegistry_Register_MultipleTypesSuccess(t *testing.T) {
 		t.Errorf("RegisteredTypes() count = %d, want %d", len(registered), len(types))
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-012 — ForAgent
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdapterRegistry_ForAgent_SuccessReturnsAdapter verifies that ForAgent
 // returns the registered adapter for a known agent_type.
@@ -266,7 +240,6 @@ func TestAdapterRegistry_ForAgent_UnknownAlsoSeals(t *testing.T) {
 
 	r := handlercontract.NewAdapterRegistry()
 
-	// Call ForAgent for an unregistered type — should seal even on error.
 	if _, err := r.ForAgent(core.AgentType("not-registered")); err == nil {
 		t.Error("ForAgent(unregistered): got nil error, want non-nil")
 	}
@@ -275,10 +248,6 @@ func TestAdapterRegistry_ForAgent_UnknownAlsoSeals(t *testing.T) {
 		t.Error("Sealed() = false after ForAgent on unknown type; want true")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-012 — parallelism-prep: concurrent ForAgent (hk-cdb9f)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdapterRegistry_ForAgent_ConcurrentNoRace verifies that N=100 goroutines
 // calling ForAgent concurrently — both before and after the seal transition —
@@ -312,7 +281,6 @@ func TestAdapterRegistry_ForAgent_ConcurrentNoRace(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	// After N concurrent ForAgent calls the registry must be sealed.
 	if !r.Sealed() {
 		t.Error("Sealed() = false after concurrent ForAgent calls; want true")
 	}
@@ -328,7 +296,6 @@ func TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace(t *testing.T) {
 
 	r := handlercontract.NewAdapterRegistry()
 
-	// Pre-register one type so ForAgent succeeds.
 	baseType := adapterRegistryFixtureValidType("base-concurrent")
 	if err := r.Register(baseType, adapterRegistryFixtureNewAdapter()); err != nil {
 		t.Fatalf("Register base: unexpected error: %v", err)
@@ -342,8 +309,6 @@ func TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			// Half the goroutines look up; the other half read sealed state.
-			// Both paths touch shared fields and must not race.
 			if _, err := r.ForAgent(baseType); err != nil {
 				t.Errorf("ForAgent(%q): unexpected error: %v", baseType, err)
 			}
@@ -355,11 +320,4 @@ func TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace(t *testing.T) {
 	wg.Wait()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-012 — compile-time: adapterRegistryFixtureAdapter satisfies Adapter
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Compile-time assertion: adapterRegistryFixtureAdapter satisfies Adapter.
-// This file imports no execution-shape package (internal/handler), proving that
-// the Adapter interface is satisfiable from daemon-side (HC-051 seam) code.
 var _ handlercontract.Adapter = adapterRegistryFixtureAdapter{}

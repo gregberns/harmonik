@@ -1,21 +1,5 @@
 package main
 
-// greenlight_cmd.go — `harmonik greenlight` CLI subcommand (AC2, hk-lacr).
-//
-// Removes the "needs-greenlight" label from a staged deploy+verify follow-up
-// bead so the daemon's dispatch loop can claim it. This is the captain's
-// explicit approval mechanism required by flywheel-motion.md §5.3/§6.2.
-//
-// Usage:
-//
-//	harmonik greenlight <bead-id> [--project DIR]
-//
-// Exit codes:
-//
-//	0   Label removed (or bead did not carry the label — idempotent).
-//	1   Argument or exec error.
-//	2   Unrecognised arguments.
-
 import (
 	"context"
 	"fmt"
@@ -25,12 +9,8 @@ import (
 	"strings"
 )
 
-// labelNeedsGreenlightCLI mirrors the daemon + brcli constant; kept local so
-// this file has no import dependency on internal packages.
 const labelNeedsGreenlightCLI = "needs-greenlight"
 
-// runGreenlightSubcommand implements `harmonik greenlight <bead-id> [--project DIR]`.
-// subArgs is os.Args[2:].
 func runGreenlightSubcommand(subArgs []string) int {
 	var (
 		projectFlag string
@@ -64,7 +44,6 @@ func runGreenlightSubcommand(subArgs []string) int {
 	}
 	beadID := positional[0]
 
-	// Resolve project directory.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {

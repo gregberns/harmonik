@@ -40,9 +40,6 @@ func AssertTimingWithinTolerance(t testing.TB, twin, realStream Stream, edges []
 	}
 }
 
-// edgeDelta returns the elapsed-time difference between the first occurrence of
-// edge.To and the first occurrence of edge.From in the stream. ok=false when
-// either endpoint is missing.
 func edgeDelta(s Stream, edge TimingEdge) (time.Duration, bool) {
 	from, fromOK := firstElapsed(s, edge.From)
 	to, toOK := firstElapsed(s, edge.To)
@@ -52,7 +49,6 @@ func edgeDelta(s Stream, edge TimingEdge) (time.Duration, bool) {
 	return to - from, true
 }
 
-// firstElapsed returns the elapsed offset of the first event of the given kind.
 func firstElapsed(s Stream, kind string) (time.Duration, bool) {
 	for _, ev := range s.Events {
 		if ev.Kind == kind {

@@ -29,8 +29,6 @@ func (e *TerminalWriteError) Error() string {
 // Unwrap keeps the adapter error taxonomy available through errors.Is.
 func (e *TerminalWriteError) Unwrap() error { return e.Result.BrErr }
 
-// classifyClaimRefusal parses br presentation text at the external boundary.
-// Code above ClaimBead receives typed errors and does not depend on this text.
 func classifyClaimRefusal(err error) error {
 	var terminalErr *TerminalWriteError
 	if !errors.As(err, &terminalErr) {

@@ -8,10 +8,6 @@ import (
 	"sync"
 )
 
-// edgeKey is the composite key used to identify a unique directed edge within
-// one run. The key is (RunID, from_node NodeID, to_node NodeID) per
-// execution-model.md §4.10.EM-043a: a single edge in multiple cycles shares
-// one counter per-run.
 type edgeKey struct {
 	runID    RunID
 	fromNode NodeID
@@ -120,7 +116,6 @@ func (c *CycleCounter) ReconcileFromTransitions(runID RunID, transitions []Trans
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Build fresh counts from the supplied slice.
 	fresh := make(map[edgeKey]uint64)
 	for i := range transitions {
 		tr := &transitions[i]
@@ -135,14 +130,12 @@ func (c *CycleCounter) ReconcileFromTransitions(runID RunID, transitions []Trans
 		fresh[k]++
 	}
 
-	// Remove stale in-memory entries for this run.
 	for k := range c.counters {
 		if k.runID == runID {
 			delete(c.counters, k)
 		}
 	}
 
-	// Install reconciled counts.
 	for k, v := range fresh {
 		c.counters[k] = v
 	}

@@ -13,9 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// activeRunDiscoveryFixtureFakeQuerier is a test-injectable BeadsQuerier that
-// returns deterministic responses keyed by status. Tests set statusMap to
-// control which records are returned for each status query.
 type activeRunDiscoveryFixtureFakeQuerier struct {
 	// statusMap maps status string → records to return for that status.
 	// If a status key is absent, returns empty slice (no error).
@@ -39,20 +36,14 @@ func (f *activeRunDiscoveryFixtureFakeQuerier) ListBeadsByStatus(_ context.Conte
 	return records, nil
 }
 
-// activeRunDiscoveryFixtureEmptyQuerier returns a BeadsQuerier that returns
-// empty results for all status queries.
 func activeRunDiscoveryFixtureEmptyQuerier() BeadsQuerier {
 	return &activeRunDiscoveryFixtureFakeQuerier{}
 }
 
-// activeRunDiscoveryFixtureErrorQuerier returns a BeadsQuerier that returns
-// the given error for every call.
 func activeRunDiscoveryFixtureErrorQuerier(err error) BeadsQuerier {
 	return &activeRunDiscoveryFixtureFakeQuerier{err: err}
 }
 
-// activeRunDiscoveryFixtureBeadRecord builds a minimal valid BeadRecord for use
-// in test status maps.
 func activeRunDiscoveryFixtureBeadRecord(id string, status core.CoarseStatus) core.BeadRecord {
 	return core.BeadRecord{
 		BeadID:        core.BeadID(id),
@@ -63,9 +54,6 @@ func activeRunDiscoveryFixtureBeadRecord(id string, status core.CoarseStatus) co
 	}
 }
 
-// activeRunDiscoveryFixtureQuerierWithNonTerminal returns a BeadsQuerier where
-// the given bead IDs appear as `open` (non-terminal) and all other statuses
-// return empty.
 func activeRunDiscoveryFixtureQuerierWithNonTerminal(beadIDs ...string) BeadsQuerier {
 	records := make([]core.BeadRecord, 0, len(beadIDs))
 	for _, id := range beadIDs {
@@ -78,9 +66,6 @@ func activeRunDiscoveryFixtureQuerierWithNonTerminal(beadIDs ...string) BeadsQue
 	}
 }
 
-// activeRunDiscoveryFixtureQuerierWithTerminal returns a BeadsQuerier where
-// the given bead IDs appear as `closed` (terminal) and all other statuses
-// return empty.
 func activeRunDiscoveryFixtureQuerierWithTerminal(beadIDs ...string) BeadsQuerier {
 	records := make([]core.BeadRecord, 0, len(beadIDs))
 	for _, id := range beadIDs {
@@ -93,8 +78,6 @@ func activeRunDiscoveryFixtureQuerierWithTerminal(beadIDs ...string) BeadsQuerie
 	}
 }
 
-// fakeBranchTipReader is a test-injectable BranchTipReader that returns a
-// deterministic list of branch tips without invoking git.
 type fakeBranchTipReader struct {
 	tips []BranchTip
 	err  error
@@ -105,30 +88,21 @@ func (f *fakeBranchTipReader) ListTaskBranchTips(_ context.Context) ([]BranchTip
 	return f.tips, f.err
 }
 
-// activeRunDiscoveryFixtureEmptyReader returns a BranchTipReader with no branches.
 func activeRunDiscoveryFixtureEmptyReader() BranchTipReader {
 	return &fakeBranchTipReader{}
 }
 
-// activeRunDiscoveryFixtureReaderWithTips returns a BranchTipReader with the
-// given tips.
 func activeRunDiscoveryFixtureReaderWithTips(tips ...BranchTip) BranchTipReader {
 	return &fakeBranchTipReader{tips: tips}
 }
 
-// activeRunDiscoveryFixtureErrorReader returns a BranchTipReader that always
-// returns the given error.
 func activeRunDiscoveryFixtureErrorReader(err error) BranchTipReader {
 	return &fakeBranchTipReader{err: err}
 }
 
-// activeRunDiscoveryFixtureRunID returns a valid UUIDv7-shaped string for use
-// in tips. We use deterministic fake UUIDs for test repeatability.
 func activeRunDiscoveryFixtureRunID(n int) string {
 	return fmt.Sprintf("01900000-0000-7000-8000-00000000%04d", n)
 }
-
-// --- Tests for DiscoverActiveRuns ---
 
 // TestEM031a_DiscoverActiveRuns_EmptyBeadsEmptyBranches verifies that an empty
 // Beads result and no task branches produces an empty ActiveRunSet.
@@ -248,9 +222,7 @@ func TestEM031a_DiscoverActiveRuns_BranchWithTerminalBeadID_Excluded(t *testing.
 	const closedBeadID = "hk-done.1"
 	runID := activeRunDiscoveryFixtureRunID(2)
 
-	// Querier: closed bead exists in terminal set.
 	querier := activeRunDiscoveryFixtureQuerierWithTerminal(closedBeadID)
-	// Branch: points to the closed bead.
 	reader := activeRunDiscoveryFixtureReaderWithTips(BranchTip{
 		BranchName: "run/" + runID,
 		RunID:      runID,
@@ -316,7 +288,6 @@ func TestEM031a_DiscoverActiveRuns_BranchAndBeadMatchByBeadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverActiveRuns: unexpected error: %v", err)
 	}
-	// Union deduplication: one entry (not two).
 	if set.Len() != 1 {
 		t.Fatalf("ActiveRunSet.Len() = %d; want 1 (bead+branch union should dedup to one entry)", set.Len())
 	}
@@ -373,10 +344,8 @@ func TestEM031a_DiscoverActiveRuns_EntriesAreCopy(t *testing.T) {
 	}
 
 	first := set.Entries()
-	// Mutate the returned slice.
 	first[0] = ActiveRunEntry{} // zero out
 
-	// Second call must still return the original entry.
 	second := set.Entries()
 	if second[0].RunID.String() != runID {
 		t.Errorf("entries[0].RunID = %q after external mutation; want %q (Entries must return a copy)", second[0].RunID.String(), runID)
@@ -401,7 +370,6 @@ func TestEM031a_DiscoverActiveRuns_MalformedRunIDOnBranch_Excluded(t *testing.T)
 	if err != nil {
 		t.Fatalf("DiscoverActiveRuns: unexpected error: %v", err)
 	}
-	// The malformed entry is silently skipped; the valid one is included.
 	if set.Len() != 1 {
 		t.Fatalf("ActiveRunSet.Len() = %d; want 1 (malformed UUID skipped, valid one included)", set.Len())
 	}
@@ -420,7 +388,6 @@ func TestEM031a_DiscoverActiveRuns_DuplicateBeadInMultipleStatusQueries(t *testi
 	t.Parallel()
 
 	const dupBeadID = "hk-dup.1"
-	// Return the same bead for both "open" and "in_progress" queries.
 	querier := &activeRunDiscoveryFixtureFakeQuerier{
 		statusMap: map[string][]core.BeadRecord{
 			"open":        {activeRunDiscoveryFixtureBeadRecord(dupBeadID, core.CoarseStatusOpen)},
@@ -432,7 +399,6 @@ func TestEM031a_DiscoverActiveRuns_DuplicateBeadInMultipleStatusQueries(t *testi
 	if err != nil {
 		t.Fatalf("DiscoverActiveRuns: unexpected error: %v", err)
 	}
-	// Deduplication: even though the bead appeared in two queries, only one entry.
 	if set.Len() != 1 {
 		t.Errorf("ActiveRunSet.Len() = %d; want 1 (duplicate bead must be deduplicated)", set.Len())
 	}
@@ -499,7 +465,6 @@ func TestEM031a_isTerminalBeadStatus(t *testing.T) {
 func TestEM031a_GitBranchTipReader_EmptyRepo(t *testing.T) {
 	t.Parallel()
 
-	// Create a minimal git repo with no task branches.
 	repoDir := t.TempDir()
 
 	//nolint:gosec // G204: arguments are hard-coded constants; repoDir is t.TempDir()
@@ -537,7 +502,6 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 	runIDStr := activeRunDiscoveryFixtureRunID(7)
 	const beadID = "hk-trailer.1"
 
-	// Create a git repo with a task branch and a checkpoint commit carrying trailers.
 	repoDir := t.TempDir()
 
 	runGit := func(args ...string) {
@@ -554,7 +518,6 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 	runGit("config", "user.email", "test@test")
 	runGit("config", "user.name", "Test")
 
-	// Create a root commit on main.
 	tmpFile := filepath.Join(repoDir, "README")
 	if err := os.WriteFile(tmpFile, []byte("harmonik test repo\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile README: %v", err)
@@ -562,27 +525,22 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 	runGit("add", "README")
 	runGit("commit", "-m", "root commit")
 
-	// Create the task branch.
 	branchName := "run/" + runIDStr
 	runGit("checkout", "-b", branchName)
 
-	// Commit a checkpoint with Harmonik-Run-ID + Harmonik-Bead-ID trailers.
 	checkpointFile := filepath.Join(repoDir, "checkpoint.txt")
 	if err := os.WriteFile(checkpointFile, []byte("state\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile checkpoint: %v", err)
 	}
 	runGit("add", "checkpoint.txt")
 
-	// Trailers require a blank line before them per git trailer convention.
 	commitMsg := "checkpoint: node-a\n\n" +
 		"Harmonik-Run-ID: " + runIDStr + "\n" +
 		"Harmonik-Bead-ID: " + beadID + "\n"
 	runGit("commit", "-m", commitMsg)
 
-	// Return to main before calling for-each-ref (the branch still exists as a ref).
 	runGit("checkout", "main")
 
-	// Verify GitBranchTipReader finds the branch and parses the trailers.
 	reader := GitBranchTipReader{RepoDir: repoDir}
 	tips, err := reader.ListTaskBranchTips(t.Context())
 	if err != nil {
@@ -621,7 +579,5 @@ func TestEM031a_NewBeadsQuerierFromAdapter(t *testing.T) {
 	if querier == nil {
 		t.Fatal("NewBeadsQuerierFromAdapter returned nil")
 	}
-	// Verify the querier implements BeadsQuerier by calling it (will fail with
-	// exec error — that's acceptable; we just confirm it doesn't panic).
 	_, _ = querier.ListBeadsByStatus(t.Context(), "open") //nolint:errcheck // exec failure expected; testing wrapper shape
 }

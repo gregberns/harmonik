@@ -1,13 +1,5 @@
 package crewrun
 
-// wire.go — the crew-start / crew-stop RPC wire contract (C2).
-//
-// Moved verbatim out of internal/daemon/crewstart.go by P2 unit E2 (slice E2a);
-// the daemon-side handler that implements CrewHandler stays in internal/daemon.
-//
-// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1, §3.5.
-// Bead ref: hk-5tg5o.
-
 import (
 	"context"
 	"encoding/json"

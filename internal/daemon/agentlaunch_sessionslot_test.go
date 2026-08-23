@@ -1,20 +1,5 @@
 package daemon
 
-// agentlaunch_sessionslot_test.go — the ordering sessionSlot exists for.
-//
-// handler.Launch applies spec.StdoutWrapper and starts the goroutine that reads
-// the child's stdout BEFORE it hands the session back. So a harness that
-// announces "I have finished" quickly announces it into a slot that is still
-// empty. The plain variable this type replaced answered that with `if sess !=
-// nil`, which dropped the kill in silence: pi then sat idle, with its work
-// already done, until a stall watchdog reaped it — and a watchdog kill IS
-// recorded as a failure, so the run failed and the commit was discarded. That
-// is the outcome the announcement kill was written to stop, reached the back
-// way (hk-tyksz).
-//
-// The first test below is the proof. Revert killOrLatch to a nil check and it
-// fails on kill count 0 against 1.
-
 import (
 	"context"
 	"io"
@@ -25,8 +10,6 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
-// countingSession is a handler.Session that records its kills and does nothing
-// else. Only Kill is exercised: sessionSlot touches no other method.
 type countingSession struct {
 	mu           sync.Mutex
 	kills        int

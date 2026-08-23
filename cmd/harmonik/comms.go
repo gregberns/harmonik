@@ -1,76 +1,5 @@
 package main
 
-// comms.go — `harmonik comms` CLI subcommand block (agent-comms spec §2.1 C2/C3/C6).
-//
-// Routes `harmonik comms <verb>` to the appropriate handler. Currently implements:
-//   - send  (C2 CLI half; bead hk-cnjhx T3)
-//   - log   (C3 read-only operator view; bead hk-onn1x T5)
-//   - join  (C6 presence join; bead hk-7t27s T10)
-//   - leave (C6 presence leave; bead hk-7t27s T10)
-//   - who   (C3/C6 presence view; bead hk-ofxd0 T11)
-//   - recv  (C2/C5 durable recv; bead hk-nnwaa T8)
-//
-// Flag reference for `harmonik comms send`:
-//
-//	(--to NAME | --broadcast)  Directed recipient OR broadcast sentinel "*". Exactly one required.
-//	--from NAME                Sender identity (default: $HARMONIK_AGENT env var). Free-text, no
-//	                           allowlist. `keeper` is a recognized producer identity: the
-//	                           session-keeper shells `comms send --from keeper --topic keeper`
-//	                           fire-and-forget (no join, no subscription) to nudge an agent
-//	                           whose recv-follow is armed (agent-input.md §4.10 AIS-019).
-//	--topic T                  Optional free-text filter key (e.g. `keeper` for keeper nudges).
-//	--reply-to ID              Optional event_id of the message being replied to.
-//	--wake                     Explicitly request the default directed-send pane wake.
-//	--no-wake                  Deliver a directed message without nudging the recipient's pane.
-//	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
-//	--project DIR              Project directory (default: cwd).
-//	--                         End of flags; remaining args are the message body.
-//	<body> | -                 Message body as trailing args joined by space, or "-" to read stdin.
-//
-// Flag reference for `harmonik comms log`:
-//
-//	--since EVENT_ID|DURATION  Scan after the given event_id, or within the last DURATION (e.g. 30m).
-//	--to NAME                  Filter: only messages directed to NAME (or broadcast).
-//	--from NAME                Filter: only messages from NAME.
-//	--topic T                  Filter: only messages with topic T.
-//	--json                     Emit one JSON object per matched event (NDJSON).
-//	--project DIR              Project directory (default: cwd).
-//
-// Flag reference for `harmonik comms join` and `harmonik comms leave`:
-//
-//	--name NAME                Agent identity (default: $HARMONIK_AGENT env var).
-//	--reason join|refresh      Presence reason override for `join` only (default: join). Use
-//	                           "refresh" for periodic heartbeat calls that keep the
-//	                           daemon-free `comms who` TTL projection current.
-//	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
-//	--project DIR              Project directory (default: cwd).
-//
-// Flag reference for `harmonik comms who`:
-//
-//	--json                     Emit one JSON object per online agent (NDJSON).
-//	--project DIR              Project directory (default: cwd).
-//
-// Flag reference for `harmonik comms recv`:
-//
-//	--agent NAME               Agent identity (default: $HARMONIK_AGENT env var).
-//	--from NAME                Filter: only messages from NAME.
-//	--topic T                  Filter: only messages with topic T.
-//	--follow                   After draining the backlog, tail live messages via subscribe (streams until signal).
-//	--wait                     Block until exactly one matching message, deliver it, advance the cursor, exit (hk-tafd4).
-//	--timeout DUR              With --wait: exit 3 if no message arrives within DUR (e.g. 30s).
-//	--json                     Emit one JSON object per message (NDJSON) instead of human-readable.
-//	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
-//	--project DIR              Project directory (default: cwd).
-//
-// Exit codes:
-//
-//	0   Success
-//	1   Argument error or read failure
-//	17  Daemon not running (send/join/leave/recv — socket missing or ECONNREFUSED)
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.3, §2.4, §2.5, §4.
-// Bead ref: hk-cnjhx (T3), hk-onn1x (T5), hk-7t27s (T10), hk-ofxd0 (T11).
-
 import (
 	"context"
 	"encoding/json"
@@ -96,8 +25,6 @@ import (
 	"github.com/gregberns/harmonik/internal/presence"
 )
 
-// runCommsSubcommand routes `harmonik comms <verb> [args]`.
-// subArgs is os.Args[2:].
 func runCommsSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -126,8 +53,6 @@ func runCommsSubcommand(subArgs []string) int {
 	}
 }
 
-// runCommsSendSubcommand implements `harmonik comms send`.
-// subArgs is os.Args[3:].
 func runCommsSendSubcommand(subArgs []string) int {
 	toFlag := ""
 	broadcastFlag := false
@@ -176,8 +101,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		case strings.HasPrefix(arg, "--reply-to="):
 			replyToFlag = strings.TrimPrefix(arg, "--reply-to=")
 		case arg == "--wake":
-			// Retained as an explicit spelling for compatibility. Directed sends
-			// wake by default; broadcasts are rejected below.
 			wakeFlag = true
 		case arg == "--no-wake":
 			noWakeFlag = true
@@ -199,7 +122,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Validate: exactly one of --to / --broadcast.
 	if toFlag != "" && broadcastFlag {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: --to and --broadcast are mutually exclusive\n")
 		return 1
@@ -208,7 +130,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: one of --to NAME or --broadcast is required\n")
 		return 1
 	}
-	// --wake requires a directed recipient (not broadcast).
 	if wakeFlag && noWakeFlag {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: --wake and --no-wake are mutually exclusive\n")
 		return 1
@@ -218,13 +139,11 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve recipient: broadcast maps to "*".
 	to := toFlag
 	if broadcastFlag {
 		to = "*"
 	}
 
-	// Resolve sender identity: --from > $HARMONIK_AGENT.
 	from := fromFlag
 	if from == "" {
 		from = os.Getenv("HARMONIK_AGENT")
@@ -234,7 +153,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve body.
 	var body string
 	if len(bodyParts) == 1 && bodyParts[0] == "-" {
 		raw, err := io.ReadAll(os.Stdin)
@@ -251,7 +169,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve project directory and socket path.
 	projectDir := projectFlag
 	if projectDir == "" {
 		wd, err := os.Getwd()
@@ -271,8 +188,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
 	}
 
-	// Two-captains conflict detection (hk-z0f02): warn when sending as a name that
-	// is already online under a different session.
 	sessionID := resolveSessionID()
 	if sessionID != "" {
 		eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
@@ -281,7 +196,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Build the CommsSendRequest payload.
 	commsSendPayload := map[string]any{
 		"from": from,
 		"to":   to,
@@ -303,7 +217,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Wrap in a SocketRequest envelope.
 	reqBytes, err := json.Marshal(map[string]any{
 		"op":      "comms-send",
 		"payload": json.RawMessage(payloadBytes),
@@ -313,7 +226,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Dial, send, read response.
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	cancelDial()
@@ -335,7 +247,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: write request: %v\n", writeErr)
 		return 1
 	}
-	// Signal end of write so the daemon's decoder sees EOF on its read side.
 	if uw, ok := conn.(*net.UnixConn); ok {
 		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms send: close write: %v", closeErr)
@@ -358,7 +269,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Extract event_id from the CommsSendResult.
 	var result struct {
 		EventID string `json:"event_id"`
 	}
@@ -369,26 +279,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 
 	fmt.Println(result.EventID)
 
-	// A directed send to a name nobody uses is recorded and read by nobody, and
-	// it looked exactly like a delivered one. Say so (hk-rtqmu) AND exit
-	// non-zero (hk-zj9nw): the warning below is written for a human reading
-	// stderr, and the caller that needs it most is a script or an agent
-	// branching on the exit code, which was told the message was delivered.
-	//
-	// `harmonik wake --agent <name>` already answers this same question — a
-	// name that matches nothing — with exit 1 and a stderr line, and two
-	// sibling surfaces cannot disagree about whether reaching nobody succeeded.
-	//
-	// The two known-sets are NOT the same list and are not meant to be: wake
-	// reaches a tmux pane, send reaches a mailbox, so `operator` is addressable
-	// here (commsAlwaysAddressable) and is not a wake target, while `captain`
-	// and `watch` are wake builtins. The surfaces agree on a name NEITHER of
-	// them knows, which is the case this exit code is about.
-	//
-	// THE SEND IS STILL ACCEPTED and the message is still durably recorded: the
-	// daemon has already answered by the time this check runs, so mail-before-
-	// boot still works and a crew that boots an hour later still reads it on its
-	// first recv. Only the answer to the caller changes.
 	undelivered := to != "*" && !commsRecipientKnown(absProject, to)
 	if undelivered {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: WARNING: no agent named %q is known in this project. The name is not in the presence registry, not in the crew registry and not in the agent manifests.\n", to)
@@ -396,9 +286,6 @@ func runCommsSendSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: Exiting 1 because nobody received it. The event id above is real and the message is durable.\n")
 	}
 
-	// Directed sends wake the recipient by default so durable delivery is also
-	// actionable when the agent is idle at its prompt. Best-effort: a wake
-	// failure does not affect the exit code. --no-wake is the explicit opt-out.
 	if commsShouldWake(to != "*", noWakeFlag) {
 		if wakeErr := commsWakePaneForAgent(context.Background(), absProject, to); wakeErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik comms send: wake: %v\n", wakeErr)
@@ -415,40 +302,8 @@ func commsShouldWake(directed, noWake bool) bool {
 	return directed && !noWake
 }
 
-// commsAlwaysAddressable are recipient names that never register on the bus.
-// The operator is a person, not a process, and reads the traffic with
-// `comms log`, so no presence beat ever carries that name.
 var commsAlwaysAddressable = []string{"operator"}
 
-// commsRecipientKnown reports whether name is an identity this project uses.
-//
-// THE SEND IS STILL ACCEPTED WHEN THIS IS FALSE, and that is deliberate. A
-// recipient may legitimately be addressed before it exists: comms-recv reads
-// from a durable per-agent cursor, and an agent with no stored cursor scans the
-// event log from the start, so a message sent to a crew that boots an hour
-// later is delivered in full on its first recv. Refusing an unknown name would
-// break mail-before-boot, which is a real workflow on the channel that carries
-// epic assignments. So the repair is to stop the send from LOOKING delivered,
-// not to stop it (hk-rtqmu).
-//
-// The CALLER is nonetheless told, with exit 1, that nobody received it
-// (hk-zj9nw). Accepting the send and reporting success are separate acts, and
-// hk-rtqmu treated them as one: it fixed the stderr text and left the exit code
-// at 0, so every caller that is not a human reading stderr still read the send
-// as delivered. `harmonik wake --agent <name>` already exits 1 for a name that
-// matches nothing (checkWakeTarget), and the two surfaces have to agree. The
-// message stays durable either way — the exit code reports who received it, not
-// whether it was recorded.
-//
-// Three sources, because a name can be legitimate through any one of them:
-//
-//   - the crew registry, which holds every crew, commodore and admiral session
-//   - .harmonik/agents/, the project's declaration of the agents it defines,
-//     which is where the captain and the watch appear
-//   - the presence registry, which holds every name that ever joined or received
-//
-// They are read cheapest first. The presence registry is a projection over the
-// whole event log, so a name any directory can vouch for never pays for it.
 func commsRecipientKnown(absProject, name string) bool {
 	for _, builtin := range commsAlwaysAddressable {
 		if name == builtin {
@@ -475,21 +330,6 @@ func commsRecipientKnown(absProject, name string) bool {
 	return online
 }
 
-// resolveProjectPath canonicalises projectDir for project-hash computation,
-// resolving symlinks via filepath.EvalSymlinks and falling back to the input
-// path unchanged when EvalSymlinks errors (e.g. the path does not exist yet).
-//
-// This MUST mirror how the tmux session-name's project hash is derived
-// (internal/lifecycle/tmux/subcommand.go tmuxStartHashDir and
-// internal/keeper/tmuxresolve.go HarmonikSessionName both EvalSymlinks-then-
-// fallback before hashing). The wake codepath hashes through this helper so a
-// symlinked project path produces the SAME hash as the live tmux session name;
-// without it the wake targeted a "harmonik-<wrongHash>-..." pane that never
-// existed and the crew/captain wake silently failed (hk-z365).
-//
-// NOTE: lifecycle.ComputeProjectHash deliberately does NOT resolve symlinks (its
-// doc requires the caller to canonicalise first), so the resolution must happen
-// here, on the wake path, rather than inside the hash function.
 func resolveProjectPath(projectDir string) string {
 	resolved, err := filepath.EvalSymlinks(projectDir)
 	if err != nil {
@@ -498,34 +338,10 @@ func resolveProjectPath(projectDir string) string {
 	return resolved
 }
 
-// commsWakePaneCandidates returns the ordered list of tmux pane targets to try
-// when waking the named agent, most-specific first. The list is pure (no side
-// effects) so it can be unit-tested in isolation.
-//
-// Resolution order:
-//  1. crew registry: if .harmonik/crew/<agentName>.json exists with a Handle, use
-//     Handle+".0" (the independent crew session pane, "<session>:<window>.0").
-//  2. crew convention: "harmonik-<projectHash>-crew-<agentName>" — how crew
-//     sessions are named at spawn (fleet-portability T2).
-//  3. bare convention: "harmonik-<projectHash>-<agentName>" — how NON-crew agent
-//     sessions are named at spawn. The CAPTAIN is the canonical case: its session
-//     is "harmonik-<hash>-captain" (NO "crew-" prefix; see the native launcher
-//     in cmd/harmonik/captain.go, which names the session
-//     `harmonik-<projectHash>-captain`) and
-//     it has no crew-registry record, so candidates (1) and (2) both miss. Without
-//     this third candidate, `comms send --to captain --wake` targeted a nonexistent
-//     "...-crew-captain" pane and a stalled captain could not be roused (M10 /
-//     reference_comms_wake_captain_pane_mismatch.md).
-//
-// Crews still resolve via (1)/(2); the bare candidate is appended, not substituted,
-// so crew wake is unaffected (the crew pane is found first).
-//
-// Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
 func commsWakePaneCandidates(projectDir, agentName string) []string {
 	hash := lifecycle.ComputeProjectHash(resolveProjectPath(projectDir))
 	var candidates []string
 	if rec, loadErr := crew.Load(projectDir, agentName); loadErr == nil && rec.Handle != "" {
-		// handle format: "<session>:<window>" → pane = handle + ".0"
 		candidates = append(candidates, rec.Handle+".0")
 	}
 	candidates = append(candidates,
@@ -534,17 +350,6 @@ func commsWakePaneCandidates(projectDir, agentName string) []string {
 	return candidates
 }
 
-// commsWakePaneForAgent nudges the tmux pane for the named agent so that an idle
-// Claude session wakes and processes the newly-delivered message. It tries each
-// candidate from commsWakePaneCandidates in order, stopping at the first that
-// accepts the nudge; this transparently handles the crew-vs-captain naming
-// asymmetry (crews are "...-crew-<name>", the captain is bare "...-captain").
-//
-// Best-effort: the LAST error is returned when every candidate fails, but the
-// caller treats it as non-fatal so message delivery is not affected by wake
-// failures (e.g. no tmux running, no such pane).
-//
-// Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
 func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
 	const nudgeMsg = "[[harmonik-message:v1 origin=comms]]\nYou have a new comms message. Please check your inbox."
 	candidates := commsWakePaneCandidates(projectDir, agentName)
@@ -559,20 +364,6 @@ func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) er
 	return lastErr
 }
 
-// commsInjectTmuxPane delivers text into a tmux pane via the bracketed-paste
-// mechanism (tmux load-buffer → paste-buffer → send-keys Enter), the same
-// approach used by keeper.InjectText. The named buffer is overwritten on each
-// call; its name is distinct from the daemon's own per-run paste-inject
-// buffers, so a wake nudge and an in-flight run cannot clobber each other.
-//
-// The name comes from [ltmux.BufferName] rather than a literal (hk-o0j47).
-// This site shells out to tmux directly instead of going through
-// tmux.OSAdapter, so nothing here enforces the PL-021d buffer-name invariant —
-// a hand-written name is only ever accidentally valid. hk-9hvr0 wedged ALL
-// implementer dispatch through exactly that shape.
-//
-// Returns an error if any tmux invocation fails (e.g. pane does not exist,
-// tmux not running). Callers treat this error as non-fatal.
 func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {
 	buf := ltmux.BufferName("comms", "wake")
 
@@ -595,26 +386,12 @@ func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {
 	return nil
 }
 
-// commsDaemonDown reports whether this project's daemon socket refuses a
-// connection, and returns the socket path so the caller can name it.
-//
-// `comms who` and `comms log` read events.jsonl directly and need no daemon.
-// That is deliberate and it is kept: reading the traffic after the daemon dies
-// is exactly when an operator needs it. What was missing is the label. With an
-// EMPTY registry, `comms who` printed "no agents currently online" — the same
-// sentence a healthy bus with nobody joined prints — and `comms log` served
-// two-month-old traffic with no mark on it. Both answered with confidence from
-// a file while every other verb in the group correctly refused (hk-11zpm).
-//
-// The probe dials rather than stats the path, so a socket file left behind by a
-// dead daemon counts as down, the same way `comms send` and `comms recv` see it.
 func commsDaemonDown(absProject string) (sockPath string, down bool) {
 	sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
-		// Any other dial error is not evidence the daemon is down, so stay quiet.
 		return sockPath, commsIsSocketAbsent(err) || commsIsConnRefused(err)
 	}
 	if closeErr := conn.Close(); closeErr != nil {
@@ -623,21 +400,13 @@ func commsDaemonDown(absProject string) (sockPath string, down bool) {
 	return sockPath, false
 }
 
-// commsIsSocketAbsent reports whether err indicates a missing socket file.
-// On Linux connect(2) to a missing unix socket returns ENOENT.
-// On macOS connect(2) to a missing unix socket returns EINVAL
-// (the kernel rejects the path because no socket file exists there).
-// Both are handled via errors.Is traversal over the full error chain.
 func commsIsSocketAbsent(err error) bool {
 	if errors.Is(err, syscall.ENOENT) {
 		return true
 	}
-	// EINVAL on a unix-domain connect means the path does not exist as a
-	// socket on macOS (connect(2) returns EINVAL when the socket file is absent).
 	return errors.Is(err, syscall.EINVAL)
 }
 
-// commsIsConnRefused reports whether err indicates ECONNREFUSED.
 func commsIsConnRefused(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
 }
@@ -737,19 +506,6 @@ EXAMPLES
 `)
 }
 
-// runCommsLogSubcommand implements `harmonik comms log` (agent-comms spec §2.4, bead hk-onn1x T5).
-//
-// Scans events.jsonl for ALL agent_message events ordered by event_id (file order).
-// Does NOT advance any agent cursor — pure read-only operator view.
-// No daemon connection required.
-//
-// --since accepts either:
-//   - a UUIDv7 event_id string (scan after that event)
-//   - a duration string — delivers events whose TimestampWall is at or after now
-//     minus the given duration. Accepts Go units (e.g. "30m", "1h", "200h") plus
-//     d (days) and w (weeks): "8d" = 192h, "2w" = 336h.
-//
-// subArgs is os.Args[3:].
 func runCommsLogSubcommand(subArgs []string) int {
 	sinceFlag := ""
 	toFlag := ""
@@ -800,7 +556,6 @@ func runCommsLogSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Resolve project directory and events.jsonl path.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -816,20 +571,16 @@ func runCommsLogSubcommand(subArgs []string) int {
 	}
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 
-	// Say where these lines came from when nothing is writing them (hk-11zpm).
 	if sockPath, down := commsDaemonDown(absProject); down {
 		fmt.Fprintf(os.Stderr, "harmonik comms log: the daemon is not running (socket %s missing or refused).\n", sockPath)
 		fmt.Fprintf(os.Stderr, "harmonik comms log: these lines come from the event log at %s. They are history, not live traffic.\n", eventsPath)
 	}
 
-	// Parse --since: try as event_id UUID first, then as a duration.
 	var sinceID core.EventID // zero value = scan from beginning
 	var wallCutoff time.Time // zero = no wall-time filter
 	if sinceFlag != "" {
 		if err := sinceID.UnmarshalText([]byte(sinceFlag)); err == nil {
-			// Parsed as event_id — sinceID is set; ScanAfter will skip events ≤ sinceID.
 		} else {
-			// Try as a duration (Go units + d/w via parseFriendlyDuration).
 			dur, durErr := parseFriendlyDuration(sinceFlag)
 			if durErr != nil {
 				fmt.Fprintf(os.Stderr, "harmonik comms log: --since %q is not a valid event_id or duration: %v\n", sinceFlag, durErr)
@@ -839,42 +590,34 @@ func runCommsLogSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Scan events.jsonl, filter for agent_message, apply addressing filters.
 	count := 0
 	for ev := range eventbus.ScanAfter(eventsPath, sinceID) {
 		if ev.Type != "agent_message" {
 			continue
 		}
 
-		// Apply wall-time cutoff for duration-based --since.
 		if !wallCutoff.IsZero() && ev.TimestampWall.Before(wallCutoff) {
 			continue
 		}
 
-		// Decode payload to apply addressing filters.
 		var p core.AgentMessagePayload
 		if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
-			// Malformed payload — skip with warning.
 			fmt.Fprintf(os.Stderr, "harmonik comms log: malformed agent_message payload (event_id=%s): %v\n", ev.EventID, decErr)
 			continue
 		}
 
-		// Apply --from filter.
 		if fromFlag != "" && p.From != fromFlag {
 			continue
 		}
-		// Apply --to filter: match directed-to-name or broadcast "*".
 		if toFlag != "" && p.To != toFlag && p.To != "*" {
 			continue
 		}
-		// Apply --topic filter.
 		if topicFlag != "" && p.Topic != topicFlag {
 			continue
 		}
 
 		count++
 		if jsonFlag {
-			// Emit the full event envelope as NDJSON.
 			line, marshalErr := json.Marshal(ev)
 			if marshalErr != nil {
 				fmt.Fprintf(os.Stderr, "harmonik comms log: marshal event: %v\n", marshalErr)
@@ -882,7 +625,6 @@ func runCommsLogSubcommand(subArgs []string) int {
 			}
 			fmt.Println(string(line))
 		} else {
-			// Human-readable: timestamp  from → to  [topic]  body
 			ts := ev.TimestampWall.UTC().Format(time.RFC3339)
 			direction := fmt.Sprintf("%s → %s", p.From, p.To)
 			if p.Topic != "" {
@@ -935,10 +677,6 @@ EXAMPLES
 `)
 }
 
-// parseFriendlyDuration wraps time.ParseDuration with support for d (days) and
-// w (weeks) suffixes that Go's standard parser rejects: "8d" → 192h, "2w" → 336h.
-// Compound forms with mixed units still use time.ParseDuration directly, so "1h30m"
-// works as before. Only a bare integer followed by d or w is expanded.
 func parseFriendlyDuration(s string) (time.Duration, error) {
 	if len(s) >= 2 {
 		last := s[len(s)-1]
@@ -954,20 +692,6 @@ func parseFriendlyDuration(s string) (time.Duration, error) {
 	}
 	return time.ParseDuration(s)
 }
-
-// Presence projection — CANONICAL HOME MOVED to internal/presence (hitl-decisions
-// K5 lift, bead hk-061). The agent-presence registry projection (T10) used to live
-// here in package main; it was lifted into the leaf package internal/presence so
-// the session-keeper orphan reaper (which MUST NOT import internal/daemon and could
-// not import package main at all) can compute the same Offline predicate. The
-// symbols below are thin aliases keeping the package-main call sites (comms who,
-// two-captains conflict detection, decisions_k4.go orphaned-pending flag) and their
-// tests unchanged — the behaviour is byte-for-byte identical (same logic, same
-// constants), it just lives in one shared place now.
-//
-// Spec ref: agent-comms spec §4 (presence registry projection); hitl-decisions
-// SPEC §5 / N9 (the K5 reaper reuses this same Offline determination).
-// Bead refs: hk-7t27s (T10, original), hk-6vwi3 (fix #1), hk-061 (this lift).
 
 // PresenceRecord aliases presence.Record (the registry projection entry).
 type PresenceRecord = presence.Record
@@ -998,17 +722,6 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 	return presence.ComputeRegistry(eventsPath)
 }
 
-// resolveSessionID returns the per-session opaque token for two-captains conflict
-// detection (hk-z0f02).
-//
-// Resolution order:
-//  1. $HARMONIK_SESSION_ID — explicit operator-set token (interactive captain sessions).
-//  2. $HARMONIK_RUN_ID    — injected by the daemon per dispatched run
-//     (claudehandler_chb006_024.go:259); unique per run, covers daemon-dispatched agents
-//     such as crew members that might mis-claim a name.
-//
-// Returns empty string when neither variable is set, which disables conflict
-// detection gracefully (no false positives for sessions without a token).
 func resolveSessionID() string {
 	if id := os.Getenv("HARMONIK_SESSION_ID"); id != "" {
 		return id
@@ -1016,16 +729,6 @@ func resolveSessionID() string {
 	return os.Getenv("HARMONIK_RUN_ID")
 }
 
-// checkCommsNameConflict returns a non-empty warning string when eventsPath
-// records that name is currently online with a different session_id than sessionID.
-// Returns empty string (no warning) when:
-//   - sessionID is empty (conflict detection requires a session token)
-//   - name has no presence entry
-//   - name is offline or stale
-//   - name's last known session_id is empty or matches sessionID
-//
-// Reads events.jsonl directly; no daemon connection required.
-// Bead ref: hk-z0f02.
 func checkCommsNameConflict(eventsPath, name, sessionID string) string {
 	if sessionID == "" || name == "" {
 		return ""
@@ -1047,8 +750,6 @@ func checkCommsNameConflict(eventsPath, name, sessionID string) string {
 	)
 }
 
-// runCommsPresenceSubcommand implements `harmonik comms join` and `harmonik comms leave`.
-// verb is "join" or "leave". subArgs is os.Args[3:].
 func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 	nameFlag := ""
 	reasonFlag := ""
@@ -1090,7 +791,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		}
 	}
 
-	// Resolve agent name: --name > $HARMONIK_AGENT.
 	name := nameFlag
 	if name == "" {
 		name = os.Getenv("HARMONIK_AGENT")
@@ -1100,11 +800,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 
-	// Map verb → (status, reason).
-	// For "join", --reason may override to "refresh" so periodic heartbeat calls are not
-	// persisted to events.jsonl (hk-ru45u). Only "join" and "refresh" are valid overrides;
-	// "leave" is rejected (use `harmonik comms leave` instead).
-	// For "leave", the reason is always "leave" regardless of --reason.
 	status := "online"
 	reason := "join"
 	if verb == "leave" {
@@ -1121,7 +816,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		}
 	}
 
-	// Resolve socket path and project directory.
 	projectDir := projectFlag
 	if projectDir == "" {
 		wd, err := os.Getwd()
@@ -1142,8 +836,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
 	}
 
-	// Two-captains conflict detection (hk-z0f02): warn when joining as a name that
-	// is already online under a different session. Only fires for "join" (not leave).
 	sessionID := resolveSessionID()
 	if verb == "join" {
 		eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
@@ -1152,7 +844,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		}
 	}
 
-	// Build the comms-presence request payload.
 	presencePayload := map[string]any{
 		"agent":  name,
 		"status": status,
@@ -1168,7 +859,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 
-	// Wrap in a SocketRequest envelope.
 	reqBytes, err := json.Marshal(map[string]any{
 		"op":      "comms-presence",
 		"payload": json.RawMessage(payloadBytes),
@@ -1178,7 +868,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 
-	// Dial, send, read response.
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	cancelDial()
@@ -1222,7 +911,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 
-	// Extract event_id from the CommsPresenceResult.
 	var result struct {
 		EventID string `json:"event_id"`
 	}
@@ -1235,13 +923,6 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 	return 0
 }
 
-// runCommsWhoSubcommand implements `harmonik comms who` (agent-comms spec §2.3, bead hk-ofxd0 T11).
-//
-// Reads the presence projection (T10's ComputePresenceRegistry) and prints agents
-// that are online within the 120s staleness window (presence.TTL). Read-only; emits
-// nothing, advances no cursor. No daemon connection required.
-//
-// subArgs is os.Args[3:].
 func runCommsWhoSubcommand(subArgs []string) int {
 	jsonFlag := false
 	projectFlag := ""
@@ -1268,7 +949,6 @@ func runCommsWhoSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Resolve project directory and events.jsonl path.
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -1284,9 +964,6 @@ func runCommsWhoSubcommand(subArgs []string) int {
 	}
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 
-	// An empty roster is a legitimate state, so "no agents currently online" reads
-	// the same on a healthy bus that nobody has joined and on a bus that does not
-	// exist. Say which one this is (hk-11zpm).
 	if sockPath, down := commsDaemonDown(absProject); down {
 		fmt.Fprintf(os.Stderr, "harmonik comms who: the daemon is not running (socket %s missing or refused). No agent can be online now.\n", sockPath)
 		fmt.Fprintf(os.Stderr, "harmonik comms who: this roster comes from the event log at %s. It is history, not live presence.\n", eventsPath)
@@ -1294,9 +971,6 @@ func runCommsWhoSubcommand(subArgs []string) int {
 
 	registry := ComputePresenceRegistry(eventsPath)
 
-	// Collect online and stale agents in deterministic order (sorted by name).
-	// Stale agents (presence.TTL..presence.StaleCutoff) are included with a
-	// degraded annotation; offline agents (>presence.StaleCutoff or leave beat) are omitted.
 	type whoEntry struct {
 		Agent    string    `json:"agent"`
 		LastSeen time.Time `json:"last_seen"`
@@ -1311,7 +985,6 @@ func runCommsWhoSubcommand(subArgs []string) int {
 			entries = append(entries, whoEntry{Agent: rec.Agent, LastSeen: rec.EffectiveLastSeen, Status: "stale"})
 		}
 	}
-	// Sort by agent name for stable output.
 	for i := 1; i < len(entries); i++ {
 		for j := i; j > 0 && entries[j].Agent < entries[j-1].Agent; j-- {
 			entries[j], entries[j-1] = entries[j-1], entries[j]
@@ -1416,24 +1089,6 @@ EXAMPLES
 	}(), verb, joinReasonNote, verb, verb)
 }
 
-// runCommsRecvSubcommand implements `harmonik comms recv [--follow]` (agent-comms
-// spec §2.2 C2/C5/C3, beads hk-nnwaa T8, hk-oqmrs T9, and hk-8xspi B1).
-//
-// Without --follow/--wait: sends one comms-recv op to the daemon, drains the
-// backlog for the agent's durable POLL cursor, prints matched messages, and
-// exits.
-//
-// With --follow (or --wait): drains the backlog via comms-recv against the
-// agent's durable LIVE cursor instead (payload "live":true — hk-8xspi, B1),
-// then opens a subscribe connection anchored at cursor_after (the position
-// returned by the comms-recv op) and streams live agent_message events until a
-// signal. The subscribe server registers for live events BEFORE replaying the
-// gap (subscribe.go:304), so no messages are dropped between the drain and the
-// live tail. The POLL cursor a plain `comms recv --agent` uses is untouched by
-// this whole flow — the two are independent, so a poller is never starved by a
-// follow/wait watcher's consumption (or vice versa).
-//
-// subArgs is os.Args[3:].
 func runCommsRecvSubcommand(subArgs []string) int {
 	agentFlag := ""
 	fromFlag := ""
@@ -1506,7 +1161,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Resolve agent name: --agent > $HARMONIK_AGENT.
 	agent := agentFlag
 	if agent == "" {
 		agent = os.Getenv("HARMONIK_AGENT")
@@ -1516,8 +1170,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// --follow and --wait are mutually exclusive: --follow streams indefinitely,
-	// --wait blocks for exactly one message then exits (hk-tafd4).
 	if followFlag && waitFlag {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: --follow and --wait are mutually exclusive\n")
 		return 1
@@ -1527,7 +1179,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve socket path.
 	sockPath := socketFlag
 	if sockPath == "" {
 		projectDir := projectFlag
@@ -1547,12 +1198,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
 	}
 
-	// Build the CommsRecvRequest payload.
-	//
-	// hk-8xspi (B1): --follow/--wait mark this drain "live" so it reads/advances
-	// the LIVE cursor (shared with the subsequent subscribe session) instead of
-	// the POLL cursor a plain `comms recv --agent` uses. This keeps a follow/wait
-	// session's catch-up drain from stealing position from an independent poller.
 	recvPayload := map[string]any{
 		"agent": agent,
 	}
@@ -1581,7 +1226,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Dial, send, read response.
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	cancelDial()
@@ -1625,7 +1269,6 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Decode CommsRecvResult.
 	var result struct {
 		Messages []struct {
 			EventID   string `json:"event_id"`
@@ -1644,27 +1287,17 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// followAnchor is the since_event_id to pass to the subscribe stream.
-	// Use cursor_after when available (agent has delivered messages → cursor advanced).
-	// Fall back to scan_anchor (last event scanned regardless of match) so that
-	// the subscribe replay covers the gap window even when no messages matched
-	// (GH #8 / hk-7xvf: without this, since_event_id="" causes replay to be
-	// skipped entirely and messages arriving in the gap are permanently lost).
 	followAnchor := result.CursorAfter
 	if followAnchor == "" {
 		followAnchor = result.ScanAnchor
 	}
 
-	// --wait: block until exactly ONE matching message, then exit. If the drain
-	// already produced messages, the first one IS that message (cursor already
-	// advanced by the one-shot comms-recv op) — print it and exit 0 (hk-tafd4).
 	if waitFlag {
 		if len(result.Messages) > 0 {
 			m := result.Messages[0]
 			printCommsRecvMsg(jsonFlag, m.EventID, m.From, m.To, m.Topic, m.Body, m.InReplyTo, m.Ts)
 			return 0
 		}
-		// Backlog empty — block on a subscribe stream for exactly one message.
 		return runCommsRecvWait(sockPath, agent, fromFlag, topicFlag, followAnchor, jsonFlag, timeoutFlag)
 	}
 
@@ -1681,40 +1314,15 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 0
 	}
 
-	// --follow: open a subscribe connection anchored at followAnchor to tail
-	// live agent_message events with no gap.
-	//
-	// followAnchor is cursor_after when present, or scan_anchor when cursor_after
-	// is "" (no matching messages and no stored cursor). The scan_anchor ensures
-	// HandleSubscribe runs replay from that point forward, covering messages that
-	// arrived in the gap between the drain completing and the subscriber registering
-	// on the hub (GH #8 / hk-7xvf fix).
 	return runCommsRecvFollow(sockPath, agent, fromFlag, topicFlag, followAnchor, jsonFlag)
 }
 
-// commsFollowReconnectInitialBackoff is the starting reconnect delay after a
-// dropped subscribe connection (daemon restart or transient disconnect).
-// Doubles on each attempt up to commsFollowReconnectMaxBackoff.
 const commsFollowReconnectInitialBackoff = time.Second
 
-// commsFollowReconnectMaxBackoff caps the reconnect delay so an agent is never
-// more than ~10 s away from picking up the live stream after a daemon revive.
-// This is the primary lever against the F12 false-STALLED / stale-ceiling class
-// of misreads (logmine finding F12, bead hk-5xuvc).
 const commsFollowReconnectMaxBackoff = 10 * time.Second
 
-// commsFollowPresenceBeatInterval is the cadence of the idle --follow
-// presence-beat (B2, hk-qw63o): a quiet subscriber's stream stays open but
-// presence.TTL (120s) only advances on an explicit comms-presence refresh or
-// comms-recv/send activity, so an idle --follow otherwise ages out of `comms
-// who` and false-flags as a zombie. 60s matches the canonical refresh cadence
-// (agent-comms spec §2.5, C=60s) and the heartbeat_seconds already requested
-// from subscribe.
 var commsFollowPresenceBeatInterval = 60 * time.Second
 
-// sendPresenceRefreshBeat sends a lightweight comms-presence refresh op to the
-// daemon for agent, keeping it Online in `comms who` without touching the
-// message read path. Shared by the idle --follow presence-beat below.
 func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID string) error {
 	payload := map[string]any{
 		"agent":  agent,
@@ -1770,10 +1378,6 @@ func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID str
 	return nil
 }
 
-// sendPresenceLeaveBeat sends a comms-presence leave op to the daemon for agent,
-// marking it offline in `comms who`. Used by the --follow teardown path (hk-ru45u)
-// so a clean exit is immediately reflected in the registry rather than waiting for
-// the 120s TTL to expire. Best-effort: the caller should ignore the error.
 func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID string) error {
 	payload := map[string]any{
 		"agent":  agent,
@@ -1829,33 +1433,14 @@ func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID strin
 	return nil
 }
 
-// runCommsRecvFollow opens a subscribe connection for live agent_message events
-// anchored at sinceEventID (the cursor_after from the preceding comms-recv drain).
-// Streams until signal or connection close.
-//
-// Reconnect behaviour (F12 fix, hk-5xuvc): when the subscribe connection drops
-// (daemon restart or transient disconnect), the function waits a short backoff
-// (1 s → 2 s → … → 10 s) and re-dials, anchoring the new subscribe at the last
-// seen event_id so no messages are missed or duplicated. The loop exits only on
-// SIGINT/SIGTERM. This eliminates the ~10-30 s comms dead-window that caused
-// false STALLED reads and stale concurrency-ceiling beliefs.
 func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool) int {
 	return runCommsRecvFollowIO(context.Background(), sockPath, agent, fromFilter, topicFilter, sinceEventID, jsonOut, os.Stdout)
 }
 
-// runCommsRecvFollowIO is the testable core of runCommsRecvFollow; it writes
-// message output to w instead of the global os.Stdout.
 func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool, w io.Writer) int {
-	// Register signal handler once for the lifetime of the --follow loop.
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Leave-on-teardown (hk-ru45u): emit an offline leave beat when --follow exits
-	// on a signal or context cancel so the presence registry reflects the departure
-	// immediately rather than waiting for the 120s TTL to expire.
-	// Guard on sigCtx.Err(): a park-message exit returns 0 WITHOUT cancelling sigCtx
-	// (the agent is quiesced, not offline — it will resume on pane wake); we must
-	// not emit leave for that path or the agent incorrectly appears offline.
 	beatSessionID := resolveSessionID()
 	defer func() {
 		if agent != "" && sigCtx.Err() != nil {
@@ -1865,10 +1450,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		}
 	}()
 
-	// Idle presence-beat (B2, hk-qw63o): runs on its own timer and its own
-	// connection for the lifetime of this call, independent of the
-	// subscribe/reconnect loop below — a cheap periodic write that keeps a
-	// quiet subscriber Online in `comms who` without touching the read path.
 	beatTicker := time.NewTicker(commsFollowPresenceBeatInterval)
 	defer beatTicker.Stop()
 	go func() {
@@ -1884,19 +1465,15 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		}
 	}()
 
-	// lastSeen tracks the highest event_id delivered so far; it advances as
-	// messages arrive and becomes the since_event_id anchor on reconnect.
 	lastSeen := sinceEventID
 	backoff := commsFollowReconnectInitialBackoff
 	firstDial := true
 
 	for {
-		// Exit cleanly when a signal arrived while we were sleeping.
 		if sigCtx.Err() != nil {
 			return 0
 		}
 
-		// Build subscribe request anchored at lastSeen.
 		reqBody := map[string]any{
 			"op":                "subscribe",
 			"heartbeat_seconds": 60,
@@ -1918,7 +1495,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			return 1
 		}
 
-		// Dial — use sigCtx so the dial itself is cancelled on signal.
 		dialCtx, cancelDial := context.WithTimeout(sigCtx, 5*time.Second)
 		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 		cancelDial()
@@ -1930,13 +1506,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		if dialErr != nil {
 			if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
 				if firstDial {
-					// On the very first attempt, report that the daemon is not
-					// running and return exit 17 so callers that require the
-					// daemon to already be up get a clear signal.
 					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon not running (socket %s missing or refused)\n", sockPath)
 					return 17
 				}
-				// Subsequent attempts: daemon is restarting — wait and retry.
 				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon offline, reconnecting in %v...\n", backoff)
 				select {
 				case <-time.After(backoff):
@@ -1955,7 +1527,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			return 1
 		}
 
-		// Reset backoff on successful connect.
 		backoff = commsFollowReconnectInitialBackoff
 		firstDial = false
 
@@ -1967,7 +1538,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			return 1
 		}
 
-		// Close conn on signal so the decode loop below exits cleanly.
 		connCloseOnce := make(chan struct{})
 		go func() {
 			select {
@@ -1979,7 +1549,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			}
 		}()
 
-		// Stream events; update lastSeen so reconnects pick up without gaps.
 		reconnect := false
 		dec := json.NewDecoder(conn)
 		for {
@@ -2004,7 +1573,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 					return 0 // clean signal exit
 				}
 				if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
-					// Connection dropped — reconnect after a short backoff.
 					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: connection dropped, reconnecting in %v...\n", backoff)
 					select {
 					case <-time.After(backoff):
@@ -2024,11 +1592,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 				return 1
 			}
 
-			// hk-62r8w: SocketResponse error — server rejected the subscribe request
-			// permanently (capacity exceeded, malformed request, unregistered handler).
-			// These are not transient drops: the daemon is up but refused this session.
-			// Exit with error instead of reconnecting; reconnecting would loop at ~1s
-			// because backoff resets on every successful TCP dial.
 			if subscribeRefused(env.Ok) {
 				close(connCloseOnce)
 				if closeErr := conn.Close(); closeErr != nil {
@@ -2038,21 +1601,16 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 				return 1
 			}
 
-			// EV-037a: advance lastSeen from heartbeat.last_event_id even when no
-			// actionable message was processed — prevents watermark regression across
-			// reconnects in quiet periods. max() invariant: only advance forward.
 			if env.Type == "heartbeat" && env.LastEventID != "" {
 				if lastSeen == "" || env.LastEventID > lastSeen {
 					lastSeen = env.LastEventID
 				}
 			}
 
-			// Skip non-message events.
 			if env.Type != "agent_message" {
 				continue
 			}
 
-			// Advance lastSeen so reconnects anchor past this message.
 			if env.EventID != "" {
 				lastSeen = env.EventID
 			}
@@ -2125,11 +1683,6 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 				}
 			}
 
-			// Park signal (hk-s8qi M2, codename:sleep-wake): when the daemon parks
-			// this session it emits a park agent_message. Deliver it, then EXIT
-			// without reconnecting — the session self-quiesces. The skill files
-			// (crew-launch, captain/STARTUP.md) define the resume protocol: the
-			// session MUST NOT re-arm --follow until after a pane-nudge WAKE.
 			if p.Topic == "park" && p.From == "daemon" {
 				close(connCloseOnce)
 				if closeErr := conn.Close(); closeErr != nil {
@@ -2140,14 +1693,11 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		}
 
 		if !reconnect {
-			// Non-reconnect exit path (write error already returned above).
 			return 0
 		}
 	}
 }
 
-// printCommsRecvMsg renders one received message to stdout in either NDJSON
-// (jsonOut) or human-readable form, matching the comms-recv / --follow format.
 func printCommsRecvMsg(jsonOut bool, eventID, from, to, topic, body, inReplyTo, ts string) {
 	if jsonOut {
 		msg := struct {
@@ -2183,18 +1733,7 @@ func printCommsRecvMsg(jsonOut bool, eventID, from, to, topic, body, inReplyTo, 
 	}
 }
 
-// runCommsRecvWait blocks until exactly ONE matching agent_message arrives via a
-// subscribe stream anchored at sinceEventID (the cursor_after from the preceding
-// empty drain), prints it, and exits 0. The daemon advances the agent's durable
-// cursor as it delivers the event (hk-tafd4), so the message is consumed exactly
-// as a one-shot `comms recv` would consume it.
-//
-// With timeout > 0, the call returns commsRecvWaitTimeoutExit if no matching
-// message arrives in time. timeout == 0 blocks indefinitely (until signal).
-//
-// Bead ref: hk-tafd4.
 func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool, timeout time.Duration) int {
-	// Build the subscribe request (agent_message events directed to this agent).
 	reqBody := map[string]any{
 		"op":                "subscribe",
 		"heartbeat_seconds": 60,
@@ -2238,7 +1777,6 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 		return 1
 	}
 
-	// Cancel on signal or (if set) timeout — closing conn unblocks the decoder.
 	baseCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	waitCtx := baseCtx
@@ -2266,7 +1804,6 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 			Error string `json:"error"`
 		}
 		if decErr := dec.Decode(&env); decErr != nil {
-			// Timeout / signal close manifests as an EOF or "use of closed".
 			if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
 				if timeout > 0 && waitCtx.Err() == context.DeadlineExceeded {
 					fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: timed out after %s with no message\n", timeout)
@@ -2278,13 +1815,11 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 			return 1
 		}
 
-		// hk-62r8w: SocketResponse error — server rejected the subscribe request.
 		if subscribeRefused(env.Ok) {
 			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: server error: %s\n", env.Error)
 			return 1
 		}
 
-		// Skip non-message events (heartbeats, subscription_gap, etc.).
 		if env.Type != "agent_message" {
 			continue
 		}
@@ -2302,15 +1837,10 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 		}
 
 		printCommsRecvMsg(jsonOut, env.EventID, p.From, p.To, p.Topic, p.Body, p.InReplyTo, env.TimestampWall)
-		// Got our one message — close the connection so the daemon flushes the
-		// cursor (defer flushCursor in HandleSubscribe), then exit 0.
 		return 0
 	}
 }
 
-// commsRecvWaitTimeoutExit is the exit code `comms recv --wait --timeout` returns
-// when the timeout elapses with no matching message. Distinct from 1 (arg/IO
-// error) and 17 (daemon down) so scripts can branch on "no message yet".
 const commsRecvWaitTimeoutExit = 3
 
 func commsRecvUsage() {

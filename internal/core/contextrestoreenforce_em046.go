@@ -114,12 +114,10 @@ func NewContextRestoreTransition(base Transition, actorRole ActorRole) (Transiti
 		)
 	}
 
-	// Enforce daemon-synthesized fields per EM-046 + EM-023a.
 	base.TransitionKind = TransitionKindContextRestore
 	base.OutcomeStatus = OutcomeStatusSuccess
 	base.ActorRole = actorRole
 
-	// Record the synthesized-outcome marker per EM-023a.
 	if base.Evidence == nil {
 		base.Evidence = make(Evidence)
 	}

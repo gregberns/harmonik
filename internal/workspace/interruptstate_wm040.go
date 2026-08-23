@@ -79,15 +79,12 @@ func SetInterruptStateToNone(
 ) error {
 	switch cause {
 	case InterruptStateClearCauseOperatorResuming, InterruptStateClearCauseReconciliationVerdict:
-		// valid causes — proceed
 	default:
 		return fmt.Errorf("%w: got %q", ErrInterruptStateClearRequiresCause, cause)
 	}
 
 	prior := ws.InterruptState
 
-	// Write the durable marker first (durability-before-mutation discipline).
-	// If the marker write fails, the field is not mutated.
 	if err := WriteInterruptStateChangedMarker(
 		workspacePath,
 		ws.WorkspaceID,

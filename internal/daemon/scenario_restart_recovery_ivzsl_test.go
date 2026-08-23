@@ -2,65 +2,6 @@
 
 package daemon_test
 
-// scenario_restart_recovery_ivzsl_test.go — live restart-recovery harness for the
-// dispatched+bead-closed deadlock combination (hk-ivzsl).
-//
-// # What is tested
-//
-// TestScenario_RestartRecovery_QM002bDeadlock boots the full daemon.Start
-// composition root with a pre-seeded "stuck" queue that reproduces the exact
-// deadlock that hk-z0pmi and hk-5pg37 target:
-//
-//   - bead A: ItemStatus=dispatched in queue.json + CoarseStatus=closed in br
-//     (simulates a bead that landed via another queue after the first daemon
-//     was killed mid-run, leaving the claim goroutine abandoned).
-//
-//   - bead B: ItemStatus=failed with LastFailureReason="cross_queue_duplicate"
-//     (QM-034 — a failed sibling that must not interrupt the dispatched item).
-//
-// Before the Class A' fix (f82c051e), the group could NEVER advance to terminal
-// because QM-034 bars advancement while any item is in dispatched (non-terminal)
-// state.  The group stays active → QM-027 blocks all subsequent submits.
-//
-// After the Class A' fix:
-//   - daemon.Start calls LoadQueueAtStartup → reconcileThreeWay detects
-//     bead A is dispatched+closed → advances item to completed.
-//   - Both items are now terminal (completed + failed).
-//   - daemon.Start emits reconciliation_mismatch_observed with
-//     mismatch_class=bead_closed_queue_dispatched.
-//   - The same startup reconcile then advances the all-terminal group to
-//     complete-with-failures and demotes the queue to paused-by-failure
-//     (reconcileQueueTerminalState, the F5 pass).
-//   - QM-027 treats paused-by-failure like a completed queue, so the queue
-//     name accepts a fresh submit while the failure record stays on disk.
-//
-// # Assertions
-//
-//  1. reconciliation_mismatch_observed with mismatch_class=bead_closed_queue_dispatched fires.
-//  2. On disk, item A's status is "completed" (Class A' persisted the correction).
-//  3. After daemon exits, the queue is still on disk at paused-by-failure with
-//     its group at complete-with-failures.
-//  4. queue dry-run for a fresh bead against that queue is ACCEPTED (QM-027
-//     does not block) — the wedge is gone.
-//  5. Control: the same dry-run against an ACTIVE queue is rejected with
-//     queue_already_active, which proves the guard is reachable.
-//
-// # Helper prefix
-//
-// Helpers in this file use the prefix "rrRecov" (restart-recovery).
-// Per implementer-protocol.md §Helper-prefix discipline.
-//
-// # Spec refs
-//
-//   - specs/queue-model.md §3.2b QM-002b Class A' — dispatched+closed advance.
-//   - specs/queue-model.md §5 QM-034 — failed items must not interrupt siblings.
-//   - specs/queue-model.md §6.8 QM-027 — single-active-queue guard.
-//   - specs/queue-model.md §8.3 QM-052 — a failure-paused queue recovers by a
-//     fresh submit to the same name, which is why QM-027 exempts it.
-//   - specs/process-lifecycle.md §4.2 PL-005 step 8a.
-//
-// Bead: hk-ivzsl.
-
 import (
 	"bufio"
 	"context"
@@ -80,14 +21,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rrRecov fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// rrRecovEvalSymlinks resolves all symlinks in path so that br — which rejects
-// paths containing symlinks outside the beads directory — receives a canonical
-// path. On macOS, t.TempDir() returns /var/folders/... which is a symlink to
-// /private/var/folders/..., triggering br's symlink guard.
 func rrRecovEvalSymlinks(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -97,8 +30,6 @@ func rrRecovEvalSymlinks(t *testing.T, path string) string {
 	return resolved
 }
 
-// rrRecovProjectDir creates the minimal project directory for the scenario.
-// Returns the project dir and the JSONL events log path.
 func rrRecovProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = rrRecovEvalSymlinks(t, t.TempDir())
@@ -116,8 +47,6 @@ func rrRecovProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// rrRecovBrPath returns the path to the real `br` binary, skipping the test
-// when br is not on PATH.
 func rrRecovBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -127,8 +56,6 @@ func rrRecovBrPath(t *testing.T) string {
 	return brPath
 }
 
-// rrRecovBrWrapperScript writes a /bin/sh wrapper that invokes realBrPath
-// with --db <dbPath> prepended to all args. Returns the wrapper path.
 func rrRecovBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := rrRecovEvalSymlinks(t, t.TempDir())
@@ -141,12 +68,6 @@ func rrRecovBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// rrRecovInitBrWithBeads initialises a beads workspace and creates two beads:
-//   - beadA is created open then closed (simulates "landed via another path").
-//   - beadB is created open (will have queue status=failed but br status=open;
-//     the pre-claim guard on the queue path already failed it).
-//
-// Returns (beadAID, beadBID).
 func rrRecovInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper string) (beadAID, beadBID string) {
 	t.Helper()
 
@@ -195,14 +116,6 @@ func rrRecovInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper stri
 	return beadAID, beadBID
 }
 
-// rrRecovWriteStuckQueueJSON writes .harmonik/queues/main.json under projectDir
-// with the "deadlock combination" that blocked groups before Class A':
-//   - item 0 (beadAID): status=dispatched + run_id set (stuck from crash)
-//   - item 1 (beadBID): status=failed + last_failure_reason=cross_queue_duplicate
-//
-// This reproduces the exact combination described in hk-z0pmi: a dispatched
-// item whose bead landed elsewhere paired with a failed sibling.  Before Class
-// A', QM-034's "dispatched blocks advance" invariant kept this group stuck forever.
 func rrRecovWriteStuckQueueJSON(t *testing.T, projectDir, beadAID, beadBID string) {
 	t.Helper()
 
@@ -253,8 +166,6 @@ func rrRecovWriteStuckQueueJSON(t *testing.T, projectDir, beadAID, beadBID strin
 	}
 }
 
-// rrRecovCreateOpenBead creates one open bead through the br wrapper and
-// returns its ID.
 func rrRecovCreateOpenBead(t *testing.T, brWrapper, title string) string {
 	t.Helper()
 	//nolint:gosec // G204: br args are test-internal literals; not user input
@@ -270,10 +181,6 @@ func rrRecovCreateOpenBead(t *testing.T, brWrapper, title string) string {
 	return beadID
 }
 
-// rrRecovForceQueueStatus rewrites the status field of the on-disk main queue
-// in place. It is the control lever for the QM-027 check: it puts the queue
-// back into the one state the guard MUST reject, so an accepted dry-run is
-// evidence about paused-by-failure and not about a guard that never ran.
 func rrRecovForceQueueStatus(t *testing.T, projectDir, status string) {
 	t.Helper()
 
@@ -300,8 +207,6 @@ func rrRecovForceQueueStatus(t *testing.T, projectDir, status string) {
 	}
 }
 
-// rrRecovMismatchPayload is the decoded payload of a
-// reconciliation_mismatch_observed JSONL event.
 type rrRecovMismatchPayload struct {
 	QueueID       string `json:"queue_id"`
 	GroupIndex    int    `json:"group_index"`
@@ -312,9 +217,6 @@ type rrRecovMismatchPayload struct {
 	ObservedAt    string `json:"observed_at"`
 }
 
-// rrRecovExtractMismatchPayload reads the JSONL log and returns the decoded
-// payload of the first reconciliation_mismatch_observed event whose
-// mismatch_class equals wantClass. Fails the test if not found.
 func rrRecovExtractMismatchPayload(t *testing.T, jsonlPath, wantClass string) rrRecovMismatchPayload {
 	t.Helper()
 
@@ -359,8 +261,6 @@ func rrRecovExtractMismatchPayload(t *testing.T, jsonlPath, wantClass string) rr
 	return rrRecovMismatchPayload{} // unreachable
 }
 
-// rrRecovReadGroupItemStatuses reads the on-disk queue file and returns the
-// item statuses in group 0 in order.
 func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 	t.Helper()
 
@@ -390,10 +290,6 @@ func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 	}
 	return statuses
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_RestartRecovery_QM002bDeadlock
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_RestartRecovery_QM002bDeadlock is the scenario-level complement
 // to the unit tests in internal/lifecycle/startup_pl005_qm002_test.go.  It
@@ -438,41 +334,26 @@ func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 // Bead: hk-ivzsl.
 func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
-	// EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
 
-	// Locate br binary; skip when absent.
 	realBrPath := rrRecovBrPath(t)
 
-	// Create project directory with required subdirs.
 	projectDir, jsonlPath := rrRecovProjectDir(t)
 
-	// Initialise br DB and seed two beads:
-	//   bead A = dispatched in queue + closed in br  (Class A' target)
-	//   bead B = failed sibling (cross_queue_duplicate)
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := rrRecovBrWrapperScript(t, realBrPath, dbPath)
 	beadAID, beadBID := rrRecovInitBrWithBeads(t, realBrPath, projectDir, brWrapper)
 	t.Logf("rrRecov: beadA=%s (dispatched+closed), beadB=%s (failed sibling)", beadAID, beadBID)
 
-	// Verify initial br state.
 	scenariotest.AssertBeadStatus(t, brWrapper, beadAID, "closed")
 	scenariotest.AssertBeadStatus(t, brWrapper, beadBID, "open")
 
-	// Write the stuck queue.json simulating the state left by a crashed daemon:
-	//   group 0, active, wave
-	//   item 0: beadA dispatched (stuck claim goroutine from prior crash)
-	//   item 1: beadB failed (cross_queue_duplicate — QM-034 failed sibling)
 	rrRecovWriteStuckQueueJSON(t, projectDir, beadAID, beadBID)
 
-	// Redirect EnsureWorktreeTrust to a test-local config path so the daemon
-	// does not try to read ~/.claude.json and fail in CI.
 	claudeConfigPath := filepath.Join(rrRecovEvalSymlinks(t, t.TempDir()), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("rrRecov: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -481,8 +362,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		}
 	})
 
-	// Wire daemon.Config.  No HandlerBinary: we cancel after reconciliation
-	// fires, well before any dispatch attempt.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
@@ -498,21 +377,11 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
-	// Launch daemon.Start in a goroutine.
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// ── Phase 1: wait for Class A' to fire ────────────────────────────────────
-	//
-	// LoadQueueAtStartup runs synchronously in daemon.Start BEFORE the work
-	// loop goroutine starts.  Within that call, reconcileThreeWay detects
-	// beadA (dispatched + closed) and emits reconciliation_mismatch_observed
-	// with mismatch_class=bead_closed_queue_dispatched.
-	//
-	// Budget: 15 s — the reconciliation itself is sub-second; extra headroom
-	// for CI and slow br calls.
 	const reconcileBudget = 15 * time.Second
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, reconcileBudget, func() {
 		for {
@@ -522,10 +391,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		}
 	})
 
-	// ── Phase 2: assert Class A' payload ─────────────────────────────────────
-	//
-	// The reconciliation_mismatch_observed event must carry the correct
-	// bead_id and mismatch_class for the Class A' advance.
 	mismatch := rrRecovExtractMismatchPayload(t, jsonlPath, "bead_closed_queue_dispatched")
 	if mismatch.BeadID != beadAID {
 		t.Errorf("rrRecov: Class A' mismatch.BeadID = %q, want %q", mismatch.BeadID, beadAID)
@@ -540,12 +405,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		t.Error("rrRecov: Class A' mismatch.ObservedAt is empty")
 	}
 
-	// ── Phase 3: assert on-disk queue correction ──────────────────────────────
-	//
-	// Class A' persists the corrected queue before emitting the event
-	// (QM-063 persist-before-emit).  Read the queue file from disk and assert:
-	//   item 0 (beadA): advanced from dispatched → completed.
-	//   item 1 (beadB): unchanged at failed (QM-034 sibling integrity preserved).
 	itemStatuses := rrRecovReadGroupItemStatuses(t, projectDir)
 	if len(itemStatuses) != 2 {
 		t.Fatalf("rrRecov: expected 2 items in group 0, got %d", len(itemStatuses))
@@ -557,14 +416,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		t.Errorf("rrRecov: item B status = %q, want \"failed\" (sibling unchanged)", itemStatuses[1])
 	}
 
-	// ── Phase 4: cancel daemon and wait for clean exit ────────────────────────
-	//
-	// Cancelling loopCtx causes runWorkLoop to call exitClean →
-	// drainQueuesForRestart. The drain no longer archives anything: it parks an
-	// active queue as paused-by-drain with the restart intent, persists it in
-	// place, and puts it back in the store. main.json is never renamed. Here the
-	// queue is already paused-by-failure from the startup reconcile, so the drain
-	// skips it entirely.
 	loopCancel()
 
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {
@@ -573,16 +424,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		}
 	})
 
-	// ── Phase 5: assert the queue is parked at paused-by-failure ─────────────
-	//
-	// The startup reconcile does more than fix item A.  Once both items are
-	// terminal it advances the group to complete-with-failures and demotes the
-	// queue to paused-by-failure (reconcileQueueTerminalState, the F5 pass).
-	// The queue is therefore NOT active by the time the context is cancelled,
-	// and the shutdown drain touches only an ACTIVE queue — see
-	// TestQueueCancel_AlreadyTerminal_NoOp, which defends that no-op directly.
-	// So main.json stays on disk and keeps the failure record.  The name is
-	// unblocked by the demotion, not by an unlink.
 	queueMainPath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 	if _, statErr := os.Stat(queueMainPath); statErr != nil {
 		t.Errorf("rrRecov: .harmonik/queues/main.json must remain after daemon exit (the failure record is kept); statErr=%v", statErr)
@@ -607,13 +448,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 			loadedQ.Groups[0].Status, queue.GroupStatusCompleteWithFailures)
 	}
 
-	// ── Phase 6: prove a subsequent submit is accepted ────────────────────────
-	//
-	// This is the property the wedge broke, so assert it through the real
-	// validation pipeline.  HandleQueueDryRun is the production entry point
-	// behind `harmonik queue dry-run`: it loads the on-disk queue itself and
-	// runs QM-020..QM-027 without persisting or emitting.  QM-027 treats
-	// paused-by-failure like a completed queue, so the fresh bead is accepted.
 	brAdapter, adapterErr := brcli.NewForProject(brWrapper, projectDir)
 	if adapterErr != nil {
 		t.Fatalf("rrRecov: brcli.NewForProject: %v", adapterErr)
@@ -637,8 +471,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 			rpcErr.Code, rpcErr.Message)
 	}
 
-	// Control: the same call MUST be rejected when the queue reads active.
-	// Without it, an "accepted" result above could mean the guard never ran.
 	rrRecovForceQueueStatus(t, projectDir, string(queue.QueueStatusActive))
 	_, blockedErr := queue.HandleQueueDryRun(context.Background(), dryRunReq, ledger, projectDir)
 	if blockedErr == nil {
@@ -648,10 +480,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 			blockedErr.Code, blockedErr.Message, queue.ErrorCodeQueueAlreadyActive)
 	}
 
-	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
-	//
-	// No run goroutines fired in this test (no HandlerBinary → no dispatch),
-	// so run_started is absent.  Both invariants pass vacuously.
 	scenariotest.AssertEventCausality(t, jsonlPath,
 		"run_started",
 		[]string{"run_completed", "run_failed", "run_cancelled"},
@@ -663,8 +491,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		30*time.Second,
 	)
 
-	// Log the summary only when every claim above held. A PASS line printed
-	// next to a failure teaches the next reader the wrong thing.
 	if !t.Failed() {
 		t.Logf("rrRecov: PASS beadA=%s Class-A'-advanced=completed beadB=%s sibling-unchanged=failed queue-paused-by-failure=true subsequent-submit-accepted=true beadC=%s",
 			beadAID, beadBID, beadCID)

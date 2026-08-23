@@ -7,10 +7,6 @@ import (
 	"regexp"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase
-// ──────────────────────────────────────────────────────────────────────────────
-
 // Phase identifies the agent-session phase that the tmux window hosts.
 // Mirrors the HARMONIK_PHASE env-var values defined in claude-hook-bridge.md §4.2.
 //
@@ -32,10 +28,6 @@ const (
 	PhaseReviewer Phase = "reviewer"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// WindowHandle
-// ──────────────────────────────────────────────────────────────────────────────
-
 // WindowHandle is an opaque reference to a live tmux window returned by
 // [Adapter.NewWindowIn]. Callers pass it to [Adapter.KillWindow] and
 // [Adapter.WindowPanePID].
@@ -44,10 +36,6 @@ const (
 // callers MUST treat it as an opaque string — the format may change when the
 // OSAdapter is later extended to support multiple panes.
 type WindowHandle string
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Outcome
-// ──────────────────────────────────────────────────────────────────────────────
 
 // Outcome carries the result of a [Adapter.NewWindowIn] call.
 //
@@ -67,10 +55,6 @@ type Outcome struct {
 	PaneID string
 	Err    error
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// NewWindowIn input
-// ──────────────────────────────────────────────────────────────────────────────
 
 // NewWindowIn carries the parameters for [Adapter.NewWindowIn].
 type NewWindowIn struct {
@@ -99,19 +83,6 @@ type NewWindowIn struct {
 	Command string
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Adapter interface
-// ──────────────────────────────────────────────────────────────────────────────
-
-// bufferNameRe is the compiled regex for validating tmux buffer names used by
-// the daemon pane-write mechanism. The required format is:
-//
-//	harmonik-<session-id>-<purpose>
-//
-// where <session-id> and <purpose> are lowercase alphanumeric slugs with
-// optional internal hyphens.
-//
-// Spec ref: process-lifecycle.md §4.7 PL-021d — buffer-name discipline.
 var bufferNameRe = regexp.MustCompile(`^harmonik-[a-z0-9-]+-[a-z0-9-]+$`)
 
 // Adapter is the tmux window-management interface consumed by the daemon and
@@ -289,10 +260,6 @@ type Adapter interface {
 	// Spec ref: process-lifecycle.md §4.7 PL-021d — full write sequence + structured-log audit.
 	WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Error sentinels
-// ──────────────────────────────────────────────────────────────────────────────
 
 // ErrTmuxMissing is returned by [Adapter.ProbeTmux] when the tmux binary is
 // absent from PATH. This corresponds to the PL-021a/PL-021b absence-detection

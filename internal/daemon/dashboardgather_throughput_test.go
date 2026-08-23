@@ -1,9 +1,5 @@
 package daemon
 
-// dashboardgather_throughput_test.go — unit tests for the session-data.jsonl
-// windowed roll-up (hk-r22bd): beads closed, mean/p50 wall-time, tokens+cost
-// per outcome, grouped by crew/queue/harness/model.
-
 import (
 	"os"
 	"path/filepath"
@@ -102,7 +98,6 @@ func TestReadThroughput_GroupsByQueueHarnessModel(t *testing.T) {
 	appendSessionRecord(t, dir, mk("r2", "main", "claude-code", "claude-sonnet-4-6", true, 20, f(0.6), 2*time.Hour))
 	appendSessionRecord(t, dir, mk("r3", "main", "claude-code", "claude-sonnet-4-6", false, 5, f(0.1), 3*time.Hour))
 	appendSessionRecord(t, dir, mk("r4", "eval-pi", "pi", "openrouter/minimax", true, 100, nil, 30*time.Minute))
-	// Outside the 24h window — must be excluded.
 	appendSessionRecord(t, dir, mk("r5", "main", "claude-code", "claude-sonnet-4-6", true, 999, f(9), 48*time.Hour))
 
 	writeLanesJSON(t, dir, `{
@@ -139,7 +134,6 @@ func TestReadThroughput_GroupsByQueueHarnessModel(t *testing.T) {
 	if mainGroup.BeadsClosed != 2 {
 		t.Errorf("BeadsClosed: got %d, want 2 (successful runs only)", mainGroup.BeadsClosed)
 	}
-	// wall times: 10, 20, 5 -> mean=11.666.., p50=10
 	if mainGroup.MeanWallSecs < 11.6 || mainGroup.MeanWallSecs > 11.7 {
 		t.Errorf("MeanWallSecs: got %v, want ~11.67", mainGroup.MeanWallSecs)
 	}
@@ -173,21 +167,16 @@ func TestReadThroughput_GroupsByQueueHarnessModel(t *testing.T) {
 		t.Errorf("failure Count: got %d, want 1", failureStats.Count)
 	}
 
-	// eval-pi has no lanes.json entry -> Crew empty.
 	if piGroup.Crew != "" {
 		t.Errorf("piGroup.Crew: got %q, want empty (no lane entry for eval-pi)", piGroup.Crew)
 	}
 
-	// ByLane view (joined via queue->lane) should carry the main-lane entry only.
 	if len(tp.ByLane) != 1 || tp.ByLane[0].Lane != "main-lane" {
 		t.Fatalf("ByLane: got %+v, want [main-lane]", tp.ByLane)
 	}
 	if tp.ByLane[0].BeadsClosed != 2 {
 		t.Errorf("ByLane BeadsClosed: got %d, want 2", tp.ByLane[0].BeadsClosed)
 	}
-	// wall times 10+20+5=35 over all 3 runs (not just the 2 successes) -> mean=11.
-	// Regression check for the iter-1 review finding: dividing by the success-only
-	// count (2) would inflate this to 17.
 	if tp.ByLane[0].MeanWallSecs != 11 {
 		t.Errorf("ByLane MeanWallSecs: got %d, want 11 (35s / 3 runs, not / 2 successes)", tp.ByLane[0].MeanWallSecs)
 	}

@@ -2,33 +2,6 @@
 
 package daemon
 
-// run_terminal_writer_lifetime_test.go — a run may not return while a writer it
-// started is still making files under the project directory.
-//
-// The run terminal collects session data in a goroutine, on purpose: the
-// collection reads the whole event log and the agent transcripts, and a run has
-// nothing left to do with the answer. Off the hot path is the right shape. An
-// OWNERLESS goroutine is not. sessiondata.Append creates
-// <projectDir>/.harmonik/ and appends session-data.jsonl inside it, so until
-// that goroutine ends the run is still writing into a directory it has told its
-// caller it is finished with.
-//
-// In the test suite the project directory is a t.TempDir. The write lands in
-// the middle of the cleanup's RemoveAll: the cleanup deletes .harmonik, the
-// goroutine re-creates it, and the final rmdir fails with "directory not
-// empty". Go reports that against whichever test the cleanup happened to be
-// running, which is why the victim changed from run to run and why running one
-// test alone hid it — alone, the goroutine wins the race and nobody sees it.
-// That is the defect. The cleanup error is only where it surfaced.
-//
-// The named pipe is what makes this deterministic, and it is why the file is
-// !windows: syscall.Mkfifo has no Windows form. The package already carries
-// that constraint for its signal tests.
-//
-// Helper prefix: writerLifetime.
-//
-// Bead ref: hk-59flr.
-
 import (
 	"errors"
 	"os"
@@ -38,76 +11,18 @@ import (
 	"time"
 )
 
-// writerLifetimeStillBlocked is how long the test insists the run stays inside
-// beadRunOne while the collection is held still. It is not a wait for anything
-// to happen: the collection is blocked on a pipe with no writer and can never
-// finish on its own, so any return within this window is a return that did not
-// wait for it. Three seconds is far longer than the microseconds an unowned
-// goroutine takes to lose the race in the field.
 const writerLifetimeStillBlocked = 3 * time.Second
 
-// writerLifetimeAfterRelease bounds how long the run may take to return ONCE
-// the collection is released. It is what separates a run that waits for its
-// writer from one that waits for a clock: a fixed delay long enough to survive
-// the window above still returns at its own time, not at the writer's. The
-// measured delay for a run that really waits is under two milliseconds, so this
-// is a thousandfold margin, and the test logs what it actually saw.
-//
-// The two bounds together reject a fixed delay of any length except one between
-// three and four seconds — longer than the whole run this fixture drives. That
-// residual gap is stated rather than hidden: no single-drive test can close it,
-// and shutting it would cost a second drive for a case nobody writes by
-// accident.
 const writerLifetimeAfterRelease = time.Second
 
-// writerLifetimePostReturnGrace is how long the reader-wait keeps polling after
-// the run has returned before it concludes no collection is coming. It replaces
-// the remaining 60 seconds of a 60-second timeout with a fifth of a second, and
-// it is not zero because a regressed run can return microseconds before its
-// collection reaches the blocking open.
 const writerLifetimePostReturnGrace = 200 * time.Millisecond
 
-// writerLifetimeWaitForReader opens the write end of a named pipe, and returns
-// only once a READER has opened the other end. The second result is false when
-// no reader arrived within timeout.
-//
-// This is a handshake, not a poll for time to pass. open(O_WRONLY|O_NONBLOCK)
-// on a pipe with no reader fails with ENXIO and succeeds the instant a reader
-// arrives, so a successful open is proof that the run's session-data collection
-// has reached its first read and is now stuck there.
-//
-// It reports rather than calling t.Fatal, because the caller has a live
-// goroutine to join first. A test that ends while that goroutine is still
-// running panics the whole binary the moment the goroutine logs.
-//
-// driveDone is closed when the run under test has returned. Watching it is what
-// stops this helper from spending its whole timeout proving an ABSENCE. If the
-// run finishes without ever starting a collection there is no reader coming and
-// there never will be, and the honest report is available immediately; polling
-// on to the deadline only delays a verdict that is already decided, and it
-// delays it behind a message about a timeout, which reads as a slow machine
-// rather than as a run that did no collection. Pass nil when there is nothing
-// to watch.
 func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duration, driveDone <-chan struct{}) (*os.File, bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	runReturned := false
 	var runReturnedAt time.Time
 	for time.Now().Before(deadline) {
-		// O_CLOEXEC IS LOAD-BEARING, NOT HYGIENE. This is the write end of the
-		// FIFO that holds the session-data collection at its read, and closing it
-		// is how this test releases the collection. Without O_CLOEXEC the
-		// descriptor is INHERITED by every process the test binary forks while it
-		// is open — and this test is t.Parallel() in a package whose neighbours
-		// fork git, /bin/sh handlers and `sleep 300`. A FIFO reader sees EOF only
-		// when the LAST write end closes, so our Close dropped only OUR copy while
-		// a neighbour's child still held a duplicate, and the collection stayed
-		// blocked for that child's whole life.
-		//
-		// Go's os.OpenFile always sets O_CLOEXEC; a raw syscall.Open does not, and
-		// Go's fork/exec dups only ProcAttr.Files and leaves every other
-		// non-CLOEXEC descriptor open in the child. Any raw open in this tree owes
-		// itself this flag.
 		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 		if err == nil {
 			return os.NewFile(uintptr(fd), path), true
@@ -116,13 +31,6 @@ func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duratio
 			t.Errorf("writerLifetime: open the write end of %s: %v", path, err)
 			return nil, false
 		}
-		// Keep polling for a short grace after the run returns, then stop. The
-		// grace is not politeness: in the REGRESSED tree this test exists to catch
-		// — the one where the run does not wait for its writer — the run can return
-		// microseconds before the collection reaches its blocking open. With no
-		// grace this branch would fire first and report the wrong thing, when the
-		// precise claim-1 message ("the run returned while the session-data writer
-		// it started was still going") is the one that names the defect.
 		if runReturned && time.Now().After(runReturnedAt.Add(writerLifetimePostReturnGrace)) {
 			t.Errorf("writerLifetime: nothing opened %s for reading, and the run has now "+
 				"returned.\n"+
@@ -176,12 +84,6 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 	)
 	seeded := make(chan struct{})
 
-	// The drive runs in a goroutine because the test has to observe the run
-	// from outside it: the whole claim is about what is true at the moment
-	// beadRunOne returns. The fixture's own t.Fatalf calls are setup failures
-	// only; every assertion this test makes is made on the test goroutine, and
-	// the failure paths below release the collection and join the drive rather
-	// than abandoning it.
 	driveDone := make(chan struct{})
 	go func() {
 		defer close(driveDone)
@@ -217,8 +119,6 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 		return
 	}
 
-	// Claim 1. The collection cannot get past its read, so the run cannot have
-	// finished with the project directory.
 	returnedEarly := false
 	select {
 	case <-driveDone:
@@ -239,11 +139,6 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 		t.Errorf("writerLifetime: close the write end: %v", err)
 	}
 
-	// The join is unbounded on purpose after the report. Ending the test here
-	// would leave the drive goroutine running, and the first thing it logs
-	// panics the whole binary with "Log in goroutine after test completed" —
-	// which buries the real finding. A run that truly never returns is bounded
-	// by `go test -timeout`, which dumps every goroutine and names the wedge.
 	select {
 	case <-driveDone:
 	case <-time.After(60 * time.Second):
@@ -252,8 +147,6 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 		<-driveDone
 	}
 
-	// Claim 2. Only meaningful when the run really did wait: a run that already
-	// returned tells us nothing about what released it.
 	waited := time.Since(releasedAt)
 	t.Logf("the run returned %v after its session-data writer was released", waited)
 	if !returnedEarly && waited > writerLifetimeAfterRelease {
@@ -262,7 +155,6 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 			"open for every writer that takes longer than the delay.", waited, writerLifetimeAfterRelease)
 	}
 
-	// Claim 3. The positive half.
 	sessionData := filepath.Join(projectDir, ".harmonik", "session-data.jsonl")
 	if _, err := os.Stat(sessionData); err != nil {
 		t.Errorf("no session data at %s after the run returned: %v\n"+

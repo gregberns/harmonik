@@ -14,7 +14,6 @@ func TestAssetSyncAutoApplyDefaultOff(t *testing.T) {
 		t.Fatal("zero-value Config must have AssetSync.AutoApply == false")
 	}
 
-	// A config.json that omits asset_sync entirely must also unmarshal to OFF.
 	parsed := Config{}
 	if err := json.Unmarshal([]byte(`{"schema_version":1,"command":["claude"]}`), &parsed); err != nil {
 		t.Fatal(err)
@@ -42,7 +41,6 @@ func TestRunAssetSkewCheckNoHookNoPanic(t *testing.T) {
 	saved := SkewCheckHook
 	SkewCheckHook = nil
 	defer func() { SkewCheckHook = saved }()
-	// Should not panic and should return promptly.
 	RunAssetSkewCheck(t.TempDir(), Config{}, nil, nil)
 }
 

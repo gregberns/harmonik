@@ -1,22 +1,5 @@
 package pi_test
 
-// pi_live_hktwin_test.go — M6 WS3-pi (pi-A: the real-pi oracle).
-//
-// This is the REAL-BOX-GATED live leg: it drives a real `pi --mode json`
-// single-turn session, asserts the terminal NDJSON sequence (session first,
-// agent_end last, per internal/harness/pi/ndjsonparser.go), and writes the capture
-// to testdata/twin-parity/pi/<scn>/{ndjson,events.jsonl} so it can replace the
-// deterministic twin sample as the parity-gate oracle.
-//
-// It is DEFAULT-SKIPPED without PI_LIVE=1 — a box without pi provider auth is
-// clean. It uses the anti-false-green require idiom (mirrors WS1.3
-// rsb12RequireSSHOrSkip / WS3-codex-B codexDriftRequireOrSkip): with PI_LIVE=1
-// but pi unavailable/unconfigured, HARMONIK_REQUIRE_PI_LIVE=1 turns the skip into
-// a Fatalf so an environment that INTENDS to run the live oracle fails loudly
-// rather than silently greening.
-//
-// Bead: M6 WS3-pi.
-
 import (
 	"bytes"
 	"fmt"
@@ -30,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
-// piLiveRequireOrSkip mirrors the WS3-codex-B codexDriftRequireOrSkip anti-false-
-// green pattern. By default it SKIPs (clean on boxes without live pi). With
-// HARMONIK_REQUIRE_PI_LIVE=1 it FATALs instead — so an environment that INTENDS
-// to run the live pi oracle fails loudly rather than silently greening.
 func piLiveRequireOrSkip(t *testing.T, msg string) {
 	t.Helper()
 	if os.Getenv("HARMONIK_REQUIRE_PI_LIVE") == "1" {
@@ -42,7 +21,6 @@ func piLiveRequireOrSkip(t *testing.T, msg string) {
 	t.Skipf("%s", msg)
 }
 
-// piLiveScenario names the capture directory the live oracle writes into.
 const piLiveScenario = "happy-path"
 
 // TestPiA_LiveSingleTurn drives a real pi single-turn session and captures it.
@@ -55,7 +33,6 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 		t.Skip("PI_LIVE=1 required for the real-pi oracle (default-skipped; needs pi provider auth)")
 	}
 
-	// Resolve the pi binary: PI_BIN overrides, else "pi" on PATH.
 	piBin := os.Getenv("PI_BIN")
 	if piBin == "" {
 		piBin = "pi"
@@ -72,9 +49,6 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 		return
 	}
 
-	// Drive a real single turn: pi --mode json --no-extensions --provider <p>
-	// --model <m> "<prompt>" — the initial-turn argv the adapter builds
-	// (internal/harness/pi/launchspec.go §BuildLaunchSpec).
 	ctxTimeout := 120 * time.Second
 	if v := os.Getenv("PI_LIVE_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -110,8 +84,6 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 		t.Fatal("pi produced no NDJSON on stdout")
 	}
 
-	// Assert the terminal NDJSON sequence via the REAL parser path: session
-	// captured (PI-012), agent_end fired (PI-014), session first + agent_end last.
 	var gotSessionID string
 	var agentEndFired bool
 	interceptor := pi.ExportedNewPiSessionIDInterceptor(
@@ -135,9 +107,6 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 		t.Errorf("live pi: last NDJSON kind = %q, want %q", lastKind, "agent_end")
 	}
 
-	// Write the capture: ndjson (raw pi stream) + a projected durable events.jsonl
-	// (terminal triad the daemon projects on success). These OVERWRITE the
-	// deterministic twin sample so the parity gate can grade against a real run.
 	dir := filepath.Join("..", "..", "..", "testdata", "twin-parity", "pi", piLiveScenario)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir capture dir: %v", err)
@@ -154,8 +123,6 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 	t.Logf("live pi oracle GREEN: captured %d NDJSON bytes into %s", len(out), dir)
 }
 
-// piFirstLastKind extracts the "type" of the first and last non-blank NDJSON
-// lines using the real parser so it sees exactly what the daemon does.
 func piFirstLastKind(t *testing.T, out []byte) (first, last string) {
 	t.Helper()
 	for _, raw := range bytes.Split(out, []byte("\n")) {
@@ -175,9 +142,6 @@ func piFirstLastKind(t *testing.T, out []byte) (first, last string) {
 	return first, last
 }
 
-// piProjectDurableTriad renders the daemon-projected durable terminal triad for a
-// successful pi run into events.jsonl bytes. A raw pi exec has no daemon, so the
-// oracle projects the same triad the daemon would journal on success.
 func piProjectDurableTriad(sessionID string) []byte {
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	lines := []string{

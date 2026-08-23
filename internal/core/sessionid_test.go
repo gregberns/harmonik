@@ -6,9 +6,6 @@ import (
 )
 
 func TestSessionID_NominalTyping(t *testing.T) {
-	// Verify that SessionID is a distinct named type and not interchangeable
-	// with plain string at the type level.  The compiler enforces this; the
-	// test confirms the conversion relationship.
 	const raw = "0196a1b2-c3d4-7000-8a1b-000000000001"
 	s := SessionID(raw)
 	back := string(s)
@@ -18,7 +15,6 @@ func TestSessionID_NominalTyping(t *testing.T) {
 }
 
 func TestSessionID_JSONRoundTrip(t *testing.T) {
-	// SessionID serialises as a plain JSON string via the underlying string type.
 	type payload struct {
 		ID SessionID `json:"session_id"`
 	}
@@ -42,7 +38,6 @@ func TestSessionID_JSONRoundTrip(t *testing.T) {
 }
 
 func TestSessionID_Comparison(t *testing.T) {
-	// SessionIDs with the same underlying value are equal.
 	const raw = "0196a1b2-c3d4-7000-8a1b-000000000003"
 	a := SessionID(raw)
 	b := SessionID(raw)

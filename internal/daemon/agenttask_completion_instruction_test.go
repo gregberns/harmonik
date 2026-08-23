@@ -1,27 +1,5 @@
 package daemon
 
-// agenttask_completion_instruction_test.go — the task file a one-shot harness
-// receives must not ask it to run a slash command.
-//
-// Pi and codex have no REPL and no slash commands. Their process ends when the
-// turn ends, and the Refs: trailer on the commit is what tells the daemon the
-// work is done. The task file used to end with the claude instruction anyway —
-// "You MUST run /quit as your final action" — because the section was rendered
-// from a constant rather than from the launching harness.
-//
-// A pi agent read it. It had already done the task and committed correctly, and
-// it obeyed with the only tool it has: `echo "/quit" | pbcopy`. The session
-// stayed alive, the daemon killed it 158 seconds in, and the run was recorded as
-// a structural crash whose reason named a claude crash on a run that never
-// involved claude. The commit was stranded on run/<run_id>.
-//
-// The test drives the real launch-spec builder, not the renderer, because the
-// renderer was never the whole defect: it also has to be told which harness it
-// is rendering for. Asserting on the file the daemon actually wrote covers both
-// halves.
-//
-// Bead: hk-quit-instruction-not-portable-ms55w.
-
 import (
 	"context"
 	"os"
@@ -112,9 +90,6 @@ func TestOneShotHarnessTaskFileNeverAsksForASlashCommand(t *testing.T) {
 			}
 			got := string(content)
 
-			// The instruction the pi agent obeyed. It must not appear anywhere
-			// in the file — not in the Session Completion section, and not in
-			// the Bead Lifecycle section's one-line summary of the job.
 			if strings.Contains(got, "/quit") {
 				for i, line := range strings.Split(got, "\n") {
 					if strings.Contains(line, "/quit") {
@@ -124,9 +99,6 @@ func TestOneShotHarnessTaskFileNeverAsksForASlashCommand(t *testing.T) {
 				}
 			}
 
-			// The completion signal that IS real for these harnesses. Without
-			// it the file would pass the check above by saying nothing at all
-			// about how to finish.
 			if !strings.Contains(got, "Refs: <bead-id>") {
 				t.Errorf("%s agent-task.md never names the Refs: trailer as the completion signal", tc.name)
 			}

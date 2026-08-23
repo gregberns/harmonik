@@ -1,17 +1,5 @@
 package daemon
 
-// export_launchrouting_test.go — harnessregistry launch-routing test seams.
-//
-// Split out of export_test.go (RT19.11, P2 E5 export_test.go split) so the 8
-// harnessregistry.go launch-routing builders (the harness-registry constructors,
-// effective-model resolution, and the routed / observed-routed / pinned /
-// pi-process-exit / codex-process-exit LaunchSpec builders) live in one topic
-// file. These are the builders RT18.11 re-points, so isolating them shrinks that
-// diff. Same package (daemon), so every daemon_test caller resolves
-// daemon.ExportedX byte-identically after the move.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 

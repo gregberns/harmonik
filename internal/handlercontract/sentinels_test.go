@@ -23,7 +23,6 @@ func TestSentinelsDistinct(t *testing.T) {
 		{"ErrBudget", handlercontract.ErrBudget},
 	}
 
-	// Every primary sentinel must NOT match any other primary sentinel.
 	for i, a := range primaries {
 		for j, b := range primaries {
 			if i == j {

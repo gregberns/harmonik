@@ -1,9 +1,5 @@
 package handlercontract
 
-// readyState — per-bead helper prefix for test helpers in
-// readystate_hc039_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.46).
-
 // AgentReadyMsg is the on-wire NDJSON message emitted (either by the handler
 // subprocess for non-tmux substrates, or synthesized by the hook-relay on
 // first SessionStart receipt for the tmux substrate) to signal the session is

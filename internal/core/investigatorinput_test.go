@@ -6,9 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// investigatorInputFixture returns a fully-populated InvestigatorInput with
-// all required fields set to valid non-zero values. Tests mutate individual
-// fields to probe Valid().
 func investigatorInputFixture(t *testing.T) InvestigatorInput {
 	t.Helper()
 	runID := RunID(uuid.Must(uuid.NewV7()))

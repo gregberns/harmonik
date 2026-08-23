@@ -150,43 +150,16 @@ type OrchestrationConfig struct {
 func DriveOrchestration(ctx context.Context, cfg OrchestrationConfig) error {
 	mode := cfg.WorkflowMode
 	if mode == "" {
-		// PL-004a: the daemon-level default is dot. This was review-loop until
-		// that mode was retired (EM-015d); it is a DORMANT default either way —
-		// every shipped scenario under scenarios/ declares a workflow_path.
 		mode = core.WorkflowModeDot
 	}
 
-	// Network sandbox enforcement (SH-028): when requested, verify the sandbox
-	// is active before proceeding. The CLI (SH-032) activates the sandbox via
-	// ApplyNetworkSandbox() at process startup; this check is a fail-fast
-	// guard that prevents scenario execution without the required isolation.
 	if cfg.EnableNetworkSandbox && !IsNetworkSandboxActive() {
 		return ErrNetworkSandboxNotApplied
 	}
 
-	// Create a child context that the daemon cancels via CancelOnQueueExit
-	// when the scenario's bead queue reaches a terminal state. This ensures
-	// daemon.Start returns promptly on scenario completion without requiring an
-	// external stop RPC call.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
-	// Apply the scenario's wall-clock deadline (SH-026). The deadline context
-	// is a child of the queue-exit context so that either cancellation signal
-	// (queue exit or timeout) propagates to daemon.Start.
-	//
-	// Daemon-stop equivalence: context.WithTimeout cancellation propagates to
-	// daemon.Start's context, triggering the daemon's graceful-drain path
-	// (bounded by ON-029 drain-timeout per process-lifecycle.md §4.2 PL-003a).
-	// This is architecturally equivalent to calling the daemon stop RPC: the
-	// daemon observes context.Done() and initiates the same drain sequence it
-	// would on a stop-RPC call, honoring the HC-018 per-handler cancellation
-	// bounds. Using the context is the Go-idiomatic surface for this signal
-	// when daemon.Start runs in-process (as in the harness — Substrate=nil).
-	//
-	// Go's monotonic clock component (present in time.Now()-derived Times) is
-	// used automatically by context.WithTimeout per SH-025 monotonic-clock
-	// requirement — NTP wall-clock regressions do not cause spurious timeouts.
 	if cfg.TimeoutSecs > 0 {
 		var deadlineCancel context.CancelFunc
 		runCtx, deadlineCancel = context.WithTimeout(runCtx, time.Duration(cfg.TimeoutSecs)*time.Second)
@@ -205,13 +178,7 @@ func DriveOrchestration(ctx context.Context, cfg OrchestrationConfig) error {
 		// CancelOnQueueExit: daemon self-terminates when the scenario's bead queue
 		// reaches a terminal state (all-success or paused-by-failure).
 		CancelOnQueueExit: cancelRun,
-		// Substrate nil: harness runs without tmux; daemon falls back to
-		// exec.CommandContext per specs/process-lifecycle.md §4.7 PL-021b.
-		// The $TMUX guard in cmd/harmonik/main.go is a CLI-layer check, not a
-		// daemon.Start requirement.
 
-		// Harness-mode skip flags: suppress pre-flights not applicable to
-		// ephemeral synthetic project roots (SH-016a).
 		SkipWALCheckpoint:          true,
 		SkipBrHistoryRotation:      true,
 		SkipRestartBackoff:         true,
@@ -224,11 +191,6 @@ func DriveOrchestration(ctx context.Context, cfg OrchestrationConfig) error {
 
 	err := DaemonEntryPoint(runCtx, daemonCfg)
 
-	// Timeout detection: check deadline exceedance FIRST per spec order-of-checks
-	// note at §7.1 step 3 — a coincident daemon error on the timeout path routes
-	// to scenario-timeout, not orchestration-internal-error. The parent ctx must
-	// still be live; if it is already cancelled, the cancellation was external
-	// (SIGINT/SIGTERM — not a timeout) and should propagate as a normal error.
 	if cfg.TimeoutSecs > 0 && ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		return ErrScenarioTimeout
 	}

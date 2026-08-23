@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// parseCompletionGCTime reads a marker timestamp in the one wire layout.
-// A bad timestamp is a broken fixture, so the test stops here.
 func parseCompletionGCTime(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value)
@@ -20,7 +18,6 @@ func parseCompletionGCTime(t *testing.T, value string) time.Time {
 	return parsed
 }
 
-// completionMarkerBasename names the release marker for one receipt.
 func completionMarkerBasename(t *testing.T, queueID, receiptID string) string {
 	t.Helper()
 	basename, err := CompletionReleaseMarkerBasename(queueID, receiptID)

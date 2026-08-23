@@ -121,12 +121,10 @@ func (s *S02Registrar) Registry() Registry {
 // Structural invalidity (cp.Valid() == false) returns [ErrInvalidControlPoint]
 // from the underlying MapRegistry.Register call.
 func (s *S02Registrar) RegisterFromDocument(doc PolicyDocument) error {
-	// CP-035: all seven required sections must be present in the YAML source.
 	if err := doc.ValidateSections(); err != nil {
 		return err
 	}
 
-	// CP-038: schema_version must be a positive integer.
 	if err := doc.ValidateSchemaVersion(); err != nil {
 		return err
 	}
@@ -176,16 +174,6 @@ func (s *S02Registrar) RegisterFromDocument(doc PolicyDocument) error {
 	return nil
 }
 
-// constructGate constructs a Gate ControlPoint from the policy YAML entry pg
-// and the document's schemaVersion.
-//
-// Mapping per §7.1:
-//   - Kind   = KindGate
-//   - Trigger = Trigger{Name: pg.AttachPoint} (attach-point encodes the fire point)
-//   - OutcomeAction = OutcomeActionAllow (primary action for a Gate; §4.2)
-//   - Payload.Gate  = {Subtype, AttachPoint, NamedApprover, VerificationRef}
-//
-// construction is PURE: no I/O, no side effects.
 func constructGate(pg PolicyGate, schemaVersion int) (ControlPoint, error) {
 	eval, err := constructEvaluator(pg.Evaluator, fmt.Sprintf("gate %q", pg.Name))
 	if err != nil {
@@ -230,20 +218,6 @@ func constructGate(pg PolicyGate, schemaVersion int) (ControlPoint, error) {
 	}, nil
 }
 
-// constructHook constructs a Hook ControlPoint from the policy YAML entry ph
-// and the document's schemaVersion.
-//
-// Mapping per §7.1:
-//   - Kind          = KindHook
-//   - Trigger       = Trigger{Name: ph.TriggerEvent}
-//   - OutcomeAction = OutcomeActionSideEffect (§4.3: Hooks always produce a side-effect)
-//   - Payload.Hook  = {TriggerEvent, SubscriptionFilter, SideEffectKind, HaltOnFailure, SubsystemPriority}
-//
-// The ts argument is the daemon's declared Hook trigger set. ph.TriggerEvent
-// MUST be present in ts per CP-013; an unrecognized trigger returns an error
-// wrapping ErrConstructControlPoint.
-//
-// construction is PURE: no I/O, no side effects.
 func constructHook(ph PolicyHook, schemaVersion int, ts *HookTriggerSet) (ControlPoint, error) {
 	if !ts.Contains(ph.TriggerEvent) {
 		return ControlPoint{}, fmt.Errorf("%w: hook %q: trigger %q not in declared lifecycle set (CP-013)",
@@ -285,16 +259,6 @@ func constructHook(ph PolicyHook, schemaVersion int, ts *HookTriggerSet) (Contro
 	}, nil
 }
 
-// constructGuard constructs a Guard ControlPoint from the policy YAML entry pg
-// and the document's schemaVersion.
-//
-// Mapping per §7.1:
-//   - Kind          = KindGuard
-//   - Trigger       = Trigger{Name: ""} (Guard trigger is implicit — §4.4)
-//   - OutcomeAction = OutcomeActionReorder (§4.4: Guard may only reorder)
-//   - Payload.Guard = {AppliesToNode}
-//
-// construction is PURE: no I/O, no side effects.
 func constructGuard(pg PolicyGuard, schemaVersion int) (ControlPoint, error) {
 	eval, err := constructEvaluator(pg.Evaluator, fmt.Sprintf("guard %q", pg.Name))
 	if err != nil {
@@ -320,20 +284,6 @@ func constructGuard(pg PolicyGuard, schemaVersion int) (ControlPoint, error) {
 	}, nil
 }
 
-// constructBudget constructs a Budget ControlPoint from the policy YAML entry pb
-// and the document's schemaVersion.
-//
-// Mapping per §7.1:
-//   - Kind          = KindBudget
-//   - Trigger       = Trigger{Name: "dispatch"} (Budget fires on dispatch + per-chunk accrual)
-//   - OutcomeAction = OutcomeActionAdmit (§4.5: primary outcome is admission within limit)
-//   - Payload.Budget = {Resource, Scope, Limit, WarningThreshold, ScopeTarget}
-//
-// Budget evaluators are mechanism-tagged (deterministic threshold check per
-// §4.5.CP-022). The synthetic canonical expression is constructed from the
-// budget's limit value; full expression customisation is deferred.
-//
-// construction is PURE: no I/O, no side effects.
 func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
 	resource := BudgetResource(pb.Resource)
 	if !resource.Valid() {
@@ -360,7 +310,6 @@ func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
 
 	warningThreshold := pb.WarningThreshold
 	if warningThreshold == 0 {
-		// Apply CP-022 default of 0.8 when not explicitly set in YAML.
 		warningThreshold = 0.8
 	}
 
@@ -393,13 +342,6 @@ func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
 	}, nil
 }
 
-// constructEvaluator builds an Evaluator from a PolicyEvaluatorBlock.
-//
-// Supported modes:
-//   - "mechanism": Expression must be non-empty; DelegationPath must be absent.
-//   - "cognition":  DelegationPath must be fully populated; Expression must be absent.
-//
-// cpLabel is used only in error messages (e.g., "gate \"deploy-gate\"").
 func constructEvaluator(block PolicyEvaluatorBlock, cpLabel string) (Evaluator, error) {
 	switch ModeTag(block.Mode) {
 	case ModeTagMechanism:
@@ -442,16 +384,6 @@ func constructEvaluator(block PolicyEvaluatorBlock, cpLabel string) (Evaluator, 
 	}
 }
 
-// parseScopeTarget converts a raw scope_target string from policy YAML into a
-// typed ScopeTarget value.
-//
-// Accepted forms (per specs/control-points.md §6.1.4):
-//   - "*"                → wildcard (ScopeTargetWildcard)
-//   - "node_type:<type>" → predicate (ScopeTargetPredicate)
-//   - "<single-id>"      → singleton (ScopeTargetSingleton)
-//
-// An empty string is treated as wildcard ("*") for leniency at construction
-// time; callers may reject this via BudgetPayload.Valid() if required.
 func parseScopeTarget(raw string) (ScopeTarget, error) {
 	switch {
 	case raw == "" || raw == "*":

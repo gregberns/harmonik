@@ -65,12 +65,6 @@ func (e *ErrQuotedToolCommandToken) Error() string {
 		"(security: workflow-graph.md WG-045)", e.NodeID, e.Token)
 }
 
-// findQuotedToolCommandToken scans a tool_command string for a template token that
-// sits inside a single- or double-quoted span and returns its name (without the __
-// delimiters), or "" if every token is unquoted. It is deliberately conservative —
-// it does NOT fully parse shell; it tracks quote spans (with double-quote backslash
-// escapes) and rejects any token whose start index falls inside a quoted span,
-// erring toward rejecting the ambiguous quoted-token case.
 func findQuotedToolCommandToken(cmd string) string {
 	inside := quotedSpanMask(cmd)
 	for _, span := range templateTokenRe.FindAllStringIndex(cmd, -1) {
@@ -82,10 +76,6 @@ func findQuotedToolCommandToken(cmd string) string {
 	return ""
 }
 
-// quotedSpanMask marks each byte index of cmd that lies INSIDE a single- or
-// double-quoted span, exclusive of the quote characters themselves. Single
-// quotes have no shell escaping; double quotes honour backslash escapes (so \"
-// does not close the span).
 func quotedSpanMask(cmd string) []bool {
 	inside := make([]bool, len(cmd))
 	inSingle, inDouble := false, false
@@ -123,11 +113,6 @@ func quotedSpanMask(cmd string) []bool {
 	return inside
 }
 
-// replaceTokens applies a single, non-recursive substitution pass over val,
-// replacing every __KEY__ with params[KEY]. When quote is true (tool_command
-// context) the replacement value is wrapped with ShellQuote so it becomes one
-// inert shell word. Unrecognised tokens are left intact so the residual scan in
-// substituteGraphParams catches them.
 func replaceTokens(val string, params map[string]string, quote bool) string {
 	if !templateTokenRe.MatchString(val) {
 		return val
@@ -144,8 +129,6 @@ func replaceTokens(val string, params map[string]string, quote bool) string {
 	})
 }
 
-// scanResidualTokens returns the deduplicated list of __TOKEN__ names (delimiters
-// stripped) still present across the supplied strings, in first-seen order.
 func scanResidualTokens(sources []string) []string {
 	seen := make(map[string]struct{})
 	var tokens []string
@@ -161,16 +144,6 @@ func scanResidualTokens(sources []string) []string {
 	return tokens
 }
 
-// substituteGraphParams substitutes launch template params into an already-parsed
-// graph, per-attribute (WG-045 / WG-046). It first validates the param map for
-// ingestion hygiene (control chars / NUL / newline / over-length / malformed key)
-// via core.ValidateTemplateParams — the backstop chokepoint that covers the
-// daemon-down local-persist path which bypasses the queue-submit RPC.
-//
-// tool_command values are shell-quoted; all other attribute values are substituted
-// verbatim. After the pass, any residual __TOKEN__ in any attribute is a
-// launch-time *ErrResidualToken (preserving the WG-045 "did you forget a --param?"
-// error, now reported post-parse). A nil graph or empty param map is a no-op.
 func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 	if err := core.ValidateTemplateParams(params); err != nil {
 		return err
@@ -179,11 +152,6 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		return nil
 	}
 
-	// Load-time lint (WG-045 enforcement): a token wrapped in the author's own
-	// quotes inside a tool_command would defeat the shell-quoting close (the
-	// substituted value concatenates out of the author's quotes). Reject fail-loud
-	// BEFORE substituting so the rule is enforced, not merely normative. Only the
-	// tool_command attribute reaches a shell, so only it is linted.
 	for _, n := range g.Nodes {
 		if n.ToolCommand == "" {
 			continue
@@ -193,14 +161,10 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		}
 	}
 
-	// Collect substitution targets. `verbatim` holds non-shell attribute pointers;
-	// `quoted` holds tool_command pointers (the only shell sink); `attrMaps` holds
-	// UnknownAttrs maps (informational/display attributes such as label).
 	var verbatim []*string
 	quoted := make([]*string, 0, len(g.Nodes)) // exactly one tool_command per node
 	var attrMaps []map[string]string
 
-	// Graph-level.
 	verbatim = append(verbatim,
 		&g.Name, &g.SchemaVersion, &g.Version, &g.StartNodeID,
 		&g.WorkflowClass, &g.NoProgressGuard, &g.Goal,
@@ -216,7 +180,6 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		attrMaps = append(attrMaps, g.UnknownAttrs)
 	}
 
-	// Nodes.
 	for _, n := range g.Nodes {
 		verbatim = append(verbatim,
 			&n.ID, &n.RawType, &n.AgentType, &n.HandlerRef, &n.GateRef,
@@ -231,7 +194,6 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		}
 	}
 
-	// Edges.
 	for _, e := range g.Edges {
 		verbatim = append(verbatim,
 			&e.FromNodeID, &e.ToNodeID, &e.ConditionRaw, &e.PreferredLabel,
@@ -247,7 +209,6 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		}
 	}
 
-	// Substitute.
 	for _, p := range verbatim {
 		*p = replaceTokens(*p, params, false)
 	}
@@ -260,7 +221,6 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		}
 	}
 
-	// Residual scan: any surviving __TOKEN__ anywhere is a launch error.
 	residualSources := make([]string, 0, len(verbatim)+len(quoted))
 	for _, p := range verbatim {
 		residualSources = append(residualSources, *p)

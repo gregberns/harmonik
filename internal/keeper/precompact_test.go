@@ -12,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// precompactAction extracts the "action" field from a
-// session_keeper_precompact_blocked event payload.
 func precompactAction(t *testing.T, ev keeper.EmittedEvent) string {
 	t.Helper()
 	var p core.SessionKeeperPrecompactBlockedPayload
@@ -23,9 +21,6 @@ func precompactAction(t *testing.T, ev keeper.EmittedEvent) string {
 	return p.Action
 }
 
-// newPrecompactCycler builds a Cycler for precompact tests. It wires the same
-// fakes as cycle_test.go but adds a no-op context-store clear so tests
-// can control the marker file directly.
 func newPrecompactCycler(
 	t *testing.T,
 	projectDir string,
@@ -43,7 +38,6 @@ func newPrecompactCycler(
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 
 	if readHandoff == nil {
-		// Default: immediately return nonce on first call.
 		readHandoff = func(_ string) (string, error) {
 			return "# Handoff\n\n" + nonce + "\n", nil
 		}
@@ -94,7 +88,6 @@ func TestRunForPrecompact_NotManaged(t *testing.T) {
 		t.Errorf("action = %q, want %q", got, "not_managed")
 	}
 
-	// Cycle must not have fired.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(got) != 0 {
 		t.Errorf("cycle started unexpectedly: %d handoff_started events", len(got))
 	}
@@ -156,13 +149,11 @@ func TestRunForPrecompact_AntiLoop(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	const sid = "sess-fired"
 
-	// Use a nonce that the handoff immediately returns so the first call cycles fully.
 	const cycleID = "cyc-precompact-test"
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := func(_ string) (string, error) {
 		return "# Handoff\n\n" + nonce + "\n", nil
 	}
-	// Gauge: initially returns sid, then after first cycle returns "sess-new".
 	callCount := 0
 	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		callCount++
@@ -177,7 +168,6 @@ func TestRunForPrecompact_AntiLoop(t *testing.T) {
 	ctx := context.Background()
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 
-	// First call: should trigger cycle.
 	if err := cycler.RunForPrecompact(ctx, cf); err != nil {
 		t.Fatalf("first call error: %v", err)
 	}
@@ -189,7 +179,6 @@ func TestRunForPrecompact_AntiLoop(t *testing.T) {
 		t.Errorf("first call action = %q, want %q", got, "cycle_triggered")
 	}
 
-	// Second call on same session: anti-loop should suppress.
 	if err := cycler.RunForPrecompact(ctx, cf); err != nil {
 		t.Fatalf("second call error: %v", err)
 	}
@@ -230,7 +219,6 @@ func TestRunForPrecompact_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// precompact_blocked with "cycle_triggered"
 	pcEvents := em.EventsOfType(core.EventTypeSessionKeeperPrecompactBlocked)
 	if len(pcEvents) != 1 {
 		t.Fatalf("want 1 precompact_blocked, got %d", len(pcEvents))
@@ -239,11 +227,9 @@ func TestRunForPrecompact_HappyPath(t *testing.T) {
 		t.Errorf("action = %q, want %q", got, "cycle_triggered")
 	}
 
-	// Cycle must have fired: handoff_started present.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(got) == 0 {
 		t.Error("expected handoff_started event; got none")
 	}
-	// Cycle must have completed.
 	if got := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(got) == 0 {
 		t.Error("expected cycle_complete event; got none")
 	}

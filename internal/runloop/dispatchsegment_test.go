@@ -1,17 +1,5 @@
 package runloop
 
-// dispatchsegment_test.go — RT8 FakeClock conformance tests for the
-// launch/ready/brief dispatch segment (dispatchsegment.go), the census
-// fault-injection seed (RSM-030): a resume whose agent stalls on relaunch
-// (no readiness signal is ever recognized) MUST ride the SR9 ready-timeout
-// edge — kill + agent_ready_timeout + a Failed terminal — within the
-// virtual-time ready bound, and that failure MUST map onto the Run machine's
-// reopen spine. Never silence (RSM-INV-001/002, RSM-024/025).
-//
-// All tests are pure virtual time (substrate.FakeClock + the runshell_test.go
-// pumpUntilDone pump) — the determinism the deleted wall-clock waitAgentReady
-// + resume-grace caulk could never offer.
-
 import (
 	"context"
 	"errors"
@@ -48,8 +36,6 @@ func TestDispatchSegment_ClassifyLaunchFailurePreservesSentinelWrapping(t *testi
 	}
 }
 
-// segRecordingEmitter is a minimal handlercontract.EventEmitter that records
-// every emission, standing in for the sealed bus under the perRunEventTap.
 type segRecordingEmitter struct {
 	mu    sync.Mutex
 	calls []segEmitCall
@@ -87,10 +73,6 @@ func (e *segRecordingEmitter) readyEmit() (found, withRun bool, runID *core.RunI
 	return false, false, nil
 }
 
-// segStubAdapter satisfies handlercontract.Adapter for the segment's ready
-// pump: only DetectReady is ever invoked, so the embedded nil interface backs
-// the remaining methods (a call would panic, proving the segment stayed inside
-// its contract).
 type segStubAdapter struct {
 	handlercontract.Adapter
 	ready func(core.EventEnvelope) bool
@@ -107,10 +89,6 @@ func segTestRunID(t *testing.T) core.RunID {
 	return core.RunID(id)
 }
 
-// runStalledResumeSegment drives one resume-shaped segment (tmux path: no
-// watcher; transitional probe armed) whose agent never yields a recognized
-// readiness signal, in pure virtual time, and returns the terminal state, the
-// virtual elapsed duration, and the recorded side effects.
 func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReadyTimeout bool) (final runexec.DispatchState, elapsed time.Duration, rec *segRecordingEmitter, killed, timeoutEmitted *bool) {
 	t.Helper()
 	start := time.Unix(0, 0)
@@ -171,22 +149,13 @@ func TestDispatchSegment_ResumeStalled_TimeoutThenReopenWithinBound(t *testing.T
 	if !*timeoutEmitted {
 		t.Error("agent_ready_timeout was not emitted (silent wait — RSM-INV-002 breach)")
 	}
-	// The bound (RSM-024): the resume settles its failure terminal within the
-	// ready sub-bound + the kill-reap window. The pump advances 1 virtual
-	// second per step, so allow one step of slack.
 	if bound := cfg.ReadyTimeout + cfg.ReadyKillReap + time.Second; elapsed > bound {
 		t.Errorf("terminal took %v of virtual time, want ≤ %v (RSM-024 bound breach)", elapsed, bound)
 	}
-	// The probe DID fire (run_id-stamped, M3-D7) — the stall is the agent's,
-	// not the probe's — and the machine still failed closed.
 	if found, withRun, _ := rec.readyEmit(); !found || !withRun {
 		t.Errorf("transitional probe emit: found=%v withRunID=%v, want a run_id-stamped agent_ready", found, withRun)
 	}
 
-	// Reopen half (RSM-025 fail-closed): the sub-driver maps the failed
-	// dispatch onto EvModeOutcome{failure}; the Run machine MUST reopen the
-	// bead and emit a failed run terminal — the segment's timeout composes
-	// into the run-level reopen within the same virtual clock.
 	clock := substrate.NewFakeClock(time.Unix(0, 0))
 	rrec := &recordingEffectors{}
 	events := make(chan runexec.Event, 1)

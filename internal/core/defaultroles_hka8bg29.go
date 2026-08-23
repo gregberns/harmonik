@@ -25,10 +25,6 @@ func DefaultRequiredRoles() []Role {
 	}
 }
 
-// defaultPlannerRole returns the concrete default Role for the Planner.
-//
-// The Planner reads the full workspace and produces workflow artifacts
-// (specs, DOT files, plan documents). It does not write source code.
 func defaultPlannerRole() Role {
 	ps := NewPermissionSchema()
 	ps.AllowedTools = []ToolName{"Read", "Bash", "WebSearch", "WebFetch", "Agent"}
@@ -42,10 +38,6 @@ func defaultPlannerRole() Role {
 	}
 }
 
-// defaultBuilderRole returns the concrete default Role for the Builder.
-//
-// The Builder implements changes across the full workspace. It may write to
-// any path and invoke all implementation tools. Invocable by Planner.
 func defaultBuilderRole() Role {
 	ps := NewPermissionSchema()
 	ps.AllowedTools = []ToolName{"Read", "Edit", "Write", "Bash", "Agent"}
@@ -59,11 +51,6 @@ func defaultBuilderRole() Role {
 	}
 }
 
-// defaultReviewerRole returns the concrete default Role for the Reviewer.
-//
-// The Reviewer reads the full workspace to evaluate work and writes only to
-// the review-verdict path. It does not modify source code or specs.
-// Invocable by Planner and Builder.
 func defaultReviewerRole() Role {
 	ps := NewPermissionSchema()
 	ps.AllowedTools = []ToolName{"Read", "Bash"}

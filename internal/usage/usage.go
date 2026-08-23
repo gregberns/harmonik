@@ -34,10 +34,6 @@ import (
 // TokenUsage is the four-category token count; type is owned by sessiondata.
 type TokenUsage = sessiondata.TokenUsage
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Core data structures
-// ──────────────────────────────────────────────────────────────────────────────
-
 // RunRecord is the per-daemon-run result in AnalysisResult.
 type RunRecord struct {
 	RunID     string `json:"run_id"`
@@ -139,10 +135,6 @@ type AnalysisResult struct {
 	Warnings                 []string              `json:"warnings"`
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Config
-// ──────────────────────────────────────────────────────────────────────────────
-
 // Config controls the analysis window and file locations.
 type Config struct {
 	// Since / Until are normalized ISO UTC timestamps ("YYYY-MM-DDTHH:MM:SSZ").
@@ -175,10 +167,6 @@ func DefaultConfig(projectDir string) Config {
 		ProjectDir:        projectDir,
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Timestamp helpers
-// ──────────────────────────────────────────────────────────────────────────────
 
 var tsRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`)
 
@@ -222,10 +210,6 @@ func parseDurationShorthand(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Main analysis — VIEW over session-data.jsonl
-// ──────────────────────────────────────────────────────────────────────────────
-
 // RunAnalysis performs the token-usage analysis for the given window.
 // Primary source: <ProjectDir>/.harmonik/session-data.jsonl (pre-computed by the daemon).
 // Orchestrator sessions (captain/crew) are always derived live from transcripts.
@@ -238,14 +222,11 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	result.Window.Since = cfg.Since
 	result.Window.Until = cfg.Until
 
-	// Resolve project dir from EventsFile when ProjectDir is not set.
 	projectDir := cfg.ProjectDir
 	if projectDir == "" && cfg.EventsFile != "" {
-		// EventsFile is <projectDir>/.harmonik/events/events.jsonl
 		projectDir = filepath.Dir(filepath.Dir(filepath.Dir(cfg.EventsFile)))
 	}
 
-	// Phase 1: read pre-computed run records from session-data.jsonl.
 	sdRecords, sdErr := sessiondata.ReadAll(projectDir, cfg.Since, cfg.Until)
 	if sdErr != nil {
 		result.Warnings = append(result.Warnings,
@@ -254,13 +235,8 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 
 	runRecords, beadRecords := ingestSessionData(sdRecords)
 
-	// Collect session IDs attributed to daemon runs (to exclude from orchestrator scan).
 	knownSessionIDs := map[string]bool{}
 
-	// Phase 2: orchestrator sessions — live transcript scan (not in session-data.jsonl).
-	// The scan reads only the transcript directories of the named project. It
-	// used to read one fixed path, so every report showed the same project's
-	// sessions whatever the operator named. Refs hk-usage-misattributes-cost-yymyu.
 	scope, scopeErr := scopeTranscriptDirs(cfg.ClaudeProjectsDir, projectDir)
 	if scopeErr != nil {
 		return nil, fmt.Errorf("usage: scope transcript dirs for %s: %w", projectDir, scopeErr)
@@ -275,7 +251,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	}
 	result.noteScope(scope, uncertainSessions)
 
-	// Global rollups.
 	var productiveCost, orchCost float64
 	var globalUsage TokenUsage
 	for _, rr := range runRecords {
@@ -305,7 +280,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	result.RunCount = len(runRecords)
 	result.OrchSessionCount = len(orchSessions)
 
-	// By-model accumulation.
 	byModel := map[string]*ModelStat{}
 	accumModel := func(models map[string]int, usage TokenUsage, cost float64) {
 		total := 0
@@ -342,7 +316,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 		result.ByModel[m] = *s
 	}
 
-	// By-tier.
 	tierCost := map[string]float64{}
 	for m, s := range byModel {
 		tierCost[modelTier(m)] += s.Cost
@@ -359,7 +332,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 		result.ByTier[tier] = TierStat{Cost: c, Pct: pct}
 	}
 
-	// By-hour (use run start_at for daemon runs; orch first_ts for sessions).
 	byHour := map[string]*HourStat{}
 	accumHour := func(ts string, usage TokenUsage, cost float64) {
 		hour := "unknown"
@@ -385,7 +357,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 		result.ByHour[h] = *s
 	}
 
-	// Top N.
 	runSlice := make([]RunRecord, 0, len(runRecords))
 	for _, rr := range runRecords {
 		runSlice = append(runSlice, *rr)
@@ -415,17 +386,6 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	return result, nil
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase 1 — session-data.jsonl rollup
-// ──────────────────────────────────────────────────────────────────────────────
-
-// ingestSessionData turns the pre-computed run records into the report's run
-// and bead rollups.
-//
-// A record with no cost keeps its tokens and gets no dollars. The collector
-// writes a cost only when it knows a price for the model, so a missing cost
-// means "not known". A report that adds 0 for such a run states a number it
-// does not have, and the run then reads as free work.
 func ingestSessionData(records []sessiondata.Record) (runsByID map[string]*RunRecord, beadsByID map[string]*BeadRecord) {
 	runRecords := map[string]*RunRecord{}
 	beadRecords := map[string]*BeadRecord{}
@@ -476,9 +436,6 @@ func ingestSessionData(records []sessiondata.Record) (runsByID map[string]*RunRe
 	return runRecords, beadRecords
 }
 
-// noteScope records what the transcript scan could and could not place. It
-// warns when the project has no transcript directory at all, so an empty
-// orchestrator total reads as "no data found" and not as "no spend".
 func (r *AnalysisResult) noteScope(scope transcriptScope, uncertain []OrchestratorSession) {
 	if len(scope.Own) == 0 {
 		r.Warnings = append(r.Warnings,
@@ -500,14 +457,6 @@ func (r *AnalysisResult) noteScope(scope transcriptScope, uncertain []Orchestrat
 		len(uncertain), fmtDollars(r.UnattributedCostUSD), strings.Join(names, ", ")))
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase 2 — Find long-lived orchestrator sessions
-// ──────────────────────────────────────────────────────────────────────────────
-
-// findOrchestratorSessions reads the long-lived non-daemon sessions (captain,
-// crew, operator) from each of the given transcript directories. The caller
-// picks the directories, so this function decides nothing about which project a
-// session belongs to. See scopeTranscriptDirs.
 func findOrchestratorSessions(dirs []string, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
 	var sessions []OrchestratorSession
 	for _, dir := range dirs {
@@ -520,9 +469,6 @@ func findOrchestratorSessions(dirs []string, since, until string, knownSessionID
 	return sessions, nil
 }
 
-// orchSessionsInDir reads the orchestrator sessions of one transcript
-// directory. A session whose every git branch starts with "run/" is a daemon
-// run. session-data.jsonl already counts those, so this function drops them.
 func orchSessionsInDir(dir, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -555,7 +501,6 @@ func orchSessionsInDir(dir, since, until string, knownSessionIDs map[string]bool
 	return sessions, nil
 }
 
-// isDaemonRunSession reports a session that ran only on run branches.
 func isDaemonRunSession(sess OrchestratorSession) bool {
 	if len(sess.Branches) == 0 {
 		return false
@@ -615,10 +560,6 @@ func analyzeOrchSession(fpath, sessionID, since, until string) (OrchestratorSess
 	return sess, nil
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Transcript reader (for orchestrator sessions only)
-// ──────────────────────────────────────────────────────────────────────────────
-
 type transcriptTurn struct {
 	Timestamp string
 	Model     string
@@ -632,8 +573,6 @@ func readTranscript(path, since, until string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Read-only transcript scan runs after this defer, so keep the close deferred
-	// to function exit; the close error is immaterial for a read handle.
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "usage: close transcript", "err", closeErr, "path", path)
@@ -709,18 +648,10 @@ func jsonInt64(raw json.RawMessage) int64 {
 	return n
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Formatters
-// ──────────────────────────────────────────────────────────────────────────────
-
 func fmtDollars(v float64) string { return fmt.Sprintf("$%.4f", v) }
 
-// costUnknownLabel is the cost column for work whose dollars are not known.
-// "$0.0000" in that column reads as free work, which is a different claim.
 const costUnknownLabel = "cost unknown"
 
-// beadCostLabel gives the cost column for one bead. A bead gets a dollar amount
-// only when at least one of its runs carries a price.
 func beadCostLabel(b BeadRecord) string {
 	if b.RunCount > 0 && b.UnpricedRuns == b.RunCount {
 		return costUnknownLabel
@@ -728,7 +659,6 @@ func beadCostLabel(b BeadRecord) string {
 	return fmtDollars(b.CostUSD)
 }
 
-// runCostLabel gives the cost column for one run.
 func runCostLabel(rr RunRecord) string {
 	if !rr.CostKnown {
 		return costUnknownLabel
@@ -903,10 +833,6 @@ func PrintSummary(r *AnalysisResult, w io.Writer) error {
 	p("======================================================================")
 	return writeErr
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
 
 func modelTier(model string) string {
 	ml := strings.ToLower(model)

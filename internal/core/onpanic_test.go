@@ -68,7 +68,6 @@ func TestOnPanicMarshalText(t *testing.T) {
 func TestOnPanicUnmarshalText(t *testing.T) {
 	t.Parallel()
 
-	// hqwn66FixtureWrapper is a test-local wrapper for table-driven JSON round-trip tests.
 	type hqwn66FixtureWrapper struct {
 		Policy OnPanic `json:"on_panic"`
 	}

@@ -1,19 +1,5 @@
 package queue_test
 
-// rpc_test.go — unit tests for the four queue JSON-RPC handler functions and
-// the HandlerAdapter.
-//
-// Coverage:
-//   - HandleQueueSubmit: happy path + validation-error path (QM-027, single active queue)
-//   - HandleQueueAppend: happy path + validation-error path (QM-024, append-target-invalid)
-//   - HandleQueueStatus: queue present + queue absent (nil → {queue: null})
-//   - HandleQueueDryRun: happy path + validation-error path (QM-020, bead-not-found)
-//
-// Test helper prefix: rpcFixture
-//
-// Spec ref: specs/queue-model.md §2.10, §6, §8.1.
-// Bead ref: hk-nomxl.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,12 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// Fake ledger for rpc_test.go
-// ---------------------------------------------------------------------------
-
-// rpcFixtureFakeLedger is a fake BeadLedger for RPC handler tests.
-// It maps bead IDs to statuses and records edges for QM-025.
 type rpcFixtureFakeLedger struct {
 	statuses map[core.BeadID]queue.BeadStatus
 	edges    map[[2]core.BeadID]bool
@@ -48,7 +28,6 @@ func (f *rpcFixtureFakeLedger) BlocksEdge(_ context.Context, blocker, blocked co
 	return f.edges[[2]core.BeadID{blocker, blocked}], nil
 }
 
-// rpcFixtureOpenLedger returns a fake ledger where the given IDs are all open.
 func rpcFixtureOpenLedger(ids ...core.BeadID) queue.BeadLedger {
 	statuses := make(map[core.BeadID]queue.BeadStatus)
 	for _, id := range ids {
@@ -60,8 +39,6 @@ func rpcFixtureOpenLedger(ids ...core.BeadID) queue.BeadLedger {
 	}
 }
 
-// rpcFixtureTempProjectDir creates a temporary project directory with a
-// .harmonik subdirectory and returns the project root path.
 func rpcFixtureTempProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -71,9 +48,6 @@ func rpcFixtureTempProjectDir(t *testing.T) string {
 	return dir
 }
 
-// rpcFixtureWaveGroup returns the group-0 wave Group containing items for each
-// bead ID, all with ItemStatus pending and no timestamps set. Every call site
-// wants index 0, so it is not a parameter.
 func rpcFixtureWaveGroup(ids ...core.BeadID) queue.Group {
 	items := make([]queue.Item, len(ids))
 	for i, id := range ids {
@@ -88,17 +62,11 @@ func rpcFixtureWaveGroup(ids ...core.BeadID) queue.Group {
 	}
 }
 
-// rpcFixtureStreamGroup returns the group-0 stream Group used by the append
-// tests. Every call site wants index 0, so it is not a parameter.
 func rpcFixtureStreamGroup(ids ...core.BeadID) queue.Group {
 	g := rpcFixtureWaveGroup(ids...)
 	g.Kind = queue.GroupKindStream
 	return g
 }
-
-// ---------------------------------------------------------------------------
-// HandleQueueSubmit
-// ---------------------------------------------------------------------------
 
 // TestHandleQueueSubmit_HappyPath verifies that a valid queue-submit request
 // mints a queue_id, returns status=active, and persists queue.json.
@@ -123,7 +91,6 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
 	}
 
-	// queue_id must be non-empty and 36 chars (UUID canonical form).
 	if len(resp.QueueID) != 36 {
 		t.Errorf("QueueID = %q, want 36-char UUID", resp.QueueID)
 	}
@@ -134,7 +101,6 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 		t.Errorf("GroupCount = %d, want 1", resp.GroupCount)
 	}
 
-	// The returned *Queue must be non-nil and have status=active.
 	if q == nil {
 		t.Fatal("returned *Queue is nil")
 	}
@@ -142,7 +108,6 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 		t.Errorf("returned queue status = %q, want %q", q.Status, queue.QueueStatusActive)
 	}
 
-	// queues/main.json must exist on disk (NQ-A2 per-queue persistence).
 	queueFile := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 	if _, statErr := os.Stat(queueFile); statErr != nil {
 		t.Errorf("queues/main.json not found after submit: %v", statErr)
@@ -165,13 +130,11 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 
-	// First submit succeeds.
 	_, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("first submit: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Second submit with different bead must fail with queue_already_active.
 	req2 := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureWaveGroup(beadB)},
@@ -297,11 +260,8 @@ func TestHandleQueueSubmit_RetainsPerItemWorkflowFields(t *testing.T) {
 		t.Fatal("returned *Queue is nil")
 	}
 
-	// 1. The in-memory queue handed to SetQueue must retain the fields.
 	assertWorkflowFields(t, "returned queue", q, wantParams)
 
-	// 2. The PERSISTED queue (what the workloop re-reads via Load after SetQueue)
-	//    must retain them too — guards against an omitempty/round-trip drop.
 	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Load persisted queue: %v", loadErr)
@@ -309,8 +269,6 @@ func TestHandleQueueSubmit_RetainsPerItemWorkflowFields(t *testing.T) {
 	assertWorkflowFields(t, "persisted queue", loaded, wantParams)
 }
 
-// assertWorkflowFields asserts the first item of the first group carries the
-// expected per-item workflow fields.
 func assertWorkflowFields(t *testing.T, label string, q *queue.Queue, params map[string]string) {
 	t.Helper()
 	if q == nil || len(q.Groups) == 0 || len(q.Groups[0].Items) == 0 {
@@ -334,12 +292,7 @@ func assertWorkflowFields(t *testing.T, label string, q *queue.Queue, params map
 	}
 }
 
-// paramKey is the single TemplateParams key asserted by assertWorkflowFields.
 const paramKey = "REVIEWER_MODEL"
-
-// ---------------------------------------------------------------------------
-// HandleQueueAppend
-// ---------------------------------------------------------------------------
 
 // TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields is the append-path
 // half of the hk-u6zp guard. QueueAppendRequest carries no per-item workflow
@@ -397,13 +350,8 @@ func TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields(t *testing.T) {
 		t.Fatal("mutated queue is nil")
 	}
 
-	// The submit-time item (index 0) must still carry its workflow fields after
-	// the append mutated the queue.
 	assertWorkflowFields(t, "after append (in-memory)", mutated, wantParams)
 
-	// Re-persist the mutated queue exactly as HandlerAdapter.HandleQueueAppend
-	// does, then Load it — what the workloop re-reads after the append's
-	// SetQueue. The submit-time item's workflow fields must survive that round-trip.
 	if persistErr := queue.Persist(t.Context(), projectDir, mutated); persistErr != nil {
 		t.Fatalf("Persist mutated queue: %v", persistErr)
 	}
@@ -426,7 +374,6 @@ func TestHandleQueueAppend_HappyPath(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA, beadB, beadC)
 
-	// Submit a queue with a stream group containing beadA.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
@@ -436,7 +383,6 @@ func TestHandleQueueAppend_HappyPath(t *testing.T) {
 		t.Fatalf("setup submit: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Append beadB and beadC.
 	appendReq := queue.QueueAppendRequest{
 		QueueID:    submitResp.QueueID,
 		GroupIndex: 0,
@@ -453,7 +399,6 @@ func TestHandleQueueAppend_HappyPath(t *testing.T) {
 	if len(appendResp.NewTailIndices) != 2 {
 		t.Errorf("len(NewTailIndices) = %d, want 2", len(appendResp.NewTailIndices))
 	}
-	// beadA was at index 0; new items should start at index 1.
 	if appendResp.NewTailIndices[0] != 1 {
 		t.Errorf("NewTailIndices[0] = %d, want 1", appendResp.NewTailIndices[0])
 	}
@@ -489,10 +434,6 @@ func TestHandleQueueAppend_ValidationError_NoQueue(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HandleQueueStatus
-// ---------------------------------------------------------------------------
-
 // TestHandleQueueStatus_NoQueue verifies that status returns {queue: null}
 // when no queue is loaded.
 func TestHandleQueueStatus_NoQueue(t *testing.T) {
@@ -518,7 +459,6 @@ func TestHandleQueueStatus_WithActiveQueue(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA)
 
-	// Submit a queue.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
@@ -554,7 +494,6 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA, beadB)
 
-	// Submit to "alpha" named queue.
 	alphaResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "alpha",
@@ -564,7 +503,6 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 		t.Fatalf("submit alpha: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Submit to "beta" named queue.
 	betaResp, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "beta",
@@ -574,7 +512,6 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 		t.Fatalf("submit beta: unexpected RPCError: %v", rpcErr2)
 	}
 
-	// Status with Name="alpha" must return alpha's queue.
 	respAlpha, rpcErr3 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{Name: "alpha"})
 	if rpcErr3 != nil {
 		t.Fatalf("HandleQueueStatus(alpha): unexpected RPCError: %v", rpcErr3)
@@ -586,7 +523,6 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 		t.Errorf("status(alpha): QueueID = %q, want %q", respAlpha.Queue.QueueID, alphaResp.QueueID)
 	}
 
-	// Status with Name="beta" must return beta's queue.
 	respBeta, rpcErr4 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{Name: "beta"})
 	if rpcErr4 != nil {
 		t.Fatalf("HandleQueueStatus(beta): unexpected RPCError: %v", rpcErr4)
@@ -609,7 +545,6 @@ func TestHandleQueueStatus_ByQueueID(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA)
 
-	// Submit to a named queue.
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "flywheel",
@@ -619,7 +554,6 @@ func TestHandleQueueStatus_ByQueueID(t *testing.T) {
 		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Status by UUID must find the flywheel queue without specifying its name.
 	resp, rpcErr2 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{QueueID: submitResp.QueueID})
 	if rpcErr2 != nil {
 		t.Fatalf("HandleQueueStatus(queue_id): unexpected RPCError: %v", rpcErr2)
@@ -664,7 +598,6 @@ func TestHandleQueueAppend_ByQueueID_NonMainQueue(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA, beadB)
 
-	// Submit a stream group to a non-main named queue.
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "flywheel",
@@ -674,8 +607,6 @@ func TestHandleQueueAppend_ByQueueID_NonMainQueue(t *testing.T) {
 		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Append using only queue_id (no name) — previously this would fail with
-	// queue_id_mismatch because it defaulted to loading "main" (hk-1k5as fix).
 	appendResp, _, _, rpcErr2 := queue.HandleQueueAppend(t.Context(), queue.QueueAppendRequest{
 		QueueID:    submitResp.QueueID,
 		GroupIndex: 0,
@@ -689,10 +620,6 @@ func TestHandleQueueAppend_ByQueueID_NonMainQueue(t *testing.T) {
 		t.Errorf("AppendedCount = %d, want 1", appendResp.AppendedCount)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// HandleQueueDryRun
-// ---------------------------------------------------------------------------
 
 // TestHandleQueueDryRun_HappyPath verifies that a valid dry-run request returns
 // the resolved queue envelope without persisting queue.json.
@@ -715,7 +642,6 @@ func TestHandleQueueDryRun_HappyPath(t *testing.T) {
 		t.Fatalf("HandleQueueDryRun: unexpected RPCError: %v", rpcErr)
 	}
 
-	// ResolvedQueue must be a well-formed envelope with the correct group count.
 	if len(resp.ResolvedQueue.Groups) != 1 {
 		t.Errorf("ResolvedQueue.Groups count = %d, want 1", len(resp.ResolvedQueue.Groups))
 	}
@@ -726,7 +652,6 @@ func TestHandleQueueDryRun_HappyPath(t *testing.T) {
 		t.Errorf("ParallelismNarrowed = true, want false (no blocks edges)")
 	}
 
-	// queue.json MUST NOT be written (dry-run must not persist per QM-028).
 	queueFile := filepath.Join(projectDir, ".harmonik", "queue.json")
 	if _, statErr := os.Stat(queueFile); statErr == nil {
 		t.Error("queue.json written by dry-run, want no file (QM-028: dry-run must not persist)")
@@ -769,7 +694,6 @@ func TestHandleQueueDryRun_ValidationError_BeadNotFound(t *testing.T) {
 	t.Parallel()
 
 	projectDir := rpcFixtureTempProjectDir(t)
-	// Empty ledger → no beads known → bead_not_found.
 	ledger := rpcFixtureOpenLedger()
 
 	req := queue.QueueDryRunRequest{
@@ -802,8 +726,6 @@ func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA, beadB)
 
-	// Establish an active "main" queue so QM-027 would falsely fire if the dry-run
-	// checks the wrong per-name slot.
 	mainReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
@@ -812,8 +734,6 @@ func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
 		t.Fatalf("setup: submit main queue: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Dry-run targeting "extqueue" must succeed — "main" is a different per-name
-	// slot and must not trigger QM-027 here.
 	dryReq := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
@@ -825,12 +745,10 @@ func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
 			rpcErr.Code, rpcErr.Message)
 	}
 
-	// ResolvedQueue.Name must reflect the requested queue name.
 	if resp.ResolvedQueue.Name != "extqueue" {
 		t.Errorf("ResolvedQueue.Name = %q, want %q", resp.ResolvedQueue.Name, "extqueue")
 	}
 
-	// No file must have been written for "extqueue" (dry-run must not persist per QM-028).
 	if _, statErr := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "extqueue.json")); statErr == nil {
 		t.Error("extqueue.json written by dry-run, want no file (QM-028: dry-run must not persist)")
 	}
@@ -847,7 +765,6 @@ func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beadA, beadB)
 
-	// Establish an active "extqueue" queue via a real submit.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
@@ -857,7 +774,6 @@ func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
 		t.Fatalf("setup: submit extqueue: unexpected RPCError: %v", rpcErr)
 	}
 
-	// Dry-run targeting the same "extqueue" must be rejected with queue_already_active.
 	dryReq := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
@@ -872,10 +788,6 @@ func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
 			rpcErr.Code, queue.ErrorCodeQueueAlreadyActive)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// HandlerAdapter round-trip (JSON encode/decode)
-// ---------------------------------------------------------------------------
 
 // TestHandlerAdapter_QueueStatus_RoundTrip verifies that HandlerAdapter.HandleQueueStatus
 // returns a JSON-encoded QueueStatusResponse that can be decoded back.
@@ -894,7 +806,6 @@ func TestHandlerAdapter_QueueStatus_RoundTrip(t *testing.T) {
 		t.Fatal("HandleQueueStatus: nil JSON result")
 	}
 
-	// Decode into QueueStatusResponse to verify shape.
 	var statusResp queue.QueueStatusResponse
 	if err := json.Unmarshal(raw, &statusResp); err != nil {
 		t.Fatalf("decode QueueStatusResponse: %v", err)

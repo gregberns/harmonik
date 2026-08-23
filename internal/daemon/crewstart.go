@@ -1,14 +1,5 @@
 package daemon
 
-// crewstart.go — C2 daemon-side crew-start / crew-stop handler.
-//
-// Implements the crewrun.CrewHandler interface: collision-check, registry write,
-// queue-ensure, session launch, paste-seed, keeper-attach inputs, and teardown.
-//
-// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1–§3.5, §7.
-// Acceptance criteria: C2 AC-1, AC-3.
-// Bead ref: hk-5tg5o.
-
 import (
 	"context"
 	"encoding/json"
@@ -31,46 +22,26 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// crewKeeperEventBus is the minimal event-emission seam used by the crew keeper
-// post-spawn probe. Satisfied by eventbus.EventBus. May be nil in tests that do
-// not assert on event emission.
 type crewKeeperEventBus interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
 
-// crewKeeperCommsBus is the minimal comms-emission seam used by the crew keeper
-// post-spawn probe. Satisfied by eventbus.CommsMessageEmitter (busImpl). May be
-// nil in tests that do not assert on keeper-alert comms.
 type crewKeeperCommsBus interface {
 	EmitAgentMessage(ctx context.Context, payload core.AgentMessagePayload) (core.EventID, error)
 }
 
-// keeperProbePollInterval is the interval between LiveKeeperPresent polls during
-// the post-spawn liveness probe. 1s is fine for a startup check: short enough to
-// confirm a live watcher quickly, long enough not to busy-spin.
 const keeperProbePollInterval = time.Second
 
-// windowHandleExposer is an optional interface a SubstrateSession may implement
-// to expose its underlying tmux window handle string for crew registry recording.
-//
-// *tmuxSubstrateSession implements this (WindowHandle method in tmuxsubstrate.go).
-// Test doubles may implement it to control the recorded handle value.
 type windowHandleExposer interface {
 	WindowHandle() string
 }
 
-// crewPaneStopper is an optional interface a Substrate may implement to stop a
-// persistent crew pane by its window handle string (crew-stop path).
-//
-// *tmuxSubstrate implements this (StopWindowByHandle method in tmuxsubstrate.go).
-// Test doubles may implement it to record stop calls without real tmux.
 type crewPaneStopper interface {
 	// StopWindowByHandle sends /quit to the pane (best-effort), waits a grace
 	// period, then kills the window identified by handle.
 	StopWindowByHandle(ctx context.Context, handle string) error
 }
 
-// crewHandlerImpl is the concrete implementation of crewrun.CrewHandler.
 type crewHandlerImpl struct {
 	claudeBinary string
 	projectDir   string
@@ -122,9 +93,6 @@ func WithCrewsConfig(crews map[string]projectconfig.CrewConfig) CrewHandlerOpt {
 	}
 }
 
-// crewConfigHarness looks up the configured harness for a crew name in the
-// crews: config tier, returning "" when absent (no per-crew config, or the
-// crew has no harness: entry).
 func (h *crewHandlerImpl) crewConfigHarness(name string) string {
 	if h.crews == nil {
 		return ""
@@ -161,10 +129,6 @@ func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler
 	return h
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HandleCrewStart
-// ─────────────────────────────────────────────────────────────────────────────
-
 // HandleCrewStart implements crewrun.CrewHandler.HandleCrewStart.
 //
 // Ordering per c2-spec.md §7:
@@ -190,13 +154,11 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		return nil, fmt.Errorf("queue is required")
 	}
 
-	// ── Step 1: collision check + resolve session_id ──
 	sessionID, isResume, err := h.resolveSessionID(req.Name, req.Queue)
 	if err != nil {
 		return nil, err
 	}
 
-	// ── Step 2: write registry record before launch ──
 	rec := crew.Record{
 		Name:      req.Name,
 		Type:      h.resolveCrewType(req),
@@ -208,37 +170,16 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		return nil, fmt.Errorf("write registry: %w", writeErr)
 	}
 
-	// ── Step 3: ensure named queue ──
 	if qErr := h.ensureQueue(ctx, req.Queue); qErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback; primary error returned
 		return nil, fmt.Errorf("ensure queue: %w", qErr)
 	}
 
-	// ── Step 3.5: .managed marker — created BEFORE session spawn (hk-p006e) ──
-	//
-	// MUST precede SpawnCrewSession so the in-session keeper (a sibling tmux
-	// window launched inside SpawnCrewSession as "keeper") finds the marker at
-	// startup. harmonik keeper Step 2 calls keeper.IsManaged immediately on boot:
-	// if the marker is absent, the keeper exits as a no-op and never arms.
-	// The old position (step 6a, after the spawn) caused a race: the keeper
-	// started and checked IsManaged before the daemon reached step 6a.
-	//
-	// Non-fatal: a failure logs to stderr and the crew start continues. The
-	// keeper will fail to arm (no-op exit) if the marker could not be written;
-	// ops-monitor will surface keeper-missing and the watch skill will re-arm.
 	if markerErr := createCrewManagedMarker(h.projectDir, req.Name); markerErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: crew-start: create .managed marker for %q: %v\n", req.Name, markerErr)
 	}
 
-	// ── Step 4: build launch spec + spawn ──
-	// Read the optional model: front-matter field from the mission handoff
-	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
-	// or absent field yields "" and the crew inherits the compiled default model.
 	model := crewrun.ReadMissionModel(req.MissionPath)
-	// Crew-scoped harness resolution (hk-l63b9): flag > mission harness:
-	// front-matter > per-crew config > default "claude". This is a SEPARATE
-	// resolver from the worker per-bead resolveHarness (harnessresolve.go) — a
-	// crew has no bead to carry a harness:<type> label.
 	harness := crewrun.ResolveCrewHarness(req.Harness, crewrun.ReadMissionHarness(req.MissionPath), h.crewConfigHarness(req.Name))
 	lspec, buildErr := crewrun.BuildCrewLaunchSpec(crewrun.CrewLaunchCtx{
 		ClaudeBinary: h.claudeBinary,
@@ -258,11 +199,6 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	var windowHandle string
 	if h.substrate != nil {
 		argv := append([]string{lspec.Binary}, lspec.Args...)
-		// WindowName names the crew's claude pane window. The independent-session
-		// path (SpawnCrewSession) hardcodes tmux.WindowAgent internally and also
-		// adds a sibling tmux.WindowKeeper window; this value is consumed only by
-		// the fallback SpawnWindow path, where the CONTRACT "agent" name keeps the
-		// crew pane consistent across both paths (hk-rmy1, slice C).
 		spawn := handler.SubstrateSpawn{
 			WindowName: tmux.WindowAgent,
 			Cwd:        lspec.WorkDir,
@@ -271,40 +207,22 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		}
 
 		if css, ok := h.substrate.(crewSessionSpawner); ok {
-			// ── Independent-session path (hk-mmlqt) ──
-			// Crew lives in its own tmux session so daemon SIGTERM / supervisor-revive
-			// does not kill running crew windows. SpawnCrewSession creates the session
-			// with TWO windows — "agent" (this crew claude) and "keeper" (the per-crew
-			// session-keeper, "harmonik keeper --tmux <session>:agent"). Invariant I1:
-			// a crew RESTART/re-task must respawn ONLY the "agent" window so the keeper
-			// window survives — there is NO in-daemon crew-restart path here today (crew
-			// restart is driven by the keeper itself / externally via crew stop+start),
-			// so no agent-only respawn is implemented in this package; the keeper window
-			// is the durable sibling that re-binds to a freshly respawned agent pane.
 			var sess handler.SubstrateSession
 			sess, err = css.SpawnCrewSession(ctx, req.Name, spawn)
 			if err != nil {
 				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
 				return nil, fmt.Errorf("spawn crew session: %w", err)
 			}
-			// ── Async keeper liveness probe (hk-qgfme) ──
-			// Run off the synchronous RPC so the caller always gets a live agent
-			// back immediately. If the keeper watcher fails to acquire its flock
-			// within flock_acquire_grace, the goroutine emits an event + comms
-			// alert. Probe is DISABLED when FlockAcquireGrace == 0 (not configured).
 			if h.keeperCfg.FlockAcquireGrace > 0 {
 				go h.probeKeeperLiveness(req.Name, h.keeperCfg.FlockAcquireGrace)
 			}
 			if wh, ok2 := sess.(windowHandleExposer); ok2 {
 				windowHandle = wh.WindowHandle()
 			}
-			// ── Step 5: paste mission kick-off line (best-effort) ──
 			if req.MissionPath != "" {
 				h.pasteCrewMissionToSession(ctx, sess, sessionID, req.MissionPath)
 			}
 		} else {
-			// ── Fallback: window inside the daemon's session ──
-			// Used by test doubles that don't implement crewSessionSpawner.
 			prs := newPerRunSubstrate(h.substrate, h.claudeBinary, nil)
 			var sess handler.SubstrateSession
 			if prs != nil {
@@ -319,25 +237,15 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 			if wh, ok2 := sess.(windowHandleExposer); ok2 {
 				windowHandle = wh.WindowHandle()
 			}
-			// ── Step 5: paste mission kick-off line (best-effort) ──
 			if prs != nil && req.MissionPath != "" {
 				h.pasteCrewMission(ctx, prs, sessionID, req.MissionPath)
 			}
 		}
 	}
 
-	// ── Step 6a: .managed marker already created in step 3.5 (hk-p006e) ──
-	//
-	// Retained note (hk-rmy1): the marker gates keeper.IsManaged on boot — it is
-	// NOT redundant. External readers (keeper doctor, crew-stop cleanup) also key
-	// off it. It was moved to step 3.5 (before the spawn) to close the race where
-	// the keeper process started before the marker existed and exited as a no-op.
-
-	// ── Step 7: update registry with handle ──
 	if windowHandle != "" {
 		rec.Handle = windowHandle
 		if updateErr := crew.Write(h.projectDir, rec); updateErr != nil {
-			// Non-fatal: session is running; handle is just missing from registry.
 			fmt.Fprintf(os.Stderr, "daemon: crew-start: update registry handle for %q: %v\n", req.Name, updateErr)
 		}
 	}
@@ -353,15 +261,9 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	return out, nil
 }
 
-// resolveSessionID determines the session_id to use for a crew-start call.
-//
-// Returns (newSessionID, false, nil) for a fresh crew session.
-// Returns (existingID, true, nil) for a stale re-launch (record exists; resume it).
-// Returns ("", false, err) when a collision blocks the start.
 func (h *crewHandlerImpl) resolveSessionID(name, wantQueue string) (sessionID string, isResume bool, err error) {
 	existing, loadErr := crew.Load(h.projectDir, name)
 	if errors.Is(loadErr, crew.ErrNotFound) {
-		// No existing record. Check for queue conflict then mint a fresh id.
 		if conflictErr := h.checkQueueConflict(name, wantQueue); conflictErr != nil {
 			return "", false, conflictErr
 		}
@@ -370,15 +272,9 @@ func (h *crewHandlerImpl) resolveSessionID(name, wantQueue string) (sessionID st
 	if loadErr != nil {
 		return "", false, fmt.Errorf("load existing record for %q: %w", name, loadErr)
 	}
-	// Record exists → treat as stale re-launch: reuse the recorded session_id
-	// and launch with --resume so the crew continues the same conversation.
-	// Per spec §7: "re-use name+queue and the recorded session_id, relaunching
-	// interactive --resume <uuid>".
 	return existing.SessionID, true, nil
 }
 
-// checkQueueConflict scans existing crew records for a LIVE binding to wantQueue
-// under a different name. Returns an error if a conflict is found.
 func (h *crewHandlerImpl) checkQueueConflict(name, wantQueue string) error {
 	records, err := crew.List(h.projectDir)
 	if err != nil {
@@ -392,13 +288,6 @@ func (h *crewHandlerImpl) checkQueueConflict(name, wantQueue string) error {
 	return nil
 }
 
-// resolveCrewType determines the crew's agent type for the durable registry
-// record. An explicit req.Type wins; otherwise the type is derived from a
-// same-named type folder under .harmonik/agents/ (oversight singletons —
-// admiral, watch — launch with instance name == type name). When neither
-// resolves, "" is returned and Record.EffectiveType() reads it as the default
-// "crew". The stamped type lets the SD-3 reaper honour lifecycle.persistent
-// (hk-dy5gw).
 func (h *crewHandlerImpl) resolveCrewType(req crewrun.CrewStartRequest) string {
 	if req.Type != "" {
 		return req.Type
@@ -410,8 +299,6 @@ func (h *crewHandlerImpl) resolveCrewType(req crewrun.CrewStartRequest) string {
 	return ""
 }
 
-// ensureQueue ensures the named queue exists in .harmonik/queues/<name>.json.
-// If absent, persists a minimal empty Queue{Name:q, Workers:1}. Idempotent.
 func (h *crewHandlerImpl) ensureQueue(ctx context.Context, queueName string) error {
 	q, err := queue.Load(ctx, h.projectDir, queueName)
 	if err != nil {
@@ -420,10 +307,6 @@ func (h *crewHandlerImpl) ensureQueue(ctx context.Context, queueName string) err
 	if q != nil {
 		return nil // already exists
 	}
-	// Status is set to QueueStatusCompleted so the QM-027 single-active guard
-	// permits the first queue-submit to this name. An empty/zero status is not
-	// "completed", so the guard would incorrectly reject the submit with
-	// queue_already_active (-32010) — hk-vrnh3.
 	minimal := &queue.Queue{
 		SchemaVersion: 1,
 		Name:          queueName,
@@ -436,21 +319,9 @@ func (h *crewHandlerImpl) ensureQueue(ctx context.Context, queueName string) err
 	return nil
 }
 
-// pasteCrewMission delivers the mission kick-off line to the crew pane via the
-// bracketed-paste mechanism (mirrors pasteInjectImplementerInitial).
-//
-// Message: "Please read <handoffPath> and run /session-resume on it, then begin
-// your operating loop."
-//
-// Best-effort: errors are logged to stderr but do not fail the crew-start op.
 func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecter, sessionID, handoffPath string) {
-	// P2 E5 RT19c gave the shared paste helpers a ClockPort so the RUN path's
-	// Working-phase watchdogs become FakeClock-drivable. The crew-start handler is
-	// not a run-path dispatch and carries no ports bundle, so it stays on the
-	// system clock here rather than inventing a seam RT19c did not scope.
 	clk := substrate.ClockPort(substrate.SystemClock{})
 
-	// Dismiss the welcome splash with an Enter keypress before the paste.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: crew-start: splash dismiss SendEnterToLastPane: %v\n", err)
@@ -461,38 +332,16 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	bufName := bufferName(sessionID, "crew-init")
 	msg := fmt.Sprintf("Please read %s and run /session-resume on it, then begin your operating loop.\n", handoffPath)
 
-	// Verify the seed actually rendered into the input box BEFORE submitting,
-	// re-pasting on a silently-dropped paste (hk-dvcc7). This mirrors the working
-	// implementer/reviewer paths (injectAndVerifySeed, hk-zexsj); the crew path
-	// alone still used a blind WriteLastPane + fixed-delay submit Enter, which on
-	// a slow or concurrent cold-start fired the Enter while the bracketed paste
-	// was still being absorbed — the keypress raced the paste and was swallowed,
-	// leaving the seed typed-but-unsubmitted so the crew idled silently until
-	// someone manually pressed Enter. injectAndVerifySeed captures the pane and
-	// confirms the marker rendered (re-pasting up to pasteVerifyAttempts) so the
-	// submit only fires once the seed is demonstrably in the input bar. Marker
-	// "/session-resume" is a stable literal in the seed, guaranteed present on a
-	// successful render (the handoff path is variable, so it is not the marker).
 	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "/session-resume", "crew-init"); reason != "" {
 		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission unverified: %s\n", reason)
 		return
 	}
-	// Settle after the paste before submitting (hk-jzpqo/hk-76n5g): the bracketed
-	// paste is still being absorbed by the TUI when the first submit Enter fires;
-	// waiting splashDismissWait gives the REPL time to return to an input-ready
-	// state before the bounded submit-Enter retry. A redundant Enter at an
-	// already-submitted REPL is a harmless empty line, so the retry only ever
-	// helps: at least one keypress lands after the input handler is ready.
 	splashDismissWait(ctx, clk)
 	if es, ok := inj.(enterSender); ok {
 		sendSubmitEnterWithRetry(ctx, clk, es, "crew-init")
 	}
 }
 
-// crewPasteInjector implements pasteInjecter and enterSender for the crew
-// independent-session spawn path (hk-mmlqt). It delivers paste operations
-// directly to a specific pane target using the tmux adapter, bypassing the
-// perRunSubstrate (which routes via shared spawn state in the daemon session).
 type crewPasteInjector struct {
 	adapter interface {
 		WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error
@@ -523,12 +372,6 @@ func (c *crewPasteInjector) CaptureLastPane(ctx context.Context, scrollback int)
 	return pc.CapturePane(ctx, c.paneTarget, scrollback)
 }
 
-// pasteCrewMissionToSession delivers the mission kick-off line to the crew pane
-// using the pane target captured from sess (independent-session path, hk-mmlqt).
-//
-// It builds a crewPasteInjector from the substrate's tmux adapter and the
-// session's pane target, then delegates to pasteCrewMission. Best-effort: if
-// the adapter or pane target is unavailable, the paste is silently skipped.
 func (h *crewHandlerImpl) pasteCrewMissionToSession(ctx context.Context, sess handler.SubstrateSession, sessionID, handoffPath string) {
 	pt, ok := sess.(paneTargeter)
 	if !ok {
@@ -546,9 +389,6 @@ func (h *crewHandlerImpl) pasteCrewMissionToSession(ctx context.Context, sess ha
 	h.pasteCrewMission(ctx, inj, sessionID, handoffPath)
 }
 
-// createCrewManagedMarker creates .harmonik/keeper/<name>.managed so the keeper
-// recognises this crew member as managed (keeper.IsManaged returns true).
-// Idempotent: succeeds when the file already exists.
 func createCrewManagedMarker(projectDir, name string) error {
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
@@ -563,20 +403,6 @@ func createCrewManagedMarker(projectDir, name string) error {
 	return f.Close()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Keeper post-spawn liveness probe (hk-qgfme)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// probeKeeperLiveness polls LiveKeeperPresent for up to grace after a crew
-// session is spawned. Called as a goroutine (async, off the HandleCrewStart RPC)
-// so the caller always receives a live agent immediately.
-//
-// If the keeper watcher flock is not held by the end of the grace window,
-// reportKeeperWatcherDead emits a session_keeper_watcher_dead event and a
-// keeper-alert comms message. The crew agent is ALWAYS kept live; this path
-// is warn-loud, never a hard-block.
-//
-// The probe is disabled (not called) when keeperCfg.FlockAcquireGrace == 0.
 func (h *crewHandlerImpl) probeKeeperLiveness(crewName string, grace time.Duration) {
 	fn := h.liveKeeperFn
 	if fn == nil {
@@ -601,18 +427,6 @@ func (h *crewHandlerImpl) probeKeeperLiveness(crewName string, grace time.Durati
 	}
 }
 
-// reportKeeperWatcherDead fires when the post-spawn probe finds the keeper
-// watcher flock unheld after the grace window. It logs to stderr (always),
-// emits a session_keeper_watcher_dead event (when eventBus != nil), and sends
-// a keeper-alert comms message to the operator (when commsBus != nil).
-//
-// The crew agent remains live; the captain/operator is responsible for
-// remediation (e.g. running `harmonik keeper --agent <crew>`).
-//
-// The context is deliberately detached. This runs on the goroutine that the
-// crew-start RPC starts and then leaves behind, so the RPC context is already
-// cancelled by the time the grace window ends. On the caller's context the
-// alarm would never be raised — the alarm is the whole point of the probe.
 func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Duration) {
 	ctx := context.Background()
 	fmt.Fprintf(os.Stderr,
@@ -620,7 +434,6 @@ func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Du
 			"check keeper config and run 'harmonik keeper --agent %s'\n",
 		crewName, grace.Seconds(), crewName)
 
-	// Emit durable session_keeper_watcher_dead event.
 	if h.eventBus != nil {
 		payload := core.SessionKeeperWatcherDeadPayload{
 			AgentName:          crewName,
@@ -633,7 +446,6 @@ func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Du
 		}
 	}
 
-	// Send keeper-alert comms to operator.
 	if h.commsBus != nil {
 		msg := core.AgentMessagePayload{
 			From:  "daemon",
@@ -648,10 +460,6 @@ func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Du
 		_, _ = h.commsBus.EmitAgentMessage(ctx, msg)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HandleCrewStop
-// ─────────────────────────────────────────────────────────────────────────────
 
 // HandleCrewStop implements crewrun.CrewHandler.HandleCrewStop.
 //
@@ -678,10 +486,6 @@ func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMe
 		return nil, fmt.Errorf("load record for %q: %w", req.Name, err)
 	}
 
-	// ── Quit→grace→kill the pane / session (hk-mmlqt) ──
-	// Use crewSessionStopper (kills the whole independent session) when available.
-	// Fall back to crewPaneStopper (kills the window inside the daemon session)
-	// for substrates that don't implement the independent-session path.
 	if h.substrate != nil {
 		if css, ok := h.substrate.(crewSessionStopper); ok {
 			if stopErr := css.StopCrewSession(ctx, req.Name, rec.Handle); stopErr != nil {
@@ -696,18 +500,15 @@ func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMe
 		}
 	}
 
-	// ── Remove .managed marker ──
 	markerPath := filepath.Join(h.projectDir, ".harmonik", "keeper", req.Name+".managed")
 	if removeErr := os.Remove(markerPath); removeErr != nil && !os.IsNotExist(removeErr) {
 		fmt.Fprintf(os.Stderr, "daemon: crew-stop: remove .managed for %q: %v\n", req.Name, removeErr)
 	}
 
-	// ── Remove registry record ──
 	if removeErr := crew.Remove(h.projectDir, req.Name); removeErr != nil && !errors.Is(removeErr, crew.ErrNotFound) {
 		return nil, fmt.Errorf("remove registry for %q: %w", req.Name, removeErr)
 	}
 
-	// ── Optional --pause-queue ──
 	if req.PauseQueue && h.opPauseCtrl != nil && rec.Queue != "" {
 		if pauseErr := h.opPauseCtrl.HandleOperatorPause(ctx, rec.Queue); pauseErr != nil {
 			return nil, fmt.Errorf("pause queue %q: %w", rec.Queue, pauseErr)

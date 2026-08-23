@@ -10,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/agentmanifest"
 )
 
-// --- test fixtures ---
-
 const validManifest = `
 type: mytype
 cardinality: { min: 0, max: n }
@@ -68,7 +66,6 @@ const validOperating = `## On wake
 - Do not overstep.
 `
 
-// makeTypeFolder creates a minimal valid type folder under agentsDir/typeName.
 func makeTypeFolder(t *testing.T, agentsDir, manifestYAML string) {
 	t.Helper()
 	const typeName = "mytype"
@@ -87,8 +84,6 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write %q: %v", path, err)
 	}
 }
-
-// --- Load tests ---
 
 func TestLoad_ValidType(t *testing.T) {
 	t.Parallel()
@@ -152,7 +147,6 @@ func TestLoad_ValidType(t *testing.T) {
 func TestLoad_LifecyclePersistent(t *testing.T) {
 	t.Parallel()
 
-	// Absent → defaults to false (validManifest declares only self_restart).
 	agentsDir := t.TempDir()
 	makeTypeFolder(t, agentsDir, validManifest)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
@@ -163,7 +157,6 @@ func TestLoad_LifecyclePersistent(t *testing.T) {
 		t.Errorf("Lifecycle.Persistent = true, want false (property absent)")
 	}
 
-	// Present and true → parses true.
 	persistentManifest := strings.Replace(validManifest,
 		"lifecycle:\n  self_restart: true",
 		"lifecycle:\n  self_restart: true\n  persistent: true", 1)
@@ -215,7 +208,6 @@ func TestLoad_MissingManifest(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// No manifest.yaml written.
 
 	_, err := agentmanifest.Load(agentsDir, "orphan")
 	if !errors.Is(err, agentmanifest.ErrNotFound) {
@@ -232,7 +224,6 @@ func TestLoad_MissingSoul(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "manifest.yaml"), validManifest)
 	writeFile(t, filepath.Join(dir, "operating.md"), validOperating)
-	// soul.md intentionally absent
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -249,7 +240,6 @@ func TestLoad_MissingOperating(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "manifest.yaml"), validManifest)
 	writeFile(t, filepath.Join(dir, "soul.md"), validSoul)
-	// operating.md intentionally absent
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -400,8 +390,6 @@ triggers:
 	}
 }
 
-// --- MaxCardinality unmarshaling ---
-
 func TestLoad_MaxCardinality_Unlimited(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
@@ -534,8 +522,6 @@ triggers:
 	}
 }
 
-// --- ResolveRef tests ---
-
 func TestResolveRef_PathBearingIsLiteral(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
@@ -552,7 +538,6 @@ func TestResolveRef_PathBearingIsLiteral(t *testing.T) {
 func TestResolveRef_BareRef_SharedFirst(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
-	// Create shared skill and per-type skill with the same name.
 	sharedSkill := filepath.Join(agentsDir, "_skills", "crew-launch")
 	if err := os.MkdirAll(sharedSkill, 0o700); err != nil {
 		t.Fatal(err)
@@ -574,7 +559,6 @@ func TestResolveRef_BareRef_SharedFirst(t *testing.T) {
 func TestResolveRef_BareRef_TypeFolderFallback(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
-	// Only the per-type skill exists (not in _skills/).
 	typeSkill := filepath.Join(agentsDir, "crew", "private-skill")
 	if err := os.MkdirAll(typeSkill, 0o700); err != nil {
 		t.Fatal(err)
@@ -602,7 +586,6 @@ func TestResolveRef_BareRef_NotFound(t *testing.T) {
 func TestResolveRef_BareRef_FileInTypeFolder(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
-	// operating.md is a file in the type folder, not a directory.
 	typeDir := filepath.Join(agentsDir, "crew")
 	if err := os.MkdirAll(typeDir, 0o700); err != nil {
 		t.Fatal(err)

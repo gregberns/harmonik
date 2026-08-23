@@ -23,7 +23,6 @@ import (
 	"testing"
 )
 
-// dotFixtureHarnessNode finds the named node in a parsed graph or fails.
 func dotFixtureHarnessNode(t *testing.T, g *Graph, id string) *Node {
 	t.Helper()
 	for _, n := range g.Nodes {
@@ -35,8 +34,6 @@ func dotFixtureHarnessNode(t *testing.T, g *Graph, id string) *Node {
 	return nil
 }
 
-// dotFixtureHarnessGraph returns a minimal graph whose implementer node carries
-// harness=codex, agent_runtime=codex, and reviewer_harness=claude-code.
 func dotFixtureHarnessGraph() string {
 	return `digraph harness_test {
   schema_version="1";
@@ -74,8 +71,6 @@ func TestDotFixtureHarnessAttrsParsed(t *testing.T) {
 		t.Errorf("node work: ReviewerHarness = %q, want %q", n.ReviewerHarness, "claude-code")
 	}
 
-	// The attrs MUST be typed fields, not retained in UnknownAttrs (WG-002),
-	// otherwise the dispatcher (forbidden from reading UnknownAttrs) cannot see them.
 	for _, k := range []string{"harness", "agent_runtime", "reviewer_harness"} {
 		if v, ok := n.UnknownAttrs[k]; ok {
 			t.Errorf("node work: attr %q leaked into UnknownAttrs (=%q); must be a typed field", k, v)

@@ -1,26 +1,11 @@
 package core
 
-// agentevents_hqwn59_prop_test.go — property tests for the Valid() methods
-// declared in agentevents_hqwn59.go that are not already covered by
-// agentevents_hqwn59_test.go (AgentRateLimitStatus / AgentRateLimitStatusPayload
-// are excluded here to avoid duplicate coverage).
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// Approach: rapid generator builds a valid payload, flips exactly one required
-// field to its zero/invalid value, asserts Valid()==false; all-valid -> true.
-//
-// Refs: hk-qgzso (property-test coverage uplift for hk-j3hrn core uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ============================================================
-// AgentStartedPayload
-// ============================================================
 
 func TestProp_AgentStartedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -84,7 +69,6 @@ func TestProp_AgentStartedPayload_EmptyNodeIDRejected(t *testing.T) {
 
 func TestProp_AgentStartedPayload_InvalidAgentTypeRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Uppercase letters violate the AgentType regex.
 		s := "Invalid-Type-" + rapid.StringN(1, 10, -1).Draw(rt, "suffix")
 		p := AgentStartedPayload{
 			RunID:     RunID(drawNonNilUUID(rt, "run_id")),
@@ -113,10 +97,6 @@ func TestProp_AgentStartedPayload_EmptyStartedAtRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// AgentReadyPayload
-// ============================================================
 
 func TestProp_AgentReadyPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -170,10 +150,6 @@ func TestProp_AgentReadyPayload_NilCapabilitiesRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// LaunchInitiatedPayload
-// ============================================================
-
 func TestProp_LaunchInitiatedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := LaunchInitiatedPayload{
@@ -226,10 +202,6 @@ func TestProp_LaunchInitiatedPayload_EmptyClaudeSessionIDRejected(t *testing.T) 
 	})
 }
 
-// ============================================================
-// AgentReadyTimeoutPayload
-// ============================================================
-
 func TestProp_AgentReadyTimeoutPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := AgentReadyTimeoutPayload{
@@ -281,10 +253,6 @@ func TestProp_AgentReadyTimeoutPayload_ZeroTimeoutMsRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// AgentOutputChunkPayload
-// ============================================================
 
 func TestProp_AgentOutputChunkPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -371,10 +339,6 @@ func TestProp_AgentOutputChunkPayload_EmptyChunkDigestRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// AgentFailedPayload
-// ============================================================
 
 func TestProp_AgentFailedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -474,10 +438,6 @@ func TestProp_AgentFailedPayload_EmptyReasonRejected(t *testing.T) {
 	})
 }
 
-// ============================================================
-// SkillsProvisionedPayload
-// ============================================================
-
 func TestProp_SkillsProvisionedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := SkillsProvisionedPayload{
@@ -575,10 +535,6 @@ func TestProp_SkillsProvisionedPayload_EmptySkillVersionRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// SessionLogLocationPayload
-// ============================================================
 
 func TestProp_SessionLogLocationPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -693,10 +649,6 @@ func TestProp_SessionLogLocationPayload_EmptyBeadIDRejected(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// HandlerCapabilitiesPayload
-// ============================================================
 
 func TestProp_HandlerCapabilitiesPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

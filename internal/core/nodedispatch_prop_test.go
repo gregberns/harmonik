@@ -1,23 +1,11 @@
 package core
 
-// Property tests for Valid() methods in nodedispatchpayload.go and
-// nodedispatchdecidedpayload.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Bead ref: hk-z02yj (part of hk-j3hrn core coverage uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ---------------------------------------------------------------------------
-// NodeDispatchOrigin
-// ---------------------------------------------------------------------------
 
 func TestProp_NodeDispatchOrigin_Valid_AcceptsDeclaredConstants(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -44,10 +32,6 @@ func TestProp_NodeDispatchOrigin_Valid_RejectsArbitraryStrings(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// NodeDispatchRequestedPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_NodeDispatchRequestedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -123,10 +107,6 @@ func TestProp_NodeDispatchRequestedPayload_Valid_RejectsInvalidOrigin(t *testing
 	})
 }
 
-// ---------------------------------------------------------------------------
-// NodeDispatchDecidedPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_NodeDispatchDecidedPayload_Valid_AcceptsAdvanceOutcome(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := NodeDispatchDecidedPayload{
@@ -198,7 +178,6 @@ func TestProp_NodeDispatchDecidedPayload_Valid_RejectsEmptyFromNodeID(t *testing
 
 func TestProp_NodeDispatchDecidedPayload_Valid_RejectsNoOutcome(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// NextNodeID empty, IsTerminal false, Failed false → no outcome set.
 		p := NodeDispatchDecidedPayload{
 			RunID:      RunID(drawNonNilUUID(rt, "run_id")),
 			FromNodeID: rapid.StringN(1, 64, -1).Draw(rt, "from_node"),
@@ -213,7 +192,6 @@ func TestProp_NodeDispatchDecidedPayload_Valid_RejectsNoOutcome(t *testing.T) {
 
 func TestProp_NodeDispatchDecidedPayload_Valid_RejectsMultipleOutcomes(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// NextNodeID non-empty AND IsTerminal → two outcomes set simultaneously.
 		p := NodeDispatchDecidedPayload{
 			RunID:      RunID(drawNonNilUUID(rt, "run_id")),
 			FromNodeID: rapid.StringN(1, 64, -1).Draw(rt, "from_node"),

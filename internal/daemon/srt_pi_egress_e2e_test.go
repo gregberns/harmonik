@@ -1,88 +1,5 @@
 package daemon_test
 
-// srt_pi_egress_e2e_test.go — ISOLATED end-to-end proof of the Pi srt egress
-// bug and its fix (hk-ybuts / hk-u69my). Inaugural instance of the PRE-DEPLOY
-// END-TO-END TEST GATE (orchestrator-rules): a changed daemon launch behavior is
-// proven by an e2e test that reproduces the REAL launch path in isolation — no
-// live daemon is constructed or touched.
-//
-// # The bug
-//
-// The daemon launches the Pi harness (SessionIDCaptured) via the exec path with
-// an srt sandbox wrap. With the DGX vLLM model server confirmed LIVE, a
-// daemon-launched Pi run failed in ~4s ("implement exited without advancing
-// HEAD") and the model server logged ZERO inbound requests: the srt-wrapped Pi
-// process never reached the model. An identical OUT-OF-DAEMON Pi launch (same
-// argv/env/models.json, NO srt wrap) succeeded end-to-end.
-//
-// # Root cause (proven by this test)
-//
-// GenerateSandboxProfile hardcoded network.allowLocalBinding=false. The model
-// server is at http://192.168.1.86:8551 — a private-LAN address that srt's
-// default no_proxy set (127.0.0.1, 10/8, 172.16/12, 192.168/16, …) routes as a
-// DIRECT connection, bypassing srt's MITM proxy. macOS Seatbelt then denies that
-// raw socket ("Operation not permitted") unless network.allowLocalBinding is
-// true. srt's allowedDomains path only covers PROXIED public HTTPS (the
-// openrouter.ai spike), so it does nothing for a direct-connect LAN/loopback
-// endpoint. There was no config path to enable local binding, so a sandboxed Pi
-// could never reach a locally-hosted model.
-//
-// # The TRUE srt local-egress finding (Option A rationale)
-//
-// srt does NOT treat loopback and a REMOTE private-LAN host identically.
-// Empirically proven this session:
-//
-//   - LOCAL interfaces (loopback 127.0.0.1, and this host's own non-loopback
-//     interface IPs): with network.allowLocalBinding=true the direct socket OPENS.
-//     curl reaches a locally-hosted endpoint. (Proven by
-//     TestPiEgress_LocalInterfaceIsPermitted below.)
-//   - REMOTE host on the LAN (the DGX box at 192.168.1.86:8551 — a DIFFERENT
-//     machine): the direct socket stays BLOCKED under srt regardless of
-//     allowLocalBinding. A raw socket to a remote host is denied.
-//
-// The earlier comment here claimed srt "blocks BOTH loopback and 192.168.x direct
-// sockets identically unless allowLocalBinding is set." That premise was FALSE on
-// two counts: allowLocalBinding opens loopback, AND it opens this host's own
-// non-loopback interfaces; the true discriminator is REMOTE-HOST vs LOCAL, not
-// loopback vs non-loopback. Because the old test only exercised a loopback stub,
-// it went green while the REAL path to the remote DGX model server was still
-// blocked. (Note: the remote-host block is not reproducible with an in-process
-// stub, since a stub can only bind local interfaces — see
-// TestPiEgress_LocalInterfaceIsPermitted's comment.)
-//
-// The operator chose OPTION A: keep the srt sandbox and reach the DGX model over a
-// LOOPBACK SSH TUNNEL — config base_url is now http://127.0.0.1:8551/v1. This
-// works precisely because loopback opens under allowLocalBinding while the LAN
-// address does not. So the loopback-reaches-stub assertion below faithfully
-// mirrors the REAL Option-A path: config -> 127.0.0.1 tunnel -> DGX.
-//
-// # What this harness does (real-srt-spawn mode)
-//
-//  1. Stands up a STUB HTTP model server on loopback (httptest.Server) that
-//     records whether it received a request and returns a minimal
-//     OpenAI-completions response. Loopback faithfully mirrors the real Option-A
-//     path (config -> 127.0.0.1 tunnel -> DGX): both are a loopback direct-connect
-//     socket gated by allowLocalBinding.
-//  2. Builds the srt spawn decision via the REAL gate (ExportedSandboxSpawnForRun)
-//     and wraps a trivial `curl <stub>` command via the REAL exec-path wrapper
-//     (ExportedSandboxWrapExecArgv) — the exact functions the workloop uses for a
-//     SessionIDCaptured (pi) run.
-//  3. Spawns the wrapped argv and asserts the stub recorded the request.
-//
-// A companion test (TestPiEgress_LocalInterfaceIsPermitted) binds a stub to the
-// host's real non-loopback IPv4 and shows the srt-wrapped curl CAN reach it with
-// allowLocalBinding=true — pinning the true discriminator (remote-host vs local),
-// since the actual DGX remote-host block cannot be reproduced by an in-process
-// stub (a stub can only bind local interfaces).
-//
-// RED (old code): AllowLocalBinding is ignored (hardcoded false) → curl's socket
-// is denied → stub NOT hit. GREEN (after fix): AllowLocalBinding is honored →
-// stub hit.
-//
-// If srt or curl is unavailable the test SKIPS the real spawn and instead asserts
-// on the generated profile JSON (allowLocalBinding must be true) — documented at
-// the skip site.
-
 import (
 	"context"
 	"encoding/json"
@@ -99,9 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// egressStubModelServer starts a loopback HTTP server standing in for the local
-// OpenAI-compatible model endpoint. It records whether any request arrived and
-// returns a minimal completions body.
 func egressStubModelServer(t *testing.T) (url string, wasHit func() bool) {
 	t.Helper()
 	var hit atomic.Bool
@@ -114,9 +28,6 @@ func egressStubModelServer(t *testing.T) (url string, wasHit func() bool) {
 	return srv.URL, hit.Load
 }
 
-// egressSandboxInput builds a SandboxProfileInput exactly as the workloop would,
-// toggling AllowLocalBinding. All REQUIRED fields are satisfied so
-// GenerateSandboxProfile succeeds.
 func egressSandboxInput(t *testing.T, allowLocalBinding bool) daemon.SandboxProfileInput {
 	t.Helper()
 	tmp := t.TempDir()
@@ -129,8 +40,6 @@ func egressSandboxInput(t *testing.T, allowLocalBinding bool) daemon.SandboxProf
 	}
 }
 
-// egressPiSandboxConfig is the config the live deployment uses:
-// backend=srt, harnesses:[pi], NO network block beyond the local-binding toggle.
 func egressPiSandboxConfig(allowLocalBinding bool) projectconfig.SandboxConfig {
 	return projectconfig.SandboxConfig{
 		Backend:   "srt",
@@ -141,13 +50,9 @@ func egressPiSandboxConfig(allowLocalBinding bool) projectconfig.SandboxConfig {
 	}
 }
 
-// runWrappedCurl spawns the srt-wrapped `curl <url>` and reports whether it
-// exited 0. It reproduces the workloop's exec path: gate → exec-wrap → spawn.
 func runWrappedCurl(t *testing.T, allowLocalBinding bool, url string) (ranClean bool, combined string) {
 	t.Helper()
 
-	// REAL gate: for a pi run under backend=srt + harnesses:[pi] this returns a
-	// non-nil SrtSpawnConfig carrying the profile input. AgentType "pi".
 	spawn := daemon.ExportedSandboxSpawnForRun(
 		egressPiSandboxConfig(allowLocalBinding),
 		core.AgentType("pi"),
@@ -158,13 +63,6 @@ func runWrappedCurl(t *testing.T, allowLocalBinding bool, url string) (ranClean 
 	}
 	spawn.SrtBinary = "srt"
 
-	// REAL exec-path wrap: srt --settings <profile> curl <long-flags> <url>.
-	//
-	// curl's LONG flags are deliberate: srt uses commander, whose parser would
-	// otherwise consume curl's short -s/-o/-w as srt's own -s/--settings etc.
-	// (interleaved-option collision). Pi's real argv (pi --mode json --provider
-	// … --model … <seed>) is all long flags, so it has no such collision — the
-	// long-flag curl faithfully mirrors that argv shape through the SAME wrap.
 	bin, args, _, err := daemon.ExportedSandboxWrapExecArgv(
 		spawn, "curl",
 		[]string{"--silent", "--max-time", "6", "--output", "/dev/null", "--write-out", "%{http_code}", url},
@@ -210,10 +108,6 @@ func TestPiEgress_LocalBindingReachesStub(t *testing.T) {
 	}
 }
 
-// firstNonLoopbackIPv4 returns the host's first non-loopback IPv4 address, or ""
-// if none is found. This is the property that makes a stub bound to it a faithful
-// reproduction of the REAL DGX target (a private-LAN direct-connect address),
-// rather than a convenient loopback stand-in.
 func firstNonLoopbackIPv4() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -233,9 +127,6 @@ func firstNonLoopbackIPv4() string {
 	return ""
 }
 
-// nonLoopbackStubModelServer binds an httptest server to a specific (non-loopback)
-// address rather than the default loopback. It records whether it was hit, exactly
-// like egressStubModelServer.
 func nonLoopbackStubModelServer(t *testing.T, bindAddr string) (url string, wasHit func() bool) {
 	t.Helper()
 	var hit atomic.Bool
@@ -286,9 +177,6 @@ func TestPiEgress_LocalInterfaceIsPermitted(t *testing.T) {
 
 	url, wasHit := nonLoopbackStubModelServer(t, lanIP)
 
-	// allowLocalBinding=true — the same toggle that opens loopback. It must ALSO
-	// open this LOCAL non-loopback interface, proving "non-loopback" is not the
-	// discriminator (remote-vs-local is).
 	ranClean, out := runWrappedCurl(t, true /*allowLocalBinding*/, url)
 	if !wasHit() {
 		t.Fatalf("sandboxed process did NOT reach a LOCAL non-loopback stub at %s "+

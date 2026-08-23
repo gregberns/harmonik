@@ -1,19 +1,5 @@
 package workflow
 
-// dispatcher_test.go — requirement-traceable sensors for DecideNextNode.
-//
-// Coverage targets (hk-bf85t T-IMPL-008 acceptance criteria):
-//   1. 5-step cascade: status-conditional match, edge-condition evaluation,
-//      cap-hit handling, no-match fallback (structural), unconditional edge.
-//   2. Returns next_node_id or terminal-state indication.
-//   3. Emits NodeDispatchDecidedPayload with NextNodeID populated on Advance.
-//   4. Cap-hit sets CompletionReason="cap_hit" and FailureClass=compilation_loop.
-//
-// Spec refs:
-//   - specs/workflow-graph.md §5 WG-010, WG-011, WG-012.
-//   - specs/execution-model.md §4.10 EM-041, EM-043, EM-046a.
-//   - specs/execution-model.md §4.3 EM-015e  — cap_hit vocabulary.
-
 import (
 	"testing"
 	"time"
@@ -23,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func fixtureRun(t *testing.T) *core.Run {
 	t.Helper()
@@ -44,9 +28,6 @@ func fixtureOutcome(status core.OutcomeStatus) core.Outcome {
 	return core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
 }
 
-// mkCondEdge builds a *dot.Edge whose Condition is parsed from a simple
-// "outcome.STATUS == 'VALUE'" expression. Every caller routes from node "a",
-// so the source node is fixed rather than passed.
 const mkCondEdgeFromNode = "a"
 
 func mkCondEdge(to, lhs, rhs string) *dot.Edge {
@@ -61,12 +42,10 @@ func mkCondEdge(to, lhs, rhs string) *dot.Edge {
 	}
 }
 
-// mkUncondEdge builds a *dot.Edge with no condition (unconditional edge per WG-011).
 func mkUncondEdge(from, to string) *dot.Edge {
 	return &dot.Edge{FromNodeID: from, ToNodeID: to, OrderingKey: to}
 }
 
-// mkGraph builds a minimal *dot.Graph.
 func mkGraph(startNode string, terminalNodes, nodeIDs []string, edges []*dot.Edge) *dot.Graph {
 	g := &dot.Graph{
 		StartNodeID:     startNode,
@@ -78,8 +57,6 @@ func mkGraph(startNode string, terminalNodes, nodeIDs []string, edges []*dot.Edg
 	g.Edges = edges
 	return g
 }
-
-// ── terminal node ─────────────────────────────────────────────────────────────
 
 // TestDecideNextNode_Terminal verifies that when fromNodeID is in
 // terminal_node_ids the decision is IsTerminal=true with no NextNodeID.
@@ -106,8 +83,6 @@ func TestDecideNextNode_Terminal(t *testing.T) {
 		t.Errorf("Payload.NextNodeID = %q, want empty on terminal", dec.Payload.NextNodeID)
 	}
 }
-
-// ── step 1: conditional match by outcome.status (WG-010 step 1) ──────────────
 
 // TestDecideNextNode_ConditionalMatch_Success verifies the SUCCESS edge is
 // selected when outcome.status == SUCCESS.
@@ -155,8 +130,6 @@ func TestDecideNextNode_ConditionalMatch_Fail(t *testing.T) {
 	}
 }
 
-// ── step 2: preferred_label match (WG-010 step 2) ────────────────────────────
-
 // TestDecideNextNode_PreferredLabel narrows the candidate set to the edge
 // whose label matches outcome.preferred_label.
 func TestDecideNextNode_PreferredLabel(t *testing.T) {
@@ -181,8 +154,6 @@ func TestDecideNextNode_PreferredLabel(t *testing.T) {
 	}
 }
 
-// ── step 5: unconditional-edge fallback (WG-011) ──────────────────────────────
-
 // TestDecideNextNode_UnconditionalFallback verifies that when no conditional
 // edge matches the unconditional edge is taken (WG-011 invariant).
 func TestDecideNextNode_UnconditionalFallback(t *testing.T) {
@@ -191,7 +162,6 @@ func TestDecideNextNode_UnconditionalFallback(t *testing.T) {
 	g := mkGraph("a", []string{"specific", "default"}, []string{"a", "specific", "default"},
 		[]*dot.Edge{condEdge, uncondEdge})
 	run := fixtureRun(t)
-	// SUCCESS outcome: FAIL condition won't match; unconditional edge should be taken.
 	cycles := core.NewCycleCounter()
 
 	dec := DecideNextNode(g, "a", fixtureOutcome(core.OutcomeStatusSuccess), run, cycles)
@@ -204,15 +174,12 @@ func TestDecideNextNode_UnconditionalFallback(t *testing.T) {
 	}
 }
 
-// ── no-match → structural failure (WG-012 / EM-046a) ─────────────────────────
-
 // TestDecideNextNode_NoMatch_Structural verifies that when no edge matches the
 // cascade returns Failed=true with FailureClass=structural.
 func TestDecideNextNode_NoMatch_Structural(t *testing.T) {
 	failEdge := mkCondEdge("b", "outcome.status", "FAIL")
 	g := mkGraph("a", []string{"b"}, []string{"a", "b"}, []*dot.Edge{failEdge})
 	run := fixtureRun(t)
-	// SUCCESS outcome: FAIL condition won't match; no unconditional fallback.
 	cycles := core.NewCycleCounter()
 
 	dec := DecideNextNode(g, "a", fixtureOutcome(core.OutcomeStatusSuccess), run, cycles)
@@ -231,8 +198,6 @@ func TestDecideNextNode_NoMatch_Structural(t *testing.T) {
 	}
 }
 
-// ── cap-hit → compilation_loop + CompletionReason="cap_hit" (EM-043, EM-015e) ─
-
 // TestDecideNextNode_CapHit verifies that a traversal-cap hit on the selected
 // edge produces Failed=true with FailureClass=compilation_loop and
 // CompletionReason="cap_hit" per EM-015d-RFD vocabulary.
@@ -241,16 +206,12 @@ func TestDecideNextNode_CapHit(t *testing.T) {
 	outcome := fixtureOutcome(core.OutcomeStatusSuccess)
 	cycles := core.NewCycleCounter()
 
-	// Pre-populate the cycle counter to simulate the cap already being reached.
 	capVal := 1
 	_, err := cycles.Increment(run.RunID, core.NodeID("a"), core.NodeID("b"), &capVal)
 	if err != nil {
 		t.Fatalf("unexpected error on pre-increment: %v", err)
 	}
 
-	// Build a core.Edge with TraversalCap=1 and call SelectNextEdge directly
-	// to verify the cap-hit cascade path.  dot.Edge has no traversal_cap field
-	// at v1, so we test the cap-hit mapping via the core layer.
 	coreEdge := core.Edge{
 		FromNode:     core.NodeID("a"),
 		ToNode:       core.NodeID("b"),
@@ -267,8 +228,6 @@ func TestDecideNextNode_CapHit(t *testing.T) {
 		t.Errorf("FailureClass = %q, want %q", cascadeResult.FailureClass, core.FailureClassCompilationLoop)
 	}
 
-	// Verify that the cap-hit → "cap_hit" mapping in DecideNextNode's failure
-	// path produces the correct CompletionReason.
 	dec := DispatchDecision{
 		Failed:           true,
 		FailureClass:     core.FailureClassCompilationLoop,
@@ -290,8 +249,6 @@ func TestDecideNextNode_CapHit(t *testing.T) {
 		t.Errorf("Payload.CompletionReason = %q, want %q", dec.Payload.CompletionReason, "cap_hit")
 	}
 }
-
-// ── payload fields (acceptance criterion 3) ──────────────────────────────────
 
 // TestDecideNextNode_Payload verifies that Payload fields RunID, FromNodeID,
 // and NextNodeID are correctly populated on a successful cascade.
@@ -316,8 +273,6 @@ func TestDecideNextNode_Payload(t *testing.T) {
 		t.Errorf("Payload.NextNodeID = %q, want %q", dec.Payload.NextNodeID, "end")
 	}
 }
-
-// ── NodeDispatchDecidedPayload.Valid ──────────────────────────────────────────
 
 // TestNodeDispatchDecidedPayload_Valid exercises the Valid() predicate.
 func TestNodeDispatchDecidedPayload_Valid(t *testing.T) {
@@ -373,8 +328,6 @@ func TestNodeDispatchDecidedPayload_Valid(t *testing.T) {
 		})
 	}
 }
-
-// ── context update (EM-041a) ──────────────────────────────────────────────────
 
 // TestDecideNextNode_ContextUpdate verifies that context updates in the outcome
 // are applied before the cascade evaluates edge conditions.

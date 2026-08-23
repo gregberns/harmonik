@@ -9,11 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// adapterFixtureStub is a minimal Adapter implementation used only to verify
-// the interface method-set. It is NOT a usable Adapter; all methods return
-// zero values.
-//
-// Helper prefix: adapterFixture (per implementer-protocol.md §Helper-prefix discipline).
 type adapterFixtureStub struct{}
 
 func (adapterFixtureStub) DetectReady(_ core.EventEnvelope) bool { return false }
@@ -29,15 +24,8 @@ func (adapterFixtureStub) Diagnose(_ context.Context) (handlercontract.Diagnosti
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }
 
-// Compile-time assertion that adapterFixtureStub satisfies the Adapter
-// interface. The blank identifier is deliberate: the declaration exists purely
-// so the build fails when the interface and the stub drift apart.
 var _ handlercontract.Adapter = adapterFixtureStub{}
 
-// adapterFixtureAssertType fails to compile unless got is assignable to T. It
-// replaces the `var _ T = expr` idiom used by the return-type conformance tests
-// below, which staticcheck (QF1011) reads as a redundant type annotation rather
-// than the deliberate assertion it is.
 func adapterFixtureAssertType[T any](_ T) {}
 
 // TestAdapter_MethodSetConformance verifies that the Adapter interface is
@@ -49,24 +37,19 @@ func adapterFixtureAssertType[T any](_ T) {}
 func TestAdapter_MethodSetConformance(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
 
-	// DetectReady(event) -> bool
 	ready := a.DetectReady(core.EventEnvelope{})
 	_ = ready
 
-	// DetectRateLimit(event) -> (bool, time.Duration)
 	limited, retryAfter := a.DetectRateLimit(core.EventEnvelope{})
 	_ = limited
 	_ = retryAfter
 
-	// CleanExitSequence(ctx, session) -> error
 	err := a.CleanExitSequence(context.Background(), sessionFixtureStub{})
 	_ = err
 
-	// RotateAccount(ctx) -> error
 	err = a.RotateAccount(context.Background())
 	_ = err
 
-	// Diagnose(ctx) -> (DiagnosticReport, error)
 	report, err := a.Diagnose(context.Background())
 	_ = report
 	_ = err
@@ -109,8 +92,6 @@ func TestAdapter_DetectRateLimitEventParam(t *testing.T) {
 func TestAdapter_CleanExitSequenceSessionParam(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
 	var s handlercontract.Session = sessionFixtureStub{}
-	// Compile-time parameter-type check; the stub's nil return is also asserted
-	// so a signature change to a non-error result cannot pass silently.
 	if err := a.CleanExitSequence(context.Background(), s); err != nil {
 		t.Fatalf("CleanExitSequence: unexpected error: %v", err)
 	}

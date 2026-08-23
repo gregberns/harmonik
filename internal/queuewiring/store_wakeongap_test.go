@@ -1,17 +1,5 @@
 package queuewiring_test
 
-// queuestore_wakeongap_hkekj_test.go — wake-gap fix tests (hk-ekj).
-//
-// Coverage:
-//   - Resume case: handleOperatorResuming signals WakeCh after transitioning
-//     a paused-by-drain queue back to active so the idle workloop unblocks.
-//   - No-op resume: when no queue is paused, WakeCh is NOT spuriously signaled.
-//   - Startup case: QueueStore.Wake() delivers a signal after startup
-//     queue-load so the idle workloop unblocks on its first tick.
-//
-// Spec ref: specs/queue-model.md §8.6 QM-055 (pause survives restart).
-// Bead ref: hk-ekj.
-
 import (
 	"context"
 	"encoding/json"
@@ -24,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// wakeGapFixturePausedQueue returns a queue whose status is paused-by-drain.
 func wakeGapFixturePausedQueue(t *testing.T, name string) *queue.Queue {
 	t.Helper()
 	return &queue.Queue{
@@ -49,7 +34,6 @@ func wakeGapFixturePausedQueue(t *testing.T, name string) *queue.Queue {
 	}
 }
 
-// wakeGapFixtureResumeEvent builds an operator_resuming event payload.
 func wakeGapFixtureResumeEvent(t *testing.T, queueName string) core.Event {
 	t.Helper()
 	payload := core.OperatorResumingPayload{
@@ -66,7 +50,6 @@ func wakeGapFixtureResumeEvent(t *testing.T, queueName string) core.Event {
 	}
 }
 
-// wakeGapFixtureConsumer builds a QueueOperatorEventConsumer over a sealed bus.
 func wakeGapFixtureConsumer(t *testing.T, qs *queuewiring.QueueStore) *queuewiring.QueueOperatorEventConsumer {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -80,8 +63,6 @@ func wakeGapFixtureConsumer(t *testing.T, qs *queuewiring.QueueStore) *queuewiri
 	return c
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 // TestWakeGap_ResumeSignalsWakeCh verifies that handleOperatorResuming fires
 // WakeCh after transitioning a paused-by-drain queue to active. Without this,
 // a workloop blocked in workloopIdleWait would not wake until the next
@@ -93,14 +74,12 @@ func TestWakeGap_ResumeSignalsWakeCh(t *testing.T) {
 	q := wakeGapFixturePausedQueue(t, "main")
 	qs.SetQueue(q)
 
-	// Drain the SetQueue signal so we start with an empty wake channel.
 	select {
 	case <-qs.WakeCh():
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("SetQueue did not signal WakeCh")
 	}
 
-	// Confirm channel is now empty.
 	select {
 	case <-qs.WakeCh():
 		t.Fatal("unexpected signal before resume")
@@ -114,15 +93,12 @@ func TestWakeGap_ResumeSignalsWakeCh(t *testing.T) {
 		t.Fatalf("handleOperatorResuming: %v", err)
 	}
 
-	// Resume must have signaled WakeCh (hk-ekj fix).
 	select {
 	case <-qs.WakeCh():
-		// pass
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("WakeCh not signaled after queue resume (wake-gap regression)")
 	}
 
-	// Queue status must be active now.
 	got := qs.Queue()
 	if got == nil {
 		t.Fatal("queue absent after resume")
@@ -139,7 +115,6 @@ func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 
 	qs := queuewiring.NewQueueStore()
 
-	// Load an ACTIVE (not paused) queue.
 	q := &queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       "wg-noop-q",
@@ -158,7 +133,6 @@ func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 	}
 	qs.SetQueue(q)
 
-	// Drain the SetQueue signal.
 	select {
 	case <-qs.WakeCh():
 	case <-time.After(100 * time.Millisecond):
@@ -172,12 +146,10 @@ func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 		t.Fatalf("handleOperatorResuming on already-active queue: %v", err)
 	}
 
-	// No transition → no wake signal expected.
 	select {
 	case <-qs.WakeCh():
 		t.Fatal("spurious WakeCh signal when no paused-by-drain queue was transitioned")
 	default:
-		// pass
 	}
 }
 
@@ -189,8 +161,6 @@ func TestWakeGap_StartupLoadWakesWorkloop(t *testing.T) {
 
 	qs := queuewiring.NewQueueStore()
 
-	// Simulate startup: install a queue (mirroring the daemon.Start loop that
-	// calls qs.SetQueue for each loadedQueue), then fire a defensive Wake().
 	q := &queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       "wg-startup-q",
@@ -213,21 +183,16 @@ func TestWakeGap_StartupLoadWakesWorkloop(t *testing.T) {
 	}
 	qs.SetQueue(q)
 
-	// Drain the SetQueue signal to model the case where the startup signal was
-	// already consumed by an early workloop-sleep before workloopIdleWait.
 	select {
 	case <-qs.WakeCh():
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("SetQueue did not signal WakeCh at startup")
 	}
 
-	// Now simulate the defensive Wake() added after the loadedQueues loop.
 	qs.Wake()
 
-	// A simulated workloop blocked in workloopIdleWait should unblock.
 	select {
 	case <-qs.WakeCh():
-		// pass
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("WakeCh not signaled by startup Wake() — workloop would not unblock (hk-ekj)")
 	}

@@ -7,8 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// outcomeExpectationFixtureSuccess returns a minimally valid OutcomeExpectation
-// with outcome_status=SUCCESS and a non-empty description.
 func outcomeExpectationFixtureSuccess(t *testing.T) OutcomeExpectation {
 	t.Helper()
 	return OutcomeExpectation{
@@ -146,7 +144,6 @@ func TestOutcomeExpectationJSONRoundTrip(t *testing.T) {
 func TestOutcomeExpectationJSONKeys(t *testing.T) {
 	t.Parallel()
 
-	// Verify the JSON wire shape: outcome_status and description keys present.
 	e := outcomeExpectationFixtureSuccess(t)
 	data, err := json.Marshal(e)
 	if err != nil {

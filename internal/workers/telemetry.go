@@ -1,20 +1,5 @@
 package workers
 
-// telemetry.go — periodic worker resource + problem snapshot (worker-report
-// Phase 1, WR1).
-//
-// This file is the foundation of the worker-report feature: the typed event
-// payload, its registration, and the pure parser for the inline darwin collector
-// output. It mirrors health.go's shape (typed payload + core.RegisterEventType in
-// init() + EmitFunc). WR2 adds the CommandRunner-driven collector (CollectReport
-// + the inline darwin `sh -c` collector script), mirroring health.go's
-// runner/emit shape. WR4 adds problem-flag derivation (deriveProblems →
-// Problems: orphaned_claude / disk_pressure / worktree_leak) plus the
-// `worktrees=` collector line + WorktreeCount field that feeds worktree_leak.
-// The timer/poll-loop wiring still lands in WR3.
-//
-// Bead refs: hk-9wbl (WR1), hk-ec9v (WR2), hk-b2f9 (WR4).
-
 import (
 	"bytes"
 	"context"
@@ -43,8 +28,6 @@ type WorkerReportPayload struct {
 	WorkerName string `json:"worker_name"`
 	// SampledAt is the RFC 3339 UTC wall-clock timestamp at sample time.
 	SampledAt string `json:"sampled_at"`
-
-	// "At what point are we maxing out?" — resource snapshot.
 
 	// Load1 is the 1-minute load average.
 	Load1 float64 `json:"load1"`
@@ -97,7 +80,6 @@ func init() {
 // `vmstat<<` line carries the raw `vm_stat` block; `pagesize=` is emitted last so
 // the explicit sysctl value wins over any vm_stat-header scrape.
 func darwinCollectorScript(repoPath string) string {
-	// repoPath is quoted in the df invocation to tolerate spaces in the path.
 	return strings.Join([]string{
 		`echo "load=$(sysctl -n vm.loadavg | tr -d '{}')"`,
 		`echo "ncpu=$(sysctl -n hw.ncpu)"`,
@@ -116,22 +98,6 @@ func darwinCollectorScript(repoPath string) string {
 	}, "\n")
 }
 
-// linuxCollectorScript builds the inline `sh -c` collector body for a Linux
-// worker (e.g. a Docker/Lima container), substituting repoPath into the `df`
-// and `git` invocations. It emits key=value lines parsed by parseWorkerReport.
-//
-// Linux-specific sources:
-//   - /proc/loadavg  → load= (space-separated triplet, no braces)
-//   - /proc/cpuinfo  → ncpu= (grep -c '^processor'; no nproc dependency)
-//   - /proc/meminfo  → memtotal= (MemTotal×1024 bytes)
-//   - /proc/meminfo  → memfree= (MemAvailable×1024 bytes; new Linux key)
-//   - /proc/meminfo  → swapused= ((SwapTotal−SwapFree)×1024 bytes; new Linux key)
-//   - df -m          → disk=
-//   - ps+grep        → claude= (pgrep -f is not universal in Alpine/minimal images)
-//   - git worktree   → worktrees=
-//
-// parseWorkerReport handles memfree= and swapused= directly (bytes → MB),
-// bypassing the darwin vm_stat block. Bead: hk-yflqo (L3 Linux OS target).
 func linuxCollectorScript(repoPath string) string {
 	return strings.Join([]string{
 		`echo "load=$(awk '{print $1, $2, $3}' /proc/loadavg)"`,
@@ -207,15 +173,6 @@ const DefaultDiskFloorMB int64 = 2048
 // legitimate run worktree trips the leak signal.
 const DefaultMaxSlotsFallback = 4
 
-// worktreeBaseline computes the expected `git worktree list` entry count below or
-// at which worktree_leak does NOT fire. The baseline is 1 (the main worktree /
-// checkout) + maxSlots (the concurrent run worktrees a fully-loaded worker holds,
-// one per in-flight slot). A healthy worker at full load therefore holds exactly
-// 1+maxSlots worktrees and must NOT flag; only a count above that signals a leak.
-//
-// When maxSlots is unset (<= 0) it falls back to DefaultMaxSlotsFallback. The
-// baseline is floored at 2 so a single legitimate run worktree never trips the
-// signal regardless of input.
 func worktreeBaseline(maxSlots int) int {
 	if maxSlots <= 0 {
 		maxSlots = DefaultMaxSlotsFallback
@@ -227,53 +184,12 @@ func worktreeBaseline(maxSlots int) int {
 	return baseline
 }
 
-// Problem-flag string constants — the values that land in WorkerReportPayload.Problems.
 const (
 	problemOrphanedClaude = "orphaned_claude"
 	problemDiskPressure   = "disk_pressure"
 	problemWorktreeLeak   = "worktree_leak"
 )
 
-// deriveProblems computes the "are there issues?" flags for a worker report
-// (worker-report Phase 1, §"Problem detection"). It is pure: no I/O, no command
-// execution — it reads only the parsed snapshot rep, the live Registry slot
-// count, and the disk floor.
-//
-// Flags returned (in a stable order):
-//
-//   - orphaned_claude — rep.ClaudeProcs > 0 AND the Registry reports no harmonik
-//     run in flight. This is the chani-handoff symptom: claude exits but a
-//     process lingers after the run completes, so it is unaccounted for.
-//
-//     KNOWN FALSE-POSITIVE SURFACE (Phase 1, advisory report-only — no action is
-//     taken on this flag): the ClaudeProcs count also catches an operator-run
-//     claude on the box, the health-check permission-probe claude, and the brief
-//     post-run window before a just-finished claude exits. So orphaned_claude can
-//     fire benignly; it is a signal to look, not a fault. A dwell/grace guard
-//     (require the orphan to persist across N samples, or skip the known probe
-//     PIDs) would go here in Phase 2 to suppress those transients.
-//
-//     SINGLE-WORKER ASSUMPTION (V1): the Registry tracks one global inFlight
-//     counter, not a per-worker map (NewRegistry holds at most one Worker). So
-//     "no in-flight run for THIS worker" is read as reg.InFlight() == 0 against
-//     that single counter. When Phase 2 makes the Registry multi-worker this
-//     must become a per-worker lookup keyed by rep.WorkerName. A nil reg is
-//     treated as zero in-flight (the orphaned check still fires).
-//
-//   - disk_pressure — rep.DiskFreeMB < floor, where floor is diskFloorMB, or
-//     DefaultDiskFloorMB when diskFloorMB <= 0.
-//
-//   - worktree_leak — rep.WorktreeCount > the worker's worktree baseline, where
-//     baseline = 1 (the main worktree / checkout) + maxSlots (the concurrent run
-//     worktrees a fully-loaded worker holds, one per in-flight slot). The
-//     collector emits the count from
-//     `git worktree list --porcelain | grep -c '^worktree '` (the main worktree
-//     plus every linked run worktree); a count above the baseline means run
-//     worktrees were not cleaned up (the ghost-worktree class). maxSlots <= 0
-//     (unset) falls back to DefaultMaxSlotsFallback — see worktreeBaseline.
-//
-// Returns nil (not an empty slice) when no problem is detected, so the
-// json:"problems,omitempty" tag drops the field entirely on a clean report.
 func deriveProblems(rep WorkerReportPayload, reg *Registry, diskFloorMB int64, maxSlots int) []string {
 	var problems []string
 
@@ -293,8 +209,6 @@ func deriveProblems(rep WorkerReportPayload, reg *Registry, diskFloorMB int64, m
 		problems = append(problems, problemDiskPressure)
 	}
 
-	// baseline = 1 (main worktree) + maxSlots (concurrent run worktrees); a
-	// fully-loaded healthy worker holds exactly that many and must not flag.
 	if rep.WorktreeCount > worktreeBaseline(maxSlots) {
 		problems = append(problems, problemWorktreeLeak)
 	}
@@ -302,8 +216,6 @@ func deriveProblems(rep WorkerReportPayload, reg *Registry, diskFloorMB int64, m
 	return problems
 }
 
-// emitWorkerReport marshals and emits a worker_report event. No-op when emit is
-// nil (mirrors emitUnhealthyEvent in health.go).
 func emitWorkerReport(ctx context.Context, p WorkerReportPayload, emit EmitFunc) {
 	if emit == nil {
 		return
@@ -333,34 +245,6 @@ const defaultDarwinPageSize = 16384
 
 const bytesPerMB = 1024 * 1024
 
-// parseWorkerReport parses the inline darwin collector output (the lines emitted
-// by the `sh -c` collector described in §The collector) into the resource fields
-// of a WorkerReportPayload. It is pure: it does not run commands, set WorkerName,
-// SampledAt, or Problems — those are populated by the caller (CollectReport, WR2)
-// and the problem-detection pass (WR4).
-//
-// The expected line shapes (order-independent, tolerant of extra whitespace):
-//
-//	load={1.20 1.10 0.95}        # sysctl -n vm.loadavg, braces stripped or not
-//	ncpu=8                       # sysctl -n hw.ncpu
-//	memtotal=17179869184         # sysctl -n hw.memsize (bytes)
-//	vmstat<<                     # marker; the raw `vm_stat` block follows, then a blank line
-//	  Pages free:    123456.
-//	  Pages inactive: 65432.
-//	swap=total = 2048.00M  used = 512.50M  free = 1535.50M ...  # sysctl -n vm.swapusage
-//	disk=/dev/disk1 ... 123456 ... /Volumes/x   # df -m <repo_path> | tail -1
-//	claude=3                     # pgrep -f 'claude --session-id' | wc -l
-//	worktrees=2                  # git worktree list --porcelain | grep -c '^worktree ' (WR4)
-//
-// Conversions:
-//   - memtotal bytes → MB (÷ 1MiB).
-//   - MemFreeMB ≈ (free + inactive pages) × pageSize ÷ 1MiB, where pageSize is
-//     parsed from the vm_stat header ("page size of N bytes"); it falls back to
-//     defaultDarwinPageSize (16384) if the header is absent/unparseable.
-//   - swap "used = N.NN{G,M,K}" → MB (suffix-scaled: G ×1024, M ×1, K ÷1024).
-//   - disk: the second numeric column of `df -m` output is "Available" MB.
-//
-// A line whose value cannot be parsed yields an error naming the offending key.
 func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 	var p WorkerReportPayload
 
@@ -386,7 +270,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 			continue
 		}
 
-		// Within the vm_stat block, parse the page-count lines we care about.
 		if inVMStat {
 			if v, ok := parseVMStatPageSize(trimmed); ok {
 				pageSize = v
@@ -400,27 +283,15 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 				inactPg = v
 				continue
 			}
-			// Other vm_stat lines (active, wired, etc.) are ignored. The block
-			// ends at a blank line or at the next key=value line.
 			if !strings.Contains(trimmed, "=") {
 				continue
 			}
 			inVMStat = false
-			// fall through to key=value handling below
 		}
 
-		// The vm_stat block is introduced by a `vmstat<<` marker. In the real
-		// collector the marker is on the same line as the first vm_stat output
-		// (`echo "vmstat<<$(vm_stat)"`), so detect the prefix rather than a
-		// key=value split. Everything after the marker until the next blank line
-		// or key=value line is the vm_stat block.
 		if strings.HasPrefix(trimmed, "vmstat<<") {
 			inVMStat = true
 			after := strings.TrimSpace(strings.TrimPrefix(trimmed, "vmstat<<"))
-			// The collector emits the vm_stat block starting at this marker, so
-			// the authoritative page size rides in on the header line that
-			// usually follows "vmstat<<": "Mach Virtual Memory Statistics:
-			// (page size of N bytes)". Parse N when present.
 			if v, ok := parseVMStatPageSize(after); ok {
 				pageSize = v
 			}
@@ -441,9 +312,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 
 		switch key {
 		case "pagesize":
-			// Authoritative page size from `sysctl -n hw.pagesize` (WR2 collector).
-			// Overrides the vm_stat-header scrape and the fallback so MemFreeMB is
-			// correct on Apple Silicon (16384) rather than the old x86 4096 guess.
 			n, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
 				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: pagesize: %w", err)
@@ -452,9 +320,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 				pageSize = n
 			}
 		case "memfree":
-			// Linux: MemAvailable×1024 bytes from /proc/meminfo (linuxCollectorScript).
-			// Sets MemFreeMB directly; prevents the vm_stat page-count path from
-			// overwriting it (sawMemFree flag). Bead: hk-yflqo (L3 Linux OS target).
 			b, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
 				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: memfree: %w", err)
@@ -462,7 +327,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 			p.MemFreeMB = b / bytesPerMB
 			sawMemFree = true
 		case "swapused":
-			// Linux: (SwapTotal−SwapFree)×1024 bytes from /proc/meminfo.
 			b, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
 				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: swapused: %w", err)
@@ -506,10 +370,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 			}
 			p.ClaudeProcs = n
 		case "worktrees":
-			// `git worktree list --porcelain | grep -c '^worktree '` (WR4). Optional:
-			// an empty value (older collector, or grep -c with no match piped to a
-			// non-numeric) parses as 0 rather than erroring, so the field degrades
-			// gracefully against pre-WR4 collector output.
 			if val == "" {
 				p.WorktreeCount = 0
 				break
@@ -526,9 +386,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 		return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: missing required load= line")
 	}
 
-	// Only compute MemFreeMB from vm_stat page counts when the Linux memfree= key
-	// was not seen. On darwin, memfree= is absent so this path always fires.
-	// On Linux, memfree= (MemAvailable bytes) was already set above.
 	if !sawMemFree {
 		p.MemFreeMB = (freePg + inactPg) * pageSize / bytesPerMB
 	}
@@ -536,8 +393,6 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 	return p, nil
 }
 
-// parseLoadavg parses the value of a `load=` line, e.g. "{1.20 1.10 0.95}" or
-// "1.20 1.10 0.95", returning the 1- and 5-minute averages.
 func parseLoadavg(val string) (load1, load5 float64, err error) {
 	val = strings.TrimSpace(val)
 	val = strings.Trim(val, "{}")
@@ -556,9 +411,6 @@ func parseLoadavg(val string) (load1, load5 float64, err error) {
 	return load1, load5, nil
 }
 
-// parseVMStatPages parses a vm_stat page-count line of the form
-// "Pages free:    123456." returning the count for the given prefix label.
-// The trailing period (present in vm_stat output) is tolerated.
 func parseVMStatPages(line, label string) (int64, bool) {
 	if !strings.HasPrefix(line, label) {
 		return 0, false
@@ -573,10 +425,6 @@ func parseVMStatPages(line, label string) (int64, bool) {
 	return v, true
 }
 
-// parseVMStatPageSize parses the page size (bytes) from a vm_stat header line of
-// the form "Mach Virtual Memory Statistics: (page size of 16384 bytes)". It
-// returns (N, true) on a match, (0, false) otherwise so the caller keeps its
-// current (fallback or already-parsed) value.
 func parseVMStatPageSize(line string) (int64, bool) {
 	const marker = "page size of "
 	idx := strings.Index(line, marker)
@@ -584,7 +432,6 @@ func parseVMStatPageSize(line string) (int64, bool) {
 		return 0, false
 	}
 	rest := line[idx+len(marker):]
-	// rest now begins with "N bytes)"; take the leading numeric run.
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
 		return 0, false
@@ -596,16 +443,10 @@ func parseVMStatPageSize(line string) (int64, bool) {
 	return v, true
 }
 
-// parseSwapUsed extracts the used MB from a `vm.swapusage` string, e.g.
-// "total = 2048.00M  used = 512.50M  free = 1535.50M  (encrypted)".
-// The value carries a magnitude suffix that vm.swapusage scales with load:
-// M/m (already MB, ×1), G/g (GB → ×1024), or K/k (KB → ÷1024). The result is
-// always returned in MB.
 func parseSwapUsed(val string) (int64, error) {
 	fields := strings.Fields(val)
 	for i, f := range fields {
 		if f == "used" {
-			// Expect: used = N.NN{G,M,K}  → "=" at i+1, value at i+2.
 			if i+2 < len(fields) {
 				mb, err := parseSwapMagnitude(fields[i+2])
 				if err != nil {
@@ -618,8 +459,6 @@ func parseSwapUsed(val string) (int64, error) {
 	return 0, fmt.Errorf("no 'used = N.NN{G,M,K}' token in %q", val)
 }
 
-// parseSwapMagnitude parses a swap value with a unit suffix (G/M/K, case
-// insensitive) into MB. A bare number (no suffix) is treated as MB.
 func parseSwapMagnitude(tok string) (int64, error) {
 	if tok == "" {
 		return 0, fmt.Errorf("empty value")
@@ -644,12 +483,6 @@ func parseSwapMagnitude(tok string) (int64, error) {
 	return int64(f * mult), nil
 }
 
-// parseDFAvailable parses the "Available" MB column from a single `df -m` data
-// line (the output of `df -m <path> | tail -1`). df -m columns are:
-// Filesystem  1M-blocks  Used  Available  Capacity  iused  ifree  %iused  Mounted-on.
-// The Available column is the third numeric field. To be robust against a
-// device name that contains spaces, this scans the numeric fields in order and
-// takes the third one (1M-blocks, Used, Available).
 func parseDFAvailable(val string) (int64, error) {
 	fields := strings.Fields(val)
 	var nums []int64

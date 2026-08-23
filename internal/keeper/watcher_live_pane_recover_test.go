@@ -1,25 +1,5 @@
 package keeper_test
 
-// watcher_live_pane_recover_test.go — unit tests for gauge-INDEPENDENT live-pane
-// recovery (hk-75mr). When the gauge is stale but the tmux pane is still ALIVE
-// (the agent is hung mid-turn, not exited), neither the threshold cycle nor the
-// idle-respawn path can recover it, and a /clear inject cannot reach a hung
-// turn. The watcher's last resort is a GATED ForceRestart, fired ONLY when ALL
-// gates hold (every gate fail-closed):
-//   - stale ≥ LiveRecoverGrace (>> RespawnGrace, anti-premature-reap);
-//   - pane alive (IsPaneAliveFn);
-//   - NOT operator-attached (OperatorAttachedFn, hk-0t5s keystroke recency);
-//   - NOT blocked on an open decision (hitl-decisions K6);
-//   - cooldown elapsed (LiveRecoverCooldown);
-//   - bound .sid identity is a valid UUIDv4 (hk-8prq) — absent/invalid → no-op.
-//
-// The observable is the session_keeper_live_pane_recover event (and a spy
-// LiveRecoverFn counter). Helper prefix: "lpr".
-//
-// Reuses writeGauge/writeSidFile/primarySID/gaugeSID (sessionid_test.go),
-// runWatcherFor/RecordingEmitter (watcher_test.go), and k6Emit* helpers
-// (watcher_decision_exempt_test.go) — all package keeper_test.
-
 import (
 	"context"
 	"encoding/json"
@@ -31,7 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// lprRecorder is a thread-safe spy for the LiveRecoverFn action.
 type lprRecorder struct {
 	mu    sync.Mutex
 	calls int
@@ -51,11 +30,6 @@ func (r *lprRecorder) count() int {
 	return r.calls
 }
 
-// lprConfig builds a WatcherConfig whose live-pane-recovery gates ALL pass by
-// default (stale gauge ≥ grace, pane alive, no operator, valid .sid bound). The
-// RespawnCmd is intentionally empty so the idle-respawn path is inert and the
-// ONLY recovery that can fire is live-pane recovery. Callers flip individual
-// gates to test fail-closed behavior. EventsJSONLPath is left to applyDefaults.
 func lprConfig(projectDir, agent string, recoverFn func(context.Context, string) error) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
 		AgentName:           agent,
@@ -90,8 +64,6 @@ func TestWatcher_LivePaneRecover_FiresWhenStalePaneAliveValidSid(t *testing.T) {
 
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
-	// Generous run window so even under CPU contention (the gate runs all
-	// packages' tests in parallel) several poll ticks elapse past the tiny grace.
 	runWatcherFor(context.Background(), lprConfig(projectDir, agent, rec.fn), em, 1500*time.Millisecond)
 
 	if rec.count() == 0 {
@@ -241,8 +213,6 @@ func TestWatcher_LivePaneRecover_CooldownPreventsDouble(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	cfg := lprConfig(projectDir, agent, rec.fn)
 	cfg.LiveRecoverCooldown = 10 * time.Second // only one attempt allowed in the run
-	// Generous window so recovery reliably fires once even under contention; the
-	// 10s cooldown (>> window) guarantees it cannot fire a second time.
 	runWatcherFor(context.Background(), cfg, em, 1500*time.Millisecond)
 
 	if rec.count() != 1 {
@@ -264,7 +234,6 @@ func TestWatcher_LivePaneRecover_ExemptWhenBlockedOnDecision(t *testing.T) {
 	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
-	// Open decision for this agent + a fresh presence beat (now → Online).
 	k6EmitNeeded(t, ctx, projectDir, agent)
 	k6EmitPresence(t, ctx, projectDir, agent, core.AgentPresenceStatusOnline, time.Now(), core.AgentPresenceReasonRefresh)
 

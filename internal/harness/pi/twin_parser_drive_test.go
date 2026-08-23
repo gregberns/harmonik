@@ -1,21 +1,5 @@
 package pi_test
 
-// pi_twin_parser_drive_test.go — M6 WS3-pi (pi-B load-bearing proof).
-//
-// The pi twin (cmd/harmonik-twin-pi) is only useful as an oracle if its NDJSON
-// output drives the REAL pi parser (internal/harness/pi/ndjsonparser.go) to exactly
-// the same normalized result a live pi session would: a captured session id, a
-// fired agent_end watcher, and accumulated token usage. This test proves that by
-// running the twin binary and feeding its stdout through the real
-// piSessionIDInterceptor + capturePiUsage path (via the exported test seams).
-//
-// It also pins the committed reference fixture
-// (testdata/twin-parity/pi/happy-path-sample/ndjson) as byte-identical to the
-// twin's live output, so the twin-parity gate's corpus can never silently drift
-// from the twin.
-//
-// Bead: M6 WS3-pi.
-
 import (
 	"bufio"
 	"bytes"
@@ -28,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
-// runPiTwin executes `go run ./cmd/harmonik-twin-pi <args...>` from the module
-// root and returns its stdout. Using `go run` keeps the proof honest — it
-// exercises the actual twin binary, not an in-test re-implementation.
 func runPiTwin(t *testing.T, args ...string) []byte {
 	t.Helper()
 	full := append([]string{"run", "github.com/gregberns/harmonik/cmd/harmonik-twin-pi"}, args...)
@@ -51,9 +32,6 @@ func runPiTwin(t *testing.T, args ...string) []byte {
 func TestPiTwinDrivesRealParser(t *testing.T) {
 	out := runPiTwin(t, "--scenario", "happy-path")
 
-	// (1) Drive the real interceptor: session-id capture (PI-012) + agent_end
-	// watcher firing (PI-014). The interceptor passes bytes through unchanged, so
-	// we read it to EOF exactly as the SpawnWatcher does.
 	var gotSessionID string
 	var sessionFires, agentEndFires int
 	interceptor := pi.ExportedNewPiSessionIDInterceptor(
@@ -80,9 +58,6 @@ func TestPiTwinDrivesRealParser(t *testing.T) {
 		t.Errorf("agentEndCb fired %d times, want exactly 1 (PI-014 terminal)", agentEndFires)
 	}
 
-	// (2) Drive the real usage accumulator line-by-line, exactly as the
-	// session-data collector does. The twin's happy-path emits input=42 via
-	// message_start and output=17 via message_end.
 	var arts pi.ExportedPiRunArtifacts
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
@@ -102,8 +77,6 @@ func TestPiTwinDrivesRealParser(t *testing.T) {
 		t.Errorf("accumulated OutputTokens = %d, want 17", arts.TotalUsage.OutputTokens)
 	}
 
-	// (3) The committed reference fixture must be byte-identical to the twin's
-	// live output — the parity gate's corpus is the twin, verbatim.
 	fixture := filepath.Join("..", "..", "..", "testdata", "twin-parity", "pi", "happy-path-sample", "ndjson")
 	refBytes, err := os.ReadFile(fixture) //nolint:gosec // G304: fixture is a fixed in-repo testdata path, not user input
 	if err != nil {

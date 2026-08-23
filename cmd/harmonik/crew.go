@@ -1,51 +1,5 @@
 package main
 
-// crew.go — `harmonik crew` CLI subcommand block (captain & crew spec C2 §3.1).
-//
-// Routes `harmonik crew <verb>` to the appropriate handler. Implements:
-//   - start  (C2 crew-start daemon RPC; exit 17 when daemon down)
-//   - stop   (C2 crew-stop daemon RPC; exit 17 when daemon down)
-//   - list   (read-only local read of .harmonik/crew/*.json; works daemon-down)
-//
-// Flag reference for `harmonik crew start`:
-//
-//	<name>              Crew member name (charset [a-z0-9-], 1–64 chars). Required.
-//	                    May also be supplied via --name <name>.
-//	--queue <q>         Named queue the crew is bound to. Default: "<name>-q".
-//	--mission <path>    Path to the mission handoff file. OPTIONAL. On a FRESH
-//	                    start this is the only source of the mission; the on-disk
-//	                    default (.harmonik/crew/missions/<name>.md) is never
-//	                    auto-read here (D3, hk-sn4n). Keeper-restart re-reads disk.
-//	--harness <type>    Crew orchestrator harness override (e.g. "codex"). OPTIONAL.
-//	                    Highest-precedence tier of the crew-scoped harness resolver
-//	                    (hk-l63b9); "claude" (today's only supported substrate) is
-//	                    the default when this and the mission harness: front-matter
-//	                    field are both absent.
-//	--socket PATH       Override socket path (default: <project>/.harmonik/daemon.sock).
-//	--project DIR       Project directory (default: cwd).
-//
-// Flag reference for `harmonik crew stop`:
-//
-//	<name>              Crew member name. Required.
-//	--pause-queue       Halt dispatch on the crew's named queue after teardown.
-//	--socket PATH       Override socket path (default: <project>/.harmonik/daemon.sock).
-//	--project DIR       Project directory (default: cwd).
-//
-// Flag reference for `harmonik crew list`:
-//
-//	--json              Emit one JSON object per record (NDJSON).
-//	--project DIR       Project directory (default: cwd).
-//
-// Exit codes:
-//
-//	0   Success
-//	1   Argument error or op rejected
-//	2   Unrecognised verb
-//	17  Daemon not running (start/stop — socket missing or ECONNREFUSED)
-//
-// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
-// Bead ref: hk-yj2j6 (C2 CLI).
-
 import (
 	"context"
 	"encoding/json"
@@ -62,8 +16,6 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// runCrewSubcommand routes `harmonik crew <verb> [args]`.
-// subArgs is os.Args[2:].
 func runCrewSubcommand(subArgs []string) int {
 	verb := ""
 	if len(subArgs) > 0 {
@@ -86,12 +38,6 @@ func runCrewSubcommand(subArgs []string) int {
 	}
 }
 
-// crewStartArgs holds the resolved, post-defaulting inputs to a crew-start op.
-//
-// It is the output of resolveCrewStartArgs — the pure arg/defaulting layer that
-// ES4 (hk-sn4n) made unit-testable. The RPC wiring in runCrewStartSubcommand
-// consumes these fields; the helper itself touches no daemon, no network, and no
-// disk, so the defaulting + mission-split logic can be table-tested daemon-down.
 type crewStartArgs struct {
 	// Name is the crew member identifier (sole positional).
 	Name string
@@ -110,41 +56,8 @@ type crewStartArgs struct {
 	ProjectFlag string
 }
 
-// crewReapPriorWatchers is the hk-6629b launch-path reap hook (see
-// watcherreap.go). A package var, not a runCrewStartCoreWith parameter, so
-// the many existing call sites/tests of that function are unaffected; tests
-// that care override this var directly and restore it via t.Cleanup.
 var crewReapPriorWatchers reapPriorAgentWatchersFn = reapPriorAgentWatchers
 
-// resolveCrewStartArgs parses `crew start` / `start crew` argv, applies the ES4
-// defaults, and enforces the mission-split rule. It returns the resolved args,
-// a help-requested flag, and a usage-error message ("" on success).
-//
-// Defaults (hk-sn4n / PLAN §4):
-//   - --queue defaults to "<name>-q" when not supplied (one named queue per crew).
-//   - --mission is OPTIONAL on a fresh start.
-//
-// Mission-split rule (D3, review outcome D — the load-bearing invariant):
-//
-//	A FRESH `crew start` reads ONLY the --mission flag. When --mission is given,
-//	that file is the mission. When it is absent, MissionPath stays "" and the crew
-//	starts WITHOUT a mission (to be commissioned later over comms). The on-disk
-//	default mission .harmonik/crew/missions/<name>.md is NEVER consulted here.
-//
-//	This makes stale-reuse impossible BY CONSTRUCTION: this function never reads
-//	disk and never synthesises the default path, so a prior agent's leftover
-//	mission file simply cannot become the value sent over the RPC. The daemon
-//	(HandleCrewStart) only ever pastes the path it is handed — it does not read
-//	the on-disk default either — so an empty MissionPath yields a crew that boots
-//	with no auto-loaded mission rather than the stale one.
-//
-//	The KEEPER-RESTART re-hydration path is a DIFFERENT code path and is
-//	deliberately untouched: a keeper cycles a crew via `/clear` + `/session-resume`
-//	on the SAME session_id (internal/keeper), NOT via this `crew start` RPC. On
-//	that resume the crew re-runs its own boot sequence and re-reads its OWN
-//	just-written .harmonik/crew/missions/<name>.md (crew-launch § Self-restart).
-//	Because restart never flows through resolveCrewStartArgs, the "fresh start
-//	ignores disk" rule cannot regress restart's "re-read disk" behaviour.
 func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usageErr string) {
 	var positional []string
 
@@ -195,42 +108,21 @@ func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usag
 	}
 	args.Name = positional[0]
 
-	// Default --queue to "<name>-q" (one named queue per crew). hk-sn4n.
 	if args.Queue == "" {
 		args.Queue = args.Name + "-q"
 	}
 
-	// NOTE (D3): no --mission default. MissionPath stays "" when the flag is
-	// absent — we deliberately do NOT fall back to the on-disk default mission
-	// path, which is what prevents booting on a prior agent's stale mission.
-
 	return args, false, ""
 }
 
-// crewBriefSeedFn is the injectable seam for pasting the agent-brief boot seed
-// to the crew's agent pane after a successful crew-start RPC (T10/hk-ncg9m).
-// Production passes pasteCrewBriefSeedViaTmux; tests inject a capturing stub.
 type crewBriefSeedFn func(project, name, sessionID string)
 
-// crewBriefSeedDelay mirrors captainSplashDismissDelay in captain.go: the
-// settle period between the splash-dismiss Enter and the boot-seed paste, and
-// between the paste and the submit Enter (T10/hk-ncg9m).
 const crewBriefSeedDelay = 750 * time.Millisecond
 
-// crewBootBufferName is the PL-021d tmux buffer name for a crew's boot-seed
-// paste. Mirrors captainBootBufferName: built by [ltmux.BufferName], never by
-// fmt.Sprintf, so a session id that the crew-start RPC returns in an unexpected
-// shape (uppercase, underscored) cannot produce a name WriteToPane rejects with
-// ErrStructural — which would silently drop the seed. Bead: hk-y466l.
 func crewBootBufferName(sessionID string) string {
 	return ltmux.BufferName(sessionID, "crew-boot")
 }
 
-// pasteCrewBriefSeedViaTmux is the production crewBriefSeedFn. It derives the
-// crew's tmux session name (harmonik-<project-hash>-crew-<name>) and pastes
-// "Please run `harmonik agent brief` and begin your operating loop." to the
-// crew's agent pane, mirroring captain.go PasteSeedToAgentPane (T10/hk-ncg9m).
-// Best-effort: all errors are logged to stderr but never returned.
 func pasteCrewBriefSeedViaTmux(project, name, sessionID string) {
 	realDir, err := filepath.EvalSymlinks(project)
 	if err != nil {
@@ -265,27 +157,14 @@ func pasteCrewBriefSeedViaTmux(project, name, sessionID string) {
 	}
 }
 
-// runCrewStartSubcommand implements `harmonik crew start <name> [--queue <q>] [--mission <path>]`.
-//
-// Defaults --queue to "<name>-q" and treats --mission as optional, never reusing
-// the on-disk default mission — see resolveCrewStartArgs for the mission-split
-// rule (hk-sn4n / D3). subArgs is os.Args[3:].
 func runCrewStartSubcommand(subArgs []string) int {
 	return runCrewStartCore(subArgs, runKeeperEnable)
 }
 
-// runCrewStartCore is the testable inner function for crew start. enableKeeper
-// is injected so tests can verify keeper wiring without touching the real
-// ~/.claude/settings.json. Production callers pass runKeeperEnable.
-// Bead ref: hk-xxcv9.
 func runCrewStartCore(subArgs []string, enableKeeper keeperEnableFn) int {
 	return runCrewStartCoreWith(subArgs, enableKeeper, pasteCrewBriefSeedViaTmux)
 }
 
-// runCrewStartCoreWith is runCrewStartCore with an injectable brief-seed seam
-// (T10/hk-ncg9m). briefSeed is called after a successful crew-start RPC to paste
-// the agent-brief boot seed to the crew's agent pane. nil skips the paste (tests
-// that do not want tmux side-effects pass nil or a capturing stub).
 func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSeed crewBriefSeedFn) int {
 	args, help, usageErr := resolveCrewStartArgs(subArgs)
 	if help {
@@ -304,7 +183,6 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 		return 1
 	}
 
-	// Resolve project dir before the RPC so boot assets can be provisioned first.
 	absProject := args.ProjectFlag
 	if absProject == "" {
 		wd, wdErr := os.Getwd()
@@ -318,25 +196,12 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 		absProject = ap
 	}
 
-	// hk-6629b: reap any prior `comms recv --agent <name> --follow` /
-	// `subscribe --to <name> --follow` watcher process for this crew name,
-	// REGARDLESS of liveness — a crew relaunched (e.g. after a keeper restart
-	// or a re-`crew start` for the same name) must never leave its
-	// predecessor's watcher holding a daemon subscribe slot. See
-	// captainReapPriorWatchers in captain.go for the mirrored captain-side call.
 	crewReapPriorWatchers(name)
 
-	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
-	// before the daemon spawns the crew so a foreign project (never run harmonik
-	// init) has the files the crew agent reads at boot. (hk-2nmbq)
 	if err := ensureBootAssets(absProject, os.Stdout, os.Stderr); err != nil {
 		return 1
 	}
 
-	// Wire keeper hooks BEFORE sending the RPC so the new crew session reads the
-	// statusLine + Stop + PreCompact + SessionStart stanzas at session start.
-	// Mirrors the captain path (runCaptainLaunchWithOps). Non-fatal: a failure
-	// WARNS but does not block the crew start. Bead: hk-xxcv9.
 	if keeperCfg, cerr := buildCrewKeeperConfig(name, absProject); cerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: build keeper config: %v\n", cerr)
 	} else if rc := enableKeeper(keeperCfg, os.Stdout, os.Stderr); rc != 0 {
@@ -379,34 +244,18 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 		return 1
 	}
 
-	// Seed the .sid file so the keeper can find the session immediately (before
-	// the first statusLine repaint writes the hook-generated .sid). Non-fatal:
-	// the SessionStart hook will overwrite it on first repaint anyway.
-	// Refs: hk-yfcc, hk-8prq.
 	if result.SessionID != "" {
 		seedSID(absProject, name, result.SessionID)
 	}
 
-	// Paste the agent-brief boot seed to the crew's agent pane so the crew runs
-	// `harmonik agent brief` as its first action (T10/hk-ncg9m — symmetric seed
-	// paste mirroring captain.go PasteSeedToAgentPane). Best-effort: never blocks.
 	if briefSeed != nil && result.SessionID != "" {
 		briefSeed(absProject, name, result.SessionID)
 	}
-
-	// The crew's keeper is launched by the DAEMON as a sibling `keeper` window
-	// inside the crew session (HandleCrewStart → SpawnCrewSession, hk-rmy1),
-	// targeting `agent` window. Full force-cut band (D4, hk-lcga). The CLI does
-	// not spawn a separate keeper session. Refs: hk-rmy1 / hk-lcga / hk-tt9q.
 
 	fmt.Println(result.SessionID)
 	return 0
 }
 
-// seedSID writes the crew's session ID to .harmonik/keeper/<name>.sid so the
-// keeper can find the session before the first statusLine hook repaint. The
-// SessionStart hook overwrites this with the same value on first repaint.
-// Non-fatal: errors are logged to stderr but do not propagate. Refs: hk-yfcc.
 func seedSID(projectDir, name, sessionID string) {
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if mkErr := os.MkdirAll(keeperDir, core.HarmonikDirMode); mkErr != nil {
@@ -419,10 +268,6 @@ func seedSID(projectDir, name, sessionID string) {
 	}
 }
 
-// buildCrewKeeperConfig assembles the enableConfig used to wire keeper hooks
-// for a freshly-started crew member. Mirrors buildCaptainKeeperConfig in
-// captain.go. No --yes-destructive gate is needed: the daemon creates the
-// .managed marker in HandleCrewStart (createCrewManagedMarker). Bead: hk-xxcv9.
 func buildCrewKeeperConfig(name, projectDir string) (enableConfig, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -436,8 +281,6 @@ func buildCrewKeeperConfig(name, projectDir string) (enableConfig, error) {
 	}, nil
 }
 
-// runCrewStopSubcommand implements `harmonik crew stop <name> [--pause-queue]`.
-// subArgs is os.Args[3:].
 func runCrewStopSubcommand(subArgs []string) int {
 	pauseQueueFlag := false
 	socketFlag := ""
@@ -505,18 +348,10 @@ func runCrewStopSubcommand(subArgs []string) int {
 		return exitCode
 	}
 
-	// The daemon's HandleCrewStop tears down the whole crew session
-	// (StopCrewSession → KillSession), which kills BOTH the `agent` and `keeper`
-	// windows — so the keeper process dies with the session. No separate
-	// hk-keeper-<name> teardown is needed any more. Refs: hk-rmy1 / hk-yfcc.
-
 	fmt.Printf("crew %s stopped\n", name)
 	return 0
 }
 
-// runCrewListSubcommand implements `harmonik crew list [--json] [--project DIR]`.
-// Read-only; works with the daemon down.
-// subArgs is os.Args[3:].
 func runCrewListSubcommand(subArgs []string) int {
 	jsonFlag := false
 	projectFlag := ""
@@ -591,8 +426,6 @@ func runCrewListSubcommand(subArgs []string) int {
 	return 0
 }
 
-// crewResolveSockPath resolves the daemon socket path from flag overrides or cwd.
-// Returns "" and prints an error on failure.
 func crewResolveSockPath(socketFlag, projectFlag string) string {
 	if socketFlag != "" {
 		return socketFlag
@@ -614,15 +447,12 @@ func crewResolveSockPath(socketFlag, projectFlag string) string {
 	return filepath.Join(absProject, ".harmonik", "daemon.sock")
 }
 
-// crewSocketResponse mirrors the daemon's SocketResponse envelope.
 type crewSocketResponse struct {
 	Ok     bool            `json:"ok"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
 }
 
-// crewDialAndSend dials the daemon socket, writes reqBytes, and reads the response.
-// verb is used in error messages. Returns the decoded response and exit code.
 func crewDialAndSend(sockPath, verb string, reqBytes []byte) (crewSocketResponse, int) {
 	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)

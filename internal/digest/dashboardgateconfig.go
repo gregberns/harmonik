@@ -60,15 +60,11 @@ func (e *ErrMissingDashboardMaxStaleness) Error() string {
 		"max_staleness is not set; set it (e.g. `dashboard:\n  max_staleness: 45m`) — there is no compiled default"
 }
 
-// rawDashboardGateConfig is the YAML shape of the dashboard: block.
-// Unknown keys are silently ignored (forward-compat).
 type rawDashboardGateConfig struct {
 	MaxStaleness string `yaml:"max_staleness"`
 	Unlock       bool   `yaml:"unlock"`
 }
 
-// rawConfigWithDashboard is the minimal top-level shape needed to extract
-// dashboard:. Unknown sibling keys are silently ignored (forward-compat).
 type rawConfigWithDashboard struct {
 	// Dashboard is a pointer so we can distinguish "block absent" (nil) from
 	// "block present but empty" (non-nil zero value) — the former disables
@@ -99,8 +95,6 @@ func LoadDashboardGateConfig(projectDir string) (DashboardGateConfig, error) {
 	return parseDashboardGateConfig(data)
 }
 
-// parseDashboardGateConfig decodes raw YAML bytes and returns the
-// DashboardGateConfig.
 func parseDashboardGateConfig(data []byte) (DashboardGateConfig, error) {
 	var raw rawConfigWithDashboard
 	if err := yaml.Unmarshal(data, &raw); err != nil {

@@ -22,7 +22,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// readLines reads all newline-terminated lines from path, stripping the '\n'.
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
@@ -207,8 +206,6 @@ func TestT5_EventOrderInJSONL(t *testing.T) {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
 	}
 
-	// JSONL records carry the full EV-001 envelope; the type-specific body is
-	// nested under "payload". Check payload["evt"] for the event type string.
 	for i, line := range lines {
 		var m map[string]any
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
@@ -259,7 +256,6 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// Write 5 F-class (daemon_started) events — each is fsynced.
 	for i := range 5 {
 		p := map[string]any{"seq": i}
 		pb, err := json.Marshal(p)
@@ -270,13 +266,10 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 			t.Fatalf("Emit seq %d: %v", i, emitErr)
 		}
 	}
-	// Close writer — simulating "graceful" shutdown up to this point.
 	if closeErr := w.Close(); closeErr != nil {
 		t.Fatalf("Close: %v", closeErr)
 	}
 
-	// Simulate crash: open a new writer on the same file WITHOUT closing it
-	// (fd leak — simulates process crash after write but before close).
 	w2, err := eventbus.OpenJSONLWriter(jsonlPath)
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter (crash sim): %v", err)
@@ -285,7 +278,6 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 	if err := bus2.Seal(); err != nil {
 		t.Fatalf("Seal crash sim: %v", err)
 	}
-	// Write one more event
 	pb2, err := json.Marshal(map[string]any{"seq": 5, "crash_before_close": true})
 	if err != nil {
 		t.Fatalf("Marshal crash-sim: %v", err)
@@ -293,11 +285,7 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 	if emitErr := bus2.Emit(context.Background(), core.EventTypeDaemonStarted, pb2); emitErr != nil {
 		t.Fatalf("Emit crash-sim: %v", emitErr)
 	}
-	// Do NOT close w2 — simulate process death (fd leak).
-	// The OS will close the fd on process exit, but all written bytes
-	// that were fsynced are durable.
 
-	// Verify file is intact — all lines valid JSON, none corrupted.
 	rawBytes, readErr := os.ReadFile(jsonlPath) //nolint:gosec // G304: tmpdir path
 	if readErr != nil {
 		t.Fatalf("ReadFile: %v", readErr)
@@ -322,7 +310,6 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 		t.Errorf("%d corrupted lines after crash-sim", corruptedCount)
 	}
 
-	// Verify re-open does NOT truncate (EV-020).
 	w3, err := eventbus.OpenJSONLWriter(jsonlPath)
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter (re-open): %v", err)
@@ -349,13 +336,10 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 		t.Errorf("re-open appears to have truncated the file: before=%d lines, after=%d lines", len(lines), len(lines2))
 	}
 
-	// Use exec to run a subprocess that tries to SIGKILL the JSONLWriter
-	// via the go test binary itself.
 	t.Logf("NOTE: true SIGKILL durability requires a subprocess using internal packages; " +
 		"full SIGKILL scenario is not exercisable from an external test binary. " +
 		"This test validates O_APPEND + fsync chain integrity instead.")
 
-	// Suppress "declared but not used" for exec/syscall imports.
 	_ = exec.Command
 	_ = syscall.SIGKILL
 }
@@ -409,8 +393,6 @@ func TestT5_RedactionHC031ByFieldName(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &envelope); err != nil {
 		t.Fatalf("line is not valid JSON: %v", err)
 	}
-	// JSONL records carry the full EV-001 envelope; payload fields are nested
-	// under "payload".
 	p, ok := envelope["payload"].(map[string]any)
 	if !ok {
 		t.Fatal("envelope missing 'payload' object")
@@ -444,8 +426,6 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	jsonlPath := filepath.Join(dir, "events.jsonl")
 
 	reg := handlercontract.NewRedactionRegistry()
-	// Register a value-pattern that matches "sk-<alphanum>" anywhere in the value.
-	// HC-032: RegisterPattern(subsystem, []*regexp.Regexp)
 	skPattern := regexp.MustCompile(`sk-[A-Za-z0-9]+`)
 	reg.RegisterPattern("t5probe_handler", []*regexp.Regexp{skPattern})
 
@@ -463,8 +443,6 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// "carrier_field" carries an sk-prefixed secret value.
-	// "safe_field" carries a value that does NOT match the pattern.
 	p := map[string]any{
 		"carrier_field": "sk-SuperSecretValue",
 		"safe_field":    "visible-ok",
@@ -488,14 +466,11 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &envelope); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	// JSONL records carry the full EV-001 envelope; payload fields are nested
-	// under "payload".
 	payload, ok := envelope["payload"].(map[string]any)
 	if !ok {
 		t.Fatal("envelope missing 'payload' object")
 	}
 
-	// carrier_field value matched the sk- pattern — must be redacted.
 	val, ok := payload["carrier_field"]
 	if !ok {
 		t.Fatal("carrier_field missing from JSONL payload")
@@ -508,7 +483,6 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 		t.Errorf("carrier_field not redacted by HC-032 value-pattern: got %q", valStr)
 	}
 
-	// safe_field must pass through unchanged.
 	if safeVal, ok := payload["safe_field"]; !ok || safeVal != "visible-ok" {
 		t.Errorf("safe_field should pass through unchanged: got %v", safeVal)
 	}
@@ -580,9 +554,6 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		t.Fatalf("Emit: %v", emitErr)
 	}
 
-	// Emit must return BEFORE the async consumer is allowed to complete —
-	// proven via happens-before signaling (asyncMayFinish/asyncDone) rather
-	// than a wall-clock budget, so this is immune to CPU-saturation flakes.
 	select {
 	case <-asyncDone:
 		t.Errorf("async consumer completed before Emit returned — async consumer appears to be on critical path (EV-014a violation)")
@@ -590,7 +561,6 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 	}
 	close(asyncMayFinish)
 
-	// Drain and check that sync happened before async.
 	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if drainErr := bus.Drain(drainCtx); drainErr != nil {

@@ -1,7 +1,5 @@
 package watch_test
 
-// ledger_we10_test.go — RED→GREEN tests for WE10 watch ledger polish.
-
 import (
 	"encoding/json"
 	"os"

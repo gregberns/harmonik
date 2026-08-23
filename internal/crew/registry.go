@@ -23,7 +23,6 @@ const (
 	maxNameLen    = 64
 )
 
-// validName matches the allowed charset: lowercase letters, digits, hyphens.
 var validName = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // ErrInvalidName is returned when a crew name fails charset or length validation.
@@ -59,8 +58,6 @@ func (r Record) EffectiveType() string {
 	return r.Type
 }
 
-// validateName rejects names that contain '/' or '..', fail the charset check,
-// or are outside the 1–64 character length range.
 func validateName(name string) error {
 	if name == "" || len(name) > maxNameLen {
 		return ErrInvalidName
@@ -74,12 +71,10 @@ func validateName(name string) error {
 	return nil
 }
 
-// crewDir returns .harmonik/crew under projectDir.
 func crewDir(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", crewSubDir)
 }
 
-// recordPath returns the canonical path for a crew member's record file.
 func recordPath(projectDir, name string) string {
 	return filepath.Join(crewDir(projectDir), name+".json")
 }
@@ -197,12 +192,8 @@ func List(projectDir string) ([]Record, error) {
 		r, err := Load(projectDir, name)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
-				// File vanished between ReadDir and Load (TOCTOU race); skip silently.
 				continue
 			}
-			// Corrupt or empty file: return a stub so callers can still probe the
-			// corresponding tmux session by name (hk-aoapq). Treat as unknown/protect,
-			// not absent/reap.
 			records = append(records, Record{Name: name})
 			continue
 		}
@@ -235,12 +226,10 @@ func UpdateSessionID(projectDir, name, sessionID string) error {
 //
 // agentsDir is the absolute path to .harmonik/agents/ (the type registry root).
 func ResolveType(projectDir, agentsDir, name string) (string, error) {
-	// Bare type name: resolve to itself when the type folder exists.
 	typeDir := filepath.Join(agentsDir, name)
 	if st, err := os.Stat(typeDir); err == nil && st.IsDir() {
 		return name, nil
 	}
-	// Instance name: look up the crew record.
 	r, err := Load(projectDir, name)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {

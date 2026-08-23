@@ -1,14 +1,5 @@
 package core
 
-// Tests for DeadLetterSink: OpenDeadLetterSink, Record, Close, NoopDeadLetterSink.
-//
-// Coverage target: integration-style with a temp file — write N records,
-// re-read the JSONL, assert each envelope round-trips.
-//
-// Property layer (TestProp_*) uses pgregory.net/rapid, mirroring beadid_prop_test.go.
-//
-// Refs: hk-fd95q, hk-j3hrn (core coverage uplift).
-
 import (
 	"bufio"
 	"context"
@@ -22,7 +13,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-// makeTestEnvelope returns a minimal but valid EventEnvelope for sink tests.
 func makeTestEnvelope(t *testing.T, eventType EventType) EventEnvelope {
 	t.Helper()
 	id, err := uuid.NewRandom()
@@ -39,8 +29,6 @@ func makeTestEnvelope(t *testing.T, eventType EventType) EventEnvelope {
 	}
 }
 
-// readDeadLetterRecords reads all JSONL lines from path and decodes each into
-// a deadLetterRecord.  It returns the slice in file order.
 func readDeadLetterRecords(t *testing.T, path string) []deadLetterRecord {
 	t.Helper()
 	f, err := os.Open(path) //nolint:gosec // G304: path is supplied by this package's temporary test fixtures
@@ -156,7 +144,6 @@ func TestDeadLetterSink_AppendPreservesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dead.jsonl")
 
-	// First open: write one record.
 	s1, err := OpenDeadLetterSink(path)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
@@ -169,7 +156,6 @@ func TestDeadLetterSink_AppendPreservesExisting(t *testing.T) {
 		t.Fatalf("first Close: %v", err)
 	}
 
-	// Second open: write a second record.
 	s2, err := OpenDeadLetterSink(path)
 	if err != nil {
 		t.Fatalf("second open: %v", err)
@@ -269,7 +255,6 @@ func TestProp_DeadLetterSink_EnvelopeRoundTrip(t *testing.T) {
 			rt.Fatalf("Close: %v", err)
 		}
 
-		// Re-read and verify.
 		f, err := os.Open(path) //nolint:gosec // G304: path is rooted in the property test's temporary directory
 		if err != nil {
 			rt.Fatalf("open: %v", err)

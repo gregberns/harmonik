@@ -9,10 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// sessionFixtureStub is a minimal Session implementation used only to verify
-// the interface method-set. It is NOT a usable Session; all methods panic.
-//
-// Helper prefix: sessionFixture (per implementer-protocol.md §Helper-prefix discipline).
 type sessionFixtureStub struct{}
 
 func (sessionFixtureStub) ID() core.SessionID { return "" }
@@ -29,15 +25,8 @@ func (sessionFixtureStub) Wait(_ context.Context) (core.Outcome, error) {
 }
 func (sessionFixtureStub) LogLocation() string { return "" }
 
-// Compile-time assertion that sessionFixtureStub satisfies the Session
-// interface. The blank identifier is deliberate: the declaration exists purely
-// so the build fails when the interface and the stub drift apart.
 var _ handlercontract.Session = sessionFixtureStub{}
 
-// sessionFixtureAssertType fails to compile unless got is assignable to T. It
-// replaces the `var _ T = expr` idiom used by the return-type conformance tests
-// below, which staticcheck (QF1011) reads as a redundant type annotation rather
-// than the deliberate assertion it is.
 func sessionFixtureAssertType[T any](_ T) {}
 
 // TestSession_MethodSetConformance verifies that the Session interface
@@ -49,29 +38,23 @@ func sessionFixtureAssertType[T any](_ T) {}
 func TestSession_MethodSetConformance(t *testing.T) {
 	var s handlercontract.Session = sessionFixtureStub{}
 
-	// ID() -> core.SessionID
 	id := s.ID()
 	_ = id
 
-	// SendInput(ctx, input) -> error
 	err := s.SendInput(context.Background(), "")
 	_ = err
 
-	// Attach(ctx) -> (io.Reader, error)
 	r, err := s.Attach(context.Background())
 	_ = r
 	_ = err
 
-	// Kill(ctx) -> error
 	err = s.Kill(context.Background())
 	_ = err
 
-	// Wait(ctx) -> (core.Outcome, error)
 	outcome, err := s.Wait(context.Background())
 	_ = outcome
 	_ = err
 
-	// LogLocation() -> string
 	loc := s.LogLocation()
 	_ = loc
 }

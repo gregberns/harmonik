@@ -1,22 +1,11 @@
 package core
 
-// Property tests for the Valid() methods in statelifecyclepayload.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Bead ref: hk-z02yj (part of hk-j3hrn core coverage uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ---------------------------------------------------------------------------
-// StateEnteredPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_StateEnteredPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -87,10 +76,6 @@ func TestProp_StateEnteredPayload_Valid_RejectsEmptyEnteredAt(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// StateExitedPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_StateExitedPayload_Valid_AcceptsFullPayloadNoTransitionID(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

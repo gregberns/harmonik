@@ -2,18 +2,6 @@
 
 package keeper
 
-// sessionstart_hook_integration_test.go — integration test (build tag:
-// integration, hk-8prq) that exercises the REAL SessionStart hook script
-// (scripts/keeper-sessionstart-hook.sh) against the keeper's PRIMARY identity
-// read path (ReadCtxFile).
-//
-// It models the production sequence: a session boots (SessionStart source=
-// startup) writing <agent>.sid, then a /clear fires SessionStart source=clear
-// carrying the NEW post-clear session_id. The gauge .ctx is left holding the
-// OLD id (modeling the multi-writer / lagging-statusline reality the .sid
-// channel fixes). The keeper must pick up the NEW id from the single-writer
-// channel, and must fall back to the gauge id once .sid is removed.
-
 import (
 	"bytes"
 	"os"
@@ -27,8 +15,6 @@ const (
 	hookNewSID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 )
 
-// runSessionStartHook execs the real hook with the given SessionStart JSON on
-// stdin and the env the script reads (HARMONIK_PROJECT, HARMONIK_AGENT).
 func runSessionStartHook(t *testing.T, scriptPath, project, agent, jsonPayload string) {
 	t.Helper()
 	cmd := exec.Command("bash", scriptPath)
@@ -52,7 +38,6 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 		t.Skip("bash not available; skipping SessionStart hook integration test")
 	}
 
-	// Locate the real hook script relative to this test file (repo scripts/).
 	wd, err := os.Getwd() // .../internal/keeper
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -65,7 +50,6 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 	project := t.TempDir()
 	const agent = "captain"
 
-	// Gauge holds the OLD id (and never advances) — the multi-writer reality.
 	keeperDir := filepath.Join(project, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -75,7 +59,6 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 		t.Fatalf("write gauge: %v", err)
 	}
 
-	// 1. Startup: SessionStart(source=startup) writes the OLD id to .sid.
 	runSessionStartHook(t, scriptPath, project, agent,
 		`{"session_id":"`+hookOldSID+`","source":"startup","hook_event_name":"SessionStart"}`)
 	if cf, _, err := ReadCtxFile(project, agent); err != nil {
@@ -84,8 +67,6 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 		t.Fatalf("after startup: want %q, got %q", hookOldSID, cf.SessionID)
 	}
 
-	// 2. /clear: SessionStart(source=clear) rotates .sid to the NEW id. The gauge
-	//    still carries the OLD id, so this proves the keeper reads .sid, not .ctx.
 	runSessionStartHook(t, scriptPath, project, agent,
 		`{"session_id":"`+hookNewSID+`","source":"clear","hook_event_name":"SessionStart"}`)
 	cf, _, err := ReadCtxFile(project, agent)
@@ -97,7 +78,6 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 			hookNewSID, cf.SessionID, hookOldSID)
 	}
 
-	// 3. Channel removed → fall back to the gauge id.
 	if err := os.Remove(filepath.Join(keeperDir, agent+".sid")); err != nil {
 		t.Fatalf("remove sid: %v", err)
 	}

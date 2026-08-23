@@ -1,21 +1,5 @@
 package codex_test
 
-// codexnowork_hk368i4_test.go — the hk-368i4 no-work detector.
-//
-// The detector is a pure function of (outcome, phase duration, floor), so these
-// tests assert the DECISION directly and contain no wall-clock timing: nothing
-// here sleeps, and nothing measures elapsed time. A loaded box cannot change
-// the result.
-//
-// The measured oracle these cases are drawn from (implementer_phase_complete
-// events on lima's isolated scratch project, cross-checked against india's
-// codex gate runs):
-//
-//	commit_landed=FALSE:  5.19s  4.00s  3.38s  3.27s
-//	commit_landed=TRUE:  28.9s  31.9s  39.3s  55.3s  44.1s  53.5s
-//
-// Bead ref: hk-368i4.
-
 import (
 	"testing"
 	"time"
@@ -35,32 +19,21 @@ func TestCodexNoWorkSuspected_hk368i4(t *testing.T) {
 		override time.Duration
 		want     bool
 	}{
-		// Every observed no-work run, at its measured duration.
 		{"observed no-work 3.27s", codex.ExportedCodexRefsNoChange, 3270 * time.Millisecond, floor, true},
 		{"observed no-work 3.38s", codex.ExportedCodexRefsNoChange, 3380 * time.Millisecond, floor, true},
 		{"observed no-work 4.00s", codex.ExportedCodexRefsNoChange, 4 * time.Second, floor, true},
 		{"observed no-work 5.19s", codex.ExportedCodexRefsNoChange, 5190 * time.Millisecond, floor, true},
 
-		// A slow run that still produced nothing is NOT flagged: the duration
-		// signal is absent, so the detector has no corroboration and stays quiet.
-		// The run still fails through the no-commit guard.
 		{"no-change but slow — not flagged", codex.ExportedCodexRefsNoChange, 40 * time.Second, floor, false},
 		{"no-change exactly at floor — not flagged", codex.ExportedCodexRefsNoChange, codex.ExportedCodexNoWorkDurationFloorDefault, floor, false},
 
-		// THE SAFETY CASE from the bead: a legitimately trivial bead completes
-		// fast. It still commits, so it never reaches codexRefsNoChange and is
-		// never flagged, whatever its duration. This is why pairing the two
-		// signals is safe when duration alone would not be.
 		{"fast run that committed", codex.ExportedCodexRefsCommitted, 1 * time.Second, floor, false},
 		{"fast run that amended", codex.ExportedCodexRefsAmended, 1 * time.Second, floor, false},
 		{"fast run already carrying the trailer", codex.ExportedCodexRefsAlreadyPresent, 1 * time.Second, floor, false},
 
-		// An unmeasured duration is not evidence of anything. Without this the
-		// detector would fire on every run whose clock plumbing is missing.
 		{"zero duration — unmeasured, never flags", codex.ExportedCodexRefsNoChange, 0, floor, false},
 		{"negative duration — unmeasured, never flags", codex.ExportedCodexRefsNoChange, -1 * time.Second, floor, false},
 
-		// The floor is tunable, and tuning moves the boundary in both directions.
 		{"override raises the floor above a real run", codex.ExportedCodexRefsNoChange, 20 * time.Second, 30 * time.Second, true},
 		{"override lowers the floor below a no-work run", codex.ExportedCodexRefsNoChange, 4 * time.Second, 2 * time.Second, false},
 	}

@@ -1,16 +1,5 @@
 package policy
 
-// ratelimit.go — the pure rate-limit hysteresis reducer and the
-// budget-exhausted always-trip predicate for handler-pause.
-//
-// Moved out of internal/daemon/handlerpause_policy_37zy8.go (hk-37zy8) without
-// semantic change: the daemon shell still owns the mutex-guarded per-agent-type
-// counter map, the clock-stamped HandlerPauseCause, the RunRegistry freeze-list,
-// and the Controller.Pause call. Only the decision — "does this event trip a
-// pause, and what is the new counter?" — lives here.
-//
-// Spec ref: specs/handler-pause.md §5 (trigger taxonomy).
-
 // DefaultRateLimitThreshold is the number of consecutive rate-limit active
 // events required to trip a pause. Two consecutive hits (without an intervening
 // cleared event) trigger a pause — the minimum hysteresis per hk-37zy8.

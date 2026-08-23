@@ -5,136 +5,6 @@
 // machine can hold config as an immutable value without linking the daemon.
 package projectconfig
 
-// projectconfig.go — per-project model/effort config loader for
-// .harmonik/config.yaml (hk-bfvk7), extended with the daemon operational
-// config block per PL-004b (hk-rcp7) and the keeper config block (hk-lhu2).
-//
-// Implements tier-2 of the EM-012b model/effort resolution chain:
-// per-project .harmonik/config.yaml supplies per-agent-type defaults that take
-// precedence over compiled-in tier-3 defaults but are overridden by per-bead
-// labels (tier-1).
-//
-// Also implements the PL-004b daemon: block reader: LoadProjectConfig now parses
-// the optional daemon: mapping under schema_version: 1, extracting workflow_mode,
-// max_concurrent, and target_branch. Callers read these via ProjectConfig.Daemon
-// to apply the flag > config > default precedence chain at startup.
-//
-// Also implements the hk-lhu2 keeper: block reader: LoadProjectConfig parses the
-// optional keeper: mapping under schema_version: 1, extracting context thresholds
-// and warn message overrides. Callers read these via ProjectConfig.Keeper and
-// apply the CLI flag > config > default precedence chain at keeper startup.
-//
-// # File location
-//
-// .harmonik/config.yaml at the project root. Loaded ONCE at daemon startup and
-// cached on the daemon Config struct. No mtime-invalidation: operators restart
-// the daemon to reload (matches the pattern for WorkflowModeDefault and other
-// startup-time-resolved fields). This is documented here so the decision is
-// explicit.
-//
-// # Schema (v1)
-//
-//	schema_version: 1
-//	agents:
-//	  claude-code:
-//	    model: sonnet      # optional alias; omitted = defer to tier 3
-//	    effort: medium     # optional effort; omitted = defer to tier 3
-//	  claude-twin:
-//	    model: sonnet
-//	    effort: medium
-//	daemon:
-//	  workflow_mode: dot       # dot only; single FORBIDDEN (PL-004a floor), review-loop RETIRED
-//	  max_concurrent: 4        # > 0 to override --max-concurrent default
-//	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
-//	  remote_control_prefix: hk # cosmetic Claude RC session-label prefix (empty = bare name); hk-igpg
-//	  restart_backoff:         # rapid daemon-boot delay; Go duration STRINGS; empty = compiled default
-//	    base: 30s
-//	    cap: 10m
-//	    window: 1h
-//	keeper:
-//	  context_thresholds:
-//	    warn_abs_tokens: 200000        # absolute warn gate (default 200000); ≤0 = not configured
-//	    act_abs_tokens: 215000         # absolute act gate (default 215000); ≤0 = not configured
-//	    force_act_abs_tokens: 240000   # hard ceiling, unconditional clear (default act+25000); ≤0 = not configured
-//	    force_act_abs_offset: 25000    # offset over act when force_act_abs_tokens unset; ≤0 = not configured (hk-9kgf)
-//	    idle_floor_abs_tokens: 200000  # floor below which idle crews are not idle-restarted; ≤0 = not configured (hk-9kgf)
-//	    act_pct_ceil: 0.85             # pct-of-window cap for act gate (default 0.85); ≤0 = not configured; >1 = error
-//	    warn_pct_ceil: 0.70            # pct-of-window cap for warn gate (default 0.70); ≤0 = not configured; >1 = error
-//	  hard_ceiling:                  # hk-9kgf
-//	    mode: restart                  # off|alarm|restart; other = error; empty = not configured
-//	    abs_tokens: 360000             # ≤0 = not configured
-//	    cooldown: 30m                  # Go duration STRING; bare number = error; empty = not configured
-//	  timings:                       # all Go duration STRINGS; bare number = error; empty = not configured (hk-9kgf)
-//	    poll_interval: 60s
-//	    idle_quiesce: 5m
-//	    staleness: 10m
-//	    handoff_timeout: 5m
-//	    clear_settle: 30s
-//	    boot_grace: 2m
-//	    max_boot_grace_total: 10m
-//	  cadence:                       # all Go duration STRINGS; bare number = error; empty = not configured (hk-9kgf)
-//	    warn_cooldown: 15m
-//	    no_gauge_backoff: 2m
-//	    respawn_grace: 1m
-//	    respawn_cooldown: 5m
-//	    live_recover_grace: 1m
-//	    live_recover_cooldown: 5m
-//	    force_retry_interval: 2m
-//	    idle_restart_cooldown: 10m
-//	    hard_ceiling_cooldown: 30m
-//	    blind_keeper_threshold: 20m
-//	  budgets:                       # hk-9kgf; ≤0 = not configured
-//	    heartbeat_max_misses: 3
-//	    max_handoff_timeouts: 2
-//	  self_service:                  # hk-9kgf
-//	    enabled: true                  # bool; default false
-//	    grace_seconds: 30              # ≤0 = not configured
-//	    instruct_only_when_idle: true  # bool; default false
-//	    crews_enabled: true            # *bool; ABSENT = TRUE (crews self-restart, hk-vs4u); explicit false = false
-//	  warn_messages:
-//	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
-//	    actionable_warn_text: ""       # actionable self-service restart-handshake advisory override; empty = compiled default (hk-9kgf, hk-vs4u)
-//	    on_demand_warn_text: ""        # DEPRECATED alias of actionable_warn_text (kept RECOGNIZED so old strict configs don't hard-error); mapped with a log warning (hk-vs4u)
-//	    leader_defer_text: ""          # leader K2 defer-message body override; empty = compiled default (SK-032)
-//	    crew_defer_text: ""            # crew keeper-message body (K7); empty/off default, config hook only — gated on self_service.crews_enabled (SK-032, park-resume-protocol §9)
-//	opsmonitor:                        # hk-bi4bg: ops-monitor schedule overrides; absent = compiled defaults
-//	  interval: 5m                     # Go duration STRING; empty/absent = "5m"
-//	  script_path: scripts/ops-monitor-check.sh  # path passed to bash; empty/absent = default
-//	supervise:                         # all duration fields are Go duration STRINGS; empty = compiled default
-//	  heartbeat_ttl: 90s
-//	  start_timeout: 30s
-//	  crash_loop_window: 60s
-//	  health_probe_interval: 15s
-//	  stop_timeout: 10s
-//	  restart_backoff:
-//	    base: 1s
-//	    cap: 60s
-//	  daemon_watchdog:
-//	    check_interval: 30s
-//	    dial_timeout: 3s
-//	    revive_backoff: 10s
-//	    revive_window: 15m
-//
-// Unknown agent keys are silently ignored (forward-compat).
-// Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
-// Unknown keys under keeper: (and every keeper sub-block) are REJECTED with
-//   *ErrUnknownConfigKey naming the offending key path (operator decision, hk-9f3f).
-//   The previous "silently ignored (forward-compat per hk-lhu2)" behaviour is removed
-//   because silent-ignore masks a typo'd / fat-fingered keeper key.
-// Unknown schema_version → ErrUnsupportedConfigVersion.
-// Parse error on a present file → ErrMalformedConfigYAML.
-// daemon.workflow_mode: single → ErrWorkflowModeFloorViolation (PL-004a floor).
-// Absent file → zero-value ProjectConfig, nil error.
-//
-// # Spec refs
-//
-// specs/execution-model.md §4.3 EM-012b — tier-2 slot.
-// specs/handler-contract.md §4.10 HC-055a — ModelPreference invariants.
-// specs/process-lifecycle.md §4.1 PL-004a — review floor (never single from config).
-// specs/process-lifecycle.md §4.1 PL-004b — flag > config > default precedence chain.
-//
-// Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf, hk-bi4bg.
-
 import (
 	"errors"
 	"fmt"
@@ -150,10 +20,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// projectConfigRelPath is the path of the config file relative to the project root.
 const projectConfigRelPath = ".harmonik/config.yaml"
 
-// projectConfigCurrentVersion is the only schema_version this loader accepts.
 const projectConfigCurrentVersion = 1
 
 // ErrMalformedConfigYAML is returned when .harmonik/config.yaml is present but
@@ -251,8 +119,6 @@ func (e *ErrWorkflowModeFloorViolation) Error() string {
 	)
 }
 
-// rawDaemonConfig is the per-daemon block in the config.yaml daemon: mapping.
-// Unknown keys at this level are silently ignored (forward-compat per PL-004b).
 type rawDaemonConfig struct {
 	WorkflowMode        string                        `yaml:"workflow_mode"`
 	MaxConcurrent       int                           `yaml:"max_concurrent"`
@@ -262,17 +128,12 @@ type rawDaemonConfig struct {
 	RestartBackoff      rawDaemonRestartBackoffConfig `yaml:"restart_backoff"`       // rapid boot-record backoff (hk-b82kn)
 }
 
-// rawDaemonRestartBackoffConfig is the daemon.restart_backoff: block.
-// All fields are Go duration strings; empty = compiled default.
 type rawDaemonRestartBackoffConfig struct {
 	Base   string `yaml:"base"`
 	Cap    string `yaml:"cap"`
 	Window string `yaml:"window"`
 }
 
-// rawKeeperContextThresholds holds configurable threshold values in the
-// keeper.context_thresholds block. Values ≤ 0 are treated as not configured
-// (defer to CLI flag or compiled default). Unknown keys are REJECTED (hk-9f3f).
 type rawKeeperContextThresholds struct {
 	WarnAbsTokens      int64   `yaml:"warn_abs_tokens"`
 	ActAbsTokens       int64   `yaml:"act_abs_tokens"`
@@ -283,17 +144,12 @@ type rawKeeperContextThresholds struct {
 	WarnPctCeil        float64 `yaml:"warn_pct_ceil"`
 }
 
-// rawKeeperHardCeiling holds the keeper.hard_ceiling block. Mode is one of
-// off|alarm|restart (validated). AbsTokens ≤ 0 = not configured. Cooldown is a
-// Go duration STRING (e.g. "5m"); empty = not configured, bare number = error.
 type rawKeeperHardCeiling struct {
 	Mode      string `yaml:"mode"`
 	AbsTokens int64  `yaml:"abs_tokens"`
 	Cooldown  string `yaml:"cooldown"`
 }
 
-// rawKeeperTimings holds the keeper.timings block. All fields are Go duration
-// STRINGS; empty = not configured, a bare number = error.
 type rawKeeperTimings struct {
 	PollInterval       string `yaml:"poll_interval"`
 	CyclerPollInterval string `yaml:"cycler_poll_interval"` // hk-4gtu: distinct from poll_interval (watcher)
@@ -306,8 +162,6 @@ type rawKeeperTimings struct {
 	FlockAcquireGrace  string `yaml:"flock_acquire_grace"` // hk-qgfme: crew keeper post-spawn liveness probe bound
 }
 
-// rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
-// STRINGS; empty = not configured, a bare number = error.
 type rawKeeperCadence struct {
 	WarnCooldown         string `yaml:"warn_cooldown"`
 	NoGaugeBackoff       string `yaml:"no_gauge_backoff"`
@@ -326,21 +180,11 @@ type rawKeeperCadence struct {
 	PostAnswerGrace      string `yaml:"post_answer_grace"`
 }
 
-// rawKeeperBudgets holds the keeper.budgets block. Values ≤ 0 = not configured.
 type rawKeeperBudgets struct {
 	HeartbeatMaxMisses int `yaml:"heartbeat_max_misses"`
 	MaxHandoffTimeouts int `yaml:"max_handoff_timeouts"`
 }
 
-// rawKeeperSelfService holds the keeper.self_service block. Enabled /
-// InstructOnlyWhenIdle default false; GraceSeconds ≤ 0 = not configured.
-//
-// CrewsEnabled is a *bool (NOT bool) deliberately: the operator decision (hk-vs4u)
-// is that CREWS SELF-RESTART BY DEFAULT, so an ABSENT crews_enabled must resolve to
-// TRUE while an explicit `crews_enabled: false` resolves to false. A plain bool
-// zero-value cannot distinguish "unset" from "explicit false"; the pointer is nil
-// when the key is absent and non-nil (pointing at the parsed value) when present.
-// The unset→true resolution is applied in ResolveKeeperConfig. Refs: hk-vs4u.
 type rawKeeperSelfService struct {
 	Enabled              bool  `yaml:"enabled"`
 	GraceSeconds         int   `yaml:"grace_seconds"`
@@ -348,8 +192,6 @@ type rawKeeperSelfService struct {
 	CrewsEnabled         *bool `yaml:"crews_enabled"`
 }
 
-// rawKeeperWarnMessages holds configurable warn text overrides in the
-// keeper.warn_messages block. Empty strings are treated as not configured.
 type rawKeeperWarnMessages struct {
 	DefaultWarnText    string `yaml:"default_warn_text"`
 	OnDemandWarnText   string `yaml:"on_demand_warn_text"`
@@ -368,42 +210,6 @@ type rawKeeperWarnMessages struct {
 	CrewDeferText string `yaml:"crew_defer_text"`
 }
 
-// rawKeeperConfig is the keeper: block in config.yaml.
-//
-// Unknown keys at this level — and in EVERY keeper sub-block (context_thresholds,
-// hard_ceiling, timings, cadence, budgets, self_service, warn_messages) — are
-// REJECTED with *ErrUnknownConfigKey naming the offending key path (operator
-// decision, hk-9f3f). This is enforced by strict yaml.v3 decoding (KnownFields(true))
-// of the keeper sub-node ONLY; see strictDecodeKeeperBlock. The daemon: block is
-// decoded SEPARATELY and stays tolerant (PL-004b spec requirement).
-//
-// History: hk-lhu2 originally made unknown keeper keys silently ignored for
-// forward-compat while the schema was actively extended (hk-lhu2 → hk-exg3 →
-// hk-9kgf). The schema is now stable and silent-ignore was masking real
-// misconfiguration (a typo'd key would be silently dropped, defeating the
-// operator's intent). hk-9f3f removes silent-ignore for the keeper block.
-//
-// # Config-schema convention (LOCKED — hk-exg3)
-//
-// All keeper config lives in ONE keeper: block under schema_version: 1 in
-// .harmonik/config.yaml. It is NOT a second file, and it is NOT project.yaml
-// (project.yaml is the captain's separate state file under .harmonik/context/,
-// unrelated to this loader).
-//
-// Field-type convention for every present and future keeper sub-field:
-//   - Token / count fields are ints (e.g. warn_abs_tokens, max_concurrent).
-//   - ALL duration fields are Go duration STRINGS (e.g. "5m", "120s") parsed
-//     with time.ParseDuration. A bare number for a duration field MUST fail
-//     loudly (time.ParseDuration rejects it) — never silently coerce a number
-//     to seconds/nanoseconds.
-//
-// # Absent-file fast path
-//
-// The empty-file sentinel in parseProjectConfig no longer field-lists each block:
-// it compares the whole parsed rawProjectConfig against its zero value via
-// reflect.DeepEqual (RU-06), so ANY set keeper field — present or future —
-// defeats the sentinel with no per-field maintenance. keeperBlockAbsent survives
-// only as a test helper (hk-exg3 field-coverage assertion), not on the load path.
 type rawKeeperConfig struct {
 	ContextThresholds rawKeeperContextThresholds `yaml:"context_thresholds"`
 	HardCeiling       rawKeeperHardCeiling       `yaml:"hard_ceiling"`
@@ -414,18 +220,6 @@ type rawKeeperConfig struct {
 	WarnMessages      rawKeeperWarnMessages      `yaml:"warn_messages"`
 }
 
-// keeperBlockAbsent reports whether the keeper: block is at its zero value —
-// i.e. no keeper config was supplied in .harmonik/config.yaml. It does an
-// explicit field-by-field zero check rather than `raw == (rawKeeperConfig{})`
-// so that adding a slice / map / nested-non-comparable sub-struct field to
-// rawKeeperConfig (which forthcoming hk-exg3-initiative beads will do) cannot
-// break compilation of the absent-file fast path.
-//
-// INVARIANT (hk-exg3): every field of rawKeeperConfig MUST be checked here.
-// When a field is added to rawKeeperConfig (or its sub-structs), extend this
-// helper in lockstep.
-//
-// Bead ref: hk-exg3.
 func keeperBlockAbsent(raw rawKeeperConfig) bool {
 	t := raw.ContextThresholds
 	h := raw.HardCeiling
@@ -441,11 +235,9 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		t.IdleFloorAbsTokens == 0 &&
 		t.ActPctCeil == 0 &&
 		t.WarnPctCeil == 0 &&
-		// hard_ceiling
 		h.Mode == "" &&
 		h.AbsTokens == 0 &&
 		h.Cooldown == "" &&
-		// timings
 		tm.PollInterval == "" &&
 		tm.CyclerPollInterval == "" &&
 		tm.IdleQuiesce == "" &&
@@ -455,7 +247,6 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		tm.BootGrace == "" &&
 		tm.MaxBootGraceTotal == "" &&
 		tm.FlockAcquireGrace == "" &&
-		// cadence
 		c.WarnCooldown == "" &&
 		c.NoGaugeBackoff == "" &&
 		c.RespawnGrace == "" &&
@@ -470,15 +261,12 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		c.ReapDecisionsCadence == "" &&
 		c.OperatorTurnLookback == "" &&
 		c.PostAnswerGrace == "" &&
-		// budgets
 		b.HeartbeatMaxMisses == 0 &&
 		b.MaxHandoffTimeouts == 0 &&
-		// self_service
 		!s.Enabled &&
 		s.GraceSeconds == 0 &&
 		!s.InstructOnlyWhenIdle &&
 		s.CrewsEnabled == nil &&
-		// warn_messages
 		w.DefaultWarnText == "" &&
 		w.OnDemandWarnText == "" &&
 		w.ActionableWarnText == "" &&
@@ -713,8 +501,6 @@ type DaemonRestartBackoffConfig struct {
 	Window time.Duration
 }
 
-// rawSandboxNetworkConfig is the sandbox.network block in config.yaml.
-// Unknown keys are silently ignored (forward-compat, matches daemon: block behaviour).
 type rawSandboxNetworkConfig struct {
 	Mode                   string   `yaml:"mode"`
 	AllowedDomains         []string `yaml:"allowed_domains"`
@@ -722,15 +508,11 @@ type rawSandboxNetworkConfig struct {
 	AllowLocalBinding      bool     `yaml:"allow_local_binding"`
 }
 
-// rawSandboxCacheConfig is the sandbox.cache block in config.yaml.
 type rawSandboxCacheConfig struct {
 	WarmRead     []string `yaml:"warm_read"`
 	PrivateWrite []string `yaml:"private_write"`
 }
 
-// rawSandboxConfig is the sandbox: block in config.yaml (hk-6596l).
-// backend is REQUIRED when the block is present (fail-loud per the
-// no-hardcoded-defaults principle). Unknown keys are silently ignored.
 type rawSandboxConfig struct {
 	Backend   string                  `yaml:"backend"`
 	Harnesses []string                `yaml:"harnesses"`
@@ -803,9 +585,6 @@ func (c SandboxConfig) HasHarness(name string) bool {
 	return false
 }
 
-// agentTypeNamesForError renders the reserved agent types as a comma-separated
-// list for an error message, so the set in the message can never drift from the
-// set the check actually uses.
 func agentTypeNamesForError() string {
 	reserved := core.ReservedAgentTypes()
 	names := make([]string, 0, len(reserved))
@@ -815,12 +594,6 @@ func agentTypeNamesForError() string {
 	return strings.Join(names, ", ")
 }
 
-// nearestAgentType returns the reserved agent type that got is a prefix of, when
-// exactly one qualifies. It exists for the case this validation was written for —
-// "claude" for "claude-code" — and deliberately does nothing cleverer: a prefix
-// test either names the intended type unambiguously or stays silent. "claude" is
-// a prefix of both claude-code and claude-twin, so it returns nothing there and
-// the caller falls back to listing the full set, which is the honest answer.
 func nearestAgentType(got string) (string, bool) {
 	if got == "" {
 		return "", false
@@ -837,8 +610,6 @@ func nearestAgentType(got string) (string, bool) {
 	return match, match != ""
 }
 
-// sandboxBlockAbsent reports whether the sandbox: block is at its zero value,
-// i.e. no sandbox config was supplied in .harmonik/config.yaml.
 func sandboxBlockAbsent(raw rawSandboxConfig) bool {
 	return raw.Backend == "" &&
 		len(raw.Harnesses) == 0 &&
@@ -850,16 +621,12 @@ func sandboxBlockAbsent(raw rawSandboxConfig) bool {
 		len(raw.Cache.PrivateWrite) == 0
 }
 
-// rawHarnessesPiFallbackConfig is the optional harnesses.pi.fallback block.
-// All fields are stored as strings; absence is the empty string.
 type rawHarnessesPiFallbackConfig struct {
 	Provider  string `yaml:"provider"`
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
 }
 
-// rawHarnessesPiProfileConfig is one named profile under harnesses.pi.profiles.
-// Full tuple; provider/model/api_key_env required (validated in resolve_pi_config.go).
 type rawHarnessesPiProfileConfig struct {
 	Provider   string `yaml:"provider"`
 	Model      string `yaml:"model"`
@@ -869,10 +636,6 @@ type rawHarnessesPiProfileConfig struct {
 	API        string `yaml:"api"`          // OPTIONAL; defaulted at launch, not here
 }
 
-// rawHarnessesPiConfig is the harnesses.pi block in config.yaml.
-// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback, api_key_file, base_url, api.
-// No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
-// fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
 	Provider   string                                 `yaml:"provider"`
 	Model      string                                 `yaml:"model"`
@@ -895,7 +658,6 @@ type rawHarnessesPiConfig struct {
 	ProviderSlots map[string]int `yaml:"provider_slots"`
 }
 
-// rawHarnessesConfig is the top-level harnesses: block in config.yaml.
 type rawHarnessesConfig struct {
 	Pi rawHarnessesPiConfig `yaml:"pi"`
 }
@@ -990,9 +752,6 @@ type HarnessesConfig struct {
 	Pi PiHarnessConfig
 }
 
-// rawOpsmonitorConfig is the opsmonitor: block in config.yaml (hk-bi4bg).
-// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
-// Absent fields resolve to the compiled defaults in ensureOpsMonitorSchedule.
 type rawOpsmonitorConfig struct {
 	Interval   string `yaml:"interval"`    // Go duration string; empty = default "5m"
 	ScriptPath string `yaml:"script_path"` // script path; empty = default "scripts/ops-monitor-check.sh"
@@ -1013,23 +772,15 @@ type OpsmonitorConfig struct {
 	ScriptPath string
 }
 
-// rawWatchdogConfig is the watchdog: block in config.yaml (hk-sbitr).
-// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
-// Enabled is a *bool so that nil (absent) resolves to the default (true) while an explicit
-// false is honoured by the caller without ambiguity.
 type rawWatchdogConfig struct {
 	Enabled *bool `yaml:"enabled"`
 }
 
-// rawSuperviseBackoffConfig is the supervise.restart_backoff: block.
-// All fields are Go duration strings; empty = compiled default.
 type rawSuperviseBackoffConfig struct {
 	Base string `yaml:"base"`
 	Cap  string `yaml:"cap"`
 }
 
-// rawSuperviseDaemonWatchdogConfig is the supervise.daemon_watchdog: block.
-// All fields are Go duration strings; empty = compiled default.
 type rawSuperviseDaemonWatchdogConfig struct {
 	CheckInterval string `yaml:"check_interval"`
 	DialTimeout   string `yaml:"dial_timeout"`
@@ -1037,8 +788,6 @@ type rawSuperviseDaemonWatchdogConfig struct {
 	ReviveWindow  string `yaml:"revive_window"`
 }
 
-// rawSuperviseConfig is the supervise: block in config.yaml.
-// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
 type rawSuperviseConfig struct {
 	HeartbeatTTL        string                           `yaml:"heartbeat_ttl"`
 	StartTimeout        string                           `yaml:"start_timeout"`
@@ -1081,11 +830,6 @@ type WatchdogConfig struct {
 	Enabled bool
 }
 
-// rawWatchConfig is the watch: block in config.yaml (WE7 — captain-wake-economy).
-// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
-// Both target fields default to "captain" when absent (NOT fail-loud — §7 exception).
-// WE9 behavioral keys (absent_thresh_s, stall_ticks) are fail-loud when zero/absent.
-// WE6 schedule interval keys (liveness_interval, digest_interval) are fail-loud when absent.
 type rawWatchConfig struct {
 	StatusTarget            string `yaml:"status_target"`
 	OpsmonitorTarget        string `yaml:"opsmonitor_target"`
@@ -1136,16 +880,12 @@ type WatchConfig struct {
 	VerifyServicesBody string
 }
 
-// rawStallSentinelEscalation is the stall_sentinel.escalation: sub-block.
-// All fields are Go duration strings. Bead: hk-hm09z.
 type rawStallSentinelEscalation struct {
 	Tier1Crew     string `yaml:"tier1_crew"`
 	Tier2Captain  string `yaml:"tier2_captain"`
 	Tier3Operator string `yaml:"tier3_operator"`
 }
 
-// rawStallSentinelDetection is the stall_sentinel.detection: sub-block.
-// All fields are Go duration strings. Bead: hk-hm09z.
 type rawStallSentinelDetection struct {
 	RunSilenceStall     string `yaml:"run_silence_stall"`
 	ReviewFinalizeStall string `yaml:"review_finalize_stall"`
@@ -1153,11 +893,6 @@ type rawStallSentinelDetection struct {
 	LaneNoprogressStall string `yaml:"lane_noprogress_stall"`
 }
 
-// rawStallSentinelConfig is the stall_sentinel: block in config.yaml.
-// All duration fields are Go duration strings (fail-loud on bare numbers via
-// parseDurationField). All fields are optional at the YAML level; the
-// fail-loud enforcement (for sentinel startup) is in
-// cmd/harmonik/resolve_stall_sentinel_config.go. Bead: hk-hm09z.
 type rawStallSentinelConfig struct {
 	Escalation rawStallSentinelEscalation `yaml:"escalation"`
 	Detection  rawStallSentinelDetection  `yaml:"detection"`
@@ -1205,7 +940,6 @@ type StallSentinelConfig struct {
 	LaneNoprogressStall time.Duration
 }
 
-// rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
@@ -1226,8 +960,6 @@ type rawProjectConfig struct {
 	Subsystems map[string]yaml.Node `yaml:"subsystems"`
 }
 
-// rawCrewConfig is the per-crew-name block under crews: in config.yaml
-// (hk-l63b9). Keyed by crew name (matches CrewStartRequest.Name).
 type rawCrewConfig struct {
 	// Harness is the per-crew default harness selection (e.g. "codex"). The
 	// third-highest tier of the crew-scoped harness resolver — overridden by
@@ -1244,13 +976,11 @@ type CrewConfig struct {
 	Harness string
 }
 
-// rawAgentConfig is the per-agent-type block inside the agents map.
 type rawAgentConfig struct {
 	Model  string `yaml:"model"`
 	Effort string `yaml:"effort"`
 }
 
-// agentConfigEntry holds the resolved (model, effort) pair for a single agent type.
 type agentConfigEntry struct {
 	model  string
 	effort string
@@ -1362,41 +1092,19 @@ func LoadProjectConfig(repoRoot string) (ProjectConfig, error) {
 	return parseProjectConfig(path, data)
 }
 
-// parseProjectConfig decodes raw YAML bytes into a ProjectConfig.
 func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	var raw rawProjectConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return ProjectConfig{}, &ErrMalformedConfigYAML{Path: path, Cause: err}
 	}
 
-	// Empty-file sentinel: a config whose EVERY field is at its zero value carries
-	// no operator intent → absent semantics (zero-value ProjectConfig, nil error).
-	// A file with only a daemon: or keeper: block but no schema_version: 1 is NOT
-	// all-zero, so it falls through to the version check below and returns
-	// ErrUnsupportedConfigVersion (fail-fast).
-	//
-	// Detected STRUCTURALLY via reflect.DeepEqual against a zero rawProjectConfig so
-	// that ANY meaningful field — in ANY block — defeats the sentinel. This replaced
-	// a hand-maintained per-block field list that silently drifted (RU-06): a config
-	// with only watch.absent_thresh_s (and no schema_version) was wrongly treated as
-	// empty and discarded, booting the daemon on defaults with the tuning lost. The
-	// structural check cannot drift when a field is added to any block — including
-	// the crews: block (hk-l63b9), which needs no bespoke absent-check here.
-	//
-	// A non-nil-but-empty agents map (`agents: {}`) is normalized to nil first so it
-	// still reads as absent, matching the prior len(raw.Agents)==0 semantics.
 	sentinel := raw
 	if len(sentinel.Agents) == 0 {
 		sentinel.Agents = nil
 	}
-	// hk-l63b9: normalize an empty-but-non-nil crews map (`crews: {}`) to nil for
-	// the same reason as agents above — so a versionless file carrying only an
-	// empty crews block still reads as absent, not ErrUnsupportedConfigVersion.
 	if len(sentinel.Crews) == 0 {
 		sentinel.Crews = nil
 	}
-	// Same normalization for an empty-but-non-nil subsystems map (`subsystems: {}`):
-	// it carries no partitioning intent, so it must not defeat the sentinel.
 	if len(sentinel.Subsystems) == 0 {
 		sentinel.Subsystems = nil
 	}
@@ -1411,35 +1119,24 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		}
 	}
 
-	// hk-rcp7 PL-004b: parse and validate the daemon: block.
 	daemonCfg, err := parseDaemonBlock(path, raw.Daemon)
 	if err != nil {
 		return ProjectConfig{}, err
 	}
 
-	// hk-9f3f: REJECT unknown keys under the keeper: block (and every sub-block).
-	// This is a strict decode of the keeper sub-node ONLY — the daemon: block
-	// above was decoded tolerantly (PL-004b) and is untouched by this check.
 	if err := strictDecodeKeeperBlock(path, data); err != nil {
 		return ProjectConfig{}, err
 	}
 
-	// hk-lhu2 / hk-9kgf: parse the keeper: block. Most values are optional, but
-	// a malformed duration string (e.g. a bare number) fails loudly (hk-9kgf).
 	keeperCfg, err := parseKeeperBlock(path, raw.Keeper)
 	if err != nil {
 		return ProjectConfig{}, err
 	}
 
-	// hk-sbitr: parse the watchdog: block. Absent → Enabled defaults to true.
 	watchdogCfg := parseWatchdogBlock(raw.Watchdog)
 
-	// hk-we7: parse the watch: block. Absent → both target fields are empty strings
-	// (callers default to "captain").
 	watchCfg := parseWatchBlock(raw.Watch)
 
-	// hk-bi4bg: parse the opsmonitor: block. Both fields are optional; absent =
-	// empty string → callers apply the compiled defaults.
 	opsmonitorCfg := parseOpsmonitorBlock(raw.Opsmonitor)
 
 	superviseCfg, err := parseSuperviseBlock(path, raw.Supervise)
@@ -1447,12 +1144,8 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
-	// hk-v7q5u: parse the harnesses: block (PI-050). All fields are optional at
-	// the YAML level; ResolvePiConfig enforces fail-loud on missing required values.
 	harnessesCfg := parseHarnessesBlock(raw.Harnesses)
 
-	// hk-6596l: parse the sandbox: block. backend is REQUIRED when the block is
-	// present; absent block → zero SandboxConfig (Backend=="", no sandboxing).
 	var sandboxCfg SandboxConfig
 	if !sandboxBlockAbsent(raw.Sandbox) {
 		var sErr error
@@ -1462,16 +1155,11 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		}
 	}
 
-	// hk-hm09z: parse the stall_sentinel: block. All fields are optional at the
-	// YAML level; fail-loud enforcement lives in ResolveStallSentinelConfig.
 	stallSentinelCfg, err := parseStallSentinelBlock(path, raw.StallSentinel)
 	if err != nil {
 		return ProjectConfig{}, err
 	}
 
-	// Subsystem partitioning: parse the subsystems: block. Absent → every
-	// subsystem enabled; an unknown subsystem name is a hard error so a typo
-	// can never silently mean "off". See subsystems.go.
 	subsystemsCfg, err := parseSubsystemsBlock(path, raw.Subsystems)
 	if err != nil {
 		return ProjectConfig{}, err
@@ -1492,9 +1180,6 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
-		// Unknown agent keys are silently ignored (forward-compat per bead spec).
-		// We store all keys since AgentType.Valid() is a syntax check; semantic
-		// filtering happens at LookupAgent call time via the caller's key.
 		cfg.entries[at] = agentConfigEntry{
 			model:  agentRaw.Model,
 			effort: agentRaw.Effort,
@@ -1510,15 +1195,6 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	return cfg, nil
 }
 
-// parseDaemonBlock validates and converts a rawDaemonConfig into a DaemonConfig.
-//
-// Validation rules per PL-004b:
-//   - workflow_mode absent → zero DaemonConfig.WorkflowMode (defer to flag/default).
-//   - workflow_mode present but not in {dot, single} → *ErrMalformedConfigYAML.
-//   - workflow_mode == review-loop → *ErrMalformedConfigYAML naming dot (RETIRED, EM-015d).
-//   - workflow_mode == single → *ErrWorkflowModeFloorViolation (PL-004a review floor).
-//   - max_concurrent ≤ 0 → treated as not configured (zero DaemonConfig.MaxConcurrent).
-//   - target_branch → stored for observability/symmetry only; not used in resolution chain.
 func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	cfg := DaemonConfig{
 		TargetBranch: raw.TargetBranch, // observability/symmetry only per PL-004b
@@ -1526,13 +1202,6 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 
 	if raw.WorkflowMode != "" {
 		wm := core.WorkflowMode(raw.WorkflowMode)
-		// PL-004a (amended): a config naming the retired review-loop mode FAILS at
-		// load with a message naming dot; it is never silently coerced. This is
-		// deliberately stricter than the per-bead label path, which degrades a
-		// stale workflow:review-loop label to dot with a bead_label_conflict — a
-		// config file is operator-authored and read once at boot, so a wrong value
-		// there is worth stopping for, whereas a bead label is queue data the
-		// operator may not control and must not wedge the queue.
 		if raw.WorkflowMode == core.WorkflowModeRetiredReviewLoop {
 			return DaemonConfig{}, &ErrMalformedConfigYAML{
 				Path: path,
@@ -1548,26 +1217,18 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 				Cause: fmt.Errorf("daemon.workflow_mode %q: unknown value; must be dot (single is forbidden at daemon level)", raw.WorkflowMode),
 			}
 		}
-		// PL-004a review floor: single MUST NOT be reachable from the daemon-level
-		// default or any config file path. A legacy per-bead workflow:single label
-		// selects the registered no-review DOT graph and is audited via
-		// review_bypassed.
 		if wm == core.WorkflowModeSingle {
 			return DaemonConfig{}, &ErrWorkflowModeFloorViolation{Path: path, Value: raw.WorkflowMode}
 		}
 		cfg.WorkflowMode = wm
 	}
 
-	// Values ≤ 0 are treated as "not configured" per PL-004b.
 	if raw.MaxConcurrent > 0 {
 		cfg.MaxConcurrent = raw.MaxConcurrent
 	}
 
-	// allowed_repos: stored as-is; nil/empty = cross-repo dispatch not permitted.
 	cfg.AllowedRepos = raw.AllowedRepos
 
-	// remote_control_prefix: stored as-is; empty = not configured (bare label). No
-	// validation/length cap (operator decision hk-igpg: short default, no hard cap).
 	cfg.RemoteControlPrefix = raw.RemoteControlPrefix
 
 	for _, f := range []struct {
@@ -1589,42 +1250,15 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	return cfg, nil
 }
 
-// keeperNodeEnvelope captures the keeper: sub-node of the top-level config YAML
-// as a raw yaml.Node WITHOUT strict decoding, so that sibling top-level keys
-// (schema_version, agents, daemon) are tolerated. The captured node is then
-// re-decoded strictly IN ISOLATION (strictDecodeKeeperBlock), which is what
-// scopes the unknown-key rejection to the keeper block alone. (hk-9f3f)
 type keeperNodeEnvelope struct {
 	Keeper yaml.Node `yaml:"keeper"`
 }
 
-// strictDecodeKeeperBlock rejects any unknown key anywhere under the keeper:
-// block (the block itself or any sub-block) rather than silently ignoring it
-// (operator decision, hk-9f3f).
-//
-// SCOPE: it validates ONLY the keeper: sub-node, so the daemon:, agents:, and
-// schema_version: top-level keys are NEVER subjected to the strict check — the
-// daemon block keeps its PL-004b unknown-key tolerance.
-//
-// DETECTION IS STRUCTURAL (RU-06): it walks the captured keeper yaml.Node and
-// compares each mapping key against the known yaml tags of the corresponding Go
-// struct (derived via reflection), recursing into sub-block mappings. It does
-// NOT parse yaml.v3's KnownFields(true) error text — a yaml.v3 upgrade that
-// reworded that message cannot silently degrade the precise *ErrUnknownConfigKey
-// to a generic error.
-//
-// On an unknown key it returns *ErrUnknownConfigKey whose KeyPath names the
-// offending key rooted at keeper (e.g. keeper.context_thresholds.warn_abs_token).
 func strictDecodeKeeperBlock(path string, data []byte) error {
-	// Tolerantly capture ONLY the keeper sub-node, ignoring sibling top-level
-	// keys (schema_version, agents, daemon). No KnownFields here — top-level
-	// tolerance must be preserved.
 	var env keeperNodeEnvelope
 	if err := yaml.Unmarshal(data, &env); err != nil {
-		// Structural error — already surfaced upstream as malformed; be defensive.
 		return &ErrMalformedConfigYAML{Path: path, Cause: err}
 	}
-	// Absent keeper block: zero node (Kind 0) → nothing to validate.
 	if env.Keeper.Kind == 0 {
 		return nil
 	}
@@ -1650,12 +1284,9 @@ func strictDecodeKeeperBlock(path string, data []byte) error {
 //
 //nolint:gocognit,cyclop // unknownYAMLKey is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, bool) {
-	// Unwrap a document node to its single content child.
 	if node.Kind == yaml.DocumentNode && len(node.Content) == 1 {
 		node = node.Content[0]
 	}
-	// Only mapping nodes carry keys; anything else (scalar/seq/null/alias) has no
-	// keys to validate against this struct.
 	if node.Kind != yaml.MappingNode {
 		return "", true
 	}
@@ -1666,7 +1297,6 @@ func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, b
 		return "", true
 	}
 
-	// Build tag -> field type map for this struct.
 	known := make(map[string]reflect.Type, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
@@ -1680,7 +1310,6 @@ func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, b
 		known[tag] = f.Type
 	}
 
-	// Mapping content is [key0, val0, key1, val1, ...].
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode, valNode := node.Content[i], node.Content[i+1]
 		key := keyNode.Value
@@ -1688,8 +1317,6 @@ func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, b
 		if !ok {
 			return prefix + "." + key, false
 		}
-		// Recurse into struct-typed sub-blocks (deref pointers) when the value is
-		// itself a mapping, so nested unknown keys are caught too.
 		ft := fieldType
 		for ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
@@ -1703,18 +1330,6 @@ func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, b
 	return "", true
 }
 
-// parseDurationField parses a Go duration STRING into a time.Duration.
-//
-// Contract (hk-9kgf, operator decision): a duration field MUST be a Go duration
-// STRING (e.g. "5m", "120s", "1h30m"). It FAILS LOUDLY — returning
-// *ErrMalformedConfigYAML naming the offending key — on a bare number or any
-// other unparseable value. It MUST NEVER silently coerce a number to
-// seconds/nanoseconds: bad config is an operator error and must surface.
-//
-// An empty string means "not configured": parseDurationField returns (0, nil)
-// so the resolver later applies the compiled default.
-//
-// Bead ref: hk-9kgf.
 func parseDurationField(path, key, value string) (time.Duration, error) {
 	if value == "" {
 		return 0, nil // not configured — defer to default
@@ -1734,30 +1349,10 @@ func parseDurationField(path, key, value string) (time.Duration, error) {
 	return d, nil
 }
 
-// parseKeeperBlock converts a rawKeeperConfig into a KeeperConfig.
-//
-// Most values are optional; ≤ 0 / empty strings are stored as zero values so
-// callers can detect "not configured" and defer to the CLI flag or compiled
-// default. Two classes of value FAIL LOUDLY (hk-9kgf):
-//   - any duration field whose string is unparseable (e.g. a bare number) →
-//     *ErrMalformedConfigYAML naming the key (via parseDurationField).
-//   - hard_ceiling.mode whose value is not one of off|alarm|restart.
-//
-// Per-field validation (pct in 0..1, mode enum, duration parses) is done HERE.
-// Cross-field invariants (warn < act < force) are NOT checked here — they run
-// post-resolution in a later bead.
-//
-// Unknown YAML keys at any level under keeper: are REJECTED (operator decision,
-// hk-9f3f) — strict decoding happens upstream in strictDecodeKeeperBlock before
-// this function runs; parseKeeperBlock receives an already-validated rawKeeperConfig.
-//
-// Bead ref: hk-lhu2, hk-9kgf, hk-9f3f.
 func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	cfg := KeeperConfig{}
 
-	// ── context_thresholds ──
 	t := raw.ContextThresholds
-	// Values ≤ 0 are treated as "not configured" — defer to CLI flag or compiled default.
 	if t.WarnAbsTokens > 0 {
 		cfg.WarnAbsTokens = t.WarnAbsTokens
 		cfg.Present.WarnAbsTokens = true
@@ -1778,7 +1373,6 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		cfg.IdleFloorAbsTokens = t.IdleFloorAbsTokens
 		cfg.Present.IdleFloorAbsTokens = true
 	}
-	// pct fields: per-field validation — must be in (0, 1]. ≤ 0 = not configured.
 	if t.ActPctCeil > 0 {
 		if t.ActPctCeil > 1 {
 			return KeeperConfig{}, &ErrMalformedConfigYAML{
@@ -1800,7 +1394,6 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		cfg.Present.WarnPctCeil = true
 	}
 
-	// ── hard_ceiling ──
 	hc := raw.HardCeiling
 	if hc.Mode != "" {
 		switch hc.Mode {
@@ -1823,14 +1416,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		return KeeperConfig{}, err
 	}
 	cfg.HardCeilingCooldownDur = d
-	// NOTE: Present.HardCeilingCooldown tracks cadence.hard_ceiling_cooldown (the key
-	// the resolver's HardCeilingCooldown reads), set in the cadence loop below — NOT
-	// this hard_ceiling.cooldown field (HardCeilingCooldownDur), which the resolver
-	// does not consume.
 
-	// ── timings (all durations) ──
-	// present records whether the raw STRING was non-empty (present even for "0s"),
-	// so the operator-facing resolver can tell unset from an explicit zero (boot_grace).
 	tm := raw.Timings
 	for _, f := range []struct {
 		key     string
@@ -1858,7 +1444,6 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		}
 	}
 
-	// ── cadence (all durations) ──
 	c := raw.Cadence
 	for _, f := range []struct {
 		key     string
@@ -1891,7 +1476,6 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		}
 	}
 
-	// ── budgets ──
 	b := raw.Budgets
 	if b.HeartbeatMaxMisses > 0 {
 		cfg.HeartbeatMaxMisses = b.HeartbeatMaxMisses
@@ -1902,30 +1486,19 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		cfg.Present.MaxHandoffTimeouts = true
 	}
 
-	// ── self_service ──
 	s := raw.SelfService
 	cfg.SelfServiceEnabled = s.Enabled
 	if s.GraceSeconds > 0 {
 		cfg.SelfServiceGraceSeconds = s.GraceSeconds
 	}
 	cfg.SelfServiceInstructOnlyWhenIdle = s.InstructOnlyWhenIdle
-	// crews_enabled: carry the nil/non-nil pointer through verbatim. ResolveKeeperConfig
-	// resolves nil (absent) → true (operator decision: crews self-restart, hk-vs4u).
 	cfg.SelfServiceCrewsEnabled = s.CrewsEnabled
 
-	// ── warn_messages ── empty strings are "not configured" — defer to compiled default.
 	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
 	cfg.ActionableWarnText = raw.WarnMessages.ActionableWarnText
 	cfg.SettleWarnText = raw.WarnMessages.SettleWarnText
-	// Leader defer-message + crew-message overrides (K2/K7). Empty = compiled
-	// default (leader) / off (crew). Carried through verbatim; consumption is T3+.
 	cfg.LeaderDeferText = raw.WarnMessages.LeaderDeferText
 	cfg.CrewDeferText = raw.WarnMessages.CrewDeferText
-	// Dedup (hk-vs4u): on_demand_warn_text is DEPRECATED in favour of the single key
-	// actionable_warn_text, but it stays a RECOGNIZED key (rawKeeperWarnMessages still
-	// declares it) so old strict configs (hk-9f3f) do not hard-error. Map the
-	// deprecated value onto ActionableWarnText with a log warning, UNLESS the new key
-	// was already set (the new key wins on conflict).
 	if raw.WarnMessages.OnDemandWarnText != "" {
 		if cfg.ActionableWarnText == "" {
 			cfg.ActionableWarnText = raw.WarnMessages.OnDemandWarnText
@@ -1938,14 +1511,6 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	return cfg, nil
 }
 
-// parseWatchdogBlock converts a rawWatchdogConfig into a WatchdogConfig.
-//
-// When Enabled is nil (absent from the YAML) the function defaults to true —
-// the operator brief (hk-sbitr) specifies "cheap to leave on" and default-ON
-// is the correct behaviour when the key is omitted. An explicit false is
-// honoured verbatim.
-//
-// Bead ref: hk-sbitr.
 func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
 	if raw.Enabled == nil {
 		return WatchdogConfig{Enabled: true}
@@ -1981,39 +1546,14 @@ func parseSuperviseBlock(path string, raw rawSuperviseConfig) (SuperviseConfig, 
 	return cfg, nil
 }
 
-// parseWatchBlock converts a rawWatchConfig into a WatchConfig.
-// Both target fields are optional; empty strings mean "not configured"
-// and callers apply the "captain" default (NOT here — so callers can
-// distinguish "absent" from an explicit "captain").
-//
-// A conversion, not a field-by-field literal: the raw shape and the config shape
-// must stay identical, and a conversion turns any future drift into a compile
-// error instead of a silently dropped field.
 func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 	return WatchConfig(raw)
 }
 
-// parseOpsmonitorBlock converts a rawOpsmonitorConfig into an OpsmonitorConfig.
-// Both fields are optional; empty strings mean "not configured" and callers
-// apply the compiled defaults in ensureOpsMonitorSchedule ("5m" interval,
-// "scripts/ops-monitor-check.sh" script path).
-//
-// Bead ref: hk-bi4bg.
-//
-// A conversion, not a field-by-field literal: the raw shape and the config shape
-// must stay identical, and a conversion turns any future drift into a compile
-// error instead of a silently dropped field.
 func parseOpsmonitorBlock(raw rawOpsmonitorConfig) OpsmonitorConfig {
 	return OpsmonitorConfig(raw)
 }
 
-// parseStallSentinelBlock converts a rawStallSentinelConfig into a
-// StallSentinelConfig. All duration fields are optional at the YAML level;
-// a bare number (not a Go duration string) fails loudly via parseDurationField.
-// Required-value enforcement (fail-loud when any field is zero at startup) is
-// delegated to cmd/harmonik/resolve_stall_sentinel_config.go.
-//
-// Bead ref: hk-hm09z.
 func parseStallSentinelBlock(path string, raw rawStallSentinelConfig) (StallSentinelConfig, error) {
 	e := raw.Escalation
 	d := raw.Detection
@@ -2049,38 +1589,20 @@ func parseStallSentinelBlock(path string, raw rawStallSentinelConfig) (StallSent
 	}, nil
 }
 
-// parseHarnessesBlock converts a rawHarnessesConfig into a HarnessesConfig.
-//
-// All Pi fields are stored verbatim from the YAML except APIKeyFile, where a
-// leading ~ is expanded to the user's home directory (PI-050/hk-sv3vg). All
-// other validation and required-field enforcement is left to ResolvePiConfig
-// (cmd/harmonik/resolve_pi_config.go), the operator-facing chokepoint.
-//
-// HasFallback is set to true when any fallback sub-field is non-empty (i.e. the
-// operator wrote at least one key under harnesses.pi.fallback:).
-//
-// Spec refs: PI-050. Bead refs: hk-v7q5u, hk-sv3vg.
 func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	pi := raw.Pi
 	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
 	apiKeyFile, expandErr := daemonExpandHomePath(pi.APIKeyFile)
 	if expandErr != nil {
-		// Non-fatal: leave the ~-prefixed path unexpanded and let ResolvePiConfig
-		// surface it. Log so a home-dir resolution failure is not swallowed.
 		fmt.Fprintf(os.Stderr, "daemon: parseHarnessesBlock: expand harnesses.pi.api_key_file %q: %v\n", pi.APIKeyFile, expandErr)
 	}
-	// Copy profiles verbatim (APIKeyFile ~ expansion is done later in ResolvePiConfig).
 	var profiles map[string]PiProfileConfig
 	if len(pi.Profiles) > 0 {
 		profiles = make(map[string]PiProfileConfig, len(pi.Profiles))
 		for name, rp := range pi.Profiles {
-			// A conversion, not a field-by-field literal: drift between the raw
-			// and resolved profile shapes becomes a compile error instead of a
-			// silently dropped field.
 			profiles[name] = PiProfileConfig(rp)
 		}
 	}
-	// Copy provider slot ceilings verbatim; nil/empty stays nil (unbounded).
 	var providerSlots map[string]int
 	if len(pi.ProviderSlots) > 0 {
 		providerSlots = make(map[string]int, len(pi.ProviderSlots))
@@ -2108,19 +1630,6 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	}
 }
 
-// parseSandboxBlock converts a rawSandboxConfig into a SandboxConfig.
-//
-// Validation:
-//   - backend MUST be present when the block is present (fail-loud per the
-//     no-hardcoded-defaults principle; the caller checks sandboxBlockAbsent before
-//     calling here so we only arrive when at least one field is non-zero).
-//   - backend must be one of "srt" or "none".
-//   - All other fields are optional; nil slices are preserved as nil.
-//
-// v1 network mode is "open" (locked per SPIKE-FINDINGS §TLS DECISION); the value
-// is stored verbatim from config for forward-compat but not further validated here.
-//
-// Bead ref: hk-6596l.
 func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error) {
 	if raw.Backend == "" {
 		return SandboxConfig{}, &ErrMalformedConfigYAML{
@@ -2136,25 +1645,12 @@ func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error)
 			Cause: fmt.Errorf("sandbox.backend %q: unknown value; must be one of srt, none", raw.Backend),
 		}
 	}
-	// hk-vsl4d: reject an unknown sandbox.harnesses entry. The list is matched
-	// against a run's agent type by exact string compare (SandboxConfig.HasHarness
-	// -> sandboxSpawnForRun), so a name that matches no agent type does not fail —
-	// it silently matches nothing and the run is NOT sandboxed. The natural thing
-	// to write is "claude"; the real identifier is "claude-code". That config reads
-	// as sandboxing claude and sandboxes nothing, with no error and no log line.
-	//
-	// Fails CLOSED, matching sandbox.backend directly above: a security control
-	// that is misconfigured must refuse to start, not run unprotected. A shape
-	// check would not do this job — "claude" satisfies the AR-025 regex — so
-	// membership in core.ReservedAgentTypes() is the test.
 	for _, h := range raw.Harnesses {
 		if core.AgentType(h).Reserved() {
 			continue
 		}
 		cause := fmt.Errorf("sandbox.harnesses[%q]: unknown agent type; must be one of %s",
 			h, agentTypeNamesForError())
-		// Name the near-miss explicitly. This defect's whole shape is a
-		// plausible-looking name, so the error should say what to write.
 		if suggestion, ok := nearestAgentType(h); ok {
 			cause = fmt.Errorf("sandbox.harnesses[%q]: unknown agent type; did you mean %q? must be one of %s",
 				h, suggestion, agentTypeNamesForError())
@@ -2177,10 +1673,6 @@ func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error)
 	}, nil
 }
 
-// daemonExpandHomePath expands a leading ~ to the user's home directory.
-// Returns the path unchanged when it does not start with ~.
-// Mirrors expandHomePath in cmd/harmonik/resolve_pi_config.go (CLI path);
-// kept separate to avoid a cmd→internal import cycle. Bead: hk-sv3vg.
 func daemonExpandHomePath(p string) (string, error) {
 	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
 		return p, nil

@@ -1,24 +1,5 @@
 package daemon_test
 
-// harnessregistry_test.go — daemon-side HarnessRegistry wiring + routed
-// launchSpecBuilder tests (codex-harness C1/T3, hk-hj9ld).
-//
-// Covers:
-//  1. newHarnessRegistry registers claude.Harness for core.AgentTypeClaudeCode and
-//     no other type (claude-only in T3).
-//  2. The registry-routed launchSpecBuilder produces a LaunchSpec equivalent to a
-//     direct buildClaudeLaunchSpec call for the default (claude) resolution —
-//     no behavior change.
-//  3. resolveHarness default resolution lands on AgentTypeClaudeCode, so the
-//     routed builder uses the claude harness for a bead with no harness label.
-//
-// These tests do NOT call t.Parallel(): like harness/claude's harness_test.go they invoke
-// buildClaudeLaunchSpec (EnsureWorktreeTrust writes under a ~/.claude file lock),
-// so running them in parallel with the integration suite causes spurious
-// lock-timeout failures.
-//
-// Helper prefix: harnessRegistryFixture.
-
 import (
 	"context"
 	"os"
@@ -36,11 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// harnessRegistryFixtureWorkspace mirrors claudeHarnessFixtureWorkspace.
 func harnessRegistryFixtureWorkspace(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -50,7 +26,6 @@ func harnessRegistryFixtureWorkspace(t *testing.T) string {
 	return dir
 }
 
-// harnessRegistryFixtureRunCtx builds an ExportedClaudeRunCtx for single-mode.
 func harnessRegistryFixtureRunCtx(t *testing.T, workspacePath string) daemon.ExportedClaudeRunCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
@@ -70,15 +45,10 @@ func harnessRegistryFixtureRunCtx(t *testing.T, workspacePath string) daemon.Exp
 	}
 }
 
-// harnessRegistryFixtureBus returns an in-process event bus for resolveHarness.
 func harnessRegistryFixtureBus(t *testing.T) handlercontract.EventEmitter {
 	t.Helper()
 	return eventbus.NewBusImpl()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. Registry contents (claude-only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHarnessRegistry_ForAgent_Claude verifies newHarnessRegistry registers the
 // claude.Harness under core.AgentTypeClaudeCode and ForAgent returns it.
@@ -95,7 +65,6 @@ func TestHarnessRegistry_ForAgent_Claude(t *testing.T) {
 	if got := h.AgentType(); got != core.AgentTypeClaudeCode {
 		t.Errorf("ForAgent(claude-code).AgentType() = %q; want %q", got, core.AgentTypeClaudeCode)
 	}
-	// It must be the concrete *claude.Harness.
 	if _, ok := h.(*claude.Harness); !ok {
 		t.Errorf("ForAgent(claude-code) returned %T; want *claude.Harness", h)
 	}
@@ -148,16 +117,11 @@ func TestHarnessRegistry_ForAgent_Codex_Registered(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Routed builder == direct buildClaudeLaunchSpec (no behavior change)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRoutedLaunchSpecBuilder_ClaudeParity verifies that the registry-routed
 // launchSpecBuilder produces a LaunchSpec byte-identical (Binary/Args/Env/WorkDir)
 // to a direct buildClaudeLaunchSpec call for a bead with no harness label (default
 // resolution → claude-code). This is the C1/T3 no-behavior-change guarantee.
 func TestRoutedLaunchSpecBuilder_ClaudeParity(t *testing.T) {
-	// Reference: direct buildClaudeLaunchSpec on a fresh workspace.
 	wsRef := harnessRegistryFixtureWorkspace(t)
 	rcRef := harnessRegistryFixtureRunCtx(t, wsRef)
 	refSpec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rcRef)
@@ -165,8 +129,6 @@ func TestRoutedLaunchSpecBuilder_ClaudeParity(t *testing.T) {
 		t.Fatalf("reference buildClaudeLaunchSpec: %v", err)
 	}
 
-	// Routed: through newHarnessRegistry + resolveHarness (default → claude) on a
-	// fresh workspace (avoids WriteAgentTask side-effect collision).
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
 		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
@@ -185,24 +147,15 @@ func TestRoutedLaunchSpecBuilder_ClaudeParity(t *testing.T) {
 		t.Fatalf("routed launchSpecBuilder: %v", err)
 	}
 
-	// Binary parity.
 	if routedSpec.Binary != refSpec.Binary {
 		t.Errorf("Binary: routed = %q; want %q", routedSpec.Binary, refSpec.Binary)
 	}
-	// Arg-shape parity: the routed path must produce a --session-id flag and the
-	// same flag set as the direct path (session-id values differ per-run, which
-	// is expected — they are freshly minted UUIDv7s). Compare argv with the
-	// session-id VALUE normalised out.
 	if got, want := normalizeSessionID(routedSpec.Args), normalizeSessionID(refSpec.Args); !equalStrings(got, want) {
 		t.Errorf("Args (session-id normalised):\n routed = %v\n  want  = %v", got, want)
 	}
-	// Env-key parity: the same set of HARMONIK_* keys must be present. Values for
-	// run/session IDs differ per-run, so compare the key set, not values.
 	if got, want := envKeys(routedSpec.Env), envKeys(refSpec.Env); !equalStringSet(got, want) {
 		t.Errorf("Env key set differs:\n routed = %v\n  want  = %v", got, want)
 	}
-	// WorkDir parity: each spec points at its own workspace; both must be the
-	// supplied workspace path (non-empty, equal to rc.WorkspacePath).
 	if routedSpec.WorkDir != wsRouted {
 		t.Errorf("routed WorkDir = %q; want %q", routedSpec.WorkDir, wsRouted)
 	}
@@ -243,10 +196,6 @@ func TestRoutedLaunchSpecBuilder_SideEffects(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. resolveHarness default → claude (routed builder uses claude for no-label bead)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHarnessRegistry_DefaultResolvesToClaude verifies resolveHarness with all
 // tiers absent resolves to core.AgentTypeClaudeCode (the routed builder's claude
 // path is reached for an ordinary bead).
@@ -262,13 +211,6 @@ func TestHarnessRegistry_DefaultResolvesToClaude(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// normalizeSessionID returns a copy of args with the value following any
-// --session-id or --resume flag replaced by a placeholder, so per-run UUID
-// differences do not defeat structural argv comparison.
 func normalizeSessionID(args []string) []string {
 	out := make([]string, len(args))
 	copy(out, args)
@@ -280,7 +222,6 @@ func normalizeSessionID(args []string) []string {
 	return out
 }
 
-// envKeys extracts the sorted-into-set of "KEY" portions from "KEY=VALUE" entries.
 func envKeys(env []string) map[string]bool {
 	keys := map[string]bool{}
 	for _, e := range env {

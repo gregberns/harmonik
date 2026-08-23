@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// agentStartedFixtureRunID returns a non-nil RunID for AgentStartedPayload tests.
 func agentStartedFixtureRunID(t *testing.T) RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -173,10 +172,6 @@ func TestAgentStartedPayloadRoundTrip(t *testing.T) {
 func TestAgentStartedPayloadConstructorShape(t *testing.T) {
 	t.Parallel()
 
-	// Verify the constructor shape: a zero-value AgentStartedPayload produced by
-	// the constructor function is of the correct type.  This tests the constructor
-	// function shape as used by registerAgentEvents() without touching the global
-	// registry (which eventregistry_test.go resets between subtests).
 	ctor := func() EventPayload { return &AgentStartedPayload{} }
 	got := ctor()
 	if _, ok := got.(*AgentStartedPayload); !ok {
@@ -187,8 +182,6 @@ func TestAgentStartedPayloadConstructorShape(t *testing.T) {
 func TestAgentStartedPayloadNoEnvironmentVariables(t *testing.T) {
 	t.Parallel()
 
-	// HC-029 binding: AgentStartedPayload MUST NOT contain an env or
-	// environment field. Verify via JSON marshal that no such key appears.
 	runID := agentStartedFixtureRunID(t)
 	p := AgentStartedPayload{
 		RunID:     runID,

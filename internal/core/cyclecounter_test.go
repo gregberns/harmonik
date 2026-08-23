@@ -8,15 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// cycleCounterFixtureRunID allocates a fresh RunID for cycle-counter tests.
-// Helper prefix: hk-b3f.57-impl per implementer-protocol.md.
 func cycleCounterFixtureRunID() RunID {
 	return RunID(uuid.Must(uuid.NewV7()))
 }
 
-// cycleCounterFixtureTransition builds a minimal valid Transition for use in
-// reconciliation tests. Only RunID, FromState.NodeID, and ToState.NodeID are
-// meaningful for the cycle counter; other fields carry plausible sentinel values.
 func cycleCounterFixtureTransition(runID RunID, from, to NodeID) Transition {
 	now := time.Now()
 	fromState := State{
@@ -55,8 +50,6 @@ func cycleCounterFixtureTransition(runID RunID, from, to NodeID) Transition {
 	}
 }
 
-// --- Basic increment / get ---
-
 // TestCycleCounterEM043_IncrementGet verifies that a fresh counter starts at
 // zero and each Increment call returns the incremented value, per EM-043a.
 func TestCycleCounterEM043_IncrementGet(t *testing.T) {
@@ -91,8 +84,6 @@ func TestCycleCounterEM043_IncrementGet(t *testing.T) {
 	}
 }
 
-// --- Per-run isolation ---
-
 // TestCycleCounterEM043_PerRunIsolation verifies that counters for different
 // run_ids are independent: incrementing an edge in run-A does not affect the
 // counter for the same edge in run-B. Spec reference: EM-043a.
@@ -120,8 +111,6 @@ func TestCycleCounterEM043_PerRunIsolation(t *testing.T) {
 	}
 }
 
-// --- Cap-reached → ErrCompilationLoop ---
-
 // TestCycleCounterEM043_CapReached verifies that Increment returns an error
 // wrapping ErrCompilationLoop when the traversal count reaches the cap, and
 // that the counter is NOT incremented beyond the cap. Spec reference: EM-043,
@@ -146,7 +135,6 @@ func TestCycleCounterEM043_CapReached(t *testing.T) {
 		}
 	}
 
-	// Next increment must fail with ErrCompilationLoop.
 	n, err := cc.Increment(runID, from, to, &traversalCap)
 	if err == nil {
 		t.Fatal("Increment at cap returned nil error, want ErrCompilationLoop")
@@ -154,7 +142,6 @@ func TestCycleCounterEM043_CapReached(t *testing.T) {
 	if !errors.Is(err, ErrCompilationLoop) {
 		t.Errorf("Increment at cap returned %v, want error wrapping ErrCompilationLoop", err)
 	}
-	// Counter must not have advanced.
 	wantCap := uint64(traversalCap)
 	if n != wantCap {
 		t.Errorf("counter returned alongside ErrCompilationLoop = %d, want %d (counter must not advance past cap)", n, wantCap)
@@ -189,8 +176,6 @@ func TestCycleCounterEM043_CapOneEdge(t *testing.T) {
 	}
 }
 
-// --- Reset ---
-
 // TestCycleCounterEM043_Reset verifies that Reset clears all counters for the
 // target run and does not affect counters for other runs.
 func TestCycleCounterEM043_Reset(t *testing.T) {
@@ -220,8 +205,6 @@ func TestCycleCounterEM043_Reset(t *testing.T) {
 		t.Errorf("after Reset(runA), runB counter = %d, want 2 (must be unaffected)", got)
 	}
 }
-
-// --- Recovery from transition slice ---
 
 // TestCycleCounterEM043_ReconcileFromTransitions verifies that
 // ReconcileFromTransitions replays a slice of Transition records and sets
@@ -316,14 +299,12 @@ func TestCycleCounterEM043_ReconcileReplacesExistingInMemory(t *testing.T) {
 	cc := NewCycleCounter()
 	runID := cycleCounterFixtureRunID()
 
-	// Pre-populate in-memory counter with a stale value.
 	for range 5 {
 		if _, err := cc.Increment(runID, "m", "n", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Reconcile with a smaller authoritative count.
 	transitions := []Transition{
 		cycleCounterFixtureTransition(runID, "m", "n"),
 		cycleCounterFixtureTransition(runID, "m", "n"),
@@ -334,8 +315,6 @@ func TestCycleCounterEM043_ReconcileReplacesExistingInMemory(t *testing.T) {
 		t.Errorf("after Reconcile over stale in-memory: counter = %d, want 2 (reconcile must replace, not add)", got)
 	}
 }
-
-// --- Single edge participates in multiple cycles (OQ-EM-004) ---
 
 // TestCycleCounterEM043_SingleEdgeMultiCycleSharedCounter verifies that when a
 // single edge is traversed from different cycle paths, it shares one counter
@@ -350,8 +329,6 @@ func TestCycleCounterEM043_SingleEdgeMultiCycleSharedCounter(t *testing.T) {
 	to := NodeID("shared-to")
 	traversalCap := 4
 
-	// Traverse three times (simulating three different cycle paths hitting the
-	// same a→b edge). All three traversals must increment the same counter.
 	for i := range 3 {
 		n, err := cc.Increment(runID, from, to, &traversalCap)
 		if err != nil {
@@ -363,12 +340,10 @@ func TestCycleCounterEM043_SingleEdgeMultiCycleSharedCounter(t *testing.T) {
 		}
 	}
 
-	// Fourth traversal still within cap.
 	if _, err := cc.Increment(runID, from, to, &traversalCap); err != nil {
 		t.Fatalf("fourth traversal (at cap) returned error: %v", err)
 	}
 
-	// Fifth traversal must fail.
 	_, err := cc.Increment(runID, from, to, &traversalCap)
 	if !errors.Is(err, ErrCompilationLoop) {
 		t.Errorf("fifth traversal beyond cap: got %v, want ErrCompilationLoop", err)

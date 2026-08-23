@@ -128,9 +128,6 @@ func (e IntentLogEntry) Valid() bool {
 	if e.IdempotencyKey == "" {
 		return false
 	}
-	// BI-010d: reset is a startup-only write with no associated run or transition.
-	// RunID and TransitionID are zero-valued for reset entries; all other ops require
-	// non-nil UUIDs.
 	if e.Op != TerminalOpReset {
 		if uuid.UUID(e.RunID) == uuid.Nil {
 			return false

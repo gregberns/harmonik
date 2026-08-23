@@ -1,15 +1,5 @@
 package watch_test
 
-// markers_t12_test.go — RED→GREEN tests for T12 watch marker-check.
-//
-// Required assertions (task spec):
-//   (a) A declared never_emits marker matched against the event stream produces a friendly reminder.
-//   (b) An event from an agent whose type has no matching marker produces no reminder.
-//   (c) A qualified marker (e.g. "queue_submit:main") matches only when the qualifier also matches.
-//   (d) An event with no resolvable emitter type is skipped (no false-positive).
-//
-// Done-check: these tests must be GREEN; event-stream authoritative (no transcript grepping).
-
 import (
 	"encoding/json"
 	"os"
@@ -21,11 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/watch"
 )
 
-// markerFixtureAgentsDir builds a minimal agents directory tree with manifests.
-//
-//	admiral: never_emits: [queue_submit:main]
-//	watch:   never_emits: [queue_submit:main]
-//	crew:    never_emits: []
 func markerFixtureAgentsDir(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -141,7 +126,6 @@ markers:
 	return agentsDir
 }
 
-// markerEvent builds a core.Event with the given type and payload map.
 func markerEvent(t *testing.T, evType string, payload map[string]any) core.Event {
 	t.Helper()
 	ev := ledgerFixtureEvent(t, evType)
@@ -166,7 +150,6 @@ func TestMarkerChecker_QualifiedViolationProducesReminder(t *testing.T) {
 		t.Fatalf("NewMarkerChecker: %v", err)
 	}
 
-	// admiral emits queue_submit with queue=main → violation
 	ev := markerEvent(t, "queue_submit", map[string]any{
 		"from":  "admiral",
 		"queue": "main",
@@ -218,7 +201,6 @@ func TestMarkerChecker_CrewTypeNoViolation(t *testing.T) {
 		t.Fatalf("NewMarkerChecker: %v", err)
 	}
 
-	// "paul" is a crew instance (unknown to type names → resolves to crew; crew has no never_emits)
 	ev := markerEvent(t, "queue_submit", map[string]any{
 		"from":  "paul",
 		"queue": "main",
@@ -260,7 +242,6 @@ func TestMarkerChecker_QualifiedMarkerQueueMismatch(t *testing.T) {
 		t.Fatalf("NewMarkerChecker: %v", err)
 	}
 
-	// admiral emits queue_submit but to a different queue — not "main" → no violation
 	ev := markerEvent(t, "queue_submit", map[string]any{
 		"from":  "admiral",
 		"queue": "feature-branch",
@@ -301,7 +282,6 @@ func TestMarkerChecker_NoEmitterSkipped(t *testing.T) {
 		t.Fatalf("NewMarkerChecker: %v", err)
 	}
 
-	// No 'from' field in payload
 	ev := markerEvent(t, "queue_submit", map[string]any{
 		"queue": "main",
 	})

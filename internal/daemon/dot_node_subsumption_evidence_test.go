@@ -1,25 +1,5 @@
 package daemon_test
 
-// dot_node_subsumption_evidence_test.go — what the graph path accepts as proof
-// that a bead's work already landed.
-//
-// When an implementer exits without moving HEAD, the node may close the bead as
-// subsumed instead of hard-failing it. The evidence for that close was a commit
-// message on the literal branch `main` carrying a "Refs: <bead-id>" line, and
-// nothing else. Anyone may write that line, for any reason.
-//
-// Measured on this repository: bead hk-2hfyt, a P1 fleet-down bug, closed as
-// done on 2026-07-12. The commit that satisfied the probe was a whole-repo
-// gofumpt run whose entire message was "fmt: auto-format via gofumpt+gci" plus
-// "Refs: hk-2hfyt". The fix never landed. A clone of this repository carries
-// hundreds of bead identifiers in its history, so re-dispatching any named bead
-// to an agent that did nothing read as success.
-//
-// The probe also asked the wrong branch: this program merges to an integration
-// branch, and `main` is 845 commits behind it.
-//
-// Bead: hk-1a7yb.
-
 import (
 	"context"
 	"os"
@@ -32,19 +12,11 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// dotFixtureLandsOnBody is a bead body that declares a lands_on branch (bead
-// YAML key `target_branch`, BI-009b) without declaring a cross-repo target.
 func dotFixtureLandsOnBody(branch string) string {
 	return "## Summary\n\nWork that lands on an integration branch.\n\n" +
 		"## Branching\n\n```yaml\ntarget_branch: " + branch + "\n```\n"
 }
 
-// dotFixtureMentionOnlyCommit reproduces the commit that closed hk-2hfyt: a
-// mechanical whole-repo reformat that names the bead and does none of its work.
-//
-// It is deliberately NOT a docs-only commit. The diff touches a .go file, so a
-// "did it change anything real" check passes on it. Naming a bead is the only
-// thing this commit does that relates to the bead.
 func dotFixtureMentionOnlyCommit(t *testing.T, dir string, bead core.BeadID) {
 	t.Helper()
 	path := filepath.Join(dir, "formatted.go")
@@ -100,8 +72,6 @@ func TestDotNode_SubsumptionAsksTheBranchTheRunLandsOn(t *testing.T) {
 		HandlerScript:   dotFixtureNoCommitHandler(t),
 		BeadDescription: dotFixtureLandsOnBody("integration"),
 		BeforeRun: func(t *testing.T, projectDir string) {
-			// The work merges on the integration branch. main never sees it,
-			// which is the state of this repository.
 			dotFixtureGit(t, projectDir, "checkout", "-b", "integration")
 			dotFixtureLandSubsumedCommit(t, projectDir, beadID)
 			dotFixtureGit(t, projectDir, "checkout", "main")
@@ -175,17 +145,6 @@ func TestBeadWorkLandedOn_BranchIsRequiredAndIsNeverDefaulted(t *testing.T) {
 	}
 }
 
-// ── The claim-failure path ──────────────────────────────────────────────────
-//
-// The second caller of the same evidence: when `br` refuses a claim because a
-// blocker bead is still open, the daemon looks for blockers whose work already
-// merged and closes those stale records. It asked the same two wrong questions
-// — the literal branch `main`, and a mention in a commit message — and it
-// failed the other way round as well: a blocker that landed on the integration
-// branch stayed invisible, so a ready bead read as blocked.
-
-// blockedLedger reports one bead as blocked by a fixed edge list. Every other
-// bead, and every other call, is the ordinary stub.
 type blockedLedger struct {
 	*stubBeadLedger
 	blocked core.BeadID
@@ -199,7 +158,6 @@ func (l *blockedLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRe
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusBlocked, Edges: l.edges}, nil
 }
 
-// recordingCloser records every stale-blocker close the daemon asks for.
 type recordingCloser struct {
 	mu     sync.Mutex
 	closed []core.BeadID
@@ -239,9 +197,7 @@ func TestAutoCloseStaleBlockers_AsksTheTargetBranchForRealEvidence(t *testing.T)
 
 	projectDir := t.TempDir()
 	workloopFixtureGitRepo(t, projectDir)
-	// main names one blocker and does none of its work.
 	dotFixtureMentionOnlyCommit(t, projectDir, namedID)
-	// The other blocker's work is merged on the target branch.
 	dotFixtureGit(t, projectDir, "checkout", "-b", "integration")
 	dotFixtureLandSubsumedCommit(t, projectDir, mergedID)
 	dotFixtureGit(t, projectDir, "checkout", "main")

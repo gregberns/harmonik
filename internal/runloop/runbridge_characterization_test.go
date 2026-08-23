@@ -1,28 +1,5 @@
 package runloop
 
-// runbridge_characterization_test.go — characterization of the TERMINAL spine
-// of the shared launch → dispatch → wait → probe → teardown sequence.
-//
-// RunBridge is where the pure Run state machine meets the live daemon: it is
-// the single place a bead is closed or reopened and the single place a run
-// terminal is emitted. Every dispatch site ends here. It had no tests.
-//
-// These pin the OUTCOMES the bridge produces for each terminal class — what
-// happens to the bead, whether the run reports success, and which events reach
-// the bus — using fake ports. They do not pin the hook layout, so a Phase-3
-// decomposition that preserves the outcomes preserves these.
-//
-// NOT covered here, deliberately, because the current code makes it
-// unreachable without a real git repository: every branch that runs a merge or
-// the scenario gate. mergeHook calls runmerge.RunBranchToTarget and gateHook
-// calls runScenarioGateIfNeededVia directly — neither is behind a port — so the
-// per-mode merge-retry budget (single 1 / DOT 3), the
-// retryable-vs-fatal classification, and the DOT already-approved carve-out
-// cannot be exercised in a unit test. That is a real seam finding, not an
-// omission.
-//
-// Spec: specs/run-state-machine.md RSM-020/021/022/033/035.
-
 import (
 	"context"
 	"encoding/json"
@@ -37,8 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ── fakes ────────────────────────────────────────────────────────────────────
-
 type bridgeLedgerCall struct {
 	op             string // "close" | "reopen"
 	reason         string
@@ -46,9 +21,6 @@ type bridgeLedgerCall struct {
 	ctxAlive       bool // the context the bridge handed the ledger was usable
 }
 
-// bridgeLedger records every terminal write the bridge made, and whether the
-// context it arrived with was still usable. The liveness flag is the point:
-// a terminal write handed a dead context is a write that silently does nothing.
 type bridgeLedger struct {
 	mu       sync.Mutex
 	calls    []bridgeLedgerCall
@@ -125,7 +97,6 @@ func (e *bridgeEmitter) saw(typ core.EventType) bool {
 	return false
 }
 
-// outcomeReason digs the reason out of the last outcome_emitted payload.
 func (e *bridgeEmitter) outcome(t *testing.T) (kind, reason string, found bool) {
 	t.Helper()
 	for _, c := range e.emitted() {
@@ -152,8 +123,6 @@ type terminalRecord struct {
 	ctxAlive bool
 }
 
-// newBridge builds a RunBridge over fake ports, plus the recorders for its two
-// observable outputs: the ledger writes and the run-terminal emission.
 func newBridge(t *testing.T, mode core.WorkflowMode) (*RunBridge, *bridgeLedger, *bridgeEmitter, *terminalRecord) {
 	t.Helper()
 	ledger := &bridgeLedger{}
@@ -173,10 +142,6 @@ func newBridge(t *testing.T, mode core.WorkflowMode) (*RunBridge, *bridgeLedger,
 			term.ctxAlive = ctx.Err() == nil
 		},
 	)
-	// The spine hooks with no merge/gate context: the DOT posture (SkipGate)
-	// keeps the gate off the real toolchain, and PreMergeSync is a tripwire —
-	// every terminal exercised below must reach the ledger WITHOUT merging, so
-	// any merge attempt should name itself rather than surface as a nil panic.
 	b.WireSpine(SpineArgs{
 		SkipGate: true,
 		PreMergeSync: func(context.Context) string {
@@ -217,8 +182,6 @@ func TestRunBridge_DrainSynchronizesWithALiveContextBeforeMerge(t *testing.T) {
 		t.Fatalf("sync failure closed %d bead(s), want 0", len(closed))
 	}
 }
-
-// ── the outcomes ─────────────────────────────────────────────────────────────
 
 // TestRunBridge_ReopenSurvivesACancelledRunContext pins RSM-022 / hk-e3fy: when
 // the run's own context is already dead — a stale-watcher abort, a daemon
@@ -480,7 +443,6 @@ func TestRunBridge_PreDispatchFailureStillReopens(t *testing.T) {
 	b, ledger, _, term := newBridge(t, core.WorkflowModeSingle)
 	ctx := context.Background()
 
-	// No Start(): the machine is still in its pre-dispatch phase.
 	b.Fail(ctx, "worktree_create_failed: disk full", "worktree_create_failed")
 
 	reopens := ledger.only("reopen")

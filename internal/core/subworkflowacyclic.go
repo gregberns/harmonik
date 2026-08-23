@@ -31,7 +31,6 @@ func NewSubWorkflowRefGraph() *SubWorkflowRefGraph {
 // ID). Both values must be non-empty.
 func (g *SubWorkflowRefGraph) AddEdge(parent, child string) {
 	g.edges[parent] = append(g.edges[parent], child)
-	// Ensure child has a vertex even if it has no outgoing edges.
 	if _, ok := g.edges[child]; !ok {
 		g.edges[child] = nil
 	}
@@ -47,7 +46,6 @@ func (g *SubWorkflowRefGraph) AddEdge(parent, child string) {
 // This is the function the pre-run validator calls after building the graph
 // via transitive resolution per EM-034b.
 func (g *SubWorkflowRefGraph) HasCycle() bool {
-	// colour: 0 = white (unvisited), 1 = grey (on stack), 2 = black (done)
 	colour := make(map[string]int, len(g.edges))
 
 	var dfs func(v string) bool
@@ -62,7 +60,6 @@ func (g *SubWorkflowRefGraph) HasCycle() bool {
 					return true
 				}
 			}
-			// colour 2 = already fully explored, safe to skip
 		}
 		colour[v] = 2 // black
 		return false

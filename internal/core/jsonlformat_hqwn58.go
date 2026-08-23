@@ -2,16 +2,6 @@ package core
 
 import "fmt"
 
-// jsonlformat_hqwn58.go — on-disk JSONL line format shapes and file path
-// constants for the event log (event-model.md §6.2).
-//
-// Spec ref: specs/event-model.md §6.2.
-// Bead ref: hk-hqwn.58.
-
-// ---------------------------------------------------------------------------
-// File path constants (relative to the .harmonik directory root)
-// ---------------------------------------------------------------------------
-
 // EventsJSONLPath is the path of the primary event log relative to the
 // project's .harmonik directory (event-model.md §6.2).
 //
@@ -38,10 +28,6 @@ const DeadLettersJSONLPath = "events/dead-letters.jsonl"
 func SpillJSONLPath(consumerName string) string {
 	return fmt.Sprintf("events/spill-%s.jsonl", consumerName)
 }
-
-// ---------------------------------------------------------------------------
-// Dead-letter line wrapper
-// ---------------------------------------------------------------------------
 
 // DeadLetterAnnotation is the metadata block embedded in every dead-letter
 // log entry (event-model.md §6.2).
@@ -102,10 +88,6 @@ type DeadLetterLine struct {
 func (l DeadLetterLine) Valid() bool {
 	return l.Event.Valid() && l.DeadLetter.Valid()
 }
-
-// ---------------------------------------------------------------------------
-// Read-recovery context
-// ---------------------------------------------------------------------------
 
 // JSONLReadContext identifies the context in which a JSONL read is occurring
 // (event-model.md §6.2). The context determines which read-recovery rule

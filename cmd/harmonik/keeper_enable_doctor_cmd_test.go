@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// ── enable helpers ────────────────────────────────────────────────────────────
-
-// makeScriptsDir creates a fake scripts directory in the temp dir with
-// placeholder files for the keeper scripts (including the SessionStart hook,
-// hk-8prq).
 func makeScriptsDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -28,7 +23,6 @@ func makeScriptsDir(t *testing.T) string {
 	return dir
 }
 
-// makeEnableCfg returns an enableConfig wired to temp directories.
 func makeEnableCfg(t *testing.T, agent string) (cfg enableConfig, settingsPath string) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -45,7 +39,6 @@ func makeEnableCfg(t *testing.T, agent string) (cfg enableConfig, settingsPath s
 	return cfg, settingsPath
 }
 
-// readSettingsJSON reads and parses a settings.json from path.
 func readSettingsJSON(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
 	//nolint:gosec // G304: path is supplied by this package's temporary settings fixtures
@@ -87,8 +80,6 @@ func keeperFixtureString(t *testing.T, value any, field string) string {
 	return got
 }
 
-// ── enable tests ──────────────────────────────────────────────────────────────
-
 // TestKeeperEnable_FreshSettings verifies that enable writes all three stanzas
 // when settings.json does not yet exist.
 func TestKeeperEnable_FreshSettings(t *testing.T) {
@@ -104,7 +95,6 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 
 	settings := readSettingsJSON(t, settingsPath)
 
-	// statusLine (ON-058b: project-agnostic — no HARMONIK_PROJECT= prefix).
 	sl, ok := settings["statusLine"].(map[string]interface{})
 	if !ok {
 		t.Fatal("statusLine missing or wrong type")
@@ -113,28 +103,20 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("statusLine.command does not contain keeper-statusline.sh: %q", cmd)
 	}
-	// hk-nm32w: agent name must NOT be embedded.
 	if strings.Contains(cmd, "HARMONIK_AGENT=") {
 		t.Errorf("statusLine.command must not embed HARMONIK_AGENT= (hk-nm32w): %q", cmd)
 	}
-	// ON-058b: statusLine command must NOT carry HARMONIK_PROJECT= — it is
-	// project-agnostic; project routing is resolved at runtime from the
-	// inherited HARMONIK_PROJECT env var.
 	if strings.Contains(cmd, "HARMONIK_PROJECT=") {
 		t.Errorf("statusLine.command must not embed HARMONIK_PROJECT= (ON-058b): %q", cmd)
 	}
-	// hk-hs1: statusLine MUST carry "type":"command". Without it Claude Code
-	// rejects the entire settings.json and disables ALL hooks.
 	if got := keeperFixtureString(t, sl["type"], "statusLine.type"); got != "command" {
 		t.Errorf(`statusLine.type = %q; want "command" (hk-hs1)`, got)
 	}
 
-	// Stop hook (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	found, stopCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
 	if !found {
 		t.Error("Stop hook not wired in settings.json for this project")
 	}
-	// hk-nm32w: agent name must NOT be embedded in hook commands.
 	if strings.Contains(stopCmd, "HARMONIK_KEEPER_AGENT=") {
 		t.Errorf("Stop hook command must not embed HARMONIK_KEEPER_AGENT= (hk-nm32w): %q", stopCmd)
 	}
@@ -142,12 +124,10 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 		t.Errorf("Stop hook command missing HARMONIK_PROJECT=: %q", stopCmd)
 	}
 
-	// PreCompact hook (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	found, pcCmd := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
 	if !found {
 		t.Error("PreCompact hook not wired in settings.json for this project")
 	}
-	// hk-nm32w: agent name must NOT be embedded in hook commands.
 	if strings.Contains(pcCmd, "HARMONIK_KEEPER_AGENT=") {
 		t.Errorf("PreCompact hook command must not embed HARMONIK_KEEPER_AGENT= (hk-nm32w): %q", pcCmd)
 	}
@@ -172,7 +152,6 @@ func TestKeeperEnable_Idempotent(t *testing.T) {
 		t.Fatalf("second enable: want 0, got %d\n%s", code, out.String())
 	}
 
-	// statusLine must appear exactly once.
 	settings := readSettingsJSON(t, settingsPath)
 	countStatusLine := 0
 	if sl, ok := settings["statusLine"].(map[string]interface{}); ok {
@@ -184,13 +163,11 @@ func TestKeeperEnable_Idempotent(t *testing.T) {
 		t.Errorf("statusLine stanza count: want 1, got %d", countStatusLine)
 	}
 
-	// Stop hook must appear exactly once.
 	stopCount := countHookEntriesForScript(settings, "Stop", "keeper-stop-hook.sh")
 	if stopCount != 1 {
 		t.Errorf("Stop hook count: want 1, got %d", stopCount)
 	}
 
-	// PreCompact hook must appear exactly once.
 	pcCount := countHookEntriesForScript(settings, "PreCompact", "keeper-precompact-hook.sh")
 	if pcCount != 1 {
 		t.Errorf("PreCompact hook count: want 1, got %d", pcCount)
@@ -243,7 +220,6 @@ func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 
 	cfg, settingsPath := makeEnableCfg(t, "orchestrator")
 
-	// Pre-populate settings with a Stop hook using the old agent-embedded format.
 	legacyCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_KEEPER_AGENT=orchestrator " + filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh")
 	initial := map[string]interface{}{
 		"hooks": map[string]interface{}{
@@ -272,12 +248,10 @@ func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 	}
 
 	settings := readSettingsJSON(t, settingsPath)
-	// ON-058a: look up by (basename, HARMONIK_PROJECT=<projectDir>) pair.
 	found, updatedCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
 	if !found {
 		t.Fatal("Stop hook not found after normalization")
 	}
-	// hk-nm32w: normalized command must NOT embed the agent name.
 	if strings.Contains(updatedCmd, "HARMONIK_KEEPER_AGENT=") {
 		t.Errorf("Stop hook still embeds HARMONIK_KEEPER_AGENT= after normalization (hk-nm32w): %q", updatedCmd)
 	}
@@ -293,7 +267,6 @@ func TestKeeperEnable_BacksUpExistingFile(t *testing.T) {
 
 	cfg, settingsPath := makeEnableCfg(t, "orchestrator")
 
-	// Write initial settings.json.
 	initial := map[string]interface{}{"foo": "bar"}
 	raw := keeperFixtureMarshal(t, initial)
 	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
@@ -305,7 +278,6 @@ func TestKeeperEnable_BacksUpExistingFile(t *testing.T) {
 		t.Fatalf("want 0, got %d\n%s", code, out.String())
 	}
 
-	// Find backup file.
 	dir := filepath.Dir(settingsPath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -459,10 +431,6 @@ func TestKeeperEnable_PreservesExistingSettings(t *testing.T) {
 	}
 }
 
-// ── doctor tests ──────────────────────────────────────────────────────────────
-
-// makeDoctorCfg returns a doctorConfig wired to temp dirs, optionally with a
-// fake settings.json and keeper files already created.
 func makeDoctorCfg(t *testing.T, agent string) (cfg doctorConfig, cleanup func()) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -490,7 +458,6 @@ func TestKeeperDoctor_AllGapsWhenNoSetup(t *testing.T) {
 	if code != 1 {
 		t.Errorf("want exit 1 (gaps), got %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
-	// At minimum statusLine and hook gaps should be reported.
 	out := stdout.String()
 	if !strings.Contains(out, "statusLine") {
 		t.Errorf("doctor output missing statusLine check: %s", out)
@@ -511,7 +478,6 @@ func TestKeeperDoctor_HookGapDetected(t *testing.T) {
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 	scriptsDir := makeScriptsDir(t)
 
-	// Write settings with only statusLine (no hooks).
 	settings := map[string]interface{}{}
 	mergeStatusLineStanza(settings, "HARMONIK_PROJECT="+cfg.projectDir+" HARMONIK_AGENT=orchestrator "+filepath.Join(scriptsDir, "keeper-statusline.sh"))
 	raw := keeperFixtureMarshalIndent(t, settings)
@@ -533,7 +499,6 @@ func TestKeeperDoctor_HookGapDetected(t *testing.T) {
 // ANTHROPIC_API_KEY is set in the environment.
 // NOT parallel: uses t.Setenv which forbids parallel.
 func TestKeeperDoctor_APIKeyRiskDetected(t *testing.T) {
-	// Use t.Setenv so the env is restored after the test.
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake")
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
@@ -609,14 +574,12 @@ func TestDoctor_ManagedSidMismatchIsRed(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Write .managed with a dead (old) session ID.
 	deadSID := "dead0000-0000-4000-a000-000000000001"
 	managedPath := filepath.Join(keeperDir, "orchestrator.managed")
 	if err := os.WriteFile(managedPath, []byte(deadSID+"\n"), 0o600); err != nil {
 		t.Fatalf("write .managed: %v", err)
 	}
 
-	// Write .ctx (gauge) with a different live session ID.
 	liveSID := "live0000-0000-4000-a000-000000000002"
 	ctxContent := `{"pct":50,"session_id":"` + liveSID + `","ts":"2026-01-01T00:00:00Z"}`
 	ctxPath := filepath.Join(keeperDir, "orchestrator.ctx")
@@ -664,13 +627,9 @@ func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
-	// Write a settings.json whose statusLine command is otherwise canonical but
-	// deliberately omits the "type":"command" field.
-	// Agent name is NOT embedded per hk-nm32w — derived from tmux session name.
 	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
-			// "type" intentionally absent — this is the defect that hk-hs1 fixed.
 			"command": statusLineCmd,
 		},
 	}
@@ -682,11 +641,9 @@ func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// Doctor must exit non-zero (gap found).
 	if code == 0 {
 		t.Errorf("want non-zero exit (statusLine.type gap), got 0\nstdout: %s", stdout.String())
 	}
-	// The "statusLine.type" check key must appear in the output.
 	if !strings.Contains(stdout.String(), "statusLine.type") {
 		t.Errorf("doctor output missing statusLine.type check; stdout: %s", stdout.String())
 	}
@@ -700,8 +657,6 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
-	// Write a fully-normalized statusLine stanza with "type":"command".
-	// Agent name is NOT embedded per hk-nm32w — derived from tmux session name.
 	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
@@ -717,7 +672,6 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// The statusLine.type check must NOT appear with the failure symbol in the output.
 	out := stdout.String()
 	if strings.Contains(out, "✗ statusLine.type") {
 		t.Errorf("doctor should not report statusLine.type failure when type is present; stdout: %s", out)
@@ -733,8 +687,6 @@ func TestKeeperDoctor_StatusLineAgentPollution(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
-	// Write a settings.json with a literal HARMONIK_AGENT= in the command — the
-	// pre-hk-67k pattern that caused ctx pollution across all sessions.
 	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=captain /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
@@ -750,11 +702,9 @@ func TestKeeperDoctor_StatusLineAgentPollution(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// Doctor must exit non-zero (pollution gap found).
 	if code == 0 {
 		t.Errorf("want non-zero exit (statusLine.agent_pollution), got 0\nstdout: %s", stdout.String())
 	}
-	// The pollution check key must appear in the output.
 	if !strings.Contains(stdout.String(), "statusLine.agent_pollution") {
 		t.Errorf("doctor output missing statusLine.agent_pollution check; stdout: %s", stdout.String())
 	}
@@ -768,9 +718,6 @@ func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
-	// Shell-expansion form: crews inherit their own HARMONIK_AGENT; the captain
-	// (no env var set) falls back to the literal "captain". Not ideal vs the pure
-	// tmux-name approach, but not a pollution risk.
 	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=${HARMONIK_AGENT:-captain} /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
@@ -786,7 +733,6 @@ func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// Shell-expansion form must NOT trigger the pollution check.
 	if strings.Contains(stdout.String(), "statusLine.agent_pollution") {
 		t.Errorf("doctor should not flag shell-expansion HARMONIK_AGENT as pollution; stdout: %s", stdout.String())
 	}
@@ -927,8 +873,6 @@ func TestKeeperDoctor_TmuxPaneSessionAbsent_Skips(t *testing.T) {
 	}
 }
 
-// ── Settings merge helpers tests ──────────────────────────────────────────────
-
 // TestMergeStatusLineStanza_Add verifies adding a fresh stanza.
 func TestMergeStatusLineStanza_Add(t *testing.T) {
 	t.Parallel()
@@ -942,7 +886,6 @@ func TestMergeStatusLineStanza_Add(t *testing.T) {
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("command not set: %q", cmd)
 	}
-	// hk-hs1: a freshly-added stanza must carry "type":"command".
 	if !statusLineTypeIsCommand(settings) {
 		t.Error(`added statusLine missing "type":"command" (hk-hs1)`)
 	}
@@ -1001,7 +944,6 @@ func TestMergeStatusLineStanza_Update(t *testing.T) {
 	if got != newCmd {
 		t.Errorf("command not updated: want %q, got %q", newCmd, got)
 	}
-	// hk-hs1: normalization must also add the required "type":"command".
 	if !statusLineTypeIsCommand(settings) {
 		t.Error(`updated statusLine missing "type":"command" (hk-hs1)`)
 	}
@@ -1044,10 +986,8 @@ func TestMergeHookStanza_Update(t *testing.T) {
 
 	const projectDir = "/proj"
 	settings := map[string]interface{}{}
-	// Old command: same project, stale script path or extra agent env var.
 	oldCmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=x /old/keeper-stop-hook.sh"
 	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, oldCmd)
-	// New canonical command: same project, clean form.
 	newCmd := "HARMONIK_PROJECT=" + projectDir + " /new/keeper-stop-hook.sh"
 	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, newCmd)
 	if action != "updated (normalized)" {
@@ -1069,7 +1009,6 @@ func TestMergeHookStanza_Update(t *testing.T) {
 func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 	t.Parallel()
 
-	// Two projects share the same settings.json (simulating ~/.claude/settings.json).
 	settingsDir := t.TempDir()
 	settingsPath := filepath.Join(settingsDir, "settings.json")
 	scriptsDir := makeScriptsDir(t)
@@ -1101,7 +1040,6 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 
 	settings := readSettingsJSON(t, settingsPath)
 
-	// ON-058b: exactly one statusLine stanza, project-agnostic (no HARMONIK_PROJECT=).
 	sl, ok := settings["statusLine"].(map[string]interface{})
 	if !ok {
 		t.Fatal("statusLine missing or wrong type")
@@ -1114,7 +1052,6 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 		t.Errorf("statusLine.command must not embed HARMONIK_PROJECT= (ON-058b): %q", slCmd)
 	}
 
-	// ON-058a: each project has its own sibling group in Stop and PreCompact arrays.
 	foundA, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", projectA)
 	if !foundA {
 		t.Error("Stop hook for projectA not found")
@@ -1124,7 +1061,6 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 		t.Error("Stop hook for projectB not found")
 	}
 
-	// Two distinct sibling groups should be present (one per project).
 	stopCount := countHookEntriesForScript(settings, "Stop", "keeper-stop-hook.sh")
 	if stopCount != 2 {
 		t.Errorf("Stop hook entry count: want 2 (one per project), got %d", stopCount)
@@ -1144,7 +1080,6 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 		t.Errorf("PreCompact hook entry count: want 2 (one per project), got %d", pcCount)
 	}
 
-	// ON-058a idempotency: re-running enable for projectA must not add a third group.
 	out.Reset()
 	if code := runKeeperEnable(cfgA, &out, &out); code != 0 {
 		t.Fatalf("re-enable projectA: want 0, got %d\n%s", code, out.String())
@@ -1156,10 +1091,6 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 	}
 }
 
-// ── countHookEntriesForScript helper ─────────────────────────────────────────
-
-// countHookEntriesForScript counts how many hook entries contain scriptBasename
-// for the given event type. Used to assert no duplicates.
 func countHookEntriesForScript(settings map[string]interface{}, eventName, scriptBasename string) int {
 	hooksRaw, ok := settings["hooks"]
 	if !ok || hooksRaw == nil {
@@ -1207,8 +1138,6 @@ func countHookEntriesForScript(settings map[string]interface{}, eventName, scrip
 	}
 	return count
 }
-
-// ── enable/doctor parser-parity tests (hk-ar5y) ──────────────────────────────
 
 // TestParseKeeperEnableArgs_PreservesYesDestructive guards the exact regression
 // that failed the original hk-psds: the enable parser MUST keep its
@@ -1378,7 +1307,6 @@ func TestKeeperDoctor_MissingConfigReported(t *testing.T) {
 	t.Parallel()
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
-	// projectDir has no .harmonik/config.yaml — all keeper keys are absent.
 	var stdout, stderr bytes.Buffer
 	code := runKeeperDoctor(cfg, &stdout, &stderr)
 
@@ -1389,11 +1317,9 @@ func TestKeeperDoctor_MissingConfigReported(t *testing.T) {
 	if !strings.Contains(out, "config") {
 		t.Errorf("doctor output missing 'config' check; stdout: %s", out)
 	}
-	// The failure symbol must appear on the config line.
 	if !strings.Contains(out, "✗") {
 		t.Errorf("doctor output missing failure symbol; stdout: %s", out)
 	}
-	// Doctor must point at the fix command.
 	if !strings.Contains(out, "keeper config --example") {
 		t.Errorf("doctor config output must mention 'keeper config --example'; stdout: %s", out)
 	}
@@ -1408,7 +1334,6 @@ func TestKeeperDoctor_CompleteConfigPassesCheck(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
-	// Write a complete config.yaml using the canonical example block.
 	cfgDir := filepath.Join(cfg.projectDir, ".harmonik")
 	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -1421,7 +1346,6 @@ func TestKeeperDoctor_CompleteConfigPassesCheck(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// The config check must pass (no "✗ config" line).
 	out := stdout.String()
 	if strings.Contains(out, "✗ config") {
 		t.Errorf("doctor should not report config failure when all keys are present; stdout: %s", out)

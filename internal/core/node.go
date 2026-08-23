@@ -132,14 +132,12 @@ func (n Node) Valid() bool {
 	if !n.Type.Valid() {
 		return false
 	}
-	// HandlerRef: required iff agentic; forbidden otherwise.
 	if n.Type == NodeTypeAgentic && n.HandlerRef == nil {
 		return false
 	}
 	if n.Type != NodeTypeAgentic && n.HandlerRef != nil {
 		return false
 	}
-	// Timeout: when set must be positive.
 	if n.Timeout != nil && *n.Timeout <= 0 {
 		return false
 	}
@@ -149,14 +147,12 @@ func (n Node) Valid() bool {
 	if !n.Axes.Valid() {
 		return false
 	}
-	// EM-011: Axes.Idempotency MUST match IdempotencyClass.
 	if !idempotencyAxisMatchesClass(n.Axes.Idempotency, n.IdempotencyClass) {
 		return false
 	}
 	if !n.ModeTag.Valid() {
 		return false
 	}
-	// SubWorkflowRef: required iff sub-workflow; forbidden otherwise.
 	if n.Type == NodeTypeSubWorkflow && n.SubWorkflowRef == nil {
 		return false
 	}
@@ -166,12 +162,6 @@ func (n Node) Valid() bool {
 	return true
 }
 
-// idempotencyAxisMatchesClass reports whether the AxisIdempotency value from
-// Axes.Idempotency is consistent with the node's IdempotencyClass per
-// execution-model.md §4.2.EM-011.
-//
-// The mapping is one-to-one for the three shared values; AxisIdempotencyNA has
-// no corresponding IdempotencyClass and always returns false.
 func idempotencyAxisMatchesClass(axis AxisIdempotency, class IdempotencyClass) bool {
 	switch class {
 	case IdempotencyClassIdempotent:

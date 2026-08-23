@@ -1,67 +1,5 @@
 package daemon_test
 
-// workloop_reservationwindow_test.go — what happens to a reserved queue item
-// when the work loop exits before the bead is ever claimed.
-//
-// The window is narrow and expensive. reserveQueueItem commits the item as
-// DISPATCHED with a RunID in one durable write. The bead is claimed some lines
-// later. Between those two points the loop can leave, and the item is then
-// recorded on disk as handed to a run that never existed.
-//
-// That state does not self-heal. A dispatched item is never re-selected. The
-// boot provenance pass reads a dispatched item as a live owner and excludes its
-// bead from the stale sweep, and the Class-B reconcile pass only repairs beads
-// the ledger holds in_progress — this bead is still open, because the claim is
-// exactly what did not happen. So an item lost in this window is stranded until
-// somebody edits the queue file, and any wave group holding it never advances.
-//
-// # What these tests found
-//
-// The test backlog recorded this as three unreleased early returns and marked
-// it RED TODAY. Driven against the tree, two of the three are not defects:
-// both reachable exits leave through exitClean, which calls
-// drainQueuesForRestart and parks the whole active queue as paused-by-drain
-// with a one-shot restart intent, so the item goes with the queue into a state
-// the next start owns rather than stranding. Those two paths are pinned below
-// so the protection stays honest — it is load-bearing, and nothing was
-// asserting it.
-//
-// Shutdown used to ARCHIVE the queue instead — CancelQueueOnShutdown renamed
-// the canonical file to a .cancelled-<ts> suffix and the item went away with
-// it. That is gone. Parking keeps the file where it is, so "the item is safe"
-// is now a claim about two programs, not one: the exit parks it and the next
-// start takes it back. Every assertion in this file is written to span both,
-// because a park that no start can consume is the same strand under a new
-// name. Spec: queue-model.md §8.5 QM-054 (park with resume_on_start) and §8.6
-// QM-055 (the next start recovers dispatched items, then resumes).
-//
-// The third exit WAS real: the claim TransitionID generation failure returned
-// an error directly instead of draining, so it skipped the drain and left
-// exactly the stranded item described above. It had no test because it had no
-// seam — TransitionIDGenerator.Next fails only when the UUIDv7 draw fails, and
-// nothing let a test induce that.
-//
-// Both halves are now closed. runloop.TransitionIDSource is the seam, so a test
-// can hand the loop a generator that refuses; scheduler.go routes the failure
-// through exitFatal, which drains on the way out and still returns the error.
-// The third test below drives it.
-//
-// Mutation that must turn these red: delete the drainQueuesForRestart call from
-// exitClean in scheduler.go. All three tests below fail; that call is the only
-// thing keeping any of these exits safe. Two narrower mutations attack a
-// different half of the contract each: drop the `q.ResumeOnStart = true` line
-// from queue.PauseQueueForRestart, and the queue parks with no restart intent,
-// so the next start leaves it paused for ever and the name never frees; or drop
-// the ResumeOnStart branch from loadOneQueueAtStartup in internal/lifecycle, and
-// the intent is written but never consumed. Neither of those two leaves a
-// dispatched item behind — the queue is simply left parked — so the only thing
-// that catches them outside the clean-exit test is
-// assertNoStrandedDispatchedItem failing a queue left in ANY non-active state
-// instead of reading the status and returning. That test asserts both halves
-// directly; the two sibling tests inherit the check through the helper. For the
-// claim-TransitionID test alone, the narrower mutation is to put back the bare
-// `return fmt.Errorf(...)` at the claim-TID failure in scheduler.go.
-
 import (
 	"context"
 	"errors"
@@ -79,11 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// haltAtClaimLedger halts dispatch at the moment of the claim — the shape a
-// SIGTERM takes when it lands in the reservation window. By the time ClaimBead
-// runs, reserveQueueItem has already committed the item as dispatched, so
-// cancelling here puts the loop in the window with a durable reservation
-// outstanding.
 type haltAtClaimLedger struct {
 	*stubBeadLedger
 	halt     func()
@@ -94,7 +27,6 @@ type haltAtClaimLedger struct {
 func (l *haltAtClaimLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	select {
 	case <-l.claimed:
-		// Already fired once; later calls behave normally.
 	default:
 		close(l.claimed)
 		l.halt()
@@ -103,8 +35,6 @@ func (l *haltAtClaimLedger) ClaimBead(_ context.Context, _ string, _ brcli.Timeo
 	return l.claimErr
 }
 
-// reservationWindowQueue builds a one-item active wave queue, the smallest
-// thing that can carry a reservation.
 func reservationWindowQueue(t *testing.T, beadID core.BeadID) *queue.Queue {
 	t.Helper()
 	now := time.Now()
@@ -123,10 +53,6 @@ func reservationWindowQueue(t *testing.T, beadID core.BeadID) *queue.Queue {
 	}
 }
 
-// openBeadLedger answers the two questions the next daemon start asks the Beads
-// ledger while it recovers a queue: what is this bead, and what is in flight. It
-// reports every bead open and nothing in flight, which is the truth for a bead
-// the loop reserved but never claimed — the exact case this file is about.
 type openBeadLedger struct{}
 
 func (openBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
@@ -137,14 +63,6 @@ func (openBeadLedger) ListInFlightBeads(_ context.Context) ([]core.BeadRecord, e
 	return nil, nil
 }
 
-// runNextDaemonStart drives the real startup queue-recovery path against
-// whatever this exit left on disk, and returns what that start would carry into
-// its dispatch loop. It is the second half of every claim in this file: the exit
-// no longer disposes of the queue itself, it hands it to the next start, so an
-// assertion that stops at the file on disk stops one program too early.
-//
-// A start that returns an error is itself a failure of the property. That is the
-// literal shape of "the parked queue blocks the next start".
 func runNextDaemonStart(t *testing.T, projectDir string) []*queue.Queue {
 	t.Helper()
 	loaded, err := lifecycle.LoadQueueAtStartup(
@@ -156,35 +74,6 @@ func runNextDaemonStart(t *testing.T, projectDir string) []*queue.Queue {
 	return loaded
 }
 
-// assertNoStrandedDispatchedItem is the whole point of this file. It reads the
-// canonical queue file back from disk — not the in-memory store, which would
-// report success for a queue that is still on disk holding a dispatched item —
-// and fails unless the item is left somewhere a later program can still pick it
-// up.
-//
-// Three states fail, and for the same reason each time: the bead was reserved
-// and never claimed, so nothing except this queue is holding it.
-//
-//   - The file is ABSENT. That is not a release, it is the operator's submitted
-//     work deleted with no receipt, and the clean-exit test below calls the same
-//     disk state lost work. Passing it here would let this file contradict
-//     itself.
-//   - The queue is left NOT ACTIVE. Only an active queue is dispatched from, and
-//     a queue parked at paused-by-drain holds its name against QM-027 exactly as
-//     an active one does — internal/queue/validation.go releases the name for
-//     completed and paused-by-failure, and otherwise only for the zero-value
-//     status a corrupt file carries. So a park nobody
-//     consumes strands the item AND refuses every later submit to that name.
-//     Active-versus-parked is not the discriminator; whether the restart intent
-//     is written and then consumed is.
-//   - The queue is ACTIVE and still records the item as dispatched. A dispatched
-//     item is never re-selected.
-//
-// A queue parked WITH the restart intent is the one state that is not judged on
-// what the exit left, because the next start owns the repair: that start puts
-// the parked file back to active, so a dispatched item sitting in it is harmless
-// only if the start's recovery pass takes it back first. That case runs the real
-// start and then judges the queue the start produced, by the same three rules.
 func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 	t.Helper()
 
@@ -196,8 +85,6 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 		t.Fatal("the canonical main queue file is gone after the exit; a clean shutdown parks the queue in place (QM-054), so an absent file is the submitted work deleted without a receipt, not an item released")
 	}
 	if q.Status == queue.QueueStatusPausedByDrain && q.ResumeOnStart {
-		// Parked with restart intent: the next start owns the repair. Run it and
-		// judge what it leaves, not what the exit left.
 		runNextDaemonStart(t, projectDir)
 		q, err = queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 		if err != nil {
@@ -227,14 +114,6 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 	}
 }
 
-// runLoopToExit runs the work loop, waits for it to return, and asserts it left
-// cleanly. The caller supplies the call because the runtime type is unexported
-// to this package.
-//
-// The returned error is worth asserting rather than discarding: a clean exit
-// goes through exitClean, which returns nil AFTER draining the queue. A non-nil
-// error means the loop took one of the direct error returns instead — the
-// family this file is about, and the family that skips the drain.
 func runLoopToExit(t *testing.T, run func() error) {
 	t.Helper()
 	if err := runLoopCapturingExit(t, run); err != nil {
@@ -242,10 +121,6 @@ func runLoopToExit(t *testing.T, run func() error) {
 	}
 }
 
-// runLoopCapturingExit runs the work loop to completion and hands back whatever
-// it returned. The claim-TID case below needs the error rather than a failure:
-// a fatal error there is CORRECT and must still propagate, and the claim under
-// test is that it propagates AND drains, not that it stops happening.
 func runLoopCapturingExit(t *testing.T, run func() error) error {
 	t.Helper()
 	done := make(chan struct{})
@@ -258,9 +133,6 @@ func runLoopCapturingExit(t *testing.T, run func() error) error {
 	return err
 }
 
-// refusingTIDSource is a TransitionID source that never issues one. It stands in
-// for a UUIDv7 draw that fails — the only way the real generator can fail, and a
-// thing no test can make the real generator do.
 type refusingTIDSource struct {
 	calls atomic.Int32
 	err   error
@@ -287,16 +159,10 @@ func TestWorkLoop_DispatchHaltAfterTheReservationDoesNotLeaveTheItemDispatched(t
 		claimErr error
 	}{
 		{
-			// The claim failed AND dispatch is halting. The loop returns at the
-			// dispatchCtx check above the release block, so the release that
-			// exists for an ordinary claim failure never runs.
 			name:     "claim fails as dispatch halts",
 			claimErr: context.Canceled,
 		},
 		{
-			// The claim succeeded but dispatch is halting anyway. The item is
-			// dispatched and the bead is claimed; the loop unwinds from a later
-			// point.
 			name:     "claim succeeds as dispatch halts",
 			claimErr: nil,
 		},
@@ -403,8 +269,6 @@ func TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem(t *testi
 
 	err := runLoopCapturingExit(t, func() error { return daemon.ExportedRunWorkLoop(ctx, deps) })
 
-	// Positive evidence that the loop reached the window at all. Without this the
-	// two assertions below are satisfied for free by a loop that never dispatched.
 	if got := tidGen.calls.Load(); got == 0 {
 		t.Fatal("the loop never asked for a TransitionID, so it never reached the claim; this test proved nothing")
 	}
@@ -479,7 +343,6 @@ func TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt(t *testi
 	cancel()
 	runLoopToExit(t, func() error { return daemon.ExportedRunWorkLoop(ctx, deps) })
 
-	// Half one — what the exit left on disk.
 	parked, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("load the canonical queue after exit: %v", err)
@@ -500,8 +363,6 @@ func TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt(t *testi
 		t.Fatalf("the parked queue holds %d group(s) and no longer carries its single item intact; the park must not edit the work", len(parked.Groups))
 	}
 
-	// Half two — what the next start makes of it. This is the part that decides
-	// whether the park was a handoff or a wedge.
 	resumed := runNextDaemonStart(t, projectDir)
 	if len(resumed) != 1 {
 		t.Fatalf("the next start carried %d queue(s) into its dispatch loop; want the one this exit parked", len(resumed))
@@ -519,9 +380,6 @@ func TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt(t *testi
 		t.Errorf("the resumed queue holds %d item(s); the one bead this queue was submitted with must survive the round trip", got)
 	}
 
-	// And the durable file agrees with what the start is holding. A start that
-	// resumes only in memory re-parks nothing and repeats the whole recovery on
-	// every boot.
 	durable, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("load the canonical queue after the next start resumed it: %v", err)
@@ -533,7 +391,6 @@ func TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt(t *testi
 	assertNoStrandedDispatchedItem(t, projectDir)
 }
 
-// countQueueItems totals the items a queue still carries across all its groups.
 func countQueueItems(q *queue.Queue) int {
 	n := 0
 	for gi := range q.Groups {

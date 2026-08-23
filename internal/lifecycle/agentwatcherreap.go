@@ -1,26 +1,5 @@
 package lifecycle
 
-// agentwatcherreap.go — hk-6629b: launch-path reap of prior same-agent
-// `comms recv --follow` / `subscribe --follow` watcher processes.
-//
-// Root cause (hk-6629b): a `comms recv --follow` / `subscribe --follow` child
-// process survives its spawning session's /clear cycle — reparented to init
-// (ppid=1) — and keeps holding a daemon subscribe slot indefinitely. Over
-// successive captain/crew /clear cycles these accumulate until the daemon's
-// subscribe capacity is exhausted, blinding every NEW watcher.
-//
-// Captain ruling (bead comment 2176): implement launch-path reap (option b),
-// NOT a daemon subscribe-server edit (that is the separate follow-up bead,
-// hk-f9gna). CRITICAL ACCEPTANCE NUANCE: reap prior same-agent watchers
-// REGARDLESS OF LIVENESS — the observed leak was a fully live, still-reading
-// duplicate (reparented to init) that survived a prior session's /clear and
-// was actively double-delivering + holding a slot. A "kill only dead procs"
-// heuristic (e.g. gating on ppid==1, as BI-014a's ProcessLister does for `br`)
-// would MISS exactly the case that motivated this fix — so identification
-// here is by COMMAND LINE + AGENT IDENTITY only, never by liveness/parentage.
-//
-// Bead: hk-6629b.
-
 import (
 	"context"
 	"fmt"
@@ -82,10 +61,6 @@ func (OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agen
 	return pids, nil
 }
 
-// matchesAgentFollowWatcher reports whether cmdline is an invocation of
-// `harmonik comms recv --follow` or `harmonik subscribe --follow` addressed to
-// agent via a "--agent"/"--to" flag. Matching is TOKEN-based (not substring),
-// so agent "captain" does not match a watcher addressed to "captain2".
 func matchesAgentFollowWatcher(cmdline, agent string) bool {
 	if agent == "" || !strings.Contains(cmdline, "harmonik") || !strings.Contains(cmdline, "--follow") {
 		return false
@@ -109,9 +84,6 @@ func matchesAgentFollowWatcher(cmdline, agent string) bool {
 	return false
 }
 
-// splitFlagToken splits a "--flag=value" token into (flag, value, true).
-// Returns ("", "", false) for a token with no "=" (the caller checks the
-// "--flag value" two-token form separately).
 func splitFlagToken(tok string) (flag, val string, ok bool) {
 	if !strings.HasPrefix(tok, "--") {
 		return "", "", false
@@ -123,8 +95,6 @@ func splitFlagToken(tok string) (flag, val string, ok bool) {
 	return tok[:eq], tok[eq+1:], true
 }
 
-// agentWatcherReapGracePeriod / PollInterval mirror SweepOrphanBr's SIGTERM→
-// SIGKILL escalation timing (vars so tests can shorten them).
 var (
 	agentWatcherReapGracePeriod  = 5 * time.Second
 	agentWatcherReapPollInterval = 100 * time.Millisecond
@@ -208,12 +178,6 @@ func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister
 		}
 	}
 
-	// Before SIGKILL, re-verify identity via a fresh command-line enumeration
-	// so a recycled PID (unrelated process that inherited the number after the
-	// watcher exited) is never SIGKILLed. This does NOT reintroduce a liveness
-	// gate on the initial candidate set (the hk-6629b ruling): identification
-	// stays command-line + agent-identity only; the recheck only confirms the
-	// PID still belongs to a matching watcher before escalation.
 	if len(alive) > 0 {
 		fresh, freshErr := lister.ListAgentFollowWatcherPIDs(ctx, agent)
 		if freshErr != nil {

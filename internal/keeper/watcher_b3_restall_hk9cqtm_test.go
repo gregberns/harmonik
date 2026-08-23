@@ -1,24 +1,5 @@
 package keeper_test
 
-// watcher_b3_restall_hk9cqtm_test.go — Acceptance corpus #4: B3 watch re-stall
-// auto-heals via gated ForceRestart (hk-9cqtm).
-//
-// Scenario: stale gauge over an ALIVE pane whose TmuxTarget is MANGLED (stale
-// session name, wrong format — the hk-5266t class that caused #2…#32 alerts with
-// no self-healing path, BUGS.md B3). The watcher must:
-//   (a) re-resolve the target via ResolveTmuxTargetFn,
-//   (b) fire gated ForceRestart exactly once (cooldown + valid-SID gates),
-//   (c) NOT loop, and
-//   (d) leave SuppressNoGauge flood suppression (hk-F21) intact.
-//
-// Layer: L-fake-tmux (IsPaneAliveFn / ResolveTmuxTargetFn are injectable seams;
-// no real tmux required). The L-twin loop proof is in
-// watcher_b3_restall_hk9cqtm_integration_test.go.
-//
-// Helper reuse: writeGauge / writeSidFile / primarySID / gaugeSID
-// (sessionid_test.go), runWatcherFor / RecordingEmitter (watcher_test.go),
-// lprRecorder / lprEvents (watcher_live_pane_recover_test.go).
-
 import (
 	"context"
 	"encoding/json"
@@ -29,19 +10,10 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// b3MangledTarget is the stale/wrong TmuxTarget stored in the watcher config,
-// modelling a session that was killed and recreated with a new name.
 const b3MangledTarget = "stale-old-session:agent"
 
-// b3ResolvedTarget is the canonical target that ResolveTmuxTargetFn returns
-// after re-deriving it from projectDir+agentName.
 const b3ResolvedTarget = "harmonik-b3test000000-testwatch:agent"
 
-// b3Config builds a WatcherConfig for the B3 re-stall scenario (acceptance
-// corpus #4). TmuxTarget is mangled; IsPaneAliveFn returns false for the
-// mangled target but true for the re-resolved canonical one; ResolveTmuxTargetFn
-// returns the canonical target. All other live-recover gates pass by default.
-// RespawnCmd is intentionally empty so idle-respawn is inert.
 func b3Config(projectDir, agent string, recoverFn func(context.Context, string) error) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
 		AgentName:           agent,
@@ -114,7 +86,6 @@ func TestWatcher_B3_ReStall_CooldownPreventsLoop(t *testing.T) {
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
 	cfg := b3Config(projectDir, agent, rec.fn)
-	// cooldown already 10s in b3Config; generous window ensures exactly 1 fire.
 	runWatcherFor(context.Background(), cfg, em, 1500*time.Millisecond)
 
 	if rec.count() != 1 {
@@ -165,7 +136,6 @@ func TestWatcher_B3_ReStall_SkippedWhenReResolveAlsoFails(t *testing.T) {
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
 	cfg := b3Config(projectDir, agent, rec.fn)
-	// Both targets fail the alive check → neither mangled nor resolved is alive.
 	cfg.IsPaneAliveFn = func(_ context.Context, _ string) bool { return false }
 	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
 
@@ -191,7 +161,6 @@ func TestWatcher_B3_ReStall_SkippedWhenOperatorAttachedToResolvedTarget(t *testi
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
 	cfg := b3Config(projectDir, agent, rec.fn)
-	// Operator attached to the resolved canonical target → must suppress recovery.
 	cfg.OperatorAttachedFn = func(target string) bool {
 		return target == b3ResolvedTarget
 	}

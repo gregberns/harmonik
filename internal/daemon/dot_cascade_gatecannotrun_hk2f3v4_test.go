@@ -1,18 +1,5 @@
 package daemon
 
-// dot_cascade_gatecannotrun_hk2f3v4_test.go — a gate that could not RUN must not
-// be routed back to the implementer (hk-2f3v4).
-//
-// Measured live on the codex:local cell, 2026-08-10: the scratch clone had no
-// pinned gofumpt, so `make full` died at fmt-check on every attempt. The gate
-// FAIL was classified deterministic, which is the class standard-bead.dot routes
-// back to implement, and the run spent four implement passes and about an hour of
-// real agent time on a fault no implementation could reach. It reported only
-// "incomplete".
-//
-// The daemon never sees the 127 itself — make reports its own exit 2 — so the
-// signature has to be read out of the gate output.
-
 import (
 	"context"
 	"fmt"
@@ -28,23 +15,17 @@ func TestIsGateCannotRunError(t *testing.T) {
 	t.Parallel()
 
 	cannotRun := []string{
-		// The exact shape observed on the cell.
 		"scripts/go-format.sh: line 49: /private/tmp/h/core-loop-lt/.tools/gofumpt: No such file or directory\nmake[2]: *** [fmt-check] Error 127\nmake[1]: *** [gate-static] Error 2\n",
 		"make: *** [full] Error 127\n",
 		"/bin/sh: gofumpt: command not found\n",
 	}
 	for _, out := range cannotRun {
 		if !isGateCannotRunError([]byte(out)) {
-			// gateEvidenceQuote, not a raw %s: `out` here carries "] Error 127"
-			// and ": command not found", and a FAILING run of this test puts them
-			// in the log the NEXT gate's classifier reads.
 			t.Error(gateEvidenceQuote(fmt.Sprintf("a gate that could not run reads as runnable:\n%s", out)))
 		}
 	}
 
 	ranAndFailed := []string{
-		// A genuine test failure — the gate ran and found a fault. This MUST stay
-		// deterministic so the implementer gets its fix-loop.
 		"--- FAIL: TestThing (0.02s)\n    thing_test.go:41: want 3, got 4\nFAIL\nmake[1]: *** [test] Error 1\n",
 		// A build error.
 		"internal/daemon/x.go:12:2: undefined: Foo\nmake: *** [gate-static] Error 2\n",

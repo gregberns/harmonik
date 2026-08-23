@@ -1,57 +1,11 @@
 package main
 
-// veto_verdict.go — `harmonik veto-verdict <run_id>` subcommand.
-//
-// # Purpose (RC-027)
-//
-// Implements the operator verdict-veto surface per RC-027. RC-027's design is
-// that a reconciliation workflow whose YAML policy declares
-// confirm_required: true pauses verdict execution and waits for operator input.
-// This command sends the "veto" decision to the daemon, causing it to discard
-// the investigator's verdict.
-//
-// # NOT CONNECTED — this command cannot succeed under any input
-//
-// The design above is not built. No production code parks a run awaiting an
-// operator decision, so there is never a pending verdict, and every invocation
-// exits 16. confirm_verdict.go's package comment holds the full statement of
-// which three call sites are missing and why connecting any one of them is not
-// enough. Both commands share the socket path (sendVerdictOverrideRequest), so
-// they share the refusal too.
-//
-// Bead ref: hk-verdict-override-unwired-aqjxo.
-//
-// With --promote-to escalate-to-human, the daemon substitutes the discarded
-// verdict with escalate-to-human and executes that instead (signalling that
-// the operator escalated the case beyond the investigator's resolution).
-//
-// # Grammar
-//
-//	harmonik veto-verdict <run_id> [--promote-to escalate-to-human] [--project DIR]
-//
-// Positional argument: run_id — the run whose pending verdict to veto.
-//
-// # Exit codes
-//
-//	0  — success; the daemon will discard the pending verdict (and optionally
-//	     promote to escalate-to-human)
-//	1  — argument or flag error
-//	16 — no pending verdict for the given run_id (operator-control-invalid-state)
-//	17 — daemon not running (socket absent or ECONNREFUSED)
-//
-// Spec refs:
-//   - specs/reconciliation/spec.md §4.5 RC-027
-//   - specs/operator-nfr.md §4.3 ON-014
-//
-// Bead ref: hk-63oh.39.
-
 import (
 	"fmt"
 	"os"
 	"strings"
 )
 
-// vetoVerdictUsage prints help for `harmonik veto-verdict`.
 func vetoVerdictUsage() {
 	fmt.Print(`harmonik veto-verdict — veto a pending reconciliation verdict
 
@@ -124,9 +78,6 @@ SPEC
 `)
 }
 
-// runVetoVerdictSubcommand implements
-// `harmonik veto-verdict <run_id> [--promote-to escalate-to-human] [--project DIR]`.
-// subArgs is os.Args[2:] (everything after "veto-verdict").
 func runVetoVerdictSubcommand(subArgs []string) int {
 	var projectDirFlag string
 	var promoteTo string
@@ -166,7 +117,6 @@ func runVetoVerdictSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Validate --promote-to: only "escalate-to-human" is accepted.
 	if promoteTo != "" && promoteTo != "escalate-to-human" {
 		fmt.Fprintf(os.Stderr, "harmonik veto-verdict: unknown --promote-to value %q; the only valid value is 'escalate-to-human'\n", promoteTo)
 		return 1
@@ -189,9 +139,6 @@ func runVetoVerdictSubcommand(subArgs []string) int {
 	return sendVetoVerdictRequest(projectDirFlag, runID, promoteTo)
 }
 
-// sendVetoVerdictRequest sends the veto decision to the daemon via the socket.
-// It delegates to sendVerdictOverrideRequest in confirm_verdict.go, overriding
-// the exit-code error messages for the veto context.
 func sendVetoVerdictRequest(projectDir, runID, promoteTo string) int {
 	code := sendVerdictOverrideRequest(projectDir, runID, "veto_verdict", promoteTo)
 	if code == 0 {

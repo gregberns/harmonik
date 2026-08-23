@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// validState returns a fully-populated State with all fields non-zero.
 func validState(t *testing.T) State {
 	t.Helper()
 

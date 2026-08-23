@@ -21,8 +21,6 @@ func ClaudeSettingsPath(workspacePath string) string {
 // settings file, per workspace-model.md §4.3 WM-013e and CHB-005.
 const ClaudeSettingsWorktreeGitignoreLine = ".claude/settings.json"
 
-// bridgeHookEntry is the canonical shape of a single hook entry as declared
-// in claude-hook-bridge.md §4.1 CHB-003.
 type bridgeHookEntry struct {
 	Type    string   `json:"type"`
 	Command string   `json:"command"`
@@ -30,15 +28,11 @@ type bridgeHookEntry struct {
 	Timeout int      `json:"timeout"`
 }
 
-// bridgeMatcherGroup is the wrapper object per event-type array element
-// per CHB-003.
 type bridgeMatcherGroup struct {
 	Matcher string            `json:"matcher"`
 	Hooks   []bridgeHookEntry `json:"hooks"`
 }
 
-// bridgeEventKinds is the ordered set of Claude hook event-kinds the bridge
-// MUST declare per CHB-003.
 var bridgeEventKinds = []string{
 	"SessionStart",
 	"Stop",
@@ -47,15 +41,8 @@ var bridgeEventKinds = []string{
 	"Notification",
 }
 
-// hookRelayVerb is the harmonik subcommand every bridge hook invokes. It is the
-// one part of a bridge hook entry that does not change between binaries or
-// versions, so it is what identifies an entry as ours.
 const hookRelayVerb = "hook-relay"
 
-// bridgeMatcherGroupFor returns the single bridge matcher-group for eventKind.
-// daemonBinaryPath MUST be the absolute path to the running harmonik binary
-// (resolved at daemon start via os.Executable) so that the hook command can
-// be found regardless of the tmux window's $PATH (hk-kqdpf.6 fix).
 func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGroup {
 	return bridgeMatcherGroup{
 		Matcher: "",
@@ -142,7 +129,6 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 		return fmt.Errorf("workspace: MaterializeClaudeSettings: MkdirAll .claude/: %w", err)
 	}
 
-	// Attempt to read an existing settings.json.
 	existing, readErr := os.ReadFile(settingsPath) //nolint:gosec // G304: path constructed from workspacePath + canonical suffix
 
 	var merged map[string]interface{}
@@ -153,17 +139,14 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 	}
 
 	if readErr == nil && len(existing) > 0 {
-		// File exists — attempt JSON merge.
 		var parsed map[string]interface{}
 		if jsonErr := json.Unmarshal(existing, &parsed); jsonErr != nil {
-			// Malformed JSON — overwrite path per CHB-004.
 			merged = buildBridgeOnlySettings(daemonBinaryPath)
 			overwrote = true
 			if sessionLogPath != "" {
 				warnLine := fmt.Sprintf("[workspace-manager WARNING] WM-040a/CHB-004: %s was malformed JSON; overwritten with bridge-required content. Original parse error: %v\n",
 					settingsPath, jsonErr)
 				if logErr := appendToFile(sessionLogPath, warnLine); logErr != nil {
-					// Non-fatal; log write failure is observable but must not block materialization.
 					_ = logErr
 				}
 			}
@@ -171,38 +154,25 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 			merged = mergeSettingsWithBridge(parsed, daemonBinaryPath)
 		}
 	} else {
-		// File absent — write fresh bridge-only content.
 		merged = buildBridgeOnlySettings(daemonBinaryPath)
 	}
 
-	// Strip disableAllHooks: true per CHB-004.
 	delete(merged, "disableAllHooks")
 
-	// Serialize the merged result.
 	content, err := marshalSettings(merged)
 	if err != nil {
 		return fmt.Errorf("workspace: MaterializeClaudeSettings: MarshalIndent: %w", err)
 	}
 
-	// Atomic write per WM-026.
 	if err := atomicWriteWithParentFsync(settingsPath, content); err != nil {
 		return fmt.Errorf("workspace: MaterializeClaudeSettings: atomic write: %w", err)
 	}
 
 	_ = overwrote // consumed via sessionLogPath warning above
 
-	// CHB-005 gitignore hygiene is now an operator-setup obligation (hk-jvzc2):
-	// the parent repo's root .gitignore MUST cover .claude/settings.json before
-	// the daemon runs. The daemon no longer mutates the worktree .gitignore
-	// per-launch — silent edits surfaced as uncommitted churn in the parent
-	// repo's working tree across dogfood runs (hk-cd92e, hk-jvzc2).
 	return nil
 }
 
-// marshalSettings serializes a merged settings map to the canonical on-disk
-// byte form (indented JSON + trailing newline). Shared by the local
-// MaterializeClaudeSettings write and the remote MaterializeClaudeSettingsVia
-// write so both produce byte-identical settings.json content (hk-z8ek).
 func marshalSettings(merged map[string]interface{}) ([]byte, error) {
 	content, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
@@ -211,24 +181,6 @@ func marshalSettings(merged map[string]interface{}) ([]byte, error) {
 	return append(content, '\n'), nil
 }
 
-// buildBridgeOnlySettings returns a settings map containing only the
-// bridge-required hook entries per CHB-003, plus the skill-autoload
-// disable setting per T6 (hk-j79ny).
-// daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
-//
-// NOTE (hk trust-modal fix, 2026-07-06): the permissions.allow pre-authorization
-// array (formerly written here per WM-040a/hk-53y35) is DELIBERATELY NOT written.
-// In a git-worktree context Claude Code >= 2.1.201 fires an interactive
-// "This folder pre-approves N tool permissions in .claude/settings.json" consent
-// modal whenever a project-local settings.json declares permissions.allow. That
-// modal is NOT suppressed by the ~/.claude.json trust keys (hasTrustDialogAccepted
-// / hasCompletedProjectOnboarding) NOR by --dangerously-skip-permissions, so a
-// daemon-spawned pane wedges at it and times out at agent_ready (HC-056). Since
-// every harmonik worktree launch already passes --dangerously-skip-permissions
-// (HC-055b), the allow-list is redundant — omitting it removes the modal. See
-// the workspace-model.md §4.7a note. Confirmed empirically: identical settings
-// boot clean in a non-git dir but wedge in a git worktree; stripping the block
-// boots the git worktree clean.
 func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	hooks := make(map[string]interface{}, len(bridgeEventKinds))
 	for _, kind := range bridgeEventKinds {
@@ -244,32 +196,21 @@ func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	}
 }
 
-// mergeSettingsWithBridge replaces harmonik's own hook entries in each
-// event-type array of existing and adds the current bridge matcher-group, per
-// CHB-004. It does not append to what is already there: this runs once per
-// agent launch and one worktree hosts many launches, so an append added one
-// more copy of every bridge entry on each launch (hk-dknb2). User hooks are
-// untouched and continue to fire alongside.
-// daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
 func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath string) map[string]interface{} {
-	// Clone top-level so we don't mutate the caller's map.
 	merged := make(map[string]interface{}, len(existing))
 	for k, v := range existing {
 		merged[k] = v
 	}
 
-	// Ensure a "hooks" top-level key exists.
 	hooksRaw, ok := merged["hooks"]
 	if !ok || hooksRaw == nil {
 		hooksRaw = map[string]interface{}{}
 	}
 	hooksMap, ok := hooksRaw.(map[string]interface{})
 	if !ok {
-		// Unexpected shape — treat as absent; replace with bridge-only.
 		hooksMap = make(map[string]interface{})
 	}
 
-	// Put exactly one current bridge matcher-group in each event-type array.
 	for _, kind := range bridgeEventKinds {
 		bridgeGroup := groupToInterface(bridgeMatcherGroupFor(kind, daemonBinaryPath))
 		existing, exists := hooksMap[kind]
@@ -279,17 +220,9 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 		}
 		arr, ok := existing.([]interface{})
 		if !ok {
-			// Unexpected element type — start fresh with bridge-only for this kind.
 			hooksMap[kind] = []interface{}{bridgeGroup}
 			continue
 		}
-		// Remove the bridge entries already here, do not add a second copy. One
-		// worktree hosts several launches — implementer, resume, reviewer, each
-		// retry — and this merge runs on every one of them. Appending gave a
-		// worktree four byte-identical copies of every group, and Claude fires a
-		// hook once per copy, so that session reported every Stop four times.
-		// Dropping the old entry also retires a stale daemon binary path, which
-		// an append would have left behind pointing at a binary that has moved.
 		kept := make([]interface{}, 0, len(arr)+1)
 		for _, group := range arr {
 			stripped, dropGroup := stripBridgeHookEntries(group)
@@ -303,52 +236,11 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 
 	merged["hooks"] = hooksMap
 
-	// NOTE (hk trust-modal fix, 2026-07-06): harmonik NO LONGER injects a
-	// permissions.allow block. Formerly (WM-040a/hk-53y35) it wrote the harmonik
-	// default allow-list when the merged settings lacked one. But in a git-worktree
-	// context Claude Code >= 2.1.201 fires an interactive "pre-approves N tool
-	// permissions in .claude/settings.json" consent modal whenever project-local
-	// settings declare permissions.allow — a modal NOT suppressed by the
-	// ~/.claude.json trust keys or by --dangerously-skip-permissions, wedging the
-	// daemon-spawned pane at agent_ready (HC-056). Since every worktree launch
-	// already passes --dangerously-skip-permissions (HC-055b), the allow-list is
-	// redundant. Any permissions block the user committed in their own settings.json
-	// is left exactly as-is (harmonik neither adds nor edits it) — if a user opts to
-	// declare permissions.allow themselves, that is their choice. See
-	// buildBridgeOnlySettings for the full rationale.
-
-	// Force-set autoLoadedSkillsDirectories to [] so worker agent panes never
-	// see fleet orchestration skills auto-loaded from ancestor .claude/skills/
-	// directories. This is a hard invariant, not a user-overridable default:
-	// harmonik controls which skills reach each agent via required_skills[] in
-	// the LaunchSpec + manifest context[]; ambient autoload would bypass that
-	// scoping. Always overwrite — similar to how disableAllHooks is stripped.
-	//
-	// Spec ref: T6/hk-j79ny; agent-manifest SPEC.md §6.
 	merged["autoLoadedSkillsDirectories"] = []interface{}{}
 
 	return merged
 }
 
-// stripBridgeHookEntries removes harmonik's own hook entries from one decoded
-// matcher-group. It returns the group to keep and reports whether the whole
-// group must be dropped.
-//
-// The filter works on ENTRIES, not on whole groups. Harmonik writes one entry
-// per group today, so nothing on disk needs the distinction yet. But the bridge
-// group carries the default matcher "", which is the value another writer is
-// most likely to pick as well, and a group-level drop would take that writer's
-// entry with it silently. A group is dropped only when every entry in it was
-// ours and the list is now empty. Anything this function does not recognise is
-// kept unchanged.
-//
-// This function does not mutate the group it is given. A group that loses an
-// entry is returned as a shallow copy, so the decoded value still in the input
-// array is left as it arrived. That is a property of this function only: the
-// caller does write its rebuilt arrays back into the hooks map it was handed,
-// so the merge as a whole is not free of side effects on its input. Harmless
-// today, because that map is decoded from the file inside
-// MaterializeClaudeSettings and is discarded once the file is written.
 func stripBridgeHookEntries(group interface{}) (interface{}, bool) {
 	groupMap, ok := group.(map[string]interface{})
 	if !ok {
@@ -366,7 +258,6 @@ func stripBridgeHookEntries(group interface{}) (interface{}, bool) {
 		kept = append(kept, entry)
 	}
 	if len(kept) == len(entries) {
-		// Nothing of ours in this group. Return it exactly as it arrived.
 		return group, false
 	}
 	if len(kept) == 0 {
@@ -380,13 +271,6 @@ func stripBridgeHookEntries(group interface{}) (interface{}, bool) {
 	return copied, false
 }
 
-// isBridgeHookEntry reports whether a decoded hook entry is one harmonik wrote.
-// It matches on the hook-relay verb rather than on the whole entry, so an entry
-// written by an older binary — a different path, a different timeout — is still
-// recognised as ours and replaced instead of accumulating beside the new one.
-// An entry the user wrote is left alone, because nothing the user writes
-// invokes hook-relay. Every case this predicate does not recognise falls
-// through to keep.
 func isBridgeHookEntry(entry interface{}) bool {
 	entryMap, ok := entry.(map[string]interface{})
 	if !ok {
@@ -400,8 +284,6 @@ func isBridgeHookEntry(entry interface{}) bool {
 	return ok && verb == hookRelayVerb
 }
 
-// groupToInterface converts a bridgeMatcherGroup to the interface{} shape
-// that json.MarshalIndent will encode correctly.
 func groupToInterface(g bridgeMatcherGroup) interface{} {
 	entries := make([]interface{}, len(g.Hooks))
 	for i, h := range g.Hooks {
@@ -418,7 +300,6 @@ func groupToInterface(g bridgeMatcherGroup) interface{} {
 	}
 }
 
-// stringsToInterface converts []string to []interface{} for JSON encoding.
 func stringsToInterface(ss []string) []interface{} {
 	out := make([]interface{}, len(ss))
 	for i, s := range ss {
@@ -427,12 +308,6 @@ func stringsToInterface(ss []string) []interface{} {
 	return out
 }
 
-// atomicWriteWithParentFsync implements the WM-026 atomic-write discipline:
-//
-//  1. Write content to ${path}.tmp-<pid>
-//  2. fsync the temp file
-//  3. rename(2) to canonical path
-//  4. fsync the parent directory
 func atomicWriteWithParentFsync(path string, content []byte) error {
 	pid := os.Getpid()
 	tmpPath := fmt.Sprintf("%s.tmp-%d", path, pid)
@@ -446,7 +321,6 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 	if _, err := f.Write(content); err != nil {
 		return withCleanupErrs(fmt.Errorf("write tmp: %w", err), f.Close(), os.Remove(tmpPath))
 	}
-	// (2) fsync temp file.
 	if err := f.Sync(); err != nil {
 		return withCleanupErrs(fmt.Errorf("fsync tmp: %w", err), f.Close(), os.Remove(tmpPath))
 	}
@@ -454,12 +328,10 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 		return withCleanupErrs(fmt.Errorf("close tmp: %w", err), os.Remove(tmpPath))
 	}
 
-	// (3) Atomic rename.
 	if err := os.Rename(tmpPath, path); err != nil {
 		return withCleanupErrs(fmt.Errorf("rename: %w", err), os.Remove(tmpPath))
 	}
 
-	// (4) fsync the parent directory.
 	parentDir := filepath.Dir(path)
 	d, err := os.Open(parentDir) //nolint:gosec // G304: parentDir is derived from caller-provided path, not user input
 	if err != nil {
@@ -471,8 +343,6 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 	return d.Close()
 }
 
-// appendToFile appends text to path, creating the file if absent.
-// Used for the CHB-004 overwrite-warning write to the session log.
 func appendToFile(path, text string) error {
 	//nolint:gosec // G304: path is the caller-selected workspace session log
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

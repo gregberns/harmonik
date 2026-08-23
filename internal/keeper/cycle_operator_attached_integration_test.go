@@ -2,43 +2,6 @@
 
 package keeper
 
-// cycle_operator_attached_integration_test.go — REAL-tmux integration test
-// (build tags: integration && darwin) for the operator-attached guard (hk-6qf).
-//
-// # Why this file exists
-//
-// The -short unit tests (cycle_operator_attached_test.go) exercise the act-path
-// guard via a FAKE OperatorAttachedFn, so the production probe — OperatorAttached
-// shelling out to `tmux list-clients -t <target>` and interpreting its output —
-// is unexercised there. This file drives the REAL OperatorAttached against a live
-// tmux server with a REAL client attached and detached, mirroring the convention
-// in tmuxresolve_integration_test.go (hk-2ojne).
-//
-// # How a real client is attached without a controlling terminal
-//
-// `tmux attach-session` needs a tty. The test allocates a pseudo-terminal via the
-// stdlib (no external pty dependency — the keeper package's depguard allows only
-// $gostd + core + eventbus + self), points `tmux attach-session`'s std fds at the
-// pty slave with Setsid+Setctty, and lets a real client attach. Killing that
-// process detaches the client. The pty ioctls (TIOCPTYGRANT/UNLK/GNAME) are
-// darwin-specific, hence the `darwin` build constraint; the test is meaningless
-// without them.
-//
-// # Safety contract (load-bearing)
-//
-// This test creates and destroys ONLY its own uniquely-named throwaway tmux
-// session (name derived from a random suffix with an "oa6qf-test-" prefix that no
-// harmonik machinery ever produces). Teardown kills BY EXACT NAME — there is NO
-// kill-server, NO glob/pattern kill, and NO list-and-kill. It can never touch
-// hk-daemon-supervise, harmonik-*, *-flywheel, or any pre-existing session. If
-// tmux is not on PATH or the pty cannot be allocated the test t.Skip()s.
-//
-// Run with:
-//
-//	go test -tags=integration -run TestIntegration_OperatorAttached ./internal/keeper/...
-//
-// Bead: hk-6qf. Helper prefix: oai (operator-attached-integration).
-
 import (
 	"context"
 	"fmt"
@@ -53,15 +16,12 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// darwin /dev/ptmx ioctl request codes (sys/ttycom.h). Used to grant, unlock,
-// and resolve the slave name of a freshly-opened master pty.
 const (
 	oaiTIOCPTYGRANT = 0x20007454 // TIOCPTYGRANT
 	oaiTIOCPTYUNLK  = 0x20007452 // TIOCPTYUNLK
 	oaiTIOCPTYGNAME = 0x40807453 // TIOCPTYGNAME
 )
 
-// oaiRequireTmux skips the test when tmux is not installed.
 func oaiRequireTmux(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -69,16 +29,12 @@ func oaiRequireTmux(t *testing.T) {
 	}
 }
 
-// oaiUniqueSessionName returns a throwaway session name guaranteed not to collide
-// with any real harmonik/captain/crew session.
 func oaiUniqueSessionName(t *testing.T) string {
 	t.Helper()
 	//nolint:gosec // G404: test-local session-name uniqueness, no security relevance
 	return fmt.Sprintf("oa6qf-test-%d-%d", rand.Int64(), rand.Int64())
 }
 
-// oaiStartSession creates a detached tmux session by EXACT name and registers a
-// t.Cleanup that kills THAT session (and only that session) by name.
 func oaiStartSession(t *testing.T, name string) {
 	t.Helper()
 	if out, err := exec.CommandContext(context.Background(), "tmux", "new-session", "-d", "-s", name, "sleep", "300").CombinedOutput(); err != nil {
@@ -92,9 +48,6 @@ func oaiStartSession(t *testing.T, name string) {
 	})
 }
 
-// oaiOpenPTY allocates a master/slave pty pair via the darwin stdlib ioctl path
-// and returns the open master file and the slave device path. It t.Skip()s the
-// test if any step fails — pty allocation may be denied in sandboxed CI.
 func oaiOpenPTY(t *testing.T) (*os.File, string) {
 	t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
@@ -122,9 +75,6 @@ func oaiOpenPTY(t *testing.T) (*os.File, string) {
 	return master, string(buf[:n])
 }
 
-// oaiAttachClient starts a real `tmux attach-session -t name` client connected to
-// a fresh pty and returns a detach func. The client appears in
-// `tmux list-clients -t name` until detach is called.
 func oaiAttachClient(t *testing.T, name string) (detach func()) {
 	t.Helper()
 
@@ -145,7 +95,6 @@ func oaiAttachClient(t *testing.T, name string) (detach func()) {
 		_ = master.Close()
 		t.Fatalf("oai: failed to start tmux attach-session: %v", err)
 	}
-	// The child holds the slave as its controlling tty; this side can close it.
 	_ = slave.Close()
 
 	detached := false
@@ -158,13 +107,10 @@ func oaiAttachClient(t *testing.T, name string) (detach func()) {
 		_, _ = cmd.Process.Wait()
 		_ = master.Close()
 	}
-	// Safety net so a failing test never leaves an attach client around.
 	t.Cleanup(detach)
 	return detach
 }
 
-// oaiWaitClients polls `tmux list-clients -t name` until OperatorAttached matches
-// want, or the deadline elapses. Returns the final OperatorAttached reading.
 func oaiWaitClients(name string, want bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -184,25 +130,21 @@ func TestIntegration_OperatorAttached_RealClient(t *testing.T) {
 
 	name := oaiUniqueSessionName(t)
 
-	// (0) No session yet → OperatorAttached must be false (fail-open).
 	if OperatorAttached(name) {
 		t.Fatalf("oai: OperatorAttached(%q) true before the session exists", name)
 	}
 
 	oaiStartSession(t, name)
 
-	// (1) Session exists but no client attached → false.
 	if oaiWaitClients(name, false, 2*time.Second) {
 		t.Fatalf("oai: OperatorAttached(%q) true with no client attached", name)
 	}
 
-	// (2) Attach a REAL client via a pty → true.
 	detach := oaiAttachClient(t, name)
 	if !oaiWaitClients(name, true, 3*time.Second) {
 		t.Fatalf("oai: OperatorAttached(%q) false while a real client IS attached", name)
 	}
 
-	// (3) Detach → false again (live → absent client transition).
 	detach()
 	if oaiWaitClients(name, false, 3*time.Second) {
 		t.Fatalf("oai: OperatorAttached(%q) still true after the client detached", name)
@@ -250,8 +192,6 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 	}
 	injectCount := func() int { return len(injectMu.texts) }
 
-	// Handoff fake returns the nonce immediately; gauge flips to newSID after the
-	// /clear so the cycle can complete on the detached run.
 	nonce := nonceMarker(cycleID)
 	readHandoff := func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
 	var gaugeCalls int
@@ -280,21 +220,14 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		HandoffTimeout: 1 * time.Second,
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		// OperatorAttachedFn left nil → real OperatorAttached (tmux list-clients).
 	}
 	cycler := mustNewCyclerWithConfigOverrides(cfg, em, overrides)
 
-	// Attach a REAL client and confirm the probe sees it before driving the cycle.
 	detach := oaiAttachClient(t, name)
 	if !oaiWaitClients(name, true, 3*time.Second) {
 		t.Fatalf("oai: client not visible to OperatorAttached(%q) before suppress assertion", name)
 	}
 
-	// (1) Attached → MaybeRun must SUPPRESS: the destructive /clear injection is
-	// withheld and the handoff never starts. (We no longer assert an
-	// operator_attached event — emitOperatorAttached is a no-op since f46ad0bf /
-	// hk-ubp1; see the function doc above. The real, load-bearing signal is the
-	// *absence of injection and handoff* while the operator is attached.)
 	if err := cycler.MaybeRun(context.Background(), &CtxFile{Pct: 95.0, SessionID: prevSID}); err != nil {
 		t.Fatalf("MaybeRun(attached): %v", err)
 	}
@@ -308,13 +241,11 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		t.Fatalf("oai: want 0 cycle_complete while attached (cycle must be suppressed); got %d", got)
 	}
 
-	// (2) Detach the real client; wait until the probe reports no client.
 	detach()
 	if oaiWaitClients(name, false, 3*time.Second) {
 		t.Fatalf("oai: client still attached after detach(); cannot test resume")
 	}
 
-	// (3) Detached → MaybeRun proceeds and completes the cycle.
 	if err := cycler.MaybeRun(context.Background(), &CtxFile{Pct: 95.0, SessionID: prevSID}); err != nil {
 		t.Fatalf("MaybeRun(detached): %v", err)
 	}

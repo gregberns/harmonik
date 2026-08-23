@@ -1,18 +1,5 @@
 package main
 
-// comms_test.go — the `harmonik comms` verb router, plus the shared helpers the
-// rest of the comms client-hop tests are built on.
-//
-// These tests cover the CLIENT hop: the command an agent actually types. The
-// daemon side is tested in internal/daemon. What is asserted here is the shape
-// an agent or a shell script binds to — stdout, exit codes, and the request put
-// on the wire.
-//
-// Helpers here build on the package fixtures in testsupport_daemon_test.go
-// (newProjectFixture, startFakeDaemon, replyOnce, Requests) and on captureStd
-// in subscribe_refusal_test.go. Stream capture mutates process globals, so no
-// test in this family may call t.Parallel().
-
 import (
 	"encoding/json"
 	"os"
@@ -22,13 +9,6 @@ import (
 	"time"
 )
 
-// ---------------------------------------------------------------------------
-// Reading what the CLI put on the wire
-// ---------------------------------------------------------------------------
-
-// commsAwaitRequest returns the first request the fake daemon decoded whose
-// "op" matches. It fails the test if none arrives, so a silent no-dial cannot
-// pass as success.
 func commsAwaitRequest(t *testing.T, d *fakeDaemon, op string) map[string]any {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
@@ -52,8 +32,6 @@ func commsAwaitRequest(t *testing.T, d *fakeDaemon, op string) map[string]any {
 	}
 }
 
-// commsPendingRequestCount reports how many requests the fake daemon has
-// already buffered. Used to prove a command never dialled at all.
 func commsPendingRequestCount(d *fakeDaemon) int {
 	n := 0
 	for {
@@ -66,7 +44,6 @@ func commsPendingRequestCount(d *fakeDaemon) int {
 	}
 }
 
-// commsRequestPayload returns the nested "payload" object of a request.
 func commsRequestPayload(req map[string]any) map[string]any {
 	p, ok := req["payload"].(map[string]any)
 	if !ok {
@@ -75,12 +52,6 @@ func commsRequestPayload(req map[string]any) map[string]any {
 	return p
 }
 
-// ---------------------------------------------------------------------------
-// events.jsonl fixtures (comms log and comms who read the file directly)
-// ---------------------------------------------------------------------------
-
-// commsWriteEvents creates a project dir holding an events.jsonl of the given
-// JSONL lines, and returns the project dir.
 func commsWriteEvents(t *testing.T, lines ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -98,7 +69,6 @@ func commsWriteEvents(t *testing.T, lines ...string) string {
 	return dir
 }
 
-// commsEventLine builds one JSONL event envelope of the given type.
 func commsEventLine(t *testing.T, eventID, ts, evType string, payload map[string]any) string {
 	t.Helper()
 	payloadBytes, err := json.Marshal(payload)
@@ -119,7 +89,6 @@ func commsEventLine(t *testing.T, eventID, ts, evType string, payload map[string
 	return string(line)
 }
 
-// commsMessageLine builds an agent_message event line.
 func commsMessageLine(t *testing.T, eventID, ts, from, to, topic, body string) string {
 	t.Helper()
 	payload := map[string]any{"from": from, "to": to, "body": body}
@@ -129,7 +98,6 @@ func commsMessageLine(t *testing.T, eventID, ts, from, to, topic, body string) s
 	return commsEventLine(t, eventID, ts, "agent_message", payload)
 }
 
-// commsPresenceLine builds an agent_presence event line.
 func commsPresenceLine(t *testing.T, eventID, ts, agent, status, reason string) string {
 	t.Helper()
 	return commsEventLine(t, eventID, ts, "agent_presence", map[string]any{
@@ -139,10 +107,6 @@ func commsPresenceLine(t *testing.T, eventID, ts, agent, status, reason string) 
 		"reason":    reason,
 	})
 }
-
-// ---------------------------------------------------------------------------
-// The verb router
-// ---------------------------------------------------------------------------
 
 // TestCommsRouter_UnknownVerbExitsTwoAndNamesTheVerbs verifies that an
 // unrecognised verb exits 2, which no verb handler returns, so a caller can

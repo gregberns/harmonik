@@ -1,26 +1,5 @@
 package core
 
-// hooktrigger_hka8bg12.go — Hook lifecycle event type registry (CP-013).
-//
-// Implements specs/control-points.md §4.3.CP-013:
-//
-//	A Hook's trigger MUST match one of the declared lifecycle event types.
-//	Hook-trigger names form a separate Hook-namespace (the "on_" prefix
-//	distinguishes them from raw event-type names). The baseline trigger
-//	set is registered at daemon init; subsystems MAY declare additional
-//	triggers via the subsystem envelope (architecture.md §4.4). An
-//	unrecognized trigger fails registration.
-//
-// # Design
-//
-// HookTriggerSet is the in-daemon registry of declared trigger names. It is
-// populated at daemon init via NewBaselineHookTriggerSet (baseline 8) followed
-// by zero or more AddTrigger calls from subsystem envelopes. S02Registrar holds
-// a HookTriggerSet and validates each Hook's TriggerEvent against it during
-// construction (constructHook).
-//
-// Refs: hk-a8bg.12
-
 import "fmt"
 
 // HookTrigger is the canonical name for a Hook subscription trigger.
@@ -41,7 +20,6 @@ const (
 	HookTriggerOnCheckpointFailed    HookTrigger = "on_checkpoint_failed"
 )
 
-// baselineHookTriggers is the ordered list of baseline trigger names.
 var baselineHookTriggers = [...]HookTrigger{
 	HookTriggerOnAgentStarted,
 	HookTriggerOnAgentOutput,
@@ -113,7 +91,6 @@ func (ts *HookTriggerSet) All() []string {
 	for t := range ts.triggers {
 		out = append(out, string(t))
 	}
-	// Sort for determinism (CP-046 spirit: observable output is stable).
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j] < out[j-1]; j-- {
 			out[j], out[j-1] = out[j-1], out[j]

@@ -1,33 +1,11 @@
 package core
 
-// cp018_guard_reorders_test.go — Conformance tests for CP-018
-//
-// specs/control-points.md §4.4.CP-018:
-//
-//	A Guard MUST fire during edge evaluation of the deterministic cascade
-//	defined in [execution-model.md §4.10]. The evaluator receives the candidate
-//	edge set, current state, and outcome; the evaluator returns a reordered edge
-//	list that is a subset or permutation of the input. A Guard MUST NOT add
-//	edges not present in the input, remove edges, or block a transition. Gate
-//	semantics (deny / escalate) are NOT available to Guards.
-//
-// Tests:
-//  1. Guard fires during edge evaluation (is called by DispatchEdge).
-//  2. Guard receives the candidate edge set, *Run (current state), and Outcome.
-//  3. Guard MUST NOT add edges: DispatchEdge panics when returned length > input.
-//  4. Guard MUST NOT remove edges: DispatchEdge panics when returned length < input.
-//  5. Gate semantics unavailable: GuardEvaluator return type is []Edge, not GateAction.
-//  6. Guard observes post-context-update run state (EM-041a ordering: context
-//     updates precede guard invocation per execution-model.md §7.3 pseudocode).
-
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func cp018FixtureRun(t *testing.T) *Run {
 	t.Helper()
@@ -47,8 +25,6 @@ func cp018FixtureEdge(t *testing.T, toNode NodeID) Edge {
 	t.Helper()
 	return Edge{FromNode: "node-src", ToNode: toNode, Weight: 1, OrderingKey: "a"}
 }
-
-// ── CP-018 §1: guard fires during edge evaluation ────────────────────────────
 
 // TestCP018_GuardFiresDuringEdgeEvaluation verifies that the guard evaluator is
 // called by DispatchEdge, confirming that a Guard fires during edge evaluation
@@ -73,8 +49,6 @@ func TestCP018_GuardFiresDuringEdgeEvaluation(t *testing.T) {
 		t.Error("CP-018: guard was not called during edge evaluation")
 	}
 }
-
-// ── CP-018 §2: guard receives correct inputs ─────────────────────────────────
 
 // TestCP018_GuardReceivesCandidateEdgesRunAndOutcome verifies that the guard
 // evaluator receives the candidate edge set, current *Run (current state), and
@@ -119,8 +93,6 @@ func TestCP018_GuardReceivesCandidateEdgesRunAndOutcome(t *testing.T) {
 	}
 }
 
-// ── CP-018 §3: guard MUST NOT add edges ──────────────────────────────────────
-
 // TestCP018_GuardMustNotAddEdges verifies that a guard returning a longer slice
 // than its input causes DispatchEdge to panic per the "MUST NOT add edges not
 // present in the input" constraint of CP-018.
@@ -131,7 +103,6 @@ func TestCP018_GuardMustNotAddEdges(t *testing.T) {
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
 	e := cp018FixtureEdge(t, "node-dst")
 
-	// Guard violates CP-018: adds an extra edge.
 	addGuard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		extra := edges[0]
 		extra.ToNode = "node-extra"
@@ -149,8 +120,6 @@ func TestCP018_GuardMustNotAddEdges(t *testing.T) {
 	DispatchEdge(run, []Edge{e}, outcome, func(_ PolicyExpression, _ map[string]any, _ Outcome) bool { return true }, cycles, addGuard, PermitGate)
 }
 
-// ── CP-018 §4: guard MUST NOT remove edges ───────────────────────────────────
-
 // TestCP018_GuardMustNotRemoveEdges verifies that a guard returning a shorter
 // slice than its input causes DispatchEdge to panic per the "MUST NOT remove
 // edges" constraint of CP-018.
@@ -163,7 +132,6 @@ func TestCP018_GuardMustNotRemoveEdges(t *testing.T) {
 	eB := cp018FixtureEdge(t, "node-b")
 	eB.OrderingKey = "b"
 
-	// Guard violates CP-018: removes one edge.
 	removeGuard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return edges[:1]
 	}
@@ -179,8 +147,6 @@ func TestCP018_GuardMustNotRemoveEdges(t *testing.T) {
 	DispatchEdge(run, []Edge{eA, eB}, outcome, func(_ PolicyExpression, _ map[string]any, _ Outcome) bool { return true }, cycles, removeGuard, PermitGate)
 }
 
-// ── CP-018 §5: gate semantics not available to guards ────────────────────────
-
 // TestCP018_GuardReturnTypeIsEdgeListNotGateAction verifies at the type level
 // that GuardEvaluator returns []Edge (not GateAction), confirming that gate
 // semantics (deny / escalate) are structurally unavailable to guards per CP-018.
@@ -188,18 +154,12 @@ func TestCP018_GuardMustNotRemoveEdges(t *testing.T) {
 func TestCP018_GuardReturnTypeIsEdgeListNotGateAction(t *testing.T) {
 	t.Parallel()
 
-	// The GuardEvaluator type is func(*Run, []Edge, Outcome) []Edge.
-	// If this compiles, the return type is []Edge — not GateAction.
-	// A guard cannot return GateActionDeny or GateActionEscalateToHuman.
 	var _ GuardEvaluator = func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return edges // can only reorder — not deny/escalate
 	}
 
-	// Confirm IdentityGuard is a valid GuardEvaluator (no-op path).
 	var _ GuardEvaluator = IdentityGuard
 }
-
-// ── CP-018 §6: guard observes post-context-update run state ──────────────────
 
 // TestCP018_GuardObservesPostContextUpdateState verifies that the guard sees
 // run.Context state AFTER outcome.ContextUpdates have been applied, per the
@@ -216,7 +176,6 @@ func TestCP018_GuardObservesPostContextUpdateState(t *testing.T) {
 
 	run := cp018FixtureRun(t)
 
-	// Outcome carries a context update that sets "route" = "priority".
 	outcome := Outcome{
 		Status: OutcomeStatusSuccess,
 		Kind:   OutcomeKindDefault,
@@ -228,7 +187,6 @@ func TestCP018_GuardObservesPostContextUpdateState(t *testing.T) {
 
 	var contextSeenByGuard map[string]any
 	guard := func(r *Run, edges []Edge, _ Outcome) []Edge {
-		// Capture a snapshot of run.Context at the moment guard fires.
 		contextSeenByGuard = make(map[string]any, len(r.Context))
 		for k, v := range r.Context {
 			contextSeenByGuard[k] = v
@@ -239,7 +197,6 @@ func TestCP018_GuardObservesPostContextUpdateState(t *testing.T) {
 	cycles := NewCycleCounter()
 	DispatchEdge(run, []Edge{e}, outcome, func(_ PolicyExpression, _ map[string]any, _ Outcome) bool { return true }, cycles, guard, PermitGate)
 
-	// Guard MUST have seen "route" = "priority" — the post-context-update value.
 	val, ok := contextSeenByGuard["route"]
 	if !ok {
 		t.Fatal("CP-018: guard did not observe run.Context[\"route\"] — context updates must precede guard invocation per EM-041a")

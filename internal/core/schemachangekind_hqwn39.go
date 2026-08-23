@@ -108,8 +108,6 @@ func (k SchemaChangeKind) IsBreaking() bool {
 		SchemaChangeTightenValidation:
 		return true
 	default:
-		// Unknown kind — conservative: treat as breaking to prevent silent
-		// compatibility violations on future additions.
 		return true
 	}
 }
@@ -146,8 +144,6 @@ func (k SchemaChangeKind) String() string {
 	return string(k)
 }
 
-// allSchemaChangeKinds is the exhaustive set of nine §6.4 change-kind rows.
-// Tests that validate coverage of the breaking-change table use this slice.
 var allSchemaChangeKinds = []SchemaChangeKind{
 	SchemaChangeAddOptionalField,
 	SchemaChangeAddRequiredField,

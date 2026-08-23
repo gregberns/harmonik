@@ -1,16 +1,5 @@
 package dashboard
 
-// unlock.go — the operator override for the staleness forcing gate
-// (plans/2026-07-03-operator-dashboard/DESIGN.md §4 guardrail: "MUST have an
-// operator override (`harmonik dashboard --unlock` / a config kill-switch)").
-//
-// Persisted at .harmonik/context/dashboard-unlock.json. The expiry is
-// mandatory (mirrors the sentinel PhaseFlag+Expiry convention in
-// internal/digest/sentinelconfig.go): an operator who forgets to re-lock
-// cannot leave the gate permanently disabled by accident.
-//
-// Bead ref: hk-xg6rw.
-
 import (
 	"encoding/json"
 	"os"

@@ -22,7 +22,6 @@ func KillSubprocesses(pids []int) error {
 	var errs []error
 	for _, pid := range pids {
 		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-			// ESRCH means the process has already exited — not an error.
 			if err == syscall.ESRCH {
 				continue
 			}

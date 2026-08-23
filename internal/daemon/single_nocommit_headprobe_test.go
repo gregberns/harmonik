@@ -1,20 +1,5 @@
 package daemon_test
 
-// single_nocommit_headprobe_test.go — a legacy single input selects no-review
-// DOT, whose implementer node must fail closed when it cannot read HEAD.
-//
-// The guard asked two questions in one condition: "did the probe succeed" AND
-// "should the run reopen". A probe that errored answered the first question
-// `false`, so the whole condition was false and the guard was skipped. A run
-// that exited 0 and produced nothing then fell through to the clean-exit
-// classification, merged as no-change, and CLOSED the bead green.
-//
-// specs/execution-model.md EM-058 component C says a worktree whose HEAD cannot
-// be resolved is a daemon-side error. The input below is deliberately legacy
-// `single`; run planning maps it to the registered no-review DOT graph.
-//
-// Bead: hk-fmere.
-
 import (
 	"strings"
 	"testing"
@@ -22,17 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// singleFixtureBreakWorktreeHandler writes an implementer that produces NO work
-// and then makes its own worktree unreadable to git, so the post-exit HEAD probe
-// errors while everything outside the worktree stays healthy.
-//
-// A `.git` file that points at a directory which does not exist is what a git
-// worktree looks like after its administrative directory is gone. git refuses
-// with "not a git repository" rather than walking up to the parent repo, which
-// is what makes this a probe ERROR and not a wrong answer.
-//
-// The real-world shape is a transient probe failure — most plausibly a remote
-// run whose probe crosses SSH, so the worktree is broken directly instead.
 func singleFixtureBreakWorktreeHandler(t *testing.T) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "single-fixture-broken-worktree.sh",
@@ -59,9 +33,6 @@ func TestLegacySingleInput_NoReviewDOTUnreadableHeadDoesNotClose(t *testing.T) {
 	if reopened := res.Ledger.reopenedIDs(); len(reopened) == 0 {
 		t.Errorf("bead %s reached no reopen; events=%v", beadID, res.Bus.eventTypes())
 	}
-	// The run must fail for THIS reason. A broken worktree also breaks the merge
-	// and the scenario gate, so a later regression could reopen the bead for the
-	// wrong reason and satisfy the two assertions above for free.
 	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "resolve HEAD after node") {
 		t.Errorf("run_failed summary = %q; want it to name the unreadable worktree HEAD", summary)
 	}

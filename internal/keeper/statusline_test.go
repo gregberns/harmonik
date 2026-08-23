@@ -12,16 +12,12 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// repoScriptPath returns the absolute path to scripts/keeper-statusline.sh
-// by walking up from the package directory to the repo root.
 func repoScriptPath(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Skip("runtime.Caller failed; cannot locate script")
 	}
-	// this file lives at internal/keeper/statusline_test.go
-	// repo root is three directories up: internal/keeper → internal → repo root
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	p := filepath.Join(repoRoot, "scripts", "keeper-statusline.sh")
 	if _, err := os.Stat(p); err != nil {
@@ -44,7 +40,6 @@ func TestKeeperStatuslineScript(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// Legacy payload: only used_percentage, no total_input_tokens or context_window_size.
 	sampleJSON := `{"session_id":"test-session-42","context_window":{"used_percentage":65.3}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -81,7 +76,6 @@ func TestKeeperStatuslineScript(t *testing.T) {
 	if cf.Ts == "" {
 		t.Error("ts field is empty; want an RFC 3339 timestamp")
 	}
-	// Legacy payload has no token data — both fields must default to zero.
 	if cf.Tokens != 0 {
 		t.Errorf("tokens = %d; want 0 (absent in legacy payload)", cf.Tokens)
 	}
@@ -103,7 +97,6 @@ func TestKeeperStatuslineScript_WithTokenCounts(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// Full payload including absolute token counts (modern Claude Code format).
 	sampleJSON := `{"session_id":"tok-session-1","context_window":{"used_percentage":28.0,"total_input_tokens":280000},"context_window_size":1000000}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -160,7 +153,6 @@ func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// [1m] model payload: context_window_size is absent (Claude Code omits it for Opus-4.8 [1m]).
 	sampleJSON := `{"session_id":"opus-1m-session","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":15.0,"total_input_tokens":150000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -188,14 +180,12 @@ func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	// pct is recomputed as tokens/effective_window: 150000/500000*100 = 30.
 	if cf.Pct != 30.0 {
 		t.Errorf("pct = %v; want 30.0 (150000/500000*100, effective fill)", cf.Pct)
 	}
 	if cf.Tokens != 150000 {
 		t.Errorf("tokens = %d; want 150000", cf.Tokens)
 	}
-	// Default effective fraction 0.5 → floor(1000000*0.5) = 500000.
 	if cf.WindowSize != 500000 {
 		t.Errorf("window_size = %d; want 500000 (effective [1m] window, hk-d8dj0)", cf.WindowSize)
 	}
@@ -214,7 +204,6 @@ func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// Payload with no context_window_size and no recognizable model.
 	sampleJSON := `{"session_id":"env-override-session","context_window":{"used_percentage":20.0,"total_input_tokens":200000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -262,8 +251,6 @@ func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// Nested-object model form: Claude Code emits .model as {id, display_name}.
-	// context_window_size is absent (Claude Code omits it for [1m] models in this format).
 	sampleJSON := `{"session_id":"opus-obj-session","model":{"id":"claude-opus-4-8[1m]","display_name":"Opus"},"context_window":{"used_percentage":12.0,"total_input_tokens":120000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -291,14 +278,12 @@ func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	// Default effective fraction 0.5 → floor(1000000*0.5) = 500000.
 	if cf.WindowSize != 500000 {
 		t.Errorf("window_size = %d; want 500000 (effective [1m] window, hk-d8dj0)", cf.WindowSize)
 	}
 	if cf.Tokens != 120000 {
 		t.Errorf("tokens = %d; want 120000", cf.Tokens)
 	}
-	// pct recomputed: 120000/500000*100 = 24.
 	if cf.Pct != 24.0 {
 		t.Errorf("pct = %v; want 24.0 (120000/500000*100, effective fill)", cf.Pct)
 	}
@@ -318,8 +303,6 @@ func TestKeeperStatuslineScript_NestedContextWindowSize(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// context_window_size is nested under .context_window (documented schema path),
-	// not at the top level. No top-level .context_window_size field is present.
 	sampleJSON := `{"session_id":"nested-ws-session","context_window":{"used_percentage":25.0,"total_input_tokens":250000,"context_window_size":1000000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -371,8 +354,6 @@ func TestKeeperStatuslineScript_1M_EffectivePct(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// 372k tokens; Claude Code reports 37.2% against the nominal 1M window.
-	// After the fix: pct = 372000/500000*100 = 74.4, window_size = 500000.
 	sampleJSON := `{"session_id":"1m-effective-pct","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":37.2,"total_input_tokens":372000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -406,8 +387,6 @@ func TestKeeperStatuslineScript_1M_EffectivePct(t *testing.T) {
 	if cf.Tokens != 372000 {
 		t.Errorf("tokens = %d; want 372000", cf.Tokens)
 	}
-	// pct must reflect the effective window, not the nominal 1M:
-	// 372000 / 500000 * 100 = 74.4. Tolerance ±0.1 for floating-point representation.
 	const wantPct = 74.4
 	if cf.Pct < wantPct-0.1 || cf.Pct > wantPct+0.1 {
 		t.Errorf("pct = %v; want ~%.1f (372000/500000*100, effective fill — must not be 37.2)", cf.Pct, wantPct)
@@ -428,7 +407,6 @@ func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// 600k tokens; with fraction=0.6 → effective window = floor(1M*0.6) = 600000.
 	sampleJSON := `{"session_id":"fraction-override","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":60.0,"total_input_tokens":600000}}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
@@ -457,11 +435,9 @@ func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	// window_size is floor of one million times 0.6, i.e. 600000.
 	if cf.WindowSize != 600000 {
 		t.Errorf("window_size = %d; want 600000 (floor(1M*0.6))", cf.WindowSize)
 	}
-	// pct = 600000/600000*100 = 100 (clamped)
 	if cf.Pct != 100.0 {
 		t.Errorf("pct = %v; want 100.0 (600000/600000*100, clamped to 100)", cf.Pct)
 	}
@@ -480,7 +456,6 @@ func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {
 	script := repoScriptPath(t)
 	projectDir := t.TempDir()
 
-	// JSON with no context_window field (e.g. right after /clear).
 	sampleJSON := `{"session_id":"after-clear"}`
 
 	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments

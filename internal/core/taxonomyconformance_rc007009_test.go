@@ -2,22 +2,6 @@ package core
 
 import "testing"
 
-// ---- Taxonomy + action-mapping conformance (hk-63oh.79) ----
-//
-// RC-007: action-mapping table is the dispatch contract; taxonomy is detection.
-// RC-008: auto-resolver categories MUST have a deterministic resolver.
-// RC-009: 11-category taxonomy shape is settled; amendments require [architecture.md §4.6].
-//
-// Spec refs:
-//   - specs/reconciliation/spec.md §4.2 RC-007, RC-008, RC-009
-//   - specs/reconciliation/spec.md §8.12 (authoritative on semantics)
-//   - specs/reconciliation/schemas.md §6.3 (authoritative on mechanical dispatch)
-
-// rc79ActionRow captures the four columns of the §8.12 / schemas.md §6.3 table
-// for a single reconciliation category.
-//
-// This struct is the lint anchor: any change to the §8.12 table MUST be
-// reflected here; a mismatch is detected by TestRC007_ActionTableConformance.
 type rc79ActionRow struct {
 	category         ReconciliationCategory
 	investigatorUsed bool   // Investigator spawned? column
@@ -25,87 +9,42 @@ type rc79ActionRow struct {
 	typicalVerdict   string // Typical verdict if investigator; "" for auto-resolver cats
 }
 
-// rc79ActionTable is the normative §8.12 / schemas.md §6.3 action-mapping table
-// encoded as a slice in the canonical 11-row order.
-//
-// Dual-table ownership (spec.md §8.12 NOTE): spec.md §8.12 is authoritative on
-// SEMANTICS; schemas.md §6.3 is authoritative on MECHANICAL DISPATCH. This Go
-// representation must match both. Divergence between this table and either spec
-// table is a lint failure per RC-007.
 var rc79ActionTable = []rc79ActionRow{
 	{
-		// Cat 0 — infrastructure unavailable (§8.1)
-		// Default action: halt classification + degraded status
-		// Investigator? No. Auto-resolver? Yes (wait-and-retry). Verdict: —
 		category: ReconciliationCategoryCat0, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 1 — idempotent rerun (§8.2)
-		// Default action: auto-resume by re-spawning
-		// Investigator? No. Auto-resolver? Yes (spawn the node). Verdict: —
 		category: ReconciliationCategoryCat1, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 2 — non-idempotent in-flight (§8.3)
-		// Default action: investigator workflow
-		// Investigator? Yes. Auto-resolver? No. Verdict: resume-with-context / reset-to-checkpoint / reopen-bead
 		category: ReconciliationCategoryCat2, investigatorUsed: true, autoResolver: false, typicalVerdict: "resume-with-context/reset-to-checkpoint/reopen-bead",
 	},
 	{
-		// Cat 3 — store disagreement generic (§8.4)
-		// Default action: investigator workflow (git-wins orientation)
-		// Investigator? Yes. Auto-resolver? No. Verdict: accept-close-with-note / reopen-bead / no-op-accept
 		category: ReconciliationCategoryCat3, investigatorUsed: true, autoResolver: false, typicalVerdict: "accept-close-with-note/reopen-bead/no-op-accept",
 	},
 	{
-		// Cat 3a — torn Beads write (§8.4a)
-		// Default action: auto-resolve via adapter status-check-before-reissue
-		// Investigator? No. Auto-resolver? Yes (BI-031b). Verdict: —
 		category: ReconciliationCategoryCat3a, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 3b — verdict-unexecuted (§8.5)
-		// Default action: auto-resolve via RC-026 re-execution
-		// Investigator? No. Auto-resolver? Yes (re-run verdict action). Verdict: —
 		category: ReconciliationCategoryCat3b, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 3c — inverse premature-close (§8.6)
-		// Default action: auto-verdict accept-close-with-note + mechanical close
-		// Investigator? No. Auto-resolver? Yes (direct close-write). Verdict: —
 		category: ReconciliationCategoryCat3c, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 4 — recoverable known state (§8.7)
-		// Default action: auto-resume with pending action
-		// Investigator? No. Auto-resolver? Yes (re-arm retry/gate). Verdict: —
 		category: ReconciliationCategoryCat4, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 5 — clean restart (§8.8)
-		// Default action: normal startup; proceed to ready
-		// Investigator? No. Auto-resolver? Yes (no-op). Verdict: —
 		category: ReconciliationCategoryCat5, investigatorUsed: false, autoResolver: true, typicalVerdict: "",
 	},
 	{
-		// Cat 6a — integrity violation, LLM-triageable (§8.11)
-		// Default action: investigator workflow
-		// Investigator? Yes. Auto-resolver? No. Verdict: escalate-to-human (default; may downgrade)
 		category: ReconciliationCategoryCat6a, investigatorUsed: true, autoResolver: false, typicalVerdict: "escalate-to-human",
 	},
 	{
-		// Cat 6b — integrity violation, mechanically unrecoverable (§8.11a)
-		// Default action: auto-escalate to operator without investigator spawn
-		// Investigator? No. Auto-resolver? N/A (operator intervention). Verdict: —
-		// NOTE: autoResolver=false because "N/A (operator intervention)" is not a
-		// daemon-implemented auto-resolver; the daemon escalates but does NOT
-		// autonomously resolve.
 		category: ReconciliationCategoryCat6b, investigatorUsed: false, autoResolver: false, typicalVerdict: "",
 	},
 }
 
-// rc79LookupActionRow returns the rc79ActionRow for the given category from
-// rc79ActionTable, or returns a zero row and false if not found.
 func rc79LookupActionRow(cat ReconciliationCategory) (rc79ActionRow, bool) {
 	for _, row := range rc79ActionTable {
 		if row.category == cat {
@@ -178,7 +117,6 @@ func TestRC007_ActionTableCoversAllCategories(t *testing.T) {
 func TestRC007_ActionTableConformance_InvestigatorColumn(t *testing.T) {
 	t.Parallel()
 
-	// From §8.12: investigator spawned = Yes for Cat 2, Cat 3, Cat 6a only.
 	wantInvestigator := map[ReconciliationCategory]bool{
 		ReconciliationCategoryCat0:  false,
 		ReconciliationCategoryCat1:  false,
@@ -226,7 +164,6 @@ func TestRC007_ActionTableConformance_InvestigatorColumn(t *testing.T) {
 func TestRC008_AutoResolverCategories(t *testing.T) {
 	t.Parallel()
 
-	// From §8.12 + RC-008: daemon-implemented auto-resolvers (not N/A).
 	wantAutoResolver := map[ReconciliationCategory]bool{
 		ReconciliationCategoryCat0:  true,  // wait-and-retry
 		ReconciliationCategoryCat1:  true,  // re-spawn
@@ -340,17 +277,14 @@ func TestRC007_AutoResolverAndInvestigatorAreExclusive(t *testing.T) {
 func TestRC009_TaxonomyShapeIsSettled(t *testing.T) {
 	t.Parallel()
 
-	// The settled taxonomy has exactly 11 categories.
 	const settledCount = 11
 
-	// Count categories in the action table.
 	if len(rc79ActionTable) != settledCount {
 		t.Errorf("RC-009: action table has %d rows; the 11-category shape is settled (RC-009). "+
 			"Any amendment MUST follow [architecture.md §4.6] and update this test.",
 			len(rc79ActionTable))
 	}
 
-	// Count valid categories by ranging over all table entries.
 	seen := make(map[ReconciliationCategory]bool, settledCount)
 	for _, row := range rc79ActionTable {
 		if seen[row.category] {
@@ -376,13 +310,11 @@ func TestRC009_TaxonomyShapeIsSettled(t *testing.T) {
 func TestRC009_AmendmentProtocolGate(t *testing.T) {
 	t.Parallel()
 
-	// Build the set of categories in the action table.
 	inTable := make(map[ReconciliationCategory]bool, 11)
 	for _, row := range rc79ActionTable {
 		inTable[row.category] = true
 	}
 
-	// Every category in the enum must be in the table.
 	allCats := []ReconciliationCategory{
 		ReconciliationCategoryCat0,
 		ReconciliationCategoryCat1,
@@ -403,7 +335,6 @@ func TestRC009_AmendmentProtocolGate(t *testing.T) {
 		}
 	}
 
-	// Every table row's category must also appear in allCats.
 	allCatSet := make(map[ReconciliationCategory]bool, len(allCats))
 	for _, c := range allCats {
 		allCatSet[c] = true
@@ -415,12 +346,6 @@ func TestRC009_AmendmentProtocolGate(t *testing.T) {
 		}
 	}
 }
-
-// ---- Per-category detection-fixture tests (RC-007..009) ----
-//
-// Each test below asserts the detection → category → action chain for one
-// category, using a minimal input fixture that represents the canonical
-// detection-rule trigger for that category.
 
 // TestRC007_Cat0_InfraUnavailable verifies the Cat 0 action-mapping row:
 // halt classification + degraded status, no investigator, auto-resolver.
@@ -434,16 +359,12 @@ func TestRC007_Cat0_InfraUnavailable(t *testing.T) {
 	if !ok {
 		t.Fatal("RC-007: no action-table row for Cat 0")
 	}
-	// §8.1: halt classification + degraded status; no investigator.
 	if row.investigatorUsed {
 		t.Error("RC-007/Cat 0: investigatorUsed=true; Cat 0 MUST NOT spawn an investigator (§8.1)")
 	}
-	// §8.12: Auto-resolver = Yes (wait-and-retry).
 	if !row.autoResolver {
 		t.Error("RC-007/Cat 0: autoResolver=false; Cat 0 MUST have a wait-and-retry auto-resolver (§8.12)")
 	}
-	// §8.1 emitted event: infrastructure_unavailable.
-	// (The event name is a contract; the category drives the emission.)
 	if !cat.Valid() {
 		t.Error("RC-007/Cat 0: category is not valid; enum definition error")
 	}
@@ -651,15 +572,10 @@ func TestRC007_Cat6b_IntegrityMechanicallyUnrecoverable(t *testing.T) {
 	if row.investigatorUsed {
 		t.Error("RC-007/Cat 6b: investigatorUsed=true; Cat 6b MUST NOT spawn an investigator (§8.11a)")
 	}
-	// Cat 6b: Auto-resolver column in §8.12 reads "N/A (operator intervention)".
-	// The daemon auto-escalates but the resolution is operator-owned; this is
-	// NOT a daemon-implemented auto-resolver per RC-008's enumeration.
 	if row.autoResolver {
 		t.Error("RC-007/Cat 6b: autoResolver=true; §8.12 reads N/A (operator intervention) — not a daemon auto-resolver")
 	}
 }
-
-// ---- §8.12 ↔ schemas.md §6.3 dual-table sync lint test ----
 
 // TestRC007_DualTableSyncInvestigatorColumn is the lint test verifying that the
 // investigator-spawned semantics column (this file, from spec.md §8.12) matches
@@ -677,9 +593,6 @@ func TestRC007_Cat6b_IntegrityMechanicallyUnrecoverable(t *testing.T) {
 func TestRC007_DualTableSyncInvestigatorColumn(t *testing.T) {
 	t.Parallel()
 
-	// schemas.md §6.3 Investigator? column (exact per current spec v0.4.0):
-	// Cat 0=No, Cat 1=No, Cat 2=Yes, Cat 3=Yes, Cat 3a=No, Cat 3b=No,
-	// Cat 3c=No, Cat 4=No, Cat 5=No, Cat 6a=Yes, Cat 6b=No.
 	schemasInvestigator := map[ReconciliationCategory]bool{
 		ReconciliationCategoryCat0:  false,
 		ReconciliationCategoryCat1:  false,
@@ -717,8 +630,6 @@ func TestRC007_DualTableSyncInvestigatorColumn(t *testing.T) {
 func TestRC007_DualTableSyncAutoResolverColumn(t *testing.T) {
 	t.Parallel()
 
-	// schemas.md §6.3 Auto-resolver? column (exact per spec v0.4.0).
-	// Cat 6b: "N/A (operator intervention)" → encoded as false (not a daemon resolver).
 	schemasAutoResolver := map[ReconciliationCategory]bool{
 		ReconciliationCategoryCat0:  true,  // Yes (wait-and-retry)
 		ReconciliationCategoryCat1:  true,  // Yes (spawn the node)

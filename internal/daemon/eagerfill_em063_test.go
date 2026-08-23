@@ -1,26 +1,5 @@
 package daemon
 
-// eagerfill_em063_test.go — unit tests for the EM-063 pre-screen and
-// provenance guard in the eager-refill path.
-//
-// Observable behaviours covered:
-//
-//  1. Phase 1: a bead already present in the queue with pending/dispatched/
-//     completed/failed status is excluded from survivors.
-//
-//  2. Phase 2: beadLandedOnOriginMain returns (false, "", nil) when the
-//     git working directory does not contain a remote tracking branch —
-//     the call does not crash and treats the bead as not-landed.
-//
-//  3. kerfNextBeads returns an error when the kerf binary path is absent.
-//
-//  4. eagerRefillEval returns immediately (no panic) when kerfPath is empty.
-//
-//  5. eagerRefillEval returns immediately when queueStore is nil.
-//
-// Spec ref: specs/execution-model.md §4.13 EM-063.
-// Bead ref: hk-9321v.
-
 import (
 	"context"
 	"os"
@@ -39,13 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// em063FixtureStreamQueueWithBeads builds an active stream queue that has
-// the given bead IDs as dispatched or pending items.  The returned queue has
-// one group (index 0) in active state.
 func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 	now := time.Now().UTC()
 	items := make([]queue.Item, 0, len(beadIDs))
@@ -75,8 +47,6 @@ func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 	}
 }
 
-// em063FixtureDeps builds a minimal testRuntime with only the fields
-// required by preScreenCandidates and eagerRefillEval.
 func em063FixtureDeps(t *testing.T, qs *queuewiring.QueueStore) testRuntime {
 	t.Helper()
 	return testRuntime{
@@ -138,18 +108,12 @@ func TestRunCompletionPort_CarriesEagerRefillValues(t *testing.T) {
 	}
 }
 
-// noopEmitter satisfies handlercontract.EventEmitter for test stubs that do
-// not need event inspection.
 type noopEmitter struct{}
 
 func (n *noopEmitter) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
 func (n *noopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Phase 1: already-in-queue guard
-// ---------------------------------------------------------------------------
 
 // TestEM063_Phase1_AlreadyInQueue_PendingExcluded verifies that a bead present
 // in the active queue with ItemStatusPending is excluded from pre-screen
@@ -166,7 +130,6 @@ func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 	candidates := []core.BeadID{"hk-inqueue-01", "hk-inqueue-02", "hk-new-bead"}
 	survivors := preScreenCandidates(context.Background(), deps.reap(eagerRefillPort{}), candidates)
 
-	// Only the bead NOT already in the queue should survive Phase 1.
 	if len(survivors) != 1 {
 		t.Fatalf("Phase 1: survivors = %v, want [hk-new-bead]", survivors)
 	}
@@ -218,17 +181,12 @@ func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 	deps := em063FixtureDeps(t, queuewiring.NewQueueStore())
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
-	// Phase 2 git check will not find anything (temp dir has no git history).
 	survivors := preScreenCandidates(context.Background(), deps.reap(eagerRefillPort{}), candidates)
 
 	if len(survivors) != 3 {
 		t.Errorf("Phase 1 with empty queue: survivors = %v, want all 3 candidates", survivors)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Phase 2: already-landed git guard
-// ---------------------------------------------------------------------------
 
 // TestEM063_Phase2_BeadLandedOnOriginMain_MissingRemote verifies that
 // beadLandedOnOriginMain returns (false, "", nil) when the project directory
@@ -237,9 +195,7 @@ func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 func TestEM063_Phase2_BeadLandedOnOriginMain_MissingRemote(t *testing.T) {
 	t.Parallel()
 
-	// Use a temp dir with an empty git repo.
 	dir := t.TempDir()
-	// initialise a bare git repo so `git log` has something to work with.
 	if out, err := runSimpleCmd("git", "-C", dir, "init"); err != nil {
 		t.Skipf("git init failed: %v (%s)", err, out)
 	}
@@ -256,16 +212,11 @@ func TestEM063_Phase2_BeadLandedOnOriginMain_MissingRemote(t *testing.T) {
 	}
 }
 
-// runSimpleCmd is a test helper that runs a command and returns (output, error).
 func runSimpleCmd(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...) //nolint:gosec
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
-
-// ---------------------------------------------------------------------------
-// kerfNextBeads — binary-absent error path
-// ---------------------------------------------------------------------------
 
 // TestEM063_KerfNextBeads_BinaryAbsent verifies that kerfNextBeads returns an
 // error when the kerf binary path does not exist (EM-062 relies on this to
@@ -279,10 +230,6 @@ func TestEM063_KerfNextBeads_BinaryAbsent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// eagerRefillEval — guard gates
-// ---------------------------------------------------------------------------
-
 // TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty verifies that
 // eagerRefillEval returns immediately (no panic, no queue mutation) when
 // kerfPath is empty — the "kerf not installed" fast-path.
@@ -295,10 +242,8 @@ func TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty(t *testing.T) {
 
 	deps := em063FixtureDeps(t, qs)
 
-	// Must not panic, must not mutate queue.
 	eagerRefillEval(context.Background(), deps.reap(eagerRefillPort{}))
 
-	// Queue should be unchanged.
 	got := qs.Queue()
 	if got == nil || len(got.Groups[0].Items) != 1 {
 		t.Error("eagerRefillEval with empty kerfPath mutated the queue; expected no-op")
@@ -313,15 +258,9 @@ func TestEM063_EagerRefillEval_NoopWhenQueueStoreNil(t *testing.T) {
 	deps := em063FixtureDeps(t, nil)
 	deps.queueStore = nil
 
-	// Must not panic.
 	eagerRefillEval(context.Background(), deps.reap(eagerRefillPort{kerfPath: "/some/kerf"}))
 }
 
-// ---------------------------------------------------------------------------
-// stagedBeadGeneratorEval (flywheel V9 §5.4 B, hk-f722)
-// ---------------------------------------------------------------------------
-
-// writeTestFile writes content to path, creating parent directories as needed.
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -332,21 +271,14 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 }
 
-// writePhase2Config writes a minimal .harmonik/config.yaml with one Phase-2
-// class entry: class → verifyCmd.
 func writePhase2Config(t *testing.T, projectDir, class, verifyCmd string) {
 	t.Helper()
 	content := "sentinel:\n  done_definition:\n    " + class + ": \"" + verifyCmd + "\"\n"
 	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"), content)
 }
 
-// writeFakeBrScript creates an executable shell script at scriptPath that
-// appends its first two arguments (subcommand + title) to argsFile and exits 0.
-// The full description is NOT written to avoid newline-splitting in counts.
 func writeFakeBrScript(t *testing.T, scriptPath, argsFile string) {
 	t.Helper()
-	// Write only the first arg ($1) and the second arg ($2) so that
-	// multi-line descriptions in later args do not create spurious "lines".
 	script := "#!/bin/sh\nprintf 'CALL %s %s\\n' \"$1\" \"$2\" >> " + argsFile + "\n"
 	writeTestFile(t, scriptPath, script)
 	if err := os.Chmod(scriptPath, 0o755); err != nil {
@@ -354,10 +286,6 @@ func writeFakeBrScript(t *testing.T, scriptPath, argsFile string) {
 	}
 }
 
-// writeFakeBrArgScript creates an executable shell script at scriptPath that
-// appends ALL arguments (joined by space) to argsFile.  Use this variant only
-// when the test needs to inspect specific flags; note that newlines embedded in
-// arguments will appear verbatim in the file.
 func writeFakeBrArgScript(t *testing.T, scriptPath, argsFile string) {
 	t.Helper()
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argsFile + "\n"
@@ -367,7 +295,6 @@ func writeFakeBrArgScript(t *testing.T, scriptPath, argsFile string) {
 	}
 }
 
-// stagedBeadFixtureDeps builds the completion values for staged-bead tests.
 func stagedBeadFixtureDeps(t *testing.T, projectDir, brPath string) (testRuntime, eagerRefillPort) {
 	t.Helper()
 	deps := em063FixtureDeps(t, nil)
@@ -391,7 +318,6 @@ func TestStagedBeadGenerator_NoopWhenBrPathEmpty(t *testing.T) {
 	writePhase2Config(t, projectDir, "deploy", "make deploy")
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, "")
-	// Must not panic and must not call br (no file to write to since brPath is empty).
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
 }
 
@@ -400,7 +326,6 @@ func TestStagedBeadGenerator_NoopWhenBrPathEmpty(t *testing.T) {
 func TestStagedBeadGenerator_NoopWhenNoPhase2Classes(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	// Config with only "merged" (default): no Phase-2 classes.
 	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"),
 		"sentinel:\n  done_definition:\n    myclass: merged\n")
 
@@ -412,7 +337,6 @@ func TestStagedBeadGenerator_NoopWhenNoPhase2Classes(t *testing.T) {
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"myclass"})
 
-	// argsFile must not exist (br was never called).
 	if _, statErr := os.Stat(argsFile); statErr == nil {
 		t.Error("br was called despite no Phase-2 classes; expected no-op")
 	}
@@ -431,7 +355,6 @@ func TestStagedBeadGenerator_NoopWhenLabelsMismatch(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	// Labels: "bugfix", "chore" — neither matches "deploy".
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"bugfix", "chore"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
@@ -510,16 +433,13 @@ func TestStagedBeadGenerator_AtMostOnce(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	// First call: should create the bead.
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
-	// Second call with the same bead + class: must be a no-op.
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("br was not called on first invocation: %v", err)
 	}
-	// writeFakeBrScript writes "CALL <subcmd> <title>\n" per invocation.
 	var callCount int
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "CALL ") {
@@ -546,10 +466,8 @@ func TestStagedBeadGenerator_DurableLedger_SkipsOnPreseededKey(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	// Simulate a restart: pre-seed the in-memory ledger as the boot-seed does.
 	eagerRefill.followUpLedger["hk-xyz:deploy"] = struct{}{}
 
-	// This call must be a no-op because the key is already in the ledger.
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
@@ -576,12 +494,10 @@ func TestStagedBeadGenerator_DurableLedger_PersistsToDisk(t *testing.T) {
 
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-persist", []string{"deploy"})
 
-	// br must have been called.
 	if _, statErr := os.Stat(argsFile); statErr != nil {
 		t.Fatalf("br was not called: %v", statErr)
 	}
 
-	// The key must be on disk.
 	ledger, err := loadFollowUpLedger(ledgerPath)
 	if err != nil {
 		t.Fatalf("loadFollowUpLedger: %v", err)
@@ -606,7 +522,6 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	deps.capacity.maxConcurrent = 1
 
-	// Register a fake in-flight run to saturate the ceiling.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &RunHandle{
 		BeadID:    core.BeadID("hk-other"),
 		StartedAt: time.Now(),
@@ -619,13 +534,6 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// stagedBeadGeneratorEval — §6.2 provenance guard (hk-zlwq)
-// ---------------------------------------------------------------------------
-
-// stagedBeadGitFixture initialises a git repository with an origin remote in dir.
-// When refBeadID is non-empty, a commit with "Refs: <refBeadID>" is added to main
-// and pushed to origin so that beadOnOriginMain returns true for that bead.
 func stagedBeadGitFixture(t *testing.T, dir, refBeadID string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -708,10 +616,6 @@ func TestStagedBeadGenerator_FiresWhenProvenancePresent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B5-7: WIP == maxConcurrent-1 off-by-one (one slot free → DOES fire)
-// ---------------------------------------------------------------------------
-
 // TestStagedBeadGenerator_FiresAtMaxMinusOne verifies the WIP ceiling off-by-one:
 // when in-flight == maxConcurrent-1 (one slot free), the generator DOES fire.
 // This is the boundary complement of TestStagedBeadGenerator_NoopWhenAtCeiling.
@@ -728,7 +632,6 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	deps.capacity.maxConcurrent = 3
 
-	// Register 2 in-flight runs: Len() == 2 == maxConcurrent-1 → one slot free.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &RunHandle{
 		BeadID:    core.BeadID("hk-inflight-1"),
 		StartedAt: time.Now(),
@@ -745,10 +648,6 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B5-8: multi-class / multi-bead ledger keys
-// ---------------------------------------------------------------------------
-
 // TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys verifies that
 // two calls with the same completed bead but different Phase-2 class labels
 // produce two separate ledger keys (beadID:classA and beadID:classB) and
@@ -756,7 +655,6 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 func TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	// Config with two Phase-2 classes.
 	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"),
 		"sentinel:\n  done_definition:\n    deploy: make deploy\n    smoke: make smoke\n")
 
@@ -766,12 +664,9 @@ func TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys(t *testing.T
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	// First call: matches "deploy" (first label in the slice that is a Phase-2 class).
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
-	// Second call: matches "smoke".
 	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"smoke"})
 
-	// Both ledger keys must be present.
 	eagerRefill.followUpLedgerMu.Lock()
 	_, hasDeployKey := eagerRefill.followUpLedger["hk-abc:deploy"]
 	_, hasSmokeKey := eagerRefill.followUpLedger["hk-abc:smoke"]
@@ -784,7 +679,6 @@ func TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys(t *testing.T
 		t.Error("ledger missing key 'hk-abc:smoke'")
 	}
 
-	// br should have been called twice (once per class).
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("br-args file missing: %v", err)

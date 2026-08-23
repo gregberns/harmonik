@@ -1,29 +1,5 @@
 package brcli_test
 
-// terminaltransition_claimguard_test.go — the ClaimBead compare-and-set guard.
-//
-// `br update <bead_id> --claim` is a compare-and-set. It sets assignee=actor
-// and status=in_progress together, and it refuses with exit 4 ("already
-// assigned to <name>") when the bead already has an assignee. ClaimBead keeps a
-// fallback to `br update <bead_id> --status in_progress` for the one legitimate
-// refusal (hk-amed0: a crew wrote `br create --assignee <crew>`, so an OPEN
-// bead carries a routing assignee). The fallback must never run when another
-// party holds the bead — a blind status write there defeats the compare-and-set.
-//
-// The same safety property has a second half one layer up, in
-// terminalTransitionWrite. A refused write whose bead already sits at the
-// claim's intended post-state (in_progress) used to count as an idempotent
-// success, which swallowed the commonest takeover of all before the gate above
-// ever ran. That credit is now restricted to beads whose ownership sentinel we
-// hold. The paired tests are TestClaimBeadRefusesBeadRunningUnderAnotherActor
-// and TestClaimBeadIsIdempotentForBeadWeAlreadyOwn.
-//
-// These tests drive ClaimBead against a mock `br` that logs every argv it
-// receives. They assert on the argv log, so a test fails if the guard lets a
-// takeover write reach `br`, and fails if the guard blocks the legitimate case.
-//
-// Bead ref: hk-amed0.
-
 import (
 	"context"
 	"fmt"
@@ -39,16 +15,12 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// claimGuardMock is a mock `br` binary that answers the two commands the claim
-// path issues, and appends every invocation's argv to a log file.
 type claimGuardMock struct {
 	brPath     string
 	argvLog    string
 	projectDir string
 }
 
-// ownBead plants the beads-owned ownership sentinel for beadID, which is what
-// a previously successful ClaimBead of ours would have left behind.
 func (m claimGuardMock) ownBead(t *testing.T, beadID string) {
 	t.Helper()
 	dir := filepath.Join(m.projectDir, ".harmonik", "beads-owned")
@@ -60,14 +32,6 @@ func (m claimGuardMock) ownBead(t *testing.T, beadID string) {
 	}
 }
 
-// claimGuardNewMock writes the mock `br` binary.
-//
-// showJSON is the stdout of `br show <id> --format json`. When showJSON is
-// empty the mock makes `br show` fail with exit 1, which models a bead whose
-// holder cannot be read.
-//
-// `br update ... --claim` always exits 4 with the real refusal text.
-// `br update ... --status in_progress` always exits 0.
 func claimGuardNewMock(t *testing.T, showJSON string) claimGuardMock {
 	t.Helper()
 	dir := t.TempDir()
@@ -116,7 +80,6 @@ exit 0
 	return claimGuardMock{brPath: brPath, argvLog: argvLog, projectDir: t.TempDir()}
 }
 
-// invocations returns every argv line the mock recorded, in order.
 func (m claimGuardMock) invocations(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile(m.argvLog)
@@ -133,8 +96,6 @@ func (m claimGuardMock) invocations(t *testing.T) []string {
 	return lines
 }
 
-// sawStatusWrite reports whether the mock ever received the blind
-// `update <id> --status in_progress` fallback write.
 func (m claimGuardMock) sawStatusWrite(t *testing.T) bool {
 	t.Helper()
 	for _, line := range m.invocations(t) {
@@ -145,8 +106,6 @@ func (m claimGuardMock) sawStatusWrite(t *testing.T) bool {
 	return false
 }
 
-// claimGuardShowJSON builds a one-element `br show --format json` array with
-// the given status and assignee.
 func claimGuardShowJSON(status, assignee string) string {
 	return fmt.Sprintf(
 		`[{"id":"hk-guard","title":"guard fixture","description":"","status":%q,`+
@@ -155,11 +114,8 @@ func claimGuardShowJSON(status, assignee string) string {
 	)
 }
 
-// claimGuardCall runs ClaimBead against the mock and returns its error.
 func claimGuardCall(t *testing.T, m claimGuardMock) error {
 	t.Helper()
-	// NewForProject, not New: the ownership sentinel lives under projectDir, and
-	// every production caller builds the adapter this way.
 	adapter, err := brcli.NewForProject(m.brPath, m.projectDir)
 	if err != nil {
 		t.Fatalf("brcli.NewForProject: %v", err)
@@ -242,7 +198,6 @@ func TestClaimBeadRefusesTakeoverOfBeadHeldByAnotherActor(t *testing.T) {
 func TestClaimBeadRefusesBeadRunningUnderAnotherActor(t *testing.T) {
 	t.Parallel()
 	mock := claimGuardNewMock(t, claimGuardShowJSON("in_progress", "chani"))
-	// Deliberately no mock.ownBead call — no sentinel, so the bead is not ours.
 
 	err := claimGuardCall(t, mock)
 	if err == nil {
@@ -291,7 +246,6 @@ func TestClaimBeadIsIdempotentForBeadWeAlreadyOwn(t *testing.T) {
 func TestCloseBeadIdempotencyIsNotGatedBySentinel(t *testing.T) {
 	t.Parallel()
 	mock := claimGuardNewMock(t, claimGuardShowJSON("closed", "chani"))
-	// Deliberately no ownBead call — no sentinel for this bead.
 
 	adapter, err := brcli.NewForProject(mock.brPath, mock.projectDir)
 	if err != nil {
@@ -363,7 +317,6 @@ func TestClaimBeadCreditsLostAcknowledgementWithinOneCall(t *testing.T) {
 	showOut := filepath.Join(dir, "show.json")
 	counter := filepath.Join(dir, "claim.count")
 
-	// The bead reads in_progress: attempt 1 landed before it was killed.
 	if err := os.WriteFile(showOut, []byte(claimGuardShowJSON("in_progress", "us")), 0o600); err != nil {
 		t.Fatalf("write show fixture: %v", err)
 	}
@@ -403,8 +356,6 @@ exit 0
 	}
 
 	mock := claimGuardMock{brPath: brPath, argvLog: argvLog, projectDir: t.TempDir()}
-	// Deliberately no ownBead call: attempt 1 never returned success, so
-	// ClaimBead never got to write the sentinel.
 
 	adapter, err := brcli.NewForProject(brPath, mock.projectDir)
 	if err != nil {
@@ -431,9 +382,6 @@ exit 0
 	if mock.sawStatusWrite(t) {
 		t.Fatalf("ClaimBead issued a blind status write; argv log: %v", mock.invocations(t))
 	}
-	// Guard the test itself: the call must have reached the REFUSED-write branch,
-	// not exhausted its retries to the BrUnavailable branch. Exactly two claim
-	// attempts means attempt 2 answered with the refusal.
 	claims := 0
 	for _, line := range mock.invocations(t) {
 		if strings.Contains(line, "--claim") {
@@ -467,7 +415,6 @@ func TestClaimBeadRefusesTakeoverAfterDbLockedRetry(t *testing.T) {
 	showOut := filepath.Join(dir, "show.json")
 	counter := filepath.Join(dir, "claim.count")
 
-	// Another actor holds the bead and is running it.
 	if err := os.WriteFile(showOut, []byte(claimGuardShowJSON("in_progress", "chani")), 0o600); err != nil {
 		t.Fatalf("write show fixture: %v", err)
 	}
@@ -508,7 +455,6 @@ exit 0
 	}
 
 	mock := claimGuardMock{brPath: brPath, argvLog: argvLog, projectDir: t.TempDir()}
-	// No sentinel: we have never claimed this bead.
 
 	adapter, err := brcli.NewForProject(brPath, mock.projectDir)
 	if err != nil {
@@ -618,8 +564,6 @@ exit 0
 	if mock.sawStatusWrite(t) {
 		t.Fatalf("ClaimBead issued the --status in_progress fallback; argv log: %v", mock.invocations(t))
 	}
-	// A wrong credit is self-confirming, because ClaimBead plants the sentinel
-	// after a nil return. Prove none was planted.
 	sentinel := filepath.Join(mock.projectDir, ".harmonik", "beads-owned", "hk-guard")
 	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
 		t.Fatalf("ClaimBead planted an ownership sentinel for a bead it did not claim (stat err = %v)", statErr)
@@ -653,10 +597,6 @@ func TestReissueTerminalTransitionKeepsSentinelInStep(t *testing.T) {
 		return adapter, projectDir
 	}
 
-	// plantIntent writes the stale intent file that a crashed prior run would
-	// have left on disk, and returns it with the directory holding it.
-	// ReissueTerminalTransition starts at BI-030 step 5 and expects steps 1-4 to
-	// have happened already.
 	plantIntent := func(t *testing.T, op core.TerminalOp, post core.CoarseStatus) (core.IntentLogEntry, string) {
 		t.Helper()
 		runID := core.RunID(uuid.Must(uuid.NewV7()))
@@ -747,7 +687,6 @@ func TestSweepCloseBeadDeletesOwnershipSentinel(t *testing.T) {
 		t.Fatalf("sentinel fixture missing before sweep: %v", statErr)
 	}
 
-	// The shared mock refuses `close` with exit 2, so use a mock that accepts it.
 	brPath := filepath.Join(t.TempDir(), "br")
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
 	if err := os.WriteFile(brPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {

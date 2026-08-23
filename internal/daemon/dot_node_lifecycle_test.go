@@ -1,19 +1,5 @@
 package daemon_test
 
-// dot_node_lifecycle_test.go — a graph node's session must join the run's
-// lifecycle machinery and must reach a terminal state.
-//
-// Two consumers depend on it and both were inert on the graph path, which is the
-// production default:
-//
-//   - the stale watcher drives Ready → Failed(silent_hang) through the machine
-//     it reads off the RunHandle, and a graph run never put one there; the
-//     dashboard's lifecycle read has the same source; and
-//   - the HC-065 terminal transition, which emits lifecycle_transition, ran only
-//     in the single-mode tail.
-//
-// Bead: hk-b4xf2.
-
 import (
 	"encoding/json"
 	"sync/atomic"
@@ -24,13 +10,6 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
-// dotFixtureMachineWatchingHookStore samples the in-flight RunHandle's lifecycle
-// machine at the moment the launch registers its agent-ready callback.
-//
-// That moment is the observation point because the launch calls the site's
-// post-launch hook and then this method, in that order and on the same
-// goroutine. So "was a machine on the handle by now" is a question about the
-// hook, asked from production code rather than from a source-level sensor.
 type dotFixtureMachineWatchingHookStore struct {
 	dotFixtureHookStore
 
@@ -90,8 +69,6 @@ func TestDotNode_SessionReachesATerminalLifecycleState(t *testing.T) {
 	}
 }
 
-// dotFixtureLifecycleStates returns the to_state of every lifecycle_transition
-// event the run emitted, in order.
 func dotFixtureLifecycleStates(t *testing.T, res dotFixtureResult) []string {
 	t.Helper()
 	all := res.Bus.allEvents()

@@ -1,13 +1,5 @@
 package daemon
 
-// socket_state.go — StateHandler socket interface for `harmonik state`.
-//
-// Defines the StateHandler interface, its live implementation, and the
-// RunSocketListenerWithState wrapper that adds the "state" socket op.
-//
-// Spec ref: specs/system-state.md §4 (SS-001, SS-002fold, SS-INV-007).
-// Bead ref: hk-gv04 (P2-a: harmonik state aggregator command).
-
 import (
 	"context"
 	"encoding/json"
@@ -23,7 +15,6 @@ type StateHandler interface {
 	HandleState(ctx context.Context) (json.RawMessage, error)
 }
 
-// liveStateHandlerImpl wraps a LiveStateBuilder for the socket RPC.
 type liveStateHandlerImpl struct {
 	builder *LiveStateBuilder
 }

@@ -19,10 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// (a) Tmux session sweep
-// ──────────────────────────────────────────────────────────────────────────────
-
 // TmuxSessionLister enumerates live tmux sessions by name. Production
 // implementations invoke the real tmux binary; tests inject a deterministic fake.
 //
@@ -61,9 +57,6 @@ func tmuxServerAbsent(out []byte) bool {
 func (OSTmuxSessionLister) ListTmuxSessions(ctx context.Context) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
 	if err != nil {
-		// tmux exits non-zero when there are no sessions or the server is not
-		// running. Other failures (missing binary, permissions, cancellation)
-		// must remain observable or the sweep silently skips live orphans.
 		if tmuxServerAbsent(out) {
 			return nil, nil
 		}
@@ -93,16 +86,8 @@ func (OSTmuxSessionKiller) KillTmuxSession(ctx context.Context, sessionName stri
 	return nil
 }
 
-// tmuxPollInterval is the cadence at which SweepOrphanTmuxSessions polls for
-// process exit after kill-session. Tests shorten this without changing the
-// production call-site signature.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006 — "poll for underlying process
-// exit at a 100 ms cadence up to a 2-second ceiling (configurable per OQ-PL-002)."
 var tmuxPollInterval = 100 * time.Millisecond
 
-// tmuxPollCeiling is the maximum time SweepOrphanTmuxSessions waits after
-// kill-session before proceeding. Configurable per OQ-PL-002.
 var tmuxPollCeiling = 2 * time.Second
 
 // SweepOrphanTmuxSessions lists all tmux sessions, filters those whose name
@@ -155,7 +140,6 @@ func SweepOrphanTmuxSessions(
 		orphanLog(logger, "SweepOrphanTmuxSessions: killing session %q", name)
 		if killErr := killer.KillTmuxSession(ctx, name); killErr != nil {
 			orphanLog(logger, "SweepOrphanTmuxSessions: kill-session %q error (proceeding): %v", name, killErr)
-			// Non-fatal: a session that has already gone is fine.
 		}
 		killed++
 	}
@@ -169,13 +153,6 @@ func SweepOrphanTmuxSessions(
 	return killed, nil
 }
 
-// waitForTmuxSessionsGone polls at tmuxPollInterval, up to tmuxPollCeiling, for
-// every session matching prefix to disappear after kill-session.
-//
-// The sweep does NOT track individual session PIDs — the polling is best-effort
-// confirmation after the kill-session commands have been sent, and the caller
-// proceeds regardless of the outcome (PL-006: "after the ceiling expires, the
-// daemon proceeds").
 func waitForTmuxSessionsGone(ctx context.Context, lister TmuxSessionLister, prefix string, logger *log.Logger) {
 	deadline := time.Now().Add(tmuxPollCeiling)
 	for time.Now().Before(deadline) {
@@ -186,9 +163,6 @@ func waitForTmuxSessionsGone(ctx context.Context, lister TmuxSessionLister, pref
 		case <-time.After(tmuxPollInterval):
 		}
 
-		// A failed re-list says nothing about whether the sessions exited, so it
-		// must not end the wait — a single transient tmux hiccup used to abort
-		// exit verification entirely. Keep polling; the 2 s ceiling bounds it.
 		remaining, listErr := lister.ListTmuxSessions(ctx)
 		if listErr != nil {
 			orphanLog(logger, "SweepOrphanTmuxSessions: re-list during exit poll failed (retrying): %v", listErr)
@@ -201,7 +175,6 @@ func waitForTmuxSessionsGone(ctx context.Context, lister TmuxSessionLister, pref
 	}
 }
 
-// anyNameHasPrefix reports whether any name in names starts with prefix.
 func anyNameHasPrefix(names []string, prefix string) bool {
 	for _, name := range names {
 		if strings.HasPrefix(name, prefix) {
@@ -210,10 +183,6 @@ func anyNameHasPrefix(names []string, prefix string) bool {
 	}
 	return false
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// (c) Handler subprocess sweep
-// ──────────────────────────────────────────────────────────────────────────────
 
 // HandlerProcessLister enumerates candidate orphan handler subprocesses.
 // Implementations query the OS process table; tests inject a deterministic fake.
@@ -279,17 +248,11 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 	for _, pid := range candidates {
 		env, err := ReadProcessEnviron(pid)
 		if err != nil {
-			// /proc not available (darwin) or permission denied: skip.
 			continue
 		}
 		if !MatchesProvenanceMarker(env, projectHash) {
 			continue
 		}
-		// PL-017a(b): relay grandchildren (harmonik hook-relay ...) are spawned by
-		// agent subprocesses and MUST NOT be targeted by the orphan-sweep.  They
-		// exit on their own when the agent completes its hook invocation; survivors
-		// (parent agent died mid-invocation) are reaped by OS init-reparenting at
-		// daemon death.  Identify them by argv[1] == "hook-relay" via /proc/cmdline.
 		args, cmdErr := ReadProcessCmdlineArgs(pid)
 		if cmdErr == nil && IsRelayGrandchild(args) {
 			continue
@@ -299,16 +262,8 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 	return matched, nil
 }
 
-// handlerSweepGracePeriod is the time SweepOrphanHandlers waits after SIGTERM
-// before escalating to SIGKILL. Matches HC-018's 5-second cleanup bound.
-// Tests may shorten this without changing the production call-site.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006 — "SIGTERM followed by SIGKILL
-// after a bounded 5-second interval consistent with handler-contract.md §4.4 HC-018."
 var handlerSweepGracePeriod = 5 * time.Second
 
-// handlerSweepPollInterval is the cadence at which SweepOrphanHandlers polls
-// during the grace period.
 var handlerSweepPollInterval = 100 * time.Millisecond
 
 // SweepOrphanHandlers enumerates handler subprocesses re-parented to init
@@ -343,7 +298,6 @@ func SweepOrphanHandlers(
 
 	orphanLog(logger, "SweepOrphanHandlers: found %d orphan handler process(es): %v", len(pids), pids)
 
-	// Phase 1: SIGTERM all candidates.
 	for _, pid := range pids {
 		if sigErr := syscall.Kill(pid, syscall.SIGTERM); sigErr != nil {
 			orphanLog(logger, "SweepOrphanHandlers: SIGTERM pid %d: %v (may have already exited)", pid, sigErr)
@@ -352,7 +306,6 @@ func SweepOrphanHandlers(
 		}
 	}
 
-	// Phase 2: wait up to 5 s polling at 100 ms.
 	deadline := time.Now().Add(handlerSweepGracePeriod)
 	alive := make(map[int]bool, len(pids))
 	for _, pid := range pids {
@@ -379,10 +332,6 @@ func SweepOrphanHandlers(
 		}
 	}
 
-	// Phase 3: SIGKILL any still-alive processes — after re-verifying identity
-	// via a fresh provenance-matched enumeration, so a recycled PID (unrelated
-	// process that inherited the number after the target exited) is never
-	// SIGKILLed.
 	if len(alive) > 0 {
 		fresh, freshErr := lister.ListOrphanHandlerPIDs(ctx, projectHash)
 		if freshErr != nil {
@@ -399,7 +348,6 @@ func SweepOrphanHandlers(
 		}
 	}
 
-	// Count how many were successfully killed (not still alive after SIGKILL).
 	for _, pid := range pids {
 		if !orphanSweepIsPidLive(pid) {
 			killed++
@@ -420,11 +368,6 @@ type IntentGCLedger interface {
 	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
 }
 
-// gcRetiredIntentsMaxScan is the maximum number of stale intent files that
-// GCRetiredIntents will query via ShowBead in a single daemon-startup pass.
-// Each ShowBead call shells out to `br show` (~0.24 s); capping prevents a
-// startup hang when hundreds of files accumulate (hk-hf9i8).  Files beyond
-// the cap are left on disk and picked up on subsequent boots.
 const gcRetiredIntentsMaxScan = 250
 
 // GCRetiredIntentsResult reports the outcome of a [GCRetiredIntents] pass.
@@ -555,7 +498,6 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 		record, showErr := cfg.Ledger.ShowBead(ctx, intentEntry.BeadID)
 		if showErr != nil {
 			if errors.Is(showErr, brcli.ErrBeadNotFound) {
-				// Bead was purged from the ledger; its terminal op is moot — nothing to reconcile.
 				if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: remove purged-bead intent %q failed (%v); retaining", name, removeErr)
 					result.Retained++
@@ -571,7 +513,6 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 		}
 
 		if gcIntentOpLanded(intentEntry.Op, record.Status, intentEntry.IntendedPostState) {
-			// Step 3: op has landed — delete the leftover intent file.
 			if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 				orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: remove %q failed (%v); retaining", name, removeErr)
 				result.Retained++
@@ -583,10 +524,7 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 			continue
 		}
 
-		// Op has NOT landed.  Decide between step 4 (pre-state: re-drive) and
-		// step 5 (diverged: neither pre-state nor post-state → Cat 3a retain).
 		if cfg.RedriveWriter == nil {
-			// No write surface — legacy behavior: retain for Cat 3a.
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s status=%s (want op=%s to land); retaining for Cat 3a (no RedriveWriter)", intentEntry.BeadID, record.Status, intentEntry.Op)
 			result.Retained++
 			continue
@@ -594,30 +532,23 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 
 		preState, knownOp := gcIntentOpPreState(intentEntry.Op)
 		if !knownOp {
-			// Unknown op — cannot determine pre-state; retain conservatively.
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s unknown op %q; retaining for Cat 3a", intentEntry.BeadID, intentEntry.Op)
 			result.Retained++
 			continue
 		}
 
 		if record.Status != preState {
-			// Step 5: bead is neither at pre-state nor post-state — torn write /
-			// external mutation.  Route to Cat 3a reconciliation.
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s status=%s is neither pre-state (%s) nor post-state (%s) for op=%s; retaining for Cat 3a (divergence)", intentEntry.BeadID, record.Status, preState, intentEntry.IntendedPostState, intentEntry.Op)
 			result.Retained++
 			continue
 		}
 
-		// Step 4: bead is at pre-state — re-issue the br write.
 		orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s at pre-state %s for op=%s; re-driving via BI-031 step 4", intentEntry.BeadID, preState, intentEntry.Op)
 		redriveErr := cfg.RedriveWriter.ReissueTerminalTransition(ctx, intentsDir, cfg.BrTimeoutCfg, intentEntry)
 		if redriveErr == nil {
-			// 4a success: intent file deleted by ReissueTerminalTransition.
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: re-drive succeeded for bead %s op=%s", intentEntry.BeadID, intentEntry.Op)
 			result.RedriveCount++
 		} else {
-			// 4b unconfirmed / 4d unavailable / 4e schema mismatch / 4f other:
-			// intent file retained; Cat 3a auto-resolver will handle it.
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: re-drive failed for bead %s op=%s (%v); retaining for Cat 3a", intentEntry.BeadID, intentEntry.Op, redriveErr)
 			result.Retained++
 		}
@@ -628,7 +559,6 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 			gcRetiredIntentsMaxScan, result.Skipped)
 	}
 
-	// fsync the parent directory once after all removals.
 	if result.Removed > 0 {
 		fsyncDirBestEffort(intentsDir, cfg.Logger, "GCRetiredIntentsWithRedrive")
 	}
@@ -658,17 +588,6 @@ func GCRetiredIntents(
 	})
 }
 
-// gcIntentOpPreState returns the Beads status that must hold BEFORE the op
-// can be issued (BI-031 step 4 pre-state check).
-//
-// Returns (preState, true) for known ops; (empty, false) for unknown ops.
-// The caller MUST treat an unknown op as ambiguous and retain the intent file.
-//
-// Reset note: reset returns (in_progress, true) but step-4 re-drive is never
-// reached for reset in practice. gcIntentOpLanded treats in_progress as
-// "landed" for reset (the bead was re-opened and then claimed), so the only
-// non-landed, non-post-state reachable status for reset is closed — which
-// diverges from the returned pre-state (in_progress) and routes to Cat 3a.
 func gcIntentOpPreState(op core.TerminalOp) (core.CoarseStatus, bool) {
 	switch op {
 	case core.TerminalOpClaim:
@@ -684,59 +603,21 @@ func gcIntentOpPreState(op core.TerminalOp) (core.CoarseStatus, bool) {
 	}
 }
 
-// gcIntentOpLanded reports whether the op described by an intent file has
-// definitely completed, given the bead's current status.
-//
-// "Landed" means the bead is in the IntendedPostState OR has advanced past it
-// in the lifecycle — either way re-driving the op is not needed.
-//
-// The hk-hf9i8 fix: the original code used exact equality
-// (record.Status == IntendedPostState), which retained claim intents when
-// beads had advanced from in_progress to closed.  With 991 such files on
-// disk, every daemon restart called br show 991 times (~4 min hang).
-//
-// Per-op rules (conservative — retain on any ambiguity):
-//
-//	claim  (→ in_progress): landed if status ≠ open (bead left the pre-claim state)
-//	close  (→ closed):      landed if status = closed, tombstone, or open
-//	reopen (→ open):        landed if status = open, in_progress, or tombstone
-//	reset  (→ open):        same as reopen
 func gcIntentOpLanded(op core.TerminalOp, currentStatus, intendedPostState core.CoarseStatus) bool {
 	if currentStatus == intendedPostState {
 		return true
 	}
 	switch op {
 	case core.TerminalOpClaim:
-		// claim: open → in_progress.
-		// If the bead is no longer open it was claimed; it may have since
-		// advanced to closed or tombstone.
 		return currentStatus != core.CoarseStatusOpen
 	case core.TerminalOpClose:
-		// close: in_progress → closed.
-		// tombstone: purged after close.
-		// open: the bead was reset from in_progress back to open (the run was
-		// abandoned), OR the close landed and the bead was subsequently reopened.
-		// In either case the close intent for the original run is no longer
-		// actionable and must be GC'd. Without this, close intents for
-		// reset-to-open beads are permanently stuck in step 5 "diverged"
-		// because their pre-state (in_progress) no longer matches.
-		// Bead ref: hk-birxh.
 		return currentStatus == core.CoarseStatusTombstone || currentStatus == core.CoarseStatusOpen
 	case core.TerminalOpReopen, core.TerminalOpReset:
-		// reopen/reset: closed → open.
-		// If the bead is in_progress the reopen ran and the bead was claimed.
-		// If the bead is tombstone the reopen ran and the bead was eventually
-		// purged.  If the bead is still closed the situation is ambiguous
-		// (op may not have run yet) — retain conservatively.
 		return currentStatus == core.CoarseStatusInProgress ||
 			currentStatus == core.CoarseStatusTombstone
 	}
 	return false
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// (e) Stale reconciliation lock sweep
-// ──────────────────────────────────────────────────────────────────────────────
 
 // SweepReconciliationLocksResult is the result of [SweepStaleReconciliationLocks].
 //
@@ -814,24 +695,14 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 			orphanLog(logger, "SweepStaleReconciliationLocks: %q is active (EWOULDBLOCK or live PID); skipping", name)
 			continue
 		}
-		// From here the sweep HOLDS the flock on the lock file (RC-002a: the
-		// flock is the serialization point — releasing it before the unlink
-		// would let another daemon acquire the lock and start a live
-		// reconciliation the sweep then unlinks, permitting TWO concurrent
-		// reconciliations for the same target_run_id). Close (which releases
-		// the lock) only AFTER the unlink.
 
-		// RC-002b: read verdict-executed state and run_id before unlinking.
 		runID, hasVerdictExecuted, metaErr := reconLockReadMeta(lockPath)
 		if metaErr != nil {
-			// Cannot read meta; treat conservatively as no-verdict-executed so the run
-			// is routed to Cat 3b (the safer choice: Cat 3b re-execution is idempotent).
 			orphanLog(logger, "SweepStaleReconciliationLocks: read meta %q: %v (treating as no-verdict)", name, metaErr)
 			hasVerdictExecuted = false
 			runID = strings.TrimSuffix(name, ".lock")
 		}
 
-		// Stale: remove via unlink + fsync(parent dir) — with the flock still held.
 		removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger)
 		if closeErr := held.Close(); closeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: close held lock %q after unlink: %v", name, closeErr)
@@ -845,8 +716,6 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 		result.Removed++
 
 		if !hasVerdictExecuted {
-			// No verdict-executed line: route the target run through Cat 3b
-			// (verdict-emitted-but-unexecuted) per RC-002b / §8.5.
 			result.Cat3bRunIDs = append(result.Cat3bRunIDs, runID)
 			orphanLog(logger, "SweepStaleReconciliationLocks: run %q queued for Cat 3b routing (no verdict-executed)", runID)
 		}
@@ -858,23 +727,6 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 	return result, nil
 }
 
-// reconLockProbeStale reports whether a reconciliation lock file is stale:
-//   - flock(LOCK_EX|LOCK_NB) succeeds (no live lock holder), AND
-//   - the recorded creator_pid does not respond to kill(pid, 0).
-//
-// When stale is true, the returned *os.File is open with the flock STILL HELD:
-// the caller MUST unlink the lock file BEFORE closing it, so that no other
-// daemon can acquire the lock between the staleness verdict and the unlink
-// (RC-002a: at most one reconciliation workflow per target run — the flock
-// probe is the serialization point, per PL-006).
-//
-// Returns (nil, false, nil) if the lock is actively held (EWOULDBLOCK) or the
-// recorded creator PID is live (lock released before returning).
-// Returns (nil, false, err) if the file cannot be opened, the flock fails for
-// any reason other than contention, or the creator_pid line cannot be parsed.
-// All three are "cannot confirm this lock is dead", so the file is skipped
-// rather than removed — the error is reported instead of being silently folded
-// into the actively-held case, but the outcome for the caller is the same.
 func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error) {
 	//nolint:gosec // G304: path is constructed from projectDir + .harmonik/reconciliation-locks/ + entry name, not user input
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
@@ -888,16 +740,13 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after flock failure", "err", closeErr, "path", lockPath)
 		}
 		if errors.Is(flockErr, syscall.EWOULDBLOCK) || errors.Is(flockErr, syscall.EAGAIN) {
-			// Lock contention is a normal signal: the lock is actively held.
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("reconLockProbeStale: flock %q: %w", lockPath, flockErr)
 	}
 
-	// Parse creator_pid from file content (flock held throughout).
 	pid, parseErr := reconLockReadCreatorPID(f)
 	if parseErr != nil {
-		// Cannot parse: cannot prove the creator is dead — skip, don't remove.
 		if closeErr := f.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after parse failure", "err", closeErr, "path", lockPath)
 		}
@@ -905,20 +754,15 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 	}
 
 	if orphanSweepIsPidLive(pid) {
-		// Creator still alive — not stale.
 		if closeErr := f.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd (live creator)", "err", closeErr, "path", lockPath)
 		}
 		return nil, false, nil
 	}
 
-	// Stale: return with the flock held; caller unlinks, THEN closes.
 	return f, true, nil
 }
 
-// reconLockReadCreatorPID reads the creator_pid field from an already-open
-// reconciliation lock file. The file format is line-based: one line is
-// "creator_pid=<integer>".
 func reconLockReadCreatorPID(f *os.File) (int, error) {
 	if _, err := f.Seek(0, 0); err != nil {
 		return 0, fmt.Errorf("reconLockReadCreatorPID: seek: %w", err)
@@ -939,16 +783,6 @@ func reconLockReadCreatorPID(f *os.File) (int, error) {
 	return 0, fmt.Errorf("reconLockReadCreatorPID: creator_pid line not found in %q", f.Name())
 }
 
-// reconLockReadMeta reads the run_id and verdict-executed state from a
-// reconciliation lock file at lockPath.
-//
-// Per RC-002b, the verdict-executor writes "Harmonik-Verdict-Executed: true" to
-// the lock file just before releasing the lock. If this line is present the
-// verdict was already committed to git; the lock only outlived its useful purpose.
-// If absent, the verdict was not executed before the daemon crashed.
-//
-// runID falls back to the filename-derived value (strip ".lock" suffix) if the
-// "run_id=" line is not found in the file.
 func reconLockReadMeta(lockPath string) (runID string, hasVerdictExecuted bool, err error) {
 	//nolint:gosec // G304: lockPath is constructed from projectDir + known relative path, not user input
 	f, err := os.Open(lockPath)
@@ -972,14 +806,11 @@ func reconLockReadMeta(lockPath string) (runID string, hasVerdictExecuted bool, 
 		}
 	}
 	if runID == "" {
-		// Filename is the canonical source when run_id line is absent.
 		runID = strings.TrimSuffix(filepath.Base(lockPath), ".lock")
 	}
 	return runID, hasVerdictExecuted, nil
 }
 
-// reconLockUnlinkAndFsync removes lockPath and fsyncs the parent directory,
-// per PL-006's "unlink followed by fsync(parent_directory_fd)" discipline.
 func reconLockUnlinkAndFsync(lockPath, lockDir string, logger *log.Logger) error {
 	if err := os.Remove(lockPath); err != nil {
 		return fmt.Errorf("reconLockUnlinkAndFsync: Remove %q: %w", lockPath, err)
@@ -1001,10 +832,6 @@ func reconLockUnlinkAndFsync(lockPath, lockDir string, logger *log.Logger) error
 	}
 	return nil
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// (d) Stale intent file enumeration
-// ──────────────────────────────────────────────────────────────────────────────
 
 // EnumerateStaleIntents counts intent files under .harmonik/beads-intents/ whose
 // mtime is before daemonStartTime. The files are NOT removed — they are left on
@@ -1028,9 +855,6 @@ func EnumerateStaleIntents(projectDir string, daemonStartTime time.Time) (count 
 	}
 
 	for _, entry := range entries {
-		// Intent files are `<key>.json` (BI-030); skip directories and
-		// non-.json entries (which also excludes in-flight `*.json.tmp-*`
-		// atomic-write temp files from brcli.WriteIntentLogTmp).
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
@@ -1045,14 +869,6 @@ func EnumerateStaleIntents(projectDir string, daemonStartTime time.Time) (count 
 	return count, nil
 }
 
-// fsyncDirBestEffort fsyncs a directory so preceding unlinks/renames survive a
-// crash. It is best-effort: the directory entries are already gone from the
-// live filesystem, so a failure does not invalidate the caller's pass.
-//
-// "Best-effort" means the caller does not abort — not that the failure is
-// invisible. Every step reports through logger, because a filesystem that
-// silently refuses every directory fsync is exactly the condition an operator
-// needs to know about before trusting crash-recovery behaviour.
 func fsyncDirBestEffort(dir string, logger *log.Logger, caller string) {
 	dirFd, openErr := os.Open(dir)
 	if openErr != nil {

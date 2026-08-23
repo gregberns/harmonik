@@ -1,14 +1,5 @@
 package daemon_test
 
-// moderesolve_test.go — table-driven tests for the EM-012a four-tier
-// workflow-mode resolution (resolveWorkflowMode via ExportedResolveWorkflowMode).
-//
-// Acceptance criterion (hk-7om2q.9): table-driven test covers all four
-// precedence tiers; resolved value matches expected for each combination.
-//
-// Helper prefix: modeResolveFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-7om2q.9).
-
 import (
 	"context"
 	"encoding/json"
@@ -20,11 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// modeResolveFixtureBead builds a minimal BeadRecord with the given label set.
 func modeResolveFixtureBead(t *testing.T, labels []string) core.BeadRecord {
 	t.Helper()
 	return core.BeadRecord{
@@ -37,8 +23,6 @@ func modeResolveFixtureBead(t *testing.T, labels []string) core.BeadRecord {
 	}
 }
 
-// modeResolveFixtureBus is a minimal in-process event collector that records
-// every emitted (eventType, rawPayload) pair for assertion.
 type modeResolveFixtureBus struct {
 	mu     sync.Mutex
 	events []modeResolveFixtureEvent
@@ -62,10 +46,8 @@ func (b *modeResolveFixtureBus) EmitWithRunID(ctx context.Context, _ core.RunID,
 	return b.Emit(ctx, et, payload)
 }
 
-// Compile-time assertion: modeResolveFixtureBus satisfies EventEmitter.
 var _ handlercontract.EventEmitter = (*modeResolveFixtureBus)(nil)
 
-// modeResolveFixtureBusEvents returns a snapshot of all collected events.
 func modeResolveFixtureBusEvents(t *testing.T, bus *modeResolveFixtureBus) []modeResolveFixtureEvent {
 	t.Helper()
 	bus.mu.Lock()
@@ -74,10 +56,6 @@ func modeResolveFixtureBusEvents(t *testing.T, bus *modeResolveFixtureBus) []mod
 	copy(out, bus.events)
 	return out
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestResolveWorkflowModePrecedence is the primary table-driven test covering
 // all four tiers of EM-012a resolution and the conflict-event paths.
@@ -93,7 +71,6 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 		// must be emitted.
 		wantConflictEvent bool
 	}{
-		// ── Tier 1: per-bead label wins ──────────────────────────────────────
 		{
 			name:          "tier1 single label overrides daemon default",
 			beadLabels:    []string{"area:daemon", "workflow:single"},
@@ -101,12 +78,6 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantMode:      core.WorkflowModeSingle,
 		},
 		{
-			// This case used to assert that workflow:review-loop resolved to
-			// review-loop at tier 1. Since the mode's retirement (EM-015d) the
-			// label names an unknown mode, so per BI-009a tier 1 is treated as
-			// absent, bead_label_conflict is emitted, and the walk continues —
-			// here to the tier-3 daemon default. A queue full of stale labels
-			// must degrade, never wedge.
 			name:              "tier1 retired review-loop label is unknown: conflict, falls to tier3",
 			beadLabels:        []string{"workflow:review-loop"},
 			daemonDefault:     core.WorkflowModeSingle,
@@ -120,7 +91,6 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantMode:      core.WorkflowModeDot,
 		},
 
-		// ── Tier 1 conflict: multiple workflow labels → emit event, fall through
 		{
 			name:              "tier1 conflict multiple labels emits bead_label_conflict and falls to tier3",
 			beadLabels:        []string{"workflow:single", "workflow:review-loop"},
@@ -136,7 +106,6 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantConflictEvent: true,
 		},
 
-		// ── Tier 1 conflict: unknown mode value → emit event, fall through
 		{
 			name:              "tier1 unknown mode value emits bead_label_conflict and falls to tier3",
 			beadLabels:        []string{"workflow:bogus"},
@@ -152,11 +121,6 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantConflictEvent: true,
 		},
 
-		// ── Tier 2: per-project config (no-op) ───────────────────────────────
-		// No bead label, no daemon default → must fall to tier 4.
-		// Tier 2 is always absent; we verify tier 3 is tried first.
-
-		// ── Tier 3: daemon default ────────────────────────────────────────────
 		{
 			name:          "tier3 daemon default single when no bead label",
 			beadLabels:    nil,
@@ -164,32 +128,18 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantMode:      core.WorkflowModeSingle,
 		},
 		{
-			// This case used to assert a review-loop daemon default was honoured
-			// at tier 3. Since the retirement (EM-015d) that default is not a
-			// valid WorkflowMode, so tier 3 is skipped and the walk lands on the
-			// tier-4 dot fallback. (The daemon also refuses to boot with this
-			// default at all — bootconfig.ValidateWorkflowMode. This is the
-			// belt-and-braces resolution-layer half.)
 			name:          "tier3 retired review-loop daemon default is invalid: falls to tier4 dot",
 			beadLabels:    []string{"area:brcli"}, // non-workflow label; tier 1 absent
 			daemonDefault: core.WorkflowMode(core.WorkflowModeRetiredReviewLoop),
 			wantMode:      core.WorkflowModeDot,
 		},
 		{
-			// EM-012a / hk-30vlb: when the daemon is configured with dot as the
-			// default (the v1.0 production default per PL-004a), an unlabeled bead
-			// resolves to dot at tier 3 and will be dispatched via the embedded
-			// standard-bead.dot graph (standardgraph.go).  This is the "unlabeled
-			// bead → dot over standard-bead.dot" case normalised at the mode-
-			// resolution layer; the embedded-artifact path itself is pinned by
-			// TestStandardBeadDotEmbedValidAndInSync (standardgraph_sync_test.go).
 			name:          "tier3 daemon default dot when no bead label (v1.0 production default)",
 			beadLabels:    nil,
 			daemonDefault: core.WorkflowModeDot,
 			wantMode:      core.WorkflowModeDot,
 		},
 
-		// ── Tier 4: hard fallback → dot (hk-30vlb) ───────────────────────────
 		{
 			name:          "tier4 fallback to dot when no bead label and no daemon default",
 			beadLabels:    nil,

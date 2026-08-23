@@ -13,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// makeNotifyEvent constructs a minimal core.Event with a JSON-marshalled payload.
 func makeNotifyEvent(t *testing.T, evtType core.EventType, payload any) core.Event {
 	t.Helper()
 	evID, err := uuid.NewV7()
@@ -45,15 +44,12 @@ func TestNotifyStream_SuccessWithCommit(t *testing.T) {
 	beadID := "hk-abc123"
 	sha := "deadbeefcafebabe1234"
 
-	// 1. run_started → capture RunID → BeadID
 	_ = n.handleRunStarted(ctx, makeNotifyEvent(t, core.EventTypeRunStarted,
 		notifyRunStarted{RunID: runID, BeadID: beadID}))
 
-	// 2. workspace_merge_status merged → capture RunID → commit SHA
 	_ = n.handleMergeStatus(ctx, makeNotifyEvent(t, core.EventTypeWorkspaceMergeStatus,
 		notifyMergeStatus{RunID: runID, Status: "merged", MergeCommitHash: &sha}))
 
-	// 3. run_completed → emit success line
 	_ = n.handleRunCompleted(ctx, makeNotifyEvent(t, core.EventTypeRunCompleted,
 		notifyRunCompleted{RunID: runID, Success: true, Summary: "all good"}))
 
@@ -62,7 +58,6 @@ func TestNotifyStream_SuccessWithCommit(t *testing.T) {
 	if !strings.HasPrefix(line, "[hk-abc123] success (commit ") {
 		t.Errorf("got %q, want prefix %q", line, wantPrefix)
 	}
-	// SHA should be truncated to 7 chars
 	if !strings.Contains(line, "deadbee") {
 		t.Errorf("got %q, want 7-char SHA prefix %q", line, "deadbee")
 	}

@@ -1,30 +1,5 @@
 package workspace
 
-// workertrust_isolation_test.go — the worker-side config writers must obey the
-// configured config path, and must never wait on the lock forever (hk-g8d5x).
-//
-// WHAT WENT WRONG. internal/testhelpers/hermetic points
-// HARMONIK_CLAUDE_CONFIG_PATH at a temp file so no test touches the operator's
-// real ~/.claude.json. The Go writer honoured that variable. The python program
-// the REMOTE writer feeds to python3 did not: it expanded ~ itself, and it took
-// a plain blocking fcntl.flock(LOCK_EX) on the real ~/.claude.json.lock. Three
-// internal/daemon dot-node tests are the only ones that pass a non-nil Runner,
-// so they were the only ones that reached this program — and each of them
-// blocked about 50 seconds on the operator's home directory while an orphaned
-// test binary from another lane held that lock. The failure named the dispatch
-// path, which was innocent.
-//
-// The three claims these tests hold down:
-//
-//  1. with HARMONIK_CLAUDE_CONFIG_PATH set, the program writes THAT file and
-//     leaves the home directory alone;
-//  2. when the lock is held, the program gives up after its budget and says which
-//     file it was waiting on, instead of waiting forever; and
-//  3. box A's CLAUDE_CONFIG_HOME never crosses the wire — it names a directory on
-//     box A, and the file the worker writes must be the one the WORKER's claude
-//     reads. Fixing claim 1 by sending every configured path across would have
-//     broken every remote run on a daemon that follows docs/live-twin-testing.md.
-
 import (
 	"context"
 	"encoding/json"
@@ -40,14 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// homeRedirectRunner runs each command locally with HOME pointed at a directory
-// this test owns.
-//
-// It stands in for the remote runner: production hands EnsureWorktreeTrustVia an
-// SSHRunner and the program runs in the WORKER's home, and the local passthrough
-// runner the daemon's dot-node fixtures use runs it in whatever home the test
-// binary inherited. Redirecting HOME lets the assertion below say "the home
-// directory was not touched" without touching the operator's real one.
 type homeRedirectRunner struct{ home string }
 
 func (r homeRedirectRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -56,15 +23,6 @@ func (r homeRedirectRunner) Command(ctx context.Context, name string, args ...st
 	return cmd
 }
 
-// workerEnvRunner runs each command locally but with an environment shaped like
-// the FAR side of an ssh hop: home is the WORKER's home, configHome is the
-// WORKER's own CLAUDE_CONFIG_HOME (empty for the usual case of none), and every
-// config-path variable this process may hold is removed first.
-//
-// That scrubbing is the whole point. ssh forwards no environment by default, so
-// a worker program sees the worker's variables and never box A's. A runner that
-// inherited box A's variables would hide the exact regression these tests exist
-// to catch.
 type workerEnvRunner struct {
 	home       string
 	configHome string
@@ -88,8 +46,6 @@ func (r workerEnvRunner) Command(ctx context.Context, name string, args ...strin
 	return cmd
 }
 
-// fixedResultRunner ignores the requested command and runs script through sh, so
-// a test can drive the Go caller's handling of a specific exit status.
 type fixedResultRunner struct{ script string }
 
 func (r fixedResultRunner) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -97,9 +53,6 @@ func (r fixedResultRunner) Command(ctx context.Context, _ string, _ ...string) *
 	return exec.CommandContext(ctx, "sh", "-c", r.script)
 }
 
-// isolationFixture makes a worktree directory, a redirected home, and a config
-// path under a third directory, and points HARMONIK_CLAUDE_CONFIG_PATH at the
-// config path.
 func isolationFixture(t *testing.T) (worktree, home, cfgPath string) {
 	t.Helper()
 	worktree = t.TempDir()
@@ -109,9 +62,6 @@ func isolationFixture(t *testing.T) (worktree, home, cfgPath string) {
 	return worktree, home, cfgPath
 }
 
-// homeConfigUntouched fails when the redirected home has a .claude.json, which
-// is what the program writes when it expands ~ instead of using the configured
-// path.
 func homeConfigUntouched(t *testing.T, home string) {
 	t.Helper()
 	strayCfg := filepath.Join(home, ".claude.json")
@@ -119,8 +69,6 @@ func homeConfigUntouched(t *testing.T, home string) {
 		//nolint:gosec // G304: strayCfg is inside this test's t.TempDir fixture.
 		body, readErr := os.ReadFile(strayCfg)
 		if readErr != nil {
-			// The file exists, so the test has already failed. Report why the
-			// contents are missing rather than dropping the diagnostic.
 			body = []byte("unreadable: " + readErr.Error())
 		}
 		t.Fatalf("the worker program wrote %s, so it expanded ~ instead of using the configured "+
@@ -140,15 +88,12 @@ func homeConfigUntouched(t *testing.T, home string) {
 // trust upsert: the remote leg records the trust entry in the configured config
 // file, and creates nothing in the home directory.
 func TestEnsureWorktreeTrustVia_RemoteWritesTheConfiguredPath(t *testing.T) {
-	// Not parallel: t.Setenv.
 	worktree, home, cfgPath := isolationFixture(t)
 
 	if err := EnsureWorktreeTrustVia(t.Context(), homeRedirectRunner{home: home}, worktree); err != nil {
 		t.Fatalf("EnsureWorktreeTrustVia: %v", err)
 	}
 
-	// Checked first: "it left the home directory alone" is the claim, and it gives
-	// the sharper message when the program goes back to expanding ~.
 	homeConfigUntouched(t, home)
 
 	key := worktree
@@ -270,25 +215,18 @@ func TestEnsureWorktreeTrustVia_LockTimeoutIsStructural(t *testing.T) {
 // steers the LOCAL writer (which is what the live-twin runbook needs), and it
 // never leaves box A on the remote path.
 func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
-	// Not parallel: t.Setenv.
 	worktree := t.TempDir()
 	workerHome := t.TempDir()
 
-	// A directory that exists on box A and nowhere else. It is never created, so
-	// any writer that resolves through it fails loudly.
 	boxAConfigHome := filepath.Join(t.TempDir(), "box-a-only")
 	t.Setenv("CLAUDE_CONFIG_HOME", boxAConfigHome)
-	// hermetic.Main sets this for the whole package. Clear it so CLAUDE_CONFIG_HOME
-	// is the only override in force, which is the live-twin daemon's shape.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", "")
 
-	// Half one: box A's own writer still honours CLAUDE_CONFIG_HOME.
 	if got, want := claudeGlobalConfigPath(), filepath.Join(boxAConfigHome, ".claude.json"); got != want {
 		t.Fatalf("the LOCAL config path is %q, want %q — CLAUDE_CONFIG_HOME must keep steering box A's own writer, "+
 			"which is what docs/live-twin-testing.md relies on", got, want)
 	}
 
-	// Half two: nothing box-A-only crosses the wire.
 	if got := claudeConfigPathForWorker(); got != "" {
 		t.Errorf("claudeConfigPathForWorker() = %q, want \"\" — only HARMONIK_CLAUDE_CONFIG_PATH may cross the wire, "+
 			"and CLAUDE_CONFIG_HOME describes the box it is set on", got)
@@ -302,8 +240,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 		}
 	}
 
-	// And the behaviour those assertions stand for: run both programs with a
-	// worker-shaped environment and see them write the WORKER's own config.
 	ctx := t.Context()
 	runner := workerEnvRunner{home: workerHome}
 	if err := EnsureWorktreeTrustVia(ctx, runner, worktree); err != nil {
@@ -345,7 +281,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 // own must still be obeyed — that is what keeps the precedence list one list
 // rather than two, and it is what a worker with its own scratch config needs.
 func TestWorkerConfigPrograms_WorkerHonoursItsOwnConfigHome(t *testing.T) {
-	// Not parallel: t.Setenv.
 	worktree := t.TempDir()
 	workerHome := t.TempDir()
 	workerConfigHome := t.TempDir()

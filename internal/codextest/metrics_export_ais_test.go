@@ -1,15 +1,5 @@
 package codextest_test
 
-// T9 metrics export — persists the INPUT reactor's replayed emitted-event stream
-// (every stratum replayed fault-free, re-enveloped) as an events.jsonl for the
-// out-of-band jq/grep oracle (scripts/codex-metrics.sh).
-//
-// Skipped unless CODEX_METRICS_EXPORT names the output path. This is NOT a
-// regression test (the L2 tiers own the in-process assertions) — it is the
-// deterministic PRODUCER for the jq/grep recompute: the checker reads the
-// persisted file with jq/grep, NEVER the driver's own report, satisfying "the
-// thing under repair cannot be its own oracle" (D13). Zero-daemon, zero-token.
-
 import (
 	"encoding/json"
 	"os"
@@ -19,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/codexinput"
 )
 
-// aisReplayEnvelope is the minimal re-enveloped emitted event the out-of-band
-// metrics script consumes (jq reads .type / .input_seq / .reason / .turn_id).
 type aisReplayEnvelope struct {
 	Type     codexinput.EmitType `json:"type"`
 	InputSeq uint64              `json:"input_seq,omitempty"`

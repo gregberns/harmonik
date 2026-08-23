@@ -25,13 +25,11 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0020"
 
-		// Create the worktree via the production helper (registered with git).
 		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		// No lease-lock, no sessions dir — bare-worktree-no-lease state.
 		evidenceType, err := ClassifyCrashEvidence(worktreePath)
 		if !errors.Is(err, ErrBareWorktreeNoLease) {
 			t.Fatalf("WM-003a: bare-worktree-no-lease: expected ErrBareWorktreeNoLease, got: %v", err)
@@ -49,14 +47,11 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0021"
 		sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000000021"
 
-		// Create the worktree (registered with git).
 		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		// Synthesize a session sidecar to simulate crash after sidecar write
-		// but before lease-lock fsync (between steps c and d of WM-016).
 		sidecarDir := filepath.Join(SessionLogRootPath(worktreePath), sessionID)
 		if err := os.MkdirAll(sidecarDir, 0o700); err != nil {
 			t.Fatalf("WM-003a: MkdirAll sidecarDir: %v", err)
@@ -67,7 +62,6 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 			t.Fatalf("WM-003a: WriteFile sidecar: %v", err)
 		}
 
-		// No lease-lock, but sidecar present — sidecar-without-lease state.
 		evidenceType, err := ClassifyCrashEvidence(worktreePath)
 		if !errors.Is(err, ErrSidecarWithoutLease) {
 			t.Fatalf("WM-003a: sidecar-without-lease: expected ErrSidecarWithoutLease, got: %v", err)
@@ -81,8 +75,6 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 	t.Run("lease-lock-present-returns-error", func(t *testing.T) {
 		t.Parallel()
 
-		// ClassifyCrashEvidence must return an error when the lease-lock IS present
-		// (the worktree is live, not an orphan).
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0022"
 
@@ -103,8 +95,6 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 	t.Run("evidence-type-string-values-are-spec-canonical", func(t *testing.T) {
 		t.Parallel()
 
-		// The evidence type string values MUST match the spec-canonical strings
-		// per workspace-model.md §3 Glossary "orphan evidence types".
 		if EvidenceBareWorktreeNoLease != "bare-worktree-no-lease" {
 			t.Errorf("WM-003a: EvidenceBareWorktreeNoLease = %q, want %q",
 				EvidenceBareWorktreeNoLease, "bare-worktree-no-lease")
@@ -118,8 +108,6 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 	t.Run("sessions-dir-present-but-no-sidecar-is-bare", func(t *testing.T) {
 		t.Parallel()
 
-		// A sessions dir exists but no harmonik.meta.json inside — this is still
-		// bare-worktree-no-lease (sidecar absent → no evidence of session completion).
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0023"
 
@@ -128,7 +116,6 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		}
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		// Create sessions dir but no sidecar inside.
 		sessionsRoot := SessionLogRootPath(worktreePath)
 		if err := os.MkdirAll(sessionsRoot, 0o700); err != nil {
 			t.Fatalf("WM-003a: MkdirAll sessionsRoot: %v", err)

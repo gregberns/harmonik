@@ -24,8 +24,6 @@ import (
 	"testing"
 )
 
-// tapFixtureRunDirect runs binary with args, feeds input to its stdin, and
-// returns its combined stdout.  Fails the test on any subprocess error.
 func tapFixtureRunDirect(t *testing.T, args []string, input string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "cat", args...)
@@ -37,8 +35,6 @@ func tapFixtureRunDirect(t *testing.T, args []string, input string) string {
 	return string(out)
 }
 
-// tapFixtureRunTap runs the Tap with binary/args and the given input, returning
-// the stdout seen by the caller and the captured bytes from each direction.
 func tapFixtureRunTap(t *testing.T, binary string, args []string, input string) (stdout, inCap, outCap string) {
 	t.Helper()
 	var stdoutBuf, inBuf, outBuf bytes.Buffer
@@ -110,27 +106,21 @@ func TestTapOutCaptureMatchesChildOutput(t *testing.T) {
 //  4. Assert InCapture == input bytes (lossless input).
 //  5. Assert OutCapture == direct stdout bytes (lossless output).
 func TestTapGateLosslessRoundtrip(t *testing.T) {
-	// Multi-line JSONL payload simulating two JSON-RPC requests.
 	const input = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n" +
 		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"executeCode\",\"params\":{\"code\":\"echo hello\"}}\n"
 
-	// Step 1: control run without the tap.
 	directOut := tapFixtureRunDirect(t, nil, input)
 
-	// Step 2: tap run with both capture directions wired.
 	tapOut, inCap, outCap := tapFixtureRunTap(t, "cat", nil, input)
 
-	// Gate assertion 1: transparent — tap output matches direct output.
 	if tapOut != directOut {
 		t.Errorf("GATE FAIL: tap stdout != direct stdout\ntap:    %q\ndirect: %q", tapOut, directOut)
 	}
 
-	// Gate assertion 2: lossless input — InCapture matches what was sent.
 	if inCap != input {
 		t.Errorf("GATE FAIL: InCapture != input\ngot:  %q\nwant: %q", inCap, input)
 	}
 
-	// Gate assertion 3: lossless output — OutCapture matches what child produced.
 	if outCap != directOut {
 		t.Errorf("GATE FAIL: OutCapture != direct stdout\ngot:  %q\nwant: %q", outCap, directOut)
 	}
@@ -147,7 +137,6 @@ func TestTapNilCaptures(t *testing.T) {
 		Stdin:  strings.NewReader(input),
 		Stdout: &stdoutBuf,
 		Stderr: io.Discard,
-		// InCapture and OutCapture intentionally nil.
 	}
 	if err := tap.Run(); err != nil {
 		t.Fatalf("Tap.Run with nil captures: %v", err)
@@ -189,8 +178,6 @@ func TestTapEmptyInput(t *testing.T) {
 // are guaranteed to be /dev/null in CI).  We exercise this by running cat with
 // /dev/null as the process stdin (the child exits immediately on EOF).
 func TestTapDefaultsToOSStdio(t *testing.T) {
-	// Redirect the process stdin to /dev/null so the default os.Stdin yields
-	// EOF immediately, allowing cat to exit without blocking.
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Skipf("cannot open /dev/null: %v", err)
@@ -204,7 +191,6 @@ func TestTapDefaultsToOSStdio(t *testing.T) {
 	origStdin := os.Stdin
 	origStdout := os.Stdout
 	os.Stdin = devNull
-	// Redirect stdout to discard so the test doesn't pollute test output.
 	devNullOut, err := os.Open(os.DevNull)
 	if err != nil {
 		os.Stdin = origStdin
@@ -222,7 +208,6 @@ func TestTapDefaultsToOSStdio(t *testing.T) {
 	tap := Tap{
 		Binary: "cat",
 		Stderr: io.Discard,
-		// Stdin, Stdout nil → should default to os.Stdin/Stdout.
 	}
 	if err := tap.Run(); err != nil {
 		t.Errorf("Tap.Run with nil Stdin/Stdout: %v", err)
@@ -232,7 +217,6 @@ func TestTapDefaultsToOSStdio(t *testing.T) {
 // TestTapMultilineJSONL verifies that the tap correctly handles a stream of
 // many JSONL lines without dropping or reordering any.
 func TestTapMultilineJSONL(t *testing.T) {
-	// Build a payload with N JSONL lines.
 	const n = 50
 	var sb strings.Builder
 	for i := 0; i < n; i++ {

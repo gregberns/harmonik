@@ -1,13 +1,5 @@
 package workspace
 
-// DefaultClaudeProjectsDir answers "where does Claude Code keep its session
-// transcripts". Production reads that directory on every run terminal. Until
-// this seam existed, a test read the operator's real store — 1.9 GB on the
-// machine this was found on, and empty on a fresh one — so the same test gave
-// two different answers on two machines.
-//
-// None of these tests may run in parallel: they mutate the process environment.
-
 import (
 	"os"
 	"path/filepath"
@@ -63,8 +55,6 @@ func TestDefaultClaudeProjectsDir_FallsBackToHome(t *testing.T) {
 // from the package TestMain (hermetic.Main), so this test fails the moment that
 // hookup is removed.
 func TestDefaultClaudeProjectsDir_UnderTestPointsAwayFromHome(t *testing.T) {
-	// Not parallel: the sibling tests above mutate the same variables, and a
-	// parallel reader could observe one of their values instead of TestMain's.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("UserHomeDir: %v", err)

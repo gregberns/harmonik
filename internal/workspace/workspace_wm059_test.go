@@ -8,11 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Tests for the Workspace record shape per workspace-model.md §6.1 (bead hk-8mwo.59).
-//
-// Helper prefix: wsRecordFixture (distinct from other helper prefixes in this package).
-
-// wsRecordFixtureValid returns a fully-populated, valid Workspace for tests.
 func wsRecordFixtureValid(t *testing.T) *Workspace {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196e200-0000-7000-8000-000000000001"))
@@ -37,10 +32,6 @@ func wsRecordFixtureValid(t *testing.T) *Workspace {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Field set — all 12 fields accessible
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM059_WorkspaceRecord12Fields verifies that all 12 fields declared in §6.1
 // are present and accessible on the Workspace struct.
 func TestWM059_WorkspaceRecord12Fields(t *testing.T) {
@@ -48,7 +39,6 @@ func TestWM059_WorkspaceRecord12Fields(t *testing.T) {
 
 	ws := wsRecordFixtureValid(t)
 
-	// Required fields.
 	if ws.WorkspaceID == "" {
 		t.Error("WM-059: WorkspaceID is empty")
 	}
@@ -80,7 +70,6 @@ func TestWM059_WorkspaceRecord12Fields(t *testing.T) {
 		t.Error("WM-059: Metadata is nil")
 	}
 
-	// Optional fields (present in fixture).
 	if ws.BeadID == nil {
 		t.Error("WM-059: BeadID is nil in fixture; want non-nil (test setup error)")
 	}
@@ -88,10 +77,6 @@ func TestWM059_WorkspaceRecord12Fields(t *testing.T) {
 		t.Error("WM-059: ImplementerHandlerRef is nil in fixture; want non-nil (test setup error)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Valid() — required field validation
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM059_ValidHappyPath verifies that a fully-populated Workspace passes Valid().
 func TestWM059_ValidHappyPath(t *testing.T) {
@@ -216,10 +201,6 @@ func TestWM059_ValidRejectsZeroSchemaVersion(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Schema version constant
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM059_SchemaVersionConstantIsPositive verifies that WorkspaceSchemaVersion
 // is positive per §6.4.
 func TestWM059_SchemaVersionConstantIsPositive(t *testing.T) {
@@ -241,10 +222,6 @@ func TestWM059_SchemaVersionConstantMatchesFixture(t *testing.T) {
 			ws.SchemaVersion, WorkspaceSchemaVersion)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Spec invariants
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWM059_WorkspaceIDDerivedFromRunID verifies that workspace_id is "ws-"+run_id
 // per WM-004 when constructed correctly. This test uses the fixture's values to

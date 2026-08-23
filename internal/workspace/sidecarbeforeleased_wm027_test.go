@@ -38,20 +38,14 @@ func TestWM027_SidecarPrecedesWorkspaceLeased(t *testing.T) {
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
 	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
-	// Step 1: Write sidecar atomically (simulates workspace manager action before workspace_leased).
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-027: atomic sidecar write failed: %v", err)
 	}
 
-	// Step 2: Assert sidecar is durably on disk.
-	// A workspace_leased consumer arriving now MUST find the sidecar present.
 	if _, err := os.Stat(sidecarPath); err != nil {
 		t.Errorf("WM-027: sidecar not on disk before workspace_leased emission point: %v", err)
 	}
 
-	// Step 3: Conceptual ordering gate — workspace_leased would emit here.
-	// The real emitter is downstream (S06). This fixture captures the durability
-	// pre-condition: sidecar is present and readable before any event fires.
 	raw := mustReadFile(t, sidecarPath)
 	if len(raw) == 0 {
 		t.Errorf("WM-027: sidecar is empty; must be non-empty before workspace_leased")
@@ -80,16 +74,12 @@ func TestWM027_SubsequentSessionsDoNotReemitWorkspaceLeased(t *testing.T) {
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0027"
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	// Simulate a leased counter: 0 = not yet leased, 1 = leased once.
-	// workspace_leased is emitted exactly once — only on the first session.
 	workspaceLeasedCount := 0
 
 	emitWorkspaceLeased := func(sessionNum int) {
-		// Only the first session triggers workspace_leased.
 		if sessionNum == 1 {
 			workspaceLeasedCount++
 		}
-		// Subsequent sessions: sidecar is written, no event re-emitted.
 	}
 
 	sessions := []struct {
@@ -110,20 +100,16 @@ func TestWM027_SubsequentSessionsDoNotReemitWorkspaceLeased(t *testing.T) {
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-027: session[%d] sidecar write: %v", i, err)
 		}
-		// Sidecar is on disk before handler launch for every session.
 		if _, err := os.Stat(sidecarPath); err != nil {
 			t.Errorf("WM-027: session[%d] sidecar not on disk: %v", i, err)
 		}
-		// workspace_leased fires only for session index 0 (session number 1).
 		emitWorkspaceLeased(i + 1)
 	}
 
-	// Assert: workspace_leased was emitted exactly once.
 	if workspaceLeasedCount != 1 {
 		t.Errorf("WM-027: workspace_leased emitted %d times; want exactly 1", workspaceLeasedCount)
 	}
 
-	// Assert: all three session directories and sidecars exist independently.
 	for i, s := range sessions {
 		sidecarPath := filepath.Join(workspacePath, ".harmonik", "sessions", s.sessionID, "harmonik.meta.json")
 		if _, err := os.Stat(sidecarPath); err != nil {

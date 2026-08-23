@@ -1,24 +1,5 @@
 package daemon_test
 
-// dot_node_baseline_test.go — a graph node with no readable baseline HEAD must
-// fail, not guess.
-//
-// The pre-launch probe dropped its error. An unreadable worktree therefore gave
-// the node an EMPTY baseline, and an empty baseline is not a harmless zero:
-//
-//   - the no-advance guard cannot fire, because the post-exit HEAD can never
-//     equal an empty string, so a node that did no work returns SUCCESS;
-//   - the trailer amend leg is disabled, because it gates on a non-empty parent,
-//     so a commit lands untrailered and is then mislabelled as no-change; and
-//   - the quit-on-commit watchdog reads "HEAD moved" on its FIRST poll, sends
-//     /quit and force kills the agent seconds after the brief is delivered.
-//
-// The bad state needs the PRE-probe to fail while the POST-probe succeeds — a
-// transient, most plausibly on a remote run whose probe crosses SSH. That is
-// what dotFixtureFlakyBaselineRunner reproduces.
-//
-// Bead: hk-o4sgg.
-
 import (
 	"context"
 	"encoding/json"
@@ -31,16 +12,6 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// dotFixtureFlakyBaselineRunner passes every command through to a local exec,
-// except that it fails ONE `rev-parse HEAD` — the first one after the node's
-// agent-task.md is written.
-//
-// That command is keyed on rather than counted because it is the one the node
-// makes for its own baseline: the launch-spec build writes agent-task.md, and
-// the very next probe is the baseline read. Counting would pin the test to a
-// probe order that is free to change.
-//
-// failBaseline false leaves every probe intact, which is the control's runner.
 type dotFixtureFlakyBaselineRunner struct {
 	mu           sync.Mutex
 	failBaseline bool
@@ -58,8 +29,6 @@ func (r *dotFixtureFlakyBaselineRunner) Command(ctx context.Context, name string
 		r.armed = false
 		r.failed = true
 		r.mu.Unlock()
-		// `false` exits 1 with no output, which is what a probe that could not
-		// reach the worktree looks like to the caller.
 		return exec.CommandContext(ctx, "false")
 	}
 	r.mu.Unlock()
@@ -97,16 +66,11 @@ func TestDotNode_UnreadableBaselineDoesNotPassANodeThatDidNoWork(t *testing.T) {
 	if reopened := res.Ledger.reopenedIDs(); len(reopened) == 0 {
 		t.Errorf("bead %s reached no reopen; events=%v", beadID, res.Bus.eventTypes())
 	}
-	// The run must fail for THIS reason. An empty baseline also poisons the
-	// quit-on-commit watchdog, so a later regression could reopen the bead for
-	// the wrong reason and satisfy the assertions above for free.
 	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "resolve HEAD before node") {
 		t.Errorf("run_failed summary = %q; want it to name the unreadable baseline", summary)
 	}
 }
 
-// dotFixtureRunFailedSummary returns the summary of the first run_failed event,
-// or "" when the run did not fail.
 func dotFixtureRunFailedSummary(res dotFixtureResult) string {
 	for _, ev := range res.Bus.allEvents() {
 		if ev.EventType != string(core.EventTypeRunFailed) {

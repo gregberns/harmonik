@@ -1,11 +1,5 @@
 package codextest_test
 
-// L2 integration tier for the INPUT driver (T9): synthesized stimulus → InputTwin
-// → codexinput reactor → InputBridgeSink over the §2.2 discrete-event harness.
-// Asserts the exact port-effect shape per stratum on the no-fault path, plus one
-// fault case per substrate mode asserting terminal-never-silence (RS-017). The
-// exhaustive 4×strata×EventN matrix lives in l2_fault_matrix_ais_test.go.
-
 import (
 	"testing"
 
@@ -37,7 +31,6 @@ func TestL2AIS_AckedEffects(t *testing.T) {
 	if sink.Handshakes != 1 {
 		t.Errorf("send_handshake = %d, want 1", sink.Handshakes)
 	}
-	// No timer fired: elapsed is virtual-zero on the fully-acked path.
 	if elapsed != 0 {
 		t.Errorf("elapsed = %v, want 0 (no timer should fire when the ack lands)", elapsed)
 	}
@@ -120,31 +113,22 @@ func TestL2AIS_FaultSmoke(t *testing.T) {
 		wantAcked     int
 	}{
 		{
-			// Child stdout closes right after submit (before the ack): the ignored
-			// disconnect sentinel leaves the submission in flight; the armed
-			// input_ack_timeout carries it to a bounded stale terminal.
 			name:      "drop_after_submit",
 			fault:     codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultDropAfter, EventN: 3},
 			wantStale: 1,
 		},
 		{
-			// The ack frame stalls (rendered, never delivered): the timeout front-
-			// stop fires stale.
 			name:          "stall_before_ack",
 			fault:         codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultStall, EventN: 4},
 			stallExpected: true,
 			wantStale:     1,
 		},
 		{
-			// The ack frame is truncated → ignored transport sentinel → timeout →
-			// stale (a partial frame is never swallowed into silence).
 			name:      "truncate_at_ack",
 			fault:     codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultTruncate, EventN: 4},
 			wantStale: 1,
 		},
 		{
-			// The ack is delivered twice (double-submit / re-delivery probe): the
-			// reactor's seq/phase guards absorb the second copy — one acked, no stale.
 			name:      "dup_ack",
 			fault:     codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultDup, EventN: 4},
 			wantAcked: 1,

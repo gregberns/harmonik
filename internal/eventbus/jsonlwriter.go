@@ -14,7 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// writeRequest is a single unit of work sent to the drainer goroutine.
 type writeRequest struct {
 	buf    []byte
 	doSync bool
@@ -116,9 +115,6 @@ func OpenJSONLWriter(path string) (*JSONLWriter, error) {
 	}
 
 	w := &JSONLWriter{
-		// Buffer of 128 allows short bursts to enqueue without blocking the
-		// drainer. At N=10 runs × 10 F-class/sec = 100 events/sec the channel
-		// is consumed faster than it fills outside of startup bursts.
 		queue: make(chan writeRequest, 128),
 		stop:  make(chan struct{}),
 		done:  make(chan struct{}),
@@ -127,19 +123,6 @@ func OpenJSONLWriter(path string) (*JSONLWriter, error) {
 	return w, nil
 }
 
-// drain is the single writer goroutine. It owns f exclusively; no other
-// goroutine touches f after drain starts.
-//
-// Batching algorithm:
-//  1. Block on the first request from the queue, or exit when stop is closed
-//     and the queue is empty.
-//  2. Non-blocking drain: collect any additional requests already in the queue.
-//  3. Concatenate all line buffers into one Write call.
-//  4. If any request in the batch has doSync=true, issue one Sync.
-//  5. Send the result (nil or error) to every request's result channel.
-//
-// This coalesces concurrent Append calls into a single Write+Sync per batch,
-// reducing fsync calls from O(N) to O(1) for burst-concurrent callers.
 func (w *JSONLWriter) drain(f *os.File) {
 	defer func() {
 		w.closeErr = f.Close()
@@ -147,7 +130,6 @@ func (w *JSONLWriter) drain(f *os.File) {
 	}()
 
 	for {
-		// Wait for the first request or a stop signal.
 		var first writeRequest
 		select {
 		case req, ok := <-w.queue:
@@ -156,7 +138,6 @@ func (w *JSONLWriter) drain(f *os.File) {
 			}
 			first = req
 		case <-w.stop:
-			// Drain any remaining items in the queue before exiting.
 			for {
 				select {
 				case req, ok := <-w.queue:
@@ -170,14 +151,12 @@ func (w *JSONLWriter) drain(f *os.File) {
 			}
 		}
 
-		// Collect any additional requests already waiting.
 		batch := []writeRequest{first}
 	drainLoop:
 		for {
 			select {
 			case req, ok := <-w.queue:
 				if !ok {
-					// queue closed; process what we have
 					break drainLoop
 				}
 				batch = append(batch, req)
@@ -190,15 +169,7 @@ func (w *JSONLWriter) drain(f *os.File) {
 	}
 }
 
-// processBatch writes and optionally syncs a batch of requests, then fans out
-// the result to all callers in the batch.
 func (w *JSONLWriter) processBatch(f *os.File, batch []writeRequest) {
-	// Concatenate all payloads into a single buffer for one Write call.
-	// The drainer is the sole writer of f, so a single Write keeps this batch's
-	// lines contiguous and in append order. This is NOT a crash-atomicity
-	// guarantee: a buffer larger than PIPE_BUF may be split into multiple
-	// physical writes, and a crash mid-write leaves a torn final line that
-	// readers discard per the §6.2 torn-tail rule.
 	totalLen := 0
 	needsSync := false
 	for i := range batch {
@@ -217,12 +188,9 @@ func (w *JSONLWriter) processBatch(f *os.File, batch []writeRequest) {
 	if _, writeErr := f.Write(combined); writeErr != nil {
 		batchErr = writeErr
 	} else if needsSync {
-		// One fsync covers all writes in the batch (fsync is a barrier
-		// over all preceding writes to the fd, per POSIX).
 		batchErr = f.Sync()
 	}
 
-	// Fan out the result to all callers in this batch.
 	for i := range batch {
 		batch[i].result <- batchErr
 	}
@@ -252,8 +220,6 @@ func (w *JSONLWriter) processBatch(f *os.File, batch []writeRequest) {
 //
 // Spec ref: event-model.md §6.2 EV-020; §4.4 EV-015, EV-016.
 func (w *JSONLWriter) Append(line []byte, doSync bool) error {
-	// Allocate a single buffer: line + newline. This ensures one write call
-	// per event line, minimising torn-write window under POSIX O_APPEND semantics.
 	buf := make([]byte, len(line)+1)
 	copy(buf, line)
 	buf[len(line)] = '\n'
@@ -265,9 +231,6 @@ func (w *JSONLWriter) Append(line []byte, doSync bool) error {
 		result: result,
 	}
 
-	// Check isClosed under lock before enqueuing. This prevents sending on
-	// queue after Close has been called (which would race with the drainer
-	// exiting). The lock window is minimal — just the closed check and enqueue.
 	w.mu.Lock()
 	if w.isClosed {
 		w.mu.Unlock()
@@ -344,13 +307,7 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 		for {
 			lineBytes, err := reader.ReadBytes('\n')
 			if len(lineBytes) > 0 {
-				// A line returned together with io.EOF has no terminating
-				// newline: it is the torn tail of a crashed write. Per the §6.2
-				// torn-tail rule a partial final line is expected and discarded
-				// silently; only a newline-terminated line that fails to decode
-				// is genuine corruption worth logging.
 				tornTail := err == io.EOF
-				// Trim the trailing newline before unmarshalling.
 				lineBytes = bytes.TrimRight(lineBytes, "\n")
 				var ev core.Event
 				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
@@ -358,8 +315,6 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 						log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
 					}
 				} else {
-					// bytes.Compare on raw UUID bytes: lexicographic order matches
-					// chronological order for UUIDv7 (EV-002). Skip events ≤ sinceID.
 					evUID := [16]byte(ev.EventID)
 					if bytes.Compare(evUID[:], since[:]) > 0 {
 						if !yield(ev) {
@@ -409,7 +364,6 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 	return func(yield func(core.Event) bool) {
 		f, err := os.Open(path)
 		if err != nil {
-			// A missing file is a fresh/empty log, not an error (mirrors ScanAfter).
 			if !os.IsNotExist(err) {
 				log.Printf("eventbus.Filter: open %s: %v", path, err)
 			}
@@ -425,13 +379,8 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 		for {
 			lineBytes, err := reader.ReadBytes('\n')
 			if len(lineBytes) > 0 {
-				// A line returned together with io.EOF has no terminating
-				// newline: it is the torn tail of a crashed write, expected per
-				// the §6.2 torn-tail rule and discarded silently. Only a
-				// newline-terminated line that fails to decode is corruption.
 				tornTail := err == io.EOF
 				lineBytes = bytes.TrimRight(lineBytes, "\n")
-				// Decode just the envelope fields needed for matching.
 				var ev core.Event
 				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
 					if !tornTail {

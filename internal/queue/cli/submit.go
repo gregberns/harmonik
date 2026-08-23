@@ -77,8 +77,6 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out, errOut io.Writer
 
 	switch {
 	case len(beadIDs) > 0:
-		// --beads flag: synthesise a minimal stream-group request with workflow_mode
-		// stamped on each item so the queue.json record is self-describing (hk-tldws).
 		var buildErr error
 		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName, workflowMode)
 		if buildErr != nil {
@@ -87,7 +85,6 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out, errOut io.Writer
 		}
 
 	case len(positional) > 0:
-		// Positional argument: treat as a queue-file path.
 		var loaded bool
 		queueDoc, loaded = loadQueueDocFromFile("submit", positional[0], queueName, diag)
 		if !loaded {
@@ -99,10 +96,6 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out, errOut io.Writer
 		return exitTransportError
 	}
 
-	// Embed the queue document in a socket request envelope.
-	// The server's HandlerAdapter.HandleQueueSubmit unmarshals the params
-	// (the entire SocketRequest JSON) into a QueueSubmitRequest, so we merge
-	// the queue document fields with the "op" field at the top level.
 	payload, marshalErr := encodeEnvelope("queue-submit", queueDoc)
 	if marshalErr != nil {
 		diag.printf("harmonik queue submit: cannot marshal request: %v\n", marshalErr)

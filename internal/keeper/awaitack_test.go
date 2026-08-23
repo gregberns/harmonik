@@ -13,13 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// awaitack_test.go — deterministic unit tests for the agent-side ACK observer
-// (hk-uldg). All cases inject a fake PaneCapturer so NO real tmux is touched —
-// this is the whole point of the CLI-over-prose choice (design §5).
-
-// fakeCapturer is a programmable PaneCapturer. It returns bufs[i] (clamped to
-// the last entry) on the i-th call, optionally erroring, and records the call
-// count. Concurrency-safe (AwaitAck is single-goroutine, but be defensive).
 type fakeCapturer struct {
 	mu    sync.Mutex
 	calls int
@@ -40,12 +33,6 @@ func (f *fakeCapturer) count() int {
 	return f.calls
 }
 
-// fakeClock returns a substrate.ClockPort whose Now() starts at t0 and advances
-// by step on each call after the first. With a small timeout the deadline is
-// crossed deterministically after a known number of polls, and its Sleep is a
-// no-op (returns immediately) so no wall-clock time elapses. This is the
-// auto-stepping variant kept for the existing timeout cases; the manual-advance
-// substrate.FakeClock is exercised by TestAwaitAck_FakeClockTimeout.
 func fakeClock(t0 time.Time, step time.Duration) substrate.ClockPort {
 	var mu sync.Mutex
 	cur := t0
@@ -62,9 +49,6 @@ func fakeClock(t0 time.Time, step time.Duration) substrate.ClockPort {
 	}}
 }
 
-// steppingClock adapts a stepping Now() func to substrate.ClockPort. Only Now is
-// meaningful for the await-ack path; Sleep returns immediately (respecting ctx)
-// and NewTicker is unused by AwaitAck.
 type steppingClock struct{ now func() time.Time }
 
 func (s steppingClock) Now() time.Time                  { return s.now() }
@@ -150,7 +134,6 @@ func TestAwaitAck_NeverAppears(t *testing.T) {
 		return "unrelated pane text without the token", nil
 	}}
 	em := &RecordingEmitter{}
-	// step == 200ms, timeout 500ms → deadline crossed after a few polls.
 	err := AwaitAck(context.Background(), AwaitAckConfig{
 		AgentName:  "captain",
 		TmuxTarget: "sess:0.0",
@@ -189,7 +172,6 @@ func TestAwaitAck_NeverAppears(t *testing.T) {
 func TestAwaitAck_WrongNonce(t *testing.T) {
 	wantNonce := "rn-555"
 	capturer := &fakeCapturer{fn: func(int) (string, error) {
-		// A stale ACK from a previous cycle with a different nonce.
 		return AckLine("rn-OTHER", "restart"), nil
 	}}
 	em := &RecordingEmitter{}
@@ -300,7 +282,6 @@ func TestAckMatchToken(t *testing.T) {
 	if tok != "[KEEPER ACK rn-42]" {
 		t.Fatalf("unexpected token %q", tok)
 	}
-	// The token must be a substring of BOTH restart and ping ACK lines.
 	for _, kind := range []string{"restart", "ping"} {
 		line := AckLine("rn-42", kind)
 		if !contains(line, tok) {
@@ -348,8 +329,6 @@ func TestAwaitAck_FakeClockTimeout(t *testing.T) {
 		}, em)
 	}()
 
-	// Wait for the reactor to register its first Sleep(poll), then jump virtual
-	// time past the deadline so the next iteration's deadline check trips.
 	clock.BlockUntil(1)
 	clock.Advance(31 * time.Second)
 

@@ -1,24 +1,5 @@
 package scenario_test
 
-// plan_review_loop_test.go — scenario tests for specs/examples/plan-review-loop.dot.
-//
-// Five named scenarios:
-//   1. approve-on-first-pass           → start→draft_plan→plan_review(APPROVE)→plan-approved (terminal)
-//   2. two-REQUEST_CHANGES-then-approve → 2× loop-back then APPROVE → plan-approved
-//   3. BLOCK-on-first                  → plan_review(BLOCK) → plan-needs-attention (terminal)
-//   4. cap-hit-fallback                → 3× REQUEST_CHANGES → cap-hit failure
-//   5. unrecognized-label-fallback     → unknown label → unconditional fallback → plan-needs-attention
-//
-// Spec refs:
-//   - docs/sdlc-workflow-corpus.md §5 (plan-review-loop topology)
-//   - specs/workflow-graph.md  WG-010 (5-step cascade)
-//   - specs/workflow-graph.md  WG-011 (unconditional-edge fallback invariant)
-//   - specs/workflow-graph.md  WG-028 (cycle bounding / traversal_cap)
-//   - specs/execution-model.md EM-015e (no-progress / cap-hit vocabulary)
-//   - specs/execution-model.md EM-043  (traversal-cap enforcement)
-//
-// Helper prefix: prl (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"os"
 	"path/filepath"
@@ -30,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func prlDotPath(t *testing.T) string {
 	t.Helper()
@@ -65,8 +44,6 @@ func prlOutcome(label string) core.Outcome {
 	return o
 }
 
-// ── Scenario 1: approve-on-first-pass ────────────────────────────────────────
-
 // TestPRL_ApproveOnFirstPass exercises the happy path:
 // start → draft_plan → plan_review(APPROVE) → plan-approved (terminal).
 func TestPRL_ApproveOnFirstPass(t *testing.T) {
@@ -79,32 +56,26 @@ func TestPRL_ApproveOnFirstPass(t *testing.T) {
 	run := prlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → draft_plan
 	dec := workflow.DecideNextNode(graph, "start", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// draft_plan → plan_review
 	dec = workflow.DecideNextNode(graph, "draft_plan", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("draft_plan→plan_review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// plan_review(APPROVE) → plan-approved
 	dec = workflow.DecideNextNode(graph, "plan_review", prlOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-approved" {
 		t.Fatalf("plan_review→plan-approved: Advance=%v NextNodeID=%q, want plan-approved", dec.Advance, dec.NextNodeID)
 	}
 
-	// plan-approved is terminal
 	dec = workflow.DecideNextNode(graph, "plan-approved", prlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-approved: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 2: two REQUEST_CHANGES then approve ─────────────────────────────
 
 // TestPRL_TwoRequestChangesThenApprove exercises the bounded loop:
 // start → draft_plan → plan_review(RC) → draft_plan → plan_review(RC) →
@@ -119,26 +90,21 @@ func TestPRL_TwoRequestChangesThenApprove(t *testing.T) {
 	run := prlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → draft_plan
 	dec := workflow.DecideNextNode(graph, "start", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
 	}
 
-	// Loop twice: plan_review(REQUEST_CHANGES) → draft_plan
 	for i := 1; i <= 2; i++ {
-		// draft_plan → plan_review
 		dec = workflow.DecideNextNode(graph, "draft_plan", prlOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "plan_review" {
 			t.Fatalf("iteration %d draft_plan→plan_review: %+v", i, dec)
 		}
 
-		// Increment cycle counter for the plan_review→draft_plan back-edge.
 		if _, err := cycles.Increment(run.RunID, "plan_review", "draft_plan", nil); err != nil {
 			t.Fatalf("pre-fill cycle counter plan_review\u2192draft_plan: %v", err)
 		}
 
-		// plan_review(REQUEST_CHANGES) → draft_plan
 		dec = workflow.DecideNextNode(graph, "plan_review", prlOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "draft_plan" {
 			t.Fatalf("iteration %d plan_review→draft_plan: Advance=%v NextNodeID=%q",
@@ -146,7 +112,6 @@ func TestPRL_TwoRequestChangesThenApprove(t *testing.T) {
 		}
 	}
 
-	// Third pass: draft_plan → plan_review → APPROVE → plan-approved
 	dec = workflow.DecideNextNode(graph, "draft_plan", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("final draft_plan→plan_review: %+v", dec)
@@ -163,8 +128,6 @@ func TestPRL_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 }
 
-// ── Scenario 3: BLOCK on first ───────────────────────────────────────────────
-
 // TestPRL_BlockOnFirst exercises:
 // start → draft_plan → plan_review(BLOCK) → plan-needs-attention (terminal).
 func TestPRL_BlockOnFirst(t *testing.T) {
@@ -177,33 +140,27 @@ func TestPRL_BlockOnFirst(t *testing.T) {
 	run := prlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → draft_plan
 	dec := workflow.DecideNextNode(graph, "start", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
 	}
 
-	// draft_plan → plan_review
 	dec = workflow.DecideNextNode(graph, "draft_plan", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("draft_plan→plan_review: %+v", dec)
 	}
 
-	// plan_review(BLOCK) → plan-needs-attention
 	dec = workflow.DecideNextNode(graph, "plan_review", prlOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-needs-attention" {
 		t.Fatalf("plan_review→plan-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// plan-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 4: cap-hit fallback ─────────────────────────────────────────────
 
 // TestPRL_CapHitFallback exercises WG-028/EM-043: when the plan_review→draft_plan
 // back-edge's traversal_cap (3) is exhausted, the conditional edge is
@@ -218,11 +175,9 @@ func TestPRL_CapHitFallback(t *testing.T) {
 	run := prlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → draft_plan → plan_review.
 	workflow.DecideNextNode(graph, "start", prlOutcome(""), run, cycles)
 	workflow.DecideNextNode(graph, "draft_plan", prlOutcome(""), run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of plan_review→draft_plan.
 	traversalCap := 3
 	for i := 0; i < traversalCap; i++ {
 		if _, err := cycles.Increment(run.RunID, "plan_review", "draft_plan", &traversalCap); err != nil {
@@ -230,8 +185,6 @@ func TestPRL_CapHitFallback(t *testing.T) {
 		}
 	}
 
-	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
-	// suppressed; the cascade reports a cap-hit failure.
 	dec := workflow.DecideNextNode(graph, "plan_review", prlOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
@@ -243,8 +196,6 @@ func TestPRL_CapHitFallback(t *testing.T) {
 		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
-
-// ── Scenario 5: unrecognized label → unconditional fallback ──────────────────
 
 // TestPRL_UnrecognizedLabelFallback exercises the WG-011 unconditional fallback:
 // when the reviewer emits a label that matches no conditional edge, the cascade
@@ -259,7 +210,6 @@ func TestPRL_UnrecognizedLabelFallback(t *testing.T) {
 	run := prlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → draft_plan → plan_review.
 	dec := workflow.DecideNextNode(graph, "start", prlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
@@ -269,7 +219,6 @@ func TestPRL_UnrecognizedLabelFallback(t *testing.T) {
 		t.Fatalf("draft_plan→plan_review: %+v", dec)
 	}
 
-	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
 	dec = workflow.DecideNextNode(graph, "plan_review", prlOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
@@ -280,7 +229,6 @@ func TestPRL_UnrecognizedLabelFallback(t *testing.T) {
 			dec.NextNodeID, "plan-needs-attention")
 	}
 
-	// plan-needs-attention is terminal.
 	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)

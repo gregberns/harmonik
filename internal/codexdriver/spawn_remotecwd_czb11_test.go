@@ -1,12 +1,5 @@
 package codexdriver_test
 
-// spawn_remotecwd_czb11_test.go — hk-czb11: codexdriver.spawn must be
-// remote-cwd-aware. When the wired Runner advertises RemoteCwdRunner (an ssh
-// transport), spawn applies SubstrateSpawn.Cwd REMOTELY (via CommandInDir) and
-// leaves the LOCAL exec.Cmd.Dir unset — a remote worktree path is never assigned
-// to the local ssh process's cwd (which would fork/exec-ENOENT). A LOCAL runner
-// (no CommandInDir) keeps the direct exec.Cmd.Dir = Cwd path.
-
 import (
 	"context"
 	"os"
@@ -19,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// twinCmd builds the in-process twin subprocess the driver session drives, so the
-// spawned session has a clean, protocol-speaking lifecycle (TestMain runs the
-// twin when CODEXDRIVER_TWIN=1). The driver assigns cmd.Env from in.Env after the
-// runner returns, so the twin env below reaches the process on both paths.
 func twinCmd(ctx context.Context) *exec.Cmd {
 	//nolint:gosec // G204: test twin subprocess — os.Args[0] is this test binary, not user input
 	return exec.CommandContext(ctx, os.Args[0], "-test.run=NONE")
@@ -34,8 +23,6 @@ type czb11InDirCall struct {
 	args []string
 }
 
-// czb11RemoteRunner implements BOTH Command and CommandInDir, so it satisfies the
-// codexdriver RemoteCwdRunner capability. It records which path spawn took.
 type czb11RemoteRunner struct {
 	mu           sync.Mutex
 	inDirCalls   []czb11InDirCall
@@ -61,8 +48,6 @@ func (r *czb11RemoteRunner) CommandInDir(ctx context.Context, dir, name string, 
 	return c
 }
 
-// czb11LocalRunner implements ONLY Command (no CommandInDir), so it is NOT a
-// RemoteCwdRunner — spawn must take the local exec.Cmd.Dir path.
 type czb11LocalRunner struct {
 	mu           sync.Mutex
 	commandCalls int
@@ -92,9 +77,6 @@ func TestSpawn_RemoteRunner_UsesRemoteCwd_LocalDirUnset_czb11(t *testing.T) {
 	runner := &czb11RemoteRunner{}
 	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{Runner: runner})
 
-	// A REMOTE worktree path that does NOT exist locally: with the bug (local
-	// cmd.Dir = this path) cmd.Start would fork/exec-ENOENT. The fix leaves the
-	// local Dir unset, so the twin still spawns cleanly.
 	const remoteCwd = "/box-b/.harmonik/worktrees/run-czb11/does-not-exist-locally"
 	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{
 		WindowName: "twin",
@@ -184,8 +166,6 @@ func TestSpawn_LocalRunner_SetsLocalCmdDir_czb11(t *testing.T) {
 	runner := &czb11LocalRunner{}
 	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{Runner: runner})
 
-	// A LOCAL runner: Cwd is a real local dir, applied as exec.Cmd.Dir (byte-
-	// identical to the pre-fix path). Must exist so cmd.Start's chdir succeeds.
 	localCwd := t.TempDir()
 	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{
 		WindowName: "twin",

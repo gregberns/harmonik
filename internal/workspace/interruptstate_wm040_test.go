@@ -90,7 +90,6 @@ func TestWM040_SetInterruptStateToNone_EmptyCauseIsRejected(t *testing.T) {
 	if !errors.Is(err, ErrInterruptStateClearRequiresCause) {
 		t.Errorf("WM-040 empty-cause: error = %v, want ErrInterruptStateClearRequiresCause", err)
 	}
-	// Field MUST NOT be mutated on error.
 	if ws.InterruptState != core.InterruptStateOperatorPaused {
 		t.Errorf("WM-040 empty-cause: interrupt_state mutated to %q; want operator-paused (unchanged)", ws.InterruptState)
 	}
@@ -120,7 +119,6 @@ func TestWM040_SetInterruptStateToNone_UnrecognisedCauseIsRejected(t *testing.T)
 	if !errors.Is(err, ErrInterruptStateClearRequiresCause) {
 		t.Errorf("WM-040 unrecognised-cause: error = %v, want ErrInterruptStateClearRequiresCause", err)
 	}
-	// Field MUST NOT be mutated.
 	if ws.InterruptState != core.InterruptStateOperatorStoppedGraceful {
 		t.Errorf("WM-040 unrecognised-cause: interrupt_state changed; want operator-stopped-graceful (unchanged)")
 	}
@@ -148,7 +146,6 @@ func TestWM040_SetInterruptStateToNone_WritesMarker(t *testing.T) {
 		SchemaVersion:  1,
 	}
 
-	// Capture bracket times in UTC (marker writes in UTC) to avoid timezone comparison issues.
 	before := time.Now().UTC().Truncate(time.Second) // RFC3339 has 1s precision
 	err := SetInterruptStateToNone(ws, dir, runID, InterruptStateClearCauseReconciliationVerdict)
 	if err != nil {
@@ -156,7 +153,6 @@ func TestWM040_SetInterruptStateToNone_WritesMarker(t *testing.T) {
 	}
 	after := time.Now().UTC().Add(time.Second) // +1s for RFC3339 truncation tolerance
 
-	// Read and parse the marker.
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 	//nolint:gosec // G304: path constructed from t.TempDir() + known relative segments, not user input
 	data, readErr := os.ReadFile(eventsFile)
@@ -164,7 +160,6 @@ func TestWM040_SetInterruptStateToNone_WritesMarker(t *testing.T) {
 		t.Fatalf("WM-040 marker: ReadFile %q: %v", eventsFile, readErr)
 	}
 
-	// Trim trailing newline before unmarshalling.
 	if len(data) > 0 && data[len(data)-1] == '\n' {
 		data = data[:len(data)-1]
 	}
@@ -190,7 +185,6 @@ func TestWM040_SetInterruptStateToNone_WritesMarker(t *testing.T) {
 		}
 	}
 
-	// changed_at must be a valid RFC 3339 timestamp within [before, after].
 	changedAt, parseErr := time.Parse(time.RFC3339, marker["changed_at"])
 	if parseErr != nil {
 		t.Fatalf("WM-040 marker: changed_at parse: %v (raw: %q)", parseErr, marker["changed_at"])
@@ -277,7 +271,6 @@ func TestWM040_WriteInterruptStateChangedMarker_IsAppendOnly(t *testing.T) {
 	workspaceID := "ws-0196b300-0000-7000-8000-000000040031"
 	runID := "0196b300-0000-7000-8000-000000040031"
 
-	// Write two markers.
 	for i := 0; i < 2; i++ {
 		if err := WriteInterruptStateChangedMarker(
 			dir, workspaceID, runID,
@@ -290,7 +283,6 @@ func TestWM040_WriteInterruptStateChangedMarker_IsAppendOnly(t *testing.T) {
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 	data := mustReadFile(t, eventsFile)
 
-	// Count newlines: two appends → two JSONL lines.
 	lineCount := 0
 	for _, b := range data {
 		if b == '\n' {

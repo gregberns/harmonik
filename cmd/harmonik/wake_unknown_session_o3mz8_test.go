@@ -1,28 +1,5 @@
 package main
 
-// wake_unknown_session_o3mz8_test.go — `harmonik wake --agent <name>` must not
-// report a wake for a name this project has no session for.
-//
-// The old surface answered exit 0 with "wake: <name> nudged" for every string,
-// including strings that cannot name a session at all:
-//
-//	harmonik wake --agent nosuchagent  -> rc=0  "wake: nosuchagent nudged"
-//	harmonik wake --agent ../../etc    -> rc=0  "wake: ../../etc nudged"
-//	harmonik wake --agent "a b c"      -> rc=0  "wake: a b c nudged"
-//	harmonik wake --agent alpha        -> rc=0  "wake: alpha nudged"
-//
-// The last line is a real session and the first three are not, so nothing in
-// the output separated them. wake is the fleet-stall escape hatch, so it lies
-// exactly when somebody is deciding whether the wake path or the session is
-// broken.
-//
-// The daemon cannot supply the answer: HandleDaemonWake treats an unmatched
-// name as informational and returns success, and the reply carries no count.
-// So the check lives in the CLI, over the same three sources the arbiter keys
-// its sleeping map by.
-//
-// Bead ref: hk-o3mz8.
-
 import (
 	"context"
 	"encoding/json"
@@ -35,7 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 )
 
-// wakeProjectWithCrew builds a temp project holding one crew registry record.
 func wakeProjectWithCrew(t *testing.T, crewName string) string {
 	t.Helper()
 	dir := shortProjectDir(t)
@@ -104,8 +80,6 @@ func TestWakeReachesTheDaemonForANameThisProjectHas(t *testing.T) {
 	ctx := context.Background()
 	dir := wakeProjectWithCrew(t, "alpha")
 
-	// A parked session with no crew record is keyed by session id, so its
-	// on-disk marker has to count as a known name too.
 	const strandedSession = "3f1c2a90-0000-4000-8000-00000000000b"
 	markerPath := filepath.Join(dir, ".harmonik", ".sleeping."+strandedSession)
 	if err := os.WriteFile(markerPath, []byte("{}"), 0o600); err != nil {
@@ -127,9 +101,6 @@ func TestWakeReachesTheDaemonForANameThisProjectHas(t *testing.T) {
 	}
 }
 
-// serveAlwaysOkDaemon stands up a unix socket at the project's daemon.sock that
-// answers every request with ok=true, which is what the real daemon does for a
-// wake it could not match to any session.
 func serveAlwaysOkDaemon(t *testing.T, projectDir string) {
 	t.Helper()
 	body, err := json.Marshal(sleepWakeSocketResponse{Ok: true})
@@ -161,7 +132,6 @@ func TestWakeAgainstALiveDaemonStillRefusesAnUnknownName(t *testing.T) {
 		t.Errorf("the refusal does not name the session it could not find: %q", out)
 	}
 
-	// The control: a real name still reaches the daemon and succeeds.
 	out, code = captureSleepWakeIO(t, func() int {
 		return runWakeSubcommand(ctx, []string{"--agent", "alpha", "--project", dir})
 	})

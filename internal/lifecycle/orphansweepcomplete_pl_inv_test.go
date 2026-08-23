@@ -6,19 +6,12 @@ import (
 	"time"
 )
 
-// startupSweepFixtureSweepState models the daemon's in-memory state tracking
-// for the orphan-sweep-complete invariant (PL-INV-003). The orphan_sweep_complete_at
-// field is set to a non-zero time when the sweep finishes. Every reconciliation
-// detector dispatch path MUST assert this flag is non-nil before invocation.
 type startupSweepFixtureSweepState struct {
 	mu                    sync.Mutex
 	orphanSweepCompleteAt *time.Time
 	detectorInvocations   []string // names of detectors that were dispatched
 }
 
-// startupSweepFixtureMarkSweepComplete records the sweep completion timestamp.
-// This corresponds to the daemon setting orphan_sweep_complete_at in memory
-// on PL-006 completion.
 func (s *startupSweepFixtureSweepState) startupSweepFixtureMarkSweepComplete() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -26,10 +19,6 @@ func (s *startupSweepFixtureSweepState) startupSweepFixtureMarkSweepComplete() {
 	s.orphanSweepCompleteAt = &now
 }
 
-// startupSweepFixtureDispatchDetector models PL-005 step 8: a reconciliation
-// detector dispatch. Per PL-INV-003 the detector MUST only be dispatched when
-// orphan_sweep_complete_at is non-nil. Returns error string if the invariant
-// is violated; returns "" on success.
 func (s *startupSweepFixtureSweepState) startupSweepFixtureDispatchDetector(name string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -41,8 +30,6 @@ func (s *startupSweepFixtureSweepState) startupSweepFixtureDispatchDetector(name
 	return ""
 }
 
-// startupSweepFixtureInvokedDetectors returns the list of detector names that
-// have been successfully dispatched.
 func (s *startupSweepFixtureSweepState) startupSweepFixtureInvokedDetectors() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,14 +61,11 @@ func TestPL_INV003_OrphanSweepCompletesBeforeReconciliationClassification(t *tes
 
 		state := &startupSweepFixtureSweepState{}
 
-		// orphan_sweep_complete_at is nil at this point.
-		// Attempting to dispatch a detector MUST fail the invariant.
 		violationMsg := state.startupSweepFixtureDispatchDetector("cat3a-intent-detector")
 		if violationMsg == "" {
 			t.Error("PL-INV-003: detector dispatched before sweep complete; invariant violation not detected")
 		}
 
-		// No detectors must have been recorded.
 		if invoked := state.startupSweepFixtureInvokedDetectors(); len(invoked) != 0 {
 			t.Errorf("PL-INV-003: %d detectors invoked before sweep; want 0", len(invoked))
 		}
@@ -92,10 +76,8 @@ func TestPL_INV003_OrphanSweepCompletesBeforeReconciliationClassification(t *tes
 
 		state := &startupSweepFixtureSweepState{}
 
-		// Mark sweep complete first.
 		state.startupSweepFixtureMarkSweepComplete()
 
-		// Now dispatch a detector: must succeed (no violation).
 		violationMsg := state.startupSweepFixtureDispatchDetector("cat3b-recon-lock-detector")
 		if violationMsg != "" {
 			t.Errorf("PL-INV-003: detector blocked after sweep complete: %s", violationMsg)
@@ -151,18 +133,10 @@ func TestPL_INV003_OrphanSweepCompletesBeforeReconciliationClassification(t *tes
 	t.Run("sweep-complete-before-step8-invariant-ordering", func(t *testing.T) {
 		t.Parallel()
 
-		// This subtest models the exact PL-005 ordering:
-		// step 3 = orphan sweep → sets flag
-		// step 8 = reconciliation dispatch → checks flag
-		//
-		// Both steps run in the fixture sequentially (no concurrency needed
-		// because the spec says each step completes before the next begins).
 		state := &startupSweepFixtureSweepState{}
 
-		// Step 3: orphan sweep.
 		state.startupSweepFixtureMarkSweepComplete()
 
-		// Step 8: dispatch reconciliation — flag must be set.
 		msg := state.startupSweepFixtureDispatchDetector("startup-recon-dispatch")
 		if msg != "" {
 			t.Errorf("PL-INV-003 step ordering: reconciliation dispatch failed: %s", msg)

@@ -1,84 +1,5 @@
 package specaudit_test
 
-// Durable-state writer parity sensor.
-//
-// # The claim this test defends
-//
-// Every function in this module that persists durable state is reached by
-// production code. A writer that only tests reach does not run, so its readers
-// see an empty directory or an absent file forever.
-//
-// # Why this class hides
-//
-// For most durable state in this tree, "absent" and "empty" are legitimate
-// answers. `.harmonik/runs/` with no files means "no run is in progress".
-// `.harmonik/reconciliation-locks/` with no files means "no reconciliation is
-// running". So when the producer disappears, every reader keeps taking its
-// empty-set branch and reports a clean result. No error is returned. No test
-// goes red. The system says all-clear because it is measuring nothing.
-//
-// The live example this sensor was built from: internal/run.Write recorded
-// each in-flight bead-run to `.harmonik/runs/`. Its production call site was
-// deleted on 2026-08-02 as collateral of an unrelated cleanup. Five reader
-// sites remain, all of which now discover zero surviving sessions after every
-// daemon restart, which is exactly what a healthy idle fleet looks like.
-// Nothing failed (hk-sat32).
-//
-// # How the sensor works
-//
-//  1. Parse every non-test .go file under internal/, cmd/ and tools/.
-//  2. Mark a function as a durable writer when it calls an os filesystem
-//     mutation directly, or calls a package-level function that is one.
-//     The rule runs to a fixpoint, so a writer behind a helper is still a
-//     writer.
-//  3. Walk forward from root context — method bodies, top-level declarations,
-//     main and init — following every identifier mention. A mention is a call
-//     or a plain use as a value, so a function passed as a callback counts.
-//  4. Report every writer the walk does not reach.
-//
-// Step 3 is reachability, not reference counting, and the difference matters.
-// Counting references was the first design, and it missed internal/crew.Write
-// when both of its production call sites were deleted, because the dead
-// UpdateSessionID still mentioned it. One dead function vouching for another
-// is exactly how this class survives. So a mention only carries weight when
-// the function making it is itself reached.
-//
-// A consequence: the sensor reports every writer in a dead subtree, not only
-// its root. ExecuteVerdict and the helpers only it calls all appear. Deleting
-// the root clears the whole group in one pass.
-//
-// # Known limits, stated plainly
-//
-//   - Methods are not nodes, and their bodies are ROOT context. Resolving a
-//     method call needs type information, and matching on the method name
-//     alone would count every Close in the tree. So an unwired method writer
-//     is a false negative, and worse, a DEAD method still vouches for every
-//     function it names. That is the same hole reachability closed for plain
-//     functions, left open for methods. Closing it needs go/types.
-//   - A function reached only through an interface or a func value is counted
-//     as used, because a plain mention of its name counts. That direction is
-//     deliberate. This sensor should not cry wolf.
-//   - Two dead functions that name each other hide each other.
-//   - The reverse defect, a writer with no reader, is not detected. Nothing
-//     in the syntax separates "nobody reads this file" from "the reader is a
-//     shell script or an LLM prompt", and several readers are exactly that.
-//   - The parser ignores build tags, so it sees every platform variant of a
-//     name at once. addFile folds them into one node and keeps the union, so
-//     a name counts as a writer when any variant writes.
-//
-// # The allowlist
-//
-// knownUnwiredWriters below records the instances that already exist. The
-// sensor fails on anything new. It ALSO fails when an allowlist entry stops
-// being true, either because the writer is now reached or because it is gone.
-// So the list can only shrink without a deliberate edit.
-//
-// Each entry carries the consequence in one line: what silently does not
-// happen while it stays there. Those lines are prose and nothing checks them.
-// Only the KEY is mechanically verified. Read a consequence as a claim some
-// human made once, and confirm it before you act on it. Two of the first
-// draft's lines were wrong.
-
 import (
 	"go/ast"
 	"go/parser"
@@ -93,8 +14,6 @@ import (
 
 const modulePath = "github.com/gregberns/harmonik"
 
-// osMutations are the stdlib calls that change durable state. A function that
-// makes one of these is a writer.
 var osMutations = map[string]bool{
 	"WriteFile": true, "Create": true, "CreateTemp": true, "OpenFile": true,
 	"Rename": true, "Remove": true, "RemoveAll": true,
@@ -102,9 +21,6 @@ var osMutations = map[string]bool{
 	"Symlink": true, "Link": true, "Truncate": true,
 }
 
-// testInfraDirs are packages that exist to serve *_test.go files. Their
-// writers are called from tests by design, so the parity rule does not apply.
-// internal/testhelpers carries the same carve-out in .golangci.yml.
 var testInfraDirs = map[string]bool{
 	"internal/testhelpers": true,
 	// internal/testhelpers/hermetic is the same carve-out one level down. It is a
@@ -116,22 +32,7 @@ var testInfraDirs = map[string]bool{
 	"internal/testhelpers/hermetic": true,
 }
 
-// knownUnwiredWriters maps "<pkgdir>.<FuncName>" to the consequence of it
-// being unreached. Most entries are defects that are already in the tree. A
-// few are deliberate, and their line says so. Remove an entry when the writer
-// is wired up or deleted. The sensor fails if a stale entry is left behind.
 var knownUnwiredWriters = map[string]string{
-	// ---- Protections that cannot protect. Absence reads as safe. ----
-	// The original wording here was RIGHT. Alpha "corrected" it on 2026-08-04 to say
-	// the sweep was unwired, and that correction was WRONG and is now reverted.
-	// The mistake: a grep excluded "orphansweep.go" by basename, and there are TWO
-	// files with that name. The production caller is workspace.RemoveAgedNoLockWorktrees
-	// invoked from internal/daemon/orphansweep.go inside RunOrphanSweep, which
-	// bootreconcile.go runs at every daemon boot. A second lane found the same thing
-	// independently and disagreed with alpha, which is what prompted the recheck.
-	// KEEP THE LESSON: excluding a path by basename is not excluding a file. Verify a
-	// negative reachability claim by naming the caller you expect and failing to find
-	// it, not by filtering the search until it comes back empty.
 	"internal/lifecycle.AcquireReconciliationLock":  "no reconciliation takes a lock, so SweepStaleReconciliationLocks reports zero stale locks forever and nothing serializes two reconciliations of the same run",
 	"internal/daemon.ExecuteVerdict":                "no reconciliation verdict is ever applied or committed, so the WIP capture under .harmonik/reconciliation/ never happens and an absent capture reads as 'there was no work to preserve'",
 	"internal/lifecycle.WriteVerdictAttemptAtomic":  "no verdict retry is ever counted, so the Cat-3b re-execution cap reads zero attempts forever and cannot stop a loop",
@@ -142,7 +43,6 @@ var knownUnwiredWriters = map[string]string{
 	"internal/lifecycle.WritePersistedTip":          "no run's branch tip is ever persisted, so ReadPersistedTip returns the empty string forever and reads it as 'first observation, not a violation'",
 	"internal/workspace.WriteWIPCapture":            "an implementer's uncommitted work is never captured before a reopen-bead verdict, and the absent capture directory reads as 'there was no work to preserve'",
 
-	// ---- Reached only by an unwired root above. Clearing the root clears these. ----
 	"internal/daemon.commitVerdictEmitted":                "the evidence commit for a reconciliation verdict, reached only from ExecuteVerdict",
 	"internal/lifecycle.removeTempFile":                   "temp-file cleanup for the verdict attempt counter, reached only from WriteVerdictAttemptAtomic",
 	"internal/workspace.writeFileIfNonEmpty":              "writes one WIP capture part, and is reached only from WriteWIPCapture",
@@ -150,7 +50,6 @@ var knownUnwiredWriters = map[string]string{
 	"internal/workspace.resetSquashProbe":                 "reached only from DetectSquashMergeConflict",
 	"internal/workspace.WriteInterruptStateChangedMarker": "reached only from SetInterruptStateToNone, so the WM-040 state-change marker is never written",
 
-	// ---- Features that quietly do nothing. ----
 	"cmd/harmonik/supervise.WriteLoopStatusAtomic":         "harmonik supervise status never reports loop status or pause reason, so a budget-exhausted loop looks healthy",
 	"internal/crew.UpdateSessionID":                        "a crew's recorded session id is frozen at spawn, so after a keeper restart the registry points at a dead session",
 	"internal/workspace.ArchiveVerdict":                    "review.iter-N.json is never written, while every implementer-resume brief tells the agent to read it",
@@ -213,12 +112,6 @@ func TestEveryDurableStateWriterIsReachedByProductionCode(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// module index
-// ---------------------------------------------------------------------------
-
-// funcNode is one package-level function. Methods are not nodes. Their bodies
-// are root context. See "Known limits" above.
 type funcNode struct {
 	key     string // "<pkgdir>.<Name>", the form used in knownUnwiredWriters
 	qual    string // "<importpath>.<Name>", the form references resolve to
@@ -240,7 +133,6 @@ type moduleIndex struct {
 	live     map[string]bool
 }
 
-// unwiredWriters returns every durable writer that no production path reaches.
 func (m *moduleIndex) unwiredWriters() []*funcNode {
 	out := make([]*funcNode, 0, len(m.order))
 	for _, q := range m.order {
@@ -254,9 +146,6 @@ func (m *moduleIndex) unwiredWriters() []*funcNode {
 	return out
 }
 
-// writerExists reports whether key still names a durable writer this sensor
-// would consider. It is how a stale allowlist entry is told apart from one
-// that is now wired up.
 func (m *moduleIndex) writerExists(key string) bool {
 	for _, q := range m.order {
 		if n := m.nodes[q]; n.key == key && n.writer && !n.skipped {
@@ -279,11 +168,6 @@ func indexModule(t *testing.T, root string) *moduleIndex {
 		rootRefs: map[string]bool{},
 	}
 
-	// Pass one parses. It also records each directory's declared package name,
-	// because an import alias defaults to the package NAME and not to the last
-	// path segment. internal/daemon/router declares package socketrouter. If
-	// this pass is skipped, every reference into such a package resolves to a
-	// key no node has, and the sensor reports its writers as dead.
 	var files []parsedFile
 	pkgNames := map[string]string{}
 	for _, top := range []string{"internal", "cmd", "tools"} {
@@ -296,8 +180,6 @@ func indexModule(t *testing.T, root string) *moduleIndex {
 				return walkErr
 			}
 			if d.IsDir() {
-				// assets/ holds embedded skill text. testdata/ holds fixtures
-				// that are deliberately outside the build.
 				if d.Name() == "testdata" || d.Name() == "assets" {
 					return filepath.SkipDir
 				}
@@ -342,8 +224,6 @@ func (m *moduleIndex) addFile(fset *token.FileSet, f *ast.File, pkgDir string, p
 	for _, d := range f.Decls {
 		fd, ok := d.(*ast.FuncDecl)
 		if !ok || fd.Body == nil || fd.Recv != nil {
-			// Methods and non-function declarations are root context: their
-			// mentions keep a function alive without needing a caller.
 			m.collectRefs(d, imports, pkgPath, m.rootRefs)
 			continue
 		}
@@ -360,17 +240,10 @@ func (m *moduleIndex) addFile(fset *token.FileSet, f *ast.File, pkgDir string, p
 			skipped: skipDir || takesTestingTB(fd.Type),
 		}
 		m.collectRefs(fd, imports, pkgPath, n.refs)
-		// One name can be declared more than once across a package's files.
-		// Two files may each declare init, and a build-tag split declares one
-		// name per platform. The parser ignores build tags, so it sees every
-		// variant. Fold them into one node and keep the union, so a variant
-		// that writes still marks the name a writer.
 		if prev, dup := m.nodes[n.qual]; dup {
 			for r := range n.refs {
 				prev.refs[r] = true
 			}
-			// Point "declared at" to a variant that actually writes, so the
-			// report does not send a reader to a stub on the other platform.
 			if n.direct && !prev.direct {
 				prev.pos = n.pos
 			}
@@ -383,8 +256,6 @@ func (m *moduleIndex) addFile(fset *token.FileSet, f *ast.File, pkgDir string, p
 	}
 }
 
-// propagateWriters runs "calls a writer, is a writer" to a fixpoint, so a
-// function that persists state through a helper still counts as a writer.
 func (m *moduleIndex) propagateWriters() {
 	for _, q := range m.order {
 		m.nodes[q].writer = m.nodes[q].direct
@@ -407,10 +278,6 @@ func (m *moduleIndex) propagateWriters() {
 	}
 }
 
-// computeLive walks forward from root context. A function is live when root
-// context mentions it, or when a live function mentions it. Test
-// infrastructure is never a root, so a writer only tests reach stays dead —
-// which is the whole point of the sensor.
 func (m *moduleIndex) computeLive() {
 	m.live = map[string]bool{}
 	var queue []string
@@ -437,14 +304,6 @@ func (m *moduleIndex) computeLive() {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// syntax helpers
-// ---------------------------------------------------------------------------
-
-// fileImports maps each import's local name to its path. Without an explicit
-// alias the local name is the imported package's declared NAME, which need not
-// match the last path segment, so pkgNames supplies the real one for packages
-// inside this module.
 func fileImports(f *ast.File, pkgNames map[string]string) map[string]string {
 	out := make(map[string]string, len(f.Imports))
 	for _, im := range f.Imports {
@@ -511,10 +370,6 @@ func callsOSMutation(b *ast.BlockStmt, imports map[string]string) bool {
 	return found
 }
 
-// collectRefs records every identifier mention under n into out, resolved to
-// the qualified "<importpath>.<Name>" form. A function's own declared name is
-// not a mention of itself. A mention counts whether it is a call or a plain
-// use as a value, so a function passed as a callback is not reported dead.
 func (m *moduleIndex) collectRefs(n ast.Node, imports map[string]string, selfPkg string, out map[string]bool) {
 	var walk func(ast.Node)
 	walk = func(cur ast.Node) {

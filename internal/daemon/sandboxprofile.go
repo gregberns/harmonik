@@ -1,58 +1,5 @@
 package daemon
 
-// sandboxprofile.go — per-run srt sandbox profile generator (codename:pi-sandbox, hk-p7smp).
-//
-// GenerateSandboxProfile converts per-run filesystem coordinates (worktree path,
-// git dirs, cache config) into a @anthropic-ai/sandbox-runtime (srt) settings JSON
-// blob. It produces LITERAL paths only — no globs — so the output is safe for
-// Linux bwrap as well as macOS Seatbelt (bwrap requires literal bind-mount paths).
-//
-// The allowWrite set is EXACTLY:
-//   - The run worktree checkout directory.
-//   - The git worktree metadata entry (<gitDir>/worktrees/<runID>/).
-//   - The shared git object store (<gitDir>/objects/).
-//   - The directory containing the run branch's ref (<gitDir>/refs/heads/<dir>/
-//     for namespaced branches; <gitDir>/refs/heads/ as both the path and the
-//     fallback for flat branch names).  The directory (not the ref file) is
-//     required because git creates <ref>.lock as a sibling during commit.
-//   - <gitDir>/packed-refs and <gitDir>/packed-refs.lock (git pack-refs atomic pair).
-//   - Per-run temp directories (TmpDirs) — never a world-shared root (hk-guapd).
-//   - The run's own scratch directory, SandboxScratchDir(WorktreePath), which is
-//     what the sandboxed child gets as TMPDIR.
-//   - srt's own default scratch TMPDIR, /tmp/claude (and /private/tmp/claude);
-//     see hk-cdpxu below.
-//   - Per-run private cache areas (PrivateWriteCacheDirs — never shared).
-//
-// Warm shared toolchain caches go in allowRead (read-only) to avoid the
-// concurrent-writer TOCTOU class (see cache-reaper TOCTOU incident).
-//
-// enableWeakerNetworkIsolation defaults FALSE per the TLS decision in
-// plans/2026-07-02-pi-sandbox/SPIKE-FINDINGS-hk-f39ny.md §TLS DECISION:
-// Pi (node) honors the injected proxy CA; local Go CLIs reach the daemon over
-// the unix socket; `gh` (Go, TLS-broken under srt) is not needed inside the
-// sandbox in v1. It is now driven by SandboxProfileInput.WeakerNetworkIsolation
-// (config: sandbox.network.weaker_network_isolation) rather than hardcoded, so
-// the parsed field is honored instead of silently ignored.
-//
-// allowLocalBinding is driven by SandboxProfileInput.AllowLocalBinding
-// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach an
-// endpoint on THIS host — loopback or one of this machine's own interfaces.
-// Those addresses fall in srt's no_proxy set, so they are connected to
-// directly and Seatbelt denies the socket ("Operation not permitted") unless
-// local binding is permitted; the allowedDomains proxy path does not cover
-// them. It does NOT open a remote host, so it does not on its own reach a
-// model server on another machine — srt_pi_egress_e2e_test.go in this package
-// measures the local half and explains why the remote half cannot be
-// reproduced in-process. The discriminator is remote-host vs local, not
-// loopback vs non-loopback. The model box is reached by tunnelling it to
-// loopback instead. Bead hk-ybuts / hk-u69my (Pi srt egress: sandboxed Pi
-// could not reach the DGX vLLM).
-//
-// Spec: plans/2026-07-02-pi-sandbox/HANDOFF.md §4 (git writable-set),
-// §6 (cache read-only base + private write area), §8.2 (profile shape).
-// Base recipe: plans/2026-07-02-pi-sandbox/srt-spike-settings.json.
-// Bead: hk-p7smp.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -140,12 +87,6 @@ type SandboxProfileInput struct {
 	PrivateWriteCacheDirs []string
 }
 
-// srtNetworkConfig is the network section of the srt settings JSON.
-// Schema: the srt settings file (plans/2026-07-02-pi-sandbox/srt-spike-settings.json),
-// pinned against srt 0.0.63. Read the version from package.json or `npm ls -g`, never
-// from `srt --version`: dist/cli.js falls back to a hardcoded "1.0.0" whenever
-// npm_package_version is unset, which is every invocation outside an npm script. The
-// "srt v1.0.0" this line used to claim came from that fallback.
 type srtNetworkConfig struct {
 	AllowedDomains    []string `json:"allowedDomains"`
 	DeniedDomains     []string `json:"deniedDomains"`
@@ -153,7 +94,6 @@ type srtNetworkConfig struct {
 	AllowLocalBinding bool     `json:"allowLocalBinding"`
 }
 
-// srtFilesystemConfig is the filesystem section of the srt settings JSON.
 type srtFilesystemConfig struct {
 	DenyRead   []string `json:"denyRead"`
 	AllowRead  []string `json:"allowRead"`
@@ -161,9 +101,6 @@ type srtFilesystemConfig struct {
 	DenyWrite  []string `json:"denyWrite"`
 }
 
-// srtSettings is the top-level srt settings JSON object.
-// Field names and shape proven by the working recipe in
-// plans/2026-07-02-pi-sandbox/srt-spike-settings.json.
 type srtSettings struct {
 	Network                      srtNetworkConfig    `json:"network"`
 	Filesystem                   srtFilesystemConfig `json:"filesystem"`
@@ -171,27 +108,6 @@ type srtSettings struct {
 	EnableWeakerNetworkIsolation bool                `json:"enableWeakerNetworkIsolation"`
 	AllowAppleEvents             bool                `json:"allowAppleEvents"`
 }
-
-// GenerateSandboxProfile produces the srt settings JSON for a sandboxed Pi run.
-//
-// All paths in the output are LITERAL — no globs or shell patterns. This is
-// required for Linux bwrap compatibility: bwrap accepts only literal bind-mount
-// paths.
-//
-// The allowWrite set is exactly the set mandated by hk-p7smp:
-//   - WorktreePath (run checkout)
-//   - <GitDir>/worktrees/<RunID>/ (git worktree metadata)
-//   - <GitDir>/objects/ (shared git object store)
-//   - directory containing the run branch ref: filepath.Dir(<GitDir>/refs/heads/<BranchName>)
-//     when BranchName is set, or <GitDir>/refs/heads/ as fallback
-//   - <GitDir>/packed-refs and <GitDir>/packed-refs.lock (atomic update pair)
-//   - TmpDirs (per-run temp directories; a world-shared root is rejected)
-//   - SandboxScratchDir(WorktreePath) — the child's TMPDIR
-//   - PrivateWriteCacheDirs (per-run private cache areas)
-//
-// Shared toolchain caches go in allowRead only. enableWeakerNetworkIsolation is
-// always false. Returns an error when any required field is absent or not
-// absolute, or when a TmpDirs entry is a world-shared temp root (hk-guapd).
 
 // SandboxScratchDir returns the per-run scratch directory for a run whose
 // worktree is at worktreePath. It is the directory the sandboxed child gets as
@@ -249,10 +165,6 @@ func SandboxScratchDir(worktreePath string) string {
 	return filepath.Join(worktreePath, ".harmonik", "tmp")
 }
 
-// worldSharedTempRoot reports whether dir is a temp root shared by every user
-// and process on the host. "/var/tmp" is included as the other POSIX shared-temp
-// location and an equally plausible $TMPDIR value; "/" is included because it is
-// the degenerate case of the same mistake.
 func worldSharedTempRoot(dir string) bool {
 	switch filepath.Clean(dir) {
 	case "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/":
@@ -283,14 +195,6 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 	if !filepath.IsAbs(in.DaemonSockPath) {
 		return nil, fmt.Errorf("sandboxprofile: DaemonSockPath must be an absolute path, got %q", in.DaemonSockPath)
 	}
-	// hk-guapd: reject a world-shared temp root in TmpDirs. srt expands every
-	// entry into a RECURSIVE write rule, so granting one of these hands the run
-	// write access to every other process's scratch state on the box. The
-	// ambient feed that caused the original defect is gone from both call
-	// sites; this makes its return a launch-time error instead of a silent
-	// over-grant. Cleaning first is load-bearing — exact comparison alone lets
-	// "/tmp/" and "/tmp/../tmp" through. A per-run subdirectory such as
-	// /tmp/harmonik-run-<id> still passes, which is the supported escape hatch.
 	for _, dir := range in.TmpDirs {
 		if worldSharedTempRoot(dir) {
 			return nil, fmt.Errorf("sandboxprofile: TmpDirs entry %q is a world-shared temp root "+
@@ -299,94 +203,40 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 		}
 	}
 
-	// Build allowWrite: exact per-spec set, all literal paths, no globs.
 	allowWrite := make([]string, 0, 5+len(in.TmpDirs)+len(in.PrivateWriteCacheDirs))
 
-	// 1. Run worktree checkout.
 	allowWrite = append(allowWrite, in.WorktreePath)
 
-	// 2. Git worktree metadata for this run (HEAD, gitdir pointer, etc.).
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "worktrees", in.RunID))
 
-	// 3. Shared git object store (blobs, trees, commits — content-addressed).
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "objects"))
 
-	// 4. Branch ref directory — git creates <ref>.lock as a sibling of the ref
-	//    file during commit (not inside it), so we need the DIRECTORY containing
-	//    the ref, not the ref file itself.  For a branch like "run/abc" the
-	//    directory is refs/heads/run/; for a flat branch like "main" it equals
-	//    refs/heads/ (same as the no-name fallback).
 	if in.BranchName != "" {
 		allowWrite = append(allowWrite, filepath.Dir(filepath.Join(in.GitDir, "refs", "heads", in.BranchName)))
 	} else {
 		allowWrite = append(allowWrite, filepath.Join(in.GitDir, "refs", "heads"))
 	}
 
-	// 5. Packed-refs file and its lock sibling (created atomically by git pack-refs).
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "packed-refs"))
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "packed-refs.lock"))
 
-	// 5a. Reflog directory for the branch.  Git appends a log entry to
-	//     logs/refs/heads/<branch> on every commit; we need write access to
-	//     the directory containing that file (not just the file itself, so new
-	//     entries for sub-branches can be created).
 	if in.BranchName != "" {
 		allowWrite = append(allowWrite, filepath.Dir(filepath.Join(in.GitDir, "logs", "refs", "heads", in.BranchName)))
 	} else {
 		allowWrite = append(allowWrite, filepath.Join(in.GitDir, "logs", "refs", "heads"))
 	}
 
-	// 6. OS temp directories.
 	allowWrite = append(allowWrite, in.TmpDirs...)
 
-	// 6a. The run's own scratch directory — the child's TMPDIR
-	// (hk-sandbox-no-writable-tmpdir-7484h). Before this entry a run could still
-	// write a temp file: srt pointed the child's TMPDIR at its own default,
-	// /tmp/claude, which 6b below grants. What the run did not have was a temp
-	// directory of its OWN, so every concurrent run on the box spooled into the
-	// same one. The run that threw away finished work was refused for a different
-	// reason — it was told to write the literal path /tmp/commit-msg.txt, which
-	// no entry here covers. That instruction is fixed in internal/workspace
-	// buildAgentTaskContent.
-	//
-	// It sits UNDER the worktree, which srt already grants recursively, so this
-	// line widens nothing — it states where TMPDIR points, in the one document
-	// that says what this run may write. See SandboxScratchDir for why the
-	// worktree and not /tmp.
-	//
-	// 6b. srt's own DEFAULT scratch TMPDIR (hk-cdpxu). Absent
-	// CLAUDE_CODE_TMPDIR in srt's own environment, srt injects
-	// TMPDIR=/tmp/claude into the sandboxed child regardless of the parent's
-	// TMPDIR and of what this profile's allowWrite contains. Any tool that
-	// honors TMPDIR for scratch/work-dir creation (e.g. `go build`'s "creating
-	// work dir" step) then fails with ENOENT unless /tmp/claude is both present
-	// on disk AND writable. srtWrapArgv now sets CLAUDE_CODE_TMPDIR, so the
-	// fallback is no longer the path a run takes; these two entries remain as
-	// the belt for a host whose srt is older than that knob.
-	//
-	// MEASURED, srt 0.0.63, sandbox-utils.js getDefaultWritePaths(): srt merges
-	// its OWN default write set — which already contains both /tmp/claude
-	// spellings — into allowOnly ahead of everything this profile says. So on
-	// that version these two entries grant nothing srt was not granting anyway,
-	// and they are a candidate for deletion once the srt floor is pinned. Left
-	// in place deliberately rather than removed on that reading alone.
-	//
-	// Both the /tmp and /private/tmp forms are listed (macOS symlinks /tmp ->
-	// /private/tmp; bwrap/Seatbelt need the literal path used at open time).
-	// Directory creation is the caller's responsibility (srtWrapArgv), since
-	// this function is a pure profile generator.
 	allowWrite = append(allowWrite,
 		SandboxScratchDir(in.WorktreePath),
 		"/tmp/claude", "/private/tmp/claude")
 
-	// 7. Per-run private cache areas (never shared with concurrent runs).
 	allowWrite = append(allowWrite, in.PrivateWriteCacheDirs...)
 
-	// Build allowRead: warm shared caches (read-only base, never writable).
 	allowRead := make([]string, len(in.SharedReadCacheDirs))
 	copy(allowRead, in.SharedReadCacheDirs)
 
-	// Normalise nil AllowedDomains to an empty slice for clean JSON output.
 	allowedDomains := in.AllowedDomains
 	if allowedDomains == nil {
 		allowedDomains = []string{}

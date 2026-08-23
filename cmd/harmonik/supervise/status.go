@@ -99,7 +99,6 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// Human-readable output.
 	if _, err := fmt.Fprintf(stdout, "status:        %s\n", result.Status); err != nil {
 		return 1
 	}
@@ -144,26 +143,20 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// buildStatus constructs a StatusResult from the file surface.
 func buildStatus(projectDir string) StatusResult {
 	return buildStatusWithProbe(projectDir, keeperLoopAlive)
 }
 
-// buildStatusWithProbe is the testable core of buildStatus. keeperProbe is
-// called when the pidfile check fails; returning true means a shell-based
-// revive loop is live (hk-yrnui false-positive fix).
 func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) StatusResult {
 	result := StatusResult{
 		SchemaVersion: 1,
 		Status:        "stopped",
 	}
 
-	// Check sentinel.
 	if _, err := os.Stat(SentinelPath(projectDir)); err == nil {
 		result.SentinelOK = true
 	}
 
-	// Read config.json metadata.
 	if cfg, err := ReadConfig(projectDir); err == nil {
 		result.RestartPolicy = cfg.RestartPolicy
 		result.RestartMax = cfg.RestartMax
@@ -171,20 +164,13 @@ func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) Stat
 		result.DaemonID = cfg.DaemonInstanceID
 	}
 
-	// Read cognition loop status (ON-008a: budget-paused / circuit-tripped surfacing).
 	if ls, err := ReadLoopStatus(projectDir); err == nil && ls != nil {
 		result.LoopStatus = string(ls.Status)
 		result.PauseReason = ls.PauseReason
 	}
 
-	// Read pidfile and probe liveness.
 	pid, err := ReadPidfile(projectDir)
 	if err != nil {
-		// Pidfile absent or unreadable. Before declaring "stopped", check whether
-		// a shell-based daemon-revive loop (hk-keeper.sh / hk-supervise.sh) is
-		// running: those loops never write supervisor.pid (doing so would corrupt
-		// the orphansweep PL-006d sentinel logic), so pidfile absence alone does
-		// not mean "no supervisor" when a keeper loop is live (hk-yrnui).
 		if keeperProbe(projectDir) {
 			result.Running = true
 			result.Status = "running"
@@ -196,11 +182,7 @@ func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) Stat
 	}
 	result.PID = pid
 
-	// kill(pid, 0) probes liveness.
 	if err := syscall.Kill(pid, 0); err != nil {
-		// Stale pidfile. Same fallback: a keeper loop may have already relaunched
-		// the supervisor and be running while the new shim hasn't written its
-		// fresh pidfile yet.
 		if keeperProbe(projectDir) {
 			result.Running = true
 			result.Status = "running"
@@ -218,16 +200,7 @@ func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) Stat
 	return result
 }
 
-// keeperLoopAlive returns true when a shell-based daemon-revive loop
-// (hk-keeper.sh or hk-supervise.sh) is detectable either as a live process
-// or via its project-scoped tmux session name. These loops never write
-// supervisor.pid (it would corrupt the orphansweep PL-006d flywheel-session
-// protection), so their presence must be inferred from process/session
-// signature instead of the pidfile.
-//
-// Bead ref: hk-yrnui — pen9 supervisor-up false positive.
 func keeperLoopAlive(projectDir string) bool {
-	// 1. Process signature: pgrep -f "hk-keeper.sh" or "hk-supervise.sh".
 	for _, pattern := range []string{"hk-keeper.sh", "hk-supervise.sh"} {
 		cmd := exec.CommandContext(context.Background(), "pgrep", "-f", pattern) //nolint:gosec // G204: fixed literals
 		if err := cmd.Run(); err == nil {
@@ -235,9 +208,6 @@ func keeperLoopAlive(projectDir string) bool {
 		}
 	}
 
-	// 2. Session signature: hk-<hash>-daemon-supervise (hk-supervise.sh) and
-	//    hk-<hash>-keeper (hk-keeper.sh). The hash uses the same SHA256 digest
-	//    as FlywheelSessionName so session names match what the scripts produce.
 	hash := supervisorProjectHash(projectDir)
 	for _, suffix := range []string{"daemon-supervise", "keeper"} {
 		sessionName := "hk-" + hash + "-" + suffix
@@ -250,9 +220,6 @@ func keeperLoopAlive(projectDir string) bool {
 	return false
 }
 
-// supervisorProjectHash returns the 6-byte SHA256 hex digest of projectDir's
-// real path, matching the hash produced by FlywheelSessionName and by the
-// project-hash subcommand used in hk-keeper.sh / hk-supervise.sh.
 func supervisorProjectHash(projectDir string) string {
 	resolved, err := filepath.EvalSymlinks(projectDir)
 	if err != nil {

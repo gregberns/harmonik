@@ -1,48 +1,5 @@
 package daemon
 
-// tunnel_port_release_test.go — a remote run gives its tunnel port reservation
-// back, on the ordinary ending and on the refusals.
-//
-// # What was here before
-//
-// Nothing, and the reason was written down: the reservation set in
-// internal/transport/tunnel had no exported reader, so no test outside that
-// package could ask whether a port was still held. The give-back moved onto the
-// run's resource scope with that gap open. This commit adds the reader
-// (tunnel.PortReserved) and closes the gap.
-//
-// The reservation is process-global and lives for the life of the daemon. A
-// leaked port is therefore silent: nothing fails, no log line appears, and the
-// daemon simply never hands that number out again. Enough of them and the
-// allocator's fifty-attempt retry starts to matter. Nothing in production reads
-// the set, so the only way this can be caught is a test.
-//
-// # Why each test here can fail
-//
-// "The port is free" is true of a run that never allocated one, which is the
-// trap §9 of the step doc names. So every test below first proves the run TOOK
-// the port: the allocation seam records the port number AND asks, at the instant
-// the allocator returned it, whether the set really held it. A run that skipped
-// the allocation, or an allocator that stopped reserving, fails on that positive
-// claim rather than sailing past it into a free-looking port.
-//
-// # Mutation record
-//
-// Make tunnel.ReleasePort a no-op — delete the map delete, keep the lock — and
-// every test in this file goes red: the three that drive a run fail on the port
-// that run allocated, and the disposition test fails its Reclaim half. The
-// mutation was confirmed applied before the run, by asserting the reader still
-// reports the port held after an explicit ReleasePort in the tunnel package's
-// own test: that test goes red too, which is what says the edit landed rather
-// than being a no-op edit on an absence.
-//
-// A second mutation, narrower and closer to this commit's subject: replace the
-// scope hold in workloop.go with a bare `defer tunnelpkg.ReleasePort(port)`.
-// Every test here stays GREEN, and that is the honest finding — see the survive
-// test at the bottom for why no reachable run can tell the two apart today.
-//
-// The remote setting is in remoterunfixture_test.go. Helper prefix: portlease.
-
 import (
 	"context"
 	"os/exec"
@@ -60,48 +17,24 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture
-// ─────────────────────────────────────────────────────────────────────────────
-
-// portleaseAlloc watches the port allocations a run makes.
-//
-// It wraps the REAL allocator rather than replacing it, so the reservation under
-// test is the production one. The second field is what makes the tests below
-// able to fail: it records whether the set held the port at the moment the
-// allocator handed it over, which is the positive half of every "the port is
-// free afterwards" claim.
 type portleaseAlloc struct {
 	mu              sync.Mutex
 	ports           []int
 	reservedAtAlloc []bool
 }
 
-// took returns the ports the run was handed, in order.
 func (a *portleaseAlloc) took() []int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return slices.Clone(a.ports)
 }
 
-// wasReservedAtAlloc reports whether the reservation set held the i-th port at
-// the instant the allocator returned it.
 func (a *portleaseAlloc) wasReservedAtAlloc(i int) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.reservedAtAlloc[i]
 }
 
-// portleaseWatchAlloc puts the recorder in front of the real allocator for the
-// length of the test.
-//
-// The seam is a package-level variable in internal/transport/tunnel, so a test
-// that swaps it MUST NOT be parallel.
-//
-// The cleanup frees anything the run left held. A red test has already made its
-// report by then, and the reservation set outlives the test binary's individual
-// tests, so leaving a leaked port in it would spread one failure across the
-// package.
 func portleaseWatchAlloc(t *testing.T) *portleaseAlloc {
 	t.Helper()
 	rec := &portleaseAlloc{}
@@ -126,9 +59,6 @@ func portleaseWatchAlloc(t *testing.T) *portleaseAlloc {
 	return rec
 }
 
-// portleaseTheOnePortTaken returns the single port the run allocated, failing
-// the test when the run took none — which is what a run refused ABOVE the
-// allocation looks like, and which would make every claim below vacuous.
 func portleaseTheOnePortTaken(t *testing.T, alloc *portleaseAlloc) int {
 	t.Helper()
 	ports := alloc.took()
@@ -146,7 +76,6 @@ func portleaseTheOnePortTaken(t *testing.T, alloc *portleaseAlloc) int {
 	return ports[0]
 }
 
-// portleaseWantFreed asserts the run gave port back.
 func portleaseWantFreed(t *testing.T, port int, ending string) {
 	t.Helper()
 	if tunnelpkg.PortReserved(port) {
@@ -157,9 +86,6 @@ func portleaseWantFreed(t *testing.T, port int, ending string) {
 	}
 }
 
-// portleaseCountingTunnel is a reverse tunnel that starts, stays up, carries
-// nothing, and counts how many times it was built. The count is how a test says
-// the run reached the tunnel rather than refusing above it.
 type portleaseCountingTunnel struct {
 	mu    sync.Mutex
 	built int
@@ -178,8 +104,6 @@ func (p *portleaseCountingTunnel) count() int {
 	return p.built
 }
 
-// portleaseWantTunnelRefusal asserts the run refused for a reverse-tunnel reason
-// and said so exactly once, on both the bead and the bus.
 func portleaseWantTunnelRefusal(t *testing.T, ledger *runplanacqLedger, bus *runplanBus, bead core.BeadID) {
 	t.Helper()
 	calls := ledger.calls()
@@ -197,10 +121,6 @@ func portleaseWantTunnelRefusal(t *testing.T, ledger *runplanacqLedger, bus *run
 	runplanWantEvents(t, bus.seen(), []core.EventType{core.EventTypeWorkerTunnelFailed})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The ordinary ending
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds drives the
 // plainest remote run there is — the tunnel comes up, the readiness probe passes
 // over the ssh shim, the stub agent runs and exits — and asserts the port
@@ -215,11 +135,7 @@ func portleaseWantTunnelRefusal(t *testing.T, ledger *runplanacqLedger, bus *run
 // log names it. The last one is what rules out a run that allocated a port and
 // then refused quietly above the launch.
 func TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds(t *testing.T) {
-	// Not parallel: sets PATH and swaps two package-level seams in
-	// internal/transport/tunnel.
 	projectDir := remotefixRepo(t)
-	// Exit 0: the tunnel readiness probe runs over this shim, and a non-zero exit
-	// refuses the run before it reaches the launch.
 	sshLog := remotefixSSHShim(t, 0)
 	tunnels := &portleaseCountingTunnel{}
 	remotefixTunnelSeam(t, tunnels.build)
@@ -254,13 +170,6 @@ func TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds(t *testing.T
 			"A run that took a port and then refused above the tunnel is a refusal test, not this "+
 			"one, and it would prove nothing about the ordinary ending.", got)
 	}
-	// The port reached the worker. The readiness probe is `nc -z 127.0.0.1 <port>`
-	// run over the SSHRunner, so the shim's log carries this run's port number.
-	//
-	// The match is on the two parts and not on the whole argv, because the runner
-	// quotes each argument and the quoting is not this test's subject. "nc" plus
-	// this run's freshly allocated port number appearing on one line is already
-	// specific enough that nothing else produces it.
 	calls := remotefixSSHCalls(t, sshLog)
 	portDigits := strconv.Itoa(port)
 	if !slices.ContainsFunc(calls, func(line string) bool {
@@ -275,10 +184,6 @@ func TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds(t *testing.T
 
 	portleaseWantFreed(t, port, "an ordinary remote run ended")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The refusals past the allocation
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestTunnelPort_ARunRefusedAtTheReadinessGateStillGivesItsPortBack is the case
 // the run scope exists for.
@@ -295,12 +200,7 @@ func TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds(t *testing.T
 // from a seam would make the run end for a different reason and would test the
 // cancellation path instead of the gate.
 func TestTunnelPort_ARunRefusedAtTheReadinessGateStillGivesItsPortBack(t *testing.T) {
-	// Not parallel: sets PATH and swaps two package-level seams in
-	// internal/transport/tunnel.
 	projectDir := remotefixRepo(t)
-	// Exit 1: every `nc -z` the readiness gate runs fails, so the gate polls to
-	// its deadline and refuses. This is the real shape of an ssh that answers
-	// while its reverse forward never comes up.
 	remotefixSSHShim(t, 1)
 	tunnels := &portleaseCountingTunnel{}
 	remotefixTunnelSeam(t, tunnels.build)
@@ -326,8 +226,6 @@ func TestTunnelPort_ARunRefusedAtTheReadinessGateStillGivesItsPortBack(t *testin
 	bead := remotefixBead("hk-portlease-readiness", "readiness-gate refusal port probe")
 	env := remotefixRunEnv(deps, bead)
 
-	// Comfortably past the gate's own ten-second bound, so the run ends at the
-	// gate rather than at this deadline.
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	if succeeded := runBeadOneTest(ctx, deps, env, "", preSelected, false); succeeded {
@@ -361,11 +259,6 @@ func TestTunnelPort_ARunRefusedAtTheReadinessGateStillGivesItsPortBack(t *testin
 // already known to be remote; a run that becomes remote through the fallback
 // worker selection reaches the copy inside the tunnel block instead.
 func TestTunnelPort_ARunRefusedForItsSocketPathStillGivesItsPortBack(t *testing.T) {
-	// Not parallel: sets PATH and swaps two package-level seams in
-	// internal/transport/tunnel.
-	//
-	// The repository sits deep enough that <dir>/.harmonik/daemon.sock is past
-	// the platform's socket-path limit, which is the refusal under test.
 	projectDir := hooksockDeepRepo(t)
 	remotefixSSHShim(t, 0)
 	tunnels := &portleaseCountingTunnel{}
@@ -375,9 +268,6 @@ func TestTunnelPort_ARunRefusedForItsSocketPathStillGivesItsPortBack(t *testing.
 	})
 	alloc := portleaseWatchAlloc(t)
 
-	// No pre-selected worker: the run becomes remote through the fallback
-	// selection inside beadRunOne, which is the only path that reaches the
-	// socket-path check below the port allocation.
 	workerReg := workers.NewRegistry(workers.Config{Workers: []workers.Worker{remotefixWorker}})
 
 	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
@@ -419,10 +309,6 @@ func TestTunnelPort_ARunRefusedForItsSocketPathStillGivesItsPortBack(t *testing.
 	portleaseWantFreed(t, port, "a run was refused for its hook-socket path")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The disposition axis
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestTunnelPort_ASurvivingRunKeepsItsPortReservationAndAReclaimedOneDoesNot
 // pins the tunnel port against the disposition, over a REAL reservation.
 //
@@ -457,8 +343,6 @@ func TestTunnelPort_ARunRefusedForItsSocketPathStillGivesItsPortBack(t *testing.
 // Mutating survivesWithTheRun to drop TunnelPort turns the survive half red on
 // both the report and the reservation.
 func TestTunnelPort_ASurvivingRunKeepsItsPortReservationAndAReclaimedOneDoesNot(t *testing.T) {
-	// Not parallel: reserves a port in the package-global set in
-	// internal/transport/tunnel.
 	cases := []struct {
 		name string
 		exit runlease.Exit
@@ -495,7 +379,6 @@ func TestTunnelPort_ASurvivingRunKeepsItsPortReservationAndAReclaimedOneDoesNot(
 
 			var releases int
 			scope := &runlease.Scope{}
-			// The same closure beadRunOne registers.
 			scope.Hold(runlease.TunnelPort, func() error {
 				releases++
 				tunnelpkg.ReleasePort(port)

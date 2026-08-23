@@ -2,35 +2,6 @@
 
 package daemon_test
 
-// scenario_queue_submit_dispatch_hksk00a_test.go — submit-RPC → dispatch → close
-// bridge scenario test (hk-sk00a).
-//
-// Gaps covered:
-//   - hk-24xn1: idle daemon does not see a newly submitted queue until the wake
-//     channel fires; this test submits via HandleQueueSubmit while the daemon is
-//     idle and asserts the bead reaches "closed".
-//   - hk-nbjht: a deferred-for-ledger-dep item in a stream group is never
-//     re-evaluated after its in-group blocker completes; this test submits [A, B]
-//     where B is deferred behind A, lets A close, and asserts B un-defers and
-//     also reaches "closed".
-//   - hk-4ie1z: exercised vacuously — any run that reaches run_completed without
-//     a commit would formerly false-close the bead; the twin scenario emits a
-//     valid outcome so the run completes cleanly.
-//
-// Bridge: queue_setqueue_wiring_test.go (HandleQueueSubmit path, no dispatch)
-//         scenario_happypath_n1_test.go (dispatch path, no queue submit)
-// Both paths are connected here end-to-end.
-//
-// Helper prefix: queueSubmitDispatch (per implementer-protocol.md §Helper-prefix).
-//
-// Spec refs:
-//   - specs/queue-model.md §2.8 QM-025 (deferred-for-ledger-dep)
-//   - specs/queue-model.md §3.2 QM-002 (queue-active → idle wake-on-submit)
-//   - specs/execution-model.md §7.4 TS-1 (queue-pull dispatch)
-//   - specs/scenario-harness.md §4 (assertion vocabulary)
-//
-// Bead: hk-sk00a.
-
 import (
 	"bufio"
 	"context"
@@ -55,12 +26,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared fixture helpers (queueSubmitDispatch prefix)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// queueSubmitDispatchProjectDir creates the minimal project directory layout.
-// Returns (projectDir, jsonlPath).
 func queueSubmitDispatchProjectDir(t *testing.T) (string, string) {
 	t.Helper()
 	raw, err := os.MkdirTemp("/tmp", "qsd-")
@@ -163,10 +128,6 @@ func queueSubmitDispatchEpicCompleted(t *testing.T, jsonlPath string, epicID cor
 	return matches
 }
 
-// queueSubmitDispatchGitRepo initialises a git repository with one commit in
-// dir, and wires a bare-repo "origin" remote so that mergeRunBranchToMain's
-// git-push step succeeds (avoiding push_failed run_failed events in scenario
-// tests that make actual commits in the worktree).
 func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -182,9 +143,6 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	readmePath := filepath.Join(dir, "README")
 	require.NoError(t, os.WriteFile(readmePath, []byte("queue-submit-dispatch scenario\n"), 0o644),
 		"queueSubmitDispatchGitRepo: WriteFile README")
-	// Both target names: see the note in the em012a fixture — the per-bead gate
-	// was renamed from `make full` to `make core` at D3=v3, and a fixture
-	// pinned to one name fails misleadingly when that moves.
 	makefile := ".PHONY: full core\nfull core:\n\t@latest=$$(git diff-tree --no-commit-id --name-only -r HEAD); " +
 		"printf '%s\\n' \"$$latest\" | grep -q '^.harmonik-twin-commit-'; " +
 		"mkdir -p $$(git rev-parse --git-common-dir)/../.harmonik; " +
@@ -195,9 +153,6 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "Initial commit")
 	run("branch", "integration")
 
-	// Add a bare-repo origin so mergeRunBranchToMain's push step succeeds.
-	// Without a remote the push fails with "fatal: 'origin' does not appear to
-	// be a git repository" and the run is reopened as push_failed (run_failed).
 	raw := t.TempDir()
 	originDir, err := filepath.EvalSymlinks(raw)
 	require.NoError(t, err, "queueSubmitDispatchGitRepo: EvalSymlinks originDir")
@@ -236,7 +191,6 @@ func queueSubmitDispatchAssertLanded(t *testing.T, projectDir, targetBranch stri
 		"target branch must advance once for each closed bead while main stays unchanged")
 }
 
-// queueSubmitDispatchBrPath returns the path to the real br binary. Skips if absent.
 func queueSubmitDispatchBrPath(t *testing.T) string {
 	t.Helper()
 	path, err := exec.LookPath("br")
@@ -246,8 +200,6 @@ func queueSubmitDispatchBrPath(t *testing.T) string {
 	return path
 }
 
-// queueSubmitDispatchBrWrapper writes a /bin/sh wrapper that invokes brPath
-// with --db dbPath prepended to all args. Returns the wrapper path.
 func queueSubmitDispatchBrWrapper(t *testing.T, brPath, dbPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -259,29 +211,6 @@ func queueSubmitDispatchBrWrapper(t *testing.T, brPath, dbPath string) string {
 	return path
 }
 
-// queueSubmitDispatchTwinWrapper writes a /bin/sh wrapper that is phase-aware so
-// these review-loop tests complete: the implementer commits and the reviewer
-// emits an APPROVE verdict (hk-4f5ua).
-//
-// Phase detection is by the presence of .harmonik/review-target.md, which the
-// daemon writes ONLY into the reviewer's isolated worktree
-// (workspace.WriteReviewTarget):
-//
-//   - Reviewer phase (review-target.md present): write an APPROVE verdict to
-//     $PWD/.harmonik/review.json (read by the daemon from revWtPath) so the
-//     review loop terminates with success → run_completed + bead closed.
-//   - Implementer phase (review-target.md absent): run the twin with
-//     --scenario commit-on-cue-startup-delay --worktree-path $PWD. The
-//     commit_on_cue step writes a timestamped sentinel file and git-commits it,
-//     satisfying the no-commit guard (hk-mmh8f), then emits outcome_emitted and
-//     agent_completed. Each commit uses a unique timestamp so concurrent beads
-//     do not conflict.
-//
-// Before hk-81n9r these tests ran in single mode (no reviewer); hk-81n9r made
-// them review-loop, so the reviewer phase previously ran commit-on-cue too,
-// wrote no verdict, and tripped "verdict absent at iteration 1".
-//
-// $PWD equals the worktree path because the daemon sets cmd.Dir = workspacePath.
 func queueSubmitDispatchTwinWrapper(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -310,8 +239,6 @@ func queueSubmitDispatchFailTwinWrapper(t *testing.T, twinPath string) string {
 	return path
 }
 
-// queueSubmitDispatchInitBr initialises a br workspace in projectDir.
-// Creates one open bead and returns its ID.
 func queueSubmitDispatchInitBr(t *testing.T, brPath, projectDir, brWrapper string) core.BeadID {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "qsd")
@@ -328,9 +255,6 @@ func queueSubmitDispatchInitBr(t *testing.T, brPath, projectDir, brWrapper strin
 	return core.BeadID(id)
 }
 
-// queueSubmitDispatchInitBrWithDep initialises a br workspace with two open
-// beads (A and B) and a dependency edge B→A (B depends on A; A blocks B).
-// Returns (aID, bID).
 func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrapper string) (core.BeadID, core.BeadID) {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "qsd2")
@@ -338,7 +262,6 @@ func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrappe
 	out, err := initCmd.CombinedOutput()
 	require.NoError(t, err, "queueSubmitDispatchInitBrWithDep: br init\n%s", out)
 
-	// Create bead A (blocker).
 	createA := exec.CommandContext(t.Context(), brWrapper, "create",
 		"deferred-undefer: bead A (blocker)", "--status", "open", "--silent")
 	outA, errA := createA.CombinedOutput()
@@ -346,7 +269,6 @@ func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrappe
 	aID := core.BeadID(strings.TrimSpace(string(outA)))
 	require.NotEmpty(t, aID, "queueSubmitDispatchInitBrWithDep: br create A returned empty ID")
 
-	// Create bead B (blocked by A).
 	createB := exec.CommandContext(t.Context(), brWrapper, "create",
 		"deferred-undefer: bead B (blocked)", "--status", "open", "--silent")
 	outB, errB := createB.CombinedOutput()
@@ -354,8 +276,6 @@ func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrappe
 	bID := core.BeadID(strings.TrimSpace(string(outB)))
 	require.NotEmpty(t, bID, "queueSubmitDispatchInitBrWithDep: br create B returned empty ID")
 
-	// Add dependency: B depends on A.
-	// "br dep add <issue> <depends-on>" — issue=B, depends-on=A.
 	depCmd := exec.CommandContext(t.Context(), brWrapper, "dep", "add",
 		string(bID), string(aID))
 	depOut, depErr := depCmd.CombinedOutput()
@@ -364,7 +284,6 @@ func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrappe
 	return aID, bID
 }
 
-// queueSubmitDispatchInitBrFanGraph creates one epic over A -> [B,C,D] -> E.
 func queueSubmitDispatchInitBrFanGraph(t *testing.T, brPath, projectDir, brWrapper string) (core.BeadID, []core.BeadID) {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "qsdg")
@@ -408,8 +327,6 @@ func queueSubmitDispatchInitBrFanGraph(t *testing.T, brPath, projectDir, brWrapp
 	return epicID, ids
 }
 
-// queueSubmitDispatchPollBeadClosed polls br show <id> until status=="closed"
-// or budget expires. Returns true when closed.
 func queueSubmitDispatchPollBeadClosed(t *testing.T, brWrapper string, id core.BeadID, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -429,8 +346,6 @@ func queueSubmitDispatchPollBeadClosed(t *testing.T, brWrapper string, id core.B
 	return false
 }
 
-// queueSubmitDispatchWaitRunTerminal polls the JSONL log for a terminal
-// run event (run_completed or run_failed) for up to budget. Returns true when found.
 func queueSubmitDispatchWaitRunTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -460,8 +375,6 @@ func queueSubmitDispatchWaitRunTerminal(t *testing.T, jsonlPath string, budget t
 	return false
 }
 
-// queueSubmitDispatchCountRunTerminal returns the number of run_completed or
-// run_failed events in the JSONL log.
 func queueSubmitDispatchCountRunTerminal(t *testing.T, jsonlPath string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -486,8 +399,6 @@ func queueSubmitDispatchCountRunTerminal(t *testing.T, jsonlPath string) int {
 	return n
 }
 
-// queueSubmitDispatchCountRunStarted returns the number of run_started events
-// in the JSONL log.
 func queueSubmitDispatchCountRunStarted(t *testing.T, jsonlPath string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -510,12 +421,6 @@ func queueSubmitDispatchCountRunStarted(t *testing.T, jsonlPath string) int {
 	return n
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fake BeadLedger implementations
-// ─────────────────────────────────────────────────────────────────────────────
-
-// qsdOpenLedger is a minimal queue.BeadLedger that marks every bead as open
-// with no blocking edges. Used when the test beads have no dependencies.
 type qsdOpenLedger struct{}
 
 func (l *qsdOpenLedger) LookupStatus(_ context.Context, _ core.BeadID) (queue.BeadStatus, error) {
@@ -525,10 +430,6 @@ func (l *qsdOpenLedger) LookupStatus(_ context.Context, _ core.BeadID) (queue.Be
 func (l *qsdOpenLedger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, error) {
 	return false, nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_QueueSubmit_IdleWake_hk24xn1
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_QueueSubmit_IdleWake_hk24xn1 verifies that a queue submitted
 // via HandleQueueSubmit to an IDLE daemon (no active queue, NoAutoPull=true)
@@ -553,7 +454,6 @@ func (l *qsdOpenLedger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, e
 // Bead: hk-sk00a; regression guard for hk-24xn1.
 func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
 		t.Skip("harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
@@ -569,16 +469,11 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 	t.Logf("queueSubmitDispatch idle-wake: seeded bead %s", beadID)
 
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
-	// Dispatch in dot mode over the implementer→reviewer graph the twin
-	// wrapper models. The embedded standard-bead.dot default would run its
-	// commit_gate (go build/vet/tests) inside this three-file temp worktree
-	// and fail every run for reasons unrelated to queue dispatch.
 	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	require.NoError(t, os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath))
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -587,7 +482,6 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		}
 	})
 
-	// Pre-create the QueueStore so the test holds the pointer for submit.
 	qs := daemon.ExportedNewQueueStore()
 
 	loopCtx, loopCancel := context.WithCancel(context.Background())
@@ -613,15 +507,8 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Brief pause: give the daemon's workloop time to reach its idle select.
-	// The exact timing is not critical; the wake channel is buffered (depth 1)
-	// so a submit before the loop reaches select still wakes it.
 	time.Sleep(200 * time.Millisecond)
 
-	// ── Submit a queue with the single open bead ────────────────────────────
-
-	// The HandlerAdapter uses the same QueueStore the daemon holds; SetQueue
-	// fires the wake channel (hk-24xn1) so the idle loop wakes immediately.
 	adapter := queue.NewHandlerAdapter(
 		&qsdOpenLedger{}, // all beads open, no deps
 		projectDir,
@@ -649,8 +536,6 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &submitResp), "decode QueueSubmitResponse")
 	t.Logf("queueSubmitDispatch idle-wake: submitted queue_id=%s", submitResp.QueueID)
 
-	// ── Wait for the single terminal event ─────────────────────────────────
-
 	const terminalBudget = 25 * time.Second
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, terminalBudget, func() {
 		for {
@@ -667,22 +552,16 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		}
 	})
 
-	// ── Assertions ──────────────────────────────────────────────────────────
-
-	// 1. run_started must appear: the daemon dispatched the bead.
 	require.True(t,
 		scenariotest.WaitForEvent(t, jsonlPath, string(core.EventTypeRunStarted), "", 100*time.Millisecond),
 		"run_started must appear in JSONL after idle-wake dispatch (hk-24xn1)")
 
-	// 2. run_completed must appear: the bead ran to completion.
 	require.True(t,
 		scenariotest.WaitForEvent(t, jsonlPath, string(core.EventTypeRunCompleted), "", 100*time.Millisecond),
 		"run_completed must appear in JSONL after dispatch (hk-24xn1)")
 
-	// 3. Bead must be closed in br.
 	scenariotest.AssertBeadStatus(t, brWrapper, string(beadID), "closed")
 
-	// 4. Causality: run_started must precede run_completed.
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeRunCompleted)},
@@ -690,10 +569,6 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 
 	t.Logf("TestScenario_QueueSubmit_IdleWake_hk24xn1: PASS bead=%s", beadID)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_QueueSubmit_DeferredUndefer_hknbjht
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_QueueSubmit_DeferredUndefer_hknbjht verifies the full
 // deferred-for-ledger-dep lifecycle end-to-end through daemon.Start + real br
@@ -715,7 +590,6 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 // Bead: hk-sk00a; regression guard for hk-nbjht.
 func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
 		t.Skip("harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
@@ -731,16 +605,11 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	t.Logf("queueSubmitDispatch deferred-undefer: A=%s B=%s (B depends on A)", aID, bID)
 
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
-	// Dispatch in dot mode over the implementer→reviewer graph the twin
-	// wrapper models. The embedded standard-bead.dot default would run its
-	// commit_gate (go build/vet/tests) inside this three-file temp worktree
-	// and fail every run for reasons unrelated to queue dispatch.
 	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	require.NoError(t, os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath))
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -776,17 +645,12 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Brief pause to let the workloop reach its idle select.
 	time.Sleep(200 * time.Millisecond)
-
-	// ── Submit [A(pending), B(deferred)] via HandlerAdapter ─────────────────
 
 	queueSubmitDispatchWaitSocket(t, projectDir)
 	submitOut := queueSubmitDispatchSubmitCLI(t, projectDir, []core.BeadID{aID, bID})
 	t.Logf("queueSubmitDispatch deferred-undefer: submitted through socket: %s", submitOut)
 
-	// Verify B was deferred at submit time: queue.json must show B as
-	// deferred-for-ledger-dep immediately after HandleQueueSubmit returns.
 	scenariotest.AssertQueueJSON(t, projectDir, scenariotest.QueueExpectation{
 		ItemStatuses: []string{
 			string(queue.ItemStatusPending),              // A: pending (eligible head)
@@ -795,10 +659,6 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	})
 	t.Log("queueSubmitDispatch deferred-undefer: B confirmed deferred-for-ledger-dep at submit time")
 
-	// ── Wait for BOTH A and B to complete ───────────────────────────────────
-
-	// Two separate run_completed / run_failed events must land: one for A,
-	// one for B. Budget = 2 × single-bead budget + headroom.
 	const terminalBudget = 45 * time.Second
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, terminalBudget, func() {
 		for {
@@ -816,21 +676,15 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		}
 	})
 
-	// ── Assertions ──────────────────────────────────────────────────────────
-
-	// 1. Both beads must be closed in br.
 	scenariotest.AssertBeadStatus(t, brWrapper, string(aID), "closed")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(bID), "closed")
 	queueSubmitDispatchAssertLanded(t, projectDir, "integration", []core.BeadID{aID, bID})
 
-	// 2. Two run_started events must appear: one dispatch per bead.
 	runStartedCount := queueSubmitDispatchCountRunStarted(t, jsonlPath)
 	require.GreaterOrEqual(t, runStartedCount, 2,
 		"expected ≥2 run_started events (one per bead); got %d (hk-nbjht un-defer regression guard)",
 		runStartedCount)
 
-	// 3. Event sequence: run_started(A) → run_completed(A) → run_started(B) → run_completed(B).
-	// Subsequence check — intervening events are allowed.
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeRunCompleted)},
@@ -838,7 +692,6 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		{Type: string(core.EventTypeRunCompleted)},
 	})
 
-	// 4. No orphan tmux windows (nil adapter → skipped in non-tmux environments).
 	scenariotest.AssertNoOrphanTmuxWindows(t, nil)
 
 	t.Logf("TestScenario_QueueSubmit_DeferredUndefer_hknbjht: PASS A=%s B=%s", aID, bID)
@@ -1142,8 +995,6 @@ func TestScenario_QueueSubmit_CleanStopResumesPendingGraph(t *testing.T) {
 				}
 			})
 		} else {
-			// Socket readiness proves startup loaded the queue. The handler pause
-			// holds launch while cancellation drives the work-loop drain.
 			queueSubmitDispatchWaitSocket(t, projectDir)
 			loopCancel()
 		}

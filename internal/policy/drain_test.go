@@ -1,22 +1,9 @@
 package policy
 
-// drain_test.go — pure truth-table tests for the quiesce/drain DECISION
-// predicates: ClassifyDrain (GenuineDrain semantics), SleepVeto
-// (the SS-INV-005 veto strands), and HasLatentWork (§4.2 latent-work).
-//
-// These assert the DECISION over projected scalar inputs — no DrainDetector, no
-// br-ready reads, no worktree readdir, no bus. The daemon-side fact-gathering,
-// oracle, marker-I/O and projection-shell coverage stays in package daemon
-// (draindetect_test.go, quiesce_sleep_veto_hkzqb3_test.go, stategather tests).
-//
-// Spec ref: codename:sleep-wake (SS-INV-005) + GenuineDrain §4.2 latent-work.
-
 import (
 	"strings"
 	"testing"
 )
-
-// --- ClassifyDrain -----------------------------------------------------------
 
 func TestClassifyDrain_EmptyIsDrained(t *testing.T) {
 	t.Parallel()
@@ -27,7 +14,6 @@ func TestClassifyDrain_EmptyIsDrained(t *testing.T) {
 
 func TestClassifyDrain_UnsureShortCircuits(t *testing.T) {
 	t.Parallel()
-	// Unsure wins even when a work axis is non-empty (fail-closed).
 	s := DrainSnapshot{Unsure: true, ReadyCount: 5}
 	if got := ClassifyDrain(s); got != DrainStateUnsure {
 		t.Fatalf("unsure snapshot: got %q, want UNSURE", got)
@@ -65,8 +51,6 @@ func TestClassifyDrain_NeedsDecompositionNotWork(t *testing.T) {
 		t.Fatalf("needs-decomposition only: got %q, want DRAINED (GenuineDrain drops it)", got)
 	}
 }
-
-// --- HasLatentWork -----------------------------------------------------------
 
 func TestHasLatentWork_EmptyIsFalse(t *testing.T) {
 	t.Parallel()
@@ -109,8 +93,6 @@ func TestHasLatentWork_EachDispatchAxis(t *testing.T) {
 		}
 	}
 }
-
-// --- SleepVeto ---------------------------------------------------------------
 
 func TestSleepVeto_EmptyNotVetoed(t *testing.T) {
 	t.Parallel()

@@ -213,7 +213,6 @@ func TestWriteAndReadManagedSessionID(t *testing.T) {
 		t.Fatalf("WriteManagedSessionID: %v", err)
 	}
 
-	// IsManaged must still return true (file exists).
 	if !keeper.IsManaged(projectDir, agent) {
 		t.Error("IsManaged: expected true after WriteManagedSessionID")
 	}
@@ -261,7 +260,6 @@ func TestWriteManagedSessionID_ConcurrentWrites(t *testing.T) {
 		}
 	}
 
-	// .managed must still exist and contain a valid (non-empty) session_id.
 	if !keeper.IsManaged(projectDir, agent) {
 		t.Fatal("IsManaged: expected true after concurrent writes")
 	}
@@ -269,8 +267,6 @@ func TestWriteManagedSessionID_ConcurrentWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadManagedSessionID after concurrent writes: %v", err)
 	}
-	// The winning session_id must be one of the values written by a goroutine —
-	// it cannot be empty or a partial mix of two writes.
 	found := false
 	for _, sid := range sids {
 		if got == sid {
@@ -291,7 +287,6 @@ func TestWriteManagedSessionID_ClearBinding(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "clear-binding-agent"
 
-	// Write a session_id then clear it.
 	if err := keeper.WriteManagedSessionID(projectDir, agent, "sess-to-clear"); err != nil {
 		t.Fatalf("WriteManagedSessionID: %v", err)
 	}
@@ -299,11 +294,9 @@ func TestWriteManagedSessionID_ClearBinding(t *testing.T) {
 		t.Fatalf("WriteManagedSessionID clear: %v", err)
 	}
 
-	// File must still exist (IsManaged = true).
 	if !keeper.IsManaged(projectDir, agent) {
 		t.Error("IsManaged: expected true after clearing binding")
 	}
-	// Binding must be empty.
 	sid, err := keeper.ReadManagedSessionID(projectDir, agent)
 	if err != nil {
 		t.Fatalf("ReadManagedSessionID after clear: %v", err)

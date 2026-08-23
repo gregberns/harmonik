@@ -111,26 +111,11 @@ type CycleState struct {
 	LastEventID core.EventID
 }
 
-// terminalTypes are the events that terminate a restart cycle.
-//
-// session_keeper_cycle_aborted has no live producer: keeper checkpoints became
-// agent-paced and the handoff-timeout edge now parks instead of aborting. It
-// stays in the set because this harness reads RECORDED corpora, and the frozen
-// 507-cycle baseline under testdata/keeper-cycles/ carries 79 of them.
-//
-// session_keeper_cycle_parked is deliberately absent. Park is a return to Idle
-// BEFORE restart authority exists, and its handoff_pending flavor is a
-// SUSPENSION the same cycle_id resumes from (session-keeper.md SK-025, §7.1
-// RequestPending is a state and not a terminal). Admitting park here would let
-// a keeper that silently stopped restarting sessions satisfy SR9.
 var terminalTypes = map[core.EventType]bool{
 	core.EventTypeSessionKeeperCycleComplete: true,
 	core.EventTypeSessionKeeperCycleAborted:  true,
 }
 
-// interiorTypes are the four §8.20 interior milestones. Their presence in a
-// cycle marks it as a POST-change corpus recording, which selects the full
-// SR3/SR4/SR6 invariant set (events-design §7.5, version-aware checks).
 var interiorTypes = []core.EventType{
 	core.EventTypeSessionKeeperHandoffWritten,
 	core.EventTypeSessionKeeperModelDone,
@@ -138,11 +123,8 @@ var interiorTypes = []core.EventType{
 	core.EventTypeSessionKeeperNewSessionUp,
 }
 
-// isTerminal reports whether t terminates a cycle.
 func isTerminal(t core.EventType) bool { return terminalTypes[t] }
 
-// hasInteriorEvents reports whether the cycle carries any §8.20 interior event,
-// i.e. whether it is a post-change recording (events-design §7.5).
 func hasInteriorEvents(s *CycleState) bool {
 	for _, t := range interiorTypes {
 		if _, ok := s.Seen[t]; ok {
@@ -174,19 +156,13 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 	states := map[string]*CycleState{}
 	observed := map[string]struct{}{}
 
-	// 2. Decode + assert loop.
 	for _, ev := range evs {
 		rep.Events++
 
-		// 2a. Schema-version validation. A mismatch is a finding (writer/reader
-		//     drift), not fatal — record it and, if the type's N-1 compat window
-		//     is NOT declared safe, skip the checks for this event. An unknown
-		//     type here is left to the decode step's skip-vs-fail policy.
 		if schemaMismatchSkips(&rep, ev) {
 			continue
 		}
 
-		// 2b. Decode.
 		p, skip, err := decodeEvent(&rep, ev, strict)
 		if err != nil {
 			return rep, err
@@ -196,17 +172,13 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 		}
 		observed[string(ev.Type)] = struct{}{}
 
-		// 2c. Route into the composite-keyed CycleState.
 		agent, cid, ok := cycleKey(p)
 		if !ok {
-			// Non-cycle keeper payload or a foreign type with no join key:
-			// counted as observed but not routed to a cycle.
 			continue
 		}
 		st := stateFor(states, agent, cid)
 		recordEvent(st, ev)
 
-		// 2d. Run the matching checkers over the (already-updated) state.
 		for _, c := range checkers {
 			if checkerMatches(c, string(ev.Type)) {
 				rep.Violations = append(rep.Violations, c.Check(ev, p, st)...)
@@ -214,8 +186,6 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 		}
 	}
 
-	// 3. Finalize (SR9 and any other end-of-corpus checker). Iterate states in
-	//    deterministic (agent, cycle) order so the report is reproducible.
 	ordered := sortedStates(states)
 	for _, c := range checkers {
 		if f, ok := c.(Finalizer); ok {
@@ -228,10 +198,6 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 	return rep, nil
 }
 
-// collectSorted scans the log and EventID-sorts the events (D9). ScanAfter
-// yields file order; a single log is written by multiple processes with
-// independent EventID generators, so we re-sort by the 16-byte UUIDv7 before
-// checking.
 func collectSorted(path string, since core.EventID) []core.Event {
 	//nolint:prealloc // ScanAfter streams an unbounded event count; no length is known up front.
 	var evs []core.Event
@@ -246,10 +212,6 @@ func collectSorted(path string, since core.EventID) []core.Event {
 	return evs
 }
 
-// schemaMismatchSkips records a schema_version mismatch on the report and
-// reports whether the event's checks must be skipped (compat window not
-// declared safe). A non-mismatch error (e.g. unknown type) is left to the
-// decode step's skip-vs-fail policy.
 func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 	err := core.ValidateEnvelopeSchemaVersion(ev)
 	if err == nil || !errors.Is(err, core.ErrSchemaVersionMismatch) {
@@ -262,9 +224,6 @@ func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 	return false
 }
 
-// decodeEvent decodes one event under the selected policy. In strict mode a
-// decode failure is a hard error; in observational mode an unknown type or a
-// malformed payload is counted on the report and skipped (EV-033).
 func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, skip bool, err error) {
 	if ev.Type == core.EventTypeRunStarted {
 		readPayload, derr := core.DecodeRunStartedForRead(ev)
@@ -299,9 +258,6 @@ func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, 
 	return pp, false, nil
 }
 
-// recordEvent runs Replay's central per-cycle bookkeeping for one routed
-// event: first-occurrence Seen tracking, the LastEventID watermark, and the
-// first-terminal latch.
 func recordEvent(st *CycleState, ev core.Event) {
 	et := ev.Type
 	if _, dup := st.Seen[et]; !dup {
@@ -313,10 +269,6 @@ func recordEvent(st *CycleState, ev core.Event) {
 	}
 }
 
-// neverObservedKeeperTypes is the registered-but-never-observed sweep
-// (events-design §4.6). Scoped to the session_keeper_* family — the taxonomy
-// this harness is responsible for; reporting the entire 169-type registry
-// would bury the signal. Reported, never a violation.
 func neverObservedKeeperTypes(observed map[string]struct{}) []core.EventType {
 	var out []core.EventType
 	for t := range core.AllPayloadSchemaVersions() {
@@ -330,12 +282,8 @@ func neverObservedKeeperTypes(observed map[string]struct{}) []core.EventType {
 	return out
 }
 
-// compositeKey builds the map key for a (agent_name, cycle_id) pair. The NUL
-// separator makes the join unambiguous even if either component contains a
-// separator character (events-design §4.4).
 func compositeKey(agent, cid string) string { return agent + "\x00" + cid }
 
-// stateFor returns the CycleState for (agent, cid), creating it on first sight.
 func stateFor(states map[string]*CycleState, agent, cid string) *CycleState {
 	k := compositeKey(agent, cid)
 	st, ok := states[k]
@@ -346,7 +294,6 @@ func stateFor(states map[string]*CycleState, agent, cid string) *CycleState {
 	return st
 }
 
-// sortedStates returns the states in deterministic (agent, cycle) order.
 func sortedStates(states map[string]*CycleState) []*CycleState {
 	out := make([]*CycleState, 0, len(states))
 	for _, s := range states {
@@ -361,7 +308,6 @@ func sortedStates(states map[string]*CycleState) []*CycleState {
 	return out
 }
 
-// checkerMatches reports whether checker c observes an event of type evType.
 func checkerMatches(c Checker, evType string) bool {
 	ts := c.Types()
 	if len(ts) == 0 {
@@ -375,21 +321,6 @@ func checkerMatches(c Checker, evType string) bool {
 	return false
 }
 
-// cycleKey extracts the composite (agent_name, cycle_id) join key from a decoded
-// payload (events-design §4.4). It is a type switch over the concrete keeper
-// cycle payloads that carry the join key: the four §8.20 interior events, the
-// §8.16 cycle payloads, and session_keeper_cycle_parked. ok is false for a
-// payload with no cycle scope (a foreign type or a non-cycle keeper event).
-//
-// A payload MISSING from this switch is silently dropped — it reaches no
-// CycleState and therefore no checker. That is how park events went unseen by
-// SR7/SR9 until 2026-08-15. Add an arm whenever a cycle-scoped payload is
-// added; the switch is the only thing routing events into a cycle.
-//
-// This used to try a pair of GetCycleID/GetAgentName mini-interfaces first and
-// call the type switch a fallback. No type in internal/core declares either
-// method, so the "preferred" path was unreachable and the fallback was the
-// whole mechanism. Removed rather than documented.
 func cycleKey(p core.EventPayload) (agent, cid string, ok bool) {
 	switch v := p.(type) {
 	case *core.SessionKeeperHandoffWrittenPayload:

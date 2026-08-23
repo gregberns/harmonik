@@ -1,8 +1,5 @@
 package keeper_test
 
-// A client-activity change during the handoff wait must not hide a handoff that
-// is already on disk. Real operator turns use the transcript gate instead.
-
 import (
 	"context"
 	"strings"
@@ -26,8 +23,6 @@ func TestCycler_ClientActivityDuringWait_DoesNotHideWrittenHandoff(t *testing.T)
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	// Attached only AFTER cycle entry: the first probe (entry Gate-7) is false so
-	// the cycle opens; every subsequent probe (the wait polls) is true.
 	var probes int
 	attachFn := func(string) bool { probes++; return probes > 1 }
 
@@ -44,7 +39,6 @@ func TestCycler_ClientActivityDuringWait_DoesNotHideWrittenHandoff(t *testing.T)
 	}
 
 	texts := spy.texts()
-	// The cycle OPENED (entry Gate-7 passed): the /session-handoff was injected.
 	if len(texts) == 0 {
 		t.Fatalf("cycle did not open — expected the /session-handoff inject before the wait")
 	}

@@ -8,8 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// validEvent returns a fully-populated Event with all required fields set to
-// non-zero values and all optional fields set to non-nil valid values.
 func validEvent(t *testing.T) Event {
 	t.Helper()
 

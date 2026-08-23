@@ -2,9 +2,6 @@ package core
 
 import "testing"
 
-// staleVerdictPayloadFixture returns a fully-populated StaleVerdictPayload
-// with all required fields set to valid non-empty values. Tests mutate
-// individual fields to probe Valid().
 func staleVerdictPayloadFixture(t *testing.T) StaleVerdictPayload {
 	t.Helper()
 	return StaleVerdictPayload{

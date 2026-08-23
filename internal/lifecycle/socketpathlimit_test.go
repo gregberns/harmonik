@@ -31,8 +31,6 @@ func TestValidateSocketPathLength_TooLong(t *testing.T) {
 	t.Parallel()
 
 	limit := sunPathMax()
-	// Build a path well beyond the limit; TestValidateSocketPathLength_ExactlyAtLimit
-	// covers the true boundary (len == limit vs len == limit-1).
 	long := "/" + strings.Repeat("a", limit) + "/.harmonik/daemon.sock"
 	err := ValidateSocketPathLength(long)
 	if err == nil {
@@ -87,7 +85,6 @@ func TestValidateSocketPathLength_AgreesWithTheKernel(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) }) //nolint:errcheck // cleanup error unactionable
 
-	// pathOfLength pads a filename under root so the whole path is exactly n bytes.
 	pathOfLength := func(n int) string {
 		prefix := root + "/"
 		if len(prefix) >= n {

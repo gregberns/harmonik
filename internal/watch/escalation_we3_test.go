@@ -1,14 +1,5 @@
 package watch_test
 
-// escalation_we3_test.go — RED→GREEN tests for WE3 (watch escalation engine).
-//
-// Three required assertions (task spec):
-//   (a) An IMMEDIATE-class event produces exactly ONE comms send escalation to the captain.
-//   (b) A PULL-DIGEST event produces ZERO comms sends and writes latest.json.
-//   (c) epic_completed (LEDGER-ONLY) produces ZERO watch escalations.
-//
-// Done-check: these tests must be GREEN.
-
 import (
 	"encoding/json"
 	"os"
@@ -19,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/watch"
 )
 
-// mockSender records calls to SendEscalation for assertion.
 type mockSender struct {
 	calls []string
 }
@@ -29,8 +19,6 @@ func (m *mockSender) SendEscalation(summary string) error {
 	return nil
 }
 
-// escalationFixtureDir builds a temp harmonik dir and returns (harmonikDir, eventsPath).
-// Reuses the ledgerFixtureDir helper shape from ledger_we2_test.go.
 func escalationFixtureDir(t *testing.T) (harmonikDir, eventsPath string) {
 	t.Helper()
 	root := t.TempDir()
@@ -42,16 +30,11 @@ func escalationFixtureDir(t *testing.T) (harmonikDir, eventsPath string) {
 	return harmonikDir, filepath.Join(eventsDir, "events.jsonl")
 }
 
-// escalationFixtureEvent builds a core.Event for the given type.
-// Reuses ledgerFixtureEvent logic.
 func escalationFixtureEvent(t *testing.T, evType string) core.Event {
 	t.Helper()
-	// Delegate to ledgerFixtureEvent which already handles UUIDv7 generation.
 	return ledgerFixtureEvent(t, evType)
 }
 
-// readDigestFile reads and unmarshals .harmonik/watch/latest.json.
-// Returns nil if the file does not exist.
 func readDigestFile(t *testing.T, harmonikDir string) *watch.WatchDigest {
 	t.Helper()
 	path := filepath.Join(harmonikDir, "watch", "latest.json")
@@ -91,7 +74,6 @@ func TestWatchEscalation_ImmediateProducesOneWake(t *testing.T) {
 		t.Fatalf("Process(decision_required): %v", err)
 	}
 
-	// Exactly one escalation send.
 	if len(sender.calls) != 1 {
 		t.Fatalf("want 1 escalation send, got %d: %v", len(sender.calls), sender.calls)
 	}
@@ -99,7 +81,6 @@ func TestWatchEscalation_ImmediateProducesOneWake(t *testing.T) {
 		t.Errorf("escalation body: got %q, want %q", sender.calls[0], summary)
 	}
 
-	// No additional sends on a second unrelated IMMEDIATE event.
 	ev2 := escalationFixtureEvent(t, "run_failed")
 	summary2 := "run hk-xyz failed after 3 iterations — no commit; captain must decide retry or close"
 	if err := engine.Process(ev2, summary2); err != nil {
@@ -135,12 +116,10 @@ func TestWatchEscalation_PullDigestNoWake(t *testing.T) {
 		t.Fatalf("Process(run_stale): %v", err)
 	}
 
-	// Zero comms sends — PULL-DIGEST never wakes the captain.
 	if len(sender.calls) != 0 {
 		t.Errorf("PULL-DIGEST must produce zero sends, got %d: %v", len(sender.calls), sender.calls)
 	}
 
-	// latest.json must be written with the flag in pending_flags.
 	d := readDigestFile(t, harmonikDir)
 	if d == nil {
 		t.Fatal("PULL-DIGEST: latest.json was not written")
@@ -175,13 +154,11 @@ func TestWatchEscalation_EpicCompletedLedgerOnly(t *testing.T) {
 		t.Fatalf("Process(epic_completed): %v", err)
 	}
 
-	// Zero escalation sends — LEDGER-ONLY events never wake the captain via the watch.
 	if len(sender.calls) != 0 {
 		t.Errorf("epic_completed must produce zero escalations, got %d: %v",
 			len(sender.calls), sender.calls)
 	}
 
-	// latest.json must NOT be written (LEDGER-ONLY does not accumulate to digest).
 	d := readDigestFile(t, harmonikDir)
 	if d != nil && len(d.PendingFlags) > 0 {
 		t.Errorf("epic_completed must not add to pending_flags, got %v", d.PendingFlags)
@@ -198,7 +175,6 @@ func TestWatchEscalation_ClassifyTable(t *testing.T) {
 		evType string
 		want   watch.EscalationClass
 	}{
-		// IMMEDIATE
 		{"decision_required", watch.EscalationImmediate},
 		{"run_failed", watch.EscalationImmediate},
 		{"review_bypassed", watch.EscalationImmediate},

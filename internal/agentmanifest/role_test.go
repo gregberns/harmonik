@@ -10,17 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/agentmanifest"
 )
 
-// A role folder holds a role's soul.md and operating.md so any agent can read and
-// follow them with no harmonik process involved. The type folder under
-// .harmonik/agents/<type>/ then keeps only the harmonik-side wiring and names the
-// role folder with a `role:` key.
-//
-// Every test here writes DIFFERENT content into the type folder than into the role
-// folder. That is deliberate: if Load silently ignored `role:` and kept reading the
-// type folder, these tests would still find a soul.md and an operating.md and would
-// pass on the wrong content. Asserting on which content came back is the only thing
-// that can fail.
-
 const roleManifest = `
 type: mytype
 cardinality: { min: 0, max: n }
@@ -78,10 +67,6 @@ const roleOperating = `## On wake
 - Do not overstep.
 `
 
-// makeRepo builds a realistic <root>/.harmonik/agents layout and returns the repo
-// root and the agents dir. The role path is resolved against the repo root, which
-// is the agents dir's grandparent, so a bare t.TempDir() as agentsDir would put the
-// role folder outside the temp dir entirely.
 func makeRepo(t *testing.T) (repoRoot, agentsDir string) {
 	t.Helper()
 	repoRoot = t.TempDir()
@@ -92,7 +77,6 @@ func makeRepo(t *testing.T) (repoRoot, agentsDir string) {
 	return repoRoot, agentsDir
 }
 
-// makeRoleFolder writes a role folder at <repoRoot>/roles/mytype.
 func makeRoleFolder(t *testing.T, repoRoot string) {
 	t.Helper()
 	dir := filepath.Join(repoRoot, "roles", "mytype")
@@ -106,7 +90,6 @@ func makeRoleFolder(t *testing.T, repoRoot string) {
 func TestLoad_RoleFolderSuppliesSoulAndOperating(t *testing.T) {
 	t.Parallel()
 	repoRoot, agentsDir := makeRepo(t)
-	// The type folder carries the OTHER content, so reading the wrong one is visible.
 	makeTypeFolder(t, agentsDir, roleManifest)
 	makeRoleFolder(t, repoRoot)
 
@@ -124,7 +107,6 @@ func TestLoad_RoleFolderSuppliesSoulAndOperating(t *testing.T) {
 	if tf.RoleDir != wantRoleDir {
 		t.Errorf("RoleDir = %q, want %q", tf.RoleDir, wantRoleDir)
 	}
-	// Dir still points at the type folder — the wiring did not move.
 	if tf.Dir != filepath.Join(agentsDir, "mytype") {
 		t.Errorf("Dir = %q, want the type folder", tf.Dir)
 	}
@@ -134,7 +116,6 @@ func TestLoad_NoRoleReadsTypeFolder(t *testing.T) {
 	t.Parallel()
 	repoRoot, agentsDir := makeRepo(t)
 	makeTypeFolder(t, agentsDir, validManifest)
-	// A role folder exists but the manifest does not name it, so it must be ignored.
 	makeRoleFolder(t, repoRoot)
 
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
@@ -152,7 +133,6 @@ func TestLoad_NoRoleReadsTypeFolder(t *testing.T) {
 func TestLoad_RoleFolderMissingNamesTheDirectoryItRead(t *testing.T) {
 	t.Parallel()
 	_, agentsDir := makeRepo(t)
-	// Type folder is complete; the role folder was never created.
 	makeTypeFolder(t, agentsDir, roleManifest)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
@@ -162,8 +142,6 @@ func TestLoad_RoleFolderMissingNamesTheDirectoryItRead(t *testing.T) {
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
 		t.Errorf("want ErrInvalid, got %v", err)
 	}
-	// The message must name the role folder. Pointing a reader at the type folder,
-	// which does have the file, is what makes this class of error waste time.
 	if !strings.Contains(err.Error(), filepath.Join("roles", "mytype")) {
 		t.Errorf("error does not name the role folder it failed to read: %v", err)
 	}

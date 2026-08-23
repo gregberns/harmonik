@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// agentinputevents_roundtrip_test.go — registry round-trip tests for the two
-// §8.21 agent-input acceptance event types (codename:agent-input-substrate, M2-1
-// T3).
-//
-// Both agent_input_acked and agent_input_stale are registered in
-// registerAgentInputEvents() (eventreg_hqwn59.go). These tests assert that the
-// global registry maps each type name to the correct payload constructor and
-// that a JSON round-trip decodes to the right concrete type — mirroring the
-// §8.16/§8.20 keeper round-trip idiom (keeperevents_roundtrip_test.go).
-
 func TestAgentInputEvents_Acked_RoundTrip(t *testing.T) {
 	want := &AgentInputAckedPayload{
 		RunID:         "run-abc",

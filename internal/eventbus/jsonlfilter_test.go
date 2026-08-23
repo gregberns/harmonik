@@ -1,18 +1,5 @@
 package eventbus_test
 
-// jsonlfilter_test.go — binding tests for hk-e61c3.5 (per-run-id JSONL filter).
-//
-// Spec ref: event-model.md §6.2 EV-020; POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 10.
-// Bead ref: hk-e61c3.5.
-//
-// These tests verify that Filter:
-//  1. Yields only events whose run_id matches the requested RunID, in file order.
-//  2. Skips events with a non-matching (or absent) run_id silently.
-//  3. Tolerates malformed JSONL lines (skips them with a warning; does not panic).
-//  4. Does NOT shard or modify the file (EV-020: single-file-per-project).
-//
-// Helper prefix: filterFixture (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"encoding/json"
 	"os"
@@ -27,13 +14,11 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// filterFixtureTempPath returns a temp file path inside t.TempDir().
 func filterFixtureTempPath(t *testing.T, name string) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), name)
 }
 
-// filterFixtureRunID creates a new random RunID for use in filter tests.
 func filterFixtureRunID(t *testing.T) core.RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -43,8 +28,6 @@ func filterFixtureRunID(t *testing.T) core.RunID {
 	return core.RunID(id)
 }
 
-// filterFixtureEvent builds a minimal valid core.Event with the given type and
-// optional runID. Pass a zero RunID to omit the field (nil pointer in output).
 func filterFixtureEvent(t *testing.T, evType string, runID *core.RunID) core.Event {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -63,8 +46,6 @@ func filterFixtureEvent(t *testing.T, evType string, runID *core.RunID) core.Eve
 	}
 }
 
-// filterFixtureWriteEvents marshals each event as a JSONL line into path using
-// JSONLWriter.
 func filterFixtureWriteEvents(t *testing.T, path string, events []core.Event) {
 	t.Helper()
 	w, err := eventbus.OpenJSONLWriter(path)
@@ -83,7 +64,6 @@ func filterFixtureWriteEvents(t *testing.T, path string, events []core.Event) {
 	}
 }
 
-// filterFixtureCollect drains an iter.Seq[core.Event] into a slice.
 func filterFixtureCollect(t *testing.T, seq func(yield func(core.Event) bool)) []core.Event {
 	t.Helper()
 	var out []core.Event
@@ -148,7 +128,6 @@ func TestFilterNoRunIDEventsSkipped(t *testing.T) {
 	path := filterFixtureTempPath(t, "events.jsonl")
 	runA := filterFixtureRunID(t)
 
-	// Write an event with no run_id (nil pointer — field omitted in JSON).
 	evNoRun := filterFixtureEvent(t, "daemon_started", nil)
 	filterFixtureWriteEvents(t, path, []core.Event{evNoRun})
 
@@ -166,7 +145,6 @@ func TestFilterMalformedLinesSkipped(t *testing.T) {
 	path := filterFixtureTempPath(t, "events.jsonl")
 	runA := filterFixtureRunID(t)
 
-	// Write: valid match, malformed, valid match.
 	evA1 := filterFixtureEvent(t, "run_started", &runA)
 	evA2 := filterFixtureEvent(t, "run_finished", &runA)
 
@@ -268,7 +246,6 @@ func TestFilterFileNotFound(t *testing.T) {
 	path := filterFixtureTempPath(t, "does_not_exist.jsonl")
 	runA := filterFixtureRunID(t)
 
-	// Must not panic.
 	got := filterFixtureCollect(t, eventbus.Filter(path, runA))
 	if len(got) != 0 {
 		t.Errorf("expected 0 events from missing file, got %d", len(got))

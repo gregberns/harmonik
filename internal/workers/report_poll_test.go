@@ -1,13 +1,5 @@
 package workers
 
-// report_poll_test.go — unit tests for the recurring worker-report poll (WR3).
-//
-// Intra-package (package workers) so the unexported pollWorkerReports sweep can
-// be exercised directly alongside the exported RunReportLoop ticker. The fake
-// runner / capture-emit helpers are shared with telemetry_test.go.
-//
-// Bead ref: WR3 (hk-jn3u).
-
 import (
 	"context"
 	"os/exec"
@@ -20,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// countingRunner is a fake CommandRunner that counts how many times Command is
-// invoked (i.e. how many CollectReport sweeps ran) while returning the canned
-// collector stdout so parsing + emit succeed. Safe for concurrent use.
 type countingRunner struct {
 	calls *int64
 }
@@ -34,8 +23,6 @@ func (r countingRunner) Command(ctx context.Context, name string, args ...string
 
 var _ tmux.CommandRunner = countingRunner{}
 
-// fixedRunnerFor returns a RunnerForWorker that always yields runner, regardless
-// of the worker's transport (so tests need not configure ssh plumbing).
 func fixedRunnerFor(runner tmux.CommandRunner) RunnerForWorker {
 	return func(w Worker) tmux.CommandRunner { return runner }
 }
@@ -81,7 +68,6 @@ func TestPollWorkerReports_NilRegistryNoOp(t *testing.T) {
 	}
 	emit := captureReportEmit(&captured)
 
-	// cfg with no workers + nil registry.
 	pollWorkerReports(context.Background(), Config{}, nil, fixedRunnerFor(runner), emit)
 
 	if got := atomic.LoadInt64(&calls); got != 0 {
@@ -189,22 +175,16 @@ func TestRunReportLoop_TicksAndEmits(t *testing.T) {
 		return nil
 	}
 
-	// workers.yaml report_interval_seconds is whole-seconds, so drive the loop
-	// with an explicitly short (10ms) interval via runReportLoopWithInterval so a
-	// couple of ticks land well within the test deadline.
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
 	reg := NewRegistry(cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		// Idle (InFlight==0) so the loop ticks at the slow interval; pass the same
-		// short interval for fast so the test is cadence-agnostic.
 		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), emit, 10*time.Millisecond, 10*time.Millisecond)
 		close(done)
 	}()
 
-	// Wait until at least one sweep emitted, bounded.
 	deadline := time.After(2 * time.Second)
 	for {
 		mu.Lock()
@@ -238,10 +218,8 @@ func TestRunReportLoop_TicksAndEmits(t *testing.T) {
 // no goroutine leak) when the registry is nil or no worker is enabled. With a nil
 // registry RunReportLoop must not block, so a direct (non-goroutine) call returns.
 func TestRunReportLoop_OffByDefault(t *testing.T) {
-	// nil registry → immediate return.
 	RunReportLoop(context.Background(), Config{}, nil, fixedRunnerFor(countingRunner{calls: new(int64)}), nil)
 
-	// registry present but worker disabled → immediate return.
 	w := reportTestWorker()
 	w.Enabled = false
 	cfg := Config{Version: 1, Workers: []Worker{w}}

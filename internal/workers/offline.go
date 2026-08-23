@@ -1,14 +1,5 @@
 package workers
 
-// offline.go — worker_offline event payload and emission helpers
-// (remote-substrate B11).
-//
-// Emitted when an SSH connection failure (ssh exit code 255) is detected
-// mid-dispatch (spawn-time code-sync) or mid-run (liveness probes). The
-// worker is disabled in-memory; the run recovers via run_stale.
-//
-// Bead ref: hk-rs-b11-offline-dh57.
-
 import (
 	"context"
 	"encoding/json"

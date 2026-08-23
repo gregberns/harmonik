@@ -1,49 +1,10 @@
 package handlercontract_test
 
-// redaction_hc031_test.go — sensors for HC-031 (common-prefix redaction rule).
-//
-// Spec refs: specs/handler-contract.md §4.7.HC-031; bead hk-8i31.38.
-//
-// Helper prefix: redactionHC031 (per implementer-protocol.md
-// §Helper-prefix discipline; distinct from redactionFixture used by hk-8i31.81).
-//
-// What this file provides:
-//
-//   1. TestRedactionHC031_SecretNamedFieldsAreRedacted — RedactByFieldName
-//      replaces every field whose name matches the HC-031 regex with
-//      RedactedSentinel.
-//
-//   2. TestRedactionHC031_SafeFieldsArePreserved — RedactByFieldName does NOT
-//      modify fields whose names do not match the HC-031 regex (no over-redaction).
-//
-//   3. TestRedactionHC031_MixedPayloadPartialRedaction — RedactByFieldName
-//      redacts secret-named fields and preserves safe fields in the same map.
-//
-//   4. TestRedactionHC031_NilPayloadReturnsNil — RedactByFieldName handles a
-//      nil input map without panicking.
-//
-//   5. TestRedactionHC031_EmptyPayloadReturnsEmpty — RedactByFieldName returns
-//      an empty (non-nil) map for an empty input map.
-//
-//   6. TestRedactionHC031_ReturnIsNewMap — RedactByFieldName does NOT mutate
-//      the input map; the returned map is a distinct allocation.
-//
-//   7. TestRedactionHC031_SentinelMatchesFixture — RedactedSentinel equals the
-//      fixture constant defined in redaction_hc028_test.go.
-//
-//   8. TestRedactionHC031_CaseInsensitiveMatch — upper-case and mixed-case
-//      variants of the trigger words are redacted (regex is case-insensitive per
-//      §4.7.HC-031).
-
 import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — secret-named fields are redacted
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRedactionHC031_SecretNamedFieldsAreRedacted verifies that every field
 // name matching the HC-031 common-prefix regex is replaced with
@@ -80,10 +41,6 @@ func TestRedactionHC031_SecretNamedFieldsAreRedacted(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — safe fields are NOT redacted (no over-redaction)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRedactionHC031_SafeFieldsArePreserved verifies that field names that do
 // NOT match the HC-031 regex are copied unchanged into the output map.
 //
@@ -119,10 +76,6 @@ func TestRedactionHC031_SafeFieldsArePreserved(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — mixed payload: partial redaction
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRedactionHC031_MixedPayloadPartialRedaction verifies that a map
 // containing both secret-named and safe-named fields is handled correctly:
 // secret-named fields are replaced with RedactedSentinel and safe-named fields
@@ -142,7 +95,6 @@ func TestRedactionHC031_MixedPayloadPartialRedaction(t *testing.T) {
 
 	got := handlercontract.RedactByFieldName(payload)
 
-	// Secret-named keys MUST be redacted.
 	for _, secretKey := range []string{"token", "password"} {
 		v, ok := got[secretKey]
 		if !ok {
@@ -154,7 +106,6 @@ func TestRedactionHC031_MixedPayloadPartialRedaction(t *testing.T) {
 		}
 	}
 
-	// Safe keys MUST retain original values.
 	for _, tc := range []struct {
 		key  string
 		want any
@@ -173,10 +124,6 @@ func TestRedactionHC031_MixedPayloadPartialRedaction(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — nil and empty inputs
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRedactionHC031_NilPayloadReturnsNil verifies that RedactByFieldName
 // returns nil (not a panic) when given a nil map.
@@ -205,10 +152,6 @@ func TestRedactionHC031_EmptyPayloadReturnsEmpty(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — immutability: input map is not modified
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRedactionHC031_ReturnIsNewMap verifies that RedactByFieldName does not
 // mutate the input map. The caller retains the original payload unchanged.
 //
@@ -220,32 +163,24 @@ func TestRedactionHC031_ReturnIsNewMap(t *testing.T) {
 		"secret": "original-value",
 		"run_id": "run-xyz",
 	}
-	// Copy original values for comparison after the call.
 	originalSecret := original["secret"]
 
 	got := handlercontract.RedactByFieldName(original)
 
-	// The returned map must differ from the input.
 	if &got == &original {
 		t.Error("RedactByFieldName returned the same map pointer; input MUST NOT be mutated")
 	}
 
-	// The original map's "secret" field must still hold its original value.
 	if original["secret"] != originalSecret {
 		t.Errorf("RedactByFieldName mutated input map: original[\"secret\"] = %v, want %v",
 			original["secret"], originalSecret)
 	}
 
-	// The returned map must carry the redacted value.
 	if got["secret"] != handlercontract.RedactedSentinel {
 		t.Errorf("RedactByFieldName result[\"secret\"] = %v, want %q",
 			got["secret"], handlercontract.RedactedSentinel)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — sentinel equality with fixture constant
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRedactionHC031_SentinelMatchesFixture verifies that
 // handlercontract.RedactedSentinel equals the fixture constant declared in
@@ -266,10 +201,6 @@ func TestRedactionHC031_SentinelMatchesFixture(t *testing.T) {
 		)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-031 — case-insensitive regex matching
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRedactionHC031_CaseInsensitiveMatch verifies that upper-case and
 // mixed-case variants of the HC-031 trigger words are redacted.

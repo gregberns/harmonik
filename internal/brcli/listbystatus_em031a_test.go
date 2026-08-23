@@ -9,29 +9,22 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// listByStatusFixtureOpenJSON returns a canonical `br list --status open --json`
-// response with one open bead.
 func listByStatusFixtureOpenJSON() string {
 	return `{"issues":[` +
 		`{"id":"hk-abc.1","title":"Open work item","description":"Waiting.","status":"open","priority":2,"issue_type":"task","labels":[],"dependency_count":0,"dependent_count":0}` +
 		`]}`
 }
 
-// listByStatusFixtureEmptyJSON returns a br list response with no matching beads.
 func listByStatusFixtureEmptyJSON() string {
 	return `{"issues":[]}`
 }
 
-// listByStatusFixtureMissingIssueTypeJSON returns a response with a missing
-// issue_type field (schema violation).
 func listByStatusFixtureMissingIssueTypeJSON() string {
 	return `{"issues":[` +
 		`{"id":"hk-abc.1","title":"Open work","description":"","status":"open","priority":2,"issue_type":"","labels":[],"dependency_count":0,"dependent_count":0}` +
 		`]}`
 }
 
-// listByStatusFixtureMissingTitleJSON returns a response with a missing title
-// field (schema violation).
 func listByStatusFixtureMissingTitleJSON() string {
 	return `{"issues":[` +
 		`{"id":"hk-abc.1","title":"","description":"","status":"open","priority":2,"issue_type":"task","labels":[],"dependency_count":0,"dependent_count":0}` +
@@ -196,7 +189,6 @@ func TestEM031a_ListBeadsByStatus_MissingTitle(t *testing.T) {
 func TestEM031a_ListBeadsByStatus_EmptyStatus(t *testing.T) {
 	t.Parallel()
 
-	// Use /nonexistent — if the argument guard fires before exec, this never runs.
 	adapter, err := brcli.New("/nonexistent/br")
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -233,15 +225,6 @@ func TestEM031a_ListBeadsByStatus_ExecFailure(t *testing.T) {
 func TestEM031a_ListBeadsByStatus_ArgsForwardedToSubprocess(t *testing.T) {
 	t.Parallel()
 
-	// Use the echo-args binary to capture what flags are passed.
-	// The mock will return non-JSON output, so we can't check records;
-	// we verify the invocation via the exit code (non-zero → ErrBrListByStatusFailed),
-	// but more importantly the args are captured.
-	//
-	// To properly test forwarding without JSON response we use an echo binary
-	// and check the error to confirm it got executed (exec works, br logic rejects).
-	//
-	// Simpler: use a mock that accepts the expected args and returns valid JSON.
 	const status = "blocked"
 	path := brcliFixtureMockBinary(t, listByStatusFixtureEmptyJSON(), "", 0)
 	adapter, err := brcli.New(path)
@@ -253,7 +236,6 @@ func TestEM031a_ListBeadsByStatus_ArgsForwardedToSubprocess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBeadsByStatus(blocked): unexpected error: %v", err)
 	}
-	// The mock ignores args and returns empty; just confirm no error.
 	if len(records) != 0 {
 		t.Errorf("len(records) = %d; want 0", len(records))
 	}

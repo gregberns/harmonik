@@ -5,109 +5,33 @@ import (
 	"path/filepath"
 )
 
-// daemonpaths.go — per-project file surface constants for the daemon.
-//
-// PL-004 enumerates every file or directory under .harmonik/ that the daemon
-// reads or writes. All path helpers in the lifecycle package MUST be derived
-// from the constants in this file. The daemon MUST NOT access harmonik-owned
-// state outside this surface.
-//
-// Spec ref: process-lifecycle.md §4.1 PL-004 — "Daemon owns per-project files
-// under .harmonik/".
-
-// harmonikSubdir is the fixed name of the per-project state directory.
 const harmonikSubdir = ".harmonik"
 
-// Per-project file paths (relative to the .harmonik/ directory).
 const (
-	// pidfileRelPath is the relative path of the per-project daemon PID file
-	// within the .harmonik directory.
-	//
-	// Spec ref: process-lifecycle.md §4.1 PL-002, PL-002a, PL-002b.
 	pidfileRelPath = "daemon.pid"
 
-	// socketRelPath is the relative path of the Unix-domain socket.
-	//
-	// Spec ref: process-lifecycle.md §4.1 PL-003, PL-003a, PL-003b.
 	socketRelPath = "daemon.sock"
 
-	// instanceIDRelPath is the relative path of the per-process daemon_instance_id
-	// (UUIDv7) written at PL-005 step 0.
-	//
-	// Spec ref: process-lifecycle.md §4.2 PL-005 step 0.
 	instanceIDRelPath = "daemon.instance-id"
 
-	// upgradingRelPath is the relative path of the durable upgrade-intent
-	// marker written by PL-027(iv) before execve.
-	//
-	// Spec ref: process-lifecycle.md §4.9 PL-027(iv);
-	//           operator-nfr.md §4.6 ON-020a.
 	upgradingRelPath = "daemon.upgrading"
 
-	// stateRelPath is the relative path of the pause-state durable marker.
-	// Content is owned by ON-030a; PL reads this at PL-005 step 8a.
-	//
-	// Spec ref: operator-nfr.md §4.7 ON-030a; process-lifecycle.md §4.2 PL-005
-	//           step 8a.
 	stateRelPath = "daemon.state"
 
-	// eventIDHWMRelPath is the relative path of the event-ID high-water-mark
-	// file within the .harmonik directory.
-	//
-	// Spec ref: event-model.md §4.1.
 	eventIDHWMRelPath = "event_id_hwm"
 
-	// eventsSubdir is the subdirectory under .harmonik/ holding the JSONL event
-	// log, dead-letter log, and per-consumer spill files.
-	//
-	// Spec ref: event-model.md §6.2.
 	eventsSubdir = "events"
 
-	// beadsIntentsSubdir is the subdirectory under .harmonik/ holding the
-	// per-operation intent files written by the Beads CLI adapter.
-	//
-	// Spec ref: beads-integration.md §4.10 BI-030; beads-integration.md §6.2.
 	beadsIntentsSubdir = "beads-intents"
 
-	// reconciliationLocksSubdir is the subdirectory under .harmonik/ holding
-	// per-target-run reconciliation lock files. Written by the reconciliation
-	// manager (RC-002a); swept by the orphan sweep (PL-006).
-	//
-	// Spec ref: reconciliation/spec.md §4.1 RC-002a.
 	reconciliationLocksSubdir = "reconciliation-locks"
 
-	// reconciliationSubdir is the subdirectory under .harmonik/ holding
-	// per-investigator evidence directories. Each investigator run gets its own
-	// subdirectory at .harmonik/reconciliation/<investigator_run_id>/.
-	//
-	// Spec ref: reconciliation/spec.md §4.4 RC-019; reconciliation/spec.md §4.5 RC-022.
 	reconciliationSubdir = "reconciliation"
 
-	// reconciliationAttemptsSubdir is the subdirectory under .harmonik/ holding
-	// per-target-run Cat 3b retry attempt counter files. Each target run's
-	// counter is stored at .harmonik/reconciliation-attempts/<target_run_id>.json,
-	// written atomically per WM-026 by the lifecycle I/O layer.
-	//
-	// Spec ref: reconciliation/spec.md §4.5 RC-026a.
 	reconciliationAttemptsSubdir = "reconciliation-attempts"
 
-	// beadsOwnedSubdir is the subdirectory under .harmonik/ holding per-bead
-	// ownership sentinel files. A file at .harmonik/beads-owned/<bead-id>
-	// records that THIS project's daemon has ever successfully claimed that bead.
-	// The sentinel outlives the BI-030 claim intent file (which is deleted on
-	// claim success) and provides an independent provenance signal for the PL-006
-	// sixth-bullet orphan sweep. Sentinel files are created on successful
-	// ClaimBead and deleted on successful CloseBead, ReopenBead, or ResetBead.
-	//
-	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet (provenance OR clause);
-	// §4.4 PL-006a (project_hash discipline).
-	// Bead ref: hk-11xkn (audit-log actor=project_hash provenance followup).
 	beadsOwnedSubdir = "beads-owned"
 
-	// wipCaptureSubdir is the leaf subdirectory name under an investigator's
-	// evidence directory for WIP capture files.
-	//
-	// Spec ref: reconciliation/spec.md §4.4 RC-019.
 	wipCaptureSubdir = "wip-capture"
 )
 

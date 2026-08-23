@@ -1,10 +1,5 @@
 package daemon
 
-// export_extpkg_runmerge_lifecycle_test.go — thin re-exports of the already-
-// extracted internal/runmerge and internal/lifecycle packages (RT19.15c split of
-// export_test.go). package daemon test file; see export_test.go header for the
-// seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 

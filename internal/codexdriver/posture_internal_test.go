@@ -1,12 +1,5 @@
 package codexdriver
 
-// White-box tests for the hk-5h759 headless crew-orchestration posture: the
-// driver must stamp Options.Sandbox + Options.ApprovalPolicy onto every
-// thread/start AND thread/resume handshake, and OMIT them (leaving codex's
-// default posture) when Options carries none (NFR7). The twin echoes the
-// received posture as a stderr marker (emitPostureMarker); these ride the same
-// twin re-exec harness as driver_test.go / resume_internal_test.go.
-
 import (
 	"context"
 	"os"
@@ -17,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// drivePosture spawns a twin with the given posture Options and resume id,
-// drives one submission to force the handshake, winds the session down, and
-// returns the twin's stderr tail (which carries the posture marker).
 func drivePosture(t *testing.T, opts Options, resumeID string) string {
 	t.Helper()
 	sub, ok := NewCodexSubstrate(opts).(*codexSubstrate)

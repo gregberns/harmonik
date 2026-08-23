@@ -1,24 +1,5 @@
 package shared
 
-// launchctx.go — LaunchCtx / LaunchArtifacts, the universal per-launch DTO
-// threaded through the daemon's LaunchPort seam (internal/daemon/runports.go).
-//
-// This type used to be called claudeRunCtx and lived in
-// internal/daemon/claudelaunchspec.go, which mis-stated its scope: it is NOT a
-// claude type. It is the parameter type of LaunchPort.BuildSpec, and
-// buildCodexRoutedLaunchSpec (internal/daemon/harnessregistry.go) feeds the very
-// same value to the codex and pi harnesses. Five of its fields — Provider,
-// APIKeyEnv, APIKeyFile, BaseURL, API — are read only on the pi path and are
-// never looked at by the claude builder.
-//
-// It lives in shared, not in any one harness impl, precisely so that no harness
-// has to import a sibling to be launched: the daemon fills the DTO in, each
-// impl reads the subset it understands.
-//
-// Origin: internal/daemon/claudelaunchspec.go lines 47–231, moved verbatim
-// (field spellings exported, doc comments otherwise unchanged) by
-// plans/2026-07-21-p2-extraction/E1b-claude.md unit E1b-prep.
-
 import (
 	"encoding/json"
 

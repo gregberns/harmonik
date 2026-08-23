@@ -278,7 +278,6 @@ func TestSH030_ExpandMatrix_SingleKey(t *testing.T) {
 		t.Fatalf("ExpandMatrix() returned %d cells; want 2", len(cells))
 	}
 
-	// Sorted by synthetic name: my-scenario[env=prod] < my-scenario[env=staging]
 	if cells[0].Name != "my-scenario[env=prod]" {
 		t.Errorf("cells[0].Name = %q; want %q", cells[0].Name, "my-scenario[env=prod]")
 	}
@@ -286,7 +285,6 @@ func TestSH030_ExpandMatrix_SingleKey(t *testing.T) {
 		t.Errorf("cells[1].Name = %q; want %q", cells[1].Name, "my-scenario[env=staging]")
 	}
 
-	// Template substitution applied to description.
 	if cells[0].Description != "running on prod" {
 		t.Errorf("cells[0].Description = %q; want %q", cells[0].Description, "running on prod")
 	}
@@ -294,7 +292,6 @@ func TestSH030_ExpandMatrix_SingleKey(t *testing.T) {
 		t.Errorf("cells[1].Description = %q; want %q", cells[1].Description, "running on staging")
 	}
 
-	// Matrix field cleared on each cell.
 	for i, c := range cells {
 		if c.Matrix != nil {
 			t.Errorf("cells[%d].Matrix should be nil after expansion; got %v", i, c.Matrix)
@@ -327,7 +324,6 @@ func TestSH030_ExpandMatrix_TwoKeys(t *testing.T) {
 		t.Fatalf("ExpandMatrix() returned %d cells; want 4", len(cells))
 	}
 
-	// Verify sorted order: t[env=a,ver=1] < t[env=a,ver=2] < t[env=b,ver=1] < t[env=b,ver=2]
 	wantNames := []string{
 		"t[env=a,ver=1]",
 		"t[env=a,ver=2]",
@@ -340,7 +336,6 @@ func TestSH030_ExpandMatrix_TwoKeys(t *testing.T) {
 		}
 	}
 
-	// Verify description substitution for first and last cells.
 	if cells[0].Description != "a/1" {
 		t.Errorf("cells[0].Description = %q; want %q", cells[0].Description, "a/1")
 	}

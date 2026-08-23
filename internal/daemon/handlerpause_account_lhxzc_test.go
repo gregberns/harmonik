@@ -1,17 +1,5 @@
 package daemon_test
 
-// handlerpause_account_lhxzc_test.go — tests for per-account pause within a
-// handler type (hk-lhxzc).
-//
-// Acceptance criteria:
-//   - PauseAccount / IsAccountPaused / ResumeAccount basic round-trip
-//   - Account-level pause does not affect handler-level IsPaused
-//   - Multiple accounts for the same handler type are independent
-//   - Persist → load round-trip for account-level state (schema v2)
-//   - v1 backwards compat: loading a v1 paused handler seeds the anonymous account
-//
-// Bead ref: hk-lhxzc.
-
 import (
 	"context"
 	"encoding/json"
@@ -24,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 func newAccountTestController(t *testing.T) *daemon.HandlerPauseController {
 	t.Helper()
@@ -57,10 +41,6 @@ func makeAccountCause(runID, beadID string) core.HandlerPauseCause {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Basic: PauseAccount / IsAccountPaused
-// ---------------------------------------------------------------------------
-
 func TestAccountPause_Basic(t *testing.T) {
 	t.Parallel()
 
@@ -78,15 +58,10 @@ func TestAccountPause_Basic(t *testing.T) {
 		t.Error("IsAccountPaused should be true after PauseAccount")
 	}
 
-	// Handler-level pause must NOT be set — per-account pause is independent.
 	if ctrl.IsPaused(at) {
 		t.Error("handler-level IsPaused must not be affected by per-account pause")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Idempotent: second PauseAccount on same account is a no-op
-// ---------------------------------------------------------------------------
 
 func TestAccountPause_Idempotent(t *testing.T) {
 	t.Parallel()
@@ -100,7 +75,6 @@ func TestAccountPause_Idempotent(t *testing.T) {
 	if err := ctrl.PauseAccount(ctx, at, acct, cause, nil); err != nil {
 		t.Fatalf("first PauseAccount: %v", err)
 	}
-	// Second call must not error.
 	if err := ctrl.PauseAccount(ctx, at, acct, cause, nil); err != nil {
 		t.Fatalf("second PauseAccount (idempotent): %v", err)
 	}
@@ -108,10 +82,6 @@ func TestAccountPause_Idempotent(t *testing.T) {
 		t.Error("IsAccountPaused should still be true")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// ResumeAccount: clears account pause
-// ---------------------------------------------------------------------------
 
 func TestAccountPause_Resume(t *testing.T) {
 	t.Parallel()
@@ -138,10 +108,6 @@ func TestAccountPause_Resume(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ResumeAccount on a non-paused account returns ErrHandlerNotPaused
-// ---------------------------------------------------------------------------
-
 func TestAccountPause_ResumeNotPaused(t *testing.T) {
 	t.Parallel()
 
@@ -155,10 +121,6 @@ func TestAccountPause_ResumeNotPaused(t *testing.T) {
 		t.Fatal("expected error when resuming a non-paused account, got nil")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Multiple accounts are independent
-// ---------------------------------------------------------------------------
 
 func TestAccountPause_MultiAccount(t *testing.T) {
 	t.Parallel()
@@ -182,7 +144,6 @@ func TestAccountPause_MultiAccount(t *testing.T) {
 		t.Error("acct2 should not be paused (independent)")
 	}
 
-	// Resume acct1 — acct2 remains unaffected.
 	if err := ctrl.ResumeAccount(ctx, at, acct1, core.HandlerResumedByOperator); err != nil {
 		t.Fatalf("ResumeAccount acct1: %v", err)
 	}
@@ -190,10 +151,6 @@ func TestAccountPause_MultiAccount(t *testing.T) {
 		t.Error("acct1 should be live after Resume")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Persist → load round-trip for account-level state (schema v2)
-// ---------------------------------------------------------------------------
 
 func TestAccountPause_PersistRoundTrip(t *testing.T) {
 	t.Parallel()
@@ -203,7 +160,6 @@ func TestAccountPause_PersistRoundTrip(t *testing.T) {
 	at := core.AgentTypeClaudeCode
 	acct := daemon.AccountID("account-persist")
 
-	// Write side.
 	ctrl1 := newAccountPersistController(t, dir)
 	cause := makeAccountCause("run-persist-001", "hk-p001")
 	inFlight := []daemon.InFlightBeadRecord{
@@ -213,14 +169,12 @@ func TestAccountPause_PersistRoundTrip(t *testing.T) {
 		t.Fatalf("PauseAccount: %v", err)
 	}
 
-	// Verify file written.
 	statePath := filepath.Join(dir, "handler-state.json")
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("handler-state.json not written: %v", err)
 	}
 
-	// Verify schema v2 in the file.
 	var top map[string]interface{}
 	if err := json.Unmarshal(raw, &top); err != nil {
 		t.Fatalf("unmarshal state file: %v", err)
@@ -229,7 +183,6 @@ func TestAccountPause_PersistRoundTrip(t *testing.T) {
 		t.Errorf("expected schema_version 2 in written file, got %v", top["schema_version"])
 	}
 
-	// Read side (simulated restart).
 	bus := eventbus.NewBusImpl()
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("bus.Seal: %v", err)
@@ -244,17 +197,12 @@ func TestAccountPause_PersistRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// v1 backwards compat: v1 paused handler loads anonymous account
-// ---------------------------------------------------------------------------
-
 func TestAccountPause_V1BackwardsCompat(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	// Write a v1 schema file with a paused claude-code handler.
 	v1State := map[string]interface{}{
 		"schema_version": 1,
 		"handlers": map[string]interface{}{
@@ -288,20 +236,14 @@ func TestAccountPause_V1BackwardsCompat(t *testing.T) {
 
 	at := core.AgentTypeClaudeCode
 
-	// Handler-level pause must be restored (existing behaviour).
 	if !ctrl.IsPaused(at) {
 		t.Error("handler-level IsPaused should be true after loading v1 paused handler")
 	}
 
-	// Anonymous account must also be paused (HP-072 v1 compat).
 	if !ctrl.IsAccountPaused(at, daemon.AnonymousAccountID) {
 		t.Error("anonymous account should be paused when loading v1 paused handler (HP-072 backwards compat)")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Account-level pause survives ResumeAccount for other accounts
-// ---------------------------------------------------------------------------
 
 func TestAccountPause_IndependentResume(t *testing.T) {
 	t.Parallel()
@@ -325,7 +267,6 @@ func TestAccountPause_IndependentResume(t *testing.T) {
 		t.Fatalf("PauseAccount B: %v", err)
 	}
 
-	// Resume A — B must remain paused.
 	if err := ctrl.ResumeAccount(ctx, at, acctA, core.HandlerResumedByOperator); err != nil {
 		t.Fatalf("ResumeAccount A: %v", err)
 	}
@@ -337,7 +278,6 @@ func TestAccountPause_IndependentResume(t *testing.T) {
 		t.Error("account B should still be paused (independent)")
 	}
 
-	// Reload from disk — B still paused.
 	bus := eventbus.NewBusImpl()
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("bus.Seal: %v", err)

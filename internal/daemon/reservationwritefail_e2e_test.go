@@ -48,9 +48,6 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
 
-	// Take write access away from the queues directory, so the atomic-write
-	// sequence inside the reservation fails. Everything else about the tick is
-	// normal: the item is eligible, a slot is free, the disk gate is open.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("mkdir queues: %v", err)
@@ -85,14 +82,8 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		WorkerRegistry:   reg,
 		MaxConcurrent:    1,
 		NoAutoPull:       true,
-		// Report free disk far above the watermark, or the disk-low gate holds
-		// the tick before selection and the test passes without ever reaching
-		// the reservation it claims to check.
 	})
 
-	// Comfortably longer than waitFor's own 20 s deadline, so a starved loop
-	// reports as a named timeout on the condition it missed rather than as a
-	// cancelled context with no explanation.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -102,39 +93,10 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Anchor on the work the assertions describe, then force further iterations.
-	//
-	// This replaces a 1200 ms sleep described as "several poll ticks".
-	// workloopPollInterval is 2 s, so 1200 ms was less than ONE tick: the loop
-	// was still inside its first post-failure sleep when the assertions ran, and
-	// every negative assertion below passed because nothing had been given time
-	// to happen. A test whose negative assertions cannot fail is not a weak
-	// test, it is not a test.
-	//
-	// The event is the positive anchor. It is emitted only after the loop has
-	// selected the item, minted a RunID, attempted the reservation and taken the
-	// write-failed branch — so once it exists, one full claim opportunity has
-	// demonstrably come and gone without a claim.
 	waitFor(t, "the reservation write to fail and be reported", func() bool {
 		return len(collectEventsByType(bus, string(core.EventTypeInfrastructureUnavailable))) > 0
 	})
 
-	// Further iterations are driven, not waited for. workloopSleep returns as
-	// soon as the queue-submit wake channel fires, so waking the store steps the
-	// loop immediately instead of paying 2 s of wall clock per tick. Waiting for
-	// the buffered wake to drain is what makes the step observable: the channel
-	// empties only when the loop has taken the signal.
-	//
-	// Five iterations, because they are what make the once-per-queue report
-	// bound below observable. Every tick re-selects the item and is refused
-	// again at the quarantine check, so reportQueueWriteError is reached six
-	// times in all and its dedup map suppresses five. Under the sleep this
-	// replaces only tick 1 ran, and "exactly one event" was satisfied by there
-	// having been only one chance to emit.
-	//
-	// The per-tick claim check is a cheap positive control on the loop rather
-	// than a search: nothing varies across ticks 2 to 6, because the quarantine
-	// is sticky and each tick takes the identical branch.
 	wakeC := qs.WakeCh()
 	for tick := range 5 {
 		qs.Wake()
@@ -167,10 +129,6 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		t.Errorf("item carries run_id %v; no run was started", *item.RunID)
 	}
 
-	// QM-001 requires the failure to be loud. It states three MUSTs and no
-	// count, so the once-per-queue bound below is not QM-001 — it is the flood
-	// control reportQueueWriteError documents for itself, and it is load-bearing
-	// here because the loop really does reach that reporter on every tick.
 	var infra []stubEmittedEvent
 	var degradedCount int
 	for _, evt := range bus.allEvents() {

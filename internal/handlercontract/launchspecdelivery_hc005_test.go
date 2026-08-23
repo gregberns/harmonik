@@ -13,11 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// Tests for LaunchSpec delivery per handler-contract.md §4.2 HC-005.
-//
-// Helper prefix: deliveryFixture (bead hk-8i31.5).
-
-// deliveryFixtureValidSpec returns a minimal valid LaunchSpec for delivery tests.
 func deliveryFixtureValidSpec(t *testing.T) *handlercontract.LaunchSpec {
 	t.Helper()
 	workflowID, err := core.NewWorkflowID("0196f200-0000-7000-8000-000000000002")
@@ -40,10 +35,6 @@ func deliveryFixtureValidSpec(t *testing.T) *handlercontract.LaunchSpec {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-005: Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC005_MaxStdinBytesIs1MiB verifies that LaunchSpecMaxStdinBytes equals 1 MiB.
 func TestHC005_MaxStdinBytesIs1MiB(t *testing.T) {
 	t.Parallel()
@@ -62,10 +53,6 @@ func TestHC005_FileArgConstant(t *testing.T) {
 		t.Errorf("HC-005: LaunchSpecFileArg = %q; want \"--launch-spec\"", handlercontract.LaunchSpecFileArg)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MarshalLaunchSpec
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC005_MarshalValidSpec verifies that a valid spec marshals without error.
 func TestHC005_MarshalValidSpec(t *testing.T) {
@@ -102,10 +89,6 @@ func TestHC005_MarshalInvalidSpecReturnsError(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadLaunchSpecFromArgs — stdin path
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC005_ReadFromStdinRoundTrip verifies the stdin delivery path:
 // marshal a spec, pipe it as stdin, ReadLaunchSpecFromArgs returns equal spec.
 func TestHC005_ReadFromStdinRoundTrip(t *testing.T) {
@@ -117,7 +100,6 @@ func TestHC005_ReadFromStdinRoundTrip(t *testing.T) {
 		t.Fatalf("HC-005: MarshalLaunchSpec: %v", err)
 	}
 
-	// args has no --launch-spec → reads from stdin (the bytes.Reader).
 	decoded, err := handlercontract.ReadLaunchSpecFromArgs([]string{}, bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("HC-005: ReadLaunchSpecFromArgs(stdin): %v", err)
@@ -147,10 +129,6 @@ func TestHC005_ReadFromStdinInvalidJSONReturnsError(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReadLaunchSpecFromArgs — file-path path
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC005_ReadFromFileRoundTrip verifies the --launch-spec file delivery path:
 // write spec to a temp file, pass --launch-spec <path> in args, read it back.
 func TestHC005_ReadFromFileRoundTrip(t *testing.T) {
@@ -162,14 +140,12 @@ func TestHC005_ReadFromFileRoundTrip(t *testing.T) {
 		t.Fatalf("HC-005: MarshalLaunchSpec: %v", err)
 	}
 
-	// Write JSON to a temp file.
 	specPath := filepath.Join(t.TempDir(), "launchspec.json")
 	//nolint:gosec // G306: 0644 is fine for a test file
 	if err := os.WriteFile(specPath, data, 0o644); err != nil {
 		t.Fatalf("HC-005: WriteFile: %v", err)
 	}
 
-	// Pass --launch-spec <path> in args. Stdin is empty (should not be read).
 	args := []string{"--launch-spec", specPath}
 	decoded, err := handlercontract.ReadLaunchSpecFromArgs(args, bytes.NewReader(nil))
 	if err != nil {
@@ -237,12 +213,10 @@ func TestHC005_SizeThresholdDeterminesDeliveryMode(t *testing.T) {
 		t.Fatalf("HC-005: MarshalLaunchSpec: %v", err)
 	}
 
-	// A normal LaunchSpec MUST fit in stdin (well under 1 MiB).
 	if len(data) > handlercontract.LaunchSpecMaxStdinBytes {
 		t.Errorf("HC-005: normal spec JSON exceeds 1 MiB (%d bytes); want < 1 MiB", len(data))
 	}
 
-	// Verify JSON is valid.
 	var v map[string]json.RawMessage
 	if err := json.Unmarshal(data, &v); err != nil {
 		t.Errorf("HC-005: marshalled spec is not valid JSON: %v", err)

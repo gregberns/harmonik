@@ -107,11 +107,8 @@ func ReadAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wor
 	out, err := runner.Command(ctx, "cat", target).Output()
 	if err != nil {
 		if tmux.IsSSHConnectionFailure(err) {
-			// SSH transport failure — inconclusive, distinct from confirmed-absent.
 			return nil, fmt.Errorf("%w: cat %s: %w", ErrRemoteTransport, target, err)
 		}
-		// Non-transport cat failure (no such file) → genuinely absent, preserving
-		// C1-only pass-through (the local not-exist path returns nil,nil).
 		return nil, nil //nolint:nilnil // confirmed-absent marker = C1-only gate per HC-068
 	}
 	return ParseAutoStatusMarker(out), nil
@@ -130,20 +127,15 @@ func ParseAutoStatusMarker(data []byte) *AutoStatusMarker {
 		return nil
 	}
 
-	// JSON parse failure → treat as absent per HC-068 Validation.
 	var m AutoStatusMarker
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil // treat-as-absent per HC-068
 	}
 
-	// status MUST be "FAIL" per HC-068 D1; any other value → treat as absent.
 	if m.Status != "FAIL" {
 		return nil // non-FAIL status is deny-side-only; treat as absent per HC-068
 	}
 
-	// failure_class hint processing per HC-059 / HC-068:
-	//   - out-of-set or missing → drop hint (FailureClass = ""); daemon back-fills.
-	//   - compilation_loop → override to structural (daemon-only class per HC-059).
 	fc := core.FailureClass(m.FailureClass)
 	if !fc.Valid() {
 		m.FailureClass = ""

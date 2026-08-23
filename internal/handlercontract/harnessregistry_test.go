@@ -1,13 +1,5 @@
 package handlercontract_test
 
-// harnessregistry_test.go — HarnessRegistry unit tests (codex-harness C1/T3, hk-hj9ld).
-//
-// Covers: register + lookup, duplicate registration, unregistered lookup, invalid
-// agent_type, nil harness, seal-after-first-lookup, zero-value panic.
-//
-// Helper prefix: harnessRegistryFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-
 import (
 	"io"
 	"testing"
@@ -16,13 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// harnessRegistryFixtureHarness is a minimal Harness whose only meaningful method
-// is AgentType (so lookups can be identity-checked). All other methods are no-ops;
-// the registry stores and returns the value without invoking them.
 type harnessRegistryFixtureHarness struct {
 	agentType core.AgentType
 }
@@ -56,7 +41,6 @@ func (harnessRegistryFixtureHarness) NewSessionIDInterceptor(inner io.Reader, _ 
 	return inner
 }
 
-// Compile-time assertion: the fixture satisfies Harness.
 var _ handlercontract.Harness = harnessRegistryFixtureHarness{}
 
 func harnessRegistryFixtureNewHarness(at core.AgentType) handlercontract.Harness {
@@ -66,10 +50,6 @@ func harnessRegistryFixtureNewHarness(at core.AgentType) handlercontract.Harness
 func harnessRegistryFixtureValidType(suffix string) core.AgentType {
 	return core.AgentType("test-harness-" + suffix)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHarnessRegistry_RegisterThenForAgent verifies a registered harness is
 // returned by ForAgent for the same agent_type.
@@ -99,7 +79,6 @@ func TestHarnessRegistry_ForAgentUnregistered(t *testing.T) {
 	t.Parallel()
 
 	reg := handlercontract.NewHarnessRegistry()
-	// Register one type, then look up a different, unregistered one.
 	if err := reg.Register(harnessRegistryFixtureValidType("present"),
 		harnessRegistryFixtureNewHarness(harnessRegistryFixtureValidType("present"))); err != nil {
 		t.Fatalf("Register: unexpected error: %v", err)
@@ -173,7 +152,6 @@ func TestHarnessRegistry_SealedAfterForAgent(t *testing.T) {
 		t.Error("registry not sealed after ForAgent")
 	}
 
-	// Post-seal Register must fail.
 	at2 := harnessRegistryFixtureValidType("seal2")
 	if err := reg.Register(at2, harnessRegistryFixtureNewHarness(at2)); err == nil {
 		t.Error("Register after seal: expected sealed-registry error, got nil")
@@ -219,9 +197,6 @@ func TestHarnessRegistry_ZeroValuePanics(t *testing.T) {
 		}
 	}()
 	var reg handlercontract.HarnessRegistry
-	// Unreachable unless the zero value stops panicking; the deferred recover
-	// above is what asserts the panic. Checking err keeps a silent
-	// error-returning regression from looking like a pass.
 	if _, err := reg.ForAgent(harnessRegistryFixtureValidType("zv")); err != nil {
 		t.Errorf("zero-value HarnessRegistry.ForAgent returned error %v; expected panic", err)
 	}

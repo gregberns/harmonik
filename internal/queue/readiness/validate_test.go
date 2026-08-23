@@ -1,12 +1,5 @@
 package readiness
 
-// validate_test.go — the claims the validator makes.
-//
-// Two of these are structural rather than behavioural, and they are the ones
-// that matter most: that Validate has no way to reach the fleet, and that a
-// snapshot arriving from a file is re-checked rather than trusted for having
-// the right Go type.
-
 import (
 	"bytes"
 	"context"
@@ -22,8 +15,6 @@ import (
 
 var validatedAt = time.Date(2026, 8, 4, 18, 0, 0, 0, time.UTC)
 
-// safePlan is a run shape the gate accepts. Each rejection test breaks exactly
-// one thing in it.
 func safePlan() RunPlan {
 	return RunPlan{
 		Harness:         "claude",
@@ -61,8 +52,6 @@ func TestValidate_AcceptsALocalStreamRunOnAQuietHost(t *testing.T) {
 	if !reflect.DeepEqual(got.SelectedBeads, []string{"hk-canary"}) {
 		t.Errorf("selected beads = %q", got.SelectedBeads)
 	}
-	// The record must carry the bar it applied, or a result read later cannot
-	// say which bar it cleared.
 	if got.AppliedLimits != DefaultHostLimits {
 		t.Errorf("applied limits = %+v, want them recorded", got.AppliedLimits)
 	}
@@ -88,7 +77,6 @@ func TestValidate_AcceptsSeveralItemsRunningAtTheSameTime(t *testing.T) {
 	if !got.Accepted {
 		t.Fatalf("three items at concurrency three were rejected: %+v", got.Rejections)
 	}
-	// The evidence must RECORD the shape, not merely tolerate it.
 	if got.Plan.ItemCount != 3 || got.Plan.Concurrency != 3 {
 		t.Errorf("record states items=%d concurrency=%d, want 3 and 3", got.Plan.ItemCount, got.Plan.Concurrency)
 	}
@@ -272,22 +260,11 @@ func TestValidateTakesNothingItCouldCallTheFleetWith(t *testing.T) {
 	}
 }
 
-// containsInterfaceField reports whether t reaches an interface or a func at
-// any depth. A port hidden one level down is still a port.
-//
-// It unwraps slices, arrays, pointers, maps and channels before testing for a
-// struct, and the first draft did not. That draft was blind in the direction
-// this ratchet is most likely to be defeated: Snapshot reaches Exclusion,
-// Command, StaleFinding, CurrentFinding and PendingIntent ONLY through slices,
-// so an interface field added to any of those five would have gone unseen. A
-// func field is the other smuggling route, since a closure carries whatever it
-// captured.
 func containsInterfaceField(t reflect.Type) bool {
 	return reachesPort(t, make(map[reflect.Type]bool))
 }
 
 func reachesPort(t reflect.Type, seen map[reflect.Type]bool) bool {
-	// A self-referential type would otherwise recurse forever.
 	if seen[t] {
 		return false
 	}
@@ -316,8 +293,6 @@ func reachesPort(t reflect.Type, seen map[reflect.Type]bool) bool {
 // encoding/json writes straight into fields and goes through no constructor, so
 // a snapshot read back from disk has been checked by nothing at all.
 func TestDecodeSnapshot_RechecksARecordThatNeverWentThroughTheConstructor(t *testing.T) {
-	// A snapshot that is well-formed JSON and a valid Go Snapshot, but which
-	// violates BI-013e: a selected item is closed.
 	bad := goodSnapshot(t)
 	bad.Selected[0].Candidate.Status = "closed"
 	body, err := json.Marshal(bad)
@@ -331,8 +306,6 @@ func TestDecodeSnapshot_RechecksARecordThatNeverWentThroughTheConstructor(t *tes
 		t.Errorf("err = %v, want it to name the requirement that was not satisfied", err)
 	}
 
-	// Positive evidence that the decoder works at all, so the refusal above is
-	// the check firing and not the decoder being broken.
 	good, err := json.Marshal(goodSnapshot(t))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

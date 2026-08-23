@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// expectedTrailerEntries enumerates all 8 registry entries (7 primary rows +
-// Harmonik-Verdict-Executed known-extension) in the canonical declared order
-// used by RegistryEntries().
 var expectedTrailerEntries = []struct {
 	key         string
 	typ         TrailerValueType
@@ -132,7 +129,6 @@ func TestRegistryEntries_IsCopy(t *testing.T) {
 	t.Parallel()
 
 	first := RegistryEntries()
-	// Overwrite the first element's key.
 	first[0].Key = "MUTATED"
 
 	second := RegistryEntries()
@@ -203,8 +199,6 @@ func TestKnownExtension_VerdictExecuted(t *testing.T) {
 	}
 }
 
-// verdictExecutedFixtureLookup is a test helper that looks up Harmonik-Verdict-Executed
-// and fatals if the key is absent from the registry.
 func verdictExecutedFixtureLookup(t *testing.T) TrailerSpec {
 	t.Helper()
 	spec, ok := LookupTrailer("Harmonik-Verdict-Executed")
@@ -236,15 +230,12 @@ func TestVerdictExecuted_NonTrueValueFailsEnum(t *testing.T) {
 	t.Parallel()
 
 	spec := verdictExecutedFixtureLookup(t)
-	// Assert registry shape: exactly one permitted value.
 	if len(spec.EnumValues) != 1 || spec.EnumValues[0] != "true" {
 		t.Errorf("expected EnumValues=[\"true\"], got %v; registry shape is the enforcement hook for RC-023", spec.EnumValues)
 	}
-	// ValidateTrailerValue now exists; verify "false" is rejected.
 	if err := ValidateTrailerValue(spec, "false"); err == nil {
 		t.Error("ValidateTrailerValue(Harmonik-Verdict-Executed, \"false\") = nil, want error (RC-023: only \"true\" is valid)")
 	}
-	// And "true" is accepted.
 	if err := ValidateTrailerValue(spec, "true"); err != nil {
 		t.Errorf("ValidateTrailerValue(Harmonik-Verdict-Executed, \"true\") = %v, want nil", err)
 	}
@@ -288,14 +279,12 @@ func TestRequiredRows(t *testing.T) {
 func TestEM017_RequiredSetConformance(t *testing.T) {
 	t.Parallel()
 
-	// EM-017 names exactly these four Required trailers.
 	wantRequired := map[string]bool{
 		"Harmonik-Run-ID":         true,
 		"Harmonik-State-ID":       true,
 		"Harmonik-Transition-ID":  true,
 		"Harmonik-Schema-Version": true,
 	}
-	// EM-017 names exactly one Conditional trailer from the execution-model set.
 	wantEM017Conditional := map[string]bool{
 		"Harmonik-Bead-ID": true,
 	}
@@ -342,9 +331,6 @@ func TestAllEntriesHaveNonEmptyDescription(t *testing.T) {
 	}
 }
 
-// ---- ValidateTrailerValue tests (hk-63oh.81) ----
-
-// validateTrailerValueFixtureSpec returns a TrailerSpec for testing purposes.
 func validateTrailerValueFixtureSpec(typ TrailerValueType, enumValues []string) TrailerSpec {
 	return TrailerSpec{
 		Key:        "Test-Trailer",
@@ -361,7 +347,6 @@ func TestValidateTrailerValue_UUID_Valid(t *testing.T) {
 	t.Parallel()
 
 	spec := validateTrailerValueFixtureSpec(TrailerTypeUUID, nil)
-	// UUIDv7: version nibble = 7 at position 14 of the hex string.
 	uuidv7 := "018f1e2a-0000-7000-8000-000000000001"
 	if err := ValidateTrailerValue(spec, uuidv7); err != nil {
 		t.Errorf("ValidateTrailerValue(UUID, %q) = %v, want nil", uuidv7, err)
@@ -385,7 +370,6 @@ func TestValidateTrailerValue_UUID_RejectsUUIDv4(t *testing.T) {
 	t.Parallel()
 
 	spec := validateTrailerValueFixtureSpec(TrailerTypeUUID, nil)
-	// UUIDv4: version nibble = 4.
 	uuidv4 := "550e8400-e29b-41d4-a716-446655440000"
 	if err := ValidateTrailerValue(spec, uuidv4); err == nil {
 		t.Errorf("ValidateTrailerValue(UUID, %q) = nil, want error (must require UUIDv7)", uuidv4)
@@ -555,11 +539,9 @@ func TestValidateTrailerValue_VerdictExecuted_RC023(t *testing.T) {
 	if !ok {
 		t.Fatal("LookupTrailer(\"Harmonik-Verdict-Executed\") returned ok=false")
 	}
-	// "true" is the only valid value (RC-023, schemas.md §6.4 fixed literal).
 	if err := ValidateTrailerValue(spec, "true"); err != nil {
 		t.Errorf("ValidateTrailerValue(Harmonik-Verdict-Executed, \"true\") = %v, want nil (RC-023)", err)
 	}
-	// Any other value is malformed per RC-023.
 	for _, bad := range []string{"false", "1", "yes", "TRUE", "True"} {
 		t.Run(bad, func(t *testing.T) {
 			t.Parallel()

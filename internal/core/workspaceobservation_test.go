@@ -4,9 +4,6 @@ import (
 	"testing"
 )
 
-// workspaceObsFixture returns a fully-populated WorkspaceObservation with
-// all required fields set to valid values. Tests mutate individual fields to
-// probe Valid().
 func workspaceObsFixture(t *testing.T) WorkspaceObservation {
 	t.Helper()
 	hash := "abc123def456"
@@ -63,7 +60,6 @@ func TestWorkspaceObservationValid_MissingWorktreeNonNilHash(t *testing.T) {
 
 	w := workspaceObsFixture(t)
 	w.PathExists = false
-	// BranchTipHash still set from fixture — invariant violation
 	if w.Valid() {
 		t.Error("Valid() = true when PathExists=false but BranchTipHash is non-nil, want false")
 	}

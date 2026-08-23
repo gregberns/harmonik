@@ -1,11 +1,5 @@
 package lifecycle
 
-// orphansweep_gcintents_redrive_test.go — unit tests for the BI-031 step-4
-// re-drive path in GCRetiredIntentsWithRedrive.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4 (4a–4f).
-// Bead ref: hk-aev8t (G3 — step-4 re-drive missing).
-
 import (
 	"context"
 	"errors"
@@ -19,11 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// fakeRedriveWriter is a deterministic IntentRedriveWriter fake for tests.
-// When a bead ID is in the `succeed` set, ReissueTerminalTransition deletes
-// the intent file (simulating 4a success) and increments calls. When the bead
-// is in the `fail` set, it returns an error (simulating 4b–4f). Any other bead
-// ID returns an unexpected-call error.
 type fakeRedriveWriter struct {
 	succeed map[core.BeadID]bool
 	fail    map[core.BeadID]bool
@@ -38,7 +27,6 @@ func (f *fakeRedriveWriter) ReissueTerminalTransition(
 ) error {
 	f.calls = append(f.calls, entry.BeadID)
 	if f.succeed[entry.BeadID] {
-		// Simulate (4a): delete the intent file on success (step 6).
 		if rmErr := os.Remove(filepath.Join(intentLogDir, entry.IdempotencyKey+".json")); rmErr != nil {
 			return fmt.Errorf("fake redrive writer: remove intent file: %w", rmErr)
 		}
@@ -59,23 +47,10 @@ func TestGCRetiredIntentsWithRedrive_NilWriter(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	// claim (→in_progress): bead is now in_progress → op LANDED.
 	landedID := core.BeadID("hk-rdnil-landed")
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdnil-landed_claim_1", landedID,
 		"claim", "in_progress")
 
-	// close (in_progress→closed): bead is still in_progress → op NOT landed, no pre-state match.
-	// Writer=nil → retained for Cat 3a (step 5 divergence: pre-state for close is in_progress,
-	// but in_progress IS the pre-state, so it actually would redrive if writer != nil — test the
-	// nil-writer retained path explicitly).
-	//
-	// Use reopen (closed→open) with bead at "open" but intendedPostState="open":
-	// gcIntentOpLanded(reopen, open, open) = true → landed/removed. That's not what we want.
-	//
-	// For a genuinely non-landed, non-redriven entry with nil writer, use:
-	// close (in_progress→closed), bead at in_progress.
-	// gcIntentOpLanded(close, in_progress, closed) = false. Pre-state for close = in_progress.
-	// in_progress == in_progress → WOULD redrive if writer != nil. With nil writer → retained. ✓
 	pendingID := core.BeadID("hk-rdnil-pending")
 	pendingPath := gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdnil-pending_close_1", pendingID,
 		"close", "closed")
@@ -105,7 +80,6 @@ func TestGCRetiredIntentsWithRedrive_NilWriter(t *testing.T) {
 	if result.RedriveCount != 0 {
 		t.Errorf("RedriveCount = %d, want 0 (nil writer)", result.RedriveCount)
 	}
-	// Non-landed file must still be on disk.
 	if _, statErr := os.Stat(pendingPath); os.IsNotExist(statErr) {
 		t.Errorf("pending intent file was unexpectedly deleted")
 	}
@@ -121,13 +95,9 @@ func TestGCRetiredIntentsWithRedrive_RedriveSuccess(t *testing.T) {
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
 	beadID := core.BeadID("hk-rd-prestate")
-	// claim (open→in_progress): pre-state is "open".
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rd-prestate_claim_1", beadID,
 		"claim", "in_progress")
 
-	// Bead is at "open" — the pre-state for claim.
-	// gcIntentOpLanded(claim, open, in_progress) = false (NOT landed).
-	// gcIntentOpPreState(claim) = open.  open == open → step 4 redrive triggered.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
@@ -156,7 +126,6 @@ func TestGCRetiredIntentsWithRedrive_RedriveSuccess(t *testing.T) {
 	if result.Retained != 0 {
 		t.Errorf("Retained = %d, want 0", result.Retained)
 	}
-	// fakeRedriveWriter deletes the file on success (step 6).
 	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
 		t.Errorf("intent file should have been deleted by fakeRedriveWriter (step 6)")
 	}
@@ -175,14 +144,9 @@ func TestGCRetiredIntentsWithRedrive_RedriveFailure(t *testing.T) {
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
 	beadID := core.BeadID("hk-rd-fail")
-	// close (in_progress→closed): pre-state is "in_progress".
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rd-fail_close_1", beadID,
 		"close", "closed")
 
-	// Bead is at "in_progress" — the pre-state for close.
-	// gcIntentOpLanded(close, in_progress, closed) = false (NOT landed).
-	// gcIntentOpPreState(close) = in_progress.  in_progress == in_progress → redrive triggered.
-	// Writer returns error → intent retained for Cat 3a.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
 			beadID: {BeadID: beadID, Status: core.CoarseStatusInProgress},
@@ -208,7 +172,6 @@ func TestGCRetiredIntentsWithRedrive_RedriveFailure(t *testing.T) {
 	if result.Retained != 1 {
 		t.Errorf("Retained = %d, want 1", result.Retained)
 	}
-	// Intent file must still exist for Cat 3a.
 	if _, statErr := os.Stat(intentPath); os.IsNotExist(statErr) {
 		t.Errorf("intent file was unexpectedly deleted after failed redrive")
 	}
@@ -227,13 +190,6 @@ func TestGCRetiredIntentsWithRedrive_DivergedStatus(t *testing.T) {
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
 	beadID := core.BeadID("hk-rd-diverged")
-	// close (in_progress→closed):
-	//   pre-state  = in_progress
-	//   post-states = closed, tombstone, open (hk-birxh)
-	//   bead is at "blocked" → neither pre-state nor any post-state → divergence → step 5 retain.
-	//
-	// gcIntentOpLanded(close, blocked, closed) = false.
-	// gcIntentOpPreState(close) = in_progress.  in_progress != blocked → divergence → retain. ✓
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rd-diverged_close_1", beadID,
 		"close", "closed")
 
@@ -286,8 +242,6 @@ func TestGCRetiredIntentsWithRedrive_PreStateOps(t *testing.T) {
 		postState string
 		preStatus core.CoarseStatus
 	}{
-		// claim (open→in_progress): pre-state=open
-		// gcIntentOpLanded(claim,open,in_progress)=false; preState=open == open → redrive
 		{"claim", "claim", "in_progress", core.CoarseStatusOpen},
 		// close (in_progress→closed): pre-state=in_progress
 		// gcIntentOpLanded(close,in_progress,closed)=false; preState=in_progress == in_progress → redrive
@@ -346,18 +300,14 @@ func TestGCRetiredIntentsWithRedrive_MixedBatch(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	// 1. reopen (closed→open): bead at open → LANDED → removed.
 	landedID := core.BeadID("hk-rdmix-landed")
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdmix-landed_reopen_1", landedID,
 		"reopen", "open")
 
-	// 2. claim (open→in_progress): bead at open (pre-state) → re-drive succeeds.
 	redriveID := core.BeadID("hk-rdmix-redrive")
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdmix-redrive_claim_1", redriveID,
 		"claim", "in_progress")
 
-	// 3. close (in_progress→closed): bead at blocked → divergence → retained (step 5).
-	// (open would be GC'd as landed since hk-birxh; use blocked as a genuinely diverged state.)
 	retainedID := core.BeadID("hk-rdmix-retained")
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdmix-retained_close_1", retainedID,
 		"close", "closed")

@@ -1,15 +1,5 @@
 package supervisecmd
 
-// error_predicates_test.go — table-driven coverage for the supervisor's
-// socket/lock error predicates.
-//
-// isSocketAbsent and isConnectionRefused gate the supervisor's "is the daemon
-// up?" probe, and isWouldBlock gates the flock-based single-instance guard: a
-// false isWouldBlock means the supervisor treats "another supervisor already
-// holds the lock" as a hard error instead of the documented exit-17 path.
-// All three are identity checks over errors the syscall layer wraps, so the
-// wrapped cases below are the ones that actually matter.
-
 import (
 	"errors"
 	"fmt"

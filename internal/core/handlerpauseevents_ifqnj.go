@@ -1,20 +1,5 @@
 package core
 
-// handlerpauseevents_ifqnj.go — event-bus payload types for §8.11 handler-pause
-// lifecycle events introduced by the handler-pause work (hk-ifqnj):
-//
-//   - handler_paused                      (§8.11.1)
-//   - handler_resumed                     (§8.11.2)
-//   - queue_item_held_for_handler_pause   (§8.11.3)
-//
-// Spec ref: specs/event-model.md §8.11.
-// Spec ref: specs/handler-pause.md.
-// Bead ref: hk-ifqnj.
-
-// ---------------------------------------------------------------------------
-// Shared sub-types
-// ---------------------------------------------------------------------------
-
 // HandlerPauseCause carries the structured reason a handler type was paused.
 // Used by both HandlerPausedPayload.Cause and HandlerResumedPayload.PriorCause.
 //
@@ -74,10 +59,6 @@ func (c HandlerPauseCause) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.11.1 handler_paused
-// ---------------------------------------------------------------------------
 
 // HandlerPausedPayload is the typed event payload for the handler_paused event
 // (event-model.md §8.11.1).
@@ -143,10 +124,6 @@ func (p HandlerPausedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.11.2 handler_resumed
-// ---------------------------------------------------------------------------
 
 // HandlerResumedBy is the typed discriminator for the by field of a
 // handler_resumed event (event-model.md §8.11.2).
@@ -247,10 +224,6 @@ func (p HandlerResumedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// §8.11.3 queue_item_held_for_handler_pause
-// ---------------------------------------------------------------------------
 
 // QueueItemHeldForHandlerPausePayload is the typed event payload for the
 // queue_item_held_for_handler_pause event (event-model.md §8.11.3).

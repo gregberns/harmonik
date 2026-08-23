@@ -7,10 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// adapterRegistry — per-bead helper prefix for test helpers in
-// adapterregistry_hc012_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.14).
-
 // AdapterRegistry enforces the HC-012 invariant: the Agent Runner (S04) exposes
 // exactly ONE Adapter per registered agent_type.
 //
@@ -68,8 +64,6 @@ func (r *AdapterRegistry) Register(agentType core.AgentType, adapter Adapter) er
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.Register called on zero-value registry; use NewAdapterRegistry")
 	}
-	// Validate before acquiring the lock — these checks are argument-only and
-	// do not touch shared state.
 	if !agentType.Valid() {
 		return fmt.Errorf(
 			"handlercontract: AdapterRegistry.Register: invalid agent_type %q; "+
@@ -116,8 +110,6 @@ func (r *AdapterRegistry) ForAgent(agentType core.AgentType) (Adapter, error) {
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.ForAgent called on zero-value registry; use NewAdapterRegistry")
 	}
-	// Write-lock for seal transition: concurrent ForAgent calls must each observe
-	// sealed=true after the first caller sets it, and must not race with Register.
 	r.mu.Lock()
 	r.sealed = true
 	adapter, ok := r.adapters[agentType]

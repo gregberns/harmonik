@@ -2,15 +2,6 @@ package runlease
 
 import "testing"
 
-// disposition_test.go pins the polarity of the survive question. Four sites in
-// the daemon's run function spelled that question three different ways before
-// this package existed, and getting it backwards is the failure this step
-// exists to prevent: a run reclaimed when it should survive costs a
-// re-dispatch, and a run that survives when it should not strands its bead in
-// progress with nothing alive to adopt it.
-
-// allResources is every value of the Resource axis, so a test that walks it
-// fails the day someone adds a resource without deciding its disposition.
 var allResources = []Resource{
 	ResourceUnnamed, WorkerSlot, LocalSlot, TunnelPort, TunnelProcess,
 	Worktree, RunRecord, HookSession, AgentSession, SpawnSlot, ColdStartToken,
@@ -88,10 +79,6 @@ func TestReclaimGivesEveryResourceBack(t *testing.T) {
 func TestSurvivalKeepsWhatTheAgentAndTheNextBootStillNeed(t *testing.T) {
 	t.Parallel()
 
-	// The session and the worktree are what the agent is working in. The run
-	// record is how a later boot finds the session by name. The hook session
-	// and the tunnel are how the agent reports; before this package they were
-	// torn down regardless, which left a surviving agent unable to report.
 	kept := map[Resource]bool{
 		AgentSession: true, Worktree: true, RunRecord: true,
 		HookSession: true, TunnelProcess: true, TunnelPort: true,
@@ -107,9 +94,6 @@ func TestSurvivalKeepsWhatTheAgentAndTheNextBootStillNeed(t *testing.T) {
 func TestSurvivalStillGivesBackThisProcessesOwnBookkeeping(t *testing.T) {
 	t.Parallel()
 
-	// The four accounting slots are counters inside the daemon. A surviving
-	// agent does not hold them, so holding them on its behalf would only
-	// over-count the dispatch gate.
 	for _, r := range []Resource{WorkerSlot, LocalSlot, SpawnSlot, ColdStartToken} {
 		if !Survive.Releases(r) {
 			t.Errorf("Survive kept %s; the surviving agent does not hold it", r)
@@ -131,8 +115,6 @@ func TestRetainingEvidenceKeepsTheWorktreeAndNothingElse(t *testing.T) {
 func TestAnUnnamedResourceIsGivenBackUnderEveryDisposition(t *testing.T) {
 	t.Parallel()
 
-	// The zero Resource is a caller mistake. Giving it back leaks nothing;
-	// keeping it would leak something nobody named.
 	for _, d := range []Disposition{Reclaim, Survive, RetainEvidence} {
 		if !d.Releases(ResourceUnnamed) {
 			t.Errorf("%s kept the unnamed resource", d)
@@ -153,9 +135,6 @@ func TestOnlyASurvivingRunLeavesItsBeadInProgress(t *testing.T) {
 func TestTheZeroDispositionReclaims(t *testing.T) {
 	t.Parallel()
 
-	// A caller who never decided must take the recoverable mistake. Reclaiming
-	// a run that should have survived costs a re-dispatch; surviving a run that
-	// should have been reclaimed strands the bead.
 	var d Disposition
 	if d != Reclaim {
 		t.Fatalf("the zero Disposition is %s, want reclaim", d)
@@ -165,8 +144,6 @@ func TestTheZeroDispositionReclaims(t *testing.T) {
 func TestEveryResourceAndDispositionHasAName(t *testing.T) {
 	t.Parallel()
 
-	// The names reach test failures and diagnostics. A new value that reports
-	// itself as an older one makes both lie.
 	seen := map[string]Resource{}
 	for _, r := range allResources {
 		name := r.String()
@@ -188,8 +165,6 @@ func TestEveryResourceAndDispositionHasAName(t *testing.T) {
 func TestADispositionOutsideTheClosedSetGivesEverythingBack(t *testing.T) {
 	t.Parallel()
 
-	// The zero value is reclaim, so an out-of-range value can only come from a
-	// cast. It must not be the one thing that keeps a resource standing.
 	rogue := Disposition(99)
 	for _, r := range allResources {
 		if !rogue.Releases(r) {

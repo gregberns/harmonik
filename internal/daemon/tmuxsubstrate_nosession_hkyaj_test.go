@@ -1,45 +1,5 @@
 package daemon_test
 
-// tmuxsubstrate_nosession_hkyaj_test.go — regression tests for the lazy
-// ErrNoSession recovery in SpawnWindow (hk-yaj).
-//
-// # The bug
-//
-// The daemon resolved its spawn-target tmux session at boot and froze the name
-// into tmuxSubstrate.sessionName. SpawnWindow called `tmux new-window -t
-// <sessionName>` with no recovery path: if the session was externally killed,
-// new-window returned ErrNoSession and SpawnWindow hard-failed wrapping
-// ErrStructural. Because all implementer/reviewer windows share a single spawn
-// target, one killed session broke fleet-wide dispatch until the daemon was
-// manually restarted (~70 min outage 2026-06-12).
-//
-// # The fix
-//
-// SpawnWindow now detects ErrNoSession from the first new-window attempt, calls
-// EnsureSession on the adapter (when it implements the sessionEnsurer interface),
-// and retries new-window once. Only after the retry fails does it hard-fail. If
-// the adapter does not implement sessionEnsurer the old hard-fail path is taken.
-//
-// # What is tested
-//
-//   - NoSession_RecoverySucceeds: adapter's first NewWindowIn returns ErrNoSession;
-//     EnsureSession creates the session; the retry NewWindowIn succeeds.
-//     SpawnWindow must return a live session (not an error).
-//
-//   - NoSession_RecoveryRetryFails: adapter returns ErrNoSession on both the
-//     initial and retry NewWindowIn calls (session still gone after EnsureSession).
-//     SpawnWindow must return ErrStructural.
-//
-//   - NoSession_NoEnsureSupport_HardFails: adapter returns ErrNoSession but does
-//     NOT implement sessionEnsurer. SpawnWindow must hard-fail immediately.
-//
-//   - NoSession_SlotReleasedOnHardFail: after a hard-fail the spawn slot must be
-//     released so subsequent spawns are not wedged.
-//
-// # Bead
-//
-//   - hk-yaj (SpawnWindow ErrNoSession self-heal).
-
 import (
 	"context"
 	"errors"
@@ -51,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// noSessionFixtureBase implements the full tmux.Adapter interface. Embedded by
-// the two fixture adapters below so each only needs to override the methods
-// relevant to the scenario.
 type noSessionFixtureBase struct {
 	windowCount int
 }
@@ -83,10 +40,6 @@ func (a *noSessionFixtureBase) WriteToPane(_ context.Context, _, _ string, _ []b
 	return nil
 }
 
-// ─── noSessionRecoveringAdapter ─────────────────────────────────────────────
-//
-// First NewWindowIn returns ErrNoSession; EnsureSession succeeds; retry succeeds.
-
 type noSessionRecoveringAdapter struct {
 	noSessionFixtureBase
 	attempts    int
@@ -109,11 +62,6 @@ func (a *noSessionRecoveringAdapter) EnsureSession(_ context.Context, _, _ strin
 
 var _ tmux.Adapter = (*noSessionRecoveringAdapter)(nil)
 
-// ─── noSessionPersistentAdapter ─────────────────────────────────────────────
-//
-// NewWindowIn always returns ErrNoSession; EnsureSession succeeds but recovery
-// still fails (session gone again immediately).
-
 type noSessionPersistentAdapter struct {
 	noSessionFixtureBase
 	ensureCalls int
@@ -130,10 +78,6 @@ func (a *noSessionPersistentAdapter) EnsureSession(_ context.Context, _, _ strin
 
 var _ tmux.Adapter = (*noSessionPersistentAdapter)(nil)
 
-// ─── noSessionNoEnsureAdapter ────────────────────────────────────────────────
-//
-// NewWindowIn returns ErrNoSession; does NOT implement sessionEnsurer.
-
 type noSessionNoEnsureAdapter struct {
 	noSessionFixtureBase
 }
@@ -144,16 +88,12 @@ func (a *noSessionNoEnsureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWind
 
 var _ tmux.Adapter = (*noSessionNoEnsureAdapter)(nil)
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
 func noSessionFixtureSpawn(ctx context.Context, sub handler.Substrate) (handler.SubstrateSession, error) {
 	return sub.SpawnWindow(ctx, handler.SubstrateSpawn{
 		Argv:       []string{"claude"},
 		WindowName: "hk-nosession-test",
 	})
 }
-
-// ─── tests ───────────────────────────────────────────────────────────────────
 
 // TestNoSession_RecoverySucceeds verifies that SpawnWindow recovers when the
 // first new-window returns ErrNoSession: EnsureSession is called, the retry
@@ -230,9 +170,7 @@ func TestNoSession_NoEnsureSupport_HardFails(t *testing.T) {
 func TestNoSession_SlotReleasedOnHardFail(t *testing.T) {
 	t.Parallel()
 
-	// A recovering adapter: first call fails (ErrNoSession), second succeeds.
 	adapter := &noSessionRecoveringAdapter{}
-	// Cap of 1; if the failed spawn leaks the slot, the second spawn wedges.
 	sub := daemon.NewTmuxSubstrate(adapter, "hk-test-session",
 		daemon.WithSpawnCap(1),
 		daemon.WithSpawnAcquireTimeout(500*time.Millisecond),
@@ -240,22 +178,17 @@ func TestNoSession_SlotReleasedOnHardFail(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First spawn: ErrNoSession → EnsureSession → retry succeeds (recovery).
 	sess, err := noSessionFixtureSpawn(ctx, sub)
 	if err != nil {
 		t.Fatalf("first spawn (recovery path) failed unexpectedly: %v", err)
 	}
-	// Release the slot.
 	_ = sess.Kill(ctx)
 
-	// Second spawn: both attempts succeed immediately.
 	adapter2 := &noSessionRecoveringAdapter{}
-	// Reuse a fresh substrate to get clean attempt counters without coupling state.
 	sub2 := daemon.NewTmuxSubstrate(adapter2, "hk-test-session",
 		daemon.WithSpawnCap(1),
 		daemon.WithSpawnAcquireTimeout(500*time.Millisecond),
 		daemon.WithNewWindowTimeout(2*time.Second))
-	// Reset adapter so the first attempt in sub2 succeeds.
 	adapter2.attempts = 1 // skip the ErrNoSession branch
 
 	sess2, err := noSessionFixtureSpawn(ctx, sub2)

@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// subworkflowpinFixture returns a valid SubWorkflowExpansionPin for tests.
 func subworkflowpinFixture() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     "reconciliation-v1",
@@ -128,7 +127,6 @@ func TestSubWorkflowExpansionPinEvidenceMap(t *testing.T) {
 	}
 }
 
-// keysOf returns the keys of a map as a slice, for diagnostic output only.
 func keysOf(m map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

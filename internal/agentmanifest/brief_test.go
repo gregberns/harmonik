@@ -1,8 +1,5 @@
 package agentmanifest
 
-// brief_test.go — unit tests for BuildBootDoc, renderers, and helpers.
-// Bead: hk-j784q (T3 — brief command + boot-document ORDER).
-
 import (
 	"encoding/json"
 	"errors"
@@ -13,8 +10,6 @@ import (
 	"testing"
 )
 
-// makeTypeFolder scaffolds a minimal valid type folder in dir for testing.
-// soulLines and opLines override the defaults when non-empty.
 func makeTypeFolder(t *testing.T, agentsDir, typeName, parentIntent, soulLines, opLines string) {
 	t.Helper()
 	dir := filepath.Join(agentsDir, typeName)
@@ -112,7 +107,6 @@ func TestBuildBootDoc_SoulByteIdentical(t *testing.T) {
 	}
 
 	soulContent := "I am crew — I work beads on an epic until the queue drains.\n\n## I do\n- Claim and complete beads.\n"
-	// Parent type (captain) so crew's parent_intent resolves.
 	makeTypeFolder(t, agentsDir, "captain", "operator", "I am captain — I run the fleet.\n", "")
 	makeTypeFolder(t, agentsDir, "crew", "captain", soulContent, "## Loop\n1. Pick bead.\n")
 
@@ -304,7 +298,6 @@ func TestBuildBootDoc_HandoffEmptyFileIsDistinctFromAbsent(t *testing.T) {
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
 
-	// A zero-byte handoff — exactly what the keeper's old truncate left behind.
 	handoffPath := filepath.Join(tmpDir, "HANDOFF-chani.md")
 	if err := os.WriteFile(handoffPath, []byte{}, 0o600); err != nil {
 		t.Fatal(err)
@@ -322,8 +315,6 @@ func TestBuildBootDoc_HandoffEmptyFileIsDistinctFromAbsent(t *testing.T) {
 			"distinguishable from an absent one (hk-4tjyj)")
 	}
 
-	// Both renderers must say something LOUDER and different than the
-	// never-written wording.
 	renderers := map[string]func(*BootDoc, io.Writer) error{
 		"markdown": RenderMarkdown,
 		"toon":     RenderToon,

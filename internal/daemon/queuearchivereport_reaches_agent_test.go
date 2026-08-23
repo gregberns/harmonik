@@ -1,12 +1,5 @@
 package daemon
 
-// queuearchivereport_reaches_agent_test.go — the finding must leave the daemon.
-//
-// An observer that observes into a local variable is the same as no observer.
-// The archive counts only do their job if they land on the
-// daemon_orphan_sweep_completed event, because that is what reaches the
-// captain through the boot digest's recent_events. These tests pin that hop.
-
 import (
 	"encoding/json"
 	"testing"

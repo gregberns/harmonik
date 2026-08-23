@@ -1,28 +1,5 @@
 package runloop
 
-// workloopeventsource.go — the per-run event tap every dispatch segment's
-// ready pump consumes (hk-gql20.14).
-//
-// The daemon's event bus is sealed at Start time (EV-009) before the work loop
-// runs, so post-seal Subscribe is not available. This file provides a thin
-// "tapping emitter" wrapper that intercepts Emit calls from the watcher
-// goroutine and forwards a synthetic envelope to a per-run channel that the
-// segment's ready pump reads.
-//
-// One type lives here:
-//
-//   - perRunEventTap: a handlercontract.EventEmitter adapter that wraps the
-//     real bus emitter, forwarding every Emit call to a buffered channel AND
-//     to the underlying bus.  One tap is created per beadRunOne call.
-//
-// RT14 removed the second type, chanAgentEventSource. It existed only to
-// satisfy waitAgentReady's agentEventSource interface, and both of its
-// constructors were the two open-coded ready waits RT14 converted onto
-// dispatchSegment (dispatchsegment.go), whose ready pump consumes the tap
-// channel directly.
-//
-// Bead: hk-gql20.14. Retirement: P2 E5 RT14.
-
 import (
 	"context"
 	"sync"
@@ -81,9 +58,6 @@ type PerRunEventTap struct {
 	subs []chan core.EventEnvelope
 }
 
-// perRunEventTapBufSize is the capacity of each per-run subscriber channel.
-// Large enough to absorb a burst of rapid watcher events without blocking
-// the watcher goroutine; consumers drain lazily.
 const perRunEventTapBufSize = 64
 
 // NewPerRunEventTap constructs a PerRunEventTap that wraps underlying and
@@ -118,15 +92,11 @@ func (t *PerRunEventTap) Subscribe() <-chan core.EventEnvelope {
 	return ch
 }
 
-// fanOut delivers env to every registered subscriber channel. Each send is
-// non-blocking: if a subscriber's buffer is full the event is dropped for that
-// subscriber only, never blocking the producer or starving other subscribers.
 func (t *PerRunEventTap) fanOut(env core.EventEnvelope) {
 	t.mu.Lock()
 	subs := t.subs
 	t.mu.Unlock()
 	for _, ch := range subs {
-		// Non-blocking send: discard for this subscriber if its buffer is full.
 		select {
 		case ch <- env:
 		default:
@@ -145,10 +115,8 @@ func (t *PerRunEventTap) fanOut(env core.EventEnvelope) {
 // event is discarded for that subscriber rather than blocking. This is
 // intentional: the watcher goroutine MUST NOT be blocked by a slow consumer.
 func (t *PerRunEventTap) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
-	// Delegate to underlying first — bus delivery takes priority.
 	err := t.underlying.Emit(ctx, eventType, payload)
 
-	// Build a synthetic envelope and fan it out to every subscriber.
 	var env core.EventEnvelope
 	if id, uuidErr := uuid.NewV7(); uuidErr == nil {
 		env.EventID = core.EventID(id)

@@ -13,14 +13,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// rotateMaxBytes is the file-size threshold triggering rotation (100 MiB).
-//
-// Spec ref: specs/operator-nfr.md §4.9 ON-035.
 const rotateMaxBytes = 100 << 20
 
-// rotateMaxAge is the time-based rotation threshold (24 hours).
-//
-// Spec ref: specs/operator-nfr.md §4.9 ON-035.
 const rotateMaxAge = 24 * time.Hour
 
 // Config carries the parameters for [NewHandler].
@@ -67,10 +61,6 @@ func (c *Config) now() time.Time {
 	return time.Now()
 }
 
-// sharedWriter holds the file handle, its protecting mutex, and the rotation
-// counters. It is allocated once in NewHandler and shared by pointer across all
-// clones produced by WithAttrs/WithGroup, so that concurrent writes from any
-// clone are mutually exclusive through a single lock.
 type sharedWriter struct {
 	mu          sync.Mutex
 	file        *os.File
@@ -112,19 +102,14 @@ func NewHandler(cfg Config) (*Handler, error) {
 	return h, nil
 }
 
-// logDir returns the path to the logs directory for this project.
 func (h *Handler) logDir() string {
 	return filepath.Join(h.cfg.ProjectDir, ".harmonik", "logs")
 }
 
-// activePath returns the path of the currently-active log file.
 func (h *Handler) activePath() string {
 	return filepath.Join(h.logDir(), h.cfg.Subsystem+"-active.jsonl")
 }
 
-// openFile creates the logs directory (if needed) and opens the active log
-// file for append. Must be called with h.mu held (or before the Handler is
-// shared).
 func (h *Handler) openFile() error {
 	dir := h.logDir()
 	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
@@ -138,8 +123,6 @@ func (h *Handler) openFile() error {
 		return fmt.Errorf("structuredlog: open log file %s: %w", active, err)
 	}
 
-	// Measure what's already in the file so the size threshold is accurate
-	// even when we're appending to an existing active file on startup.
 	info, statErr := f.Stat()
 	if statErr == nil {
 		h.shared.writtenSize = info.Size()
@@ -150,8 +133,6 @@ func (h *Handler) openFile() error {
 	return nil
 }
 
-// rotateIfNeeded checks the size and age thresholds and rotates if either is
-// exceeded. Must be called with h.shared.mu held.
 func (h *Handler) rotateIfNeeded() error {
 	now := h.cfg.now()
 	sizeExceeded := h.shared.writtenSize >= rotateMaxBytes
@@ -161,15 +142,11 @@ func (h *Handler) rotateIfNeeded() error {
 		return nil
 	}
 
-	// Close the active file.
 	if err := h.shared.file.Close(); err != nil {
 		return fmt.Errorf("structuredlog: close active log for rotation: %w", err)
 	}
 	h.shared.file = nil
 
-	// Rename active → <subsystem>-<rotated_at>.jsonl
-	// Use the time the file was opened (not now) so the name reflects the
-	// log window, matching the spec's "<subsystem>-<rotated_at>" convention.
 	stamp := h.shared.openedAt.UTC().Format("2006-01-02T15-04-05Z")
 	rotatedName := h.cfg.Subsystem + "-" + stamp + ".jsonl"
 	rotatedPath := filepath.Join(h.logDir(), rotatedName)
@@ -230,7 +207,6 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		Fields:           fields,
 	}
 
-	// Extract correlation IDs from attrs if present.
 	if rid, ok := fields["run_id"]; ok {
 		if s, ok := rid.(string); ok {
 			rec.RunID = s
@@ -259,9 +235,6 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	h.shared.mu.Lock()
 	defer h.shared.mu.Unlock()
 
-	// Guard against a Handle racing with (or following) Close: once the file
-	// is closed it is set to nil under the same mutex, so a nil file here means
-	// the handler is shut down. No-op rather than nil-deref/panic.
 	if h.shared.file == nil {
 		return os.ErrClosed
 	}
@@ -288,7 +261,6 @@ func (h *Handler) Close() error {
 	return err
 }
 
-// clone returns a shallow copy of h with its own attrs/groups slices.
 func (h *Handler) clone() *Handler {
 	h2 := *h
 	h2.attrs = append([]slog.Attr(nil), h.attrs...)
@@ -296,8 +268,6 @@ func (h *Handler) clone() *Handler {
 	return &h2
 }
 
-// buildFields collects slog attrs from the record and any pre-attached attrs
-// into a flat map, applying group prefixes.
 func (h *Handler) buildFields(r slog.Record) map[string]any {
 	fields := make(map[string]any)
 
@@ -320,7 +290,6 @@ func (h *Handler) buildFields(r slog.Record) map[string]any {
 	return fields
 }
 
-// setAttr writes a slog.Attr into the fields map, respecting groups.
 func setAttr(fields map[string]any, prefix string, a slog.Attr) {
 	key := prefix + a.Key
 	v := a.Value.Resolve()
@@ -334,7 +303,6 @@ func setAttr(fields map[string]any, prefix string, a slog.Attr) {
 	}
 }
 
-// slogLevelToLevel maps a slog.Level to the ON-035 level string.
 func slogLevelToLevel(l slog.Level) Level {
 	switch {
 	case l >= slog.LevelError:

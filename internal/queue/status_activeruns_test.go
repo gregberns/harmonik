@@ -1,24 +1,5 @@
 package queue_test
 
-// status_activeruns_test.go — queue-status cannot report a lull over a running
-// bead.
-//
-// Bare `queue status` resolves the queue named "main". Work is normally
-// dispatched from a NAMED queue, so the payload came back {"queue": null} while
-// an agent was running, and the command exited 0. The captain's shutdown
-// runbook read active_runs off that payload — a field it had never carried —
-// concluded nothing was in flight, and could shut down on top of a live run.
-// The gate could not fail.
-//
-// Reproduced live on 2026-08-10 at b49210d6 against a scratch daemon with a
-// codex bead dispatched:
-//
-//	$ harmonik queue list          matrix-codex-local  status=active  workers=1
-//	$ harmonik queue status        (no queue active)                  exit 0
-//	$ harmonik queue status --json {"queue":null,"max_concurrent":1}
-//
-// Bead: hk-queue-status-blind-shutdown-gate-9dco0.
-
 import (
 	"context"
 	"encoding/json"
@@ -28,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// activeRunsFixturePersist writes a queue holding one item in the given status.
 func activeRunsFixturePersist(t *testing.T, projectDir, name string, bead core.BeadID, status queue.ItemStatus, runID string) {
 	t.Helper()
 
@@ -111,8 +91,6 @@ func TestQueueStatusReportsAnEmptyListWhenNothingIsInFlight(t *testing.T) {
 		t.Errorf("active_runs is non-empty with only a pending item; a pending bead is not in flight")
 	}
 
-	// The encoded key must exist and must not be null: a shutdown gate reading
-	// a missing key computes zero in flight, which is how this failed before.
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		t.Fatalf("decode envelope: %v", err)

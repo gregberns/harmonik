@@ -1,15 +1,5 @@
 package queue_test
 
-// rpc_h6_concurrent_submit_test.go — race test for H6: HandlerAdapter must
-// serialise the whole submit read-modify-write (Load→validate→Persist) so two
-// concurrent submits for the SAME new queue name cannot both pass the QM-027
-// single-active check and both Persist (last-writer-wins drop). The fix routes
-// submit through the SAME queue mutation lock (LockForMutationView) that B1 uses
-// for append and the workloop uses for status mutations, so exactly one
-// concurrent submit wins; the rest are rejected with queue_already_active.
-//
-// Run under -race to exercise the interleaving.
-
 import (
 	"encoding/json"
 	"sync"
@@ -19,11 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// h6FakeLocker is a minimal QueueSetter+MutationLocker double: the daemon's real
-// QueueStore implements MutationLocker, so this exercises the production submit
-// lock path. Submit takes LockForMutationView (mutual exclusion) around the whole
-// disk RMW; it never calls the LockedQueue* accessors (the pure HandleQueueSubmit
-// reads/writes disk), so those return zero values.
 type h6FakeLocker struct{ mu sync.Mutex }
 
 // SetQueue acquires mu, exactly like the real daemon.QueueStore whose queueMu is
@@ -61,12 +46,8 @@ func TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger(beads...)
 
-	// A MutationLocker-implementing QueueSetter: the adapter serialises the whole
-	// submit disk RMW under LockForMutationView — exactly the path H6 protects.
 	adapter := queue.NewHandlerAdapter(ledger, projectDir, &h6FakeLocker{}, nil)
 
-	// All submits target the same (empty→"main") queue name but carry a distinct
-	// bead so nothing but the single-active guard can reject them.
 	params := make([]json.RawMessage, n)
 	for i := range params {
 		req := queue.QueueSubmitRequest{

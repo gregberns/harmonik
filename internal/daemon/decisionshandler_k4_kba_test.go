@@ -1,24 +1,5 @@
 package daemon
 
-// decisionshandler_k4_kba_test.go — unit tests for the operator-side decisions
-// ops (hitl-decisions component K4, bead hk-kba):
-//   - HandleDecisionsList   → returns the open set (≥2 distinct blocked agents in
-//                            one result — S2); pure read, emits nothing.
-//   - HandleDecisionsAnswer → valid option emits decision_resolved (assert the
-//                            JSONL record); bad option on an OPEN decision is an
-//                            error (N7); unknown/already-terminal id is a no-op
-//                            with NO error and NO new event (N3, S8).
-//
-// The handler is constructed via NewCommsSendHandler over a REAL file-backed bus
-// (NewBusImplWithWriter + OpenJSONLWriter), then SetRecvDeps wires the SAME
-// events.jsonl path so HandleDecisionsList/Answer's decisionsProjection reads it.
-// Emitting decision_resolved via the bus's EmitTyped (F-class fsync) writes a
-// durable record we then re-read to assert.
-//
-// Helpers use the prefix "dk4" per the helper-prefix discipline.
-//
-// Bead ref: hk-kba (K4).
-
 import (
 	"context"
 	"encoding/json"
@@ -29,11 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// dk4Handler builds a file-backed handler over a fresh events.jsonl in a temp
-// dir. It returns the handler, the events.jsonl path, and a flush func that
-// closes+reopens the writer so emitted lines are durably visible to a re-read.
-// The writer stays open across the test; callers read the file directly via
-// decisionsProjection (which opens its own read handle).
 type dk4Setup struct {
 	h          *commsSendHandlerImpl
 	eventsPath string
@@ -61,16 +37,12 @@ func dk4NewHandler(t *testing.T) *dk4Setup {
 	if !ok {
 		t.Fatal("dk4NewHandler: handler is not *commsSendHandlerImpl")
 	}
-	// Wire the events path so decisions-list / decisions-answer can re-project.
 	cursorStore := NewCursorStore(filepath.Join(dir, "cursors"))
 	impl.SetRecvDeps(cursorStore, cursorStore, eventsPath)
 
 	return &dk4Setup{h: impl, eventsPath: eventsPath, bus: bus}
 }
 
-// dk4Raise emits a decision_needed via the real handler and returns its
-// decision_id (= the event's own event_id). The F-class fsync makes it durable
-// before return, so a subsequent decisionsProjection sees it.
 func dk4Raise(t *testing.T, s *dk4Setup, question string, options []string, blockedAgent, contextLink string) string {
 	t.Helper()
 	req := DecisionsRaiseRequest{
@@ -97,8 +69,6 @@ func dk4Raise(t *testing.T, s *dk4Setup, question string, options []string, bloc
 	return res.DecisionID
 }
 
-// dk4List calls HandleDecisionsList with an optional single-id filter and decodes
-// the result.
 func dk4List(t *testing.T, s *dk4Setup, filterID string) DecisionsListResult {
 	t.Helper()
 	payload := json.RawMessage(`{}`)
@@ -165,8 +135,6 @@ func TestDecisionsList_Filter(t *testing.T) {
 	}
 }
 
-// dk4CountResolved scans the durable log and returns the number of
-// decision_resolved events for decisionID (asserts the JSONL record).
 func dk4CountResolved(t *testing.T, eventsPath, decisionID string) int {
 	t.Helper()
 	var zeroID core.EventID
@@ -209,11 +177,9 @@ func TestDecisionsAnswer_ValidEmitsResolved(t *testing.T) {
 		t.Fatal("answer: empty event_id on a successful resolve")
 	}
 
-	// Assert the durable decision_resolved record.
 	if got := dk4CountResolved(t, s.eventsPath, did); got != 1 {
 		t.Fatalf("want exactly 1 decision_resolved for %s, got %d", did, got)
 	}
-	// The decision is now closed → leaves the open set.
 	if open := decisionsProjection(s.eventsPath); len(open) != 0 {
 		t.Errorf("after answer, open set has %d entries, want 0", len(open))
 	}
@@ -230,7 +196,6 @@ func TestDecisionsAnswer_BadOptionRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("answer with a bad option: want an error (N7), got nil")
 	}
-	// No decision_resolved emitted; the decision stays open.
 	if got := dk4CountResolved(t, s.eventsPath, did); got != 0 {
 		t.Errorf("bad option must emit no decision_resolved, got %d", got)
 	}
@@ -244,7 +209,6 @@ func TestDecisionsAnswer_BadOptionRejected(t *testing.T) {
 // error above.
 func TestDecisionsAnswer_UnknownIDNoOp(t *testing.T) {
 	s := dk4NewHandler(t)
-	// No decision raised; this id is unknown.
 	const unknown = "01965b00-0000-7000-8000-0000deadbeef"
 	payload := json.RawMessage(`{"decision_id":"` + unknown + `","chosen_option":"anything"}`)
 	resultBytes, err := s.h.HandleDecisionsAnswer(context.Background(), payload)
@@ -273,14 +237,11 @@ func TestDecisionsAnswer_AlreadyTerminalNoOp(t *testing.T) {
 	s := dk4NewHandler(t)
 	did := dk4Raise(t, s, "Ship v2?", []string{"ship", "hold"}, "alice", "")
 
-	// First answer → resolves.
 	first := json.RawMessage(`{"decision_id":"` + did + `","chosen_option":"ship","resolver":"operator"}`)
 	if _, err := s.h.HandleDecisionsAnswer(context.Background(), first); err != nil {
 		t.Fatalf("first answer: %v", err)
 	}
 
-	// Second answer for the SAME id → already terminal → no-op (N3), even with a
-	// DIFFERENT option (first-writer-wins: the second never applies).
 	second := json.RawMessage(`{"decision_id":"` + did + `","chosen_option":"hold","resolver":"someone-else"}`)
 	resultBytes, err := s.h.HandleDecisionsAnswer(context.Background(), second)
 	if err != nil {
@@ -293,7 +254,6 @@ func TestDecisionsAnswer_AlreadyTerminalNoOp(t *testing.T) {
 	if !res.NoOp {
 		t.Error("second answer on a resolved decision: want NoOp=true (first-writer-wins)")
 	}
-	// Exactly ONE decision_resolved total for did (the first writer).
 	if got := dk4CountResolved(t, s.eventsPath, did); got != 1 {
 		t.Errorf("first-writer-wins: want exactly 1 decision_resolved for %s, got %d", did, got)
 	}
@@ -308,7 +268,6 @@ func TestDecisionsList_NoEmit(t *testing.T) {
 	_ = dk4Raise(t, s, "Q2", []string{"c", "d"}, "bob", "")
 
 	before := dk4TotalEvents(t, s.eventsPath)
-	// Several list calls (and a filtered show) — none may emit.
 	_ = dk4List(t, s, "")
 	_ = dk4List(t, s, "")
 	res := dk4List(t, s, "")
@@ -321,7 +280,6 @@ func TestDecisionsList_NoEmit(t *testing.T) {
 	}
 }
 
-// dk4TotalEvents counts all events in the durable log.
 func dk4TotalEvents(t *testing.T, eventsPath string) int {
 	t.Helper()
 	var zeroID core.EventID

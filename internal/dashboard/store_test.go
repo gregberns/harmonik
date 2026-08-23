@@ -13,7 +13,6 @@ import (
 func TestRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 
-	// First read on an absent file returns ErrNotFound.
 	_, err := dashboard.Read(dir)
 	if !errors.Is(err, dashboard.ErrNotFound) {
 		t.Fatalf("want ErrNotFound; got %v", err)
@@ -47,7 +46,6 @@ func TestRoundtrip(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	// Verify file exists at the expected path.
 	want := filepath.Join(dir, ".harmonik", "context", "dashboard.json")
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("dashboard.json not created at %s: %v", want, err)

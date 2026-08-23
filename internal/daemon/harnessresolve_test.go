@@ -1,19 +1,5 @@
 package daemon_test
 
-// harnessresolve_test.go — table-driven tests for the four-tier harness-selection
-// precedence resolver (resolveHarness via ExportedResolveHarness).
-//
-// Acceptance criteria (codex-harness C4/T4, hk-y01k6):
-//   - Table-driven test covers all four precedence tiers.
-//   - Resolved value matches expected for each combination.
-//   - bead_label_conflict event emitted for multi-label and malformed-value tier-1 cases.
-//   - Conflict payload satisfies BeadLabelConflictPayload.Valid().
-//   - Returned value is always a valid core.AgentType (AR-025).
-//
-// Helper prefix: harnessResolveFixture (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-y01k6 [C4/T4]
-
 import (
 	"context"
 	"encoding/json"
@@ -25,11 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// harnessResolveFixtureBead builds a minimal BeadRecord with the given label set.
 func harnessResolveFixtureBead(t *testing.T, labels []string) core.BeadRecord {
 	t.Helper()
 	return core.BeadRecord{
@@ -42,7 +23,6 @@ func harnessResolveFixtureBead(t *testing.T, labels []string) core.BeadRecord {
 	}
 }
 
-// harnessResolveFixtureBus is a minimal in-process event collector.
 type harnessResolveFixtureBus struct {
 	mu     sync.Mutex
 	events []harnessResolveFixtureEvent
@@ -75,10 +55,6 @@ func harnessResolveFixtureBusEvents(t *testing.T, bus *harnessResolveFixtureBus)
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestResolveHarnessPrecedence — primary table-driven test
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestResolveHarnessPrecedence covers all four tiers and conflict paths.
 func TestResolveHarnessPrecedence(t *testing.T) {
 	t.Parallel()
@@ -93,7 +69,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 		// wantConflictEvent: when true, exactly one bead_label_conflict event must be emitted.
 		wantConflictEvent bool
 	}{
-		// ── Tier 1: per-bead harness label wins ──────────────────────────────
 		{
 			name:          "tier1 harness:codex overrides global default",
 			beadLabels:    []string{"area:daemon", "harness:codex"},
@@ -115,7 +90,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantHarness:   core.AgentTypeCodex,
 		},
 
-		// ── Tier 1 conflict: multiple harness labels → emit event, fall through
 		{
 			name:              "tier1 conflict multiple harness labels falls to tier2",
 			beadLabels:        []string{"harness:codex", "harness:claude-code"},
@@ -130,7 +104,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantConflictEvent: true,
 		},
 
-		// ── Tier 1 conflict: invalid agent-type value → emit event, fall through
 		{
 			name:              "tier1 invalid agent-type value emits conflict and falls through",
 			beadLabels:        []string{"harness:INVALID_UPPER"},
@@ -145,7 +118,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantConflictEvent: true,
 		},
 
-		// ── Tier 2: per-queue default ─────────────────────────────────────────
 		{
 			name:         "tier2 queue default wins when no bead label",
 			beadLabels:   nil,
@@ -161,7 +133,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantHarness:   core.AgentTypeCodex,
 		},
 
-		// ── Tier 3: DOT node attribute ────────────────────────────────────────
 		{
 			name:          "tier3 node default wins when bead and queue absent",
 			beadLabels:    nil,
@@ -179,7 +150,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantHarness:   core.AgentTypeCodex,
 		},
 
-		// ── Tier 4: global Config.DefaultHarness ─────────────────────────────
 		{
 			name:          "tier4 global default wins when bead/queue/node absent",
 			beadLabels:    nil,
@@ -197,7 +167,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 			wantHarness:   core.AgentTypeClaudeCode,
 		},
 
-		// ── Tier 4 built-in fallback: all absent → claude-code ───────────────
 		{
 			name:          "built-in fallback to claude-code when all tiers absent",
 			beadLabels:    nil,
@@ -254,10 +223,6 @@ func TestResolveHarnessPrecedence(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestResolveHarnessConflictPayloadShape
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestResolveHarnessConflictPayloadShape verifies the bead_label_conflict payload
 // satisfies BeadLabelConflictPayload.Valid() and carries the expected bead_id.
 func TestResolveHarnessConflictPayloadShape(t *testing.T) {
@@ -294,14 +259,6 @@ func TestResolveHarnessConflictPayloadShape(t *testing.T) {
 		t.Error("resolveHarness: bead_label_conflict conflicting_labels is empty")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestResolveHarnessResultIsValidAgentType
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestResolveHarnessEmitsHarnessSelected (hk-lr5t)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestResolveHarnessEmitsHarnessSelected verifies that a harness_selected event
 // is emitted for every successful resolution, carrying the correct agent_type

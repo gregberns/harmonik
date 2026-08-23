@@ -1,29 +1,5 @@
 package core
 
-// implementernowork_hk368i4.go — ImplementerNoWorkSuspectedPayload (hk-368i4).
-//
-// Emitted by the daemon when a process-exit implementer (codex) finishes with
-// NO commit and a CLEAN worktree (the codexRefsNoChange outcome) AND its phase
-// ran for less than the no-work duration floor.
-//
-// The event is a DETECTOR, not a gate: the run is already failing through the
-// standard no-commit guard by the time this fires. It exists because the
-// hk-jcrzn silent-implementer failure was invisible at every layer that was
-// checked — a fallback committer read the daemon's own scaffolding as agent
-// work and manufactured a passing commit. hk-jcrzn fixes that cause; this names
-// the SHAPE so a future silent failure of a different cause is still caught.
-//
-// Why the conjunction rather than duration alone: a legitimately trivial bead
-// could in principle finish fast, and a slow run can still fail to commit.
-// Neither signal is safe on its own. Pairing them is what makes the detector
-// safe to emit loudly, because a real fast run still produces a commit and so
-// never reaches codexRefsNoChange.
-//
-// Durability class: O (observability — loss costs a diagnostic, not correctness;
-// the run's failure is recorded independently by the no-commit path).
-//
-// Bead ref: hk-368i4 (split from hk-jcrzn).
-
 // ImplementerNoWorkSuspectedPayload is the typed event payload for the
 // implementer_no_work_suspected event (hk-368i4).
 //

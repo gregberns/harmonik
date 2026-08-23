@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// traceFixtureState returns a fully-populated valid State for use in Trace fixtures.
 func traceFixtureState(t *testing.T) State {
 	t.Helper()
 
@@ -24,8 +23,6 @@ func traceFixtureState(t *testing.T) State {
 	}
 }
 
-// traceFixture returns a fully-populated Trace with all 11 fields set to valid
-// non-zero values, including optional pointer fields set to non-nil.
 func traceFixture(t *testing.T) Trace {
 	t.Helper()
 
@@ -261,7 +258,6 @@ func TestTraceJSONRoundTrip(t *testing.T) {
 		t.Error("decoded Trace fails Valid(), want true")
 	}
 
-	// Spot-check scalar fields that must survive the round-trip exactly.
 	if decoded.ActorRole != original.ActorRole {
 		t.Errorf("ActorRole: got %q, want %q", string(decoded.ActorRole), string(original.ActorRole))
 	}

@@ -2,23 +2,6 @@
 
 package daemon_test
 
-// handlerpause_sigusr1_bdvae_test.go — tests for SIGUSR1-based external-trigger
-// resume (hk-bdvae).
-//
-// Acceptance criteria per bead:
-//   - At least one external trigger path implemented (SIGUSR1).
-//   - All paths funnel through HandlerPauseController.Resume() — single transition logic.
-//   - Authentication / authorisation model documented (OS-enforced, same UID or root).
-//   - Test: trigger fires Resume; daemon-state transitions; events emitted.
-//
-// Testing strategy:
-//   - Real OS signals are process-global and interfere with other test goroutines.
-//     ExportedSignalResumeWatcherHandle calls handleSignalResume directly for unit tests.
-//   - Signal delivery via Run is tested with a real SIGUSR1 sent to os.Getpid()
-//     in a non-parallel test to avoid interference.
-//
-// Bead ref: hk-bdvae.
-
 import (
 	"context"
 	"encoding/json"
@@ -33,15 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// srSetup creates a HandlerPauseController whose bus has a pre-Seal subscriber
-// that captures handler_resumed events.
-//
-// Returns the controller, watcher, and a function that blocks until at least
-// one handler_resumed event is delivered (or timeout expires).
 func srSetup(t *testing.T) (ctrl *daemon.HandlerPauseController, watcher *daemon.SignalResumeWatcher, resumedEvents func() []core.HandlerResumedPayload) {
 	t.Helper()
 
@@ -90,7 +64,6 @@ func srSetup(t *testing.T) (ctrl *daemon.HandlerPauseController, watcher *daemon
 	return ctrl, watcher, resumedEvents
 }
 
-// srPause pauses a handler with a minimal valid cause.
 func srPause(t *testing.T, ctrl *daemon.HandlerPauseController, agentType core.AgentType) {
 	t.Helper()
 	cause := core.HandlerPauseCause{
@@ -104,10 +77,6 @@ func srPause(t *testing.T, ctrl *daemon.HandlerPauseController, agentType core.A
 		t.Fatalf("srPause: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSignalResumeWatcher_ResumesAllPaused verifies the golden path:
 // handleSignalResume resumes every paused handler, transitions state to live,
@@ -125,12 +94,10 @@ func TestSignalResumeWatcher_ResumesAllPaused(t *testing.T) {
 
 	daemon.ExportedSignalResumeWatcherHandle(watcher, context.Background())
 
-	// State transition: handler must now be live.
 	if ctrl.IsPaused(at) {
 		t.Fatal("expected handler to be live after signal resume")
 	}
 
-	// Events: at least one handler_resumed with by=signal.
 	payloads := resumedEvents()
 	if len(payloads) == 0 {
 		t.Fatal("expected at least one handler_resumed event")
@@ -217,7 +184,6 @@ func TestSignalResumeWatcher_RunExitsOnContextCancel(t *testing.T) {
 
 	select {
 	case <-done:
-		// Run exited as expected.
 	case <-time.After(daemon.ExportedDaemonExitHangBudget):
 		t.Fatalf("Run did not exit within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
@@ -242,14 +208,12 @@ func TestSignalResumeWatcher_RunResumesOnSIGUSR1(t *testing.T) {
 
 	go watcher.Run(ctx)
 
-	// Give Run a moment to register the signal channel before sending.
 	time.Sleep(20 * time.Millisecond)
 
 	if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
 		t.Fatalf("failed to send SIGUSR1: %v", err)
 	}
 
-	// Wait for the handler to become live.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if !ctrl.IsPaused(at) {

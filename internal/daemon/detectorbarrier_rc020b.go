@@ -1,39 +1,5 @@
 package daemon
 
-// detectorbarrier_rc020b.go — per-detector recover() barrier for RC-020b.
-//
-// RC-020b: a detector that panics during evaluation per RC-003a's first-match
-// priority order MUST be caught by a per-detector recover() barrier (per
-// process-lifecycle.md §4.6 PL-018a's per-goroutine recover obligation
-// extended to detector functions). On panic, the detector is suspended for
-// the daemon's lifetime and priority-order evaluation falls through to the
-// next detector. A diagnostic event reconciliation_detector_panic
-// {detector_class, error_class} MUST emit before fall-through.
-//
-// This file provides:
-//
-//   - DetectorFunc: the function signature every reconciliation detector
-//     implements.
-//   - DetectorBarrier: wraps a DetectorFunc with a per-invocation
-//     recover() barrier, tracks suspension state, and emits the
-//     reconciliation_detector_panic event on panic.
-//
-// Design notes:
-//   - Suspension is lifetime-scoped to the DetectorBarrier instance.
-//     The daemon creates one DetectorBarrier per detector class at startup;
-//     a panic sets suspended=true and the detector skips all subsequent
-//     calls within that daemon run.
-//   - The emitter is an optional narrow interface (detectorPanicEmitter).
-//     If nil, the panic is still caught and the detector is suspended;
-//     only the event emission step is skipped. This allows the barrier to
-//     be used in tests without a real event bus.
-//   - recover() is called inside a nested closure so that the panic
-//     value is captured before any deferred cleanup runs on the outer
-//     goroutine.
-//
-// Spec ref: specs/reconciliation/spec.md §4.3 RC-020b.
-// Bead ref: hk-63oh.22.
-
 import (
 	"context"
 	"encoding/json"
@@ -60,12 +26,6 @@ import (
 // Spec ref: specs/reconciliation/spec.md §4.3 RC-020b.
 type DetectorFunc func(ctx context.Context) (core.ReconciliationCategory, bool)
 
-// detectorPanicEmitter is the narrow event-emission interface required by
-// DetectorBarrier. Any value whose Emit method matches is accepted.
-//
-// The interface is unexported intentionally: callers supply the real event
-// bus (which satisfies handlercontract.EventEmitter) or a test stub; the
-// barrier itself has no dependency on the bus import.
 type detectorPanicEmitter interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
@@ -149,21 +109,15 @@ func (b *DetectorBarrier) Run(ctx context.Context) (cat core.ReconciliationCateg
 		return cat, fired
 	}
 
-	// Panic was caught: suspend detector for daemon lifetime.
 	b.mu.Lock()
 	b.suspended = true
 	b.mu.Unlock()
 
-	// Emit reconciliation_detector_panic before fall-through (RC-020b).
 	b.emitPanicEvent(ctx, panicVal)
 
 	return core.ReconciliationCategory(""), false
 }
 
-// emitPanicEvent marshals and emits the reconciliation_detector_panic event.
-// Errors during emission are silently discarded per the best-effort contract:
-// suspending the detector is the safety-critical action; event emission is
-// observability.
 func (b *DetectorBarrier) emitPanicEvent(ctx context.Context, panicVal interface{}) {
 	if b.emitter == nil {
 		return
@@ -177,12 +131,9 @@ func (b *DetectorBarrier) emitPanicEvent(ctx context.Context, panicVal interface
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		// Marshal failure: discard silently; suspension already took effect.
 		return
 	}
 
-	// Suspension is the authoritative action. The event is best-effort
-	// observability per RC-020b, so an emit failure only gets a log line.
 	if emitErr := b.emitter.Emit(ctx, core.EventTypeReconciliationDetectorPanic, payloadBytes); emitErr != nil {
 		slog.WarnContext(ctx, "daemon: emit reconciliation_detector_panic failed", "err", emitErr, "detector_class", b.class)
 	}

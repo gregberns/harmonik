@@ -1,19 +1,5 @@
 package daemon_test
 
-// socket_queuerecover_test.go — the `queue-recover` op over a live daemon socket.
-//
-// Claims defended:
-//   - `queue-recover` is registered on the daemon socket router, so the CLI verb
-//     does not dead-end
-//   - a recover request against a paused-by-failure queue returns the queue to
-//     active over the wire and re-arms the failed items
-//   - each refusal carries its QM-052b wire code in error_code
-//   - `operator-resume` aimed at a failure-parked queue is refused rather than
-//     reported as a success that dispatches nothing
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b; specs/process-lifecycle.md
-// §4.4 PL-003a.
-
 import (
 	"context"
 	"encoding/json"
@@ -29,9 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// recoverFixtureStore builds a store holding one paused-by-failure queue named
-// name, plus a project directory whose canonical file matches.
-// recoverFixtureQueueName is the queue every fixture in this file parks.
 const recoverFixtureQueueName = "canary"
 
 func recoverFixtureStore(t *testing.T) (store *queuewiring.QueueStore, projectDir string) {
@@ -73,7 +56,6 @@ func recoverFixtureStore(t *testing.T) (store *queuewiring.QueueStore, projectDi
 	return store, projectDir
 }
 
-// recoverFixtureServe starts a live socket carrying the supplied handlers.
 func recoverFixtureServe(t *testing.T, handlers daemon.SocketHandlers) string {
 	t.Helper()
 	sockPath := socketFixtureTempSockPath(t)
@@ -86,7 +68,6 @@ func recoverFixtureServe(t *testing.T, handlers daemon.SocketHandlers) string {
 	return sockPath
 }
 
-// recoverFixtureSend writes one request object to sockPath and decodes the reply.
 func recoverFixtureSend(t *testing.T, sockPath string, req map[string]string) daemon.SocketResponse {
 	t.Helper()
 	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
@@ -272,7 +253,6 @@ func TestSocketRouting_OperatorPause_RefusesUnknownQueue(t *testing.T) {
 
 	sockPath := recoverFixtureServe(t, daemon.SocketHandlers{Operator: ctrl})
 
-	// "canry" is a typo for the queue that exists, "canary".
 	resp := recoverFixtureSend(t, sockPath, map[string]string{"op": "operator-pause", "queue": "canry"})
 	if resp.Ok {
 		t.Fatal("operator-pause against a queue that does not exist reported success; the emergency stop must never claim to have stopped nothing")
@@ -304,7 +284,6 @@ func TestSocketRouting_OperatorPause_StillPausesAKnownQueue(t *testing.T) {
 	if !resp.Ok {
 		t.Fatalf("operator-pause against a queue that exists: %q", resp.Error)
 	}
-	// pausing, then paused.
 	if got := len(collectEventsByType(col, "operator_pause_status")); got != 2 {
 		t.Fatalf("operator_pause_status events = %d, want 2 (pausing then paused)", got)
 	}

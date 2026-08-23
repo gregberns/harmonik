@@ -1,42 +1,5 @@
 package codex
 
-// billingguard_concurrency_test.go — concurrency-safety tests for the positive
-// codex billing guard's config.toml rewrite (hk-codex-billing-guard-race-v6dl5).
-//
-// # Why this file exists separately
-//
-// $CODEX_HOME (default ~/.codex) is GLOBAL: one directory, one config.toml,
-// shared by every codex process and every guard invocation on the host. It is
-// not per-run, per-worktree, or per-project. At --max-concurrent N, N guards
-// rewrite that one file at once, and N codex children read it.
-//
-// The guard used to rewrite it with os.WriteFile, which EMPTIES the target
-// before it refills it, and took no lock. An independent review measured 8047 of
-// 12000 concurrent reads landing inside that empty window. Both halves of that
-// window are billing failures: a peer guard that reads no forced_login_method
-// refuses a launch that was valid, and a codex child that reads none falls back
-// to API-pool billing — which is the single outcome the guard exists to prevent.
-// The guard could defeat itself.
-//
-// billingguard_test.go pins the single-caller content rules (fresh write,
-// idempotence, wrong-value rewrite, unrelated content preserved). It says
-// nothing about what a second caller sees, so the property that makes a shared
-// $CODEX_HOME safe had no test. These are those tests.
-//
-// # Why none of these tests can hit the production lock bound
-//
-// An earlier draft of this file ran eight guards through the full locked path
-// and DID hit the 10s bound at -cpu=1, which is both a flaky test and evidence
-// that the refusal path was reachable under load. The fix was in the guard, not
-// in the test: an already-pinned config now returns on a lock-free probe, so the
-// common case never contends, and in-process writers queue on a mutex ahead of
-// the unfair flock. The tests below are shaped to match — the writer-versus-
-// reader test serializes its writers exactly as production does, so the only
-// test that waits on a contended lock is the one asserting the timeout, and it
-// passes its own short bound.
-//
-// Bead ref: hk-codex-billing-guard-race-v6dl5.
-
 import (
 	"context"
 	"errors"
@@ -53,7 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// seedConfig writes content to codexHome/config.toml and returns its path.
 func seedConfig(t *testing.T, codexHome, content string) string {
 	t.Helper()
 	cfgPath := filepath.Join(codexHome, codexConfigFileName)
@@ -63,7 +25,6 @@ func seedConfig(t *testing.T, codexHome, content string) string {
 	return cfgPath
 }
 
-// pinnedLine is the exact line the guard materializes.
 func pinnedLine() string {
 	return forcedLoginMethodKey + " = \"" + forcedLoginMethodValue + "\""
 }
@@ -80,13 +41,9 @@ func pinnedLine() string {
 // so no scheduler outcome is involved.
 func TestMaterializeForcedLoginMethod_HeldReaderSeesWholeOldFile(t *testing.T) {
 	codexHome := t.TempDir()
-	// Seeded with the WRONG value so the guard's already-pinned fast path does
-	// not apply and a real rewrite happens.
 	before := "model = \"gpt-5-codex\"\n" + forcedLoginMethodKey + " = \"apikey\"\nmodel_reasoning_effort = \"high\"\n"
 	cfgPath := seedConfig(t, codexHome, before)
 
-	// A peer codex process, or a peer guard, holding the config open across our
-	// rewrite. It must not observe a partial file.
 	held, err := os.Open(cfgPath) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("open config to hold it: %v", err)
@@ -111,8 +68,6 @@ func TestMaterializeForcedLoginMethod_HeldReaderSeesWholeOldFile(t *testing.T) {
 			seen, before)
 	}
 
-	// The rewrite must still have landed — otherwise this test would pass on a
-	// guard that does nothing at all.
 	after, err := os.ReadFile(cfgPath) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("read config after rewrite: %v", err)
@@ -154,13 +109,10 @@ func TestMaterializeForcedLoginMethod_AlreadyPinned_TakesNoLock(t *testing.T) {
 		}
 	})
 
-	// A short bound: if the guard reaches the lock at all this call cannot return
-	// nil, and it would take the whole bound to fail.
 	if err := materializeForcedLoginMethodWithin(t.Context(), codexHome, 100*time.Millisecond); err != nil {
 		t.Fatalf("an already-pinned config made the guard wait on the config lock: %v", err)
 	}
 
-	// No staging file: the fast path must not have written anything.
 	if _, statErr := os.Stat(filepath.Join(codexHome, codexConfigStagingName)); statErr == nil {
 		t.Fatal("the already-pinned fast path staged a write; it must not write at all")
 	}
@@ -182,7 +134,6 @@ func TestMaterializeForcedLoginMethod_AlreadyPinned_TakesNoLock(t *testing.T) {
 // call, on a real lockfile, so there is no race to win or lose.
 func TestMaterializeForcedLoginMethod_ContendedLock_FailsClosed(t *testing.T) {
 	codexHome := t.TempDir()
-	// Wrong value, so the fast path does not apply and a lock is genuinely needed.
 	before := forcedLoginMethodKey + " = \"apikey\"\n"
 	cfgPath := seedConfig(t, codexHome, before)
 
@@ -195,8 +146,6 @@ func TestMaterializeForcedLoginMethod_ContendedLock_FailsClosed(t *testing.T) {
 		t.Fatalf("hold the config lock: %v", flockErr)
 	}
 
-	// A short bound so the test does not wait out the production timeout. The
-	// bound decides how long a launch waits, not whether it is refused.
 	err = materializeForcedLoginMethodWithin(t.Context(), codexHome, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("materialize succeeded while another holder had the config lock — " +
@@ -209,7 +158,6 @@ func TestMaterializeForcedLoginMethod_ContendedLock_FailsClosed(t *testing.T) {
 		t.Fatalf("a contended-host refusal must be classified structural so dispatch retries it; got: %v", err)
 	}
 
-	// Fail closed means it also left the file alone.
 	untouched, err := os.ReadFile(cfgPath) //nolint:gosec // G304: test-local temp path.
 	if err != nil {
 		t.Fatalf("read config after refusal: %v", err)
@@ -218,8 +166,6 @@ func TestMaterializeForcedLoginMethod_ContendedLock_FailsClosed(t *testing.T) {
 		t.Fatalf("a refused materialize still edited config.toml; got %q want %q", untouched, before)
 	}
 
-	// Once the lock is free the same call must succeed, proving the refusal was
-	// the lock and not some unrelated fault.
 	if unlockErr := syscall.Flock(int(holder.Fd()), syscall.LOCK_UN); unlockErr != nil {
 		t.Fatalf("release the config lock: %v", unlockErr)
 	}
@@ -266,8 +212,6 @@ func TestMaterializeForcedLoginMethod_CancelledContext_DoesNotWaitOutTheBound(t 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // already cancelled before the call
 
-	// A bound far larger than any acceptable return time, so only cancellation
-	// can end this call quickly.
 	const bound = 30 * time.Second
 	start := time.Now()
 	err = materializeForcedLoginMethodWithin(ctx, codexHome, bound)
@@ -299,8 +243,6 @@ func TestMaterializeForcedLoginMethod_CancelledContext_DoesNotWaitOutTheBound(t 
 // writers cannot starve each other, so no lock bound is in play here.
 func TestReplaceCodexConfig_ConcurrentReadersNeverSeeAnUnpinnedConfig(t *testing.T) {
 	codexHome := t.TempDir()
-	// Two pinned variants of different lengths, so each rewrite genuinely changes
-	// the file and a truncation window would be wide enough to observe.
 	variants := []string{
 		pinnedLine() + "\n",
 		"model = \"gpt-5-codex\"\n" + pinnedLine() + "\nmodel_reasoning_effort = \"high\"\n",
@@ -325,8 +267,6 @@ func TestReplaceCodexConfig_ConcurrentReadersNeverSeeAnUnpinnedConfig(t *testing
 			defer writerWG.Done()
 			<-start
 			for r := 0; r < rounds; r++ {
-				// The production write path: in-process queue, then the flock,
-				// then the atomic replace.
 				codexConfigWriteMu.Lock()
 				release, err := acquireCodexConfigLock(ctx, codexHome, codexConfigLockTimeout)
 				if err != nil {
@@ -366,8 +306,6 @@ func TestReplaceCodexConfig_ConcurrentReadersNeverSeeAnUnpinnedConfig(t *testing
 				if !ok {
 					unpinned[idx]++
 				}
-				// Yield: a reader that never yields can starve the writers on a
-				// single-CPU box, which turns a correctness test into a timing one.
 				runtime.Gosched()
 			}
 		}(i)
@@ -422,8 +360,6 @@ func TestMaterializeForcedLoginMethod_ConcurrentGuards_NoneAreRefused(t *testing
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			// The production bound, deliberately: this test asserts the bound is
-			// NOT reachable on the dispatch-shaped path.
 			errs[idx] = materializeForcedLoginMethod(ctx, codexHome)
 		}(i)
 	}

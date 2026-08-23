@@ -1,31 +1,5 @@
 package daemon_test
 
-// smoke_test.go — end-to-end smoke test (hk-wql33).
-//
-// TestSmokeLoop is the proof-of-life integration test: one ready bead →
-// workspace → handler run → bead closed → run_completed event in JSONL.
-//
-// This test uses:
-//   - A REAL beads SQLite DB seeded via `br init` + `br create`.
-//   - A REAL daemon.Start call (not stub deps) with HandlerBinary pointing at
-//     a tiny /bin/sh wrapper script that exits 0 immediately.
-//   - Real brcli.Adapter calls through daemon.Start → newTestRuntime.
-//
-// The test passes a cancellable context to daemon.Start (hk-7oz2f) so that
-// the work loop can be stopped cleanly without sending SIGINT to the test
-// process.  Once the bead is confirmed closed, the cancel function is called
-// and the goroutine exits.
-//
-// Helper prefix: smokeFixture (per implementer-protocol §Helper-prefix discipline; bead hk-wql33).
-//
-// Config.HandlerArgs is not yet present in daemon.Config (deferred gap filed
-// as hk-4e5b5).  The test works around this by writing a baked /bin/sh
-// wrapper script to t.TempDir() and pointing HandlerBinary at it.
-//
-// Worktree cleanup is NOT performed by the work loop (gap filed as
-// hk-fgdgz).  The test accepts worktrees remaining after the run and just
-// verifies the happy path through bead close + JSONL events.
-
 import (
 	"bufio"
 	"context"
@@ -41,14 +15,8 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// smokeFixtureProjectDir creates the minimal project directory tree for the
-// smoke test: .harmonik/events/, .harmonik/beads-intents/.  Returns the
-// project dir and the JSONL events log path.
 func smokeFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
-	// Resolve symlinks so that br — which rejects symlinked paths — receives
-	// the canonical path. On macOS t.TempDir() returns /var/folders/... but /var
-	// is a symlink to /private/var, which br refuses.
 	raw := t.TempDir()
 	resolved, resolveErr := filepath.EvalSymlinks(raw)
 	if resolveErr != nil {
@@ -69,12 +37,6 @@ func smokeFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// smokeFixtureGitRepo initialises a git repository with a single initial
-// commit in dir.  Required because CreateWorktree calls `git worktree add` and
-// needs an existing git repo with a resolvable HEAD.
-//
-// A local bare repo is created as the "origin" remote so that the daemon's
-// post-merge `git push origin main` succeeds (push_failed is fatal otherwise).
 func smokeFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(d string, args ...string) {
@@ -96,17 +58,12 @@ func smokeFixtureGitRepo(t *testing.T, dir string) {
 	run(dir, "add", "README")
 	run(dir, "commit", "-m", "Initial commit")
 
-	// Create a bare repo as the "origin" remote so the daemon's post-merge
-	// `git push origin main` succeeds.  Without an origin the merge path returns
-	// push_failed and reopens the bead indefinitely.
 	originDir := t.TempDir()
 	run(originDir, "init", "--bare", "--initial-branch=main")
 	run(dir, "remote", "add", "origin", originDir)
 	run(dir, "push", "origin", "main")
 }
 
-// smokeFixtureBrPath locates the real `br` binary via exec.LookPath.
-// If br is not on PATH, the test is skipped.
 func smokeFixtureBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -116,14 +73,6 @@ func smokeFixtureBrPath(t *testing.T) string {
 	return brPath
 }
 
-// smokeFixtureBrWrapperScript writes a /bin/sh wrapper script to t.TempDir()
-// that invokes realBrPath with --db <dbPath> prepended to all args.  Returns
-// the absolute path to the wrapper script.
-//
-// This wrapper is required because brcli.Adapter does not pass --db to br
-// invocations; br normally discovers the DB by upward-traversal from CWD.
-// Pointing it explicitly at the test DB via a wrapper is the cleanest
-// isolation strategy for a test that runs inside a Go test binary.
 func smokeFixtureBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	scriptDir := t.TempDir()
@@ -136,18 +85,10 @@ func smokeFixtureBrWrapperScript(t *testing.T, realBrPath, dbPath string) string
 	return scriptPath
 }
 
-// smokeFixtureHandlerScript writes a /bin/sh script to t.TempDir() that makes
-// a minimal git commit and exits 0. The commit is required because the
-// no-commit guard (hk-9c1v4 / hk-mmh8f) fails the run when HEAD does not
-// advance past parentSHA; an exit-0 with no commit no longer auto-closes.
-// The script reads the bead_id from .harmonik/agent-task.md so the commit
-// message carries a proper Refs trailer.
 func smokeFixtureHandlerScript(t *testing.T) string {
 	t.Helper()
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "handler.sh")
-	// Redirect git output to stderr so the daemon's NDJSON stdout parser does
-	// not see non-JSON output and raise a malformed_progress_message error.
 	content := `#!/bin/sh
 set -e
 bead_id=$(grep '^bead_id:' .harmonik/agent-task.md | awk '{print $2}') 2>/dev/null
@@ -165,17 +106,9 @@ exit 0
 	return scriptPath
 }
 
-// smokeFixtureInitBr initialises a beads workspace in projectDir, creates one
-// ready bead, and returns its ID.
-//
-// br init is run via the real binary with cmd.Dir = projectDir so that br
-// discovers the correct workspace and creates .beads/ there.  Subsequent br
-// create calls use the wrapper script (which passes --db) so they work from
-// any working directory.
 func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath string) string {
 	t.Helper()
 
-	// Step 1: br init — run in projectDir so br creates .beads/ there.
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sm")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -183,7 +116,6 @@ func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath stri
 		t.Fatalf("smokeFixtureInitBr: br init in %s: %v\n%s", projectDir, initErr, initOut)
 	}
 
-	// Step 2: br create via wrapper (--db is now valid since .beads/ exists).
 	createCmd := exec.CommandContext(t.Context(), brWrapperPath,
 		"create", "smoke test bead", "--status", "open", "--labels", "workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
@@ -197,7 +129,6 @@ func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath stri
 	return id
 }
 
-// smokeFixtureReadJSONLLines reads all non-empty JSONL lines from path.
 func smokeFixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -216,8 +147,6 @@ func smokeFixtureReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// smokeFixturePollBeadClosed polls `br show <id>` at 10 ms intervals for up
-// to budget.  Returns true if the bead reaches "closed" status within budget.
 func smokeFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -239,16 +168,6 @@ func smokeFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budg
 	return false
 }
 
-// smokeFixturePollRunTerminal polls the JSONL log at jsonlPath for a
-// run_completed or run_failed event at 10 ms intervals for up to budget.
-//
-// The polling exists because the work loop emits run_completed/run_failed
-// AFTER CloseBead returns — so if the test cancels the context immediately
-// on seeing the bead "closed" (which happens when CloseBead's br subprocess
-// commits to SQLite), the loop may be killed mid-run before the event is
-// written.  Waiting for the terminal event here ensures the loop has fully
-// returned from CloseBead (or ReopenBead) before the context is cancelled,
-// avoiding the pre-existing race (hk-c1ln2 fix).
 func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -264,10 +183,6 @@ func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Dur
 	}
 	return false
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestSmokeLoop — end-to-end happy path
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSmokeLoop is the EARLY_ROADMAP row #11 proof-of-life integration test.
 // It exercises the full daemon work loop against a real beads SQLite DB:
@@ -292,7 +207,6 @@ func TestSmokeLoop(t *testing.T) {
 	projectDir, jsonlPath := smokeFixtureProjectDir(t)
 	smokeFixtureGitRepo(t, projectDir)
 
-	// Build the br DB path: br init will place the DB at <projectDir>/.beads/beads.db.
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := smokeFixtureBrWrapperScript(t, realBrPath, dbPath)
 	handlerScript := smokeFixtureHandlerScript(t)
@@ -309,68 +223,38 @@ func TestSmokeLoop(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// Gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a
-	// HandlerArgs field so the work loop always invokes HandlerBinary with no
-	// extra args.  The smoke test works around this by using a baked handler.sh
-	// that exits 0 without args.
-
-	// Build a cancellable context to drive a clean shutdown (hk-7oz2f).
-	// Cancelling loopCancel replaces the previous SIGINT-to-self workaround.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
-	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Poll until the bead is closed AND a run_completed/run_failed event appears
-	// in the JSONL log (10 ms interval, 20 s budget).
-	//
-	// Two-phase poll rationale: the work loop commits to SQLite (bead→closed) as
-	// part of CloseBead, then emits run_completed immediately after.  If we cancel
-	// the context the instant we see "closed" in SQLite, the loop may be mid-way
-	// through CloseBead (br subprocess still running inside RunWithTimeout's
-	// select); cancellation then kills that subprocess and returns BrUnavailable
-	// instead of BrOK, causing run_failed to be emitted and the test to fail.
-	// Waiting for the terminal JSONL event ensures the full CloseBead cycle has
-	// finished before we cancel (hk-c1ln2).
 	const pollBudget = 20 * time.Second
 	closed := smokeFixturePollBeadClosed(t, brWrapper, beadID, pollBudget)
 	if closed {
-		// Give the work loop time to emit run_completed after CloseBead returns.
 		_ = smokeFixturePollRunTerminal(t, jsonlPath, 5*time.Second)
 	}
 
-	// Stop the work loop by cancelling the context.
 	loopCancel()
 
-	// Wait for daemon.Start to return. This test's property — bead closed,
-	// run_started and run_completed all seen — has already been observed above by
-	// the time we get here, so a stopwatch on the unwind can only fail a test
-	// that has passed. It did exactly that (hk-scenario-budgets-structural-2z9dx).
 	if err := awaitLoopTeardownErr(t, startDone, "daemon.Start"); err != nil {
 		t.Errorf("daemon.Start returned error after context cancel: %v", err)
 	}
 
-	// Assert bead was closed within the polling budget.
 	if !closed {
-		// Re-check one more time to handle the case where closure happened
-		// during the SIGINT→return window.
 		closed = smokeFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second)
 	}
 	if !closed {
 		t.Errorf("bead %s was not closed within %s; work loop did not complete the dispatch cycle", beadID, pollBudget)
 	}
 
-	// Assert JSONL log contains run_started and run_completed events.
 	lines := smokeFixtureReadJSONLLines(t, jsonlPath)
 	if len(lines) == 0 {
 		t.Fatal("JSONL log is empty; expected daemon_started, run_started, run_completed")
 	}
 
-	// Check for run_started event (keyed to any run_id).
 	foundRunStarted := false
 	for _, line := range lines {
 		if strings.Contains(line, string(core.EventTypeRunStarted)) ||
@@ -383,7 +267,6 @@ func TestSmokeLoop(t *testing.T) {
 		t.Errorf("run_started event not found in JSONL log; lines: %v", lines)
 	}
 
-	// Check for run_completed event.
 	foundRunCompleted := false
 	for _, line := range lines {
 		if strings.Contains(line, string(core.EventTypeRunCompleted)) ||
@@ -395,9 +278,6 @@ func TestSmokeLoop(t *testing.T) {
 	if !foundRunCompleted {
 		t.Errorf("run_completed event not found in JSONL log; lines: %v", lines)
 	}
-
-	// Note: worktree cleanup is not asserted here.  The work loop does not
-	// clean up worktrees.  Follow-up bead hk-fgdgz tracks this gap.
 
 	t.Logf("smoke: JSONL line count = %d; bead closed = %v; run_started = %v; run_completed = %v",
 		len(lines), closed, foundRunStarted, foundRunCompleted)

@@ -1,17 +1,5 @@
 package core
 
-// Tests for EV-002c HWM persistence utilities:
-//
-//	TestReadEventIDHWM_Missing       — missing file → (zero, false, nil)
-//	TestReadEventIDHWM_Valid         — round-trip read after WriteEventIDHWMAtomicNoSync
-//	TestReadEventIDHWM_Corrupt       — malformed content → (zero, false, err)
-//	TestWriteEventIDHWMAtomicNoSync  — atomic write, readable back
-//	TestExtractUUIDv7Timestamp       — high-48-bit extraction is within 1s of now
-//	TestIsHWMClockRegression_Below   — wall clock ahead of HWM → false
-//	TestIsHWMClockRegression_Above   — wall clock >1s behind HWM → true
-//	TestIsHWMClockRegression_Edge    — wall clock exactly 1s behind → false (threshold is >1s)
-//	TestNewEventIDGeneratorWithHWM   — first Next() is strictly > HWM under clock regression
-
 import (
 	"encoding/hex"
 	"os"
@@ -22,15 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// hwmFixtureMakeID returns a UUIDv7 with the embedded timestamp set to wallClock,
-// suitable for testing timestamp-extraction and clock-regression helpers.
 func hwmFixtureMakeID(t *testing.T, wallClock time.Time) EventID {
 	t.Helper()
 	u, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("hwmFixtureMakeID: uuid.NewV7(): %v", err)
 	}
-	// Overwrite the high-48-bit ms timestamp to match wallClock.
 	if wallClock.UnixMilli() < 0 {
 		t.Fatalf("hwmFixtureMakeID: negative Unix millisecond timestamp %v", wallClock)
 	}
@@ -209,10 +194,8 @@ func TestNewEventIDGeneratorWithHWM(t *testing.T) {
 		hwm = id
 	}
 
-	// Seed from HWM; inject a regressed clock source.
 	g := NewEventIDGeneratorWithHWM(hwm)
 	g.newV7 = func() (uuid.UUID, error) {
-		// Decrement HWM by 1 to simulate a regressed clock.
 		regressed := uuid.UUID(hwm)
 		for i := 15; i >= 0; i-- {
 			if regressed[i] > 0 {
@@ -231,7 +214,6 @@ func TestNewEventIDGeneratorWithHWM(t *testing.T) {
 
 	hwmHex := hex.EncodeToString(hwm[:])
 	postHex := hex.EncodeToString(firstPost[:])
-	// Compare byte-by-byte (big-endian UUIDv7 ordering).
 	if hwmHex >= postHex {
 		t.Fatalf("EV-002c: post-restart EventID %v is not strictly > HWM %v", firstPost, hwm)
 	}

@@ -2,24 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// queueevents_extqueue.go — event-bus payload types for §8.10 queue lifecycle
-// events (extqueue v0.1):
-//
-//   - queue_submitted                     (§8.10.1)
-//   - queue_group_started                 (§8.10.2)
-//   - queue_group_completed               (§8.10.3)
-//   - queue_paused                        (§8.10.4)
-//   - queue_appended                      (§8.10.5)
-//   - queue_item_deferred_for_ledger_dep  (§8.10.6)
-//   - queue_item_reconciled               (§8.10.7)
-//
-// Spec ref: specs/event-model.md §8.10, §6.3.
-// Bead ref: hk-yslws.
-
-// ---------------------------------------------------------------------------
-// Payload structs for §8.10 events
-// ---------------------------------------------------------------------------
-
 // QueueSubmittedPayload is the typed event payload for the queue_submitted event
 // (event-model.md §8.10.1).
 //
@@ -570,8 +552,6 @@ type ReconciliationMismatchObservedPayload struct {
 	ObservedAt string `json:"observed_at"`
 }
 
-// validMismatchClasses is the exhaustive set of mismatch_class values per
-// queue-model.md §3.2b QM-002b.
 var validMismatchClasses = map[string]struct{}{
 	"bead_closed_queue_pending":           {},
 	"bead_closed_queue_dispatched":        {},
@@ -606,10 +586,6 @@ func (p ReconciliationMismatchObservedPayload) Valid() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// queue-model.md §9.8a QM-067a — cross_queue_collision
-// ---------------------------------------------------------------------------
 
 // CrossQueueCollisionDisposition names what the dispatcher did about one
 // cross-queue collision. The three values are the three ways the losing item can

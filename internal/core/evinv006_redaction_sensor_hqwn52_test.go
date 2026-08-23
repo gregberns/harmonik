@@ -1,85 +1,41 @@
 package core
 
-// evinv006_redaction_sensor_hqwn52_test.go — binding tests for hk-hqwn.52
-// (EV-INV-006: best-effort redaction plus compile-time structural check).
-//
-// Spec refs: event-model.md §5 EV-INV-006; §4.10 EV-035; §4.10 EV-036.
-// Bead ref: hk-hqwn.52.
-//
-// Two sensor layers:
-//
-//  1. EV-036 structural check (scanConstructors / ScanRegisteredPayloadsForSecretFields):
-//     - A payload type with a secret-prefix field name MUST cause the scan to
-//       return an error wrapping ErrSecretPrefixField.
-//     - A payload type with only safe field names MUST pass the scan.
-//     - The scan covers all common-prefix variants: secret, token, password,
-//       api_key, apiKey, auth, and their mixed-case forms.
-//
-//  2. EV-035 runtime redaction (secretPrefixRe matches HC-031 rule):
-//     - The regex used by the structural check MUST agree with the HC-031 set,
-//       confirming the two layers are co-aligned on what constitutes a
-//       "secret-prefix" name.
-//
-// These two layers together discharge EV-INV-006: the structural check rules out
-// secret-named fields on registered types (structural guardrail), and the regex
-// alignment confirms the best-effort redaction path (HC-031 in handlercontract)
-// and the structural scan use the identical definition of "secret-prefix".
-//
-// Helper prefix: hqwn52Fixture (per implementer-protocol.md §Helper-prefix
-// discipline; distinct from eventRegistryReset and other core helpers).
-
 import (
 	"errors"
 	"testing"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture payload types — test-only; defined here, never registered globally.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hqwn52FixtureCleanPayload has no secret-prefix fields; used to verify that
-// clean types pass the EV-036 structural scan.
 type hqwn52FixtureCleanPayload struct {
 	NodeID string `json:"node_id"`
 	RunID  string `json:"run_id"`
 	Status string `json:"status"`
 }
 
-// hqwn52FixtureSecretPayload has a field named "Secret" that matches the
-// EV-036 secret-prefix rule.
 type hqwn52FixtureSecretPayload struct {
 	NodeID string `json:"node_id"`
 	Secret string `json:"secret"`
 }
 
-// hqwn52FixtureTokenPayload has a field named "Token" — another common-prefix
-// variant that the EV-036 rule covers.
 type hqwn52FixtureTokenPayload struct {
 	RunID string `json:"run_id"`
 	Token string `json:"token"`
 }
 
-// hqwn52FixturePasswordPayload has a field named "Password".
 type hqwn52FixturePasswordPayload struct {
 	UserID   string `json:"user_id"`
 	Password string `json:"password"`
 }
 
-// hqwn52FixtureAPIKeyPayload has a field named "APIKey".
 type hqwn52FixtureAPIKeyPayload struct {
 	Service string `json:"service"`
 	APIKey  string `json:"api_key"`
 }
 
-// hqwn52FixtureAuthPayload has a field named "Auth".
 type hqwn52FixtureAuthPayload struct {
 	SessionID string `json:"session_id"`
 	Auth      string `json:"auth"`
 }
 
-// hqwn52FixtureLocalCtors builds an isolated constructor map containing only
-// the provided (typeName, constructor) pairs. Tests use local maps to keep
-// each test case self-contained and independent of global-registry state.
 func hqwn52FixtureLocalCtors(t *testing.T, pairs ...any) map[string]func() EventPayload {
 	m := make(map[string]func() EventPayload)
 	for i := 0; i+1 < len(pairs); i += 2 {
@@ -95,10 +51,6 @@ func hqwn52FixtureLocalCtors(t *testing.T, pairs ...any) map[string]func() Event
 	}
 	return m
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-036: scanConstructors (isolated registry — avoids global state)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHQWN52_EV036_CleanPayloadPassesScan verifies that a constructor map
 // containing only clean (non-secret-prefix) payload types returns nil.
@@ -246,10 +198,6 @@ func TestHQWN52_EV036_MixedRegistryDetectsViolation(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-035: best-effort redaction — secretPrefixRe agrees with HC-031 rule
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHQWN52_EV035_SecretPrefixReMatchesSecretNames verifies that the core
 // package's secretPrefixRe (used by scanConstructors) matches the same set of
 // secret-prefix names that the HC-031 redaction rule covers. This test
@@ -265,7 +213,6 @@ func TestHQWN52_EV036_MixedRegistryDetectsViolation(t *testing.T) {
 func TestHQWN52_EV035_SecretPrefixReMatchesSecretNames(t *testing.T) {
 	t.Parallel()
 
-	// These field names MUST match the secret-prefix rule per EV-035 / HC-031.
 	shouldMatch := []string{
 		"Secret",
 		"secret",
@@ -288,7 +235,6 @@ func TestHQWN52_EV035_SecretPrefixReMatchesSecretNames(t *testing.T) {
 		"PasswordHash",
 	}
 
-	// These field names MUST NOT match the secret-prefix rule.
 	shouldNotMatch := []string{
 		"NodeID",
 		"RunID",

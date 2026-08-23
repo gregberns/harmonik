@@ -1,14 +1,5 @@
 package main
 
-// comms_recv_test.go — client-hop contract tests for `harmonik comms recv`.
-//
-// These guard the wire shape an AGENT reads, not the daemon that produces it.
-// Every agent's launch context loads the agent-comms skill, which makes
-// `event_id` the one legal dedup key (N3, at-least-once delivery). A renamed
-// struct tag here leaves every daemon-side test green and silently breaks
-// dedupe across the whole fleet — the failure shows up as duplicated work, not
-// as a red test.
-
 import (
 	"encoding/json"
 	"net"
@@ -17,7 +8,6 @@ import (
 	"testing"
 )
 
-// commsRespond writes a JSON response object on the connection.
 func commsRespond(conn net.Conn, resp map[string]any) {
 	out, err := json.Marshal(resp)
 	if err != nil {
@@ -28,7 +18,6 @@ func commsRespond(conn net.Conn, resp map[string]any) {
 	}
 }
 
-// commsOpOf returns the "op" of a raw request the fake daemon decoded.
 func commsOpOf(req []byte) string {
 	var parsed map[string]any
 	if err := json.Unmarshal(req, &parsed); err != nil {
@@ -41,7 +30,6 @@ func commsOpOf(req []byte) string {
 	return op
 }
 
-// commsStringField reads a string field off a decoded request or payload.
 func commsStringField(m map[string]any, key string) string {
 	v, ok := m[key].(string)
 	if !ok {
@@ -50,7 +38,6 @@ func commsStringField(m map[string]any, key string) string {
 	return v
 }
 
-// mapKeys returns the keys of m, for readable failure messages.
 func mapKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -58,10 +45,6 @@ func mapKeys[V any](m map[string]V) []string {
 	}
 	return keys
 }
-
-// ---------------------------------------------------------------------------
-// 1. The dedup key is spelled event_id
-// ---------------------------------------------------------------------------
 
 // TestCommsRecvJSON_CarriesEventIDField pins the NDJSON object `comms recv
 // --json` emits per message. The agent-comms contract tells every agent to
@@ -132,10 +115,6 @@ func TestCommsRecvJSON_OmitsEmptyOptionalKeys(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// 2. Human output carries no event id, by design
-// ---------------------------------------------------------------------------
-
 // TestCommsRecvHuman_OmitsEventIDByDesign pins the split between the two output
 // modes. Human output is for a person reading a pane; it deliberately drops the
 // event id so that an agent which needs to dedupe has to reach for --json,
@@ -162,7 +141,6 @@ func TestCommsRecvHuman_OmitsEventIDByDesign(t *testing.T) {
 			if strings.Contains(out, replyTo) {
 				t.Errorf("human comms recv output must not carry the in-reply-to id; got: %q", out)
 			}
-			// It still has to be useful to a reader.
 			for _, want := range []string{"captain", "alice", "the body"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("human comms recv output is missing %q; got: %q", want, out)
@@ -171,10 +149,6 @@ func TestCommsRecvHuman_OmitsEventIDByDesign(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// 3. The follow anchor falls back to scan_anchor
-// ---------------------------------------------------------------------------
 
 // TestCommsRecvFollow_AnchorsOnScanAnchorWhenCursorEmpty guards a regression
 // that already shipped once (GH #8 / hk-7xvf). When the catch-up drain matches
@@ -188,8 +162,6 @@ func TestCommsRecvFollow_AnchorsOnScanAnchorWhenCursorEmpty(t *testing.T) {
 
 	d := startFakeDaemon(t, func(conn net.Conn, req []byte) {
 		if commsOpOf(req) == "comms-recv" {
-			// No matching messages and no stored cursor: cursor_after is
-			// empty, scan_anchor is the only usable position.
 			commsRespond(conn, map[string]any{
 				"ok": true,
 				"result": map[string]any{
@@ -199,8 +171,6 @@ func TestCommsRecvFollow_AnchorsOnScanAnchorWhenCursorEmpty(t *testing.T) {
 			})
 			return
 		}
-		// Stop the follow loop: a SocketResponse error exits without
-		// reconnecting, which is enough to capture the subscribe request.
 		commsRespond(conn, map[string]any{"ok": false, "error": "test-stop"})
 	})
 
@@ -257,10 +227,6 @@ func TestCommsRecvFollow_PrefersCursorAfterOverScanAnchor(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// 4. The live flag marks only the follow and wait drains
-// ---------------------------------------------------------------------------
-
 // TestCommsRecvLiveFlag_SetOnlyForFollowAndWait pins amendment B1 (hk-8xspi):
 // a --follow or --wait catch-up drain reads the LIVE cursor it shares with the
 // subscribe session that follows it, while a plain one-shot recv reads the POLL
@@ -279,8 +245,6 @@ func TestCommsRecvLiveFlag_SetOnlyForFollowAndWait(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := startFakeDaemon(t, func(conn net.Conn, req []byte) {
 				if commsOpOf(req) == "comms-recv" {
-					// One message ends --wait immediately and keeps --follow
-					// from mattering; the drain request is what we assert on.
 					commsRespond(conn, map[string]any{
 						"ok": true,
 						"result": map[string]any{
@@ -314,10 +278,6 @@ func TestCommsRecvLiveFlag_SetOnlyForFollowAndWait(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// 5. A missing socket exits 17
-// ---------------------------------------------------------------------------
 
 // TestCommsRecvDaemonDown_ExitsSeventeen verifies that recv reports the shared
 // daemon-down code. Exit 1 means "your arguments were wrong", and a caller that

@@ -13,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 )
 
-// brcliFixtureMockBinary writes a shell script that prints stdout/stderr and
-// exits with the given code. The returned path is valid for the duration of
-// the test (t.TempDir is used for cleanup).
-//
-// The binary is written with mode 0755 for executability; the gosec G306
-// finding is suppressed because this is a test fixture, not production data.
 func brcliFixtureMockBinary(t *testing.T, stdout, stderr string, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -31,14 +25,10 @@ func brcliFixtureMockBinary(t *testing.T, stdout, stderr string, exitCode int) s
 	return path
 }
 
-// brcliFixtureEchoArgsBinary writes a shell script that prints all received
-// arguments to stdout (space-separated) and exits 0. Used to verify that
-// higher-level adapter methods forward the expected flags to `br`.
 func brcliFixtureEchoArgsBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
-	// "$*" expands all positional parameters space-separated.
 	script := "#!/bin/sh\nprintf '%s' \"$*\"\nexit 0\n"
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -47,8 +37,6 @@ func brcliFixtureEchoArgsBinary(t *testing.T) string {
 	return path
 }
 
-// brcliFixtureSleepBinary writes a shell script that sleeps for the given
-// number of seconds then exits 0. Used for context-cancellation tests.
 func brcliFixtureSleepBinary(t *testing.T, seconds int) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -172,13 +160,9 @@ func TestRunPropagatesContextCancellation(t *testing.T) {
 		done <- runErr
 	}()
 
-	// Cancel after a short delay to let the subprocess start.
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 
-	// Derive the upper bound from the test's own deadline so it scales with
-	// -timeout and only fires on a true hang, not CPU starvation under heavy
-	// -race parallelism on a slow CI runner.
 	returnTimeout := 30 * time.Second
 	if dl, ok := t.Deadline(); ok {
 		if budget := time.Until(dl) - 2*time.Second; budget > 0 && budget < returnTimeout {
@@ -195,17 +179,10 @@ func TestRunPropagatesContextCancellation(t *testing.T) {
 	}
 }
 
-// brcliFixtureEchoArgsToFileBinary writes a shell script that records all
-// received arguments (space-separated) to argsFile and exits 0. Used to spy
-// on the exact argument list forwarded to the mock binary by higher-level
-// adapter methods, without going through the methods' JSON-parsing layer.
 func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
-	// Write all positional args to argsFile; print nothing to stdout so that
-	// higher-level callers (ShowBead) receive empty output and produce a
-	// parse error — which is expected and asserted in the test.
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' \"$*\" > %q\nexit 0\n", argsFile)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -214,9 +191,6 @@ func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
 	return path
 }
 
-// brcliFixturePWDBinary writes a shell script that prints its working directory
-// (via pwd) to stdout and exits 0. Used by TestNewForProjectSetsCmdDir to
-// assert that Run sets cmd.Dir on the subprocess.
 func brcliFixturePWDBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -247,8 +221,6 @@ func TestNewForProjectSetsCmdDir(t *testing.T) {
 		t.Fatalf("Run: unexpected error: %v", runErr)
 	}
 	got := strings.TrimRight(string(result.Stdout), "\n")
-	// On macOS, /tmp is a symlink to /private/tmp. Evaluate both to a real path
-	// before comparing so the test is not brittle across platforms.
 	wantReal, err := filepath.EvalSymlinks(workingDir)
 	if err != nil {
 		t.Fatalf("EvalSymlinks(workingDir): %v", err)
@@ -306,9 +278,6 @@ func TestRunFormatJSONAppendsFlag(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// ShowBead internally calls runFormatJSON, which must append --format json.
-	// The spy binary writes empty stdout, so ShowBead will return a
-	// BrSchemaMismatch error — that is expected and asserted below.
 	_, showErr := adapter.ShowBead(context.Background(), "hk-test")
 	if showErr == nil {
 		t.Fatal("expected parse error from ShowBead with spy binary, got nil")

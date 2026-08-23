@@ -25,19 +25,6 @@ var ErrBeadNotFound = errors.New("brcli: bead not found")
 // TODO(hk-872.28): Full BrError integration will absorb this sentinel.
 var ErrBrShowFailed = errors.New("brcli: br show failed")
 
-// brShowItem is the per-element JSON shape returned by `br show <id> --format json`.
-// The top-level response is a JSON array; each element has this structure.
-//
-// Field-name note (hk-nmiww): `br create` exposes --description (primary flag)
-// with --body as a CLI alias.  `br show --format json` always emits the field as
-// "description", never "body".  Consumers of br show JSON output MUST read the
-// "description" key; checking for "body" will always yield an empty string.
-//
-// Design field: `br show --format json` also emits a "design" field when present.
-// The design field carries bead enrichment (re-implementation notes, spec-field-name
-// overrides, BLOCK-iteration corrections) that MUST reach both the implementer and
-// reviewer. ShowBead appends the design field to Description with a clear header so
-// it propagates through BeadRecord.Description into agent-task.md and review-target.md.
 type brShowItem struct {
 	ID           string       `json:"id"`
 	Title        string       `json:"title"`
@@ -55,15 +42,12 @@ type brShowItem struct {
 	Assignee string `json:"assignee"`
 }
 
-// brShowEdge represents a single entry in either the dependencies or
-// dependents array of the br show JSON response.
 type brShowEdge struct {
 	ID             string `json:"id"`
 	DependencyType string `json:"dependency_type"`
 	Status         string `json:"status"`
 }
 
-// brShowErrorEnvelope is the JSON shape returned on non-zero exit by br show.
 type brShowErrorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`
@@ -97,17 +81,13 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 	}
 
 	if result.ExitCode != 0 {
-		// Attempt to parse as an error envelope to detect ISSUE_NOT_FOUND.
 		var envelope brShowErrorEnvelope
 		if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr == nil && envelope.Error.Code == "ISSUE_NOT_FOUND" {
 			return core.BeadRecord{}, ErrBeadNotFound
 		}
 
-		// Determine a human-readable error detail for the wrapped error.
 		errDetail := envelope.Error.Message
 		if errDetail == "" {
-			// Fall back to truncated stdout if envelope parse failed or message
-			// was empty.
 			truncated := result.Stdout
 			if len(truncated) > 200 {
 				truncated = truncated[:200]
@@ -123,8 +103,6 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		)
 	}
 
-	// Success path: parse JSON array.
-	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var items []brShowItem
 	if jsonErr := json.Unmarshal(result.Stdout, &items); jsonErr != nil {
 		return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: malformed br show output: %w; %w", jsonErr, BrSchemaMismatch)
@@ -140,7 +118,6 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 
 	item := items[0]
 
-	// issue_type is required for a valid BeadRecord.
 	if item.IssueType == "" {
 		return core.BeadRecord{}, fmt.Errorf(
 			"brcli.ShowBead: malformed br show output: missing issue_type field for bead %q: %w",
@@ -149,16 +126,11 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		)
 	}
 
-	// Parse CoarseStatus — UnmarshalText rejects unknown values per its contract.
 	var status core.CoarseStatus
 	if unmarshalErr := status.UnmarshalText([]byte(item.Status)); unmarshalErr != nil {
 		return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: %w", unmarshalErr)
 	}
 
-	// Build edges from dependencies (outgoing: this bead → dep) and
-	// dependents (incoming: dep → this bead).
-	// The `parent` field is redundant with the parent-child entry already in
-	// dependencies and is NOT used for edge construction.
 	edges := make([]core.DependencyEdge, 0, len(item.Dependencies)+len(item.Dependents))
 
 	for _, dep := range item.Dependencies {
@@ -199,12 +171,6 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		})
 	}
 
-	// Combine description and design fields. The design field carries bead
-	// enrichment (re-impl notes, spec-field-name overrides added after a BLOCK
-	// verdict) that must reach both the implementer and the reviewer. Appending
-	// it to Description with a labeled section ensures it propagates through
-	// BeadRecord.Description into agent-task.md and review-target.md without
-	// requiring changes to BeadRecord, ReviewTargetPayload, or their templates.
 	description := item.Description
 	if strings.TrimSpace(item.Design) != "" {
 		if description != "" && !strings.HasSuffix(description, "\n") {

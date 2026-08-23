@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-// modelTierOrder maps model tier names to their capability rank.
-// Lower rank = less capable. Ordering per specs/control-points.md §4.6.CP-033.
 var modelTierOrder = map[string]int{
 	"haiku":  0,
 	"sonnet": 1,
@@ -59,8 +57,6 @@ func IntersectFreedomProfiles(profiles []FreedomProfile) (FreedomProfile, error)
 	return result, nil
 }
 
-// intersectTwoFreedomProfiles computes the per-field tightest-wins intersection
-// of exactly two FreedomProfiles per CP-033.
 func intersectTwoFreedomProfiles(a, b FreedomProfile) (FreedomProfile, error) {
 	modelTier, err := tightestModelTier(a.ModelTier, b.ModelTier)
 	if err != nil {
@@ -93,8 +89,6 @@ func intersectTwoFreedomProfiles(a, b FreedomProfile) (FreedomProfile, error) {
 	}, nil
 }
 
-// intersectStringSet returns the set intersection of a and b, preserving
-// the order of a. The result is always a non-nil slice.
 func intersectStringSet(a, b []string) []string {
 	bSet := make(map[string]struct{}, len(b))
 	for _, s := range b {
@@ -109,11 +103,6 @@ func intersectStringSet(a, b []string) []string {
 	return result
 }
 
-// tightestModelTier returns the less-capable of the two model tier pointers
-// per the ordering: haiku < sonnet < opus.
-//
-// nil means "no tier constraint"; a non-nil value is more restrictive than nil.
-// Returns ErrUnknownModelTier if a non-nil tier name is not in the tier table.
 func tightestModelTier(a, b *string) (*string, error) {
 	if a == nil {
 		return b, nil
@@ -135,10 +124,6 @@ func tightestModelTier(a, b *string) (*string, error) {
 	return b, nil
 }
 
-// intersectBudgetRef returns the effective BudgetRef for a non-ordered reference
-// field. nil beats non-nil in the direction of "constraint wins over absence".
-// If both are non-nil and equal, the value is returned. If both are non-nil and
-// differ, ErrIncompatibleFreedomProfiles is returned.
 func intersectBudgetRef(a, b *BudgetRef) (*BudgetRef, error) {
 	if a == nil {
 		return b, nil

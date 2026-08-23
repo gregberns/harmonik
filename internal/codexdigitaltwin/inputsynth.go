@@ -1,20 +1,3 @@
-// inputsynth.go — the INPUT-direction stimulus synthesizer (T9).
-//
-// It builds the discrete stripped stimulus corpora the fault matrix replays:
-// per-stratum flat sequences of codexinput.Event that carry one input submission
-// through the driver's lifecycle to a definite outcome. The captured OUTPUT
-// corpus (testdata/codex-app-server/) proves the wire codec parses zero-raw (the
-// drift canary guards it); this synthesizer supplies the reactor's INPUT-side
-// stimuli, whose vocabulary (Spawned / HandshakeOK / InputSubmitted / InputAcked
-// / InputRejected / TurnCompleted / CloseRequested) the captured output frames do
-// not contain — the same input-vs-output gap keepertwin's SynthesizeStimulus
-// closes (measurement-design §2).
-//
-// NO pre-scheduled TimerFired lines are emitted: timer firings are produced by
-// the discrete-event harness from the reactor's own ArmTimer actions (the L2
-// harness), never delivered as external stimulus. That keeps the EventN domain
-// equal to the number of external stimuli.
-
 package codexdigitaltwin
 
 import (
@@ -50,17 +33,11 @@ var AllInputStrata = []InputStratum{
 	StratumAcked, StratumRejected, StratumStaleTimeout, StratumHandshakeFail,
 }
 
-// the fixed submission seq + turn id the strata use.
 const (
 	synthSeq    = 1
 	synthTurnID = "twin-turn-0001"
 )
 
-// inputSynthTable is the single reviewed decision table: each stratum maps to the
-// flat external-stimulus schedule (NO TimerFired lines — the harness generates
-// those from ArmTimer). Every schedule opens at Spawned so that FaultStall@1 /
-// FaultTruncate@1 foreclose the whole lifecycle (no submission opens), matching
-// the T9 entry-foreclosed acceptance shape.
 var inputSynthTable = map[InputStratum][]codexinput.Event{
 	StratumAcked: {
 		{Type: codexinput.EventTypeSpawned},

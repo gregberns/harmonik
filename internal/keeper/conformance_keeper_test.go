@@ -1,44 +1,5 @@
 package keeper
 
-// conformance_keeper_test.go — acceptance corpus registration (white-box tier).
-//
-// Named conformance set for the keeper test-validation system.  This file
-// registers the white-box (package keeper) tier of the acceptance corpus so
-// that one command runs every slot the tier owns:
-//
-//   go test -run 'TestKeeperConformance' ./internal/keeper/
-//
-// Each t.Run slot delegates to an existing test that owns the scenario.  The
-// subtest name is the canonical corpus slot, and the design doc names
-// scenarios by those slots, so the names are the corpus's public identifiers.
-// No new harness — the referenced tests carry all the assertions.
-//
-// Registered slots (white-box tier):
-//   floor/band-min-200k-1m           → TestMinAbsOrPctCeil
-//   floor/live-watcher-lock-held     → TestLiveKeeperPresent_LockHeld
-//   floor/live-watcher-no-lockfile   → TestLiveKeeperPresent_NoLockfile
-//   corpus/1/restartnow-b4-fake-tmux → TestRestartNow_CrewAgent_AccCorpus1_B4
-//
-//   floor/operator-attached-warn-only   → TestSelectWarnText_OperatorAttached_SuppressesActionable
-//
-// ─── History.  Why this file went missing. ─────────────────────────────────
-//
-// ec66da798 deleted 681 signature-pinning test files.  It took this file and
-// conformance_keeperx_test.go with them.  Neither one pinned a signature.  Both
-// were registration shells, so the delete removed the corpus's named entry
-// point and left the tests themselves in place.  `go test` exits 0 when a -run
-// filter matches nothing, and cmd/harmonik was also on the target's command
-// line and still matched, so `make test-keeper-conformance` kept reporting
-// green while running zero keeper tests.  scripts/go-test-must-match.sh now
-// fails a target in that state.
-//
-// Corpus items in package keeper_test:  see conformance_keeperx_test.go.
-// Integration items (real tmux):        see conformance_keeper_integration_test.go.
-// Binary-upgrade migration (cmd-level): see cmd/harmonik/conformance_keeper_migration_test.go.
-//
-// Refs: plans/2026-07-06-quality-system/11-keeper-test-design.md §3,
-// .kerf/works/keeper-test-harden/05-specs/keeper-fixes-spec.md.
-
 import "testing"
 
 // TestKeeperConformance covers the white-box acceptance corpus floor items and

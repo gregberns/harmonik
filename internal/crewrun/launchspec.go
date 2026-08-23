@@ -12,15 +12,6 @@
 // Plan ref: plans/2026-07-21-p2-extraction/_plan.md unit E2 (slice E2a).
 package crewrun
 
-// launchspec.go — BuildCrewLaunchSpec, persistent-session argv builder for C2.
-//
-// Builds the argv/env spec for launching a persistent crew session under
-// claude --remote-control. Sibling of buildClaudeLaunchSpec; does NOT modify it.
-//
-// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.2 (Launch construction).
-// Acceptance criterion: C2 AC-5.
-// Bead: hk-kbqto.
-
 import (
 	"fmt"
 
@@ -96,11 +87,6 @@ type CrewLaunchCtx struct {
 	Harness string
 }
 
-// crewHarnessClaude is the crew-scoped harness resolver's default value and the
-// only harness BuildCrewLaunchSpec currently knows how to build a spec for.
-// hk-l63b9: deliberately NOT core.AgentTypeClaudeCode ("claude-code") — the crew
-// harness resolver is a separate, substrate-neutral vocabulary from the per-bead
-// worker harness taxonomy (see ResolveCrewHarness doc comment).
 const crewHarnessClaude = "claude"
 
 // ResolveCrewHarness implements the crew-scoped harness-selection precedence
@@ -150,10 +136,6 @@ func BuildCrewLaunchSpec(rc CrewLaunchCtx) (handler.LaunchSpec, error) {
 	if rc.SessionID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf("BuildCrewLaunchSpec: sessionID must be non-empty")
 	}
-	// hk-l63b9: branch on the resolved crew harness. "" (unresolved callers,
-	// e.g. existing tests) and "claude" both build today's Claude spec below,
-	// unchanged. Any other harness has no crew-orchestrator substrate wired yet —
-	// fail loud rather than silently falling back to Claude.
 	if rc.Harness != "" && rc.Harness != crewHarnessClaude {
 		return handler.LaunchSpec{}, fmt.Errorf("crew harness %q not yet supported", rc.Harness)
 	}
@@ -163,9 +145,6 @@ func BuildCrewLaunchSpec(rc CrewLaunchCtx) (handler.LaunchSpec, error) {
 		binary = "claude"
 	}
 
-	// The --remote-control LABEL folds in the per-project prefix via the shared
-	// helper so the --resume and --session-id branches emit the SAME label (resume
-	// parity, hk-igpg): a keeper clear→resume must not rename the picker session.
 	rcLabel := JoinRemoteControlName(rc.RcPrefix, rc.Name)
 
 	var args []string
@@ -175,9 +154,6 @@ func BuildCrewLaunchSpec(rc CrewLaunchCtx) (handler.LaunchSpec, error) {
 		args = []string{"--dangerously-skip-permissions", "--remote-control", rcLabel, "--session-id", rc.SessionID}
 	}
 
-	// Optional per-crew model injection (specs/crew-handoff-schema.md §3): the
-	// captain may pin a lane to a specific model via the mission `model:` field.
-	// Empty inherits the compiled default (currently sonnet) — append nothing.
 	if rc.Model != "" {
 		args = append(args, "--model", rc.Model)
 	}

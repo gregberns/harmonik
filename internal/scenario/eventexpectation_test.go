@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// eventExpectationFixturePresent returns a minimally valid EventExpectation
-// with kind=event_present, a non-empty type, and a non-empty description.
 func eventExpectationFixturePresent(t *testing.T) EventExpectation {
 	t.Helper()
 	return EventExpectation{
@@ -17,8 +15,6 @@ func eventExpectationFixturePresent(t *testing.T) EventExpectation {
 	}
 }
 
-// eventExpectationFixtureAbsent returns a minimally valid EventExpectation
-// with kind=event_absent, a non-empty type, and a non-empty description.
 func eventExpectationFixtureAbsent(t *testing.T) EventExpectation {
 	t.Helper()
 	return EventExpectation{
@@ -28,8 +24,6 @@ func eventExpectationFixtureAbsent(t *testing.T) EventExpectation {
 	}
 }
 
-// eventExpectationFixtureWithPayloadMatch returns a valid EventExpectation
-// with PayloadMatch populated with a simple flat predicate.
 func eventExpectationFixtureWithPayloadMatch(t *testing.T) EventExpectation {
 	t.Helper()
 	return EventExpectation{
@@ -75,7 +69,6 @@ func TestEventExpectationKindValid(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			// Validate kind via an otherwise-valid EventExpectation.
 			e := EventExpectation{
 				Kind:        tc.kind,
 				Type:        "node_started",
@@ -261,8 +254,6 @@ func TestEventExpectationJSONRoundTrip(t *testing.T) {
 func TestEventExpectationOmitEmptyPayloadMatch(t *testing.T) {
 	t.Parallel()
 
-	// When PayloadMatch is nil, the marshaled JSON MUST NOT contain the
-	// "payload_match" key (omitempty contract on the struct tag).
 	e := eventExpectationFixturePresent(t) // PayloadMatch is nil
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -291,8 +282,6 @@ func TestEventExpectationOmitEmptyPayloadMatch(t *testing.T) {
 func TestEventExpectationPayloadMatchHeterogeneous(t *testing.T) {
 	t.Parallel()
 
-	// PayloadMatch must survive a JSON round-trip with mixed value types:
-	// string, number (float64 via encoding/json), bool, nested map, null.
 	e := EventExpectation{
 		Kind: EventExpectationKindPresent,
 		Type: "node_completed",
@@ -320,7 +309,6 @@ func TestEventExpectationPayloadMatchHeterogeneous(t *testing.T) {
 		t.Errorf("heterogeneous payload_match round-trip mismatch:\n  in:  %+v\n  out: %+v", e, got)
 	}
 
-	// Spot-check individual values preserved as expected JSON types.
 	if got.PayloadMatch["outcome.status"] != "SUCCESS" {
 		t.Errorf("payload_match[outcome.status] = %v, want %q", got.PayloadMatch["outcome.status"], "SUCCESS")
 	}

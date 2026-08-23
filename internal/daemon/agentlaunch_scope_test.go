@@ -1,43 +1,5 @@
 package daemon
 
-// agentlaunch_scope_test.go — guards the sandbox-gate CONSOLIDATION.
-//
-// This file used to pin the opposite property. The launch-path collapse left one
-// deliberate divergence: three call sites each passed a different sandbox scope
-// (the cognition gate never sandboxed, the graph-node path sandboxed only
-// harnesses that capture their own session id, single mode sandboxed
-// everything). That divergence was resolved on 2026-07-29 by consolidating on
-// the widest scope, so the test now guards the consolidation rather than the
-// split.
-//
-// The invariant: there is exactly ONE sandbox gate, `sandboxSpawnForRun`, and
-// every launch asks it. A per-site scope was a second gate stacked on the first,
-// and a second gate can only ever subtract — it could silently un-sandbox a run
-// whose harness the operator had explicitly listed in sandbox.harnesses. Putting
-// one back is a production behaviour change, so it should fail here first.
-//
-// Three things are asserted, and they fail for different reasons. Each closes a
-// hole the other two leave open, which is why none of them is redundant:
-//
-//   - No launch site re-gates. A launch input carrying a scope field means
-//     per-site scoping came back.
-//   - The gate call is unconditional. Wrapping it in an `if` inside
-//     runAgentLaunch reintroduces the same second gate without touching any
-//     call site, so the first assertion alone would not see it.
-//   - The gate's answer is never overwritten. Neither assertion above catches a
-//     second gate written as a post-hoc nil-out —
-//     `sandboxSpawn := sandboxSpawnForRun(...)` followed by
-//     `if !sessionIDCaptured { sandboxSpawn = nil }`. That keys off an existing
-//     field, so no new name appears anywhere and the call stays unconditional.
-//     It is the same second gate in a shape the first two tests read as clean.
-//
-// All three are source-level. A behavioural assertion would have to reach the real
-// srt engagement probe, which shells out to the `srt` binary and is therefore a
-// whole-system check rather than a package test — it is deferred deliberately,
-// and tracked in NEXT_STEPS.md. What IS covered behaviourally elsewhere is the
-// gate's own decision: sandboxgate_test.go exercises sandboxSpawnForRun against
-// the backend, harness-list and remote-run predicates.
-
 import (
 	"go/ast"
 	"go/parser"
@@ -48,9 +10,6 @@ import (
 	"testing"
 )
 
-// launchSiteFiles are the files holding a runAgentLaunch call site. Kept
-// explicit so a NEW launch site in a new file is a deliberate addition here
-// rather than something the glob quietly absorbs.
 var launchSiteFiles = []string{"workloop.go", "dot_cascade_core.go", "dot_gate.go"}
 
 // TestAgentLaunch_NoCallSiteRegatesTheSandbox fails if any launch site starts
@@ -174,11 +133,6 @@ func findFuncDecl(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
 	return nil
 }
 
-// agentLaunchScopeArgs returns the value passed as any sandbox-scope field in
-// every agentLaunchInput composite literal in file. It matches on the field NAME
-// rather than a type that no longer exists, so reintroducing per-site scoping
-// under a fresh name is still caught. A non-identifier value is reported as
-// "<dynamic>" so routing a scope through a variable cannot hide it.
 func agentLaunchScopeArgs(file *ast.File) []string {
 	var scopes []string
 	ast.Inspect(file, func(node ast.Node) bool {

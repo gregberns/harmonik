@@ -53,7 +53,6 @@ EXIT CODES
   1   Argument or I/O error
 `
 
-// runUsageSubcommand implements `harmonik usage [flags]`.
 func runUsageSubcommand(args []string) int {
 	var sinceStr, untilStr, format, projectDir string
 
@@ -91,7 +90,6 @@ func runUsageSubcommand(args []string) int {
 			i++
 			projectDir = args[i]
 		default:
-			// Allow --since=VALUE and --format=VALUE forms.
 			consumed := false
 			for _, prefix := range []string{"--since=", "--until=", "--format=", "--project="} {
 				if len(args[i]) > len(prefix) && args[i][:len(prefix)] == prefix {

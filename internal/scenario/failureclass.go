@@ -149,6 +149,5 @@ func (f FailureClass) HigherPrecedenceThan(other FailureClass) bool {
 	if fp == 0 || op == 0 {
 		return false
 	}
-	// Lower numeric rank = higher precedence.
 	return fp < op
 }

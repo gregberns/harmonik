@@ -2,17 +2,6 @@ package policy
 
 import "time"
 
-// autoresume.go — the pure auto-resume backoff computation for handler-pause.
-//
-// Moved out of internal/daemon/handlerpause_autoresume_0otqs.go (hk-0otqs)
-// backoffDurationLocked, de-"Locked"d: the daemon controller still owns the
-// timer goroutine, the flap-window detection, the per-entry attempt counter,
-// the Diagnose call, and Resume. Only the exponential-backoff arithmetic — the
-// decision "given a base delay and an attempt count, how long until the next
-// auto-resume?" — lives here.
-//
-// Spec ref: specs/handler-pause.md §1.2 (deferred auto-resume).
-
 // DefaultAutoResumeMaxBackoff is the maximum per-attempt backoff duration when
 // AutoResumeParams.MaxBackoff is zero or negative.
 const DefaultAutoResumeMaxBackoff = 30 * time.Minute
@@ -45,7 +34,6 @@ func BackoffDuration(p AutoResumeParams) time.Duration {
 	if maxBackoff <= 0 {
 		maxBackoff = DefaultAutoResumeMaxBackoff
 	}
-	// Shift left by attempts, but cap to avoid overflow.
 	shifted := p.Base
 	for i := 0; i < p.Attempts && shifted < maxBackoff; i++ {
 		next := shifted * 2

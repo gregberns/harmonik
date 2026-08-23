@@ -1,12 +1,5 @@
 package shared_test
 
-// seedprompt_test.go — direct unit tests for the resume seed prompt.
-//
-// Before P2 unit E1a this builder was only tested THROUGH the pi and codex
-// launch specs, which meant the clamp — the rule that keeps the prompt from
-// pointing at a reviewer-feedback.iter-0.md that never exists — had no test of
-// its own. Moving the function is the moment to fix that.
-
 import (
 	"strings"
 	"testing"

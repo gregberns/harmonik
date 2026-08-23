@@ -1,16 +1,5 @@
 package daemon
 
-// export_dotterminal_test.go — the DOT terminal-classifier seam.
-//
-// dotNodeTerminalFailure is the one place that decides whether the way an agent
-// left is a failure. Every other test of it drives a whole graph run, which is
-// the right way to state the end-to-end claim and the wrong way to state the
-// fail-closed one: a table over the classifier itself can hold the three inputs
-// that must STILL fail while the announcement exemption is in force, and a run
-// fixture cannot produce all of them.
-//
-// Bead: hk-pi-success-recorded-as-crash-j6mow.
-
 import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/runloop"

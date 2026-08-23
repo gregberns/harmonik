@@ -1,19 +1,5 @@
 package daemon_test
 
-// T8 (codename:agent-input-substrate) — observation-only tmux acceptance proof.
-//
-// Asserts that the daemon-run review-loop input path delivers the EM-015d
-// implementer-resume + reviewer-start instructions via the AIS structured input
-// port (handler.InputPort.SubmitInput → Ack), NOT via a direct tmux paste
-// (pasteInjecter.WriteLastPane) on this code path. This is the tmux-write-free
-// daemon-run input path proof for AIS-011 / AIS-012 + EM-015d-RFD/RIA: when the
-// substrate exposes InputPort, the daemon-run delivery routes through it and the
-// direct WriteLastPane paste verb is never reached.
-//
-// The interim tmux driver's SubmitInput still performs the bracketed paste
-// internally (PL-021d demoted-not-deleted), but that is encapsulated behind the
-// port — the daemon-run delivery code depends on the port, not the write verb.
-
 import (
 	"context"
 	"os"
@@ -28,10 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// t8InputPortSubstrate satisfies handler.Substrate, the daemon's (unexported)
-// pasteInjecter / enterSender / paneCapturer interfaces, AND handler.InputPort.
-// Because it exposes InputPort, the daemon-run delivery MUST route through
-// SubmitInput and MUST NOT call WriteLastPane directly.
 type t8InputPortSubstrate struct {
 	mu sync.Mutex
 	// submitPayloads records every payload delivered via the AIS input port.
@@ -45,7 +27,6 @@ type t8InputPortSubstrate struct {
 }
 
 func (s *t8InputPortSubstrate) SpawnWindow(_ context.Context, _ handler.SubstrateSpawn) (handler.SubstrateSession, error) {
-	// Not exercised by pasteInjectOnLaunch (it only needs pasteInjecter).
 	return nil, nil //nolint:nilnil // stub: SpawnWindow is never called on this path
 }
 

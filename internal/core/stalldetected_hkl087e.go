@@ -1,19 +1,5 @@
 package core
 
-// stalldetected_hkl087e.go — payload type for the stall_detected event type.
-//
-// Emitted by the Layer A detector (hk-l087e) when one of three per-run stall
-// signatures fires:
-//   - heartbeat_gap  (class-2 silent hang): no agent_heartbeat/agent_message
-//     for > run_silence_stall.
-//   - review_stall   (class-3 review wedge): reviewer_verdict fired but no
-//     run_completed/run_failed within review_finalize_stall.
-//   - run_age        (backstop): run dispatched > run_max_age with no terminal
-//     event.
-//
-// Spec: .kerf/works/stall-sentinel/SPEC.md §2 (Layer A), 02-analysis.md §Layer A.
-// Bead: hk-l087e.
-
 // StallSignature is the class of stall detected by the Layer A detector.
 // Each value corresponds directly to one of the three detection conditions in
 // the spec (02-analysis.md §Layer A).

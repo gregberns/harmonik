@@ -1,59 +1,5 @@
 package daemon
 
-// survive_shutdown_gate_test.go — the survive-shutdown disposition at the
-// launch seam.
-//
-// One condition decides what a bead run gives back when the daemon stops: the
-// agent runs in a tmux session of its own AND the run is ending because the
-// daemon is shutting down. specs/run-state-machine.md §4a calls that pair the
-// SURVIVE disposition (RSM-037), and internal/runlease.Decide is the pure
-// statement of it. The run reports the facts. Every release site asks Decide.
-//
-// The launch's own release sites are here: the abort kill, the post-wait window
-// kill, the agent session's give-back and the hook session's give-back. They
-// used to read two caller-supplied predicates, SkipAbortKill and SkipTeardown,
-// each carrying its own copy of the condition — so a wrong spelling at one was
-// invisible to the other, and the hook session was covered by neither. All four
-// now read ONE value: runlease.Decide of the run's exit facts (RSM-037). Every
-// test below drives the REAL facts the daemon reports — an independent session
-// and a live context, read at the moment the site asks — rather than a constant,
-// and the two half-conditions are covered separately, because a conjunction is
-// exactly where a half-condition hides.
-//
-// # Read this before adding a test that asserts survival
-//
-// Survive is what a run ASKS for. The system does not deliver it. Two things
-// defeat it, and both are pinned as CURRENT BEHAVIOUR rather than as promises:
-//
-//  1. The completion wait kills the session itself when it finds the run
-//     context already cancelled, with no reference to the disposition. That is
-//     in this file.
-//  2. The next boot's orphan sweep kills every tmux session carrying the
-//     project prefix, with no liveness test, before the pass that looks for a
-//     surviving run. That is in survive_shutdown_recovery_test.go.
-//
-// A test named "the session survives a daemon restart" would assert a promise
-// the system does not keep. Do not write one.
-//
-// # How a gated kill is told from an ungated one
-//
-// Every kill the disposition covers is issued on context.Background(): the
-// abort kill, the session's force-teardown, and the post-wait window kill all
-// pass a deliberately non-cancellable context so the pane still dies after the
-// run context is gone. The fixture counts kills by the context they arrive on,
-// so a kill on a live context is one of those three and a kill on a cancelled
-// one is not.
-//
-// Read the second half of that as a fact about THESE FIXTURES, not about the
-// daemon. Two ungated sites kill on the run context — the completion wait, and
-// the ready-timeout kill inside the dispatch segment — and only the first is
-// reachable here. The ready-timeout kill is excluded by arithmetic rather than
-// by anything structural: the fixtures cancel the run context within
-// milliseconds of the launch and the ready deadline is 200ms away, so the abort
-// edge always wins. Anyone widening this fixture's timings must re-earn that.
-//
-// Helper prefix: surviveGate.
-
 import (
 	"context"
 	"encoding/json"
@@ -77,18 +23,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixture
-// ─────────────────────────────────────────────────────────────────────────────
-
-// surviveGateSession is the agent's tmux session, reduced to the one question
-// these tests ask of it: what killed it, and was that thing looking at the gate?
-// See the file header for why the context a kill arrives on answers that.
-//
-// Stdout returns nil, which is what a tmux-hosted session returns. That is
-// load-bearing: it makes handler.Launch hand back a nil watcher, which is the
-// production shape for an agent in a tmux session and the shape the post-wait
-// window kill is guarded for.
 type surviveGateSession struct {
 	mu             sync.Mutex
 	killsLiveCtx   int
@@ -113,26 +47,18 @@ func (s *surviveGateSession) Outcome() handler.Outcome   { return handler.Outcom
 func (s *surviveGateSession) PID() int                   { return 0 }
 func (s *surviveGateSession) Stdout() io.Reader          { return nil }
 
-// gatedKills counts the kills the survive disposition is able to prevent.
 func (s *surviveGateSession) gatedKills() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.killsLiveCtx
 }
 
-// killsFromTheCompletionWait counts the kills issued on the already-cancelled
-// run context. Two ungated sites kill on the run context, and the file header
-// says why only the completion wait is reachable in these fixtures.
 func (s *surviveGateSession) killsFromTheCompletionWait() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.killsCancelled
 }
 
-// surviveGateSubstrate hands out one surviveGateSession and records that the
-// spawn happened. The spawn count is the proof that a launch took place at all,
-// without which "nothing was killed" would be satisfied by a run that never
-// started.
 type surviveGateSubstrate struct {
 	mu      sync.Mutex
 	spawns  int
@@ -154,10 +80,6 @@ func (s *surviveGateSubstrate) spawnCount() int {
 	return s.spawns
 }
 
-// surviveGateHookStore records the hook-session registration and its close. The
-// hook session is the agent's channel back to this daemon: an agent that keeps
-// its session but loses its hook session is holding a session it can no longer
-// report through.
 type surviveGateHookStore struct {
 	mu         sync.Mutex
 	registered int
@@ -192,7 +114,6 @@ func (h *surviveGateHookStore) counts() (registered, closed int) {
 	return h.registered, h.closed
 }
 
-// surviveGateEmitter drops every event. None of them is what these tests read.
 type surviveGateEmitter struct{}
 
 var _ handlercontract.EventEmitter = surviveGateEmitter{}
@@ -202,8 +123,6 @@ func (surviveGateEmitter) EmitWithRunID(context.Context, core.RunID, core.EventT
 	return nil
 }
 
-// surviveGateRun is one launch driven to a terminal, plus what the run gave
-// back on the way out.
 type surviveGateRun struct {
 	result    agentLaunchResult
 	session   *surviveGateSession
@@ -231,53 +150,29 @@ type surviveGateRun struct {
 	killsInsideTheLaunch int
 }
 
-// consults reports how many times the launch asked for the run's exit facts,
-// split by whether the read happened inside runAgentLaunch (the abort kill, the
-// post-wait window kill, the hook session's give-back) or in the Cleanup the
-// caller defers (the scope close).
 func (r *surviveGateRun) consults() (insideTheLaunch, atCleanup int) {
 	r.session.mu.Lock()
 	defer r.session.mu.Unlock()
 	return r.exitReadsInsideTheLaunch, r.exitReads - r.exitReadsInsideTheLaunch
 }
 
-// killsFromInsideTheLaunch is the gated kills issued before the launch returned.
 func (r *surviveGateRun) killsFromInsideTheLaunch() int {
 	r.session.mu.Lock()
 	defer r.session.mu.Unlock()
 	return r.killsInsideTheLaunch
 }
 
-// killsFromTheGiveBack is the gated kills issued by the scope close, which runs
-// inside the Cleanup the caller defers.
 func (r *surviveGateRun) killsFromTheGiveBack() int {
 	r.session.mu.Lock()
 	defer r.session.mu.Unlock()
 	return r.session.killsLiveCtx - r.killsInsideTheLaunch
 }
 
-// surviveGateDrive runs one launch under the real disposition.
-//
-// indepSession is the first half of the condition — an agent in a session of
-// its own. daemonStops is the second half: when true the run context is
-// cancelled the instant the agent is launched, which is what a daemon shutdown
-// looks like to a run still waiting for its agent to report ready.
-//
-// The exit facts handed to the launch are the same ones beadRunOne reports, read
-// through the same live context, so flipping one half here exercises the same
-// decision production makes.
 func surviveGateDrive(t *testing.T, indepSession, daemonStops bool) *surviveGateRun {
 	t.Helper()
 	return surviveGateDriveInto(t, indepSession, daemonStops, nil, true)
 }
 
-// surviveGateDriveInto is surviveGateDrive with a run scope to nest the launch's
-// resources inside, and a say in whether the caller's Cleanup runs at all.
-//
-// A nil scope leaves the launch to make one of its own, which is what the two
-// DOT sites do. callCleanup false is the shape of a caller that returns before
-// it registers the Cleanup defer, which is what beadRunOne's pre-launch refusals
-// do — the only thing left holding the launch's resources is the run's scope.
 func surviveGateDriveInto(t *testing.T, indepSession, daemonStops bool, runScope *runlease.Scope, callCleanup bool) *surviveGateRun {
 	t.Helper()
 
@@ -289,8 +184,6 @@ func surviveGateDriveInto(t *testing.T, indepSession, daemonStops bool, runScope
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// The counter shares the session's mutex so a read taken from the dispatch
-	// goroutine and one taken from the test goroutine cannot race.
 	runExit := func() runlease.Exit {
 		sess.mu.Lock()
 		out.exitReads++
@@ -336,15 +229,11 @@ func surviveGateDriveInto(t *testing.T, indepSession, daemonStops bool, runScope
 
 	out.result = runAgentLaunch(ctx, in)
 
-	// The split marks are taken between the launch returning and its Cleanup, so
-	// each half of the counters names the sites that produced it.
 	sess.mu.Lock()
 	out.killsInsideTheLaunch = sess.killsLiveCtx
 	out.exitReadsInsideTheLaunch = out.exitReads
 	sess.mu.Unlock()
 
-	// Every caller of runAgentLaunch defers Cleanup. Running it is what closes
-	// the launch's scope and gives the agent session back.
 	if callCleanup {
 		out.result.Cleanup()
 	}
@@ -352,9 +241,6 @@ func surviveGateDriveInto(t *testing.T, indepSession, daemonStops bool, runScope
 	return out
 }
 
-// surviveGateRegistry returns a registry carrying the real claude adapter, so
-// the dispatch segment has a readiness detector and holds in its ready wait
-// instead of synthesizing an immediate ready.
 func surviveGateRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 	t.Helper()
 	reg := handlercontract.NewAdapterRegistry()
@@ -363,10 +249,6 @@ func surviveGateRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 	}
 	return reg
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The disposition holds
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSurviveShutdown_AnAgentInItsOwnSessionIsNotKilledByAnyGatedSiteWhenTheDaemonStops
 // is the disposition's whole purpose. Both facts hold, so neither the abort kill
@@ -403,10 +285,6 @@ func TestSurviveShutdown_AnAgentInItsOwnSessionIsNotKilledByAnyGatedSiteWhenTheD
 			"An agent in a session of its own, on a daemon that is stopping, must be left running by every site the disposition covers: the session outlives this process and the next boot looks for it. Killing it here strands the bead in progress with nothing alive to adopt.", got)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The two half-conditions
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSurviveShutdown_AnAgentInItsOwnSessionIsTornDownWhenTheDaemonKeepsRunning
 // is the first half-condition: the session is independent, but the run is
@@ -463,10 +341,6 @@ func TestSurviveShutdown_AnAgentSharingTheDaemonSessionIsKilledWhenTheDaemonStop
 			"This agent shares the daemon's own tmux session, so nothing about it outlives the daemon. Skipping the kill orphans a live agent with no daemon watching it.")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The hook session, which the disposition now covers
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSurviveShutdown_TheHookSessionIsKeptWhenTheAgentIsLeftRunning is the
 // BEHAVIOUR CHANGE this commit makes, and it reverses the claim this file used
@@ -531,11 +405,6 @@ func TestSurviveShutdown_TheHookSessionIsGivenBackWhenTheRunIsReclaimed(t *testi
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// What the disposition does NOT cover — current behaviour, pinned so a change
-// reads as a deliberate diff rather than an accident
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSurviveShutdown_TheCompletionWaitKillsTheSessionEveryGatedSiteSpared pins
 // a DEFECT, and it is the one that makes the survive case hollow inside the
 // daemon's own process.
@@ -562,10 +431,6 @@ func TestSurviveShutdown_TheCompletionWaitKillsTheSessionEveryGatedSiteSpared(t 
 			"CURRENT BEHAVIOUR IS THAT IT DOES: it kills on an already-cancelled run context with no reference to the disposition. If this now fails because the wait learned about the disposition, that is the intended fix — update this test and say so. Do not make it pass again by adding a kill back.")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The nest — the launch's resources belong to the RUN's scope
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSurviveShutdown_TheRunScopeGivesBackASessionTheLaunchNeverClosed is what
 // the nesting buys.
@@ -611,10 +476,6 @@ func TestSurviveShutdown_TheRunScopeGivesBackASessionTheLaunchNeverClosed(t *tes
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The heartbeat is a STEP, not a give-back
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession pins the
 // one half of Cleanup the disposition must NOT reach.
 //
@@ -640,9 +501,6 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 	sub := &surviveGateSubstrate{session: sess}
 	wt := t.TempDir()
 
-	// Every heartbeat goroutine already running belongs to some other test in
-	// this package. Record them, so the one this launch starts can be told apart
-	// from all of them and waited on by itself.
 	heartbeatsBefore := surviveGateHeartbeatGoroutines(t)
 
 	in := agentLaunchInput{
@@ -679,9 +537,6 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 	if len(mine) == 0 {
 		t.Fatal("this launch started no heartbeat goroutine of its own, so its absence afterwards proves nothing")
 	}
-	// A live context runs to the ready timeout, and that kill is ungated by
-	// design, so a kill has already reached the session. What matters is that
-	// Cleanup adds none: that is the give-back reading survive and declining.
 	killsBeforeCleanup := sess.gatedKills()
 
 	res.Cleanup()
@@ -691,20 +546,6 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 			"The disposition did not decide survive at the give-back, so this test is not observing the case it claims.", got-killsBeforeCleanup)
 	}
 
-	// The goroutine returns as soon as the channel closes, but it does not do so
-	// on this goroutine. Poll rather than read once.
-	//
-	// The wait is for THIS launch's goroutines and no others. Waiting for the
-	// package to hold no heartbeat at all cannot work: the predicate is answered
-	// by a scan of every goroutine in the process, so one overlapping test that
-	// legitimately holds a heartbeat keeps it true until the deadline, and the
-	// test fails having observed nothing. That failure is not a slow box and a
-	// longer deadline does not cure it.
-	//
-	// The deadline is generous and the poll is slow on purpose. The happy path
-	// takes microseconds, so a long deadline costs nothing, while a short one
-	// turns a loaded box into a red build — runtime.Stack stops the world, and
-	// this package runs its tests in parallel.
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		still := surviveGateHeartbeatGoroutines(t)
@@ -726,23 +567,6 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 	}
 }
 
-// surviveGateHeartbeatGoroutines returns the id of every goroutine currently
-// inside handler.RunHeartbeatLoop.
-//
-// It names the one function under test rather than counting goroutines, so
-// unrelated work in a parallel package is never mistaken for a heartbeat.
-//
-// It returns the ids rather than a yes-or-no answer, and that is the whole
-// point. The scan covers every goroutine in the PROCESS, so "a heartbeat is
-// running" is a fact about the package and not about the caller. A test that
-// waits for that to become false waits on every other test as well, and one
-// overlapping heartbeat holds it true until the deadline. Identifying the
-// goroutines lets a caller snapshot the ones it did not start, take the
-// difference, and wait for its own.
-//
-// Goroutine ids are read from the dump's own headers. The runtime allocates
-// them monotonically and does not reuse them, so an id in a later scan is the
-// same goroutine it was in an earlier one.
 func surviveGateHeartbeatGoroutines(t *testing.T) map[string]bool {
 	t.Helper()
 
@@ -762,8 +586,6 @@ func surviveGateHeartbeatGoroutines(t *testing.T) map[string]bool {
 		if !strings.Contains(block, "handler.RunHeartbeatLoop") {
 			continue
 		}
-		// The first block keeps the "goroutine " prefix the split consumed from
-		// the rest; both then start with the id followed by a space.
 		header := strings.TrimPrefix(block, "goroutine ")
 		id, _, found := strings.Cut(header, " ")
 		if found && id != "" {
@@ -773,8 +595,6 @@ func surviveGateHeartbeatGoroutines(t *testing.T) map[string]bool {
 	return ids
 }
 
-// surviveGateNewHeartbeatGoroutines returns the heartbeat goroutines running
-// now that were not running when before was taken.
 func surviveGateNewHeartbeatGoroutines(t *testing.T, before map[string]bool) map[string]bool {
 	t.Helper()
 

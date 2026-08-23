@@ -75,13 +75,10 @@ type Record struct {
 	Fields map[string]any `json:"fields"`
 }
 
-// marshalTS formats t as RFC 3339 with millisecond precision.
 func marshalTS(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
-// recordJSON is the JSON-encodable form of Record, with Ts rendered as a
-// string so the millisecond format is preserved across json.Marshal.
 type recordJSON struct {
 	Ts               string         `json:"ts"`
 	LogSchemaVersion string         `json:"log_schema_version"`

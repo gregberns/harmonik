@@ -186,9 +186,6 @@ func (tr Transition) Valid() bool {
 	if !tr.TransitionKind.Valid() {
 		return false
 	}
-	// EM-044/EM-046: rollback_to_state_id is required for architectural-rollback
-	// and policy-rollback; must be absent for all other kinds, including
-	// context-restore (EM-046: context-restore does not relocate graph position).
 	needsRollback := tr.TransitionKind == TransitionKindArchitecturalRollback ||
 		tr.TransitionKind == TransitionKindPolicyRollback
 	if needsRollback && tr.RollbackToStateID == nil {
@@ -197,8 +194,6 @@ func (tr Transition) Valid() bool {
 	if !needsRollback && tr.RollbackToStateID != nil {
 		return false
 	}
-	// EM-031b: a present claim must be complete. An incomplete claim is the
-	// case recovery cannot act on, so it must never reach a checkpoint commit.
 	if tr.ReleaseClaim != nil && !tr.ReleaseClaim.Valid() {
 		return false
 	}

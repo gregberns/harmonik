@@ -1,13 +1,5 @@
 package daemon
 
-// agent_message.go — shared predicate for agent_message subscribe/recv filtering.
-//
-// N1 (agent-comms spec §8): there MUST be exactly ONE exported predicate,
-// MatchAgentMessage, called by BOTH the live subscribe offer path
-// (subscriptionStream.offer in subscribe.go) AND the durable replay scan
-// (HandleSubscribe ScanAfter loop in subscribe.go). Do not add a second copy
-// of this logic.
-
 // AgentMessagePayload is the payload shape for "agent_message" events.
 // Spec: agent-comms §1.1.
 type AgentMessagePayload struct {

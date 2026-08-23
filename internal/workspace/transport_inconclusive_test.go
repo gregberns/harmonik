@@ -1,16 +1,5 @@
 package workspace
 
-// transport_inconclusive_test.go — H4 / H5 regressions.
-//
-// A runner-routed read (remote worker) can fail for two very different reasons:
-//   - the file is genuinely ABSENT (cat exits 1: no such file), or
-//   - the TRANSPORT failed (ssh exits 255: connection refused/timeout/host-key).
-//
-// The old code collapsed both into confirmed-absent (nil, nil), so a network blip
-// on a remote worker was mis-read as "no verdict" / "no FAIL marker" → wrong
-// review-gate / outcome decision. The fix surfaces a transport failure as the
-// inconclusive ErrRemoteTransport, distinct from confirmed-absent.
-
 import (
 	"context"
 	"errors"
@@ -20,9 +9,6 @@ import (
 	"time"
 )
 
-// exitCodeRunner is a non-local CommandRunner stub whose every Command() exits
-// with the configured code (via `sh -c "exit N"`). Being a distinct non-Local
-// type it is classified non-local, so the …Via readers route through it.
 type exitCodeRunner struct{ code int }
 
 func (r exitCodeRunner) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -33,7 +19,6 @@ func (r exitCodeRunner) Command(ctx context.Context, _ string, _ ...string) *exe
 // TestH4_ReadReviewVerdictVia_TransportFailure_Inconclusive verifies an ssh
 // transport failure (exit 255) surfaces ErrRemoteTransport, not absent.
 func TestH4_ReadReviewVerdictVia_TransportFailure_Inconclusive(t *testing.T) {
-	// Shrink the retry budget so the transport error is surfaced quickly.
 	origBudget, origBase := reviewVerdictRemoteRetryBudget, reviewVerdictRemoteBaseBackoff
 	reviewVerdictRemoteRetryBudget = 40 * time.Millisecond
 	reviewVerdictRemoteBaseBackoff = 5 * time.Millisecond

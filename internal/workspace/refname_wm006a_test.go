@@ -80,51 +80,41 @@ func TestWM006a_BeadIDToRefSafe_FallbackApplied(t *testing.T) {
 		wantSuffix string // expected safe bead-ID portion returned
 	}{
 		{
-			// @{ is invalid in git refs.
 			name:       "at-brace sequence",
 			beadID:     "bead@{broken}",
 			wantSuffix: "bead%40%7Bbroken%7D",
 		},
 		{
-			// Leading dot is rejected by git check-ref-format.
 			name:       "leading dot",
 			beadID:     ".hidden-bead",
 			wantSuffix: "%2Ehidden-bead",
 		},
 		{
-			// Trailing .lock component is rejected by git check-ref-format.
 			name:       "trailing dot-lock",
 			beadID:     "bead.lock",
 			wantSuffix: "bead%2Elock",
 		},
 		{
-			// Control characters are forbidden in git refs.
 			name:       "null byte",
 			beadID:     "bead\x00null",
 			wantSuffix: "bead%00null",
 		},
 		{
-			// Newline is a control character forbidden in git refs.
 			name:       "newline",
 			beadID:     "bead\nnewline",
 			wantSuffix: "bead%0Anewline",
 		},
 		{
-			// Tab is a control character forbidden in git refs.
 			name:       "tab",
 			beadID:     "bead\ttab",
 			wantSuffix: "bead%09tab",
 		},
 		{
-			// Space is forbidden in git refs.
 			name:       "space",
 			beadID:     "bead space",
 			wantSuffix: "bead%20space",
 		},
 		{
-			// Double slash collapses to single slash after hex-encode step.
-			// Double slash does not contain any non-[a-zA-Z0-9/_-] bytes, so the
-			// hex step leaves them as-is; step (ii) then collapses them.
 			name:       "double slash collapses",
 			beadID:     "bead//double",
 			wantSuffix: "bead/double",
@@ -143,7 +133,6 @@ func TestWM006a_BeadIDToRefSafe_FallbackApplied(t *testing.T) {
 				t.Errorf("WM-006a: BeadIDToRefSafe(%q) = %q, want %q", tc.beadID, got, tc.wantSuffix)
 			}
 
-			// The returned form MUST also pass git check-ref-format independently.
 			if !refNameIsRefSafe(t, "harmonik/integration/"+got) {
 				t.Errorf("WM-006a: returned bead ID %q (from %q) fails git check-ref-format",
 					got, tc.beadID)
@@ -207,7 +196,6 @@ func TestWM006a_BeadIDToRefSafe_ResultPassesCheckRefFormat(t *testing.T) {
 
 			safe, err := BeadIDToRefSafe(t.Context(), id)
 			if err != nil {
-				// ErrRefNameInvalid is acceptable for genuinely unrecoverable IDs.
 				if errors.Is(err, ErrRefNameInvalid) {
 					t.Logf("WM-006a: BeadIDToRefSafe(%q) → ErrRefNameInvalid (expected for unrecoverable input)", id)
 					return
@@ -224,13 +212,6 @@ func TestWM006a_BeadIDToRefSafe_ResultPassesCheckRefFormat(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// refnameFixture helpers — prefixed to avoid sibling-bead collision.
-// These helpers are local to this fixture (bead hk-8mwo.11).
-// ---------------------------------------------------------------------------
-
-// refNameIsRefSafe wraps refNameCheckRefFormat with a testing.T for use in
-// table-driven tests that need to assert the outcome.
 func refNameIsRefSafe(t *testing.T, branch string) bool {
 	t.Helper()
 	return refNameCheckRefFormat(t.Context(), branch)

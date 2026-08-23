@@ -1,45 +1,5 @@
 package specaudit_test
 
-// hk-i0tw.41 binding test — SH-INV-005: scenario files are declarative-loadable.
-//
-// Spec ref: specs/scenario-harness.md §4.9 SH-INV-005.
-//
-// SH-INV-005 states: "Every scenario file MUST be loadable by a generic YAML
-// parser plus the §6.1 schema validator, with no plugin, no eval, no
-// code-execution YAML tags. Sensor: a corpus lint at suite-load time runs every
-// scenario file through `gopkg.in/yaml.v3` in strict mode with
-// `KnownFields(true)` and a forbidden-tag deny-list (rejecting
-// `!!python/object`, `!eval`, `!!binary` constructors carrying executable,
-// custom-loader directives, anchors that reference unbound aliases); any
-// rejected file is a suite-load failure. The parser is pinned to this
-// implementation at v0.1; future revisions MUST justify a parser change as a
-// foundation amendment per [architecture.md §4.6]."
-//
-// # What this test verifies
-//
-// This file encodes three independent audit frames:
-//
-//  1. Spec-body audit — SH-INV-005 heading is present in
-//     specs/scenario-harness.md and the requirement body contains the required
-//     enforcement phrases: gopkg.in/yaml.v3, KnownFields, !!python/object,
-//     !eval, !!binary, forbidden-tag deny-list.
-//
-//  2. Implementation audit — internal/scenario/scenariofile.go encodes the
-//     enforcement mechanisms mandated by SH-INV-005: KnownFields(true) and the
-//     three forbidden-tag constants. A missing phrase means the implementation
-//     has drifted from the spec obligation.
-//
-//  3. Corpus lint — every *.yaml file under scenarios/ (recursive) MUST be
-//     parseable by internal/scenario.ParseScenarioFile without error. An empty
-//     or absent scenarios/ directory is not a failure (corpus is allowed to be
-//     empty at bootstrap); the test logs the corpus size and skips lint if the
-//     directory does not exist.
-//
-// # Helper prefix
-//
-// All package-level identifiers in this file use the shiNV005Fixture prefix per
-// the implementer-protocol.md helper-prefix discipline.
-
 import (
 	"bufio"
 	"os"
@@ -52,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/scenario"
 )
 
-// shiNV005FixtureRepoRoot resolves the repository root from this test file's
-// path. The test file lives at internal/specaudit/sh_inv005_declarative_loadable_test.go;
-// the repo root is two directories up.
 func shiNV005FixtureRepoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -62,12 +19,9 @@ func shiNV005FixtureRepoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("shiNV005FixtureRepoRoot: runtime.Caller(0) failed")
 	}
-	// thisFile is .../internal/specaudit/sh_inv005_declarative_loadable_test.go
-	// repo root is two directories up.
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 }
 
-// shiNV005FixtureLoadLines opens path and returns all lines.
 func shiNV005FixtureLoadLines(t *testing.T, path string) []string {
 	t.Helper()
 
@@ -93,24 +47,12 @@ func shiNV005FixtureLoadLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// shiNV005FixtureSHINV005Heading matches the SH-INV-005 level-4 requirement
-// heading line in specs/scenario-harness.md.
 var shiNV005FixtureSHINV005Heading = regexp.MustCompile(`^#### SH-INV-005 —`)
 
-// shiNV005FixtureAnySectionHeading matches any Markdown heading (level 1–4).
-// Used to detect the end of the SH-INV-005 requirement body window.
 var shiNV005FixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
 
-// shiNV005FixtureBodyWindow is the maximum number of lines after the SH-INV-005
-// heading to scan for requirement-body content. Matches the 30-line cap used by
-// sibling specaudit tests.
 const shiNV005FixtureBodyWindow = 30
 
-// shiNV005FixtureBodyLines returns the lines that form the SH-INV-005
-// requirement body: all lines after the heading up to (but not including) the
-// next Markdown heading or shiNV005FixtureBodyWindow lines, whichever is first.
-//
-// Returns (nil, 0, reason) if the heading is not found.
 func shiNV005FixtureBodyLines(lines []string) (body []string, headingLineNo int, reason string) {
 	headingIdx := -1
 	for i, line := range lines {
@@ -139,8 +81,6 @@ func shiNV005FixtureBodyLines(lines []string) (body []string, headingLineNo int,
 	return bodyLines, headingIdx + 1, ""
 }
 
-// shiNV005FixtureBodyContains reports whether any line in body contains substr
-// (case-insensitive).
 func shiNV005FixtureBodyContains(body []string, substr string) bool {
 	lower := strings.ToLower(substr)
 	for _, line := range body {
@@ -349,11 +289,6 @@ func TestSHINV005CorpusLint(t *testing.T) {
 		t.Fatalf("SH-INV-005 corpus lint: stat %s: %v", scenariosDir, err)
 	}
 
-	// Collect all *.yaml files under scenarios/ recursively, skipping twin-scripts/
-	// subdirectories. Files under twin-scripts/ are handler-protocol message streams
-	// (twin binary configuration), not ScenarioFile structs; including them in the
-	// corpus lint would misidentify them as scenario files and fail KnownFields(true)
-	// strict-mode parsing on their heartbeat_mode / messages fields.
 	var yamlFiles []string
 	walkErr := filepath.Walk(scenariosDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -379,7 +314,6 @@ func TestSHINV005CorpusLint(t *testing.T) {
 	t.Logf("SH-INV-005 corpus lint: found %d scenario file(s) under scenarios/; running declarative-load check on each", len(yamlFiles))
 
 	for _, yamlPath := range yamlFiles {
-		// Derive a test name from the path relative to scenariosDir.
 		relPath, relErr := filepath.Rel(scenariosDir, yamlPath)
 		if relErr != nil {
 			relPath = yamlPath

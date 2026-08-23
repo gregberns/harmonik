@@ -96,17 +96,13 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 	entries, err := os.ReadDir(claudeWorktreesRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No .claude/worktrees directory — nothing to sweep.
 			return result, nil
 		}
 		return result, fmt.Errorf("daemon: SweepClaudeWorktrees: ReadDir %q: %w", claudeWorktreesRoot, err)
 	}
 
-	// Build registered and locked sets once for the whole repo.
 	registeredPaths, lockedPaths, gitErr := claudeWorktreeListRegisteredAndLocked(ctx, projectDir)
 	if gitErr != nil {
-		// Non-fatal: proceed with empty sets (conservative — all entries
-		// appear unregistered and will be age-checked or env-var-gated).
 		if logger != nil {
 			logger.Printf("daemon: SweepClaudeWorktrees: git worktree list failed (proceeding without): %v", gitErr)
 		}
@@ -121,14 +117,12 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 			continue
 		}
 		name := entry.Name()
-		// Only entries matching the "agent-<hex>" naming convention are swept.
 		if !claudeWorktreeNameValid(name) {
 			continue
 		}
 
 		entryPath := filepath.Join(claudeWorktreesRoot, name)
 
-		// Resolve symlinks for the git-registered check (macOS /var → /private/var).
 		resolvedPath := entryPath
 		if rp, err := filepath.EvalSymlinks(entryPath); err == nil {
 			resolvedPath = rp
@@ -137,7 +131,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 		registered := registeredPaths[entryPath] || registeredPaths[resolvedPath]
 		isLocked := lockedPaths[entryPath] || lockedPaths[resolvedPath]
 
-		// Get directory mtime for age classification.
 		info, statErr := entry.Info()
 		if statErr != nil {
 			if logger != nil {
@@ -148,24 +141,20 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 		}
 		ageStale := maxAge > 0 && time.Since(info.ModTime()) > maxAge
 
-		// Rule (1): registered and unlocked → active agent.
 		if registered && !isLocked {
 			result.Skipped = append(result.Skipped, entryPath)
 			continue
 		}
 
-		// Rule (2): locked but not old enough → recently active agent.
 		if isLocked && !ageStale {
 			result.Skipped = append(result.Skipped, entryPath)
 			continue
 		}
 
-		// Rules (3)-(5): orphan candidate (locked+stale, or not registered).
 		result.Orphans = append(result.Orphans, entryPath)
 
 		removeNow := ageStale || enabled
 		if !removeNow {
-			// Rule (5): dry-run.
 			if logger != nil {
 				logger.Printf("daemon: SweepClaudeWorktrees: dry-run: would remove orphan %q (set %s=1 to enable)", entryPath, EnvSweepClaudeWorktrees)
 			}
@@ -175,8 +164,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 		var removed bool
 
 		if isLocked {
-			// Rule (3): force-remove locked worktree. Double --force overrides
-			// `git worktree lock` (single --force is not sufficient for locked entries).
 			cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "worktree", "remove", "--force", "--force", entryPath)
 			if out, removeErr := cmd.CombinedOutput(); removeErr != nil {
 				if logger != nil {
@@ -189,7 +176,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 		}
 
 		if !removed {
-			// Rule (4) primary path, or rule (3) fallback after git failure.
 			if removeErr := os.RemoveAll(entryPath); removeErr != nil {
 				if logger != nil {
 					logger.Printf("daemon: SweepClaudeWorktrees: RemoveAll %q: %v", entryPath, removeErr)
@@ -197,7 +183,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 				continue
 			}
 			if isLocked {
-				// git admin entry still exists; prune will clean it up.
 				needsGitPrune = true
 			}
 		}
@@ -208,7 +193,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 		result.Removed = append(result.Removed, entryPath)
 	}
 
-	// Drop stale git admin entries left by any locked worktrees removed above.
 	if needsGitPrune {
 		pruneCmd := exec.CommandContext(ctx, "git", "-C", projectDir, "worktree", "prune")
 		if out, pruneErr := pruneCmd.CombinedOutput(); pruneErr != nil && logger != nil {
@@ -219,9 +203,6 @@ func SweepClaudeWorktrees(ctx context.Context, projectDir string, logger *log.Lo
 	return result, nil
 }
 
-// claudeWorktreesMaxAge returns the age threshold above which a
-// .claude/worktrees/agent-* entry is treated as stale. Reads
-// [EnvClaudeWorktreeMaxAgeDays]; defaults to [DefaultClaudeWorktreeMaxAgeDays].
 func claudeWorktreesMaxAge() time.Duration {
 	if v := os.Getenv(EnvClaudeWorktreeMaxAgeDays); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -231,15 +212,6 @@ func claudeWorktreesMaxAge() time.Duration {
 	return DefaultClaudeWorktreeMaxAgeDays * 24 * time.Hour
 }
 
-// claudeWorktreeNameValid reports whether name matches the "agent-<hex>"
-// convention used by the Claude Code orchestrator when creating sub-agent
-// worktrees. The hex suffix is one or more hex digits (lower-case or
-// upper-case) or the letter 'a'–'f'/'A'–'F' mixed with decimal digits.
-//
-// Rather than a strict hex regex, we accept any name that starts with
-// "agent-" and has a non-empty suffix composed of [A-Za-z0-9] characters.
-// This matches real entries like "agent-a8e49d3ccd1f65def" while rejecting
-// plain files, hidden entries, and the ".harmonik" tree.
 func claudeWorktreeNameValid(name string) bool {
 	const prefix = "agent-"
 	if !strings.HasPrefix(name, prefix) {
@@ -257,28 +229,10 @@ func claudeWorktreeNameValid(name string) bool {
 	return true
 }
 
-// asciiAlphanumeric reports whether c is one of [A-Za-z0-9]. It is deliberately
-// ASCII-only: unicode.IsLetter would accept characters a git worktree name
-// produced by the Claude Code harness never contains.
 func asciiAlphanumeric(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// claudeWorktreeListRegisteredAndLocked returns the set of absolute paths that
-// have git worktree metadata under repoRoot (registered) and, separately, the
-// subset of those that carry a `git worktree lock` annotation (locked).
-//
-// The Claude Code harness uses `git worktree lock` to mark active sub-agent
-// worktrees. A locked entry is NOT an orphan unless it is also age-stale
-// (the harness does not unlock on crash). Only paths with NO git metadata at
-// all are unconditionally eligible for orphan classification.
-//
-// Porcelain format parsed:
-//
-//	worktree /path/to/wt
-//	HEAD abc123
-//	branch refs/heads/foo
-//	locked optional-reason   ← locked entry; still registered
 func claudeWorktreeListRegisteredAndLocked(ctx context.Context, repoRoot string) (registered map[string]bool, locked map[string]bool, err error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
 	out, cmdErr := cmd.Output()

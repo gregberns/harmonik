@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// subscriptionValidV7 returns a UUIDv7 EventID for use in subscription test fixtures.
 func subscriptionValidV7(t *testing.T) EventID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -18,9 +17,6 @@ func subscriptionValidV7(t *testing.T) EventID {
 	return EventID(u)
 }
 
-// subscriptionMinimal returns a fully-valid Subscription with the smallest
-// possible populated set of required fields. Tests mutate individual fields
-// to probe Valid().
 func subscriptionMinimal(t *testing.T) Subscription {
 	t.Helper()
 	return Subscription{
@@ -33,8 +29,6 @@ func subscriptionMinimal(t *testing.T) Subscription {
 		Handler:                 func(_ context.Context, _ Event) error { return nil },
 	}
 }
-
-// --- Valid() tests — required fields ---
 
 func TestSubscriptionValid_Minimal(t *testing.T) {
 	t.Parallel()
@@ -123,8 +117,6 @@ func TestSubscriptionValid_ExplicitEventPattern(t *testing.T) {
 	}
 }
 
-// --- Valid() tests — required field violations ---
-
 func TestSubscriptionValid_EmptyConsumerID(t *testing.T) {
 	t.Parallel()
 
@@ -159,7 +151,6 @@ func TestSubscriptionValid_InvalidEventPattern(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	// Wildcard=true with non-empty Types violates §6.1 invariant.
 	s.EventPattern = EventPattern{
 		Wildcard: true,
 		Types:    map[EventType]struct{}{EventTypeRunStarted: {}},
@@ -173,7 +164,6 @@ func TestSubscriptionValid_InvalidEventPatternNoTypes(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	// Wildcard=false with empty Types violates §6.1 invariant.
 	s.EventPattern = EventPattern{Wildcard: false, Types: map[EventType]struct{}{}}
 	if s.Valid() {
 		t.Error("Valid() = true with invalid EventPattern (explicit+empty types), want false")
@@ -184,7 +174,6 @@ func TestSubscriptionValid_SinceIsNilUUID(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	// Since non-nil but points to uuid.Nil is invalid.
 	nilID := EventID(uuid.Nil)
 	s.Since = &nilID
 	if s.Valid() {
@@ -196,7 +185,6 @@ func TestSubscriptionValid_OffsetCheckpointIsNilUUID(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	// OffsetCheckpointEventID non-nil but points to uuid.Nil is invalid.
 	nilID := EventID(uuid.Nil)
 	s.OffsetCheckpointEventID = &nilID
 	if s.Valid() {
@@ -234,17 +222,6 @@ func TestSubscriptionValid_NilHandler(t *testing.T) {
 	}
 }
 
-// --- JSON round-trip (serializable fields) ---
-//
-// Subscription.Handler is a function and encodes as JSON null (Go's encoding/json
-// cannot serialise a function pointer; it emits null and sets the field to nil on
-// decode). The round-trip test verifies all non-function fields survive
-// marshal/unmarshal correctly. Handler being nil after unmarshal is expected and
-// documented here explicitly so future readers understand the limitation.
-
-// subscriptionJSONWire is a test-local wire struct carrying all fields except
-// Handler, used to verify that the serializable subset of Subscription
-// round-trips through JSON without loss.
 type subscriptionJSONWire struct {
 	ConsumerID              string       `json:"consumer_id"`
 	ConsumerClass           string       `json:"consumer_class"`
@@ -363,7 +340,6 @@ func TestSubscriptionJSONRoundTrip_MalformedInput(t *testing.T) {
 func TestSubscriptionJSONRoundTrip_MalformedEventID(t *testing.T) {
 	t.Parallel()
 
-	// since field receives an invalid UUID string — UnmarshalText on EventID must reject it.
 	raw := `{"consumer_id":"c","consumer_class":"observer","event_pattern":{"wildcard":true,"types":[]},"since":"not-a-uuid","on_panic":"recover_and_log"}`
 	var got subscriptionJSONWire
 	if err := json.Unmarshal([]byte(raw), &got); err == nil {

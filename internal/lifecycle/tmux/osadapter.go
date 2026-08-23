@@ -38,7 +38,6 @@ func (o OSAdapter) WithRunner(r CommandRunner) OSAdapter {
 	return o
 }
 
-// effectiveRunner returns the configured runner or LocalRunner{} when unset.
 func (o OSAdapter) effectiveRunner() CommandRunner {
 	if o.runner == nil {
 		return LocalRunner{}
@@ -60,7 +59,6 @@ func (o OSAdapter) ProbeTmux(ctx context.Context) error {
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "-V")
 	out, err := cmd.Output()
 	if err != nil {
-		// exec.LookPath failure means tmux is not on PATH.
 		if isNotFoundErr(err) {
 			return ErrTmuxMissing
 		}
@@ -68,7 +66,6 @@ func (o OSAdapter) ProbeTmux(ctx context.Context) error {
 		return &ErrTmuxFailure{Op: "-V", ExitCode: exitCodeOf(err), Stderr: stderr}
 	}
 
-	// `tmux -V` prints "tmux <major>.<minor>[suffix]" e.g. "tmux 3.4".
 	versionStr := strings.TrimSpace(string(out))
 	major, err := parseTmuxMajorVersion(versionStr)
 	if err != nil {
@@ -290,15 +287,8 @@ func (o OSAdapter) NewWindowIn(ctx context.Context, params NewWindowIn) Outcome 
 		return Outcome{Err: &ErrTmuxFailure{Op: "new-window", ExitCode: exitCodeOf(err), Stderr: outStr}}
 	}
 
-	// Construct the handle as "session:window-name" per the opaque format
-	// documented in adapter.go.
 	handle := WindowHandle(params.Session + ":" + params.WindowName)
 
-	// Extract the pane ID from the -P -F "#{pane_id}" output (e.g. "%27").
-	// This is captured atomically at window-creation time, eliminating the need
-	// for a follow-up WindowPaneID call that would use the slash-bearing handle
-	// and risk resolving the wrong pane when the window name is a filesystem path
-	// (hk-aievp: root cause of stale-pane misdirect).
 	paneID := strings.TrimSpace(string(out))
 
 	return Outcome{Handle: handle, PaneID: paneID}
@@ -321,7 +311,6 @@ func (o OSAdapter) KillWindow(ctx context.Context, handle WindowHandle) error {
 		if isNoSessionErr(out) {
 			return ErrNoSession
 		}
-		// "no window:" indicates the window is already gone — idempotent success.
 		if isNoWindowErr(out) {
 			return nil
 		}
@@ -427,7 +416,6 @@ func (o OSAdapter) EnsureSession(ctx context.Context, name, workDir string) erro
 			return ErrTmuxMissing
 		}
 		outStr := strings.TrimSpace(string(out))
-		// "duplicate session" means the session already exists — idempotent success.
 		if isDuplicateSessionErr(out) {
 			return nil
 		}
@@ -471,11 +459,6 @@ func (o OSAdapter) NewSessionIn(ctx context.Context, params NewWindowIn) Outcome
 	return Outcome{Handle: handle, PaneID: paneID}
 }
 
-// buildNewSessionArgs constructs the argument slice for `tmux new-session` from
-// a NewWindowIn. The session is created with params.Session as the session name
-// and params.WindowName as the first window name.
-//
-//	new-session -P -F "#{pane_id}" -d -s <session> -n <windowName> [-c <cwd>] [-e K=V...] [-- <cmd>]
 func buildNewSessionArgs(p NewWindowIn) []string {
 	args := []string{
 		"new-session",
@@ -590,7 +573,6 @@ func (o OSAdapter) SendKeysLiteral(ctx context.Context, paneTarget, text string)
 // Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys Enter (splash dismiss).
 // Bead: hk-rf4ux.
 func (o OSAdapter) SendKeysEnter(ctx context.Context, paneTarget string) error {
-	// paneTarget is a daemon-managed pane address (e.g. "%NNNN"), not user input.
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "send-keys", "-t", paneTarget, "Enter")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -612,7 +594,6 @@ func (o OSAdapter) SendKeysEnter(ctx context.Context, paneTarget string) error {
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
 // Bead: hk-cmybm.
 func (o OSAdapter) SendKeysQuit(ctx context.Context, paneTarget string) error {
-	// paneTarget is a daemon-managed pane address (e.g. "%NNNN"), not user input.
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "send-keys", "-t", paneTarget, "/quit", "Enter")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -670,15 +651,10 @@ func (o OSAdapter) WriteToPane(ctx context.Context, bufferName, paneTarget strin
 		return err
 	}
 	if err := o.PasteBuffer(ctx, bufferName, paneTarget); err != nil {
-		// PasteBuffer's -d flag only deletes the buffer on success; on failure
-		// the loaded buffer would otherwise accumulate on the tmux server.
-		// Best-effort cleanup: the paste error remains the returned error.
 		delCmd := o.effectiveRunner().Command(ctx, "tmux", "delete-buffer", "-b", bufferName)
 		_, _ = delCmd.CombinedOutput() //nolint:errcheck // best-effort cleanup
 		return err
 	}
-	// Parse session-id and purpose from "harmonik-<session-id>-<purpose>".
-	// bufferName format was already validated by LoadBuffer.
 	sessionID, purpose := parseBufferNameComponents(bufferName)
 	slog.InfoContext(ctx, "daemon_pane_write",
 		"session_id", sessionID,
@@ -690,40 +666,16 @@ func (o OSAdapter) WriteToPane(ctx context.Context, bufferName, paneTarget strin
 	return nil
 }
 
-// parseBufferNameComponents extracts the session-id and purpose components
-// from a buffer name of the form "harmonik-<session-id>-<purpose>".
-// It assumes the name has already been validated by [bufferNameRe].
-//
-// The session-id is everything between the first and last hyphen-delimited
-// segment (i.e., everything after "harmonik-" and before the trailing purpose
-// slug). The purpose is the last hyphen-delimited segment.
 func parseBufferNameComponents(bufferName string) (sessionID, purpose string) {
-	// Strip the "harmonik-" prefix.
 	const prefix = "harmonik-"
 	rest := bufferName[len(prefix):]
-	// The purpose is the last segment; everything before it is the session-id.
 	idx := strings.LastIndexByte(rest, '-')
 	if idx < 0 {
-		// Should not happen given a valid buffer name, but be defensive.
 		return rest, ""
 	}
 	return rest[:idx], rest[idx+1:]
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Internal helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-// buildNewWindowArgs constructs the argument slice for `tmux new-window` from
-// a [NewWindowIn]. It follows the command shape:
-//
-//	new-window -P -F "#{pane_id}" -d -t <session>: -n <window> [-c <cwd>] [-e K=V...] [-- <argv...>]
-//
-// The -P flag prints information about the newly-created window; -F "#{pane_id}"
-// narrows the output to the stable pane ID (e.g. "%27"). Capturing the pane ID
-// atomically at creation time avoids the follow-up WindowPaneID call that would
-// use the slash-bearing "session:window-name" handle, which tmux can misparse
-// when the window name is a filesystem path (hk-aievp, hk-yngq2).
 func buildNewWindowArgs(p NewWindowIn) []string {
 	args := []string{
 		"new-window",
@@ -744,12 +696,6 @@ func buildNewWindowArgs(p NewWindowIn) []string {
 	return args
 }
 
-// parseTmuxMajorVersion extracts the major version integer from a tmux -V
-// output string of the form "tmux <major>.<minor>[suffix]".
-//
-// Development builds print "tmux next-3.6" (the "next-" prefix is stripped)
-// or "tmux master" / "tmux openbsd-N.N" (treated as a modern build — major
-// devBuildMajor — rather than rejected).
 func parseTmuxMajorVersion(versionStr string) (int, error) {
 	parts := strings.Fields(versionStr)
 	if len(parts) < 2 {
@@ -764,9 +710,6 @@ func parseTmuxMajorVersion(versionStr string) (int, error) {
 	}
 	major, err := strconv.Atoi(majorStr)
 	if err != nil {
-		// Non-numeric version: a dev build compiled from git ("master",
-		// "openbsd-7.4", …). These track post-3.x tmux; treat as modern
-		// instead of failing the ≥3.0 probe.
 		if verPart == "master" || strings.HasPrefix(verPart, "openbsd") {
 			return devBuildMajor, nil
 		}
@@ -775,12 +718,8 @@ func parseTmuxMajorVersion(versionStr string) (int, error) {
 	return major, nil
 }
 
-// devBuildMajor is the assumed major version for tmux builds whose -V output
-// carries no numeric version (e.g. "tmux master"). Such builds track the
-// development head, which is well past the required 3.0.
 const devBuildMajor = 999
 
-// parseLines splits output on newlines and returns non-empty, trimmed lines.
 func parseLines(out []byte) []string {
 	var names []string
 	scanner := bufio.NewScanner(bytes.NewReader(out))
@@ -793,13 +732,6 @@ func parseLines(out []byte) []string {
 	return names
 }
 
-// isNotFoundErr reports whether err from exec.Command indicates the binary was
-// not found on PATH (exec.ErrNotFound or ENOENT).
-//
-// Prefer typed matching: a local exec of a missing binary wraps exec.ErrNotFound
-// (via *exec.Error), which errors.Is unwraps reliably. The substring fallback
-// covers transports (e.g. SSHRunner) that surface the failure as remote-shell
-// TEXT rather than a typed Go error.
 func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
@@ -811,8 +743,6 @@ func isNotFoundErr(err error) bool {
 		strings.Contains(err.Error(), "executable file not found")
 }
 
-// isNoSessionErr reports whether the combined output from a tmux command
-// indicates the target session does not exist.
 func isNoSessionErr(out []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(string(out)))
 	return strings.Contains(lower, "no server running") ||
@@ -821,32 +751,24 @@ func isNoSessionErr(out []byte) bool {
 		strings.Contains(lower, "no such session")
 }
 
-// isWindowCollisionErr reports whether the combined output indicates a window
-// with the requested name already exists.
 func isWindowCollisionErr(out []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(string(out)))
 	return strings.Contains(lower, "duplicate window name") ||
 		strings.Contains(lower, "already exists")
 }
 
-// isDuplicateSessionErr reports whether the combined output from `tmux new-session`
-// indicates a session with the same name already exists (idempotent EnsureSession).
 func isDuplicateSessionErr(out []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(string(out)))
 	return strings.Contains(lower, "duplicate session") ||
 		strings.Contains(lower, "session already exists")
 }
 
-// isNoWindowErr reports whether the combined output indicates the target window
-// does not exist (already gone — idempotent kill).
 func isNoWindowErr(out []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(string(out)))
 	return strings.Contains(lower, "no window") ||
 		strings.Contains(lower, "can't find window")
 }
 
-// exitCodeOf extracts the exit code from an *exec.ExitError, returning 1 for
-// any other error type.
 func exitCodeOf(err error) int {
 	if err == nil {
 		return 0
@@ -859,8 +781,6 @@ func exitCodeOf(err error) int {
 	return 1
 }
 
-// asExitError returns *exec.ExitError from err if the underlying error is one,
-// otherwise nil.
 func asExitError(err error) *exec.ExitError {
 	if err == nil {
 		return nil
@@ -871,8 +791,6 @@ func asExitError(err error) *exec.ExitError {
 	return nil
 }
 
-// extractStderr returns stderr output from an *exec.ExitError, or the error
-// message string for non-exit errors.
 func extractStderr(err error) string {
 	if ee := asExitError(err); ee != nil {
 		return strings.TrimSpace(string(ee.Stderr))

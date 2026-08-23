@@ -1,18 +1,5 @@
 package daemon_test
 
-// socket_queue_test.go — additive tests asserting that the four queue
-// control-surface ops are registered on the daemon socket (hk-nomxl).
-//
-// These tests verify that:
-//   - "queue-submit", "queue-append", "queue-status", "queue-dry-run" are
-//     handled by RunSocketListener when a QueueHandler is registered.
-//   - Responses carry the expected ErrorCode when no QueueHandler is wired
-//     (nil QueueHandler path → -32099 per handleQueueOp).
-//   - "enqueue" is NOT in the registered set (per bead body acceptance criterion).
-//
-// Spec ref: specs/process-lifecycle.md §4.4 PL-003a.
-// Bead ref: hk-nomxl.
-
 import (
 	"context"
 	"encoding/json"
@@ -22,12 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// Concrete QueueHandler stub for socket tests
-// ---------------------------------------------------------------------------
-
-// socketQueueFixtureStub satisfies daemon.QueueHandler with canned responses.
-// It uses context.Context parameters matching the interface definition.
 type socketQueueFixtureStub struct{}
 
 func (s *socketQueueFixtureStub) HandleQueueSubmit(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
@@ -62,13 +43,6 @@ func (s *socketQueueFixtureStub) HandleQueueCancel(_ context.Context, _ json.Raw
 	return json.RawMessage(`{"queue_id":"stub-queue-id","prior_status":"active"}`), nil
 }
 
-// ---------------------------------------------------------------------------
-// Fixture helper: start listener with optional QueueHandler
-// ---------------------------------------------------------------------------
-
-// socketQueueFixtureStartListenerWithQH starts RunSocketListener with a
-// QueueHandler registered. Returns cancel func and done channel like
-// socketFixtureStartListener. Passing nil for qh omits the queue handler.
 func socketQueueFixtureStartListenerWithQH(t *testing.T, sockPath string, h daemon.RequestHandler, qh daemon.QueueHandler) (context.CancelFunc, <-chan error) {
 	t.Helper()
 
@@ -91,10 +65,6 @@ func socketQueueFixtureStartListenerWithQH(t *testing.T, sockPath string, h daem
 	return cancel, ch
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 // TestSocketListener_QueueMethodsRegistered verifies that all four queue ops
 // are routed to the QueueHandler when one is registered and return Ok=true.
 func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
@@ -116,8 +86,6 @@ func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
 			defer func() { _ = conn.Close() }()
 
 			resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: op})
-			// The stub returns Ok=true; a non-ok response means the op is not
-			// registered (routed to default "unknown op" case).
 			if !resp.Ok {
 				t.Errorf("op %q: response.ok = false, error = %q (method not registered or routed incorrectly)",
 					op, resp.Error)
@@ -154,7 +122,6 @@ func TestSocketListener_QueueMethodsNilHandler(t *testing.T) {
 	sockPath := socketFixtureTempSockPath(t)
 	h := &stubHandler{}
 
-	// No QueueHandler registered.
 	socketQueueFixtureStartListenerWithQH(t, sockPath, h, nil)
 	socketFixtureWaitReady(t, sockPath)
 

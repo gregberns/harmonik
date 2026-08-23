@@ -24,7 +24,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// Ensure core is used (NodeType is referenced on Node.Type).
 var _ core.NodeType
 
 // Graph is the top-level parsed representation of a .dot workflow artifact.
@@ -122,8 +121,6 @@ type Node struct {
 	// RawType is the raw string from the DOT source before NodeType
 	// coercion.  Useful for error messages when Type == "".
 	RawType string
-
-	// --- Required / optional per-type attributes (WG-002) ---
 
 	// AgentType is the agent_type attribute on agentic nodes (open set per WG-003).
 	AgentType string

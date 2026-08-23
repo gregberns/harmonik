@@ -1,14 +1,5 @@
 package main
 
-// keeper_scripts_embed_sync_test.go — sync-guard: embedded keeper hook scripts
-// must be byte-identical to their canonical counterparts in scripts/.
-//
-// If this test fails, re-sync the out-of-date file with:
-//
-//	cp scripts/<name>.sh cmd/harmonik/assets/scripts/<name>.sh
-//
-// Bead ref: hk-ybmqp (portability — keeper hooks not embedded).
-
 import (
 	"bytes"
 	"os"

@@ -165,7 +165,6 @@ func (s ScopeTarget) MarshalJSON() ([]byte, error) {
 //
 // All other inputs are rejected.
 func (s *ScopeTarget) UnmarshalJSON(data []byte) error {
-	// Try array first.
 	if len(data) > 0 && data[0] == '[' {
 		var ids []string
 		if err := json.Unmarshal(data, &ids); err != nil {
@@ -179,7 +178,6 @@ func (s *ScopeTarget) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try string shapes.
 	var raw string
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("scopetarget: expected string or array, got %s", string(data))

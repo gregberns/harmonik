@@ -1,15 +1,5 @@
 package runlaunch
 
-// deadlines.go — the HC-056 agent-readiness deadlines, their local/remote
-// resolver, the typed timeout sentinel, and the kill-reap bound.
-//
-// Carved out of internal/daemon/agentready.go and internal/daemon/workloop.go by
-// P2 unit E5 RT19b (pure move). The doc comments below travel VERBATIM: they
-// carry the hk-do7te / hk-4hso5 / hk-5z1f0 / hk-96d7w tuning history and the
-// HC-056 spec refs, and that history is the reason the values are what they are.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-
 import (
 	"errors"
 	"time"

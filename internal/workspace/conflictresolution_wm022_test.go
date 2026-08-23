@@ -26,11 +26,6 @@ import (
 // lands. Sections that require the implementation are marked TODO with the owning
 // bead reference.
 
-// conflictResFixtureMetaJSON returns the harmonik.meta.json content for a session
-// sidecar per workspace-model.md §4.7 WM-026.
-//
-// agentType must be either an agentic class ("agentic-claude", etc.) or a
-// mechanical class ("non-agentic", "generator", "merge-node").
 func conflictResFixtureMetaJSON(t *testing.T, runID, sessionID, agentType string, launchedAt time.Time) []byte {
 	t.Helper()
 	b, err := json.Marshal(map[string]string{
@@ -46,8 +41,6 @@ func conflictResFixtureMetaJSON(t *testing.T, runID, sessionID, agentType string
 	return b
 }
 
-// conflictResFixtureWriteSidecar writes a harmonik.meta.json sidecar under
-// ${workspacePath}/.harmonik/sessions/${sessionID}/harmonik.meta.json per WM-026.
 func conflictResFixtureWriteSidecar(t *testing.T, workspacePath, sessionID string, content []byte) {
 	t.Helper()
 	dir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
@@ -60,7 +53,6 @@ func conflictResFixtureWriteSidecar(t *testing.T, workspacePath, sessionID strin
 	}
 }
 
-// conflictResFixtureSessionMeta is the parsed form of a harmonik.meta.json sidecar.
 type conflictResFixtureSessionMeta struct {
 	RunID         string `json:"run_id"`
 	SessionID     string `json:"session_id"`
@@ -69,14 +61,6 @@ type conflictResFixtureSessionMeta struct {
 	SchemaVersion string `json:"schema_version"`
 }
 
-// conflictResFixtureSidecarWalk enumerates
-// ${workspacePath}/.harmonik/sessions/*/harmonik.meta.json, parses each sidecar,
-// and returns them sorted by LaunchedAt in REVERSE chronological order (newest first).
-//
-// This is the mechanical identification procedure declared by WM-022:
-// "enumerate ${workspace_path}/.harmonik/sessions/*/harmonik.meta.json … order them
-// by the sidecar's launched_at field (RFC 3339; per WM-026) in REVERSE chronological
-// order."
 func conflictResFixtureSidecarWalk(t *testing.T, workspacePath string) []conflictResFixtureSessionMeta {
 	t.Helper()
 	sessionsDir := filepath.Join(workspacePath, ".harmonik", "sessions")
@@ -104,28 +88,16 @@ func conflictResFixtureSidecarWalk(t *testing.T, workspacePath string) []conflic
 		}
 		metas = append(metas, m)
 	}
-	// Sort by launched_at descending (newest first) per WM-022.
 	sort.Slice(metas, func(i, j int) bool {
 		return metas[i].LaunchedAt > metas[j].LaunchedAt
 	})
 	return metas
 }
 
-// conflictResFixtureFirstAgenticRef returns the implementer_handler_ref derived
-// from the first agentic sidecar found by the sidecar walk per WM-022.
-// Returns ("", false) when no agentic session is found (all-mechanical path per WM-022a).
-//
-// "Agentic" is defined by WM-022 as: agent_type belongs to the set of agentic
-// handler classes; mechanical/generator/merge-node classes are non-agentic.
-// For test purposes this set is represented by any agent_type prefixed "agentic-".
 func conflictResFixtureFirstAgenticRef(metas []conflictResFixtureSessionMeta) (agentType string, found bool) {
 	for _, m := range metas {
-		// WM-022: "the FIRST sidecar whose agent_type belongs to the set of agentic
-		// handler classes … supplies implementer_handler_ref."
-		// Mechanical / generator / merge-node classes are non-agentic.
 		switch m.AgentType {
 		case "non-agentic", "generator", "merge-node":
-			// skip
 		default:
 			return m.AgentType, true
 		}
@@ -153,11 +125,9 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 		t0 := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 		t1 := t0.Add(30 * time.Minute) // later = most recent
 
-		// Session 1: mechanical (earlier).
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
 			conflictResFixtureMetaJSON(t, runID, "sess-01", "non-agentic", t0))
 
-		// Session 2: agentic (most recent).
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
 			conflictResFixtureMetaJSON(t, runID, "sess-02", "agentic-claude", t1))
 
@@ -166,7 +136,6 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 			t.Fatalf("WM-022: want 2 sidecars, got %d", len(metas))
 		}
 
-		// Most recent must come first.
 		if metas[0].SessionID != "sess-02" {
 			t.Errorf("WM-022: most-recent sidecar = sess %q, want sess-02", metas[0].SessionID)
 		}
@@ -189,17 +158,13 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 		t0 := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 		t1 := t0.Add(30 * time.Minute)
 
-		// Session 1: agentic (older).
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
 			conflictResFixtureMetaJSON(t, runID, "sess-01", "agentic-claude", t0))
 
-		// Session 2: mechanical (most recent) — does NOT displace the agentic ref.
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
 			conflictResFixtureMetaJSON(t, runID, "sess-02", "merge-node", t1))
 
 		metas := conflictResFixtureSidecarWalk(t, dir)
-		// Walk is newest-first; the merge-node appears first but is non-agentic,
-		// so the first agentic entry is sess-01.
 		agentType, found := conflictResFixtureFirstAgenticRef(metas)
 		if !found {
 			t.Fatal("WM-022: no agentic sidecar found; want agentic-claude from sess-01")
@@ -222,13 +187,8 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 func TestWM022_NoGitTrailerWalk(t *testing.T) {
 	t.Parallel()
 
-	// This test verifies the ABSENCE of a trailer-based identification path.
-	// We construct a workspace with only git-level commit trailers and NO
-	// session sidecars. The identification result MUST be null (no agentic ref).
 	dir := t.TempDir()
 
-	// No sidecars written — simulates a workspace where the only "evidence" of
-	// an implementer would be in git trailers (which WM-022 explicitly forbids).
 	metas := conflictResFixtureSidecarWalk(t, dir)
 	if len(metas) != 0 {
 		t.Errorf("WM-022: got %d sidecars from empty sessions dir; want 0", len(metas))
@@ -258,11 +218,9 @@ func TestWM022a_AllMechanicalBranchEscalatesDirectly(t *testing.T) {
 		dir := t.TempDir()
 		runID := "0196b200-0000-7000-8000-00000022a001"
 
-		// No sessions dir — all-mechanical task branch.
 		metas := conflictResFixtureSidecarWalk(t, dir)
 		_, found := conflictResFixtureFirstAgenticRef(metas)
 
-		// WM-022a: implementer_handler_ref MUST be null.
 		if found {
 			t.Errorf("WM-022a: found agentic ref on all-mechanical branch; want null")
 		}
@@ -291,7 +249,6 @@ func TestWM022a_AllMechanicalBranchEscalatesDirectly(t *testing.T) {
 
 		t0 := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 
-		// Only non-agentic sessions.
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
 			conflictResFixtureMetaJSON(t, runID, "sess-01", "generator", t0))
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
@@ -327,9 +284,6 @@ func conflictResFixtureAttemptCapForRef(implementerHandlerRef string) int {
 	return conflictResFixtureDefaultAttemptCap
 }
 
-// conflictResFixtureDefaultAttemptCap is the DEFAULT conflict-resolution re-dispatch
-// attempt cap per WM-024: "The workspace manager MUST cap conflict-resolution
-// re-dispatch attempts at a DEFAULT of THREE (3) attempts per merge-pending cycle."
 const conflictResFixtureDefaultAttemptCap = 3
 
 // TestWM024_ThreeAttemptDefaultCap verifies that the default conflict-resolution
@@ -346,7 +300,6 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 	t.Run("default-cap-is-three", func(t *testing.T) {
 		t.Parallel()
 
-		// Any non-null implementer ref must yield cap = 3 by default.
 		agentType := "agentic-claude"
 		attemptCap := conflictResFixtureAttemptCapForRef(agentType)
 		if attemptCap != 3 {
@@ -373,20 +326,17 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 			SchemaVersion: 1,
 		}
 
-		// Simulate: 3 attempts exhausted — resolve attempts all failed.
 		attemptsRecorded := 3
 		attemptCap := conflictResFixtureAttemptCapForRef(string(*ws.ImplementerHandlerRef))
 		if attemptCap != 3 {
 			t.Fatalf("WM-024: cap = %d, want 3", attemptCap)
 		}
 
-		// After cap-reach, escalation verdict must be produced.
 		escalated := conflictResFixtureIsCapReached(attemptsRecorded, attemptCap)
 		if !escalated {
 			t.Errorf("WM-024: 3 attempts recorded, cap = 3: escalated = false; want true")
 		}
 
-		// Workspace MUST transition to discarded after escalation per WM-023.
 		if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 			t.Errorf("WM-024: Transition(conflict-resolving → discarded) after escalation: %v", err)
 		}
@@ -427,7 +377,6 @@ func conflictResFixtureIsCapReached(attemptsRecorded, attemptCap int) bool {
 func TestWM024_OperatorConfigurableCapBounds(t *testing.T) {
 	t.Parallel()
 
-	// Valid range [1, 10]: all must be accepted.
 	for attemptCap := 1; attemptCap <= 10; attemptCap++ {
 		err := conflictResFixtureValidateAttemptCap(attemptCap)
 		if err != nil {
@@ -435,7 +384,6 @@ func TestWM024_OperatorConfigurableCapBounds(t *testing.T) {
 		}
 	}
 
-	// Out-of-range: 0 and 11+ must be rejected.
 	outOfRange := []int{0, -1, 11, 100}
 	for _, attemptCap := range outOfRange {
 		err := conflictResFixtureValidateAttemptCap(attemptCap)
@@ -459,11 +407,8 @@ func conflictResFixtureValidateAttemptCap(attemptCap int) error {
 	return nil
 }
 
-// errConflictResCapOutOfRange is returned by conflictResFixtureValidateAttemptCap
-// when the operator-configured cap falls outside the [1, 10] bound per WM-024.
 var errConflictResCapOutOfRange = conflictResError("conflict-resolution attempt cap must be in [1, 10]")
 
-// conflictResError is a simple error type for conflict-resolution validation errors.
 type conflictResError string
 
 func (e conflictResError) Error() string { return string(e) }
@@ -498,19 +443,16 @@ func TestWM023_UnresolvableConflictEscalates(t *testing.T) {
 			SchemaVersion: 1,
 		}
 
-		// 3 failed attempts → cap reached → merge_conflict_escalation required.
 		if !conflictResFixtureIsCapReached(3, conflictResFixtureDefaultAttemptCap) {
 			t.Fatal("WM-023: precondition: cap not reached at 3 attempts")
 		}
 
-		// WM-023: workspace transitions to discarded after escalation.
 		if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 			t.Fatalf("WM-023: Transition to discarded: %v", err)
 		}
 		if ws.State != core.WorkspaceStateDiscarded {
 			t.Errorf("WM-023: post-escalation state = %q; want discarded", ws.State)
 		}
-		// WM-037a: terminal states carry no interrupt signal.
 		if ws.InterruptState != core.InterruptStateNone {
 			t.Errorf("WM-023+WM-037a: interrupt_state = %q after discarded; want none", ws.InterruptState)
 		}
@@ -535,12 +477,10 @@ func TestWM023_UnresolvableConflictEscalates(t *testing.T) {
 			SchemaVersion: 1,
 		}
 
-		// WM-022a: null ref → skip re-dispatch → direct escalation per WM-023.
 		if ws.ImplementerHandlerRef != nil {
 			t.Fatal("WM-022a: precondition: ImplementerHandlerRef must be nil for all-mechanical branch")
 		}
 
-		// WM-023: workspace transitions to discarded after direct escalation.
 		if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 			t.Fatalf("WM-023: Transition to discarded (all-mechanical): %v", err)
 		}
@@ -562,16 +502,12 @@ func TestWM023_UnresolvableConflictEscalates(t *testing.T) {
 func TestWM024_HandlerClassRetirementRoutesToEscalation(t *testing.T) {
 	t.Parallel()
 
-	// Simulate: the sidecar records "agentic-v1" which has been retired.
-	// The registry lookup for "agentic-v1" returns "retired".
 	retiredClass := "agentic-v1-retired"
 	isRetired := conflictResFixtureIsHandlerClassRetired(retiredClass)
 	if !isRetired {
 		t.Fatalf("WM-024: precondition: %q should be retired in test registry", retiredClass)
 	}
 
-	// When the handler class is retired, re-dispatch MUST NOT occur.
-	// Instead, it routes to WM-023 escalation directly.
 	shouldRedispatch := !isRetired
 	if shouldRedispatch {
 		t.Errorf("WM-024: retired handler class %q: shouldRedispatch = true; want false (route to escalation)", retiredClass)
@@ -593,7 +529,6 @@ func TestWM024_HandlerClassRetirementRoutesToEscalation(t *testing.T) {
 		SchemaVersion: 1,
 	}
 
-	// Retirement path → WM-023 escalation → discarded.
 	if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 		t.Fatalf("WM-024[retirement]: Transition to discarded: %v", err)
 	}
@@ -608,12 +543,9 @@ func TestWM024_HandlerClassRetirementRoutesToEscalation(t *testing.T) {
 // TODO(hk-8mwo.36): replace with real handler-contract registry lookup once
 // handler-class retirement tracking is implemented.
 func conflictResFixtureIsHandlerClassRetired(handlerClass string) bool {
-	// Test registry: only "agentic-v1-retired" is retired.
 	return handlerClass == "agentic-v1-retired"
 }
 
-// handlerRefPtr returns a pointer to a core.HandlerRef constructed from s.
-// Used to set ImplementerHandlerRef in test fixtures.
 func handlerRefPtr(s string) *core.HandlerRef {
 	h := core.HandlerRef(s)
 	return &h

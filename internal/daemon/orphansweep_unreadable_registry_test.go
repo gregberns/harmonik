@@ -1,38 +1,5 @@
 package daemon
 
-// orphansweep_unreadable_registry_test.go — what the boot sweep is allowed to
-// destroy when it cannot read the run registry.
-//
-// The registry is the only thing that separates a run whose agent is still
-// working from a directory a crash left behind. Reading it is all-or-nothing:
-// one torn write under .harmonik/runs/ and the scan answers with an error, not
-// with the records it managed to parse. The sweep then held an EMPTY exemption
-// set, which is byte-for-byte what "no run survived this restart" looks like —
-// so it killed every session carrying the project hash and force-removed every
-// worktree whose lease named the dead daemon, and reported a clean sweep over
-// an agent's session and its uncommitted work.
-//
-// The claim these tests hold between them: a boot that cannot prove a run is
-// dead destroys nothing, and a boot that can still reaps what is dead. The
-// second one is what stops the first passing for a sweep that has gone inert.
-//
-// # Two ways a worktree is reclaimed, and both need covering
-//
-// The sweep can take a worktree down two different roads, and each has its own
-// stand-down. A worktree whose lease names a dead process goes to the
-// force-removal of pass (b2). A worktree with NO lease that nothing has touched
-// for a week goes to the age prune of pass (b3), and the second road is the one
-// a surviving run travels: the lease sweep RELEASES a lease it judged stale
-// before it hands the path on, so the run that outlived the daemon reaches the
-// NEXT boot holding no lease at all. Age says nothing about it. That checkout is
-// old because it is old, not because its agent stopped.
-//
-// So the fixture drives both, selected by badRegistryReclaim. With only the
-// dead-lease drive, the age prune never fires in this file and its gate could be
-// deleted without turning anything red.
-//
-// Helper prefix: badRegistry.
-
 import (
 	"io/fs"
 	"os"
@@ -45,39 +12,23 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// badRegistryReclaim selects which of the sweep's two worktree-reclaim roads the
-// fixture puts its worktrees on.
 type badRegistryReclaim int
 
 const (
-	// badRegistryViaDeadLease leaves a lease naming a process that is gone, which
-	// is what pass (b2) force-removes.
 	badRegistryViaDeadLease badRegistryReclaim = iota
 
-	// badRegistryViaAgePrune leaves no lease and no recent activity, which is
-	// what pass (b3) removes on age alone.
 	badRegistryViaAgePrune
 )
 
-// badRegistryWorktreeUnusedFor is how far back the age-prune drive backdates a
-// worktree. It is well past DefaultHarmonikWorktreeMaxAgeDays so the drive does
-// not depend on the exact threshold, only on being over it.
 const badRegistryWorktreeUnusedFor = 30 * 24 * time.Hour
 
-// The two runs every drive of this fixture carries. One agent kept working
-// after the daemon died; the other went with it.
 const (
 	badRegistryLiveRunID      = "0f0e0d0c-0b0a-4908-8706-05040302dd01"
 	badRegistryAbandonedRunID = "0f0e0d0c-0b0a-4908-8706-05040302dd02"
 )
 
-// badRegistryTornRecord is a record file the scan cannot parse: a valid run-id
-// basename over a JSON object that stops mid-key. It is what a write that lost
-// power halfway leaves on disk, and it is enough to fail the whole scan.
 const badRegistryTornRecord = "0199aaaa-0000-7000-8000-0000000000ff.json"
 
-// badRegistryOutcome is one drive of the boot sweep over the fixture, together
-// with the fakes that recorded what the sweep did.
 type badRegistryOutcome struct {
 	liveSession      string
 	abandonedSession string
@@ -87,7 +38,6 @@ type badRegistryOutcome struct {
 	adapter          *surviveRecoveryPanePIDs
 }
 
-// sessionKilled asks both kill passes, because either one ends the agent.
 func (o badRegistryOutcome) sessionKilled(name string) bool {
 	return o.server.wasKilled(name) || o.adapter.wasKilled(name)
 }
@@ -97,13 +47,6 @@ func badRegistryOnDisk(path string) bool {
 	return err == nil
 }
 
-// badRegistryUnleaseAndAge puts a worktree on the age-prune road: it takes the
-// lease off and backdates every mtime in the tree.
-//
-// Both halves are needed. Without a lease the worktree is unclassifiable by the
-// lease sweep and lands in the no-lock list; the age prune then walks the tree
-// for its NEWEST mtime, so one recent file anywhere under it keeps the whole
-// worktree young and the prune never fires.
 func badRegistryUnleaseAndAge(t *testing.T, wtPath string) {
 	t.Helper()
 	if err := workspace.ReleaseLeaseLock(workspace.LeaseLockPath(wtPath)); err != nil {
@@ -120,8 +63,6 @@ func badRegistryUnleaseAndAge(t *testing.T, wtPath string) {
 		t.Fatalf("badRegistry: walk %s to backdate it: %v", wtPath, walkErr)
 	}
 	unused := time.Now().Add(-badRegistryWorktreeUnusedFor)
-	// Deepest first. Backdating a child cannot then re-bump a parent this loop
-	// has already done.
 	for i := len(paths) - 1; i >= 0; i-- {
 		if err := os.Chtimes(paths[i], unused, unused); err != nil {
 			t.Fatalf("badRegistry: backdate %s: %v", paths[i], err)
@@ -129,16 +70,6 @@ func badRegistryUnleaseAndAge(t *testing.T, wtPath string) {
 	}
 }
 
-// badRegistrySweep builds a project holding one live run and one abandoned run,
-// optionally drops an unparseable record beside them, and drives the boot sweep
-// over it.
-//
-// reclaim decides what state the two worktrees are left in, and the two states
-// reach the sweep's two different removal passes. Neither state says anything
-// about which run is live: a dead lease holder is the DAEMON that took the lease
-// and this fixture is the boot after that daemon died, and an old checkout is
-// old because it is old. Only the registry tells the two runs apart — which is
-// precisely what an unreadable registry takes away.
 func badRegistrySweep(t *testing.T, withTornRecord bool, reclaim badRegistryReclaim) badRegistryOutcome {
 	t.Helper()
 
@@ -199,8 +130,6 @@ func badRegistrySweep(t *testing.T, withTornRecord bool, reclaim badRegistryRecl
 		if writeErr := os.WriteFile(tornPath, []byte(`{"schema_version":`), 0o600); writeErr != nil {
 			t.Fatalf("badRegistry: write the torn record: %v", writeErr)
 		}
-		// Harness check, not decoration. If the scan still succeeds, this drive is
-		// measuring the ordinary path and every assertion below is free.
 		if _, scanErr := runpkg.ScanRegistry(repo); scanErr == nil {
 			t.Fatalf("badRegistry: the registry at %s still reads cleanly with %s in it.\n"+
 				"This test is about what the sweep does when the scan FAILS, and here it did not.",
@@ -209,7 +138,6 @@ func badRegistrySweep(t *testing.T, withTornRecord bool, reclaim badRegistryRecl
 	}
 
 	adapter := &surviveRecoveryPanePIDs{live: map[string]int{
-		// The one PID a test can name that is certainly alive.
 		liveSession: os.Getpid(),
 		// Nothing is running in there any more.
 		abandonedSession: 0,
@@ -224,8 +152,6 @@ func badRegistrySweep(t *testing.T, withTornRecord bool, reclaim badRegistryRecl
 			HandlerLister: surviveRecoveryNoProcesses{},
 			BrLister:      surviveRecoveryNoProcesses{},
 		}); sweepErr != nil {
-		// The sweep reports its non-fatal step failures this way and the daemon
-		// proceeds anyway (PL-006). What it did is what these tests are about.
 		t.Logf("RunOrphanSweep reported non-fatal step errors: %v", sweepErr)
 	}
 
@@ -269,9 +195,6 @@ func TestBootSweep_AnUnreadableRunRegistryDestroysNothing(t *testing.T) {
 			"boot could not read it.", out.liveWorktree)
 	}
 
-	// The abandoned run is spared too, and that is the trade rather than a miss:
-	// with the registry unreadable there is no fact that separates it from the
-	// live one. It leaks until the next boot reads a repaired registry.
 	if out.sessionKilled(out.abandonedSession) || !badRegistryOnDisk(out.abandonedWT) {
 		t.Errorf("the boot sweep reaped the abandoned run (session killed: %v, worktree gone: %v) "+
 			"while it could not read the registry.\n"+
@@ -337,8 +260,6 @@ func TestBootSweep_AnUnreadableRunRegistrySparesAnUnleasedAgedWorktree(t *testin
 			"only thing that says the agent is there, and this boot could not read it.", out.liveWorktree)
 	}
 
-	// The abandoned worktree is spared too, and that is the trade rather than a
-	// miss: with the registry unreadable, nothing separates it from the live one.
 	if !badRegistryOnDisk(out.abandonedWT) {
 		t.Errorf("the age prune removed the abandoned run's worktree at %s while it could not read "+
 			"the registry.\n"+

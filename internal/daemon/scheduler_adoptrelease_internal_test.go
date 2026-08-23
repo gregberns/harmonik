@@ -1,22 +1,5 @@
 package daemon
 
-// scheduler_adoptrelease_internal_test.go — the run-session adoption revert.
-//
-// When an adopted tmux session turns out to be dead, adoptLiveRunSession gives
-// its queue item back. That revert had no test of any kind. It also had no run
-// guard, so it could set an item back to pending underneath a NEWER run that
-// already held it, and it dropped the error from its own persist, so memory
-// said pending while disk said dispatched.
-//
-// Every assertion about the item below reads the queue back off disk. Reading
-// the in-memory store is how the dropped persist stayed invisible.
-//
-// The fixture is shared with scheduler_release_internal_test.go on purpose: it
-// puts the target at the SECOND item of the SECOND group, so a lookup hardcoded
-// to the first of either is caught.
-//
-// Bead ref: hk-o85ye, hk-mk4cl.
-
 import (
 	"context"
 	"errors"
@@ -32,8 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 )
 
-// adoptedRecord builds the registry record adoptLiveRunSession acts on, aimed
-// at the shared fixture's target item and naming runID as the run that holds it.
 func adoptedRecord(beadID core.BeadID, runID string) runpkg.Record {
 	return runpkg.Record{
 		SchemaVersion: 1,
@@ -47,8 +28,6 @@ func adoptedRecord(beadID core.BeadID, runID string) runpkg.Record {
 	}
 }
 
-// denyQueueWrites makes the queues directory unwritable for the rest of the
-// test, so the next queue write fails the way a full disk does.
 func denyQueueWrites(t *testing.T, projectDir string) {
 	t.Helper()
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
@@ -62,8 +41,6 @@ func denyQueueWrites(t *testing.T, projectDir string) {
 	})
 }
 
-// drainWake empties the store's coalescing wake channel, so a later read of it
-// reports only what the code under test signalled.
 func drainWake(store interface{ WakeCh() <-chan struct{} }) {
 	for {
 		select {
@@ -95,8 +72,6 @@ func TestReleaseAdoptedRunItem_ReturnsTheItemToPendingDurably(t *testing.T) {
 		t.Errorf("persisted LastFailureReason = %q; want %q — the operator cannot see why the item came back",
 			persisted.LastFailureReason, "run_session_adopted_dead")
 	}
-	// The revert must touch exactly one item. The old lookup used raw slice
-	// positions and no group status, so a wrong index reopened a neighbour.
 	if decoyGroup.Status != queue.ItemStatusCompleted {
 		t.Errorf("completed group's item = %q; want %q — the revert reached into another group",
 			decoyGroup.Status, queue.ItemStatusCompleted)
@@ -113,11 +88,8 @@ func TestReleaseAdoptedRunItem_ReturnsTheItemToPendingDurably(t *testing.T) {
 // implementers on one bead, through the path built to prevent exactly that.
 func TestReleaseAdoptedRunItem_RefusesAnItemHeldByANewerRun(t *testing.T) {
 	const beadID = core.BeadID("hk-adopt-2")
-	// The reservation on the fixture is the NEWER run: the one live right now.
 	projectDir, store, liveRun := reserveForRelease(t, beadID)
 
-	// The dead run is a different run, and this is its adoption goroutine
-	// arriving late.
 	deadRun := newReservationRunID(t)
 	if deadRun == liveRun {
 		t.Fatal("setup: the dead run and the live run must differ")
@@ -150,9 +122,6 @@ func TestReleaseAdoptedRunItem_AFailedWriteLeavesNoFalseRecovery(t *testing.T) {
 		t.Errorf("persisted status = %q; want %q — a lost write must not change disk",
 			persisted.Status, queue.ItemStatusDispatched)
 	}
-	// The wake tells the dispatch loop there is work to pick up. Firing it after
-	// a failed release sends the loop to look at an item that is still
-	// dispatched, and a dispatched item is never re-selected.
 	select {
 	case <-store.WakeCh():
 		t.Error("the store was woken after a failed release; the dispatch loop was told the item is back when it is not")
@@ -224,9 +193,6 @@ func TestAdoptedReleaseReport_ARefusedReleaseCarriesTheSharedAdvice(t *testing.T
 	}
 }
 
-// adoptStubLedger is a beadLedger that records the ReopenBead calls the adoption
-// path makes and refuses every other method, which the adoption path never
-// reaches.
 type adoptStubLedger struct {
 	reopened []core.BeadID
 }

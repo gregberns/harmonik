@@ -26,13 +26,8 @@ import (
 // first when the cap is exceeded.
 const PendingFlagsMaxLen = 20
 
-// pendingFlagsTerminalMarkers are the substrings that mark a flag as resolved
-// or noted.  Flags matching any marker are evicted on every append.
 var pendingFlagsTerminalMarkers = []string{"RESOLVED", "NOTED"}
 
-// prunePendingFlags evicts terminal flags (containing any marker from
-// pendingFlagsTerminalMarkers) and caps the result at PendingFlagsMaxLen,
-// retaining the most-recent entries.
 func prunePendingFlags(flags []string) []string {
 	out := make([]string, 0, len(flags))
 	for _, f := range flags {
@@ -81,7 +76,6 @@ const (
 func Classify(ev core.Event) EscalationClass {
 	switch ev.Type {
 
-	// IMMEDIATE — captain judgment needed now.
 	case core.EventTypeDecisionRequired,
 		core.EventTypeRunFailed,
 		core.EventTypeReviewBypassed,
@@ -89,9 +83,6 @@ func Classify(ev core.Event) EscalationClass {
 		core.EventTypeReviewGateAnomaly:
 		return EscalationImmediate
 
-	// LEDGER-ONLY — routine churn; cursor advance only.
-	// epic_completed stays on the captain's own direct subscribe to avoid triple-wake
-	// (daemon QuiesceArbiter + captain direct subscribe + watch would be triple).
 	case core.EventTypeEpicCompleted,
 		core.EventTypeRunStarted,
 		core.EventTypeRunCompleted,
@@ -102,8 +93,6 @@ func Classify(ev core.Event) EscalationClass {
 		core.EventTypeSessionKeeperCycleComplete:
 		return EscalationLedgerOnly
 
-	// Default: PULL-DIGEST — accumulate; captain reads on own idle.
-	// Covers crew-staleness (run_stale), backlog-ready, lull indicators, etc.
 	default:
 		return EscalationPullDigest
 	}
@@ -170,8 +159,6 @@ func (e *EscalationEngine) ProcessOpsMonitorReceipt(ev core.Event) (bool, error)
 	return true, e.Ledger.WriteDigest(d)
 }
 
-// appendDigestFlag reads latest.json, appends flag to pending_flags (pruning
-// terminal entries and enforcing the cap), and writes it back.
 func (e *EscalationEngine) appendDigestFlag(flag string) error {
 	d, err := e.Ledger.ReadDigest()
 	if err != nil {

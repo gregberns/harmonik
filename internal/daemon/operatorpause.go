@@ -1,28 +1,5 @@
 package daemon
 
-// operatorpause.go — OperatorPauseController (hk-ry8q1, extended hk-tigaf.6).
-//
-// OperatorPauseController implements OperatorControlHandler for the socket
-// dispatcher and exposes IsPaused for the workloop br-ready dispatch gate.
-//
-// Lifecycle:
-//   - HandleOperatorPause(ctx, ""): global pause — emits operator_pause_status{pausing}
-//     (no queue_name) → sets paused=true → emits operator_pause_status{paused}.
-//     The QueueOperatorEventConsumer reacts to drain ALL queues (QM-054).
-//   - HandleOperatorPause(ctx, queueName): per-queue pause — emits
-//     operator_pause_status{pausing, queue_name=queueName} without touching the
-//     global paused flag. Only the named queue is transitioned by the consumer.
-//   - HandleOperatorResume(ctx, ""): global resume — clears paused=false → emits
-//     operator_resuming (no queue_name). Consumer resumes ALL paused-by-drain queues.
-//   - HandleOperatorResume(ctx, queueName): per-queue resume — emits
-//     operator_resuming{queue_name=queueName} without touching the global paused flag.
-//   - IsPaused: consulted by the workloop br-ready gate before every dispatch.
-//     Returns true ONLY for the global pause; per-queue pauses do not affect it.
-//
-// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
-// Spec ref: specs/event-model.md §8.7.6 (operator_pause_status), §8.7.7 (operator_resuming).
-// Bead ref: hk-ry8q1, hk-tigaf.6.
-
 import (
 	"context"
 	"encoding/json"
@@ -121,7 +98,6 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context, queue
 	}
 
 	if queueName == "" {
-		// Global pause: gate with the paused flag for idempotency.
 		if c.paused {
 			return nil // already paused — idempotent
 		}
@@ -138,7 +114,6 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context, queue
 			return fmt.Errorf("operator-pause: emit paused: %w", err)
 		}
 	} else {
-		// Per-queue pause: does not touch the global paused flag.
 		ts := msTimestamp()
 		if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePausing, ts, queueName); err != nil {
 			return fmt.Errorf("operator-pause[%s]: emit pausing: %w", queueName, err)
@@ -179,13 +154,11 @@ func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context, queu
 	}
 
 	if queueName == "" {
-		// Global resume: gate with paused flag for idempotency.
 		if !c.paused {
 			return nil // not paused — idempotent
 		}
 		c.paused = false
 	}
-	// Per-queue resume: no global flag change; always emit (idempotency is in consumer).
 
 	payload := core.OperatorResumingPayload{
 		ResumedAt: msTimestamp(),
@@ -220,22 +193,6 @@ func (c *OperatorPauseController) SetQueueStates(reader QueuePauseStateReader) {
 	c.queues = reader
 }
 
-// refuseFailureParkedLocked refuses a drain-release aimed at a queue that is
-// parked by failure.
-//
-// This is the fix for a silent wrong answer. `harmonik queue resume <name>`
-// sends operator-resume, and the QueueOperatorEventConsumer only transitions a
-// queue whose status is paused-by-drain. A failure-parked queue therefore
-// matched nothing, yet the operator saw "resumed" and no item ever dispatched.
-// A typed refusal that names `harmonik queue recover` is the honest answer.
-//
-// Only the per-queue form is refused. A global resume (empty queueName) is a
-// drain release over every drained queue and is not aimed at any one failure
-// park, so it keeps its existing meaning.
-//
-// Caller must hold mu.
-//
-// Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
 func (c *OperatorPauseController) refuseFailureParkedLocked(queueName string) error {
 	if queueName == "" || c.queues == nil {
 		return nil
@@ -251,32 +208,10 @@ func (c *OperatorPauseController) refuseFailureParkedLocked(queueName string) er
 	}
 }
 
-// queueNameLister is the optional half of QueuePauseStateReader: a reader that
-// can also enumerate the queues it holds. It is type-asserted rather than
-// folded into QueuePauseStateReader so existing implementers keep satisfying
-// that interface — the same late-addition idiom as VerdictOverrideHandler on
-// the socket dispatcher. *queuewiring.QueueStore satisfies it.
 type queueNameLister interface {
 	AllQueues() map[string]*queue.Queue
 }
 
-// refuseUnknownQueueLocked refuses an operator verb aimed at a queue that does
-// not exist.
-//
-// This is the fix for a silent wrong answer on the emergency stop. `harmonik
-// queue pause <name>` emitted operator_pause_status against whatever string it
-// was handed. The QueueOperatorEventConsumer only transitions a queue it can
-// find, so a misspelled name matched nothing, yet the operator saw "paused:
-// <name>" and exit 0 while the real queue kept dispatching. Reporting that the
-// dispatching stopped when it did not is worse than any error.
-//
-// A global pause or resume (empty queueName) is not aimed at any one queue and
-// is never refused. When no reader is wired the check cannot run, so it passes
-// rather than refusing everything.
-//
-// Caller must hold mu.
-//
-// Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
 func (c *OperatorPauseController) refuseUnknownQueueLocked(verb, queueName string) error {
 	if queueName == "" || c.queues == nil {
 		return nil
@@ -292,8 +227,6 @@ func (c *OperatorPauseController) refuseUnknownQueueLocked(verb, queueName strin
 	}
 }
 
-// knownQueueNamesLocked returns the sorted names of the queues that exist, or
-// nil when the wired reader cannot enumerate them. Caller must hold mu.
 func (c *OperatorPauseController) knownQueueNamesLocked() []string {
 	lister, ok := c.queues.(queueNameLister)
 	if !ok {
@@ -308,8 +241,6 @@ func (c *OperatorPauseController) knownQueueNamesLocked() []string {
 	return names
 }
 
-// emitPauseStatusLocked emits an operator_pause_status event with the given
-// status, changedAt timestamp, and optional queueName scope. Caller must hold mu.
 func (c *OperatorPauseController) emitPauseStatusLocked(ctx context.Context, status core.OperatorPauseStatusValue, changedAt, queueName string) error {
 	payload := core.OperatorPauseStatusPayload{
 		Status:    status,
@@ -323,8 +254,6 @@ func (c *OperatorPauseController) emitPauseStatusLocked(ctx context.Context, sta
 	return c.bus.Emit(ctx, core.EventTypeOperatorPauseStatus, raw)
 }
 
-// msTimestamp returns the current UTC time formatted as RFC3339 with
-// millisecond resolution per event-model.md §8.9(h).
 func msTimestamp() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }

@@ -78,16 +78,10 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 
 	for _, dw := range discovered {
 		if dw.LeaseLockUnreadable {
-			// Lease-lock file present but its content is unrecoverable
-			// (corrupt/truncated) — state UNKNOWN. Fail safe: skip, and do NOT
-			// add to NoLock. A worktree with an unreadable lock is never routed
-			// to age-based force-removal, because we cannot prove it is unleased.
 			result.Skipped = append(result.Skipped, dw.WorktreePath)
 			continue
 		}
 		if dw.LeaseLock == nil {
-			// No lease-lock — directory is either a WM-003a orphan or released.
-			// Routing is the caller's responsibility; sweep skips.
 			result.Skipped = append(result.Skipped, dw.WorktreePath)
 			result.NoLock = append(result.NoLock, dw.WorktreePath)
 			continue
@@ -99,20 +93,14 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 			continue
 		}
 
-		// PID is dead → stale. Remove the lease-lock file per WM-033.
 		leaseLockPath := LeaseLockPath(dw.WorktreePath)
 		if err := ReleaseLeaseLock(leaseLockPath); err != nil {
-			// Non-fatal: log by appending to skipped and continue the sweep.
 			result.Skipped = append(result.Skipped, dw.WorktreePath)
 			continue
 		}
 		result.Removed = append(result.Removed, dw.WorktreePath)
 	}
 
-	// Post-sweep: run `git worktree prune` to drop stale .git/worktrees/<name>/
-	// metadata entries. Operator-issued `git worktree lock` entries are respected
-	// (prune skips locked entries). Best-effort: prune error is returned but does
-	// NOT undo the lock-file removals already performed.
 	pruneCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "prune")
 	if out, err := pruneCmd.CombinedOutput(); err != nil {
 		return result, fmt.Errorf("workspace: SweepStaleLeaseLocks: git worktree prune: %w\noutput: %s", err, out)
@@ -176,7 +164,6 @@ func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, 
 	worktreeRoot := filepath.Join(repoRoot, ".harmonik", "worktrees")
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
-			// Context cancelled: stop processing.
 			break
 		}
 		rel, err := filepath.Rel(worktreeRoot, p)
@@ -197,9 +184,6 @@ func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, 
 			result.Failed = append(result.Failed, p)
 			continue
 		}
-		// GC the per-worktree trust key from ~/.claude.json (hk-bfvby): each
-		// worktree gets an ephemeral trust entry and without this GC the map
-		// grows unbounded. Best-effort: failure is non-fatal.
 		if err := PruneWorktreeTrust(p); err != nil && logger != nil {
 			logger.Printf("workspace: RemoveStaleWorktrees: PruneWorktreeTrust %q: %v (non-fatal)", p, err)
 		}
@@ -239,8 +223,6 @@ func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []str
 	for _, p := range paths {
 		newest, err := newestMTimeInTree(p)
 		if err != nil {
-			// Cannot determine activity → conservatively skip (never remove a
-			// worktree we could not fully scan; it may hold recent work).
 			if logger != nil {
 				logger.Printf("workspace: RemoveAgedNoLockWorktrees: skipping %q; cannot scan tree for activity: %v", p, err)
 			}
@@ -256,12 +238,6 @@ func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []str
 	return RemoveStaleWorktrees(ctx, repoRoot, aged, logger)
 }
 
-// newestMTimeInTree walks the directory tree rooted at root and returns the
-// most-recent modification time among the root and every entry beneath it. It is
-// the activity proxy for [RemoveAgedNoLockWorktrees]: unlike the top-dir mtime,
-// it reflects in-place file edits anywhere in the worktree. A walk error (e.g. a
-// vanished entry, permission failure) is returned so the caller can conservatively
-// skip the path rather than risk removing a worktree with recent activity.
 func newestMTimeInTree(root string) (time.Time, error) {
 	var newest time.Time
 	err := filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
@@ -283,30 +259,16 @@ func newestMTimeInTree(root string) (time.Time, error) {
 	return newest, nil
 }
 
-// isPIDDead reports whether pid is not running on this host.
-//
-// Uses syscall.Kill(pid, 0): signal 0 does not kill the process but causes
-// an error if the process does not exist. On UNIX:
-//   - err == nil: process is live and we have permission to signal it.
-//   - err == syscall.EPERM: process is live (we lack permission; not our own).
-//   - err == syscall.ESRCH: process does not exist → dead.
-//   - Any other error: treat as dead (conservative; safe for sweep purposes).
-//
-// This is a best-effort probe: race conditions between the probe and actual
-// process termination are inherent; WM-033 accepts this.
 func isPIDDead(pid int) bool {
 	if pid <= 0 {
 		return true
 	}
 	err := syscall.Kill(pid, 0)
 	if err == nil {
-		// Signal accepted → process is live → NOT stale.
 		return false
 	}
 	if err == syscall.EPERM {
-		// Permission denied → process exists but we can't signal it → NOT stale.
 		return false
 	}
-	// ESRCH or any other error → process does not exist → dead.
 	return true
 }

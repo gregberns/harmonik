@@ -31,9 +31,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// ── test helpers ─────────────────────────────────────────────────────────────
-
-// swTestRun builds a minimal *core.Run for sub-workflow tests.
 func swTestRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
@@ -48,8 +45,6 @@ func swTestRun(t *testing.T) *core.Run {
 	}
 }
 
-// swTestParentGraph builds a minimal parent dot.Graph with a single
-// sub-workflow node referencing refName.
 func swTestParentGraph(refName string) *dot.Graph {
 	return &dot.Graph{
 		Name:            "parent",
@@ -62,8 +57,6 @@ func swTestParentGraph(refName string) *dot.Graph {
 	}
 }
 
-// swWriteDotFile writes a minimal valid DOT workflow to dir/<name>.dot and
-// returns the path.
 func swWriteDotFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -73,19 +66,6 @@ func swWriteDotFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// minimalDotWorkflow returns valid DOT source for a trivial one-node workflow.
-//
-// The graph-level workflow_id is load-bearing. WG-055 makes it required, and the
-// parser refuses a graph without it. Every test here writes its sub-workflow to
-// disk and lets resolveSubWorkflowGraph load it, so a graph the parser refuses
-// never resolves. The runner then returns the SAME structural FAIL that a
-// missing file returns, and a test that expects a structural FAIL passes without
-// reaching the rule it names. Keep the identity here or the negative tests in
-// this file go vacuous again.
-//
-// The value is deliberately not the DOT graph name. The parser must not fall
-// back to the graph name, so a fixture that reuses it would teach the wrong
-// shape.
 const minimalDotWorkflow = `digraph {
   schema_version="1";
   version="1.0";
@@ -95,13 +75,6 @@ const minimalDotWorkflow = `digraph {
   only [type="non-agentic", idempotency_class="idempotent", handler_ref="noop"];
 }`
 
-// reviewLoopDotWorkflow returns valid DOT source for a workflow marked as review-loop class.
-//
-// The workflow_id is load-bearing for the same reason as minimalDotWorkflow, and
-// it matters more here: SW-010 is checked AFTER resolution. Without the identity
-// the parser refuses this graph, the runner fails at resolution, and
-// TestSubWorkflowRunner_NoReviewLoop_FailsStructural sees the structural FAIL it
-// wants without the review-loop rule ever running.
 const reviewLoopDotWorkflow = `digraph {
   schema_version="1";
   version="1.0";
@@ -112,9 +85,6 @@ const reviewLoopDotWorkflow = `digraph {
   only [type="non-agentic", idempotency_class="idempotent", handler_ref="noop"];
 }`
 
-// recordingBusDaemon is a minimal in-process bus for test assertions in the
-// daemon package. Named distinctly to avoid conflict with the workflow package's
-// recordingBus in the same test binary.
 type recordingBusDaemon struct {
 	events []swRecordedEvent
 }
@@ -135,8 +105,6 @@ func (b *recordingBusDaemon) Emit(_ context.Context, et core.EventType, payload 
 	return nil
 }
 
-// swMakeRunner builds a dotSubWorkflowRunner backed by a recordingBusDaemon
-// and a minimal testRuntime. The parentGraph is used for acyclicity checking.
 func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, parentGraph *dot.Graph) *dotSubWorkflowRunner {
 	t.Helper()
 	run := swTestRun(t)
@@ -177,18 +145,13 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 	)
 }
 
-// ── 1. Acyclicity rejection (SW-003) ─────────────────────────────────────────
-
 // TestSubWorkflowRunner_AcyclicityReject_SelfReference verifies that a direct
 // self-reference (parent workflow references itself) fails closed with a
 // structural Outcome and no sub_workflow_entered event is emitted (SW-003).
 func TestSubWorkflowRunner_AcyclicityReject_SelfReference(t *testing.T) {
 	dir := t.TempDir()
-	// Write a sub-workflow DOT file so resolution succeeds; the cycle is
-	// detected AFTER resolution (SW-003 step order: resolve first, then check).
 	swWriteDotFile(t, dir, "parent.dot", minimalDotWorkflow)
 
-	// Parent graph's name matches the sub_workflow_ref → self-reference cycle.
 	parentGraph := &dot.Graph{
 		Name: "parent",
 		Nodes: []*dot.Node{
@@ -217,7 +180,6 @@ func TestSubWorkflowRunner_AcyclicityReject_SelfReference(t *testing.T) {
 	if outcome.FailureClass == nil || *outcome.FailureClass != core.FailureClassStructural {
 		t.Errorf("outcome.FailureClass = %v, want structural (SW-003)", outcome.FailureClass)
 	}
-	// SW-003: no sub_workflow_entered event must be emitted on cycle detection.
 	for _, ev := range bus.events {
 		if ev.EventType == core.EventTypeSubWorkflowEntered {
 			t.Errorf("sub_workflow_entered was emitted on acyclicity failure (SW-003 violation)")
@@ -229,11 +191,6 @@ func TestSubWorkflowRunner_AcyclicityReject_SelfReference(t *testing.T) {
 // mutual reference (A → B → A) is detected and fails closed (SW-003).
 func TestSubWorkflowRunner_AcyclicityReject_MutualReference(t *testing.T) {
 	dir := t.TempDir()
-	// Write "B.dot" that references "A" — creating a mutual cycle A→B→A.
-	// schema_version is the DOT schema, so it is "1" and not the graph version.
-	// workflow_id is required by WG-055. Without either, the parser refuses this
-	// graph, the runner fails at resolution, and the structural FAIL below says
-	// nothing about cycle detection — the check runs only after resolution.
 	childDot := `digraph {
   schema_version = "1";
   version = "1.0";
@@ -274,23 +231,18 @@ func TestSubWorkflowRunner_AcyclicityReject_MutualReference(t *testing.T) {
 	}
 }
 
-// ── 2. Namespacing format (SW-002) ────────────────────────────────────────────
-
 // TestSubWorkflowRunner_NamespacingFormat verifies that the expanded sub-graph
 // node IDs are in the form <parentNodeID>/<subNodeID> per EM-034a (SW-002).
 // This is tested via workflow.ExpandSubWorkflowGraph which is called by Run.
 // We verify indirectly by checking the sub_workflow_entered payload.
 func TestSubWorkflowRunner_NamespacingFormat(t *testing.T) {
 	dir := t.TempDir()
-	// Write a sub-workflow with a known start node "start".
 	swWriteDotFile(t, dir, "child.dot", minimalDotWorkflow)
 
 	parentGraph := &dot.Graph{Name: "parent"}
 	bus := &recordingBusDaemon{}
 	runner := swMakeRunner(t, bus, dir, parentGraph)
 
-	// Override nodeRunner to return SUCCESS immediately so dispatch completes.
-	// We intercept the entered event to verify it carries ParentNodeID.
 	spec := handler.SubWorkflowRunSpec{
 		Run:                runner.run,
 		ParentNodeID:       "review", // parent node ID — this is the namespace prefix
@@ -302,13 +254,10 @@ func TestSubWorkflowRunner_NamespacingFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	// The single-node "only" graph with no outgoing edges will succeed because
-	// DispatchSubWorkflow walks until terminal. The terminal outcome is SUCCESS.
 	if outcome.Status != core.OutcomeStatusSuccess {
 		t.Logf("note: outcome.Status = %q (may be FAIL if cascade finds no edge; acyclicity OK)", outcome.Status)
 	}
 
-	// Verify sub_workflow_entered was emitted and carries the correct parent node ID (SW-005/SW-002).
 	var foundEntered bool
 	for _, ev := range bus.events {
 		if ev.EventType != core.EventTypeSubWorkflowEntered {
@@ -327,8 +276,6 @@ func TestSubWorkflowRunner_NamespacingFormat(t *testing.T) {
 		t.Error("sub_workflow_entered event was not emitted (SW-005)")
 	}
 }
-
-// ── 3 & 4. Outcome escape and parent run_id on events (SW-005, SW-006) ───────
 
 // TestSubWorkflowRunner_EventsCarryParentRunID verifies that both
 // sub_workflow_entered and sub_workflow_exited carry the parent run_id and
@@ -384,16 +331,11 @@ func TestSubWorkflowRunner_EventsCarryParentRunID(t *testing.T) {
 	}
 }
 
-// ── 5. Resolution order (SW-004) ─────────────────────────────────────────────
-
 // TestSubWorkflowRunner_Resolution_ExplicitRefWins verifies that when both an
 // explicit ref ("child.dot") and "workflow.dot" exist, the explicit ref is
 // resolved (tier 1 wins per SW-004).
 func TestSubWorkflowRunner_Resolution_ExplicitRefWins(t *testing.T) {
 	dir := t.TempDir()
-	// Write both files. "child.dot" has workflow_class "explicit"; "workflow.dot"
-	// does not. We verify the entered event carries the name from child.dot's
-	// sub_workflow_name matching the spec.SubWorkflowRef.
 	swWriteDotFile(t, dir, "child.dot", minimalDotWorkflow)
 	swWriteDotFile(t, dir, "workflow.dot", minimalDotWorkflow)
 
@@ -412,10 +354,8 @@ func TestSubWorkflowRunner_Resolution_ExplicitRefWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	// Any non-infra outcome is acceptable; the test cares about resolution, not execution.
 	_ = outcome
 
-	// Verify the entered event's SubWorkflowName matches the explicit ref.
 	for _, ev := range bus.events {
 		if ev.EventType != core.EventTypeSubWorkflowEntered {
 			continue
@@ -435,7 +375,6 @@ func TestSubWorkflowRunner_Resolution_ExplicitRefWins(t *testing.T) {
 func TestSubWorkflowRunner_Resolution_FallsBackToWorkflowDot(t *testing.T) {
 	dir := t.TempDir()
 	swWriteDotFile(t, dir, "workflow.dot", minimalDotWorkflow)
-	// Do NOT write "missing-ref.dot".
 
 	bus := &recordingBusDaemon{}
 	parentGraph := &dot.Graph{Name: "parent"}
@@ -452,16 +391,11 @@ func TestSubWorkflowRunner_Resolution_FallsBackToWorkflowDot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	// workflow.dot fallback resolved → should NOT be a resolution structural fail.
-	// The workflow has no cycle so it should proceed to dispatch.
 	if outcome.FailureClass != nil && *outcome.FailureClass == core.FailureClassStructural {
-		// Might still fail on cascade (single-node terminal), but the failure
-		// should not be a resolution failure. Check the notes.
 		if outcome.Notes != "" && len(outcome.Notes) > 20 {
 			t.Logf("got structural fail with notes: %s", outcome.Notes)
 		}
 	}
-	// A successful tier-2 resolution emits sub_workflow_entered.
 	var foundEntered bool
 	for _, ev := range bus.events {
 		if ev.EventType == core.EventTypeSubWorkflowEntered {
@@ -478,7 +412,6 @@ func TestSubWorkflowRunner_Resolution_FallsBackToWorkflowDot(t *testing.T) {
 // structural Outcome without dispatching any node (SW-004 tier 3).
 func TestSubWorkflowRunner_Resolution_StructuralFailWhenNeitherExists(t *testing.T) {
 	dir := t.TempDir()
-	// Do NOT write any .dot files.
 
 	bus := &recordingBusDaemon{}
 	parentGraph := &dot.Graph{Name: "parent"}
@@ -501,15 +434,12 @@ func TestSubWorkflowRunner_Resolution_StructuralFailWhenNeitherExists(t *testing
 	if outcome.FailureClass == nil || *outcome.FailureClass != core.FailureClassStructural {
 		t.Errorf("outcome.FailureClass = %v, want structural (SW-004)", outcome.FailureClass)
 	}
-	// No sub_workflow_entered should be emitted when resolution fails.
 	for _, ev := range bus.events {
 		if ev.EventType == core.EventTypeSubWorkflowEntered {
 			t.Error("sub_workflow_entered was emitted despite resolution failure (SW-004)")
 		}
 	}
 }
-
-// ── 6. No review-loop sub-workflow (SW-010) ───────────────────────────────────
 
 // TestSubWorkflowRunner_NoReviewLoop_FailsStructural verifies that a
 // sub-workflow with workflow_class="review-loop" is rejected at dispatch with
@@ -541,8 +471,6 @@ func TestSubWorkflowRunner_NoReviewLoop_FailsStructural(t *testing.T) {
 	}
 }
 
-// ── In-place expansion / no-new-RunID (SW-001 / SW-INV-001) ──────────────────
-
 // TestSubWorkflowRunner_SingleRunID verifies that a successful sub-workflow
 // execution emits both lifecycle events carrying the SAME run_id as the parent
 // run — no child run identifier is allocated (SW-001 / SW-INV-001).
@@ -570,7 +498,6 @@ func TestSubWorkflowRunner_SingleRunID(t *testing.T) {
 		if ev.EventType != core.EventTypeSubWorkflowEntered && ev.EventType != core.EventTypeSubWorkflowExited {
 			continue
 		}
-		// Both event payloads embed RunID; parse as generic map to check.
 		var m map[string]any
 		if err := json.Unmarshal(ev.Payload, &m); err != nil {
 			continue

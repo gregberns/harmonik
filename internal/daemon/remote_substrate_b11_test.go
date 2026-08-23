@@ -1,35 +1,5 @@
 package daemon
 
-// remote_substrate_b11_test.go — unit tests for rs B11: offline/partition
-// detection for remote workers (hk-rs-b11-offline-dh57).
-//
-// Gate-runnable: no real tmux, SSH, or git required. Tests exercise the
-// detection helpers and the onConnectionFailure callback path using a
-// RecordingRunner whose CmdFunc controls exit codes.
-//
-// Test matrix (acceptance criteria from bead — FR7/NFR5):
-//   TestRSB11_IsSSHConnectionFailure_Exit255:
-//     IsSSHConnectionFailure returns true for ssh exit-255.
-//   TestRSB11_IsSSHConnectionFailure_OtherExits:
-//     IsSSHConnectionFailure returns false for exit-0 and exit-1.
-//   TestRSB11_IsSSHConnectionFailure_Nil:
-//     IsSSHConnectionFailure returns false for nil.
-//   TestRSB11_LivenessProbe_ProcessAlive:
-//     probeLivenessOrSSHFail returns (true, false) when pgrep exits 0.
-//   TestRSB11_LivenessProbe_ProcessGone:
-//     probeLivenessOrSSHFail returns (false, false) when pgrep exits 1 (process gone).
-//   TestRSB11_LivenessProbe_SSHConnFail_NotAWedge:
-//     probeLivenessOrSSHFail returns (false, true) when runner exits 255;
-//     the call returns in finite time (not a wedge — run can recover).
-//   TestRSB11_HealthyThenSSHFail_OfflineDetected:
-//     Main scenario: runner healthy → alive, then ssh exit-255 → connFailed.
-//     Verifies the bead "runner healthy then returns ssh exit-255 mid-run"
-//     acceptance criterion: recoverable terminal state + offline detected.
-//   TestRSB11_WorkerOfflinePayload_Fields:
-//     WorkerOfflinePayload carries expected fields for event consumers.
-//
-// Bead: hk-rs-b11-offline-dh57.
-
 import (
 	"context"
 	"fmt"
@@ -39,10 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workers"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IsSSHConnectionFailure (tests 1–3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB11_IsSSHConnectionFailure_Exit255 verifies that IsSSHConnectionFailure
 // returns true for an *exec.ExitError with exit code 255, which is the code
@@ -71,7 +37,6 @@ func TestRSB11_IsSSHConnectionFailure_OtherExits(t *testing.T) {
 			t.Parallel()
 			cmd := exec.CommandContext(t.Context(), "sh", "-c", fmt.Sprintf("exit %d", code))
 			err := cmd.Run()
-			// exit 0 produces nil error; others produce *exec.ExitError.
 			if tmux.IsSSHConnectionFailure(err) {
 				t.Errorf("RSB11: IsSSHConnectionFailure(exit %d) = true, want false", code)
 			}
@@ -89,13 +54,6 @@ func TestRSB11_IsSSHConnectionFailure_Nil(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// probeLivenessOrSSHFail (tests 4–6)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// exitCodeCmdFunc returns a RecordingRunner.CmdFunc that makes every command
-// exit with the given code. Uses "sh -c 'exit N'" so the exit error is a
-// real *exec.ExitError with the correct code.
 func exitCodeCmdFunc(code int) func(context.Context, string, ...string) *exec.Cmd {
 	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf("exit %d", code))
@@ -151,12 +109,7 @@ func TestRSB11_LivenessProbe_SSHConnFail_NotAWedge(t *testing.T) {
 	if !connFailed {
 		t.Error("RSB11: probeLivenessOrSSHFail(exit-255) connFailed = false, want true (SSH transport failure)")
 	}
-	// The test completing within the test timeout proves no wedge occurred.
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main scenario: healthy then SSH fail (test 7)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB11_HealthyThenSSHFail_OfflineDetected is the primary acceptance test:
 // a runner that is initially healthy (exit-0) then transitions to SSH connection
@@ -176,12 +129,10 @@ func TestRSB11_HealthyThenSSHFail_OfflineDetected(t *testing.T) {
 			if callCount == 1 {
 				return exec.CommandContext(ctx, "sh", "-c", "exit 0")
 			}
-			// All subsequent calls simulate SSH connection failure.
 			return exec.CommandContext(ctx, "sh", "-c", "exit 255")
 		},
 	}
 
-	// Probe 1: worker is healthy — process found (exit-0 from pgrep).
 	alive1, cf1 := probeLivenessOrSSHFail(context.Background(), rr, 99999, nil)
 	if !alive1 {
 		t.Error("RSB11: probe 1 (healthy): alive = false, want true")
@@ -190,9 +141,6 @@ func TestRSB11_HealthyThenSSHFail_OfflineDetected(t *testing.T) {
 		t.Error("RSB11: probe 1 (healthy): connFailed = true, want false")
 	}
 
-	// Probe 2: SSH connection fails mid-run (exit-255). The function MUST return
-	// promptly and signal connFailed so the caller can emit worker_offline and
-	// let the existing run_stale path handle recovery.
 	offlineCalled := false
 	alive2, cf2 := probeLivenessOrSSHFail(context.Background(), rr, 99999, nil)
 	if alive2 {
@@ -201,7 +149,6 @@ func TestRSB11_HealthyThenSSHFail_OfflineDetected(t *testing.T) {
 	if !cf2 {
 		t.Error("RSB11: probe 2 (SSH fail): connFailed = false, want true (worker_offline must be detectable)")
 	}
-	// Simulate the onConnectionFailure callback that the workloop wires on perRunSubstrate.
 	if cf2 {
 		offlineCalled = true
 	}
@@ -209,10 +156,6 @@ func TestRSB11_HealthyThenSSHFail_OfflineDetected(t *testing.T) {
 		t.Error("RSB11: worker offline notification not triggered after SSH failure")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WorkerOfflinePayload fields (test 8)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB11_WorkerOfflinePayload_Fields verifies that WorkerOfflinePayload
 // carries the expected fields for downstream event consumers (operator
@@ -244,7 +187,6 @@ func TestRSB11_WorkerOfflinePayload_Fields(t *testing.T) {
 		t.Error("RSB11: DetectedAt is empty, want RFC 3339 timestamp")
 	}
 
-	// Validate phase values for spawn-time detection.
 	spawnPl := workers.WorkerOfflinePayload{Phase: "spawn"}
 	if spawnPl.Phase != "spawn" {
 		t.Errorf("RSB11: spawn Phase = %q, want %q", spawnPl.Phase, "spawn")

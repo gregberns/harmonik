@@ -1,28 +1,5 @@
 package pi_test
 
-// pibillingguard_test.go — unit tests for the Pi fail-closed billing guard
-// (codename:pilot, PI-040/042/043, hk-l1bkp).
-//
-// Coverage:
-//   - runPiBillingGuard fails closed when the api_key_env var is absent or empty
-//     (PI-040).
-//   - runPiBillingGuard allows when the key is present and no on-disk credential
-//     exists (PI-040 + PI-042 happy path).
-//   - runPiBillingGuard fails closed when the supplied piHome/auth.json carries a
-//     populated api_key (PI-042 on-disk check — exercised via injected piHome).
-//   - runPiBillingGuard fails closed when piHome/auth.json is malformed (PI-042
-//     fail-closed posture).
-//   - runPiBillingGuard with a nil emitter does not panic.
-//   - runPiBillingGuard emits pi_billing_guard events with allowed/denied outcomes.
-//   - buildPiLaunchSpec fails closed (end-to-end wiring) when the guard denies
-//     (absent env var).
-//   - buildPiLaunchSpec succeeds when the guard allows (key present, clean disk).
-//   - Production wiring: PiHarness.LaunchSpec does NOT set skipBillingGuard.
-//
-// All filesystem state uses t.TempDir() as a fake Pi home; the real ~/.pi is
-// never touched. runPiBillingGuard accepts piHome as a parameter (mirroring
-// runCodexBillingGuard's codexHome) so all PI-042 paths are exercisable in tests.
-
 import (
 	"context"
 	"encoding/json"
@@ -37,13 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// payload-capturing emitter for pi_billing_guard events
-// ─────────────────────────────────────────────────────────────────────────────
-
-// capturingPiBillingEmitter records the (eventType, decoded payload) of every
-// emitted event so tests can assert the pi_billing_guard outcome sequence. Safe
-// for concurrent use.
 type capturingPiBillingEmitter struct {
 	mu      sync.Mutex
 	types   []core.EventType
@@ -84,7 +54,6 @@ func (e *capturingPiBillingEmitter) guardOutcomes() []core.PiBillingGuardOutcome
 	return out
 }
 
-// mustWritePi writes content to path, creating parent directories as needed.
 func mustWritePi(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -94,10 +63,6 @@ func mustWritePi(t *testing.T, path, content string) {
 		t.Fatalf("mustWritePi: write %q: %v", path, err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// piAuthIndicatesPersistentCredential (PI-042)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestPiAuthIndicatesPersistentCredential_AbsentFile verifies a missing auth.json
 // returns (false, nil) — Pi has not persisted a credential.
@@ -168,10 +133,6 @@ func TestPiAuthIndicatesPersistentCredential_EmptyHome(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// runPiBillingGuard — PI-042 on-disk deny path (injected piHome)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunPiBillingGuard_PI042_PersistentCredentialDenies verifies that when
 // piHome/auth.json carries a populated api_key, runPiBillingGuard fails closed
 // even when the PI-040 env-var check passes. This tests the PI-042 on-disk deny
@@ -179,8 +140,6 @@ func TestPiAuthIndicatesPersistentCredential_EmptyHome(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_PI042_PersistentCredentialDenies(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_PI042_DENY_KEY"
 	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
 
@@ -212,8 +171,6 @@ func TestRunPiBillingGuard_PI042_PersistentCredentialDenies(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_PI042_MalformedAuthJsonDenies(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_PI042_MALFORMED_KEY"
 	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
 
@@ -238,8 +195,6 @@ func TestRunPiBillingGuard_PI042_MalformedAuthJsonDenies(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_PI042_ABSENT_KEY"
 	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
 
@@ -256,10 +211,6 @@ func TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// runPiBillingGuard — fail-closed table test (PI-040 + PI-042)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunPiBillingGuard_FailClosed is the core fail-closed table test. It sets
 // up the operator environment and optional pi home state for each case and asserts
 // whether the guard permits (nil) or refuses (non-nil) the launch.
@@ -270,8 +221,6 @@ func TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows(t *testing.T) {
 //
 // Not parallel: uses t.Setenv (modifies process env, incompatible with t.Parallel).
 func TestRunPiBillingGuard_FailClosed(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_BILLING_GUARD_KEY"
 
 	cases := []struct {
@@ -301,11 +250,9 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Not calling t.Parallel(): t.Setenv incompatible with t.Parallel.
 			if tc.envValue != "" {
 				t.Setenv(envVarName, tc.envValue)
 			} else {
-				// Explicitly unset so a stray env var in the test host does not leak.
 				t.Setenv(envVarName, "")
 			}
 
@@ -327,18 +274,12 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// runPiBillingGuard — event emission
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunPiBillingGuard_AllowedEmitsAllowedOutcome verifies the happy path:
 // when the env var is present and auth.json is absent, the guard emits a single
 // pi_billing_guard event with outcome=allowed.
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_BILLING_GUARD_ALLOW_KEY"
 	t.Setenv(envVarName, "sk-or-real-key-value")
 
@@ -355,7 +296,6 @@ func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
 		t.Errorf("outcome = %q; want %q", outcomes[0], core.PiBillingGuardAllowed)
 	}
 
-	// Verify the event payload names the env-var NAME, not its value (PI-040).
 	if len(em.guards) != 1 {
 		t.Fatalf("expected 1 decoded guard payload; got %d", len(em.guards))
 	}
@@ -376,8 +316,6 @@ func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_AbsentKeyEmitsDeniedOutcome(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_BILLING_GUARD_DENY_KEY"
 	t.Setenv(envVarName, "") // absent/empty
 
@@ -404,8 +342,6 @@ func TestRunPiBillingGuard_AbsentKeyEmitsDeniedOutcome(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_NilEmitterNoPanic(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_GUARD_NIL_EMITTER"
 	t.Setenv(envVarName, "") // trigger the deny path
 
@@ -425,8 +361,6 @@ func TestRunPiBillingGuard_NilEmitterNoPanic(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_NilEmitterAllowNoPanic(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_GUARD_NIL_EMITTER_ALLOW"
 	t.Setenv(envVarName, "sk-or-real-key")
 
@@ -440,10 +374,6 @@ func TestRunPiBillingGuard_NilEmitterAllowNoPanic(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildPiLaunchSpec end-to-end wiring (PI-040 + PI-043)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildPiLaunchSpec_GuardDenies_RefusesSpec verifies that buildPiLaunchSpec
 // returns an error (no spec) when the billing guard fails closed (absent env var).
 // This is the PI-043 structural wiring test: the guard failure surfaces as a
@@ -452,8 +382,6 @@ func TestRunPiBillingGuard_NilEmitterAllowNoPanic(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestBuildPiLaunchSpec_GuardDenies_RefusesSpec(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_SPEC_WIRING_DENY_KEY"
 	t.Setenv(envVarName, "") // absent/empty → guard denies
 
@@ -464,7 +392,6 @@ func TestBuildPiLaunchSpec_GuardDenies_RefusesSpec(t *testing.T) {
 		Model:         "openrouter/qwen/qwen3-coder",
 		APIKeyEnv:     envVarName,
 		BaseEnv:       []string{"PATH=/usr/bin"},
-		// SkipBillingGuard is NOT set → false → guard runs.
 	}
 
 	_, err := pi.ExportedBuildPiLaunchSpec(rc)
@@ -482,8 +409,6 @@ func TestBuildPiLaunchSpec_GuardDenies_RefusesSpec(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestBuildPiLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_SPEC_WIRING_ALLOW_KEY"
 	t.Setenv(envVarName, "sk-or-real-key-wiring-allow")
 
@@ -494,7 +419,6 @@ func TestBuildPiLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 		Model:         "openrouter/qwen/qwen3-coder",
 		APIKeyEnv:     envVarName,
 		BaseEnv:       []string{"PATH=/usr/bin"},
-		// SkipBillingGuard is NOT set → false → guard runs.
 	}
 
 	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
@@ -509,10 +433,6 @@ func TestBuildPiLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// skipBillingGuard production wiring
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction verifies that
 // the production PiHarness.LaunchSpec call does NOT pass skipBillingGuard=true.
 // This is a structural contract test: if skipBillingGuard were true in
@@ -524,8 +444,6 @@ func TestBuildPiLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 //
 // Not parallel: uses t.Setenv.
 func TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_HARNESS_PROD_WIRING_KEY"
 	t.Setenv(envVarName, "") // no key → guard denies if it runs
 
@@ -554,16 +472,11 @@ func TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PiBillingGuardPayload validity
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestPiBillingGuardPayload_Valid verifies the Valid() method on the payload
 // type and outcome type cover their declared constraints.
 func TestPiBillingGuardPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	// Outcome Valid().
 	for _, o := range []core.PiBillingGuardOutcome{
 		core.PiBillingGuardAllowed,
 		core.PiBillingGuardDenied,
@@ -576,7 +489,6 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 		t.Error("outcome \"unknown\" should not be Valid(); got true")
 	}
 
-	// Payload Valid() — happy path.
 	happy := core.PiBillingGuardPayload{
 		BeadID:     "hk-test",
 		EnvVarName: "OPENROUTER_API_KEY",
@@ -587,13 +499,11 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 		t.Error("happy payload should be Valid(); got false")
 	}
 
-	// RunID is optional — empty RunID is valid.
 	happy.RunID = ""
 	if !happy.Valid() {
 		t.Error("payload with empty RunID should be Valid() (RunID is optional)")
 	}
 
-	// Missing required fields.
 	cases := []struct {
 		name   string
 		mutate func(p *core.PiBillingGuardPayload)
@@ -614,18 +524,12 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// event payload does not leak key value (PI-040 / ps-argv)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunPiBillingGuard_EventDoesNotLeakKeyValue verifies that the emitted
 // pi_billing_guard event payload contains the env-var NAME but NOT its value
 // (PI-040 / ps-argv leak prevention).
 //
 // Not parallel: uses t.Setenv.
 func TestRunPiBillingGuard_EventDoesNotLeakKeyValue(t *testing.T) {
-	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
-
 	const envVarName = "TEST_PI_BILLING_NOLEAK_KEY"
 	const keyValue = "sk-or-secret-value-must-not-appear-in-event"
 	t.Setenv(envVarName, keyValue)
@@ -647,9 +551,5 @@ func TestRunPiBillingGuard_EventDoesNotLeakKeyValue(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers (ensure handlercontract import is satisfied)
-// ─────────────────────────────────────────────────────────────────────────────
 
 var _ handlercontract.EventEmitter = (*capturingPiBillingEmitter)(nil)

@@ -11,19 +11,14 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// intEvent / intAction are throwaway instantiations so the generics themselves
-// are covered independent of any vertical (the substrate's own L0).
 type (
 	intEvent  int
 	intAction int
 )
 
-// ─── Run + SyntheticSource + FakeEffector ────────────────────────────────────
-
 func TestRun_RecordsActionsInOrder(t *testing.T) {
 	t.Parallel()
 	src := substrate.NewSyntheticSource([]intEvent{1, 2, 3})
-	// step doubles each event into two actions: 10*n and 10*n+1.
 	step := func(e intEvent) []intAction { return []intAction{intAction(10 * e), intAction(10*e + 1)} }
 	eff := &substrate.FakeEffector[intAction]{}
 
@@ -57,7 +52,6 @@ func TestFakeEffector_ResetAndActionsCopy(t *testing.T) {
 	if len(snap) != 2 {
 		t.Fatalf("Actions() len = %d, want 2", len(snap))
 	}
-	// Mutating the snapshot must not affect the effector's log.
 	snap[0] = 99
 	if again := eff.Actions(); again[0] != 1 {
 		t.Fatalf("Actions() returned a live slice: got %d after mutation, want 1", again[0])
@@ -84,10 +78,6 @@ func TestSyntheticSource_CancelledCtxClosedEmpty(t *testing.T) {
 	}
 }
 
-// ─── Twin + ReplayCodec ──────────────────────────────────────────────────────
-
-// intCodec decodes decimal-integer corpus lines into intEvents. A line "skip"
-// is skipped; a line "bad" is a fatal decode error. It is stateful (seq).
 type intCodec struct{ seq int }
 
 func (c *intCodec) DecodeLine(line []byte) (intEvent, bool, error) {
@@ -117,8 +107,6 @@ const (
 	discTerminal = intEvent(-2)
 )
 
-// drain collects every event from a Twin under a short ctx, failing if the
-// stream does not terminate promptly.
 func drainTwin(t *testing.T, tw *substrate.Twin[intEvent]) []intEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -144,7 +132,6 @@ func TestTwin_FaultNone_FaithfulReplay(t *testing.T) {
 
 func TestTwin_SkipAndFatal(t *testing.T) {
 	t.Parallel()
-	// "skip" is skipped; "bad" is fatal → ErrorEvent then close.
 	tw := substrate.NewTwin[intEvent](strings.NewReader("1\nskip\n2\nbad\n3\n"), substrate.FaultConfig{}, &intCodec{})
 	got := drainTwin(t, tw)
 	want := []intEvent{1, 2, errTerminal}
@@ -204,7 +191,6 @@ func TestTwin_FaultStall_TerminatesOnCtxCancel(t *testing.T) {
 	}()
 	select {
 	case got := <-done:
-		// Stall delivers event 1 then blocks before event 2; ctx-timeout closes.
 		if !eqEvents(got, []intEvent{1}) {
 			t.Fatalf("FaultStall got %v, want [1] before ctx-timeout close", got)
 		}
@@ -231,8 +217,6 @@ func eqEvents(a, b []intEvent) bool {
 	}
 	return true
 }
-
-// ─── FakeClock ───────────────────────────────────────────────────────────────
 
 var epoch = time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
 
@@ -289,7 +273,6 @@ func TestFakeClock_TickerFiresAtIntervals(t *testing.T) {
 	tk := c.NewTicker(200 * time.Millisecond)
 	defer tk.Stop()
 
-	// First-tick-after-interval: no tick before one full interval.
 	c.Advance(100 * time.Millisecond)
 	select {
 	case <-tk.C():
@@ -297,7 +280,6 @@ func TestFakeClock_TickerFiresAtIntervals(t *testing.T) {
 	default:
 	}
 
-	// Cross the first boundary at t0+200ms.
 	c.Advance(100 * time.Millisecond)
 	select {
 	case ts := <-tk.C():
@@ -308,7 +290,6 @@ func TestFakeClock_TickerFiresAtIntervals(t *testing.T) {
 		t.Fatal("ticker did not fire at first interval boundary")
 	}
 
-	// Cross the second boundary.
 	c.Advance(200 * time.Millisecond)
 	select {
 	case ts := <-tk.C():

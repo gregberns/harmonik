@@ -8,15 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// pertypecompat_hqwn38_test.go — EV-029 per-type N-1 compatibility window tests.
-//
-// Spec ref: event-model.md §4.8 EV-029 — "Readers of events MUST accept the
-// immediately prior schema version (N-1) for every event type AND for the
-// envelope. Per-type independence means harmonik maintains up to 71+ independent
-// compatibility contracts."
-//
-// Bead ref: hk-hqwn.38.
-
 // TestEV029_AllRegisteredTypesHaveSchemaVersion verifies that every event type
 // in the global registry has a non-zero schema version per EV-028 / EV-029.
 //
@@ -54,7 +45,6 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 	registered := AllPayloadSchemaVersions()
 	declared := AllPayloadCompatEntries()
 
-	// Build lookup maps.
 	declaredByName := make(map[EventType]PayloadCompatEntry, len(declared))
 	for _, e := range declared {
 		declaredByName[e.TypeName] = e
@@ -64,7 +54,6 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 		registeredNames[name] = true
 	}
 
-	// Every registered type must have a compat entry.
 	for typeName := range registered {
 		t.Run("registered/"+string(typeName), func(t *testing.T) {
 			t.Parallel()
@@ -75,7 +64,6 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 		})
 	}
 
-	// Every declared compat entry must correspond to a registered type.
 	for _, e := range declared {
 		t.Run("declared/"+string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
@@ -107,7 +95,6 @@ func TestEV029_InitialVersionIsOne(t *testing.T) {
 					"initial-version entries must have CurrentVersion=1 per EV-028",
 					e.TypeName, e.CurrentVersion)
 			}
-			// At v1 the compat window is vacuously satisfied — no prior version exists.
 			if !e.CompatWindowHolds {
 				t.Errorf("EV-029: type %q at initial version has CompatWindowHolds=false; "+
 					"the compat window is vacuously satisfied at v1 (no prior version exists)",
@@ -178,8 +165,6 @@ func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 			t.Parallel()
 			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
 			if !ok {
-				// Type in compat table but not registered — caught by
-				// TestEV029_CompatTableCoversAllRegisteredTypes; skip here.
 				return
 			}
 			if registryVersion != e.CurrentVersion {
@@ -254,7 +239,6 @@ func TestEV029_PreviousVersionLessThanCurrent(t *testing.T) {
 func TestEV029_RegisterEventTypeAtVersionRejectsVersionLessThanOne(t *testing.T) {
 	t.Parallel()
 
-	// schemaVersion=0 must be rejected since versions must be >= 1 per EV-028.
 	err := RegisterEventTypeAtVersion("test_ev029_sentinel_type_bad_version", func() EventPayload { return nil }, 0)
 	if err == nil {
 		t.Error("EV-029: RegisterEventTypeAtVersion with schemaVersion=0 should return an error; versions must be >= 1 per EV-028")
@@ -302,7 +286,6 @@ func TestEV029_LookupPayloadCompatEntryMissing(t *testing.T) {
 func TestEV029_ValidateEnvelopeSchemaVersionMatchesRegistry(t *testing.T) {
 	t.Parallel()
 
-	// Use run_started as a representative type registered at v2.
 	e := makeTestEvent("run_started", 2)
 	if err := ValidateEnvelopeSchemaVersion(e); err != nil {
 		t.Errorf("EV-029/EV-028: ValidateEnvelopeSchemaVersion for run_started at v2 = %v, want nil", err)
@@ -315,7 +298,6 @@ func TestEV029_ValidateEnvelopeSchemaVersionMatchesRegistry(t *testing.T) {
 func TestEV029_ValidateEnvelopeSchemaVersionDetectsMismatch(t *testing.T) {
 	t.Parallel()
 
-	// Use run_started (registered at v1); present a wrong envelope version.
 	e := makeTestEvent("run_started", 99)
 	err := ValidateEnvelopeSchemaVersion(e)
 	if err == nil {
@@ -323,8 +305,6 @@ func TestEV029_ValidateEnvelopeSchemaVersionDetectsMismatch(t *testing.T) {
 	}
 }
 
-// makeTestEvent constructs a minimal valid Event with the given type name and
-// envelope schema version. Used for ValidateEnvelopeSchemaVersion tests.
 func makeTestEvent(typeName EventType, schemaVersion int) Event {
 	return Event{
 		EventID:         EventID(uuid.Must(uuid.NewV7())),

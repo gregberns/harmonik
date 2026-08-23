@@ -1,20 +1,5 @@
 package daemon
 
-// commspresencehandler_7t27s.go — CommsPresenceHandler interface and implementation
-// for the comms-presence socket op (agent-comms spec §2.5 C6, bead hk-7t27s T10).
-//
-// The handler validates a comms-presence request, stamps last_seen with wall time,
-// emits an agent_presence event via the event bus (O-class: ordinary durability,
-// not fsync-boundary), and returns the minted event_id in the SocketResponse.
-//
-// CommsPresenceHandler is a separate interface from CommsSendHandler but is
-// implemented on the same *commsSendHandlerImpl so the daemon passes one handler
-// value to RunSocketListenerFull; socket.go type-asserts ch.(CommsPresenceHandler)
-// when processing comms-presence ops.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.5, §4.
-// Bead ref: hk-7t27s.
-
 import (
 	"context"
 	"encoding/json"
@@ -25,17 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// emitRefreshBeat emits an agent_presence{online, reason:"refresh"} beat for agent
-// via h.presEmitter. Used by HandleCommsSend and HandleCommsRecv to wire the
-// dead AgentPresenceReasonRefresh path (hk-6vwi3 fix #2): an agent stays visible
-// in "comms who" as long as it is actively sending or receiving messages even when
-// it does not emit explicit join/refresh beats.
-//
-// sessionID propagates the caller's per-session token (from $HARMONIK_SESSION_ID)
-// so the presence projection can detect two-captains conflicts (hk-z0f02). Pass ""
-// when no session token is available (e.g. comms-recv refresh beats).
-//
-// Errors are suppressed — a dropped refresh beat is harmless (O-class durability).
 func (h *commsSendHandlerImpl) emitRefreshBeat(ctx context.Context, agent, sessionID string) {
 	if h.presEmitter == nil || agent == "" {
 		return

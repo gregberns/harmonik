@@ -1,15 +1,5 @@
 package daemon
 
-// export_workloopdeps_test.go — testRuntime test-seam constructors for internal/daemon.
-//
-// Split out of export_test.go (RT19.1) so the five testRuntime shims that form
-// RT15's entire future edit surface live in one bounded file: 157 daemon_test
-// files reference them, so isolating them means RT15 later edits this ~560-line
-// file rather than the 2,895-line export_test.go. Same package (daemon), so all
-// daemon_test callers resolve daemon.ExportedX byte-identically.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"fmt"
@@ -380,29 +370,21 @@ func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 		binary = "claude"
 	}
 
-	// Normalise WorkflowModeDefault: zero value → WorkflowModeSingle, mirroring
-	// daemon.Start step 0 per PL-004a.
 	wmd := p.WorkflowModeDefault
 	if wmd == "" {
 		wmd = core.WorkflowModeSingle
 	}
 
-	// Normalise MaxConcurrent: zero value → 1 (single-threaded default).
 	maxConcurrent := p.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
 	}
 
-	// Use the caller-supplied RunRegistry or create a fresh one.
 	reg := p.RunRegistry
 	if reg == nil {
 		reg = NewRunRegistry()
 	}
 
-	// Use the caller-supplied HookStore or fall back to a real hookSessionStore
-	// (hk-ngw3d). Shell-fixture tests whose handlers exit without a real
-	// Stop-hook relay will hit the 3-second stopHookGrace window before
-	// proceeding on exit code.
 	var hookStore hookStoreIface
 	if p.HookStore != nil {
 		hookStore = p.HookStore
@@ -410,40 +392,26 @@ func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 		hookStore = newHookSessionStore()
 	}
 
-	// LaunchSpecBuilder and WorktreeFactory: pass the caller-supplied value
-	// (which may be nil) directly to testRuntime. When nil, beadRunOne uses
-	// the production nil-guards to wire buildClaudeLaunchSpec and
-	// productionWorktreeFactory respectively (hk-ngw3d).
 	lsb := p.LaunchSpecBuilder
 	wtf := p.WorktreeFactory
 
-	// MergeQueue: pass the caller-supplied domain (nil ⇒ inline merge). Concurrent
-	// beadRunOne tests inject a started queue so their commit-phase merges never
-	// race on refs/heads/main (hk-4f5ua); single-bead tests leave it nil.
 	mergeQ := p.MergeQueue
 
-	// WorktreeCreateMu: default to a fresh mutex (mirrors newTestRuntime, hk-5qp7z).
 	worktreeCreateMu := p.WorktreeCreateMu
 	if worktreeCreateMu == nil {
 		worktreeCreateMu = &sync.Mutex{}
 	}
 
-	// AgentSpawnSem: default to a fresh cap-3 semaphore (mirrors newTestRuntime, hk-5z1f0).
 	agentSpawnSem := p.AgentSpawnSem
 	if agentSpawnSem == nil {
 		agentSpawnSem = make(chan struct{}, 3)
 	}
 
-	// Derive the submit-wake channel from the QueueStore when one is provided
-	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
-	// the same wake-on-submit behaviour as production.
 	var submitWakeC <-chan struct{}
 	if p.QueueStore != nil {
 		submitWakeC = p.QueueStore.WakeCh()
 	}
 
-	// TIDGen: default to a real generator, so only a test that wants generation
-	// to fail has to say anything about it.
 	var tidGen runloop.TransitionIDSource = core.NewTransitionIDGenerator()
 	if p.TIDGen != nil {
 		tidGen = p.TIDGen
@@ -455,8 +423,6 @@ func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 	return testRuntime{env: env, ports: ports, handles: handles, ledger: p.BrAdapter, queueStore: p.QueueStore, runRegistry: reg, substratePort: p.Substrate, mergeQueue: mergeQ, launchBuilder: lsb, capacity: newCapacityPort(maxConcurrent, p.ConcurrencyCtrl), queueSurface: newQueueSurfacePort(submitWakeC, p.QueueLedger), dispatchGates: newDispatchGatesPort(p.Bus, p.HandlerPauseController, p.OperatorPauseCtrl, p.DecisionBlocker), noAutoPull: p.NoAutoPull}
 }
 
-// newTestRuntime builds the same typed test edge as the public fixture while
-// retaining the production constructor's input checks for tests that need them.
 func newTestRuntime(_ context.Context, cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store hookStoreIface) (testRuntime, error) {
 	if cfg.BrPath == "" {
 		return testRuntime{}, fmt.Errorf("daemon: newTestRuntime: Config.BrPath is empty")

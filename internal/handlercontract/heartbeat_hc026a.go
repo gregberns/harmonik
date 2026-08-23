@@ -1,13 +1,5 @@
 package handlercontract
 
-// heartbeat — per-bead helper prefix for test helpers in
-// heartbeat_hc026a_test.go (implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8i31.32).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-026a — Handler heartbeat obligation (≤ T/2 cadence)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // HeartbeatPhase is the extensible phase enum carried in every agent_heartbeat
 // progress-stream message per HC-026a.
 //
@@ -52,8 +44,6 @@ const (
 	HeartbeatPhaseShuttingDown HeartbeatPhase = "shutting_down"
 )
 
-// requiredHeartbeatPhases is the normative set of phase values declared in
-// HC-026a.  Used by ValidPhase and tests to enumerate the required set.
 var requiredHeartbeatPhases = map[HeartbeatPhase]struct{}{
 	HeartbeatPhaseStarting:     {},
 	HeartbeatPhaseReasoning:    {},

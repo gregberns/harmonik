@@ -1,28 +1,8 @@
 package core
 
-// verdictoverride_rc027_test.go — Tests for the operator verdict-override
-// surface (RC-027).
-//
-// Covers:
-//   - OperatorVerdictOverridePolicy.ConfirmRequired semantics
-//   - PolicyRequiresConfirmation pure function
-//   - VerdictOverrideDecision enum validity
-//   - VetoPromotion enum validity
-//   - OperatorVerdictOverrideRequest.Valid invariants
-//   - ApplyVetoPromotion mapping per RC-027
-//   - S01 per-category policy defaults (Cat 2/Cat 3 = false; Cat 6a = true)
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-// specs/operator-nfr.md §4.3 ON-014;
-// OQ-RC-012 (Cat 6a default confirm_required: true).
-
 import (
 	"testing"
 )
-
-// ---------------------------------------------------------------------------
-// OperatorVerdictOverridePolicy / PolicyRequiresConfirmation
-// ---------------------------------------------------------------------------
 
 // TestRC027_PolicyDefaultIsFalse verifies that the zero-value policy does not
 // require confirmation. This encodes the RC-027 default: execution proceeds
@@ -104,10 +84,6 @@ func TestRC027_S01Cat6aPolicyDefault(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// VerdictOverrideDecision enum
-// ---------------------------------------------------------------------------
-
 // TestRC027_DecisionEnumCardinality verifies that exactly two decision values
 // exist: confirm and veto.
 //
@@ -160,10 +136,6 @@ func TestRC027_UnknownDecisionIsInvalid(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// VetoPromotion enum
-// ---------------------------------------------------------------------------
-
 // TestRC027_VetoPromotionEnumCardinality verifies that exactly two promotion
 // values exist: none and escalate-to-human.
 //
@@ -213,10 +185,6 @@ func TestRC027_UnknownVetoPromotionIsInvalid(t *testing.T) {
 		t.Error("RC-027: unknown VetoPromotion should not be valid")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// OperatorVerdictOverrideRequest.Valid
-// ---------------------------------------------------------------------------
 
 // TestRC027_RequestValidConfirm verifies a well-formed confirm request.
 func TestRC027_RequestValidConfirm(t *testing.T) {
@@ -325,10 +293,6 @@ func TestRC027_RequestInvalidUnknownPromotion(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ApplyVetoPromotion
-// ---------------------------------------------------------------------------
-
 // TestRC027_ApplyVetoPromotionNoneYieldsNoOpAccept verifies that a plain veto
 // (no --promote-to) resolves to no-op-accept — the run is left in its current
 // state without executing any verdict action.
@@ -379,10 +343,6 @@ func TestRC027_ApplyVetoPromotionResultsAreValidVerdicts(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Operator-scope invariant: confirm applies only to investigator-dispatched cats
-// ---------------------------------------------------------------------------
-
 // TestRC027_AppliesOnlyToInvestigatorDispatchedCategories verifies that the
 // spec fixture for ON-014 covers exactly the three investigator-dispatched
 // categories (Cat 2, Cat 3, Cat 6a) and no auto-resolver category. This is a
@@ -393,7 +353,6 @@ func TestRC027_ApplyVetoPromotionResultsAreValidVerdicts(t *testing.T) {
 func TestRC027_AppliesOnlyToInvestigatorDispatchedCategories(t *testing.T) {
 	t.Parallel()
 
-	// investigatorDispatched encodes the three categories to which RC-027 applies.
 	type investCat struct {
 		name string
 	}
@@ -403,19 +362,14 @@ func TestRC027_AppliesOnlyToInvestigatorDispatchedCategories(t *testing.T) {
 		{"Cat 6a"}, // integrity violation, LLM-triageable
 	}
 
-	// Auto-resolver categories (Cat 0, Cat 1, Cat 3a, Cat 3b, Cat 3c, Cat 4,
-	// Cat 5, Cat 6b) MUST NOT require operator confirmation by default; their
-	// ConfirmRequired default is false.
 	autoResolver := []string{
 		"Cat 0", "Cat 1", "Cat 3a", "Cat 3b", "Cat 3c", "Cat 4", "Cat 5", "Cat 6b",
 	}
 
-	// Verify investigator categories number exactly 3.
 	if len(investigatorDispatched) != 3 {
 		t.Errorf("RC-027: investigator-dispatched category list has %d entries, want 3", len(investigatorDispatched))
 	}
 
-	// Verify auto-resolver categories do not require confirmation (policy default).
 	for _, name := range autoResolver {
 		policy := OperatorVerdictOverridePolicy{ConfirmRequired: false}
 		if PolicyRequiresConfirmation(policy) {

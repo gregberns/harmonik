@@ -1,9 +1,5 @@
 package structuredlog_test
 
-// handler_test.go — binding tests for hk-sx9r.51 (ON-035 structured logs).
-//
-// Spec ref: specs/operator-nfr.md §4.9 ON-035.
-
 import (
 	"bufio"
 	"context"
@@ -21,7 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/structuredlog"
 )
 
-// on035HandlerFixtureCfg builds a Config suitable for a single test.
 func on035HandlerFixtureCfg(t *testing.T) structuredlog.Config {
 	t.Helper()
 	return structuredlog.Config{
@@ -45,7 +40,6 @@ func on035HandlerFixtureCloseFile(t *testing.T, f *os.File) {
 	}
 }
 
-// on035HandlerFixtureReadLines returns the lines written to the active log file.
 func on035HandlerFixtureReadLines(t *testing.T, cfg structuredlog.Config) []map[string]any {
 	t.Helper()
 	active := filepath.Join(cfg.ProjectDir, ".harmonik", "logs", cfg.Subsystem+"-active.jsonl")
@@ -354,8 +348,6 @@ func TestON035Handler_RotationBySize(t *testing.T) {
 	}
 	defer on035HandlerFixtureClose(t, h)
 
-	// Inflate the internal counter above the 100 MiB threshold by writing a
-	// large record. We do this by padding the fields map.
 	padding := strings.Repeat("x", rotateMaxBytesForTest+1)
 	slog.New(h).InfoContext(context.Background(), "big record", "padding", padding)
 
@@ -365,8 +357,6 @@ func TestON035Handler_RotationBySize(t *testing.T) {
 		t.Fatalf("ReadDir %s: %v", logsDir, err)
 	}
 
-	// After writing 1 oversized record the file rotates on the NEXT write.
-	// Emit one more record to trigger rotation.
 	slog.New(h).InfoContext(context.Background(), "trigger rotation")
 	on035HandlerFixtureClose(t, h)
 
@@ -393,10 +383,6 @@ func TestON035Handler_RotationBySize(t *testing.T) {
 	}
 }
 
-// rotateMaxBytesForTest must match handler.go's rotateMaxBytes constant.
-// It is duplicated here as an explicit anchor so a change to either constant
-// causes a compile-time discrepancy (the test will produce an obviously wrong
-// result).
 const rotateMaxBytesForTest = 100 << 20
 
 // TestON035Handler_RotationByAge verifies that the active file is rotated
@@ -406,7 +392,6 @@ const rotateMaxBytesForTest = 100 << 20
 func TestON035Handler_RotationByAge(t *testing.T) {
 	t.Parallel()
 
-	// Use a clock that starts 25 hours in the past.
 	epoch := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	ticks := []time.Time{
 		epoch,                     // openFile() call
@@ -534,8 +519,6 @@ func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Each goroutine gets its own clone via WithAttrs/WithGroup to
-			// exercise the shared-lock path.
 			var logger *slog.Logger
 			if i%2 == 0 {
 				logger = slog.New(h.WithAttrs([]slog.Attr{slog.Int("worker", i)}))
@@ -550,8 +533,6 @@ func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
 	wg.Wait()
 	on035HandlerFixtureClose(t, h)
 
-	// Every line must be valid JSON. A corrupted line (interleaved bytes) will
-	// fail to parse.
 	active := filepath.Join(cfg.ProjectDir, ".harmonik", "logs", cfg.Subsystem+"-active.jsonl")
 	//nolint:gosec // test helper
 	f, err := os.Open(active)
@@ -650,12 +631,10 @@ func TestON035Handler_HandleAfterCloseNoPanic(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Must not panic; returns an error signalling the closed handler.
 	if err := h.Handle(context.Background(), slog.Record{}); err == nil {
 		t.Errorf("Handle after Close: want non-nil error, got nil")
 	}
 
-	// Idempotent: a second Close and further Handle calls are also safe.
 	if err := h.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
@@ -685,7 +664,6 @@ func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
 			}
 		}()
 	}
-	// Close concurrently with the writers.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

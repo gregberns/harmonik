@@ -1,29 +1,5 @@
 package daemon
 
-// reviewgateanomaly_hktnmjy.go — review_gate_anomaly alarm (hk-tnmjy).
-//
-// ReviewGateAnomalyWatcher emits review_gate_anomaly when N consecutive
-// bead_closed events fire with zero intervening reviewer_verdict events.
-//
-// This is the alarm that should have fired on 2026-06-01 when ~117 beads were
-// dispatched and closed without any review-loop verdicts (the review-loop
-// workflow_mode default was missing from the daemon config after a deploy).
-//
-// Logic:
-//   - On reviewer_verdict: reset the consecutive counter.
-//   - On bead_closed: append the bead_id to the running window; when count
-//     reaches the threshold emit review_gate_anomaly and reset the counter so
-//     subsequent batches re-arm independently.
-//
-// The default threshold is 3 (anomaly fires after 3 consecutive unreviewed
-// closes). Operators may override via HARMONIK_REVIEW_GATE_ANOMALY_THRESHOLD.
-//
-// Consumer class: asynchronous (bus worker-pool goroutine; not on the critical
-// path of any emit caller).
-//
-// Spec ref: specs/event-model.md §8.14 (hk-tnmjy).
-// Bead ref: hk-tnmjy.
-
 import (
 	"context"
 	"encoding/json"
@@ -38,12 +14,8 @@ import (
 )
 
 const (
-	// defaultReviewGateAnomalyThreshold is the number of consecutive
-	// bead_closed events without a reviewer_verdict before the alarm fires.
 	defaultReviewGateAnomalyThreshold = 3
 
-	// envReviewGateAnomalyThreshold is the environment variable an operator
-	// can set to override the threshold.  Value must be a positive integer ≥ 1.
 	envReviewGateAnomalyThreshold = "HARMONIK_REVIEW_GATE_ANOMALY_THRESHOLD"
 )
 
@@ -130,12 +102,9 @@ func (w *ReviewGateAnomalyWatcher) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// handleBeadClosed increments the consecutive counter and fires the alarm when
-// the threshold is reached.
 func (w *ReviewGateAnomalyWatcher) handleBeadClosed(ctx context.Context, evt core.Event) error {
 	var payload core.BeadClosedPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
-		// Malformed payload — skip; bus dead-letter path handles persistent failures.
 		return nil
 	}
 
@@ -154,8 +123,6 @@ func (w *ReviewGateAnomalyWatcher) handleBeadClosed(ctx context.Context, evt cor
 	return nil
 }
 
-// handleReviewerVerdict resets the consecutive counter — a verdict means the
-// review gate is working.
 func (w *ReviewGateAnomalyWatcher) handleReviewerVerdict(_ context.Context, _ core.Event) error {
 	w.mu.Lock()
 	w.consecutive = 0
@@ -164,12 +131,7 @@ func (w *ReviewGateAnomalyWatcher) handleReviewerVerdict(_ context.Context, _ co
 	return nil
 }
 
-// emitAnomaly emits review_gate_anomaly and resets the counter so subsequent
-// batches re-arm independently.
 func (w *ReviewGateAnomalyWatcher) emitAnomaly(ctx context.Context, count, threshold int, beadIDs []string) error {
-	// Reset before emitting to re-arm for future batches. We reset here (before
-	// emit) rather than after so that concurrent bead_closed events that arrive
-	// while emit is in progress start a fresh window rather than double-firing.
 	w.mu.Lock()
 	w.consecutive = 0
 	w.beadIDs = w.beadIDs[:0]

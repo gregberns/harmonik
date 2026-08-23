@@ -1,13 +1,5 @@
 package readiness
 
-// snapshot.go — the pure half of the readiness evidence record.
-//
-// Nothing here touches the world. Every function takes values and returns
-// values, the capture time arrives as an argument rather than from the clock,
-// and the only failure mode is a refusal carried in the return type.
-//
-// Spec ref: specs/beads-integration.md §4.5b BI-013e.
-
 import (
 	"errors"
 	"fmt"
@@ -87,7 +79,6 @@ type Candidate struct {
 	Labels []string          `json:"labels,omitempty"`
 }
 
-// candidateFrom is the only way a Candidate is built from outside a decoder.
 func candidateFrom(rec core.BeadRecord) Candidate {
 	return Candidate{
 		BeadID: rec.BeadID,
@@ -260,18 +251,6 @@ func (s Snapshot) OutputPaths() []string {
 	return paths
 }
 
-// request is the unchecked input to [newSnapshot].
-//
-// It is deliberately a separate type from [Snapshot]. The request is what a
-// caller assembled and may be wrong in any of a dozen ways; the snapshot is
-// what survived the check. Keeping them apart is what stops a half-filled
-// record from being passed around as if it had been verified.
-//
-// Both this type and [newSnapshot] are unexported on purpose. BI-013e says the
-// caller must not supply a candidate status, and an exported constructor taking
-// a caller-built [Candidate] would be exactly that hole: it would produce a
-// record indistinguishable from one [Capture] read live. The only way in from
-// outside this package is [Capture], which reads every status itself.
 type request struct {
 	CapturedAt      time.Time
 	Posture         Posture
@@ -284,13 +263,6 @@ type request struct {
 	CurrentFindings []CurrentFinding
 }
 
-// newSnapshot checks req against BI-013e and returns the retained record.
-//
-// It refuses rather than repairing: a request that does not say why a selected
-// item is safe to re-run is not a request with a missing field, it is a
-// selection nobody justified.
-//
-// The returned snapshot's event note is always [EventEvidenceNote].
 func newSnapshot(req request) (Snapshot, error) {
 	if req.CapturedAt.IsZero() {
 		return Snapshot{}, ErrNoCaptureTime
@@ -334,12 +306,6 @@ func newSnapshot(req request) (Snapshot, error) {
 	}, nil
 }
 
-// checkSelected enforces what BI-013e says of every selected item: it is named,
-// it is open, and it carries its own stated reason for being safe to re-run.
-//
-// The loop runs over all of them rather than stopping at the first, because a
-// record that proved its first item and took the rest on trust is the failure
-// this list shape exists to make impossible.
 func checkSelected(selected []SelectedItem) error {
 	if len(selected) == 0 {
 		return ErrNoSelectedItem
@@ -358,14 +324,6 @@ func checkSelected(selected []SelectedItem) error {
 	return nil
 }
 
-// checkPosture holds the run shape to the two things that are still refusals
-// after the operator withdrew the one-item rule, plus the arithmetic that keeps
-// the record honest.
-//
-// The item-count equality is the load-bearing one. Without it a snapshot can
-// state that the run carries three items and then name one of them, and the
-// assessor reading the file six weeks later has no way to tell which number is
-// the true one.
 func checkPosture(p Posture, selectedCount int) error {
 	if !p.Local {
 		return ErrPostureNotLocal
@@ -380,10 +338,6 @@ func checkPosture(p Posture, selectedCount int) error {
 	return nil
 }
 
-// checkCandidateSet enforces that every excluded entry names a bead and a
-// reason, and that no bead appears twice across the whole set. A bead listed as
-// both selected and excluded, or selected twice, is a capture that contradicts
-// itself.
 func checkCandidateSet(selected []SelectedItem, excluded []Exclusion) error {
 	seen := make(map[core.BeadID]struct{}, len(selected)+len(excluded))
 	for _, sel := range selected {
@@ -407,10 +361,6 @@ func checkCandidateSet(selected []SelectedItem, excluded []Exclusion) error {
 	return nil
 }
 
-// checkFindings enforces the evidence standard on both finding lists. The two
-// lists are checked separately because they carry different obligations: a
-// stale finding must name what fixed it, a current one must name where it now
-// lives.
 func checkFindings(stale []StaleFinding, current []CurrentFinding) error {
 	for _, f := range stale {
 		if f.FindingID == "" || f.CheckedSource == "" || f.FixingCommit == "" ||

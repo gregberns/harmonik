@@ -248,8 +248,6 @@ func TestRunOrphanSweepProtectsReplayOwnedBeadWithoutMutatingQueueMaps(t *testin
 		{BeadID: resetControl, Status: core.CoarseStatusInProgress},
 	}}
 	dispatched := lifecycle.QueueDispatchedSet{}
-	// Both beads have independent queue provenance. Dispatch replay adds only
-	// replayBead to the dispatched exclusion set.
 	owned := lifecycle.QueueOwnedSet{resetControl: {}, replayBead: {}}
 	_, err := RunOrphanSweep(t.Context(), t.TempDir(), surviveRecoveryHash, time.Now(), OrphanSweepConfig{
 		HandlerLister:   surviveRecoveryNoProcesses{},

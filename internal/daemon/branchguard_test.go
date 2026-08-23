@@ -2,61 +2,6 @@
 
 package daemon_test
 
-// branchguard_test.go — the deployment-gate scenario test for the
-// integration-branch productization work (hk-eun55).
-//
-// Most of these tests run a bead through the REAL work loop
-// (daemon.ExportedRunWorkLoop + daemon.ExportedTestRuntime, the same
-// composition seam the production dispatch path uses) and assert the
-// load-bearing branch-protection guarantees landed by hk-mkxw1 / hk-6r6xv /
-// hk-ncwb3 / hk-sul12:
-//
-//	1. TargetBranchMergeIsolation — with TargetBranch="integration" and
-//	   ProtectBranches=["main"], a committing bead MERGES to the integration
-//	   branch, and main is provably untouched: refs/heads/main rev-parse,
-//	   origin/main, AND main's REFLOG are byte-for-byte unchanged while
-//	   refs/heads/integration advances to the run-branch tip.
-//
-//	2. FailClosed_TargetInProtectSet — with TargetBranch="main" and
-//	   ProtectBranches=["main"], the EARLY lands_on gate in the work loop
-//	   (hk-ncwb3, workloop.go, the LandsOnProtectedError branch) REFUSES the
-//	   bead before a worktree is cut. We assert ZERO git side effects (main,
-//	   origin/main, integration all unchanged) and that the bead is reopened,
-//	   not closed.
-//
-//	2b. FailClosed_MergeGuardBackstop — a DIRECT call to
-//	   runmerge.RunBranchToTarget with targetBranch="main" and
-//	   protectBranches=["main"]. This is the last-line fail-closed guard
-//	   (hk-6r6xv, runmerge/merge.go resolveMergeTips). It is NOT reachable
-//	   through the work loop any more — see that test's own comment for the
-//	   measurement — so it is asserted at its own seam.
-//
-//	3. BootValidation_RefusesEmptyTargetUnderForbid — daemon.Start hard-errors
-//	   (no socket bind) when ForbidUnprotectedDefault is set but TargetBranch is
-//	   empty (hk-sul12 boot-time fail-closed validation).
-//
-// Harness: these tests reuse the mergeToMainFixture* helpers + the committing
-// worktree factory + the recording bead ledger + stubEventCollector already
-// defined in mergetomain_hkftyvo_test.go (same daemon_test package). They do NOT
-// introduce a new harness — they parameterise the existing merge-to-main harness
-// with a non-main target branch and a protect-set.
-//
-// Build tag: scenario. The daemon's pre-merge scenario gate SKIPS //go:build
-// scenario tests, so this file is run explicitly via
-//
-//	go test -tags=scenario -run 'TestBranchGuard' ./internal/daemon/ -count=1
-//
-// A plain `go test -run TestBranchGuard ./internal/daemon/` reports
-// "no tests to run" — the tag is mandatory. `make test-scenario` supplies it.
-//
-// Spec refs:
-//   - specs/execution-model.md §4.12 EM-052/EM-053 (ordered merge sequence)
-//   - hk-6r6xv (fail-closed merge guard), hk-ncwb3 (start_from retarget),
-//     hk-mkxw1 (Config branch fields), hk-sul12 (boot-time validation),
-//     hk-lgykq (per-bead landing target)
-//
-// Bead: hk-eun55.
-
 import (
 	"context"
 	"os"
@@ -73,11 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// branchguard fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// branchGuardGit runs a git command in dir, failing the test on error.
 func branchGuardGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -89,9 +29,6 @@ func branchGuardGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// branchGuardReflog returns the full `git reflog show <ref>` output (one line
-// per reflog entry) so a test can assert it is byte-for-byte unchanged across a
-// run. Missing-ref → empty string + false.
 func branchGuardReflog(t *testing.T, dir, ref string) (string, bool) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "reflog", "show", ref)
@@ -103,22 +40,14 @@ func branchGuardReflog(t *testing.T, dir, ref string) (string, bool) {
 	return string(out), true
 }
 
-// branchGuardSetupRepoWithIntegration builds a project repo with main + an
-// "integration" branch (initially pointing at the same commit as main) AND a
-// bare origin remote with both branches primed so pushes succeed. Returns the
-// project dir.
 func branchGuardSetupRepoWithIntegration(t *testing.T) string {
 	t.Helper()
 
 	projectDir := mergeToMainFixtureProjectDir(t)
 	mergeToMainFixtureGitRepo(t, projectDir) // main + one initial commit
 
-	// Create the integration branch at main's tip (hk-ncwb3: worktrees cut from
-	// the configured target branch; the merge lands on it).
 	branchGuardGit(t, projectDir, "branch", "integration")
 
-	// Bare origin remote, primed with main + integration so `git push origin
-	// <target>` in the merge sequence succeeds.
 	originDir := t.TempDir()
 	branchGuardGit(t, originDir, "init", "--bare", "--initial-branch=main")
 	branchGuardGit(t, projectDir, "remote", "add", "origin", originDir)
@@ -128,10 +57,6 @@ func branchGuardSetupRepoWithIntegration(t *testing.T) string {
 	return projectDir
 }
 
-// branchGuardDescribedLedger wraps the recording ledger so the dispatched bead
-// carries a non-empty Description (e.g. a `## Branching` section). The embedded
-// recording ledger supplies Close/Reopen capture; only the two read methods are
-// overridden to inject the description.
 type branchGuardDescribedLedger struct {
 	*mergeToMainRecordingLedger
 	description string
@@ -151,13 +76,6 @@ func (l *branchGuardDescribedLedger) ShowBead(ctx context.Context, id core.BeadI
 	return rec, err
 }
 
-// branchGuardRunBead drives one bead through the real work loop with the given
-// target branch + protect-set, using the production worktree factory and a
-// /bin/sh handler that commits one file during its run (so the run branch ends
-// one commit ahead of the target, and the node's pre-launch HEAD baseline does
-// not already carry that commit). The bead carries description as
-// its body (use "" for no ## Branching section). Returns the recording ledger
-// and the event collector after the loop has settled.
 func branchGuardRunBead(
 	t *testing.T,
 	projectDir string,
@@ -193,7 +111,6 @@ func branchGuardRunBead(
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for the first Close/Reopen (doneCh) or the test timeout.
 	select {
 	case <-recording.doneCh:
 		cancel()
@@ -205,10 +122,6 @@ func branchGuardRunBead(
 
 	return recording, collector
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 1: target-branch merge isolation (main is provably untouched)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBranchGuard_TargetBranchMergeIsolation asserts that with
 // TargetBranch="integration" and ProtectBranches=["main"], a committing bead
@@ -223,7 +136,6 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 
 	projectDir := branchGuardSetupRepoWithIntegration(t)
 
-	// Snapshot main BEFORE the run: local ref, origin/main ref, and full reflog.
 	mainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main")
 	originMainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/remotes/origin/main")
 	integrationBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/integration")
@@ -234,26 +146,21 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 
 	ledger, collector := branchGuardRunBead(t, projectDir, beadID, "integration", []string{"main"}, "")
 
-	// ── Assertion: integration ADVANCED past its prior tip. ───────────────────
 	integrationAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/integration")
 	if integrationAfter == integrationBefore {
 		t.Errorf("integration HEAD unchanged after committing run: still %s; want run-branch tip", integrationBefore)
 	}
 
-	// ── Assertion: main is BYTE-FOR-BYTE unchanged (rev-parse). ───────────────
 	mainAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main")
 	if mainAfter != mainBefore {
 		t.Errorf("refs/heads/main moved: before=%s after=%s; want UNCHANGED (target was integration)", mainBefore, mainAfter)
 	}
 
-	// ── Assertion: origin/main is unchanged (no push touched main). ───────────
 	originMainAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/remotes/origin/main")
 	if originMainAfter != originMainBefore {
 		t.Errorf("origin/main moved: before=%s after=%s; want UNCHANGED", originMainBefore, originMainAfter)
 	}
 
-	// ── Assertion: main REFLOG is byte-for-byte unchanged (no update-ref ever
-	//    touched refs/heads/main, even transiently). ───────────────────────────
 	mainReflogAfter, ok := branchGuardReflog(t, projectDir, "refs/heads/main")
 	if !ok {
 		t.Fatal("could not capture main reflog after run")
@@ -262,7 +169,6 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 		t.Errorf("main reflog changed during integration-target run:\nBEFORE:\n%s\nAFTER:\n%s\nwant byte-for-byte unchanged", mainReflogBefore, mainReflogAfter)
 	}
 
-	// ── Assertion: bead CLOSED (merge to integration succeeded). ──────────────
 	if got := ledger.getClosedCount(); got != 1 {
 		t.Errorf("CloseBead call count = %d; want 1 (integration merge should succeed)", got)
 	}
@@ -270,7 +176,6 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 		t.Errorf("ReopenBead call count = %d; want 0 on successful integration merge", got)
 	}
 
-	// ── Assertion: outcome_emitted{kind=approved}. ────────────────────────────
 	outcomeEvs := mergeToMainFindEvents(collector, "outcome_emitted")
 	if len(outcomeEvs) == 0 {
 		t.Fatalf("no outcome_emitted events; stream: %v", mergeToMainEventOrder(collector))
@@ -282,10 +187,6 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 	t.Logf("branchguard isolation OK: integration %s → %s; main pinned at %s (reflog unchanged)",
 		integrationBefore[:8], integrationAfter[:8], mainBefore[:8])
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 2: fail-closed guard refuses a protected target (zero git mutations)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBranchGuard_FailClosed_TargetInProtectSet asserts that with
 // TargetBranch="main" and ProtectBranches=["main"], the daemon refuses the bead
@@ -313,20 +214,13 @@ func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
 
 	projectDir := branchGuardSetupRepoWithIntegration(t)
 
-	// Snapshot all three refs BEFORE the run.
 	mainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main")
 	originMainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/remotes/origin/main")
 	integrationBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/integration")
 	mainReflogBefore, _ := branchGuardReflog(t, projectDir, "refs/heads/main")
 
-	// Run with the target == a protected branch. The committing factory still
-	// cuts the run-branch from main's tip and commits, so there IS work to
-	// merge — the daemon must refuse it regardless. (No ## Branching section →
-	// lands_on defaults to the configured target "main", so the early lands_on
-	// gate fires.)
 	ledger, collector := branchGuardRunBead(t, projectDir, beadID, "main", []string{"main"}, "")
 
-	// ── Assertion: ZERO git mutations — every ref pinned. ─────────────────────
 	if mainAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main"); mainAfter != mainBefore {
 		t.Errorf("refs/heads/main moved despite protect-set refusal: before=%s after=%s", mainBefore, mainAfter)
 	}
@@ -340,7 +234,6 @@ func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
 		t.Errorf("main reflog changed despite protect-set refusal:\nBEFORE:\n%s\nAFTER:\n%s", mainReflogBefore, mainReflogAfter)
 	}
 
-	// ── Assertion: bead REOPENED, NOT closed (fail-closed refusal). ───────────
 	if got := ledger.getClosedCount(); got != 0 {
 		t.Errorf("CloseBead call count = %d; want 0 when daemon refuses protected target", got)
 	}
@@ -348,26 +241,17 @@ func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
 		t.Errorf("ReopenBead call count = %d; want ≥1 when daemon refuses protected target", got)
 	}
 
-	// ── Assertion: the reopen reason names a protected-branch refusal. The
-	//    early lands_on gate (hk-ncwb3) reopens with "protected" in its message.
-	//    The deep merge guard is asserted separately by
-	//    TestBranchGuard_FailClosed_MergeGuardBackstop. ─────────────────────────
 	reopenReason := ledger.getReopenReason()
 	if !strings.Contains(reopenReason, "protected") {
 		t.Errorf("reopen reason %q does not indicate a protected-branch refusal", reopenReason)
 	}
 
-	// ── Assertion: bead_closed event MUST NOT appear. ─────────────────────────
 	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
 		t.Errorf("bead_closed emitted despite guard refusal; want absent: %v", mergeToMainEventOrder(collector))
 	}
 
 	t.Logf("branchguard fail-closed OK: protected target refused (reason=%q), all refs pinned, bead reopened", reopenReason)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 2b: deep merge guard (hk-6r6xv) refuses a protected merge target.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBranchGuard_FailClosed_MergeGuardBackstop asserts the LAST-LINE
 // fail-closed guard in internal/runmerge/merge.go: resolveMergeTips refuses the
@@ -424,12 +308,8 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 
 	projectDir := branchGuardSetupRepoWithIntegration(t)
 
-	// A fixed UUIDv7 keeps the run-branch and worktree paths deterministic.
 	runID := core.RunID(uuid.MustParse("019628a0-0000-7000-8000-0000000000b5"))
 
-	// Cut a real worktree from main's tip and commit one file on the run branch.
-	// The run branch must be genuinely AHEAD of main, or the merge would take
-	// the no-change short-circuit and the refusal below would prove nothing.
 	headSHA := mergeToMainFixtureHeadSHA(t, projectDir, "main")
 	_, cleanup, wtErr := mergeToMainCommittingFactory(t)(t.Context(), projectDir, runID.String(), headSHA)
 	if wtErr != nil {
@@ -446,13 +326,10 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 	mainReflogBefore, _ := branchGuardReflog(t, projectDir, "refs/heads/main")
 	integrationReflogBefore, _ := branchGuardReflog(t, projectDir, "refs/heads/integration")
 
-	// ── Precondition: there IS work to merge. ─────────────────────────────────
 	if runTip == mainBefore {
 		t.Fatalf("run branch %s is not ahead of main (%s); the refusal below would be vacuous", runBranch, mainBefore)
 	}
 
-	// The merge target is "main" AND "main" is protected. Every other input is
-	// valid, so the ONLY reason this merge can fail is the branch guard.
 	outcome := runmerge.RunBranchToTarget(
 		t.Context(),
 		nil, // nil Submit → runmerge.InlineSubmit
@@ -466,7 +343,6 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 		"br",             // brPath. The guard refuses before any br call.
 	)
 
-	// ── Assertion: the guard refused, and named itself. ───────────────────────
 	if outcome.Success {
 		t.Errorf("RunBranchToTarget succeeded with target=main protect=[main]; want a branch-guard refusal")
 	}
@@ -477,7 +353,6 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 		t.Errorf("outcome.Reason = %q; want it to contain %q (deep guard hk-6r6xv)", outcome.Reason, "merge_target_protected")
 	}
 
-	// ── Assertion: ZERO git mutations — every ref + reflog pinned. ────────────
 	if mainAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main"); mainAfter != mainBefore {
 		t.Errorf("refs/heads/main moved despite deep-guard refusal: before=%s after=%s", mainBefore, mainAfter)
 	}
@@ -494,7 +369,6 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 		t.Errorf("integration reflog changed despite deep-guard refusal:\nBEFORE:\n%s\nAFTER:\n%s", integrationReflogBefore, integrationReflogAfter)
 	}
 
-	// ── Assertion: the run branch itself is untouched (no rebase ran). ────────
 	if runTipAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/"+runBranch); runTipAfter != runTip {
 		t.Errorf("run branch %s moved despite deep-guard refusal: before=%s after=%s; the guard must refuse BEFORE the prepare rebase", runBranch, runTip, runTipAfter)
 	}
@@ -533,10 +407,6 @@ func TestBranchGuard_MergeTargetFollowsBeadLandsOn(t *testing.T) {
 			cfg.LandsOn, "integration")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 3: boot-time validation refuses empty target under forbid-default
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBranchGuard_BootValidation_RefusesEmptyTargetUnderForbid asserts that
 // daemon.Start hard-errors (no socket bind) when ForbidUnprotectedDefault is set

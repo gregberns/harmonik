@@ -1,12 +1,5 @@
 package queuewiring_test
 
-// queuestore_hkj808w_test.go — tests for QueueStore (hk-j808w).
-//
-// Helper prefix: queueStoreFixture
-//
-// Spec ref: specs/queue-model.md §9.1 QM-060 (single-writer discipline).
-// Bead ref: hk-j808w.
-
 import (
 	"reflect"
 	"sync"
@@ -17,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// queueStoreFixtureQueue constructs a minimal *queue.Queue for use in tests.
 func queueStoreFixtureQueue(t *testing.T) *queue.Queue {
 	t.Helper()
 	return &queue.Queue{
@@ -112,14 +104,11 @@ func TestQueueStoreConcurrentReadSerialWrite(t *testing.T) {
 
 	qs := queuewiring.NewQueueStore()
 
-	// pre-seed one queue so readers start with a non-nil value.
 	qs.SetQueue(queueStoreFixtureQueue(t))
 
 	var wg sync.WaitGroup
 	wg.Add(numReaders + 1)
 
-	// readers: repeatedly snapshot the queue pointer; the race detector flags
-	// any unsynchronised access.
 	for i := 0; i < numReaders; i++ {
 		go func() {
 			defer wg.Done()
@@ -129,7 +118,6 @@ func TestQueueStoreConcurrentReadSerialWrite(t *testing.T) {
 		}()
 	}
 
-	// writer: alternate Set/Clear across numWrites iterations.
 	go func() {
 		defer wg.Done()
 		for i := 0; i < numWrites; i++ {
@@ -159,7 +147,6 @@ func TestQueueStoreLockForMutation(t *testing.T) {
 	replacement := queueStoreFixtureQueue(t)
 
 	lq := qs.LockForMutation()
-	// Inside the lock: the queue must match what we set above.
 	if lq.Queue() != original {
 		lq.Done()
 		t.Fatalf("LockForMutation: locked view returned wrong queue: want %p, got %p", original, lq.Queue())
@@ -167,8 +154,6 @@ func TestQueueStoreLockForMutation(t *testing.T) {
 	lq.SetQueue(replacement)
 	lq.Done()
 
-	// After releasing, Queue must return the replacement (by value — see
-	// TestQueueStoreSingleInstance for why Queue() copies rather than aliases).
 	if got := qs.Queue(); !reflect.DeepEqual(got, replacement) {
 		t.Fatalf("after LockForMutation swap: want %+v, got %+v", replacement, got)
 	}

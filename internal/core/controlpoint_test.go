@@ -4,10 +4,6 @@ import (
 	"testing"
 )
 
-// registryFixtureControlPoint returns a fully-populated, valid ControlPoint of
-// the given Kind for use in Registry and ControlPoint tests (hk-a8bg.77).
-//
-// Helper prefix: registryFixture.
 func registryFixtureControlPoint(t *testing.T, kind Kind) ControlPoint {
 	t.Helper()
 
@@ -162,7 +158,6 @@ func TestControlPointValid_WrongOutcomeActionForKind(t *testing.T) {
 func TestControlPointValid_WrongPayloadForKind(t *testing.T) {
 	t.Parallel()
 
-	// Build a Gate-valid payload then assign it to a Hook ControlPoint.
 	cp := registryFixtureControlPoint(t, KindHook)
 	approver := "ops-lead"
 	cp.Payload = KindPayload{Gate: &GatePayload{
@@ -225,8 +220,6 @@ func TestControlPointValid_InvalidModeTag(t *testing.T) {
 	t.Parallel()
 
 	cp := registryFixtureControlPoint(t, KindGate)
-	// Patch both ModeTag and Evaluator.Mode to the same unknown string so that
-	// the mode-mismatch guard does not fire before the ModeTag.Valid() guard.
 	unknown := ModeTag("unknown")
 	cp.ModeTag = unknown
 	cp.Evaluator.Mode = unknown
@@ -245,7 +238,6 @@ func TestOutcomeActionValidForKind(t *testing.T) {
 		kind   Kind
 		want   bool
 	}{
-		// Gate actions
 		{OutcomeActionAllow, KindGate, true},
 		{OutcomeActionDeny, KindGate, true},
 		{OutcomeActionEscalateToHuman, KindGate, true},
@@ -286,7 +278,6 @@ func TestOutcomeActionValidForKind(t *testing.T) {
 func TestKindPayloadValidForKind(t *testing.T) {
 	t.Parallel()
 
-	// Empty (all nil) is invalid for all Kinds.
 	var empty KindPayload
 	for _, k := range []Kind{KindGate, KindHook, KindGuard, KindBudget} {
 		t.Run("empty/"+string(k), func(t *testing.T) {
@@ -297,7 +288,6 @@ func TestKindPayloadValidForKind(t *testing.T) {
 		})
 	}
 
-	// Two-non-nil is invalid.
 	approver := "ops-lead"
 	multi := KindPayload{
 		Gate: &GatePayload{
@@ -406,7 +396,6 @@ func TestDelegationPathValid(t *testing.T) {
 		t.Error("fully-populated DelegationPath.Valid() = false, want true")
 	}
 
-	// Each missing field makes it invalid.
 	cases := []struct {
 		name string
 		dp   DelegationPath

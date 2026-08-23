@@ -1,40 +1,5 @@
 package daemon_test
 
-// scenario_orphan_sweep_queue_owned_tutqk_test.go — integration test for the
-// daemon.Start + queue.json + orphan-sweep bead-reset path (hk-tutqk).
-//
-// # What is tested
-//
-// TestScenario_OrphanSweep_QueueOwnedBeadReset boots the full daemon.Start
-// composition root with:
-//
-//   - A real br DB seeded with one bead in `in_progress` status (simulating
-//     a crash-left-behind bead from a prior SIGKILL recovery).
-//   - A pre-written queue.json whose single item carries the same bead_id with
-//     status=pending (queue-owned but NOT dispatched). This is the SIGKILL-
-//     recovery scenario where the claim intent was drained but queue.json still
-//     records ownership.
-//
-// daemon.Start runs the orphan sweep (step 3 of PL-005) synchronously before
-// the work loop. The sweep reads queue.json, builds QueueOwnedSet, detects the
-// bead in QueueOwnedSet but NOT in QueueDispatchedSet, establishes provenance,
-// and resets the bead to `open` via br update.
-//
-// The test cancels the daemon context once daemon_orphan_sweep_completed appears
-// in the JSONL log and asserts the bead status via AssertBeadStatus.
-//
-// # Helper prefix
-//
-// Helpers in this file use the prefix "sweepQO" (sweep queue-owned).
-// Per implementer-protocol.md §Helper-prefix discipline.
-//
-// # Spec refs
-//
-//   - specs/process-lifecycle.md §4.5 PL-006 sixth bullet — queue-owned provenance.
-//   - specs/queue-model.md §2.7 — ItemStatus values.
-//
-// Bead: hk-tutqk.
-
 import (
 	"context"
 	"encoding/json"
@@ -50,10 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 )
 
-// sweepQOEvalSymlinks resolves all symlinks in path so that br — which rejects
-// paths containing symlinks outside the beads directory — receives a canonical
-// path. On macOS, t.TempDir() returns /var/folders/... which is a symlink to
-// /private/var/folders/..., triggering br's symlink guard.
 func sweepQOEvalSymlinks(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -63,18 +24,6 @@ func sweepQOEvalSymlinks(t *testing.T, path string) string {
 	return resolved
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// sweepQO fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// sweepQOProjectDir creates the minimal project directory for the scenario:
-// .harmonik/events/ and .harmonik/beads-intents/. Returns the project dir
-// and the JSONL events log path.
-//
-// The directory path is resolved via filepath.EvalSymlinks so that br —
-// which rejects paths whose components are symlinks outside the beads directory
-// — receives a canonical path. On macOS, t.TempDir() returns a path under
-// /var/folders/ which is a symlink to /private/var/folders/.
 func sweepQOProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = sweepQOEvalSymlinks(t, t.TempDir())
@@ -91,8 +40,6 @@ func sweepQOProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// sweepQOBrPath returns the path to the real `br` binary, skipping the test
-// when br is not on PATH.
 func sweepQOBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -102,8 +49,6 @@ func sweepQOBrPath(t *testing.T) string {
 	return brPath
 }
 
-// sweepQOBrWrapperScript writes a /bin/sh wrapper that invokes realBrPath
-// with --db <dbPath> prepended to all args. Returns the wrapper path.
 func sweepQOBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := sweepQOEvalSymlinks(t, t.TempDir())
@@ -116,12 +61,9 @@ func sweepQOBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// sweepQOInitBrWithInProgress initialises a beads workspace in projectDir,
-// creates one bead, and sets it to in_progress status. Returns the bead ID.
 func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
 
-	// br init — creates .beads/ and .beads/beads.db.
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sqo")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -129,7 +71,6 @@ func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper
 		t.Fatalf("sweepQOInitBrWithInProgress: br init: %v\n%s", initErr, initOut)
 	}
 
-	// br create — produces a bead in open status.
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"orphan sweep queue-owned test bead", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
@@ -153,15 +94,6 @@ func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper
 	return beadID
 }
 
-// sweepQOWriteQueueJSON writes the "main" queue file to
-// .harmonik/queues/main.json under projectDir. The queue has one active group
-// with a single item whose bead_id is beadID and status is "pending"
-// (queue-owned, not dispatched).
-//
-// The path is the NQ-A2 named-queues layout (.harmonik/queues/<name>.json) that
-// queue.Load reads; the pre-fix legacy path (.harmonik/queue.json) is no longer
-// loaded, so the sweep's QueueOwnedSet was empty and the bead never reset
-// (hk-4f5ua).
 func sweepQOWriteQueueJSON(t *testing.T, projectDir, beadID string) {
 	t.Helper()
 
@@ -171,8 +103,6 @@ func sweepQOWriteQueueJSON(t *testing.T, projectDir, beadID string) {
 		t.Fatalf("sweepQOWriteQueueJSON: MkdirAll .harmonik/queues: %v", err)
 	}
 
-	// Construct a minimal valid queue.json envelope (schema_version=1, status=active,
-	// one wave group, one pending item).
 	queue := map[string]interface{}{
 		"schema_version": 1,
 		"queue_id":       "00000000-0000-7000-8000-000000000001",
@@ -205,17 +135,11 @@ func sweepQOWriteQueueJSON(t *testing.T, projectDir, beadID string) {
 	}
 }
 
-// sweepQOPollOrphanSweepCompleted polls the JSONL log for a
-// daemon_orphan_sweep_completed event for up to budget. Returns true when found.
 func sweepQOPollOrphanSweepCompleted(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	return scenariotest.WaitForEvent(t, jsonlPath,
 		string(core.EventTypeDaemonOrphanSweepCompleted), "", budget)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_OrphanSweep_QueueOwnedBeadReset
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_OrphanSweep_QueueOwnedBeadReset is the integration test for the
 // daemon.Start + queue.json + orphan-sweep queue-owned bead-reset path.
@@ -233,34 +157,25 @@ func sweepQOPollOrphanSweepCompleted(t *testing.T, jsonlPath string, budget time
 // Bead: hk-tutqk.
 func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
-	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
-	// EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
 
-	// Locate br binary; skip when absent.
 	realBrPath := sweepQOBrPath(t)
 
-	// Create project directory.
 	projectDir, jsonlPath := sweepQOProjectDir(t)
 
-	// Initialise br DB and seed one bead in in_progress status.
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := sweepQOBrWrapperScript(t, realBrPath, dbPath)
 	beadID := sweepQOInitBrWithInProgress(t, realBrPath, projectDir, brWrapper)
 	t.Logf("sweepQO: seeded bead ID = %s (in_progress)", beadID)
 
-	// Verify initial state: bead must be in_progress before the sweep.
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "in_progress")
 
-	// Write queue.json: bead is queue-owned (status=pending) but not dispatched.
 	sweepQOWriteQueueJSON(t, projectDir, beadID)
 
-	// Redirect EnsureWorktreeTrust to a test-local config path.
 	claudeConfigPath := filepath.Join(sweepQOEvalSymlinks(t, t.TempDir()), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("sweepQO: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
 		if hadClaudeCfg {
 			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
@@ -269,12 +184,6 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 		}
 	})
 
-	// Wire daemon.Config for the orphan-sweep integration test.
-	// No HandlerBinary: with no ready beads (the in_progress bead is reset to
-	// open by the sweep, but there are no beads the work loop dispatches since
-	// BrPath is set and the queue item is pending; the work loop will claim it —
-	// but we cancel the context after the sweep completes, before any dispatch).
-	// We use a no-op twin wrapper so any accidental dispatch fails harmlessly.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
@@ -298,18 +207,11 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// Launch daemon.Start in a goroutine.
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// ── Wait for orphan sweep to complete ────────────────────────────────────
-	//
-	// The sweep runs synchronously in daemon.Start BEFORE the work loop goroutine
-	// is spawned (PL-005 step 3). We poll the JSONL log for
-	// daemon_orphan_sweep_completed, which is emitted immediately after the sweep.
-	// Budget: 10 s is generous; the sweep itself is sub-second in CI.
 	const sweepPollBudget = 10 * time.Second
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, sweepPollBudget, func() {
 		for {
@@ -319,25 +221,16 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 		}
 	})
 
-	// Cancel the daemon context to stop the work loop.
 	loopCancel()
 
-	// Wait for daemon.Start to return (up to 5 s).
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 5*time.Second, func() {
 		if err := <-startDone; err != nil {
 			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
 	})
 
-	// ── Assertion: bead reset to open ────────────────────────────────────────
-	//
-	// The orphan sweep detected bead in in_progress, established ownership via
-	// QueueOwnedSet (bead_id appears in queue.json), saw QueueDispatched is empty
-	// (status=pending, not dispatched), and called ResetBead → br update --status open.
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "open")
 
-	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
-	// run_started is absent in this sweep-only scenario; both checks pass vacuously.
 	scenariotest.AssertEventCausality(t, jsonlPath,
 		"run_started",
 		[]string{"run_completed", "run_failed", "run_cancelled"},

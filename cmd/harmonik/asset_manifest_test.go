@@ -1,12 +1,5 @@
 package main
 
-// asset_manifest_test.go — guards the embedded asset MANIFEST: total coverage of
-// the embed FS, correct per-class classification, deterministic digest, and
-// hash-matches-content. Extends the embed-in-sync style from
-// init_skills_sync_test.go.
-//
-// Bead ref: hk-532v (asset-manifest).
-
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,7 +29,6 @@ func TestManifestCoversEveryEmbeddedFile(t *testing.T) {
 		manifested[f.Path] = f
 	}
 
-	// Walk the embed FS independently and confirm 1:1 coverage.
 	walked := map[string]bool{}
 	err = fs.WalkDir(initSkillAssets, assetEmbedRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -65,8 +57,6 @@ func TestManifestCoversEveryEmbeddedFile(t *testing.T) {
 		t.Fatal("embed FS walk found no files — embed misconfigured")
 	}
 
-	// No asset may be Unclassified: every shipped path must map to a real class
-	// so the reconcile engine knows how to sync it.
 	for _, f := range m.Files {
 		if f.Class == Unclassified {
 			t.Errorf("asset %s is Unclassified — add a class mapping in Classify()", f.Path)

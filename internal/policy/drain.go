@@ -2,33 +2,6 @@ package policy
 
 import "fmt"
 
-// drain.go — the pure quiesce/drain DECISION predicates: the drain-state
-// classification and the sleep-veto strand logic for the fleet quiesce arbiter.
-//
-// Moved out of internal/daemon (hk-zqb3 / M5 slice 2 sub-slice B2) WITHOUT
-// semantic change. The daemon shell still owns every effect: it runs
-// GatherDrainFacts (br-ready reads, worktree readdir, ledger, oracle), projects
-// the resulting FleetFacts into the narrow DrainSnapshot below at the call site,
-// then acts on the returned decision (builds the DrainResult / the veto error,
-// parks sessions, nudges panes). Only the classification/veto DECISION — "does
-// the fleet have work?", "should we veto sleeping, and why?" — lives here.
-//
-// Snapshot rationale (B2, narrow projection): FleetFacts and its axis sub-types
-// stay in internal/daemon. Rather than relocate them into internal/core, the
-// daemon projects the exact scalar counts the predicates read into
-// DrainSnapshot. The three source predicates read ONLY these fields:
-//
-//   - vetoCheck (quiesce.go):        Unsure, UnsureReasons, Ready.Count,
-//     InProgress.Count, Runs.RegistryCount, Runs.LiveWorktrees, Queued.Count,
-//     len(Queued.PausedQueues), len(Queued.FailedArchives), len(BlockedByOpenEpic).
-//   - GenuineDrain (draindetect.go): the same set minus UnsureReasons (the
-//     daemon shell reattaches reasons), and NOT NeedsDecomposition.
-//   - hasLatentWork (stategather.go): the GenuineDrain set PLUS
-//     len(NeedsDecomposition).
-//
-// Spec ref: codename:sleep-wake (SS-INV-005 veto gate) + the GenuineDrain
-// five-defense drain oracle (§4.2 latent-work).
-
 // DrainState is the tri-state drain classification returned by ClassifyDrain.
 // The string values are identical to the daemon's legacy DrainState so the
 // daemon shell can map 1:1 without changing any frozen wire or log text.
@@ -77,11 +50,6 @@ type DrainSnapshot struct {
 	UnsureReasons      []string
 }
 
-// hasDispatchableOrInFlightWork is the shared "any active-work axis non-empty?"
-// test used by ClassifyDrain and the sleep-veto. It mirrors GenuineDrain's
-// hasWork expression EXACTLY (the eight axes, in order) and deliberately does
-// NOT count NeedsDecomposition — that generative bucket is a HAS_LATENT_WORK
-// signal (see HasLatentWork), never a GenuineDrain / sleep-veto strand.
 func hasDispatchableOrInFlightWork(s DrainSnapshot) bool {
 	return s.ReadyCount > 0 ||
 		s.InProgressCount > 0 ||

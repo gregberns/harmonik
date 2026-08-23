@@ -134,7 +134,6 @@ func CurrentStable(entries []ReleaseEntry) *ReleaseEntry {
 	return nil
 }
 
-// indexBySemver returns the index of the first entry matching semver, or -1.
 func indexBySemver(entries []ReleaseEntry, semver string) int {
 	for i := range entries {
 		if entries[i].Semver == semver {

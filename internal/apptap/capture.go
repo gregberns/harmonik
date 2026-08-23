@@ -1,13 +1,5 @@
 package apptap
 
-// Capture helpers for drivers that own their child's pipes directly.
-//
-// Tap.Run owns the whole child (exec + Wait), which does not fit a driver that
-// spawns and reaps its own process (AIS-009). These two helpers expose the same
-// transparent/lossless/verbatim tee invariant as Tap for callers that hold the
-// raw pipe endpoints: pure io.TeeReader / io.MultiWriter wrappers, no parsing,
-// no reframing, no buffering for meaning.
-
 import "io"
 
 // CaptureReader tees every byte read from r into capture, verbatim. When
@@ -49,8 +41,6 @@ func BestEffortCaptureWriter(dst, capture io.Writer, onErr func(error)) io.Write
 	if capture == nil {
 		return dst
 	}
-	// io.MultiWriter aborts on the first sub-writer error; wrapping capture in
-	// a degrading writer (which never returns an error) keeps dst flowing.
 	return io.MultiWriter(dst, &degradingWriter{w: capture, onErr: onErr})
 }
 
@@ -72,13 +62,6 @@ func BestEffortCaptureReader(src io.Reader, capture io.Writer, onErr func(error)
 	return io.TeeReader(src, &degradingWriter{w: capture, onErr: onErr})
 }
 
-// degradingWriter wraps a capture writer so a write error degrades to
-// uncaptured instead of propagating: it always reports a full, error-free
-// write, and after the first underlying error it stops writing and fires onErr
-// once. This is the load-bearing best-effort primitive behind AIS-INV-002.
-//
-// Not safe for concurrent use; each capture direction owns its own instance on
-// a single goroutine.
 type degradingWriter struct {
 	w       io.Writer
 	onErr   func(error)
@@ -94,7 +77,5 @@ func (d *degradingWriter) Write(p []byte) (int, error) {
 			}
 		}
 	}
-	// Always claim a full, error-free write so io.MultiWriter / io.TeeReader
-	// never abort the primary stream on a capture fault.
 	return len(p), nil
 }

@@ -101,12 +101,10 @@ type ExitState struct {
 //
 // Spec: specs/handler-contract.md §4.5.HC-023, §8.1–§8.4.
 func ClassifyExitState(s ExitState) error {
-	// Priority 1: operator/policy cancellation supersedes all other signals.
 	if s.CtxCanceled {
 		return fmt.Errorf("handler: classify: context canceled: %w", ErrCanceled)
 	}
 
-	// Priority 2–4: adapter-returned typed condition.
 	switch s.AdapterResult {
 	case AdapterConditionTransient:
 		return fmt.Errorf("handler: classify: adapter transient: %w", ErrTransient)
@@ -115,11 +113,7 @@ func ClassifyExitState(s ExitState) error {
 	case AdapterConditionStructural:
 		return fmt.Errorf("handler: classify: adapter structural: %w", ErrStructural)
 	case AdapterConditionNone:
-		// No adapter-detected condition — fall through to the exit-code rules.
 	}
 
-	// Priority 5–6: exit-code-based rules when adapter reports no condition.
-	// Both zero-exit-without-outcome and non-zero exit are structural: the plan
-	// produced no outcome and requires a re-plan, not a retry (§8.2).
 	return fmt.Errorf("handler: classify: exit code %d: %w", s.ExitCode, ErrStructural)
 }

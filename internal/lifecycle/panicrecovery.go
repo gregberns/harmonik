@@ -78,11 +78,9 @@ type BusFlusher interface {
 func RecoverWithLogFlush(logFlusher LogFlusher, busFlusher BusFlusher, logger *log.Logger) {
 	r := recover()
 	if r == nil {
-		// No panic in flight; nothing to do.
 		return
 	}
 
-	// EV-019: flush structured-log channel BEFORE bus flush and BEFORE re-panicking.
 	if logFlusher != nil {
 		if err := logFlusher.Flush(); err != nil {
 			if logger != nil {
@@ -91,15 +89,9 @@ func RecoverWithLogFlush(logFlusher LogFlusher, busFlusher BusFlusher, logger *l
 		}
 	}
 
-	// EV-019a: best-effort bus flush AFTER log flush completes.
-	// Wrapped in its own deferred recover so a secondary panic from the bus
-	// flush is contained and does not escape to the caller's stack.
 	if busFlusher != nil {
 		func() {
 			defer func() {
-				// Contain any secondary panic from the bus flush, but do not
-				// erase it: a flusher that panics on every recovery path is
-				// otherwise indistinguishable from one that works.
 				if secondary := recover(); secondary != nil && logger != nil {
 					logger.Printf("lifecycle: RecoverWithLogFlush: secondary panic during bus flush (contained): %v", secondary)
 				}
@@ -110,6 +102,5 @@ func RecoverWithLogFlush(logFlusher LogFlusher, busFlusher BusFlusher, logger *l
 		}()
 	}
 
-	// Re-panic so the runtime stack trace and non-zero exit code are preserved.
 	panic(fmt.Sprintf("lifecycle: re-panic after log flush: %v", r)) //nolint:forbidigo // intentional: re-panic in recovery handler is the specified EV-019/EV-019a contract
 }

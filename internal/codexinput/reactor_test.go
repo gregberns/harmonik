@@ -12,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ready drives a fresh reactor through Spawned + HandshakeOK to the Ready phase,
-// returning it for a focused transition test.
 func ready(t *testing.T) *codexinput.Reactor {
 	t.Helper()
 	r := codexinput.New(codexinput.Config{})
@@ -83,7 +81,6 @@ func TestStep_Rejected(t *testing.T) {
 // edge reachable in the machine lands in a state with an outgoing action — no
 // silent wedge (AIS-INV-001).
 func TestStep_TimerFiredAlwaysActs(t *testing.T) {
-	// Handshake-timeout edge (Handshaking): launch failure.
 	r := codexinput.New(codexinput.Config{})
 	r.Step(codexinput.Event{Type: codexinput.EventTypeSpawned})
 	got := r.Step(codexinput.Event{Type: codexinput.EventTypeTimerFired, Kind: codexinput.TimerHandshake})
@@ -94,7 +91,6 @@ func TestStep_TimerFiredAlwaysActs(t *testing.T) {
 		t.Fatalf("handshake timeout must terminate, got %s", r.State().Phase)
 	}
 
-	// Input-ack-timeout edge (AwaitingAck): stale.
 	r = ready(t)
 	r.Step(codexinput.Event{Type: codexinput.EventTypeInputSubmitted, InputSeq: 5})
 	got = r.Step(codexinput.Event{Type: codexinput.EventTypeTimerFired, Kind: codexinput.TimerInputAck})
@@ -131,8 +127,6 @@ func TestStep_CloseWhileInTurnGracefulInterrupt(t *testing.T) {
 	if r.State().Phase != codexinput.Draining {
 		t.Fatalf("close-mid-turn must enter Draining (graceful), got %s", r.State().Phase)
 	}
-	// The graceful path never fabricates a kill/exit: the open turn drains via
-	// the twin's turn/completed, and only stdin-close ends the session.
 	if late := r.Step(codexinput.Event{Type: codexinput.EventTypeTurnCompleted}); late != nil {
 		t.Fatalf("turn/completed after close should be a no-op action, got %+v", late)
 	}
@@ -187,7 +181,6 @@ func TestStep_CloseWhileAwaitingAck(t *testing.T) {
 	if r.State().PendingSeq != 0 {
 		t.Fatalf("pending seq must be cleared after close-resolve, got %d", r.State().PendingSeq)
 	}
-	// A late timer fire is now a no-op (already resolved) — never a second terminal.
 	if late := r.Step(codexinput.Event{Type: codexinput.EventTypeTimerFired, Kind: codexinput.TimerInputAck}); late != nil {
 		t.Fatalf("late timer after close-resolve must be nil, got %+v", late)
 	}
@@ -222,10 +215,6 @@ func TestEventActionRoundTrip(t *testing.T) {
 	}
 }
 
-// ─── FakeClock bounded-liveness proof (T4 / AIS-INV-001) ──────────────────────
-
-// chanSource is a dynamic EventSource: the test and the timer effector feed
-// events into `in`; Events relays them to Run and closes on ctx cancel.
 type chanSource struct{ in chan codexinput.Event }
 
 func (s *chanSource) Events(ctx context.Context) <-chan codexinput.Event {
@@ -248,9 +237,6 @@ func (s *chanSource) Events(ctx context.Context) <-chan codexinput.Event {
 	return out
 }
 
-// timerEffector translates ArmTimer/CancelTimer into ClockPort sleeps (RS-015):
-// on ArmTimer it sleeps on the FakeClock and, if the full window elapses, feeds
-// a TimerFired event back in. It records Emit actions for assertions.
 type timerEffector struct {
 	mu    sync.Mutex
 	clock *substrate.FakeClock
@@ -296,8 +282,6 @@ func (e *timerEffector) Execute(_ context.Context, a codexinput.Action) error {
 		e.emits = append(e.emits, a)
 		e.mu.Unlock()
 	default:
-		// SendHandshake/WriteInput/CloseInput/Interrupt: no side effect the
-		// bounded-liveness timer tests assert on.
 	}
 	return nil
 }
@@ -356,15 +340,12 @@ func TestBoundedLiveness_StaleFiresPastWindow(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- r.Run(ctx, src, eff) }()
 
-	// Drive to a pending submission.
 	src.in <- codexinput.Event{Type: codexinput.EventTypeSpawned}
 	src.in <- codexinput.Event{Type: codexinput.EventTypeHandshakeOK}
 	src.in <- codexinput.Event{Type: codexinput.EventTypeInputSubmitted, InputSeq: 1}
 
-	// Arm-before-advance: wait until the input-ack timer is live on the clock.
 	eff.waitArmed(codexinput.TimerInputAck)
 
-	// Just before the window: nothing stale yet.
 	clock.Advance(window - time.Nanosecond)
 	eff.mu.Lock()
 	for _, a := range eff.emits {
@@ -375,7 +356,6 @@ func TestBoundedLiveness_StaleFiresPastWindow(t *testing.T) {
 	}
 	eff.mu.Unlock()
 
-	// Past the window: exactly one agent_input_stale for seq 1, no positive ack.
 	clock.Advance(2 * time.Nanosecond)
 	stale := eff.waitEmit(t, codexinput.EmitInputStale)
 	if stale.InputSeq != 1 {

@@ -33,14 +33,6 @@ const EnvWireCaptureScn = "HARMONIK_CAPTURE_SCN"
 // unset — matches the harness default (internal/daemon/e2e_real_claude_capture_test.go).
 const DefaultWireCaptureScn = "happy-path"
 
-// openWireTap returns an open *os.File to use as SpawnWatcherConfig.WireTap when
-// EnvWireCaptureDir is set, or (nil, nil) when it is unset (the production
-// default). The caller MUST close the returned file once the watcher's Done
-// channel closes, so the capture is flushed and no fd leaks.
-//
-// The file lands at <EnvWireCaptureDir>/<scn>/wire.ndjson where <scn> is
-// EnvWireCaptureScn (default DefaultWireCaptureScn). This is exactly the path
-// the capture harness stats and reads back.
 func openWireTap() (*os.File, error) {
 	dir := os.Getenv(EnvWireCaptureDir)
 	if dir == "" {

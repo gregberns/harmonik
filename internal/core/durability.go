@@ -41,8 +41,6 @@ func IsDurable(kind TransitionKind, status OutcomeStatus) bool {
 	return isDurableKind(kind) && isDurableStatus(status)
 }
 
-// isDurableKind reports whether kind is one of the five durable TransitionKind
-// values per execution-model.md §4.5.EM-023a.
 func isDurableKind(kind TransitionKind) bool {
 	switch kind {
 	case TransitionKindForward,
@@ -56,8 +54,6 @@ func isDurableKind(kind TransitionKind) bool {
 	}
 }
 
-// isDurableStatus reports whether status is one of the two durable
-// OutcomeStatus values per execution-model.md §4.5.EM-023a.
 func isDurableStatus(status OutcomeStatus) bool {
 	switch status {
 	case OutcomeStatusSuccess, OutcomeStatusPartialSuccess:

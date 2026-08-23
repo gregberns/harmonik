@@ -1,27 +1,5 @@
 package core
 
-// detectorsnotinlibrary_63oh9_test.go — spec-level harness for hk-63oh.9.
-//
-// Covers: RC-005 (detectors and verdict-execution mechanics are NOT in the
-// workflow library), with focus on two sub-obligations:
-//
-//   §4.3 — detectors MUST live in the daemon's Go code (mechanism-tagged
-//           functions), NOT in the S01 workflow library.
-//   §4.5 — verdict-execution mechanics (action dispatch, verdict-executed
-//           commit emission, idempotency-key adapter calls) MUST also live
-//           in the daemon's Go code.
-//   Corollary — the S01 library owns investigator REASONING only.
-//
-// Tests split into three groups:
-//   A. Spec-text anchors (spec.md must contain the RC-005 requirement prose)
-//   B. DOT-file structural probes (S01 library workflows must not carry
-//      detector or verdict-execution node logic)
-//   C. Node-role fixtures (the only allowed node roles in S01 reconciliation
-//      workflows are investigator-reasoning roles per RC-015a)
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-005.
-// Bead: hk-63oh.9.
-
 import (
 	"os"
 	"path/filepath"
@@ -30,10 +8,6 @@ import (
 	"testing"
 )
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-// rc63oh9FixtureReadSpec reads specs/reconciliation/spec.md and returns its
-// content. Fails the test if the file cannot be read.
 func rc63oh9FixtureReadSpec(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -50,8 +24,6 @@ func rc63oh9FixtureReadSpec(t *testing.T) string {
 	return string(raw)
 }
 
-// rc63oh9FixtureReadDOT reads a DOT file from specs/s01/reconciliation/workflows/
-// by filename (e.g. "cat-2.dot"). Fails the test if the file cannot be read.
 func rc63oh9FixtureReadDOT(t *testing.T, filename string) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -68,17 +40,12 @@ func rc63oh9FixtureReadDOT(t *testing.T, filename string) string {
 	return string(raw)
 }
 
-// rc63oh9FixtureS01DOTFiles returns the three canonical DOT filenames in the
-// S01 reconciliation workflow library.
 var rc63oh9FixtureS01DOTFiles = []string{
 	"cat-2.dot",
 	"cat-3.dot",
 	"cat-6a.dot",
 }
 
-// rc63oh9FixtureDetectorRoleMarkers are string patterns whose presence in a
-// DOT workflow node would indicate that detector logic has leaked into the
-// S01 library (violating RC-005 §4.3).
 var rc63oh9FixtureDetectorRoleMarkers = []string{
 	`role="detector"`,
 	`type="detector"`,
@@ -88,9 +55,6 @@ var rc63oh9FixtureDetectorRoleMarkers = []string{
 	`category_assignment`,
 }
 
-// rc63oh9FixtureVerdictExecutionMarkers are string patterns whose presence in a
-// DOT workflow node would indicate that verdict-execution mechanics have leaked
-// into the S01 library (violating RC-005 §4.5).
 var rc63oh9FixtureVerdictExecutionMarkers = []string{
 	`role="verdict-executor"`,
 	`role="verdict_executor"`,
@@ -100,8 +64,6 @@ var rc63oh9FixtureVerdictExecutionMarkers = []string{
 	`verdict_execute`,
 	`verdict-executed-commit`,
 }
-
-// ── A. Spec-text anchors ──────────────────────────────────────────────────────
 
 // TestRC005_SpecSectionExists verifies that RC-005 is present in
 // specs/reconciliation/spec.md with the expected heading.
@@ -187,8 +149,6 @@ func TestRC005_SpecAssignsInvestigatorReasoningToS01(t *testing.T) {
 	}
 }
 
-// ── B. DOT-file structural probes ─────────────────────────────────────────────
-
 // TestRC005_S01DOTFilesExist verifies that all three expected S01 reconciliation
 // DOT workflow files are present on disk.
 //
@@ -202,7 +162,6 @@ func TestRC005_S01DOTFilesExist(t *testing.T) {
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
-			// rc63oh9FixtureReadDOT fails the test if the file is missing.
 			content := rc63oh9FixtureReadDOT(t, filename)
 			if content == "" {
 				t.Errorf("RC-005: %s is empty; S01 library DOT file must be non-empty", filename)
@@ -265,19 +224,6 @@ func TestRC005_S01DOTFilesCarryNoVerdictExecutionNodes(t *testing.T) {
 	}
 }
 
-// ── C. Node-role fixtures ─────────────────────────────────────────────────────
-
-// rc63oh9FixturePermittedNodeRoles enumerates the node roles the S01 reconciliation
-// library DOT files are allowed to carry, per RC-005's "S01 library owns
-// investigator reasoning only" principle.
-//
-// The three allowed roles correspond to the three structural nodes that every
-// S01 reconciliation DOT contains:
-//   - "reconciliation workflow entry point" (the start node)
-//   - "investigator"                        (the reasoning-only cognition node)
-//   - "reconciliation workflow terminal"    (the close node)
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-005, RC-015a.
 var rc63oh9FixturePermittedNodeRoles = []string{
 	"reconciliation workflow entry point",
 	"investigator",
@@ -306,7 +252,6 @@ func TestRC005_PermittedNodeRolesAreInvestigatorReasoningOnly(t *testing.T) {
 			if role == "" {
 				t.Error("RC-005: permitted role is empty string; fixture error")
 			}
-			// No permitted role should name a detector or verdict-executor.
 			for _, forbidden := range []string{"detector", "verdict-execut", "action-dispatch"} {
 				if strings.Contains(strings.ToLower(role), forbidden) {
 					t.Errorf("RC-005: permitted role %q contains forbidden term %q; "+
@@ -334,9 +279,6 @@ func TestRC005_S01DOTFilesContainOnlyPermittedRoles(t *testing.T) {
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)
 
-			// Extract every role="..." value from the DOT content.
-			// A role attribute appears as:   role="<value>"
-			// We scan for role=" tokens and collect the quoted value.
 			extractedRoles := rc63oh9ExtractRoleAttributes(content)
 
 			for _, extracted := range extractedRoles {
@@ -357,8 +299,6 @@ func TestRC005_S01DOTFilesContainOnlyPermittedRoles(t *testing.T) {
 	}
 }
 
-// rc63oh9ExtractRoleAttributes extracts all values from `role="..."` occurrences
-// in a DOT file's text content. It handles the typical DOT attribute format.
 func rc63oh9ExtractRoleAttributes(content string) []string {
 	const prefix = `role="`
 	var roles []string
@@ -398,14 +338,11 @@ func TestRC005_WorkflowClassTagIsTheSoleReconciliationDiscriminatorInDOT(t *test
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)
 
-			// The DOT must carry workflow_class="reconciliation".
 			if !strings.Contains(content, `workflow_class="reconciliation"`) {
 				t.Errorf("RC-005: %s missing workflow_class=\"reconciliation\" graph attribute; "+
 					"this is the sole reconciliation discriminator per RC-002/RC-005", filename)
 			}
 
-			// The DOT must NOT carry a category-assignment attribute — that is
-			// a detector output, not a library-level annotation.
 			if strings.Contains(content, `reconciliation_category`) {
 				t.Errorf("RC-005: %s contains 'reconciliation_category' attribute; "+
 					"category assignment is a detector output (daemon Go code), NOT a DOT annotation",

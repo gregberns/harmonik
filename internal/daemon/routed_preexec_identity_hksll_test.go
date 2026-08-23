@@ -1,40 +1,5 @@
 package daemon
 
-// routed_preexec_identity_hksll_test.go — regression tests for
-// hk-sll-claude-leak-z8fs0 and hk-sll-empty-logpath-7dxdw.
-//
-// # The two defects
-//
-// buildCodexRoutedLaunchSpec serves EVERY non-claude harness, and it built the
-// CHB-018 pre-exec messages through the claude handler's PreExecMessages with
-// two constants baked in:
-//
-//   - a hard-coded agent_type of "claude-code", so every pi and every codex run
-//     announced session_log_location{agent_type:"claude-code"} — one event after
-//     harness_selected{agent_type:"pi"} said otherwise (hk-sll-claude-leak-z8fs0).
-//   - an empty log_path, which core.SessionLogLocationPayload.Valid() rejects
-//     outright (event-model.md §8.3.7).
-//
-// Observed live on 2026-08-09 against a daemon built from 6920f9cf3, driving the
-// pi seed bead as-p4i:
-//
-//	harness_selected      {"agent_type":"pi","bead_id":"as-p4i","tier":1}
-//	session_log_location  {"agent_type":"claude-code","log_path":"","node_id":"bead/as-p4i"}
-//
-// # What these tests pin
-//
-//  1. The routed builder REPORTS the resolved harness — "codex" for a codex run,
-//     "pi" for a pi run.
-//  2. It announces a non-empty session-log path.
-//  3. The whole payload satisfies core.SessionLogLocationPayload.Valid(), so what
-//     the daemon publishes is something its own contract accepts.
-//
-// The guard half of hk-sll-empty-logpath-7dxdw — the emit path refusing an
-// invalid payload — is pinned next to that code, in
-// internal/runlaunch/sessionlogloc_guard_hksll_test.go.
-//
-// Helper prefix: hksll (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"encoding/json"
@@ -52,7 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// hksllRunID returns a fresh non-nil run id.
 func hksllRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -62,8 +26,6 @@ func hksllRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// hksllRawSessionLogLocation returns the raw session_log_location pre-exec
-// message.
 func hksllRawSessionLogLocation(t *testing.T, arts shared.LaunchArtifacts) json.RawMessage {
 	t.Helper()
 	for _, raw := range arts.PreExecMsgs {
@@ -81,7 +43,6 @@ func hksllRawSessionLogLocation(t *testing.T, arts shared.LaunchArtifacts) json.
 	return nil
 }
 
-// hksllSessionLogLocation decodes the on-wire message shape.
 func hksllSessionLogLocation(t *testing.T, arts shared.LaunchArtifacts) handlercontract.SessionLogLocationMsg {
 	t.Helper()
 	var msg handlercontract.SessionLogLocationMsg
@@ -91,8 +52,6 @@ func hksllSessionLogLocation(t *testing.T, arts shared.LaunchArtifacts) handlerc
 	return msg
 }
 
-// hksllWorktree returns a temp worktree path with a .harmonik dir, the shape the
-// routed builder expects.
 func hksllWorktree(t *testing.T) string {
 	t.Helper()
 	wt := t.TempDir()
@@ -186,8 +145,6 @@ func TestRoutedPreExec_LogPathIsAnnounced_hksllemptylogpath(t *testing.T) {
 	if msg.LogPath == "" {
 		t.Error("session_log_location.log_path is empty; core.SessionLogLocationPayload.Valid() rejects that (hk-sll-empty-logpath-7dxdw)")
 	}
-	// The announced path is the canonical per-session log directory of
-	// workspace-model.md §4.7 WM-025, keyed on the handler session id.
 	wantPath := workspace.SessionLogDirPath(wt, msg.SessionID)
 	if msg.LogPath != wantPath {
 		t.Errorf("session_log_location.log_path = %q; want the canonical session-log directory %q", msg.LogPath, wantPath)

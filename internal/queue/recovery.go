@@ -1,20 +1,5 @@
 package queue
 
-// recovery.go — the typed answer surface for failed-queue recovery.
-//
-// QM-052 parks a queue at `paused-by-failure`. Until now the only documented
-// way out was a daemon restart plus a fresh submit. QM-052b names a recovery
-// transaction instead, and it requires one typed rejection record rather than a
-// free-text error, so an operator or an assessor can tell the seven refusal
-// causes apart without reading log prose.
-//
-// This file holds the pure half: the reason enum, the wire codes, and the error
-// value. It performs no I/O. `internal/queuewiring` owns the transaction that
-// produces these values, and `internal/daemon` owns the socket op that carries
-// them.
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b.
-
 import (
 	"errors"
 	"fmt"
@@ -124,7 +109,6 @@ func (e *RecoveryError) Error() string {
 		msg += fmt.Sprintf(": bead %s", e.BeadID)
 	case RecoveryReasonQueueNotFound, RecoveryReasonQueueQuarantined,
 		RecoveryReasonWriteFailed, RecoveryReasonStaleSnapshot:
-		// The reason plus the queue name is the whole answer.
 	}
 	if e.Cause != nil {
 		msg += ": " + e.Cause.Error()

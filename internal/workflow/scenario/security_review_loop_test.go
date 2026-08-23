@@ -1,24 +1,5 @@
 package scenario_test
 
-// security_review_loop_test.go — scenario tests for specs/examples/security-review-loop.dot.
-//
-// Five named scenarios:
-//   1. approve-on-first-pass          → start→implement→security_review(APPROVE)→close (terminal, success)
-//   2. two-REQUEST_CHANGES-then-approve → 2× loop-back then APPROVE → close
-//   3. BLOCK-on-first                 → security_review(BLOCK) → close-needs-attention (terminal)
-//   4. cap-hit-fallback               → 3× REQUEST_CHANGES → cap-hit failure
-//   5. unrecognized-label-fallback    → unknown label → unconditional fallback → close-needs-attention
-//
-// Spec refs:
-//   - docs/sdlc-workflow-corpus.md §14 (security-review-loop topology)
-//   - specs/workflow-graph.md  WG-010 (5-step cascade)
-//   - specs/workflow-graph.md  WG-011 (unconditional-edge fallback invariant)
-//   - specs/workflow-graph.md  WG-028 (cycle bounding / traversal_cap)
-//   - specs/execution-model.md EM-015e (no-progress / cap-hit vocabulary)
-//   - specs/execution-model.md EM-043  (traversal-cap enforcement)
-//
-// Helper prefix: srl (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"os"
 	"path/filepath"
@@ -30,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func srlDotPath(t *testing.T) string {
 	t.Helper()
@@ -65,8 +44,6 @@ func srlOutcome(label string) core.Outcome {
 	return o
 }
 
-// ── Scenario 1: approve-on-first-pass ────────────────────────────────────────
-
 // TestSRL_ApproveOnFirstPass exercises the happy path:
 // start → implement → security_review(APPROVE) → close (terminal).
 func TestSRL_ApproveOnFirstPass(t *testing.T) {
@@ -79,32 +56,26 @@ func TestSRL_ApproveOnFirstPass(t *testing.T) {
 	run := srlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// implement → security_review
 	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("implement→security_review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// security_review(APPROVE) → close
 	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("security_review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 2: two REQUEST_CHANGES then approve ─────────────────────────────
 
 // TestSRL_TwoRequestChangesThenApprove exercises the bounded loop:
 // start → implement → security_review(RC) → implement → security_review(RC) →
@@ -119,26 +90,21 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 	run := srlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
 
-	// Loop twice: security_review(REQUEST_CHANGES) → implement
 	for i := 1; i <= 2; i++ {
-		// implement → security_review
 		dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "security_review" {
 			t.Fatalf("iteration %d implement→security_review: %+v", i, dec)
 		}
 
-		// Increment cycle counter for the security_review→implement back-edge.
 		if _, err := cycles.Increment(run.RunID, "security_review", "implement", nil); err != nil {
 			t.Fatalf("pre-fill cycle counter security_review\u2192implement: %v", err)
 		}
 
-		// security_review(REQUEST_CHANGES) → implement
 		dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "implement" {
 			t.Fatalf("iteration %d security_review→implement: Advance=%v NextNodeID=%q",
@@ -146,7 +112,6 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 		}
 	}
 
-	// Third pass: implement → security_review → APPROVE → close
 	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("final implement→security_review: %+v", dec)
@@ -163,8 +128,6 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 }
 
-// ── Scenario 3: BLOCK on first ───────────────────────────────────────────────
-
 // TestSRL_BlockOnFirst exercises the ship-blocking security defect path:
 // start → implement → security_review(BLOCK) → close-needs-attention (terminal).
 func TestSRL_BlockOnFirst(t *testing.T) {
@@ -177,33 +140,27 @@ func TestSRL_BlockOnFirst(t *testing.T) {
 	run := srlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implement
 	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
 
-	// implement → security_review
 	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("implement→security_review: %+v", dec)
 	}
 
-	// security_review(BLOCK) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("security_review→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 4: cap-hit fallback ─────────────────────────────────────────────
 
 // TestSRL_CapHitFallback exercises WG-028/EM-043: when the security_review→implement
 // back-edge's traversal_cap (3) is exhausted, the conditional edge is
@@ -218,11 +175,9 @@ func TestSRL_CapHitFallback(t *testing.T) {
 	run := srlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → implement → security_review.
 	workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of security_review→implement.
 	traversalCap := 3
 	for i := 0; i < traversalCap; i++ {
 		if _, err := cycles.Increment(run.RunID, "security_review", "implement", &traversalCap); err != nil {
@@ -230,8 +185,6 @@ func TestSRL_CapHitFallback(t *testing.T) {
 		}
 	}
 
-	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
-	// suppressed; the cascade reports a cap-hit failure.
 	dec := workflow.DecideNextNode(graph, "security_review", srlOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
@@ -243,8 +196,6 @@ func TestSRL_CapHitFallback(t *testing.T) {
 		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
-
-// ── Scenario 5: unrecognized label → unconditional fallback ──────────────────
 
 // TestSRL_UnrecognizedLabelFallback exercises the WG-011 unconditional fallback:
 // when the security reviewer emits a label that matches no conditional edge, the
@@ -259,7 +210,6 @@ func TestSRL_UnrecognizedLabelFallback(t *testing.T) {
 	run := srlRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → implement → security_review.
 	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
@@ -269,7 +219,6 @@ func TestSRL_UnrecognizedLabelFallback(t *testing.T) {
 		t.Fatalf("implement→security_review: %+v", dec)
 	}
 
-	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
 	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
@@ -280,7 +229,6 @@ func TestSRL_UnrecognizedLabelFallback(t *testing.T) {
 			dec.NextNodeID, "close-needs-attention")
 	}
 
-	// close-needs-attention is terminal.
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)

@@ -19,14 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 )
 
-// runDigestSubcommand implements `harmonik digest` per CL-030..CL-033 and
-// specs/process-lifecycle.md §PL-028d.
-//
-// Exit codes:
-//
-//	0  — success
-//	1  — argument or flag error
-//	7  — .harmonik/ directory absent
 func runDigestSubcommand(args []string) int {
 	var projectFlag string
 	var sinceFlag string
@@ -126,7 +118,6 @@ EXAMPLES
 		KerfPath:     kerfPath,
 	}
 
-	// --watch: live TUI polling loop per CL-082.
 	if watchFlag {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
@@ -157,13 +148,10 @@ EXAMPLES
 		return 0
 	}
 
-	// Human-readable output.
 	printHumanDigest(d)
 	return 0
 }
 
-// optionalExecutablePath resolves name when installed and preserves the
-// existing empty-path behavior when the optional tool is absent.
 func optionalExecutablePath(name string) string {
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -172,12 +160,10 @@ func optionalExecutablePath(name string) string {
 	return path
 }
 
-// printHumanDigest renders d as a compact human-readable status sheet.
 func printHumanDigest(d *digest.DigestJSON) {
 	fmt.Printf("harmonik digest  schema_version=%d  generated_at=%s\n\n",
 		d.SchemaVersion, d.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 
-	// Queue
 	fmt.Println("=== Queue ===")
 	if !d.Queue.Present {
 		fmt.Println("  (no active queue)")
@@ -196,7 +182,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// Recent commits
 	if len(d.RecentCommits) > 0 {
 		fmt.Println("\n=== Recent commits (origin/main) ===")
 		for _, c := range d.RecentCommits {
@@ -204,7 +189,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// Ready beads
 	if len(d.ReadyBeads) > 0 {
 		fmt.Printf("\n=== Ready beads (%d) ===\n", len(d.ReadyBeads))
 		for _, b := range d.ReadyBeads {
@@ -212,7 +196,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// In-progress beads
 	if len(d.InProgressBeads) > 0 {
 		fmt.Printf("\n=== In-progress beads (%d) ===\n", len(d.InProgressBeads))
 		for _, b := range d.InProgressBeads {
@@ -220,8 +203,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// Pending decisions (EV-044) — surfaced unconditionally so operators cannot
-	// miss a sentinel trip or other blocking decision_required event.
 	if len(d.PendingDecisions) > 0 {
 		fmt.Printf("\n=== Pending decisions (%d — BLOCKING) ===\n", len(d.PendingDecisions))
 		for _, pd := range d.PendingDecisions {
@@ -233,7 +214,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// Open notes
 	fmt.Printf("\n=== Open notes (%d) ===\n", len(d.OpenNotes))
 	if len(d.OpenNotes) == 0 {
 		fmt.Println("  (none)")
@@ -245,7 +225,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		fmt.Printf("  [+%d more truncated]\n", d.Truncated.OpenNotesOmitted)
 	}
 
-	// Recent events
 	if d.Truncated != nil && d.Truncated.RecentEventsOmitted > 0 {
 		fmt.Printf("\n=== Recent events (%d shown, +%d truncated) ===\n",
 			len(d.RecentEvents), d.Truncated.RecentEventsOmitted)
@@ -260,7 +239,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
-	// Agents online (comms who)
 	fmt.Printf("\n=== Agents online (%d) ===\n", len(d.CommsWho))
 	if len(d.CommsWho) == 0 {
 		fmt.Println("  (none)")
@@ -269,7 +247,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		fmt.Printf("  %s  status=%s\n", w.Agent, w.Status)
 	}
 
-	// Registered crews
 	fmt.Printf("\n=== Registered crews (%d) ===\n", len(d.Crews))
 	if len(d.Crews) == 0 {
 		fmt.Println("  (none)")
@@ -278,7 +255,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		fmt.Printf("  %s  queue=%s  epic=%s\n", c.Name, c.Queue, c.Epic)
 	}
 
-	// tmux fleet
 	fmt.Printf("\n=== tmux fleet (%d sessions) ===\n", len(d.TmuxFleet))
 	if len(d.TmuxFleet) == 0 {
 		fmt.Println("  (no tmux sessions)")
@@ -287,7 +263,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 		fmt.Printf("  %s  windows=%s\n", s.Session, strings.Join(s.Windows, ","))
 	}
 
-	// Paused / failed queues
 	if len(d.PausedQueues) > 0 {
 		fmt.Printf("\n=== PAUSED/FAILED QUEUES (%d) ===\n", len(d.PausedQueues))
 		for _, q := range d.PausedQueues {
@@ -298,13 +273,11 @@ func printHumanDigest(d *digest.DigestJSON) {
 		fmt.Println("  (none — all queues active or idle-healthy)")
 	}
 
-	// kerf map
 	if d.KerfMap != "" {
 		fmt.Println("\n=== Kerf map ===")
 		fmt.Println(d.KerfMap)
 	}
 
-	// Non-fatal errors
 	if len(d.Errors) > 0 {
 		fmt.Println("\n=== Collection errors ===")
 		for _, e := range d.Errors {
@@ -313,8 +286,6 @@ func printHumanDigest(d *digest.DigestJSON) {
 	}
 }
 
-// digestShortID returns the first 8 characters of id, or id itself when it is
-// shorter — a bare id[:8] panics on short IDs.
 func digestShortID(id string) string {
 	if len(id) > 8 {
 		return id[:8]

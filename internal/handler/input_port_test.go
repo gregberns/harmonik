@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// fakeSubSession is a minimal SubstrateSession that does NOT satisfy InputPort.
 type fakeSubSession struct{}
 
 func (fakeSubSession) Kill(context.Context) error { return nil }
@@ -16,8 +15,6 @@ func (fakeSubSession) Outcome() Outcome           { return Outcome{} }
 func (fakeSubSession) PID() int                   { return 0 }
 func (fakeSubSession) Stdout() io.Reader          { return nil }
 
-// fakeInputSession is a SubstrateSession that ALSO satisfies InputPort, recording
-// the last SubmitInput/CloseInput call for assertions.
 type fakeInputSession struct {
 	fakeSubSession
 	lastPayload []byte
@@ -54,7 +51,6 @@ func TestSubstrateAdapter_SendInput_unsupported(t *testing.T) {
 	if !errors.Is(err, ErrDeterministic) {
 		t.Fatalf("ErrInputUnsupported must wrap ErrDeterministic (HC-069); got %v", err)
 	}
-	// CloseStdin on a non-InputPort session is a legitimate nil (no write-end pipe).
 	if err := a.CloseStdin(); err != nil {
 		t.Fatalf("CloseStdin on a non-InputPort session: got %v, want nil", err)
 	}

@@ -1,11 +1,5 @@
 package workers
 
-// telemetry_test.go — unit tests for the pure worker-report parser (WR1).
-//
-// These are intra-package (package workers) tests so they can exercise the
-// unexported parseWorkerReport directly, mirroring the canned-output style of
-// health_test.go without needing SSH or a CommandRunner.
-
 import (
 	"context"
 	"encoding/json"
@@ -17,17 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// sampleDarwinReport is a realistic block of the inline darwin collector output
-// described in 05-phase1-spec.md §The collector. Used by the happy-path parse
-// test. The header declares the page size (4096 here), which the parser reads
-// authoritatively rather than assuming a constant. Values:
-//   - load: 1.20 / 1.10 / 0.95
-//   - ncpu: 8
-//   - memtotal: 17179869184 bytes = 16384 MB
-//   - vm_stat: free 200000 + inactive 100000 pages = 300000 * 4096 / 1MiB = 1171 MB
-//   - swap used = 512.50M → 512 MB
-//   - df -m available column (3rd numeric) = 250000 MB
-//   - claude procs: 3
 const sampleDarwinReport = `load={1.20 1.10 0.95}
 ncpu=8
 memtotal=17179869184
@@ -43,13 +26,6 @@ disk=/dev/disk3s1   476802   220000   250000    47%  1234567  9876543   11%   /S
 claude=3
 `
 
-// sampleAppleSiliconReport mirrors the actual worker (gb-mbp): the vm_stat header
-// declares a 16384-byte page size. With the SAME page counts as sampleDarwinReport
-// the MemFreeMB must be exactly 4× larger (16384/4096), proving the page size is
-// parsed from the header rather than hardcoded. swap here carries a `G` suffix
-// (under load), which must scale ×1024 to MB.
-//   - vm_stat: free 200000 + inactive 100000 pages = 300000 * 16384 / 1MiB = 4687 MB
-//   - swap used = 1.50G → 1536 MB
 const sampleAppleSiliconReport = `load={2.00 1.80 1.50}
 ncpu=12
 memtotal=68719476736
@@ -109,9 +85,6 @@ func TestParseWorkerReport(t *testing.T) {
 			},
 		},
 		{
-			// Apple Silicon worker: header declares 16384-byte pages, so the
-			// SAME page counts yield a 4× larger MemFreeMB than the 4096 case —
-			// proving the page size is parsed from the header, not hardcoded.
 			name: "apple silicon 16384 page size and G-suffix swap",
 			raw:  sampleAppleSiliconReport,
 			want: WorkerReportPayload{
@@ -126,9 +99,6 @@ func TestParseWorkerReport(t *testing.T) {
 			},
 		},
 		{
-			// K-suffix swap (light load) must scale ÷1024 to MB, and absent a
-			// vm_stat header the page size falls back to 16384 (the real worker),
-			// NOT the old 4096 assumption.
 			name: "K-suffix swap and header-less vm_stat fallback to 16384",
 			raw: "load={0.10 0.10 0.10}\n" +
 				"ncpu=8\n" +
@@ -183,7 +153,6 @@ func TestParseWorkerReport(t *testing.T) {
 			if got.ClaudeProcs != tt.want.ClaudeProcs {
 				t.Errorf("ClaudeProcs: got %d, want %d", got.ClaudeProcs, tt.want.ClaudeProcs)
 			}
-			// The parser is pure: it must not invent WorkerName/SampledAt/Problems.
 			if got.WorkerName != "" {
 				t.Errorf("WorkerName: parser must leave empty, got %q", got.WorkerName)
 			}
@@ -197,11 +166,6 @@ func TestParseWorkerReport(t *testing.T) {
 	}
 }
 
-// ---- WR2 (hk-ec9v): CollectReport runner + emit tests ----
-
-// cannedCollectorStdout is realistic output of darwinCollectorScript on an
-// Apple-Silicon worker: the explicit `pagesize=16384` line (WR2) makes MemFreeMB
-// page-size-correct (the old 4096 x86 assumption would under-count it 4×).
 const cannedCollectorStdout = `load=1.20 1.10 0.95
 ncpu=8
 memtotal=17179869184
@@ -216,8 +180,6 @@ claude=3
 pagesize=16384
 `
 
-// collectorRunner is a fake tmux.CommandRunner returning canned stdout for the
-// `sh -c <collector>` invocation. When failExit is true the command exits 1.
 type collectorRunner struct {
 	stdout   string
 	failExit bool
@@ -235,7 +197,6 @@ func (r collectorRunner) Command(ctx context.Context, name string, args ...strin
 
 var _ tmux.CommandRunner = collectorRunner{}
 
-// captureReportEmit returns an EmitFunc that records (type, payload) pairs.
 func captureReportEmit(events *[]struct {
 	Type    core.EventType
 	Payload []byte
@@ -276,7 +237,6 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	}
 	emit := captureReportEmit(&captured)
 
-	// Registry with one reserved slot → InFlight()==1 → claude=3 is accounted for.
 	reg := NewRegistry(Config{Version: 1, Workers: []Worker{reportTestWorker()}})
 	reg.SelectWorker()
 	got, err := CollectReport(context.Background(), runner, reportTestWorker(), reg, DefaultDiskFloorMB, emit)
@@ -299,7 +259,6 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	if got.MemTotalMB != 16384 {
 		t.Errorf("MemTotalMB: got %d, want 16384", got.MemTotalMB)
 	}
-	// (100000 free + 50000 inactive) * 16384 / 1MiB, page-size-correct.
 	wantFreeMB := int64(150000) * 16384 / (1024 * 1024)
 	if got.MemFreeMB != wantFreeMB {
 		t.Errorf("MemFreeMB: got %d, want %d (16384 page size)", got.MemFreeMB, wantFreeMB)
@@ -313,8 +272,6 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	if got.ClaudeProcs != 3 {
 		t.Errorf("ClaudeProcs: got %d, want 3", got.ClaudeProcs)
 	}
-	// DiskFreeMB 400000 >= floor, claude=3 accounted for by the in-flight slot,
-	// no worktrees= line → 0 → no leak. So a clean report carries no Problems.
 	if len(got.Problems) != 0 {
 		t.Errorf("Problems: got %v, want empty for a clean accounted report", got.Problems)
 	}
@@ -422,11 +379,6 @@ func TestParseWorkerReport_Malformed(t *testing.T) {
 	}
 }
 
-// ---- WR4 (hk-b2f9): deriveProblems flag tests ----
-
-// regWithInFlight builds a single-worker Registry and reserves `n` slots so
-// InFlight() == n, exercising the orphaned_claude cross-check. MaxSlots is set
-// high enough that all n reservations succeed.
 func regWithInFlight(n int) *Registry {
 	w := reportTestWorker()
 	w.MaxSlots = n + 4
@@ -439,8 +391,6 @@ func regWithInFlight(n int) *Registry {
 
 func TestDeriveProblems(t *testing.T) {
 	const floor = int64(2048)
-	// The fully-loaded healthy worker holds 1 (main worktree) + maxSlots run
-	// worktrees. With maxSlots=4 the baseline is 5: count 5 must NOT flag, 6 must.
 	const maxSlots = 4
 
 	tests := []struct {
@@ -460,7 +410,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        nil,
 		},
 		{
-			// claude lingers with zero in-flight runs → the chani-handoff symptom.
 			name:        "orphaned_claude — procs running, no in-flight",
 			rep:         WorkerReportPayload{ClaudeProcs: 1, DiskFreeMB: 50000, WorktreeCount: 1},
 			reg:         regWithInFlight(0),
@@ -469,7 +418,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        []string{"orphaned_claude"},
 		},
 		{
-			// Same procs, but a run is in flight → accounted for, no flag.
 			name:        "orphaned_claude NOT set — procs accounted for by in-flight",
 			rep:         WorkerReportPayload{ClaudeProcs: 3, DiskFreeMB: 50000, WorktreeCount: 1},
 			reg:         regWithInFlight(1),
@@ -478,7 +426,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        nil,
 		},
 		{
-			// nil Registry → treated as zero in-flight → orphaned fires.
 			name:        "orphaned_claude — nil registry treated as zero in-flight",
 			rep:         WorkerReportPayload{ClaudeProcs: 2, DiskFreeMB: 50000, WorktreeCount: 1},
 			reg:         nil,
@@ -503,7 +450,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        nil,
 		},
 		{
-			// diskFloorMB <= 0 selects DefaultDiskFloorMB (2048).
 			name:        "disk_pressure — default floor when diskFloorMB <= 0",
 			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: DefaultDiskFloorMB - 1, WorktreeCount: 1},
 			reg:         regWithInFlight(0),
@@ -512,8 +458,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        []string{"disk_pressure"},
 		},
 		{
-			// A fully-loaded healthy worker holds 1+maxSlots worktrees and must NOT
-			// flag — this is the false-flag the off-by-one fix targets.
 			name:        "worktree_leak NOT set — fully loaded at 1+max_slots",
 			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 1 + maxSlots},
 			reg:         regWithInFlight(0),
@@ -522,7 +466,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        nil,
 		},
 		{
-			// One worktree above the fully-loaded baseline (2+max_slots) → real leak.
 			name:        "worktree_leak — one above 1+max_slots baseline",
 			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 2 + maxSlots},
 			reg:         regWithInFlight(0),
@@ -531,8 +474,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        []string{"worktree_leak"},
 		},
 		{
-			// maxSlots unset (0) → baseline falls back to 1+DefaultMaxSlotsFallback.
-			// Count at the fallback baseline must NOT flag; one above must.
 			name:        "worktree_leak NOT set — maxSlots unset uses fallback baseline",
 			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 1 + DefaultMaxSlotsFallback},
 			reg:         regWithInFlight(0),
@@ -549,7 +490,6 @@ func TestDeriveProblems(t *testing.T) {
 			want:        []string{"worktree_leak"},
 		},
 		{
-			// All three conditions at once → stable order: orphaned, disk, worktree.
 			name:        "all three flags in stable order",
 			rep:         WorkerReportPayload{ClaudeProcs: 5, DiskFreeMB: 10, WorktreeCount: 99},
 			reg:         regWithInFlight(0),
@@ -596,21 +536,6 @@ func TestParseWorkerReport_WorktreeCount(t *testing.T) {
 	}
 }
 
-// sampleLinuxReport is a realistic block from linuxCollectorScript output running
-// in a Linux container (e.g. alpine or debian). The key differences from darwin:
-//   - load= has no braces: "0.52 0.31 0.22" (awk '{print $1,$2,$3}' /proc/loadavg)
-//   - No vmstat<< block; no pagesize= line.
-//   - memfree= (MemAvailable bytes) replaces the darwin vm_stat page-count path.
-//   - swapused= (bytes) replaces the darwin `swap=total... used=...` format.
-//
-// Values:
-//   - load: 0.52 / 0.31
-//   - ncpu: 4
-//   - memtotal: 8589934592 bytes → 8192 MB
-//   - memfree: 7516192768 bytes → 7168 MB
-//   - swapused: 536870912 bytes → 512 MB
-//   - disk: 250000 MB available (3rd numeric column)
-//   - claude: 0, worktrees: 2
 const sampleLinuxReport = `load=0.52 0.31 0.22
 ncpu=4
 memtotal=8589934592
@@ -658,15 +583,12 @@ func TestParseWorkerReport_Linux(t *testing.T) {
 		if got.WorktreeCount != 2 {
 			t.Errorf("WorktreeCount: got %d, want 2", got.WorktreeCount)
 		}
-		// Parser must not populate metadata fields.
 		if got.WorkerName != "" || got.SampledAt != "" || got.Problems != nil {
 			t.Errorf("parser must leave WorkerName/SampledAt/Problems empty, got %+v", got)
 		}
 	})
 
 	t.Run("memfree= wins over vm_stat page counts when both present", func(t *testing.T) {
-		// Mixing both keys in one report (e.g. a test that emits both by accident):
-		// memfree= must win; the vm_stat block must be silently ignored.
 		mixed := "load=1.0 1.0 1.0\n" +
 			"ncpu=2\n" +
 			"memtotal=4294967296\n" + // 4096 MB

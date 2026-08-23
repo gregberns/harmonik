@@ -47,10 +47,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
 var namedQueuesRoutingNow = time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 const (
@@ -59,8 +55,6 @@ const (
 	namedQueuesRoutingBareQueueID        = "01906000-0020-7000-8000-000000000022"
 )
 
-// namedQueuesRoutingProjectDir creates a temporary project root pre-populated
-// with .harmonik/ for queue.Persist / queue.Load / queue.HandleQueueList.
 func namedQueuesRoutingProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -71,8 +65,6 @@ func namedQueuesRoutingProjectDir(t *testing.T) string {
 	return dir
 }
 
-// namedQueuesRoutingInvestigateQueue returns the "investigate" fixture queue:
-//   - group0 active, wave, 1 pending item (hk-sc1-inv-a)
 func namedQueuesRoutingInvestigateQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion: 1,
@@ -94,8 +86,6 @@ func namedQueuesRoutingInvestigateQueue() queue.Queue {
 	}
 }
 
-// namedQueuesRoutingMainQueue returns the "main" fixture queue:
-//   - group0 active, wave, 2 pending items (hk-sc1-main-a, hk-sc1-main-b)
 func namedQueuesRoutingMainQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion: 1,
@@ -118,10 +108,6 @@ func namedQueuesRoutingMainQueue() queue.Queue {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SC1 — two named queues both active: queue list shows both
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesRouting_SC1_BothQueuesAppearInList verifies that after
 // persisting "investigate" and "main" queues, HandleQueueList returns exactly
 // two summaries — one per named queue — both with status=active.
@@ -139,7 +125,6 @@ func TestNamedQueuesRouting_SC1_BothQueuesAppearInList(t *testing.T) {
 	investigateQ := namedQueuesRoutingInvestigateQueue()
 	mainQ := namedQueuesRoutingMainQueue()
 
-	// Persist both queues to simulate --queue investigate + --queue main submits.
 	if err := queue.Persist(ctx, projectDir, &investigateQ); err != nil {
 		t.Fatalf("Persist(investigate): %v", err)
 	}
@@ -147,7 +132,6 @@ func TestNamedQueuesRouting_SC1_BothQueuesAppearInList(t *testing.T) {
 		t.Fatalf("Persist(main): %v", err)
 	}
 
-	// queue list must enumerate both named queues.
 	resp, rpcErr := queue.HandleQueueList(ctx, projectDir)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueList: unexpected RPCError: code=%d msg=%s", rpcErr.Code, rpcErr.Message)
@@ -157,7 +141,6 @@ func TestNamedQueuesRouting_SC1_BothQueuesAppearInList(t *testing.T) {
 		t.Fatalf("HandleQueueList: Queues len = %d, want 2 (investigate + main)", len(resp.Queues))
 	}
 
-	// Collect names for assertion — order is filesystem-dependent.
 	byName := make(map[string]queue.QueueSummary, 2)
 	for _, s := range resp.Queues {
 		byName[s.Name] = s
@@ -216,7 +199,6 @@ func TestNamedQueuesRouting_SC1_EachQueueLoadableByName(t *testing.T) {
 		t.Fatalf("Persist(main): %v", err)
 	}
 
-	// Load "investigate" — must return the correct queue.
 	loadedInv, err := queue.Load(ctx, projectDir, "investigate")
 	if err != nil {
 		t.Fatalf("Load(investigate): %v", err)
@@ -232,7 +214,6 @@ func TestNamedQueuesRouting_SC1_EachQueueLoadableByName(t *testing.T) {
 		t.Errorf("loaded investigate.Name = %q, want %q", loadedInv.Name, "investigate")
 	}
 
-	// Load "main" — must return the correct queue without contamination from investigate.
 	loadedMain, err := queue.Load(ctx, projectDir, "main")
 	if err != nil {
 		t.Fatalf("Load(main): %v", err)
@@ -248,7 +229,6 @@ func TestNamedQueuesRouting_SC1_EachQueueLoadableByName(t *testing.T) {
 		t.Errorf("loaded main.Name = %q, want %q", loadedMain.Name, "main")
 	}
 
-	// Item counts must be per-queue, not mixed.
 	if len(loadedInv.Groups[0].Items) != 1 {
 		t.Errorf("loaded investigate group0 items = %d, want 1", len(loadedInv.Groups[0].Items))
 	}
@@ -274,13 +254,11 @@ func TestNamedQueuesRouting_SC1_PersistInvestigateDoesNotOverwriteMain(t *testin
 		t.Fatalf("Persist(main): %v", err)
 	}
 
-	// Now persist "investigate" — must not touch main.json.
 	investigateQ := namedQueuesRoutingInvestigateQueue()
 	if err := queue.Persist(ctx, projectDir, &investigateQ); err != nil {
 		t.Fatalf("Persist(investigate): %v", err)
 	}
 
-	// Reload main and verify its state is unchanged.
 	loadedMain, err := queue.Load(ctx, projectDir, "main")
 	if err != nil {
 		t.Fatalf("Load(main) after investigate persist: %v", err)
@@ -297,10 +275,6 @@ func TestNamedQueuesRouting_SC1_PersistInvestigateDoesNotOverwriteMain(t *testin
 			len(loadedMain.Groups[0].Items))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC5 — bare submit (no --queue flag) lands in main
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesRouting_SC5_BareSubmitNormalisesToMain verifies that
 // NormaliseQueueName("") returns "main" — the semantic contract for bare
@@ -329,7 +303,6 @@ func TestNamedQueuesRouting_SC5_BareSubmitPersistsAsMain(t *testing.T) {
 	projectDir := namedQueuesRoutingProjectDir(t)
 	ctx := context.Background()
 
-	// Bare-submit queue: Name is empty — Persist normalises it to "main".
 	bareQ := queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       namedQueuesRoutingBareQueueID,
@@ -353,7 +326,6 @@ func TestNamedQueuesRouting_SC5_BareSubmitPersistsAsMain(t *testing.T) {
 		t.Fatalf("Persist(bare, Name=\"\"): %v", err)
 	}
 
-	// HandleQueueList must return exactly one queue named "main".
 	resp, rpcErr := queue.HandleQueueList(ctx, projectDir)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueList: unexpected RPCError: code=%d msg=%s", rpcErr.Code, rpcErr.Message)
@@ -405,7 +377,6 @@ func TestNamedQueuesRouting_SC5_BareSubmitLoadableByMainName(t *testing.T) {
 		t.Fatalf("Persist(bare, Name=\"\"): %v", err)
 	}
 
-	// Load must succeed using "main" as the name.
 	loaded, err := queue.Load(ctx, projectDir, "main")
 	if err != nil {
 		t.Fatalf("Load(\"main\") after bare Persist: %v", err)
@@ -461,19 +432,12 @@ func TestNamedQueuesRouting_SC5_OnlyMainPresentAfterBareSubmit(t *testing.T) {
 		t.Fatalf("HandleQueueList: unexpected RPCError: code=%d msg=%s", rpcErr.Code, rpcErr.Message)
 	}
 
-	// Exactly one queue — bare submit must not split into two queue files.
 	if len(resp.Queues) != 1 {
 		t.Errorf("HandleQueueList after bare submit: %d queues, want 1; names: %v",
 			len(resp.Queues), queueSummaryNames(resp.Queues))
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-// queueSummaryNames extracts just the Name field from each QueueSummary for
-// use in failure messages.
 func queueSummaryNames(summaries []queue.QueueSummary) []string {
 	names := make([]string, len(summaries))
 	for i, s := range summaries {

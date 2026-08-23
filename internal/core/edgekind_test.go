@@ -20,9 +20,6 @@ func TestEdgeKindValid(t *testing.T) {
 		}
 	}
 
-	// Valid() returns false for values outside the spec-declared set — this is
-	// the caller's signal that the value is an unknown pass-through, NOT an error
-	// condition on the read surface.
 	invalid := []EdgeKind{
 		"",
 		"parent_child",       // underscore vs hyphen
@@ -53,7 +50,6 @@ func TestEdgeKindUnmarshalText(t *testing.T) {
 		want    EdgeKind
 		wantErr bool
 	}{
-		// Spec-declared write-surface values — must round-trip cleanly.
 		{
 			name:  "valid parent-child",
 			input: `{"kind":"parent-child"}`,
@@ -127,8 +123,6 @@ func TestEdgeKindUnmarshalText(t *testing.T) {
 	}
 }
 
-// edgeKindToleranceFixtureKnownValues returns the four spec-declared EdgeKind
-// constants, used to verify that pass-through values do not collide with them.
 func edgeKindToleranceFixtureKnownValues() []EdgeKind {
 	return []EdgeKind{
 		EdgeKindParentChild,
@@ -144,7 +138,6 @@ func edgeKindToleranceFixtureKnownValues() []EdgeKind {
 func TestEdgeKindReadSurfaceTolerance(t *testing.T) {
 	t.Parallel()
 
-	// Concrete Beads values known to appear in production dep graphs.
 	beadsValues := []string{"related", "blocks", "parent-child"}
 	for _, v := range beadsValues {
 		var ek EdgeKind
@@ -156,8 +149,6 @@ func TestEdgeKindReadSurfaceTolerance(t *testing.T) {
 		}
 	}
 
-	// Pass-through unknown values must NOT round-trip through MarshalText —
-	// the write surface stays locked to the spec subset.
 	passThrough := EdgeKind("related")
 	if passThrough.Valid() {
 		t.Errorf("Valid() should return false for pass-through value %q", passThrough)
@@ -166,7 +157,6 @@ func TestEdgeKindReadSurfaceTolerance(t *testing.T) {
 		t.Errorf("MarshalText should reject pass-through value %q to protect write surface", passThrough)
 	}
 
-	// All four known constants must still pass Valid() and MarshalText.
 	for _, ek := range edgeKindToleranceFixtureKnownValues() {
 		if !ek.Valid() {
 			t.Errorf("Valid() should return true for declared constant %q", ek)
@@ -188,7 +178,6 @@ func TestEdgeKindMarshalText(t *testing.T) {
 		t.Errorf("MarshalText = %q, want %q", string(got), "parent-child")
 	}
 
-	// All four valid values should marshal without error.
 	validKinds := []EdgeKind{
 		EdgeKindParentChild,
 		EdgeKindBlocks,
@@ -205,7 +194,6 @@ func TestEdgeKindMarshalText(t *testing.T) {
 		}
 	}
 
-	// Unknown pass-through values must be rejected on the write surface.
 	unknownValues := []EdgeKind{
 		"bogus",
 		"related",

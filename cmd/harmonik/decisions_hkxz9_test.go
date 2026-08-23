@@ -1,24 +1,5 @@
 package main
 
-// decisions_hkxz9_test.go — unit tests for the agent-side `harmonik decisions`
-// CLI (hitl-decisions component K2, bead hk-xz9).
-//
-// Coverage (per 07-tasks.md K2 acceptance criteria, fast-gate level — the live
-// raise→answer→wake end-to-end is the hk-rz4 scenario, a later bead):
-//   - verb/flag parsing: raise requires --question + ≥1 --option; withdraw
-//     requires exactly one <id> + a valid --reason; missing-socket → exit 17.
-//   - the client-side re-project fold (decisionsClientProjection) matches K3's
-//     open-set semantics on a synthetic log (add on needed/event_id, remove on
-//     terminal/decision_id, dedupe on event_id — N2).
-//   - the "already-terminal → return immediately" check (decisionTerminalInLog)
-//     finds a logged terminal and applies first-writer-wins (N3).
-//   - decisionTerminalFromEvent matches a live stream event by decision_id.
-//
-// Helpers use the prefix "dx9" so they do not collide with other cmd/harmonik
-// test helpers (e.g. the comms_* tests).
-//
-// Bead ref: hk-xz9 (K2).
-
 import (
 	"encoding/json"
 	"fmt"
@@ -32,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// decisionRow is one open decision in the client-side projection (the cmd/harmonik
-// mirror of internal/daemon.Decision — kept separate because the package boundary
-// forbids importing the daemon type). Test-only: it backs decisionsClientProjection,
-// the parity fold that this file's tests assert against K3's open-set semantics.
 type decisionRow struct {
 	DecisionID   string
 	Question     string
@@ -44,16 +21,6 @@ type decisionRow struct {
 	ContextLink  string
 }
 
-// decisionsClientProjection is the client-side equivalent of K3's
-// decisionsProjection (internal/daemon, un-importable from cmd/harmonik). It is
-// the SAME fold: ADD on decision_needed keyed by the event's own event_id;
-// REMOVE on decision_resolved/decision_withdrawn keyed by payload.decision_id;
-// dedupe on event_id (N2). Returns the OPEN set keyed by decision_id.
-//
-// It lives in the test file because production code has no reader: the wait path
-// uses the lighter decisionTerminalInLog (one decision, terminal only). This full
-// fold exists solely to assert, in this file's tests, that the K2-side semantics
-// match K3's.
 func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 	var zeroID core.EventID
 	open := make(map[string]decisionRow)
@@ -98,15 +65,11 @@ func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
 		default:
-			// Every other event type does not change the open decision set.
 		}
 	}
 	return open
 }
 
-// Canonical UUIDv7-shaped event_ids (lexicographic == chronological). Suffix
-// encodes role: 1xxx = decision_needed (the decision_id), 2xxx = resolved,
-// 3xxx = withdrawn.
 const (
 	dx9D1 = "01965b00-0000-7000-8000-00000000a0a1" // needed → stays open
 	dx9D2 = "01965b00-0000-7000-8000-00000000a0a2" // needed → resolved
@@ -118,8 +81,6 @@ const (
 	dx9W3  = "01965b00-0000-7000-8000-00000000c0c3" // withdraws dx9D3
 )
 
-// dx9Event builds one EV-001 JSONL envelope line, mirroring how the daemon
-// writes events (and the K3 test's dprojEvent).
 func dx9Event(t *testing.T, eventID, evType string, payload any) string {
 	t.Helper()
 	payloadBytes, err := json.Marshal(payload)
@@ -166,8 +127,6 @@ func dx9Withdrawn(t *testing.T, eventID, decisionID, reason, by string) string {
 	})
 }
 
-// dx9BuildEventsFile writes a temp events.jsonl with the given lines and returns
-// the path.
 func dx9BuildEventsFile(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -198,10 +157,6 @@ func dx9OpenKeys(open map[string]decisionRow) []string {
 	sort.Strings(keys)
 	return keys
 }
-
-// ----------------------------------------------------------------------------
-// Client-side re-project fold parity (matches K3 decisionsProjection semantics)
-// ----------------------------------------------------------------------------
 
 func TestDecisionsClientProjection_OpenSet(t *testing.T) {
 	lines := []string{
@@ -240,10 +195,6 @@ func TestDecisionsClientProjection_MissingFileEmpty(t *testing.T) {
 		t.Fatalf("missing file should yield empty open set, got %d entries", len(open))
 	}
 }
-
-// ----------------------------------------------------------------------------
-// Already-terminal scan (the §4 step-3 "return immediately" branch)
-// ----------------------------------------------------------------------------
 
 func TestDecisionTerminalInLog_Resolved(t *testing.T) {
 	lines := []string{
@@ -297,10 +248,6 @@ func TestDecisionTerminalInLog_StillOpen(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// Live-stream terminal matcher
-// ----------------------------------------------------------------------------
-
 func TestDecisionTerminalFromEvent(t *testing.T) {
 	resolved := core.Event{
 		Type:    core.EventTypeDecisionResolved,
@@ -309,7 +256,6 @@ func TestDecisionTerminalFromEvent(t *testing.T) {
 	if term, ok := decisionTerminalFromEvent(resolved, dx9D2); !ok || !term.Resolved || term.ChosenOption != "eu" {
 		t.Errorf("resolved match failed: ok=%v term=%+v", ok, term)
 	}
-	// Wrong decision_id → no match (the wait filters by decision_id).
 	if _, ok := decisionTerminalFromEvent(resolved, dx9D1); ok {
 		t.Error("event for a different decision_id must NOT match")
 	}
@@ -322,7 +268,6 @@ func TestDecisionTerminalFromEvent(t *testing.T) {
 		t.Errorf("withdrawn match failed: ok=%v term=%+v", ok, term)
 	}
 
-	// A non-terminal type (e.g. heartbeat / decision_needed) never matches.
 	heartbeat := core.Event{Type: "heartbeat", Payload: json.RawMessage(`{}`)}
 	if _, ok := decisionTerminalFromEvent(heartbeat, dx9D2); ok {
 		t.Error("heartbeat must NOT match as a terminal")
@@ -338,23 +283,16 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-// ----------------------------------------------------------------------------
-// Verb / flag parsing
-// ----------------------------------------------------------------------------
-
 func TestDecisionsRaise_RequiresQuestionAndOption(t *testing.T) {
-	// No flags → missing --question → exit 1.
 	if rc := runDecisionsRaiseSubcommand([]string{"--option", "a"}); rc != 1 {
 		t.Errorf("raise without --question: rc = %d, want 1", rc)
 	}
-	// --question but no --option → exit 1.
 	if rc := runDecisionsRaiseSubcommand([]string{"--question", "Q?"}); rc != 1 {
 		t.Errorf("raise without --option: rc = %d, want 1", rc)
 	}
 }
 
 func TestDecisionsRaise_MissingDaemonExit17(t *testing.T) {
-	// Well-formed flags but a project with no daemon socket → exit 17.
 	dir := t.TempDir()
 	rc := runDecisionsRaiseSubcommand([]string{
 		"--question", "Ship?", "--option", "yes", "--option", "no",
@@ -366,15 +304,12 @@ func TestDecisionsRaise_MissingDaemonExit17(t *testing.T) {
 }
 
 func TestDecisionsWithdraw_RequiresIDAndValidReason(t *testing.T) {
-	// No positional id → exit 1.
 	if rc := runDecisionsWithdrawSubcommand([]string{"--reason", "self_obsoleted"}); rc != 1 {
 		t.Errorf("withdraw without id: rc = %d, want 1", rc)
 	}
-	// Two positionals → exit 1.
 	if rc := runDecisionsWithdrawSubcommand([]string{"id1", "id2"}); rc != 1 {
 		t.Errorf("withdraw with two ids: rc = %d, want 1", rc)
 	}
-	// Invalid reason → exit 1 (rejected before any dial).
 	if rc := runDecisionsWithdrawSubcommand([]string{dx9D1, "--reason", "bogus"}); rc != 1 {
 		t.Errorf("withdraw with bogus reason: rc = %d, want 1", rc)
 	}
@@ -410,15 +345,11 @@ func TestDecisionsSubcommand_Routing(t *testing.T) {
 	if rc := runDecisionsSubcommand([]string{"bogus-verb"}); rc != 2 {
 		t.Errorf("decisions bogus-verb: rc = %d, want 2", rc)
 	}
-	// list/show/answer are K4 — now routed. The only forbidden outcome is the
-	// unrecognised-verb exit code 2: getting anything else proves they routed.
-	// Point each at an absent socket so list cannot hang on a real daemon.
 	absentSock := filepath.Join(t.TempDir(), "no-daemon.sock")
 	cases := []struct {
 		verb string
 		args []string
 	}{
-		// list → routes, dials the (absent) socket → exit 17 (NOT 2).
 		{"list", []string{"list", "--socket", absentSock}},
 		// show with no id → routes, arg-validation → exit 1 (NOT 2).
 		{"show", []string{"show"}},

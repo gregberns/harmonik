@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// idemDefaultFixtureIdempotentRoles returns the set of NodeRole values that
-// must map to IdempotencyClassIdempotent per EM-010.
-// Helper prefix: idemDefaultFixture (bead hk-b3f.10).
 func idemDefaultFixtureIdempotentRoles() []NodeRole {
 	return []NodeRole{
 		NodeRoleReviewer,
@@ -19,8 +16,6 @@ func idemDefaultFixtureIdempotentRoles() []NodeRole {
 	}
 }
 
-// idemDefaultFixtureNonIdempotentRoles returns the set of NodeRole values that
-// must map to IdempotencyClassNonIdempotent per EM-010.
 func idemDefaultFixtureNonIdempotentRoles() []NodeRole {
 	return []NodeRole{
 		NodeRoleBuilder,

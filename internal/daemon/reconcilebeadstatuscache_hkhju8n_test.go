@@ -50,7 +50,6 @@ func TestCachedOrphanStatusReader_HitAndMiss(t *testing.T) {
 		}
 	}
 
-	// Deleted / non-resettable bead → ErrBeadNotFound (skip reset).
 	if _, err := c.ShowBead(context.Background(), "hk-deleted"); !errors.Is(err, brcli.ErrBeadNotFound) {
 		t.Fatalf("ShowBead(missing): want ErrBeadNotFound, got %v", err)
 	}

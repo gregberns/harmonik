@@ -1,10 +1,5 @@
 package keeper
 
-// step_test.go — L0 unit tests for the PURE Step reactor (T7 acceptance §4):
-// table-driven transition cases proving the machine independently of the
-// shell, plus a substrate.Run round-trip (SyntheticSource + FakeEffector)
-// proving the seam instantiation (design §0 / SK-009).
-
 import (
 	"context"
 	"encoding/json"
@@ -15,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// stepTestConfig returns a defaulted CyclerConfig suitable for driving the
-// pure machine directly (no ports are ever touched by Step).
 func stepTestConfig() *CyclerConfig {
 	cfg := &CyclerConfig{
 		AgentName:  "step-agent",
@@ -50,7 +43,6 @@ func assertKinds(t *testing.T, got []Action, want []ActionKind) {
 	}
 }
 
-// gaugeTickAt builds a passing-ladder GaugeTick entry event.
 func gaugeTickAt(at time.Time, cycleID string) Event {
 	return Event{
 		Kind:    EvGaugeTick,
@@ -140,8 +132,6 @@ func TestStep_LadderFail_Gate5dDefersTransiently(t *testing.T) {
 		t.Fatal("machine left Idle on a Gate-5d deferral")
 	}
 
-	// The same machine retries without a release command when the activity
-	// window expires.
 	retry := gaugeTickAt(at.Add(3*time.Minute), "cyc-step-retry")
 	retry.Gates.LastUserTurnAt = ev.Gates.LastUserTurnAt
 	actions = m.Step(retry)
@@ -448,8 +438,6 @@ func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-008", At: at})
 	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-008", SessionID: "sess-1", Source: "idle_marker", At: at})
 
-	// Windows 1 and 2: retries left → defensive re-inject (with the attempt-
-	// incremented clear_sent re-emit, SK-012) + re-arm.
 	for i := 0; i < 2; i++ {
 		actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
 		assertKinds(t, actions, []ActionKind{ActInjectClear, ActEmit, ActArmTimer})
@@ -464,7 +452,6 @@ func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
 			t.Fatalf("clear_sent attempt = %d; want %d", cs.Attempt, i+2)
 		}
 	}
-	// Window 3: attempt == retries → unconfirmed + brief.
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
 	if actions[0].Kind != ActEmit || actions[0].Type != core.EventTypeSessionKeeperClearUnconfirmed {
 		t.Fatalf("exhausted settle action[0] = %+v; want Emit(clear_unconfirmed)", actions[0])
@@ -496,7 +483,6 @@ func TestStep_SubstrateRunRoundTrip(t *testing.T) {
 	}
 	got := kinds(eff.Actions())
 	want := []ActionKind{
-		// cycle open
 		ActWriteJournal, ActEmit, ActSendEscape, ActInjectHandoffCmd, ActWriteJournal, ActArmTimer,
 		// confirm (journal + handoff_written + cancel + model-done arm, T8)
 		ActWriteJournal, ActEmit, ActCancelTimer, ActArmTimer,

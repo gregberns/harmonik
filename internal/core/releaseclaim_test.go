@@ -14,7 +14,6 @@ import (
 	"testing"
 )
 
-// rc31bLocalClaim builds a valid claim for local work: no endpoint.
 func rc31bLocalClaim() ReleaseClaim {
 	return ReleaseClaim{
 		DispatchHeadSHA: "1111111111111111111111111111111111111111",
@@ -23,7 +22,6 @@ func rc31bLocalClaim() ReleaseClaim {
 	}
 }
 
-// rc31bRemoteEndpoint builds a fully-populated endpoint.
 func rc31bRemoteEndpoint() RemoteEndpoint {
 	return RemoteEndpoint{
 		WorkerName: "worker-alpha",
@@ -32,15 +30,12 @@ func rc31bRemoteEndpoint() RemoteEndpoint {
 	}
 }
 
-// rc31bRemoteClaim builds a valid claim for a remote run: all endpoint fields.
 func rc31bRemoteClaim() ReleaseClaim {
 	ep := rc31bRemoteEndpoint()
 	c := rc31bLocalClaim()
 	c.RemoteEndpoint = &ep
 	return c
 }
-
-// --- RemoteEndpoint.Valid ---
 
 func TestRemoteEndpointValid_AllFieldsSet(t *testing.T) {
 	t.Parallel()
@@ -76,8 +71,6 @@ func TestRemoteEndpointValid_EachFieldRequired(t *testing.T) {
 		})
 	}
 }
-
-// --- ReleaseClaim.Valid ---
 
 func TestReleaseClaimValid_LocalClaim(t *testing.T) {
 	t.Parallel()
@@ -161,8 +154,6 @@ func TestReleaseClaimIsLocal(t *testing.T) {
 	}
 }
 
-// --- Transition.Valid interaction ---
-
 // TestTransitionValid_NilReleaseClaimIsNormal proves the field is optional.
 // Only the final pre-release checkpoint carries a claim; every other transition
 // carries none and must stay valid.
@@ -190,8 +181,6 @@ func TestTransitionValid_InvalidReleaseClaimRejected(t *testing.T) {
 		t.Error("Valid() = true for a transition carrying an incomplete claim, want false")
 	}
 }
-
-// --- wire format ---
 
 // TestMarshalTransitionRecord_ReleaseClaimAbsentWhenNil proves the key is
 // omitted, not written as null. §6.1 declares the claim "absent on all other

@@ -49,7 +49,6 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 		}
 	}
 
-	// Acquire supervisor.lock (fd-lifetime; kernel releases on shim exit).
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		if shimWritef(stderr, "harmonik supervise _shim: open lock: %v\n", err) != nil {
@@ -57,8 +56,6 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 		}
 		return 1
 	}
-	// Blocking flock: wait until any prior holder releases (brief race window
-	// after start exits).
 	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX); err != nil {
 		if closeErr := lockFd.Close(); closeErr != nil {
 			return 1
@@ -68,7 +65,6 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 		}
 		return 1
 	}
-	// lockFd is intentionally kept open for the shim's lifetime.
 	defer func() {
 		if closeErr := lockFd.Close(); closeErr != nil && exitCode == 0 {
 			exitCode = 1
@@ -78,7 +74,6 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 		}
 	}()
 
-	// Write own PID (PL-019d).
 	if err := WritePidfile(projectDir, os.Getpid()); err != nil {
 		if shimWritef(stderr, "harmonik supervise _shim: write pidfile: %v\n", err) != nil {
 			return 1
@@ -86,8 +81,6 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 		return 1
 	}
 
-	// Read config.json (PL-019e): supervisor re-reads config at startup, must
-	// NOT hot-reload.
 	cfg, err := ReadConfig(projectDir)
 	if err != nil {
 		if shimWritef(stderr, "harmonik supervise _shim: read config: %v\n", err) != nil {
@@ -97,26 +90,18 @@ func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 	}
 
 	if len(cfg.Command) == 0 {
-		// No supervisee configured: watchdog-only mode — revive the daemon but
-		// start no cognition/flywheel process. This is the expected state when
-		// the operator has dropped the flywheel command (hk-5gdqu).
 		return runWatchdogOnly(cfg, projectDir, stdout, stderr)
 	}
 
 	if !watchRestart {
-		// Non-restart mode: exec-replace with the supervisee directly.
 		return runDirect(cfg, stderr)
 	}
 
-	// Watch-restart mode: use internal/supervise.Supervisor.
 	return runWithSupervisor(cfg, projectDir, stderr)
 }
 
-// runDirect exec-replaces the shim with the supervisee command.
-// Uses a scoped Pi env (CI-005) rather than blanket os.Environ().
 func runDirect(cfg Config, stderr io.Writer) int {
 	bin := cfg.Command[0]
-	// Use exec.LookPath for correct PATH resolution including exec-bit check.
 	resolved, err := exec.LookPath(bin)
 	if err != nil {
 		if shimWritef(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err) != nil {
@@ -134,12 +119,6 @@ func runDirect(cfg Config, stderr io.Writer) int {
 	return 0 // never reached
 }
 
-// buildPiEnv constructs the Pi process environment per specs/credential-isolation.md
-// §4.3 CI-005: strips all credential deny-list keys from the ambient env, then
-// injects apiKey as ANTHROPIC_API_KEY when non-empty.
-//
-// This is the scoped-injection builder: it never passes os.Environ() directly
-// to the Pi process, ensuring no ambient credential leaks through inheritance.
 func buildPiEnv(apiKey string) []string {
 	ambient := os.Environ()
 	env := make([]string, 0, len(ambient)+1)
@@ -159,9 +138,6 @@ func buildPiEnv(apiKey string) []string {
 	return env
 }
 
-// runWithSupervisor runs the supervisee under internal/supervise.Supervisor
-// with restart policy from config.json, and concurrently runs a DaemonWatchdog
-// that revives the harmonik daemon if it dies (supervisor-owned revival, CL-083).
 func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -207,17 +183,8 @@ func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 	ctx, stop := setupSignals()
 	defer stop()
 
-	// Boot-time asset version-skew check (hk-yqx9): compare the RUNNING binary's
-	// embedded asset bundle against what this project last installed
-	// (.harmonik/assets.lock) and, on skew, notify the captain to run sync-assets.
-	// Best-effort, detection+notify only — never writes project files; runs ONCE at
-	// boot (a binary swap requires a supervisor restart, which re-runs this).
 	RunAssetSkewCheck(projectDir, cfg, log, stderr)
 
-	// Daemon watchdog: runs alongside the Pi supervisor, reviving the harmonik
-	// daemon when it is detected dead via socket probe (CL-083 supervisor-owned
-	// revival). The daemon command is built from the current executable and the
-	// project directory known to the shim.
 	if daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent); len(daemonCmd) > 0 {
 		dwSpec := daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd)
 		dwSpec.CrashLogPath = filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log")
@@ -248,9 +215,6 @@ func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 	return 0
 }
 
-// runWatchdogOnly runs only the DaemonWatchdog (no supervisee) and blocks until
-// SIGINT/SIGTERM. Used when config.json has no Command field — the operator
-// dropped the flywheel supervisee but still wants daemon auto-revive (hk-5gdqu).
 func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -268,10 +232,6 @@ func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) in
 	}
 
 	dwSpec := daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd)
-	// Capture daemon crash output in watchdog-only mode too — without this the
-	// child's fd 1/2 go to /dev/null and every panic stack is silently discarded,
-	// leaving the very failures the watchdog exists to recover from undiagnosable
-	// (mirrors the full-supervisor path above).
 	dwSpec.CrashLogPath = filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log")
 	dw := supervise.NewDaemonWatchdog(dwSpec, log)
 
@@ -292,28 +252,15 @@ func shimWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// buildDaemonCmd constructs the harmonik daemon revival argv from the current
-// executable and the project parameters. The daemon is restarted with
-// --no-auto-pull (queue-only, safe default per process-lifecycle.md §"Start the
-// daemon once") and --max-concurrent when cfg.MaxConcurrent is set.
-// Returns nil when the executable path cannot be resolved.
 func buildDaemonCmd(projectDir string, maxConcurrent int) []string {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil
 	}
-	// `start daemon` is the only spelling that starts a daemon
-	// (hk-cli-flag-first-starts-daemon-gjhiy). The old flag-first form now prints
-	// help and exits 2, so a revival argv without this verb never revives.
 	cmd := []string{exe, "start", "daemon", "--project", projectDir, "--no-auto-pull"}
 	if maxConcurrent > 0 {
 		cmd = append(cmd, "--max-concurrent", fmt.Sprintf("%d", maxConcurrent))
 	}
-	// Env-gated tier-4 global default harness override (hk-y01k6 flag is
-	// launch-only with no config/env path of its own). Lets an operator flip the
-	// whole fleet's default implementer/reviewer off Claude (e.g. HARMONIK_DEFAULT_HARNESS=pi
-	// during a token crunch) without a code change: set/unset the env + restart the
-	// supervisor. Empty (unset) preserves the built-in claude-code fallback.
 	if dh := os.Getenv("HARMONIK_DEFAULT_HARNESS"); dh != "" {
 		cmd = append(cmd, "--default-harness", dh)
 	}
@@ -341,8 +288,6 @@ func durationFromMS(ms int) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// setupSignals returns a context cancelled on SIGINT/SIGTERM and a stop func.
-// Imported via os/signal to avoid pulling in signal package at package level.
 func setupSignals() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

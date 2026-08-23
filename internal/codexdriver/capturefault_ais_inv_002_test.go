@@ -11,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// alwaysFailWriter is a capture sink that errors on every Write — a full disk /
-// broken redaction sink. Under AIS-INV-002 the tee must degrade to uncaptured
-// and the live run must be entirely unaffected.
 type alwaysFailWriter struct{ n int }
 
 func (w *alwaysFailWriter) Write(p []byte) (int, error) {
@@ -53,8 +50,6 @@ func TestCaptureFaultDoesNotAbortRun(t *testing.T) {
 	if err := sess.Wait(ctx); err != nil {
 		t.Fatalf("Wait: %v (capture fault must not wedge the run)", err)
 	}
-	// The capture sinks were exercised (proving the tee tried) yet the run was
-	// unaffected — degrade-to-uncaptured, not fail-closed.
 	if inCap.n == 0 && outCap.n == 0 {
 		t.Fatalf("capture sinks never written — test did not exercise the tee")
 	}

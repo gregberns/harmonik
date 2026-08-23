@@ -1,13 +1,5 @@
 package daemon
 
-// export_sandbox_session_test.go — test-seam exports for the internal/daemon
-// sandbox-gating seams in sandboxgate.go. package daemon test file; see
-// export_test.go header for the seam rationale. Bead: hk-ecrxy.
-//
-// The sessioncontext_chb023.go seams (persistClaudeSessionID,
-// newSessionIDInterceptor) were removed with that file when the review-loop
-// driver — their sole production caller — was retired.
-
 import (
 	"context"
 

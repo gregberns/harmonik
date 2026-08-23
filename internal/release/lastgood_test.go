@@ -53,7 +53,6 @@ func TestPinLastGoodBinary(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state", "last-good-binary")
 
-	// Create a fake binary to pin.
 	srcBin := filepath.Join(dir, "harmonik")
 	content := []byte("fake binary content for testing")
 	if err := os.WriteFile(srcBin, content, 0o600); err != nil {
@@ -64,7 +63,6 @@ func TestPinLastGoodBinary(t *testing.T) {
 		t.Fatalf("PinLastGoodBinary: %v", err)
 	}
 
-	// Verify the .last-good file was created.
 	dstBin := srcBin + ".last-good"
 	//nolint:gosec // G304: dstBin is constructed under t.TempDir.
 	got, err := os.ReadFile(dstBin)
@@ -75,7 +73,6 @@ func TestPinLastGoodBinary(t *testing.T) {
 		t.Errorf("last-good content mismatch: got %q, want %q", got, content)
 	}
 
-	// Verify state file records the .last-good path.
 	recorded, err := release.ReadLastGoodBinary(statePath)
 	if err != nil {
 		t.Fatalf("ReadLastGoodBinary after pin: %v", err)
@@ -89,7 +86,6 @@ func TestRestoreLastGoodBinary(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "last-good-binary")
 
-	// Set up a last-good binary.
 	lastGoodContent := []byte("last-good binary content")
 	lastGoodBin := filepath.Join(dir, "harmonik.last-good")
 	if err := os.WriteFile(lastGoodBin, lastGoodContent, 0o600); err != nil {
@@ -99,7 +95,6 @@ func TestRestoreLastGoodBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Restore to a new target path.
 	dstBin := filepath.Join(dir, "harmonik")
 	if err := os.WriteFile(dstBin, []byte("bad binary"), 0o600); err != nil {
 		t.Fatal(err)

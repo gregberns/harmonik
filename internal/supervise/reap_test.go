@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// fakeReapAdapter is a hand-rolled ReapAdapter for the orphan-reaper tests. It
-// records every KillSession call so a test can assert EXACTLY which sessions
-// were reaped (and, by omission, which were preserved).
 type fakeReapAdapter struct {
 	sessions []FlywheelSession
 	listErr  error
@@ -58,18 +55,15 @@ func TestReap_KillsOnlyDeadFlywheel_LeavesDefaultUntouched(t *testing.T) {
 		t.Fatalf("ReapOrphanFlywheelSessions: %v", err)
 	}
 
-	// Exactly the dead flywheel was killed.
 	if len(adapter.killed) != 1 || adapter.killed[0] != flywheel {
 		t.Fatalf("expected only %q killed, got %v", flywheel, adapter.killed)
 	}
-	// -default must never appear in the kill list.
 	for _, k := range adapter.killed {
 		if k == def {
 			t.Fatalf("reaper killed the -default session %q — invariant I3 violated", def)
 		}
 	}
 
-	// One tmux_orphan_reaped event, for the flywheel.
 	if len(result.Events) != 1 {
 		t.Fatalf("expected 1 event, got %d: %+v", len(result.Events), result.Events)
 	}
@@ -89,7 +83,6 @@ func TestReap_KillsOnlyDeadFlywheel_LeavesDefaultUntouched(t *testing.T) {
 // adapter returns an empty list (no error), so the reaper is a clean no-op —
 // zero scanned, zero reaped, zero events, no error.
 func TestReap_NoTmuxServer_CleanNoOp(t *testing.T) {
-	// Empty adapter models "tmux server absent / no sessions".
 	adapter := &fakeReapAdapter{sessions: nil}
 	result, err := ReapOrphanFlywheelSessions(context.Background(), adapter, ReapOptions{})
 	if err != nil {

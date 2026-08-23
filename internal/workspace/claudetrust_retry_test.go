@@ -1,48 +1,5 @@
 package workspace
 
-// claudetrust_retry_test.go — the trust writer must confirm its own write landed
-// on disk, and repair it when it did not.
-//
-// WHAT WENT WRONG, twice.
-//
-// First in production. At max-concurrent 3, two of three workers parked on Claude
-// Code's folder-trust modal. That modal renders BEFORE SessionStart, so the hook
-// never fires, agent_ready is never synthesized, and the run dies at its ready
-// deadline with nothing saying why. On disk the failed worktree's
-// projects[<realpath>].hasTrustDialogAccepted was ABSENT even though
-// EnsureWorktreeTrust had run and reported success. The clobberer is Claude Code
-// itself: a live claude process rewrites the shared config wholesale from its own
-// in-memory snapshot and does not take our advisory lock. More locking cannot
-// exclude a writer that never asks for the lock, so ensureWorktreeTrustAt writes,
-// RE-READS to verify, retries the whole read-modify-write on a lost key, and
-// fails structurally when the key never sticks.
-//
-// Then in the test suite. The unit tests for that loop were removed in a sweep
-// that deleted 681 test files, and nothing replaced them. trustPostWriteHook —
-// the seam the production file carries for exactly this purpose, invoked between
-// the write and the verifying re-read — was left with zero users, so every
-// behavior below was unmeasured. This file re-adopts the seam.
-//
-// The claims:
-//
-//  1. with nobody clobbering, the key persists and the config is written exactly
-//     ONCE — verification must not cost extra writes in the normal case;
-//  2. a clobber that erases our key once is detected and repaired, and the repair
-//     lands on top of the other writer's file rather than reverting it;
-//  3. a clobber that erases our key after EVERY write exhausts the bounded
-//     attempts and returns a structural error, never a success the disk does not
-//     support;
-//  4. an already-trusted path short-circuits on the lock-free probe — it does not
-//     write, it does not create the sidecar lockfile, and it does not queue
-//     behind an in-process write that already holds trustWriteMu; and
-//  5. a config that stays unparseable keeps the loop iterating for its whole
-//     budget, then reports the decode error itself, and is left byte-for-byte as
-//     it was found;
-//  6. repeated clobbers each get their own fresh read, so the loop does not fall
-//     back on a stale snapshot once it has retried a first time; and
-//  7. a config that is unparseable in ONE snapshot because a foreign writer is
-//     mid-rewrite is READ AGAIN and repaired once it settles.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -56,18 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// withTrustPostWriteHook installs fn as the post-write seam for the duration of
-// the test. It takes trustWriteMu for the swap because the write path reads the
-// var while holding that mutex — that is what makes the access race-free.
-//
-// The tests here are NOT parallel: the hook is one package-level var, so a
-// sequential test owns it exclusively (Go pauses t.Parallel() tests for the
-// duration of the sequential ones).
-//
-// fn runs on whatever goroutine reached the write, and the hooks built below
-// report failures through t.Fatalf, which Go documents as callable only from the
-// test goroutine. So a test that drives ensureWorktreeTrustAt from a goroutine it
-// spawned must not install one of those hooks.
 func withTrustPostWriteHook(t *testing.T, fn func(cfgPath string)) {
 	t.Helper()
 	trustWriteMu.Lock()
@@ -81,28 +26,11 @@ func withTrustPostWriteHook(t *testing.T, fn func(cfgPath string)) {
 	})
 }
 
-// clobberAddedProject is a project key the clobbering writer INVENTS, and
-// clobberGenerationKey is a top-level key it bumps on every clobber. Both are
-// deliberately content no snapshot the trust writer read before its own write
-// can contain.
 const (
 	clobberAddedProject  = "/added/by/the/clobberer"
 	clobberGenerationKey = "clobbererGeneration"
 )
 
-// clobberTrustEntry rewrites cfgPath the way a live claude process does: it drops
-// worktreePath's trust entry (the key it never knew about) and, critically, ALSO
-// COMMITS CONTENT OF ITS OWN — a new project entry plus a bumped generation
-// counter.
-//
-// The added content is what makes the repair assertion mean something. If the
-// trust writer retried from a snapshot it took before its first write instead of
-// re-reading disk, a delete-only clobber would be undetectable: writing back the
-// stale snapshot is byte-indistinguishable from re-applying onto a fresh read,
-// because the snapshot already holds everything except our own key. Adding
-// content breaks that symmetry — a stale-snapshot retry silently erases
-// generation n, which is the lost-update behavior that would make harmonik the
-// clobberer of a sibling worker's trust entry.
 func clobberTrustEntry(t *testing.T, cfgPath, worktreePath string, generation int) {
 	t.Helper()
 	cfg := readConfigMap(t, cfgPath)
@@ -120,16 +48,6 @@ func clobberTrustEntry(t *testing.T, cfgPath, worktreePath string, generation in
 	writeConfigMap(t, cfgPath, cfg)
 }
 
-// trustClobberHook builds a post-write hook that clobbers cfgPath on its first
-// `times` invocations and leaves it alone afterwards.
-//
-// *writes counts every time the write path reached the post-write point. That is
-// a count of WRITES THAT REACHED THE FILE, not of loop iterations: the seam fires
-// after the atomic rename, and an attempt that finds the entry already trusted
-// under the lock returns before it, having written nothing. Writes to any OTHER
-// config path are ignored, so the shared hook cannot disturb an unrelated test.
-//
-// *clobbers reports the last generation the clobberer committed.
 func trustClobberHook(t *testing.T, cfgPath, worktreePath string, times int, writes, clobbers *int) func(string) {
 	t.Helper()
 	return func(gotPath string) {
@@ -144,10 +62,6 @@ func trustClobberHook(t *testing.T, cfgPath, worktreePath string, times int, wri
 	}
 }
 
-// assertClobberContentSurvived asserts that everything the clobbering writer
-// committed at `generation` is still in the config. This is the
-// merge-onto-fresh-read property: the repair write must land on top of the other
-// writer's file, never revert it.
 func assertClobberContentSurvived(t *testing.T, cfgPath string, generation int) {
 	t.Helper()
 	cfg := readConfigMap(t, cfgPath)
@@ -167,9 +81,6 @@ func assertClobberContentSurvived(t *testing.T, cfgPath string, generation int) 
 	}
 }
 
-// trustedInConfig reports whether cfgPath records worktreePath as trusted. It
-// reads the file itself rather than calling alreadyTrustedAt, so the assertion
-// does not depend on the function the test is checking.
 func trustedInConfig(t *testing.T, cfgPath, worktreePath string) bool {
 	t.Helper()
 	cfg := readConfigMap(t, cfgPath)
@@ -178,7 +89,6 @@ func trustedInConfig(t *testing.T, cfgPath, worktreePath string) bool {
 	return trustDialogAccepted(entry)
 }
 
-// readConfigMap parses cfgPath as a JSON object or fails the test.
 func readConfigMap(t *testing.T, cfgPath string) map[string]any {
 	t.Helper()
 	data := mustReadFile(t, cfgPath)
@@ -189,8 +99,6 @@ func readConfigMap(t *testing.T, cfgPath string) map[string]any {
 	return cfg
 }
 
-// writeConfigMap writes cfg to cfgPath in the same indented shape Claude Code and
-// the trust writer both use.
 func writeConfigMap(t *testing.T, cfgPath string, cfg map[string]any) {
 	t.Helper()
 	if err := os.WriteFile(cfgPath, marshalConfig(t, cfgPath, cfg), 0o600); err != nil {
@@ -198,8 +106,6 @@ func writeConfigMap(t *testing.T, cfgPath string, cfg map[string]any) {
 	}
 }
 
-// marshalConfig renders cfg as the bytes writeConfigMap would put on disk. The
-// torn-read fixture needs the bytes themselves, so it can put half of them there.
 func marshalConfig(t *testing.T, cfgPath string, cfg map[string]any) []byte {
 	t.Helper()
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -250,9 +156,6 @@ func TestTrustRetry_TransientClobberIsRepaired(t *testing.T) {
 	cfgPath := filepath.Join(dir, ".claude.json")
 	worktreePath := filepath.Join(dir, "worktrees", "run-transient")
 
-	// Content that predates our first read. Preserving it only proves the write
-	// merges; the generation assertion below is the one that proves the RETRY
-	// re-reads.
 	writeConfigMap(t, cfgPath, map[string]any{
 		"theme": "dark",
 		"projects": map[string]any{
@@ -292,10 +195,6 @@ func TestTrustRetry_TransientClobberIsRepaired(t *testing.T) {
 		t.Error("the repair dropped an unrelated project entry")
 	}
 
-	// The discriminating assertion: content the clobberer committed AFTER our
-	// first read must survive too. Only a retry that re-reads disk can preserve
-	// it — a retry that re-applied its own earlier snapshot would silently revert
-	// it, and the two are indistinguishable without this check.
 	if clobbers != 1 {
 		t.Fatalf("the clobberer fired %d times, want 1; the fixture is wrong and the assertions below "+
 			"do not mean what they say", clobbers)
@@ -327,8 +226,6 @@ func TestTrustRetry_MultiRoundClobberMergesEachTime(t *testing.T) {
 		},
 	})
 
-	// Two clobbers, which the 4-attempt budget absorbs: write, clobber, write,
-	// clobber, write, and the third one sticks.
 	writes, clobbers := 0, 0
 	withTrustPostWriteHook(t, trustClobberHook(t, cfgPath, worktreePath, 2, &writes, &clobbers))
 
@@ -344,13 +241,10 @@ func TestTrustRetry_MultiRoundClobberMergesEachTime(t *testing.T) {
 		t.Errorf("the call reported success but projects[%q].hasTrustDialogAccepted is not on disk "+
 			"after the second repair", worktreePath)
 	}
-	// The fixture guard: the assertion below names a generation, so the clobberer
-	// must actually have reached it.
 	if clobbers != 2 {
 		t.Fatalf("the clobberer fired %d times, want 2; the fixture is wrong and the assertion below "+
 			"does not mean what it says", clobbers)
 	}
-	// Generation 2, not 1. This is the whole point of the test.
 	assertClobberContentSurvived(t, cfgPath, clobbers)
 }
 
@@ -368,7 +262,6 @@ func TestTrustRetry_PersistentClobberFailsStructurally(t *testing.T) {
 	worktreePath := filepath.Join(dir, "worktrees", "run-persistent")
 
 	writes, clobbers := 0, 0
-	// Clobber every attempt: the count is larger than any attempt budget.
 	withTrustPostWriteHook(t, trustClobberHook(t, cfgPath, worktreePath, 1<<30, &writes, &clobbers))
 
 	err := ensureWorktreeTrustAt(worktreePath, cfgPath)
@@ -386,13 +279,9 @@ func TestTrustRetry_PersistentClobberFailsStructurally(t *testing.T) {
 			"(trustWriteMaxAttempts = %d); a loop that gives up early leaves a repairable launch broken",
 			writes, trustWriteMaxAttempts)
 	}
-	// The message is the only artifact whoever hits this failure will read. It has
-	// to name what did not persist and what most likely did it.
 	if !strings.Contains(err.Error(), "did not persist") || !strings.Contains(err.Error(), "concurrent writer") {
 		t.Errorf("the error does not explain the failure to whoever finds it: %v", err)
 	}
-	// And the disk really is untrusted, so this is a true failure and not a broken
-	// verification read reporting one.
 	if trustedInConfig(t, cfgPath, worktreePath) {
 		t.Errorf("the call returned an error although projects[%q].hasTrustDialogAccepted IS on disk", worktreePath)
 	}
@@ -425,7 +314,6 @@ func TestTrustRetry_AlreadyTrustedPathTakesNoWrite(t *testing.T) {
 			worktreePath: map[string]any{"hasTrustDialogAccepted": true},
 		},
 	})
-	// Backdate the file so a rewrite is visible even at a coarse mtime resolution.
 	old := time.Now().Add(-2 * time.Second)
 	if err := os.Chtimes(cfgPath, old, old); err != nil {
 		t.Fatalf("backdate %s: %v", cfgPath, err)
@@ -445,26 +333,17 @@ func TestTrustRetry_AlreadyTrustedPathTakesNoWrite(t *testing.T) {
 	if after := configMtime(t, cfgPath); !after.Equal(before) {
 		t.Errorf("an already-trusted path rewrote the config (mtime %v -> %v)", before, after)
 	}
-	// trustUpsertOnce is the only thing that creates this file on the path under
-	// test, so its absence proves the probe returned before the write path.
-	// (pruneWorktreeTrustAt opens the same lockfile, and nothing here calls it.)
 	if _, statErr := os.Stat(cfgPath + ".lock"); !os.IsNotExist(statErr) {
 		t.Errorf("an already-trusted path created the sidecar lockfile %s (stat err %v), so it took the "+
 			"advisory flock and joined the write contention the lock-free probe exists to avoid",
 			cfgPath+".lock", statErr)
 	}
-	// Positive evidence that the fixture really was trusted, so "no write" is the
-	// short-circuit and not a call that failed to reach anything.
 	if !trustedInConfig(t, cfgPath, worktreePath) {
 		t.Errorf("projects[%q].hasTrustDialogAccepted is not on disk, so this test never exercised "+
 			"the already-trusted path", worktreePath)
 	}
 }
 
-// trustFastPathWait bounds how long an already-trusted call may take while
-// another trust write holds trustWriteMu. The fast path answers from one
-// read-only stat-and-parse, so it is orders of magnitude under this. The margin
-// is for a loaded CI box, not for the behavior under test.
 const trustFastPathWait = 2 * time.Second
 
 // TestTrustRetry_AlreadyTrustedPathDoesNotWaitOnAWriteInFlight is the other half
@@ -493,19 +372,11 @@ func TestTrustRetry_AlreadyTrustedPathDoesNotWaitOnAWriteInFlight(t *testing.T) 
 		},
 	})
 
-	// No post-write hook here, deliberately. This is the one test that drives the
-	// write path from a SPAWNED goroutine, and the hook's helpers report through
-	// t.Fatalf, which Go documents as callable only from the test goroutine. The
-	// "no write happens" half of claim 4 is already measured by
-	// TestTrustRetry_AlreadyTrustedPathTakesNoWrite, on the test goroutine.
 	trustWriteMu.Lock()
 
 	done := make(chan error, 1)
 	go func() { done <- ensureWorktreeTrustAt(worktreePath, cfgPath) }()
 
-	// t.Errorf, never t.Fatalf, until the mutex is released below. A Fatalf here
-	// ends the goroutine with trustWriteMu still held, and every later test that
-	// needs a trust write then blocks forever.
 	var blocked bool
 	select {
 	case err := <-done:
@@ -519,24 +390,18 @@ func TestTrustRetry_AlreadyTrustedPathDoesNotWaitOnAWriteInFlight(t *testing.T) 
 	trustWriteMu.Unlock()
 
 	if blocked {
-		// The call was only waiting, so it completes now. Drain it rather than
-		// leaving the goroutine to write into a TempDir this test is about to
-		// remove. The wait is bounded: so is the write loop.
 		<-done
 		t.Fatalf("an already-trusted path did not return within %v while another trust write held "+
 			"trustWriteMu; it is queueing behind in-process writes instead of answering from the "+
 			"lock-free probe, so every repeat launch can stall for the write loop's full budget",
 			trustFastPathWait)
 	}
-	// Positive evidence the fixture really was trusted, so a prompt return is the
-	// fast path and not a call that failed to reach anything.
 	if !trustedInConfig(t, cfgPath, worktreePath) {
 		t.Errorf("projects[%q].hasTrustDialogAccepted is not on disk, so this test never exercised "+
 			"the already-trusted path", worktreePath)
 	}
 }
 
-// configMtime returns cfgPath's modification time.
 func configMtime(t *testing.T, cfgPath string) time.Time {
 	t.Helper()
 	info, err := os.Stat(cfgPath)
@@ -546,10 +411,6 @@ func configMtime(t *testing.T, cfgPath string) time.Time {
 	return info.ModTime()
 }
 
-// tornSettleDelay is how long the foreign writer's rewrite stays half-landed. It
-// must fall between the verifying re-read that follows the tear (the very next
-// thing the loop does, microseconds later) and the next attempt's read, one full
-// backoff away. A quarter of the backoff sits far from both ends.
 const tornSettleDelay = trustWriteRetryBackoff / 4
 
 // TestTrustRetry_TornReadRecovers is claim 7, and it is the reason the decode
@@ -572,17 +433,12 @@ func TestTrustRetry_TornReadRecovers(t *testing.T) {
 	cfgPath := filepath.Join(dir, ".claude.json")
 	worktreePath := filepath.Join(dir, "worktrees", "run-torn-read")
 
-	// What the foreign writer's COMPLETED rewrite looks like: valid, carrying its
-	// own content, and with no trust entry of ours — so the loop still has work to
-	// do once it can read the file again.
 	settled := marshalConfig(t, cfgPath, map[string]any{
 		"theme": "dark",
 		"projects": map[string]any{
 			clobberAddedProject: map[string]any{"hasTrustDialogAccepted": true},
 		},
 	})
-	// And what a reader sees in the middle of it, since that writer does not
-	// rename atomically.
 	torn := settled[:len(settled)/2]
 	if json.Valid(torn) {
 		t.Fatalf("the torn fixture still parses, so this test cannot produce a decode error: %s", torn)
@@ -590,8 +446,6 @@ func TestTrustRetry_TornReadRecovers(t *testing.T) {
 
 	writeConfigMap(t, cfgPath, map[string]any{"projects": map[string]any{}})
 
-	// The settler runs off the test goroutine, so it reports through a channel
-	// rather than t.Fatalf.
 	settleErr := make(chan error, 1)
 	writes := 0
 	tornOnce := false
@@ -617,11 +471,6 @@ func TestTrustRetry_TornReadRecovers(t *testing.T) {
 	err := ensureWorktreeTrustAt(worktreePath, cfgPath)
 	elapsed := time.Since(start)
 
-	// Guarded, because the settler exists only if the hook fired. An unconditional
-	// receive here blocks forever whenever the write path never reaches the seam —
-	// which is what a regression looks like — and a hung test panics the whole
-	// package binary at the go-test timeout, destroying every other result. Reading
-	// tornOnce is race-free: the hook sets it on this goroutine, inside the call.
 	if tornOnce {
 		if settleWriteErr := <-settleErr; settleWriteErr != nil {
 			t.Fatalf("the settling writer failed, so this test never exercised a torn read: %v", settleWriteErr)
@@ -639,9 +488,6 @@ func TestTrustRetry_TornReadRecovers(t *testing.T) {
 		t.Errorf("the repair took %v, less than one backoff (%v), so it never re-read after the torn "+
 			"snapshot", elapsed, trustWriteRetryBackoff)
 	}
-	// The recovery must MERGE onto what the settling writer left, exactly as a
-	// clobber repair does. A loop that rewrote its pre-tear snapshot would drop
-	// this and become the lost-update clobberer itself.
 	cfg := readConfigMap(t, cfgPath)
 	if cfg["theme"] != "dark" {
 		t.Errorf("the repair dropped the settling writer's top-level key; theme = %v", cfg["theme"])
@@ -683,8 +529,6 @@ func TestTrustRetry_PermanentlyCorruptConfigReportsTheDecodeError(t *testing.T) 
 	cfgPath := filepath.Join(dir, ".claude.json")
 	worktreePath := filepath.Join(dir, "worktrees", "run-corrupt")
 
-	// A truncated object carrying a second project entry: what a reader sees
-	// mid-rewrite, and it makes the damage visible if the file is replaced.
 	corrupt := []byte(`{"projects": {"/some/other/project": {"hasTrustDi`)
 	if err := os.WriteFile(cfgPath, corrupt, 0o600); err != nil {
 		t.Fatalf("seed the corrupt config: %v", err)
@@ -694,8 +538,6 @@ func TestTrustRetry_PermanentlyCorruptConfigReportsTheDecodeError(t *testing.T) 
 	err := ensureWorktreeTrustAt(worktreePath, cfgPath)
 	elapsed := time.Since(start)
 
-	// Checked before the error, because "the file is intact" is the claim that
-	// matters most and it holds whatever the call returned.
 	if got := mustReadFile(t, cfgPath); !bytes.Equal(got, corrupt) {
 		t.Errorf("the corrupt config was overwritten, which discards every other project entry and "+
 			"top-level key in it.\nbefore: %s\nafter:  %s", corrupt, got)
@@ -707,9 +549,6 @@ func TestTrustRetry_PermanentlyCorruptConfigReportsTheDecodeError(t *testing.T) 
 		t.Errorf("the error is not the decode failure itself, so whoever reads it cannot tell a corrupt "+
 			"config from a clobbering writer: %v", err)
 	}
-	// trustWriteMaxAttempts attempts carry that many minus one backoffs between
-	// them. Anything faster did not re-read, and a torn read of a foreign writer
-	// would then be reported as a corrupt config off its first snapshot.
 	if wantAtLeast := time.Duration(trustWriteMaxAttempts-1) * trustWriteRetryBackoff; elapsed < wantAtLeast {
 		t.Errorf("the decode failure was reported after %v, sooner than the %v of backoff that %d attempts "+
 			"cost; the config was read once and never re-read, so a torn read gets no second chance",

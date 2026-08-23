@@ -1,22 +1,5 @@
 package daemon_test
 
-// dot_reviewer_terminal_test.go — a reviewer node must be judged on what it
-// REPORTED, not only on the verdict file it left behind.
-//
-// The graph's reviewer branch read .harmonik/review.json and returned SUCCESS
-// with preferred_label=APPROVE without ever looking at the reviewer's socket
-// outcome, its exit code, or its progress-stream watcher. So a reviewer that
-// wrote APPROVE and then declared failure, crashed, or corrupted its progress
-// stream still routed the APPROVE edge to the success terminal, and the work
-// merged.
-//
-// This is the reviewer-side twin of dot_node_terminal_test.go, which covers the
-// implementer side. The implementer fix left reviewers out on purpose, because a
-// reviewer that exits non-zero is a budget kill about as often as a crash. The
-// budget case therefore gets its own test here: it must still merge.
-//
-// Bead: hk-sb8jy. Twin of hk-v4wer.
-
 import (
 	"context"
 	"encoding/json"
@@ -28,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// dotReviewerGraph adds a reviewer node to the post-exit fixture's topology:
-// start → implement → review → close on APPROVE, close-needs-attention
-// otherwise. It mirrors standard-bead.dot's review node and its APPROVE edge,
-// minus the commit_gate (which needs `make` and the whole suite).
 const dotReviewerGraph = `digraph "dot-reviewer-fixture" {
     schema_version="1";
     version="1.0";
@@ -88,19 +67,12 @@ const dotReviewerGraph = `digraph "dot-reviewer-fixture" {
 }
 `
 
-// dotReviewerApproveJSON is a well-formed APPROVE verdict. The reviewer branch
-// parses it, so it must satisfy workspace.ReadReviewVerdict: schema_version 1, a
-// declared verdict value, and non-empty notes.
 const dotReviewerApproveJSON = `{"schema_version":1,"verdict":"APPROVE","flags":[],` +
 	`"notes":"fixture reviewer approves the committed work."}`
 
-// dotReviewerBudgetSentinelJSON is the marker pasteInjectQuitOnReviewFile writes
-// when it kills a reviewer whose verdict budget ran out. Its presence is what
-// tells the daemon that a non-zero exit was its own kill and not a crash.
 const dotReviewerBudgetSentinelJSON = `{"budget_ms":600000,"changed_lines":42,` +
 	`"elapsed_ms":611000,"reason":"budget-exceeded"}`
 
-// dotReviewerHandlerOpts describes the reviewer half of the fixture handler.
 type dotReviewerHandlerOpts struct {
 	// ExitCode is what the reviewer process exits with after writing its verdict.
 	ExitCode int
@@ -118,15 +90,6 @@ type dotReviewerHandlerOpts struct {
 	StaleBudgetSentinelFromImplementer bool
 }
 
-// dotReviewerHandler writes the ONE /bin/sh script both agentic nodes run. The
-// fixture gives every node the same handler argv, so the script decides which
-// node it is by looking for the reviewer's brief: dispatchDotAgenticNode writes
-// .harmonik/review-target.md into the worktree before it launches a reviewer
-// node and never before an implementer node.
-//
-// The implementer half commits real work. That is load-bearing: without a commit
-// the run fails on the no-commit guard for an unrelated reason, the reviewer
-// never runs, and every assertion below passes for free.
 func dotReviewerHandler(t *testing.T, bead core.BeadID, opts dotReviewerHandlerOpts) string {
 	t.Helper()
 
@@ -156,18 +119,6 @@ func dotReviewerHandler(t *testing.T, bead core.BeadID, opts dotReviewerHandlerO
 	return dotFixtureHandlerScript(t, "dot-reviewer-fixture.sh", body)
 }
 
-// dotReviewerHookStore answers with nil for the FIRST claude session it is asked
-// about and with Outcome for every session after it.
-//
-// The HookStore interface is keyed by (run, claude session) and knows nothing
-// about graph nodes, but the fixture's implementer node always runs to
-// completion before its reviewer node launches, so session order is node order.
-// That lets a test say "the implementer reported nothing and the reviewer
-// reported a failure" through a store that cannot name either node.
-//
-// SessionCount is what keeps a test built on it honest: if the reviewer ever
-// reused the implementer's session the store would silently answer nil for both,
-// and the FAILURE_SIGNAL leg would be asserting nothing.
 type dotReviewerHookStore struct {
 	Outcome json.RawMessage
 
@@ -227,7 +178,6 @@ func (*dotReviewerHookStore) SetAgentReadyCallback(_, _ string, cb func()) {
 	}
 }
 
-// runDotReviewerBead drives one bead through the reviewer graph.
 func runDotReviewerBead(t *testing.T, beadID core.BeadID, handlerOpts dotReviewerHandlerOpts, opts dotFixtureOpts) dotFixtureResult {
 	t.Helper()
 	opts.Graph = dotReviewerGraph

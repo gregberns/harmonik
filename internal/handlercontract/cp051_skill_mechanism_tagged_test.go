@@ -33,8 +33,6 @@ import (
 	"testing"
 )
 
-// cp051FixtureDirPath returns the absolute path to the handlercontract package
-// directory by resolving relative to this test file's source location.
 func cp051FixtureDirPath(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -47,9 +45,6 @@ func cp051FixtureDirPath(t *testing.T) string {
 // cp051FixtureTagsLine matches a "Tags: mechanism" line in a doc comment.
 var cp051FixtureTagsLine = regexp.MustCompile(`\bTags:.*\bmechanism\b`)
 
-// cp051FixtureFindTypeDoc parses the named Go source file and returns the
-// godoc comment text for the named type declaration, or ("", false) if the
-// type is not found.
 func cp051FixtureFindTypeDoc(t *testing.T, srcPath, typeName string) (string, bool) {
 	t.Helper()
 

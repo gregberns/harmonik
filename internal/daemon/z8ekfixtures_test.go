@@ -1,24 +1,5 @@
 package daemon
 
-// z8ekfixtures_test.go — the three hk-z8ek remote-run fixtures that could not
-// leave with claudelaunchspec_remote_hkz8ek_test.go.
-//
-// P2 unit E1b moved that file to
-// internal/harness/claude/launchspec_remote_test.go. Three daemon tests that
-// STAY consume these helpers and exercise the codex/pi remote-dispatch paths,
-// not the claude launch builder:
-//
-//   - conformance_m4c7_test.go            (z8ekRunID, newNoOpRecorderZ8ek)
-//   - harnessregistry_remote_hkr36v_test.go (all three)
-//   - harnessregistry_pi_remote_runner_m4c4_test.go (z8ekRunID, newNoOpRecorderZ8ek)
-//
-// A Go test helper is not visible across a package boundary, so the ~25 lines
-// are duplicated rather than shared: inventing a cross-package test-fixture
-// package to save them would be exactly the new seam the extraction plan
-// forbids (plans/2026-07-21-p2-extraction/E1b-claude.md §1, R4).
-//
-// Kept byte-identical to the copies that moved. If one changes, change both.
-
 import (
 	"context"
 	"encoding/base64"
@@ -32,9 +13,6 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// newNoOpRecorderZ8ek returns a RecordingRunner that succeeds for every call
-// without side effects (`true`). The caller's context is passed to the command
-// so a cancelled run does not leave the stub process behind.
 func newNoOpRecorderZ8ek() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
 		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -52,8 +30,6 @@ func z8ekRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// decodeBase64FromScript extracts and decodes the base64 payload from a
-// `... printf %s '<b64>' | base64 -d > '<path>'` remote-write script.
 func decodeBase64FromScript(t *testing.T, script string) string {
 	t.Helper()
 	const pfx = "printf %s '"

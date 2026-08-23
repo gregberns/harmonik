@@ -1,15 +1,5 @@
 package supervisecmd
 
-// loopstatus.go — CognitionLoopStatus type and loop-status.json file surface.
-//
-// The cognition loop writes its current LoopStatus to
-// .harmonik/cognition/loop-status.json. `harmonik supervise status` reads this
-// file and surfaces the status to the operator, satisfying ON-008a's
-// `budget-paused` / `circuit-tripped` surfacing obligation.
-//
-// Spec ref: specs/operator-nfr.md §4.3 ON-008a;
-//           specs/cognition-loop.md §6 LoopStatus type.
-
 import (
 	"encoding/json"
 	"errors"

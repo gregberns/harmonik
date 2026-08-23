@@ -2,8 +2,6 @@ package core
 
 import "testing"
 
-// noopPolicyFixture returns a NoOpPolicyEngine for use in tests that need a
-// production-interface PolicyEngine value (hk-b3f.89).
 func noopPolicyFixture(t *testing.T) PolicyEngine {
 	t.Helper()
 	return NoOpPolicyEngine{}
@@ -14,7 +12,6 @@ func noopPolicyFixture(t *testing.T) PolicyEngine {
 func TestNoOpPolicyEngine_ImplementsInterface(t *testing.T) {
 	t.Parallel()
 
-	// Compile-time assertion via interface conversion.
 	var _ PolicyEngine = NoOpPolicyEngine{}
 }
 
@@ -58,7 +55,6 @@ func TestNoOpPolicyEngine_EvaluateNoConstraints(t *testing.T) {
 func TestNoOpPolicyEngine_EvaluateViaInterface(t *testing.T) {
 	t.Parallel()
 
-	// Simulate the composition root wiring.
 	var eng PolicyEngine = NoOpPolicyEngine{}
 
 	verdict := eng.Evaluate(PolicyEvalContext{})

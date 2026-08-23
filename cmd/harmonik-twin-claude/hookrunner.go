@@ -38,12 +38,6 @@ import (
 	"time"
 )
 
-// twinHookFixture — per-bead helper prefix for test helpers in this file.
-// (Actual test helpers are in hookrunner_test.go; prefix declared here as a
-// godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
-
-// extractExitCode returns the OS exit code from err when err is an *exec.ExitError,
-// or -1 when the subprocess could not be launched at all.
 func extractExitCode(err error) int {
 	if err == nil {
 		return 0
@@ -55,20 +49,6 @@ func extractExitCode(err error) int {
 	return -1
 }
 
-// callStopHook executes the Stop hook command with worktreePath as cwd.
-//
-// Returns the exit code and wall-clock duration in milliseconds.
-// Any error launching the subprocess (binary not found, etc.) is mapped to
-// exit code -1 (distinguishable from real OS exit codes).
-//
-// The hook is run with:
-//   - os.Environ() passed through (includes HARMONIK_* vars injected at twin launch).
-//   - CLAUDE_HOOK_TYPE=Stop appended.
-//   - Cwd = worktreePath.
-//
-// stdout and stderr of the hook are not captured; they flow through to the
-// twin's own fds (inherited). The daemon's hook-bridge reader ingests the hook
-// output exactly as it would from real claude.
 func callStopHook(ctx context.Context, hookCommand, worktreePath string) (exitCode, durationMs int) {
 	start := time.Now()
 
@@ -77,8 +57,6 @@ func callStopHook(ctx context.Context, hookCommand, worktreePath string) (exitCo
 	cmd := exec.CommandContext(ctx, hookCommand)
 	cmd.Dir = worktreePath
 	cmd.Env = env
-	// stdout/stderr not captured; inherit parent fds so daemon hook-bridge sees
-	// hook output exactly as it would from real claude.
 
 	err := cmd.Run()
 	elapsed := int(time.Since(start).Milliseconds())
@@ -86,11 +64,9 @@ func callStopHook(ctx context.Context, hookCommand, worktreePath string) (exitCo
 	if err == nil {
 		return 0, elapsed
 	}
-	// Extract exit code from ExitError when available.
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		return ee.ExitCode(), elapsed
 	}
-	// Subprocess could not be launched at all (e.g., binary not found).
 	return -1, elapsed
 }

@@ -167,7 +167,6 @@ func (l *Ledger) QueryEvents(eventsPath string, q LaneQuery) ([]core.Event, erro
 	return matches, nil
 }
 
-// scan is the shared implementation used by Scan and ScanOnSubscriptionGap.
 func (l *Ledger) scan(eventsPath string) ([]core.Event, error) {
 	fresh := make([]core.Event, 0)
 	var lastSeen core.EventID
@@ -193,7 +192,6 @@ func (l *Ledger) scan(eventsPath string) ([]core.Event, error) {
 	return fresh, nil
 }
 
-// writeCursor writes the current cursor to the cursor file.
 func (l *Ledger) writeCursor() error {
 	return os.WriteFile(l.cursorPath, []byte(l.cursor.String()+"\n"), 0o600)
 }

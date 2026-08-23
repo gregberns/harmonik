@@ -1,11 +1,5 @@
 package main
 
-// eval_metrics_feeders_k5bxl_test.go
-// Sensors for `harmonik eval metrics` (WS3b, bead hk-eval-prog-quality-feeders-k5bxl).
-//
-// Covers the pure feeder functions plus an integration path through
-// evalComputeMetrics against a scratch git repo with a minimal evaltask package.
-
 import (
 	"encoding/json"
 	"os"
@@ -14,8 +8,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// ── Pure-function unit tests ──────────────────────────────────────────────────
 
 func TestEvalDeriveTaskID(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -149,11 +141,8 @@ func TestEvalReadBeadIDFromTask_NoBead(t *testing.T) {
 	}
 }
 
-// ── gofmt feeder ─────────────────────────────────────────────────────────────
-
 func TestEvalGofmtCheck_Clean(t *testing.T) {
 	dir := t.TempDir()
-	// Well-formatted Go file.
 	src := "package foo\n\nfunc Foo() {}\n"
 	f := filepath.Join(dir, "foo.go")
 	if err := os.WriteFile(f, []byte(src), 0o600); err != nil {
@@ -170,7 +159,6 @@ func TestEvalGofmtCheck_Clean(t *testing.T) {
 
 func TestEvalGofmtCheck_Unformatted(t *testing.T) {
 	dir := t.TempDir()
-	// Intentionally unformatted (extra space before {).
 	src := "package foo\n\nfunc Foo()  { }\n"
 	f := filepath.Join(dir, "bar.go")
 	if err := os.WriteFile(f, []byte(src), 0o600); err != nil {
@@ -195,20 +183,14 @@ func TestEvalGofmtCheck_NoFiles(t *testing.T) {
 	}
 }
 
-// ── Integration: evalComputeMetrics against a scratch git repo ───────────────
-
-// metricsTestRepo sets up a minimal git repo with an evaltask package and
-// .harmonik/agent-task.md so evalComputeMetrics can run.  Returns the repo dir.
 func metricsTestRepo(t *testing.T, beadID, taskID, goSrc string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	// git init
 	runMetricsGit(t, dir, "init")
 	runMetricsGit(t, dir, "config", "user.email", "test@test.com")
 	runMetricsGit(t, dir, "config", "user.name", "Test")
 
-	// .harmonik/agent-task.md
 	hDir := filepath.Join(dir, ".harmonik")
 	if err := os.MkdirAll(hDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -218,7 +200,6 @@ func metricsTestRepo(t *testing.T, beadID, taskID, goSrc string) string {
 		t.Fatal(err)
 	}
 
-	// evaltask package
 	pkgDir := filepath.Join(dir, "evaltasks", taskID)
 	if err := os.MkdirAll(pkgDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -227,13 +208,11 @@ func metricsTestRepo(t *testing.T, beadID, taskID, goSrc string) string {
 		t.Fatal(err)
 	}
 
-	// go.mod so go vet can run
 	modContent := "module example.com/evaltest\n\ngo 1.21\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	// commit everything
 	runMetricsGit(t, dir, "add", ".")
 	runMetricsGit(t, dir, "commit", "-m", "initial")
 
@@ -273,22 +252,18 @@ func TestEvalComputeMetrics_BasicPass(t *testing.T) {
 	if rec.DiffAddedLines == 0 {
 		t.Error("diff_added_lines = 0, want > 0 for a non-empty commit")
 	}
-	// Fields with no bead labels must be nil.
 	if rec.ExpectedBigO != nil {
 		t.Errorf("expected_big_o = %v, want nil (no label)", rec.ExpectedBigO)
 	}
 	if rec.ReferenceLineBudget != nil {
 		t.Errorf("reference_line_budget = %v, want nil (no label)", rec.ReferenceLineBudget)
 	}
-	// HiddenTestPass must be nil (no hidden_test.go).
 	if rec.HiddenTestPass != nil {
 		t.Errorf("hidden_test_pass = %v, want nil (no hidden_test.go)", rec.HiddenTestPass)
 	}
-	// UnusedSymbols must be a non-nil slice.
 	if rec.UnusedSymbols == nil {
 		t.Error("unused_symbols is nil, want []")
 	}
-	// GofmtUnformatted and VetIssues must be non-nil slices.
 	if rec.GofmtUnformatted == nil {
 		t.Error("gofmt_unformatted is nil, want []")
 	}
@@ -363,7 +338,6 @@ func TestRunEvalMetrics_MissingAgentTask(t *testing.T) {
 
 func TestRunEvalCmd_MetricsHelp(t *testing.T) {
 	var stdout, stderr strings.Builder
-	// "metrics --help" should exit 0 and mention workdir.
 	code := runEvalCmd([]string{"metrics", "--help"}, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("exit %d, want 0; stderr=%s", code, stderr.String())

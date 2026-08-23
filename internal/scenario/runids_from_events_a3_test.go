@@ -1,14 +1,5 @@
 package scenario_test
 
-// runids_from_events_a3_test.go — tests for RunIDsFromEvents, the join that
-// feeds CheckPostSuiteLeaks the ExecutedRunIDs set (SH-INV-002). Finding A3.
-//
-// The harness runner collects the distinct run_ids observed across each
-// scenario's captured event log and passes them to the post-suite leak sensor
-// so its process- and lease-checks can match residual resources by run_id.
-//
-// Spec ref: specs/scenario-harness.md §5 SH-INV-002.
-
 import (
 	"encoding/json"
 	"testing"

@@ -1,10 +1,5 @@
 package codexdriver
 
-// White-box tests for the hk-160yb G4 PreSpawn seam: the injection point the
-// daemon uses to run the stale-WAL guard before every (re)spawn
-// (ungraceful-kill recovery on the app-server path). It must run before the
-// child launches, and a failure must fail-closed (abort the spawn, no child).
-
 import (
 	"context"
 	"errors"
@@ -41,7 +36,6 @@ func TestPreSpawnHookRunsBeforeChild(t *testing.T) {
 		t.Fatalf("PreSpawn ran %d times, want exactly 1 (before the child)", ran)
 	}
 
-	// The child is live: a submit acks, proving PreSpawn did not block the launch.
 	port, ok := handler.AsInputPort(sess)
 	if !ok {
 		t.Fatal("session does not satisfy handler.InputPort")

@@ -7,14 +7,10 @@ import (
 	"time"
 )
 
-// scenarioResultFixtureStartedAt is a stable non-zero timestamp used by fixtures.
 var scenarioResultFixtureStartedAt = time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
 
-// scenarioResultFixtureCompletedAt is a stable non-zero timestamp after scenarioResultFixtureStartedAt.
 var scenarioResultFixtureCompletedAt = time.Date(2026, 5, 7, 10, 0, 5, 0, time.UTC)
 
-// scenarioResultFixtureValid returns a canonical valid ScenarioResult with
-// Verdict=pass and all required fields populated.
 func scenarioResultFixtureValid(t *testing.T) ScenarioResult {
 	t.Helper()
 	return ScenarioResult{
@@ -33,8 +29,6 @@ func scenarioResultFixtureValid(t *testing.T) ScenarioResult {
 	}
 }
 
-// scenarioResultFixtureNonPass returns a valid ScenarioResult with the given
-// non-pass verdict and a non-empty FailureClass.
 func scenarioResultFixtureNonPass(t *testing.T, verdict ScenarioVerdict, failureClass FailureClass) ScenarioResult {
 	t.Helper()
 	r := scenarioResultFixtureValid(t)
@@ -355,8 +349,6 @@ func TestScenarioResultValid(t *testing.T) {
 func TestScenarioResultJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Use timestamps that round-trip cleanly through RFC 3339 (no sub-second
-	// precision so encoding/json time.Time marshalling is lossless).
 	started := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
 	completed := time.Date(2026, 5, 7, 12, 0, 10, 0, time.UTC)
 
@@ -385,7 +377,6 @@ func TestScenarioResultJSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal error: %v", err)
 	}
 
-	// time.Time comparison: use Equal to handle monotonic clock differences.
 	if !input.StartedAt.Equal(got.StartedAt) {
 		t.Errorf("StartedAt round-trip mismatch: in=%v out=%v", input.StartedAt, got.StartedAt)
 	}
@@ -393,8 +384,6 @@ func TestScenarioResultJSONRoundTrip(t *testing.T) {
 		t.Errorf("CompletedAt round-trip mismatch: in=%v out=%v", input.CompletedAt, got.CompletedAt)
 	}
 
-	// Zero out time fields before DeepEqual so we can use reflect (time.Time
-	// has unexported monotonic state that reflect.DeepEqual sees).
 	inputCopy := input
 	gotCopy := got
 	inputCopy.StartedAt = time.Time{}

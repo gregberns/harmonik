@@ -2,12 +2,6 @@ package core
 
 import "testing"
 
-// rc73WorkflowFixtureReconciliation returns a valid reconciliation-class Workflow
-// with workflow_class = reconciliation, used by RC-001..006 structural tests.
-//
-// Spec ref: specs/reconciliation/spec.md §4.1 RC-001 — "Reconciliation MUST run
-// as a normal harmonik workflow: DOT-defined per [execution-model.md §4.1]";
-// specs/reconciliation/schemas.md §6.5 WorkflowClass extension.
 func rc73WorkflowFixtureReconciliation(t *testing.T) Workflow {
 	t.Helper()
 	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006301")
@@ -41,9 +35,6 @@ func rc73WorkflowFixtureReconciliation(t *testing.T) Workflow {
 	}
 }
 
-// rc73WorkflowFixtureOrdinary returns a valid ordinary (non-reconciliation)
-// Workflow without a WorkflowClass tag, used to contrast with reconciliation
-// workflows in structural tests.
 func rc73WorkflowFixtureOrdinary(t *testing.T) Workflow {
 	t.Helper()
 	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006302")
@@ -198,13 +189,10 @@ func TestRC005_DetectorsNotInWorkflowLibrary(t *testing.T) {
 
 	wf := rc73WorkflowFixtureReconciliation(t)
 
-	// The reconciliation workflow is valid as an ordinary harmonik workflow
-	// (same structural rules apply), confirming it has no daemon-internal fields.
 	if !wf.Valid() {
 		t.Error("RC-005: reconciliation Workflow.Valid() = false; detector logic MUST NOT be embedded in the workflow record")
 	}
 
-	// The WorkflowClass is the only reconciliation-specific discriminator.
 	if wf.WorkflowClass == nil {
 		t.Fatal("RC-005: WorkflowClass is nil; the workflow_class tag is the sole reconciliation discriminator")
 	}
@@ -229,8 +217,6 @@ func TestRC005_DetectorsNotInWorkflowLibrary(t *testing.T) {
 func TestRC006_WorkflowClassIsOnlyReconciliation(t *testing.T) {
 	t.Parallel()
 
-	// "reconciliation" is currently the only valid class; any future class must be added
-	// to WorkflowClass.Valid() and the daemon detector table atomically.
 	futureClasses := []WorkflowClass{
 		"improvement-loop",
 		"operator-cli-handler",
@@ -248,7 +234,6 @@ func TestRC006_WorkflowClassIsOnlyReconciliation(t *testing.T) {
 		})
 	}
 
-	// The only currently valid value.
 	if !WorkflowClassReconciliation.Valid() {
 		t.Error("RC-006: WorkflowClassReconciliation.Valid() = false; want true")
 	}
@@ -270,7 +255,6 @@ func TestRC001_ReconciliationWorkflowClassRoundTripValue(t *testing.T) {
 		t.Fatal("WorkflowClass is nil")
 	}
 
-	// Dereference and compare: this is the exact check the daemon runs.
 	got := *wf.WorkflowClass
 	if got != WorkflowClassReconciliation {
 		t.Errorf("*wf.WorkflowClass = %q, want WorkflowClassReconciliation (%q)", got, WorkflowClassReconciliation)

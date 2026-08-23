@@ -1,13 +1,5 @@
 package keeper
 
-// leader_defer_template_xi7p8_test.go — T3 (hk-keeper-delivery-templated-slots-xi7p8)
-// acceptance for the K2 leader defer template: four normative structural slots
-// (SK-026), the verbatim four-part good-stopping-point self-test (SK-027), and the
-// structure-normative / prose-tunable override validation with compiled-default
-// fallback (SK-033).
-//
-// Substrate/template only — NOT the K1 delivery decision (T7). No threshold change.
-
 import (
 	"fmt"
 	"strings"
@@ -20,7 +12,6 @@ import (
 func TestLeaderDeferBody_CompiledDefaultHasAllFourSlots(t *testing.T) {
 	body := LeaderDeferBody("captain", "cyc-123")
 
-	// Slots 1, 2, 3-anchor, 4 (SK-026).
 	for _, slot := range []string{
 		deferOperatorExchangeToken,    // slot 1
 		deferInflightUnitToken,        // slot 2
@@ -32,7 +23,6 @@ func TestLeaderDeferBody_CompiledDefaultHasAllFourSlots(t *testing.T) {
 		}
 	}
 
-	// Verbatim four-part SK-027 self-test (i)–(iv).
 	for _, part := range []string{
 		"mid-edit / mid-plan / mid-tool-sequence", // (i)
 		"trivially re-derivable",                  // (ii)
@@ -44,21 +34,16 @@ func TestLeaderDeferBody_CompiledDefaultHasAllFourSlots(t *testing.T) {
 		}
 	}
 
-	// SK-030 restart-now slot renders with --agent <name> --nonce <cycle_id>.
 	wantCmd := "harmonik keeper restart-now --agent captain --nonce cyc-123"
 	if !strings.Contains(body, wantCmd) {
 		t.Errorf("restart-now slot did not render %q:\n%s", wantCmd, body)
 	}
 
-	// T7 nonce model: the body instructs the agent to write the SAME cycle_id as
-	// the handoff KEEPER:<id> marker, so nudge == handoff marker == restart-now
-	// event is one join key (SK-030/SK-031).
 	wantMarker := nonceMarker("cyc-123") // <!-- KEEPER:cyc-123 -->
 	if !strings.Contains(body, wantMarker) {
 		t.Errorf("body did not instruct the handoff marker %q:\n%s", wantMarker, body)
 	}
 
-	// The compiled default must itself be structurally complete (else selection loops).
 	if !leaderDeferHasAllSlots(body) {
 		t.Errorf("compiled default fails its own four-slot completeness check:\n%s", body)
 	}
@@ -72,7 +57,6 @@ func TestSelectLeaderDeferText_FallbackPerMissingSlot(t *testing.T) {
 	const agent, nonce = "captain", "cyc-777"
 	compiled := LeaderDeferBody(agent, nonce)
 
-	// A structurally-complete operator override: all four slots present, custom prose.
 	fullOverride := fmt.Sprintf(
 		"Operator note: please %s, then %s; only stop at a %s; then run harmonik keeper restart-now --agent %s.",
 		deferOperatorExchangeToken, deferInflightUnitToken, goodStoppingPointToken, agent,

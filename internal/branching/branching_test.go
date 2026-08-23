@@ -11,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 )
 
-// writeFile writes content to <dir>/.harmonik/branching.yaml, creating
-// intermediate directories as needed.
 func writeFile(t *testing.T, dir, content string) string {
 	t.Helper()
 	d := filepath.Join(dir, ".harmonik")
@@ -132,7 +130,6 @@ defaults:
 	if err != nil {
 		t.Fatalf("Load with unknown key: unexpected error: %v", err)
 	}
-	// Known fields must still decode correctly.
 	if got.StartFrom != "main" {
 		t.Fatalf("StartFrom: got %q, want %q", got.StartFrom, "main")
 	}
@@ -271,7 +268,6 @@ defaults:
 		t.Fatalf("first load StartFrom: got %q, want %q", got1.StartFrom, "original")
 	}
 
-	// Overwrite with a new value and bump mtime by 2 seconds to ensure it differs.
 	newContent := `
 version: 1
 defaults:
@@ -282,8 +278,6 @@ defaults:
 	if err := os.WriteFile(p, []byte(newContent), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	// Explicitly set a future mtime so the cache detects the change even in
-	// environments where mtime resolution is coarse.
 	future := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(p, future, future); err != nil {
 		t.Fatalf("Chtimes: %v", err)
@@ -304,7 +298,6 @@ defaults:
 func TestLoadCached_AbsentThenPresent(t *testing.T) {
 	dir := t.TempDir()
 
-	// First call: file absent.
 	got1, err := branching.LoadCached(dir)
 	if err != nil {
 		t.Fatalf("LoadCached absent: %v", err)
@@ -313,7 +306,6 @@ func TestLoadCached_AbsentThenPresent(t *testing.T) {
 		t.Fatalf("LoadCached absent: expected zero Defaults, got %+v", got1)
 	}
 
-	// Create the file and bump its mtime.
 	p := writeFile(t, dir, `
 version: 1
 defaults:
@@ -326,7 +318,6 @@ defaults:
 		t.Fatalf("Chtimes: %v", err)
 	}
 
-	// Second call: file present; cache must miss.
 	got2, err := branching.LoadCached(dir)
 	if err != nil {
 		t.Fatalf("LoadCached present: %v", err)

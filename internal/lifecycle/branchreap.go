@@ -10,11 +10,8 @@ import (
 	"time"
 )
 
-// branchReapRunPrefix is the refs/heads prefix for task branches.
 const branchReapRunPrefix = "refs/heads/run/"
 
-// branchReapAgentPrefix is the refs/heads prefix for legacy worktree-agent-*
-// branches (old naming convention retired in favour of run/*).
 const branchReapAgentPrefix = "refs/heads/worktree-agent-"
 
 // BranchReapOptions configures a branch reap pass.
@@ -58,10 +55,6 @@ type BranchReapResult struct {
 	Events []BranchReapEvent
 }
 
-// gitStderrSuffix renders the captured stderr of a failed exec.Cmd.Output()
-// call as a ": <stderr>" suffix, or "" when the error carries none. Without it
-// a git failure surfaces only as "exit status 128", which says nothing about
-// what git objected to.
 func gitStderrSuffix(err error) string {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
@@ -74,7 +67,6 @@ func gitStderrSuffix(err error) string {
 	return ": " + msg
 }
 
-// branchCandidate is one enumerated branch considered for reaping.
 type branchCandidate struct {
 	// shortName is the short branch name, e.g. "run/019f5535-..." or "worktree-agent-abc".
 	shortName string
@@ -111,7 +103,6 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 		opts.OrphanMaxAge = 30 * 24 * time.Hour
 	}
 
-	// Step 1: enumerate all run/* and worktree-agent-* branches.
 	candidates, err := listBranchCandidates(ctx, opts.RepoDir)
 	if err != nil {
 		return result, fmt.Errorf("lifecycle: ReapBranches: list candidates: %w", err)
@@ -122,19 +113,11 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 		return result, nil
 	}
 
-	// Step 2: collect the set of branches fully merged into TargetBranch.
 	mergedSet, err := listMergedBranchSet(ctx, opts.RepoDir, opts.TargetBranch)
 	if err != nil {
-		// A missing TargetBranch (e.g. empty repo) is non-fatal — treat as no merges.
 		mergedSet = map[string]struct{}{}
 	}
 
-	// Step 3: collect the set of branch names currently checked out in registered worktrees.
-	//
-	// This set is the ONLY thing standing between a live worktree's branch and
-	// the deleter. An empty set on failure would mean "nothing is checked out",
-	// i.e. every candidate becomes eligible — the opposite of conservative. With
-	// no way to enumerate the protected branches, the only safe pass is no pass.
 	activeSet, err := listActiveWorktreeBranches(ctx, opts.RepoDir)
 	if err != nil {
 		return result, fmt.Errorf("lifecycle: ReapBranches: list active worktree branches: %w", err)
@@ -147,7 +130,6 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 		_, active := activeSet[c.shortName]
 
 		if active {
-			// Branch is checked out in a live registered worktree — never reap.
 			result.Skipped++
 			continue
 		}
@@ -170,7 +152,6 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 
 		if !opts.DryRun {
 			if delErr := deleteBranch(ctx, opts.RepoDir, c.shortName); delErr != nil {
-				// Best-effort: log the skip but do not abort the pass.
 				result.Skipped++
 				continue
 			}
@@ -183,34 +164,19 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 	return result, nil
 }
 
-// classifyReapReason returns the branch_reaped reason for a candidate that has
-// already been cleared by the active-worktree guard, and whether it is eligible
-// for reaping at all. An ineligible candidate (unmerged and younger than
-// maxAge) yields ("", false).
 func classifyReapReason(c branchCandidate, merged bool, age, maxAge time.Duration) (reason string, eligible bool) {
 	switch {
 	case merged:
 		return "merged", true
 	case age < maxAge:
-		// Unmerged and still within the retention window.
 		return "", false
 	case c.isAgentBranch:
-		// Legacy worktree-agent-* branches: all orphaned; retire on MaxAge.
 		return "orphaned_agent", true
 	default:
-		// Unmerged run/* older than MaxAge with no active worktree.
 		return "orphaned_run", true
 	}
 }
 
-// listBranchCandidates enumerates all run/* and worktree-agent-* branches in
-// repoDir, returning their short names and tip-commit creator dates.
-//
-// Uses `git for-each-ref --format='%(refname:short) %(creatordate:unix)'` against
-// the two ref prefixes. An empty repository (no refs) exits 0 with no output and
-// returns nil, nil; a non-zero exit means git itself failed (repoDir is not a
-// repository, the object store is damaged, …) and is reported as an error rather
-// than being reported upward as "no branches to reap".
 func listBranchCandidates(ctx context.Context, repoDir string) ([]branchCandidate, error) {
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
@@ -255,12 +221,6 @@ func listBranchCandidates(ctx context.Context, repoDir string) ([]branchCandidat
 	return candidates, nil
 }
 
-// listMergedBranchSet returns a set of short branch names that are fully merged
-// into targetBranch (i.e., their tip commit is reachable from targetBranch).
-//
-// Uses `git for-each-ref --merged=<target>` restricted to the two candidate
-// prefixes. A missing or unknown targetBranch causes git to exit non-zero;
-// callers treat that as an empty set.
 func listMergedBranchSet(ctx context.Context, repoDir, targetBranch string) (map[string]struct{}, error) {
 	//nolint:gosec // G204: targetBranch is caller-supplied but validated to be non-empty; repoDir resolved at startup
 	cmd := exec.CommandContext(ctx, "git",
@@ -290,12 +250,6 @@ func listMergedBranchSet(ctx context.Context, repoDir, targetBranch string) (map
 	return set, nil
 }
 
-// listActiveWorktreeBranches returns a set of short branch names that are
-// currently checked out in a registered git worktree. Branches in this set
-// MUST NOT be deleted by the reaper.
-//
-// Parses `git worktree list --porcelain` and extracts "branch refs/heads/<name>"
-// lines. A detached HEAD worktree contributes no branch name.
 func listActiveWorktreeBranches(ctx context.Context, repoDir string) (map[string]struct{}, error) {
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
@@ -324,11 +278,6 @@ func listActiveWorktreeBranches(ctx context.Context, repoDir string) (map[string
 	return set, nil
 }
 
-// deleteBranch deletes the named branch from repoDir using `git branch -D`.
-// It uses -D (force-delete) because the caller has already verified the branch
-// is either merged or an aged orphan with no active worktree. The callers of
-// this function must guarantee the branch is NOT checked out in any worktree
-// before invoking — see the activeSet guard in ReapBranches.
 func deleteBranch(ctx context.Context, repoDir, shortName string) error {
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
@@ -340,7 +289,6 @@ func deleteBranch(ctx context.Context, repoDir, shortName string) error {
 	return nil
 }
 
-// formatAge formats a duration as a human-readable age string, e.g. "47d" or "3h".
 func formatAge(d time.Duration) string {
 	days := int(d.Hours() / 24)
 	if days >= 1 {

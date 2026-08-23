@@ -99,8 +99,6 @@ func resolveRemoteSessionStartAdapter(
 	return nil, fmt.Errorf("daemon: session start worker %q is not configured", workerName)
 }
 
-// acknowledgeSessionStartWithResolver installs a receipt only after all durable
-// and live facts agree.
 func acknowledgeSessionStartWithResolver(
 	ctx context.Context,
 	projectDir string,

@@ -107,7 +107,6 @@ func KeeperWindowArgv(opts KeeperWindowOpts) []string {
 	if opts.WarnOnly {
 		argv = append(argv, "--warn-only")
 	} else {
-		// Only forward an EXPLICIT (> 0) band value; 0 = unset → let operator config drive.
 		if opts.WarnAbsTokens > 0 {
 			argv = append(argv, "--warn-abs-tokens", strconv.FormatInt(opts.WarnAbsTokens, 10))
 		}

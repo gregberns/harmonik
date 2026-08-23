@@ -1,63 +1,5 @@
 package scenariotest
 
-// concurrent_merge.go — RunConcurrentMerge, a parameterized N-bead concurrent
-// dispatch+merge scenario fixture (validation-net VN1, bead hk-944c2).
-//
-// # Why this exists
-//
-// A concurrency-only bug (hk-37giq: the per-run event-tap competing-consumer
-// starve) hid for ~2 weeks because no scenario test exercised concurrent REAL-
-// bead dispatch through the real heartbeat/launch/watchdog path. The narrow unit
-// test that shipped with the fix (workloopeventsource_hk37giq_test.go) proves the
-// tap fans out, but does NOT prove the end-to-end property: that N beads
-// dispatched concurrently all reach merge+close without a launch wedge.
-//
-// RunConcurrentMerge promotes the determinism recipe from the N=2 multi-queue
-// scenario (scenario_concurrent_multiqueue_hkumemp_test.go) into a reusable
-// helper parameterized on N and the twin scenario. It boots the FULL daemon
-// composition root (via an injected boot func — see the import-boundary note
-// below), dispatches N distinct beads from a single wave queue at
-// MaxConcurrent=N, and asserts:
-//
-//   - all N beads reach a terminal run event (run_completed/run_failed) within
-//     budget;
-//   - the concurrent-runs counter never exceeds the MaxConcurrent cap;
-//   - (when ExpectAllComplete) all N reach run_completed + merge + close, with no
-//     terminal run_stale / launch_stall_detected wedge;
-//   - run lifecycle causality holds (run_started precedes a terminal event).
-//
-// # Import-boundary note (why boot is injected)
-//
-// The daemon's test-only seams — daemon.StartForTesting, daemon.WithWorktree
-// Factory, daemon.WithMergeMutex, daemon.ExportedProductionWorktreeFactory and
-// the emptyCommitWorktreeFactory wrapper — live in *_test.go files in package
-// daemon. Go test-only symbols are visible ONLY within that package's own test
-// binary, so this package (scenariotest) cannot reference them directly. The
-// caller therefore supplies a Boot closure that has already bound
-// StartForTesting with the determinism options (WithWorktreeFactory(empty
-// CommitWorktreeFactory) + WithMergeMutex). RunConcurrentMerge owns everything
-// else: project/git/br setup, queue persistence, the phase-aware twin wrapper,
-// the daemon.Config assembly (with the Skip* flags and short AgentReadyTimeout),
-// the wait loop, and the assertions.
-//
-// # The determinism recipe (encapsulated here, from hkumemp)
-//
-//   - emptyCommitWorktreeFactory (caller-bound, pre-commits an --allow-empty
-//     commit) satisfies the no-commit guard (hk-mmh8f) WITHOUT the twin running
-//     git, and avoids the concurrent-merge `git status` race (hk-bnm89).
-//   - WithMergeMutex (caller-bound) serialises rebase→update-ref→push so
-//     concurrent merges to the shared bare-repo origin do not race.
-//   - A phase-aware twin wrapper: implementer phase runs the supplied scenario;
-//     reviewer phase writes an APPROVE review.json so the review loop terminates
-//     successfully (hk-4f5ua) instead of "verdict absent".
-//   - Skip flags: SkipWALCheckpoint, SkipRestartBackoff, SkipBrHistoryRotation,
-//     plus a short AgentReadyTimeout so the test runs in seconds.
-//
-// Helper prefix: rcm (run-concurrent-merge). Per implementer-protocol.md
-// §Helper-prefix discipline.
-//
-// Bead: hk-944c2. Refs: hk-37giq, hk-umemp, hk-bnm89, hk-4f5ua.
-
 import (
 	"bufio"
 	"context"
@@ -200,18 +142,15 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	}
 	terminalBudget := cfg.TerminalBudget
 	if terminalBudget == 0 {
-		// Per-run ready timeout × N + merge/review overhead + headroom.
 		terminalBudget = time.Duration(cfg.N)*agentReadyTimeout + 60*time.Second
 	}
 
-	// Locate the twin binary; skip when absent (matches hkumemp / N1).
 	twinPath, ok := TwinBinaryPath()
 	if !ok {
 		t.Skip("RunConcurrentMerge: harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
 	}
 	realBrPath := rcmBrPath(t)
 
-	// Project dir + git (with bare origin) + br DB.
 	projectDir, jsonlPath := rcmProjectDir(t)
 	rcmGitRepo(t, projectDir)
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
@@ -219,9 +158,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	beadIDs := rcmInitBrWithBeads(t, realBrPath, projectDir, brWrapper, prefix, cfg.N)
 	t.Logf("RunConcurrentMerge: N=%d beads=%v scenario=%q", cfg.N, beadIDs, cfg.TwinScenario)
 
-	// Single wave queue holding all N beads → dispatched concurrently up to
-	// MaxConcurrent=N (queue-model.md §wave semantics: a wave dispatches its
-	// whole set concurrently up to the daemon cap).
 	beads := make([]core.BeadID, len(beadIDs))
 	for i, id := range beadIDs {
 		beads[i] = core.BeadID(id)
@@ -231,31 +167,14 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		t.Fatalf("RunConcurrentMerge: persist wave queue: %v", err)
 	}
 
-	// Phase-aware twin wrapper: implementer phase runs the scenario; reviewer
-	// phase writes an APPROVE review.json so the review cycle terminates.
 	twinWrapper := rcmTwinWrapperScript(t, twinPath, cfg.TwinScenario)
 
-	// Install the implementer→reviewer graph the twin wrapper is written for.
-	// Without it, dot resolution falls through to the embedded standard-bead.dot,
-	// whose commit_gate node runs go build / go vet inside a fixture worktree
-	// that is not a Go module.
 	WriteReviewLoopWorkflowDot(t, projectDir)
 
-	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
-	// does not contend with a running harmonik daemon on ~/.claude.json.lock.
 	claudeConfigPath := cfg.ClaudeConfigPath
 	if claudeConfigPath == "" {
 		claudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
 	}
-	// t.Setenv, not Setenv-plus-Unsetenv. The variable is process-wide and this
-	// helper does not own it: hermetic.Main sets it once before m.Run so that no
-	// test in the binary can reach the operator's real ~/.claude.json. Unsetting
-	// it on cleanup DELETED that protection for every test that ran afterwards,
-	// and those tests then seeded trust entries into the real user config, one
-	// per throwaway worktree, with nothing to remove them. t.Setenv restores the
-	// previous value instead of removing the variable. It panics under
-	// t.Parallel, which is the correct alarm here: this helper is already
-	// documented as serial-only.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath)
 
 	daemonCfg := daemon.Config{
@@ -298,7 +217,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 
 	startDone := cfg.Boot(loopCtx, daemonCfg)
 
-	// Wait for all N terminal run events (run_completed OR run_failed).
 	MustCompleteWithin(t, jsonlPath, "", nil, terminalBudget, func() {
 		for {
 			nDone := rcmEventCount(t, jsonlPath, string(core.EventTypeRunCompleted)) +
@@ -310,7 +228,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		}
 	})
 
-	// Cancel the daemon; all runs are terminal (or budget elapsed).
 	loopCancel()
 	MustCompleteWithin(t, jsonlPath, "", nil, 15*time.Second, func() {
 		if err := <-startDone; err != nil {
@@ -334,7 +251,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		}
 	}
 
-	// ── Assertion: cap honored (always) ───────────────────────────────────────
 	if res.MaxConcurrent > cfg.N {
 		t.Errorf("RunConcurrentMerge: max concurrent runs = %d, want <= cap %d", res.MaxConcurrent, cfg.N)
 	}
@@ -342,7 +258,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		res.MaxConcurrent, res.Completed, res.Failed, res.Stale, res.LaunchStall, res.ClosedBeads, cfg.N)
 
 	if cfg.ExpectAllComplete {
-		// ── STRONG terminal outcome (post-fix regression guard) ────────────────
 		if res.Completed < cfg.N {
 			t.Errorf("RunConcurrentMerge: %d/%d runs reached run_completed; want all N "+
 				"(a shortfall is the hk-37giq concurrent-dispatch wedge signature)", res.Completed, cfg.N)
@@ -358,8 +273,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		if res.ClosedBeads < cfg.N {
 			t.Errorf("RunConcurrentMerge: %d/%d beads closed in br; want all N", res.ClosedBeads, cfg.N)
 		}
-		// Event-ordered lifecycle: every run_started is eventually followed by a
-		// terminal event (run_completed/run_failed/run_cancelled).
 		AssertEventCausality(t, jsonlPath,
 			"run_started",
 			[]string{"run_completed", "run_failed", "run_cancelled"},
@@ -370,11 +283,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	return res
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rcm fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// rcmLogWriter adapts *testing.T to io.Writer for daemon log capture.
 type rcmLogWriter struct{ t *testing.T }
 
 func (w rcmLogWriter) Write(p []byte) (int, error) {
@@ -382,8 +290,6 @@ func (w rcmLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// rcmProjectDir creates the minimal project directory (.harmonik/{events,
-// beads-intents,queues}) and returns it plus the JSONL events log path.
 func rcmProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	raw := t.TempDir()
@@ -405,8 +311,6 @@ func rcmProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// rcmGitRepo initialises a git repo with one commit and a bare-repo origin so
-// mergeRunBranchToMain's push step succeeds.
 func rcmGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -442,7 +346,6 @@ func rcmGitRepo(t *testing.T, dir string) {
 	run("push", "origin", "main")
 }
 
-// rcmBrPath returns the real `br` binary path, skipping the test when absent.
 func rcmBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -452,8 +355,6 @@ func rcmBrPath(t *testing.T) string {
 	return brPath
 }
 
-// rcmBrWrapperScript writes a /bin/sh wrapper invoking realBrPath with
-// --db <dbPath> prepended to all args.
 func rcmBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -470,8 +371,6 @@ func rcmBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	return path
 }
 
-// rcmInitBrWithBeads initialises a beads workspace and creates n distinct open
-// beads, returning their IDs in creation order.
 func rcmInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper, prefix string, n int) []string {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", prefix)
@@ -497,8 +396,6 @@ func rcmInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper, prefix 
 	return ids
 }
 
-// rcmBuildActiveWaveQueue builds an active wave queue (group 0) holding beadIDs
-// as pending items, with the given worker count.
 func rcmBuildActiveWaveQueue(name, queueID string, workers int, beadIDs ...core.BeadID) *queue.Queue {
 	items := make([]queue.Item, len(beadIDs))
 	for i, id := range beadIDs {
@@ -526,11 +423,6 @@ func rcmBuildActiveWaveQueue(name, queueID string, workers int, beadIDs ...core.
 	}
 }
 
-// rcmTwinWrapperScript writes a /bin/sh wrapper that is phase-aware: the reviewer
-// phase (detected by .harmonik/review-target.md in the worktree) writes an
-// APPROVE review.json so the review loop terminates; the implementer phase runs
-// the supplied twin scenario with --worktree-path "$PWD". PATH is re-exported so
-// the twin's internal git (used by committing scenarios) resolves.
 func rcmTwinWrapperScript(t *testing.T, twinPath, scenario string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -552,8 +444,6 @@ exec "` + twinPath + `" --scenario ` + scenario + ` --worktree-path "$PWD"
 	return path
 }
 
-// rcmMaxConcurrentRuns returns the peak number of concurrently in-flight runs,
-// tracked by run_started (+1) and run_completed/run_failed (-1) in event order.
 func rcmMaxConcurrentRuns(t *testing.T, jsonlPath string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -597,7 +487,6 @@ func rcmMaxConcurrentRuns(t *testing.T, jsonlPath string) int {
 	return maxSeen
 }
 
-// rcmEventCount returns the number of JSONL events matching eventType.
 func rcmEventCount(t *testing.T, jsonlPath, eventType string) int {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -633,8 +522,6 @@ func rcmEventCount(t *testing.T, jsonlPath, eventType string) int {
 	return count
 }
 
-// rcmPollBeadClosed polls `br show <id>` every 10ms for up to budget, returning
-// true when the bead reaches "closed".
 func rcmPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)

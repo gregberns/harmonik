@@ -127,9 +127,6 @@ func WriteReleaseClaimCheckpoint(
 	if tr.ReleaseClaim == nil {
 		return Checkpoint{}, fmt.Errorf("WriteReleaseClaimCheckpoint: %w", ErrReleaseClaimMissing)
 	}
-	// Transition.Valid covers the claim, so one check answers both questions.
-	// The two messages exist because the caller needs to know which half is
-	// wrong, and the record is immutable once committed.
 	if !tr.Valid() {
 		if !tr.ReleaseClaim.Valid() {
 			return Checkpoint{}, fmt.Errorf(
@@ -144,13 +141,10 @@ func WriteReleaseClaimCheckpoint(
 
 	relPath := TransitionRecordPath(tr.RunID, tr.TransitionID)
 
-	// EM-031b immutability guard. A record already at this path means the claim
-	// was written before; writing again would replace it.
 	switch _, err := store.ReadTransitionRecord(ctx, ReleaseClaimHeadRef, relPath); {
 	case err == nil:
 		return Checkpoint{}, fmt.Errorf("WriteReleaseClaimCheckpoint: %s: %w", relPath, ErrReleaseClaimImmutable)
 	case errors.Is(err, ErrTransitionRecordAbsent):
-		// The expected case: nothing is there yet.
 	default:
 		return Checkpoint{}, fmt.Errorf("WriteReleaseClaimCheckpoint: read %s: %w", relPath, err)
 	}
@@ -286,11 +280,6 @@ func IsReleaseClaimUnusable(err error) bool {
 		errors.Is(err, ErrReleaseClaimMissing)
 }
 
-// releaseClaimCommitMessage builds the checkpoint commit message.
-//
-// The trailers are the EM-017 required set plus the EM-017 conditional
-// Harmonik-Bead-ID. They appear in the declared order of the §6.2 trailer
-// registry, so trailer-lint reads them in the order it lists them.
 func releaseClaimCommitMessage(tr Transition, beadID *BeadID) string {
 	var b strings.Builder
 	b.WriteString("harmonik: release claim for run ")

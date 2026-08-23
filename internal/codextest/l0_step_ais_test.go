@@ -1,8 +1,5 @@
 package codextest_test
 
-// L0 tier for the INPUT driver (T9): the pure-Step boundary that the whole
-// sentinel-ignore harness depends on, plus the twin's fault-event shapes.
-
 import (
 	"bytes"
 	"context"
@@ -13,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/codexinput"
 )
 
-// aisReady drives a fresh reactor to a pending submission (AwaitingAck).
 func aisReady(t *testing.T) *codexinput.Reactor {
 	t.Helper()
 	r := codexinput.New(aisConfig())
@@ -72,13 +68,11 @@ func TestL0AIS_TwinFaultEventShapes(t *testing.T) {
 		return out
 	}
 
-	// FaultTruncate@3 replaces event 3 with the transport-error sentinel.
 	got := drain(codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultTruncate, EventN: 3})
 	if len(got) != 3 || got[2].Type != codexdigitaltwin.EvTwinTransportError {
 		t.Fatalf("truncate: last event = %+v, want twin_transport_error at index 2 (got %d events)", lastOr(got), len(got))
 	}
 
-	// FaultDropAfter@3 delivers 3 then the disconnect sentinel.
 	got = drain(codexdigitaltwin.FaultConfig{Mode: codexdigitaltwin.FaultDropAfter, EventN: 3})
 	if len(got) != 4 || got[3].Type != codexdigitaltwin.EvTwinDisconnected {
 		t.Fatalf("drop_after: events = %d, last = %+v, want twin_disconnected at index 3", len(got), lastOr(got))

@@ -1,40 +1,5 @@
 package core
 
-// verdictdiscovery_rc026.go — Verdict-execution discovery on restart (RC-026).
-//
-// RC-026 requires the startup detector of [process-lifecycle.md §4.2 PL-005]
-// to classify a reconciliation workflow as resolved ONLY if BOTH the verdict
-// commit AND the verdict-executed commit are present on the investigator's
-// branch. A branch with a verdict commit but no verdict-executed commit MUST be
-// classified as Cat 3b (verdict-unexecuted) with the dedicated auto-resolver
-// re-attempting the verdict's mechanical action under a fresh staleness check
-// (RC-024).
-//
-// This file declares:
-//
-//   - VerdictDiscoveryState — the three observable branch states the startup
-//     detector resolves per RC-026.
-//   - BranchVerdictEvidence — the minimal branch-inspection input for the
-//     discovery function (has-verdict-commit, has-verdict-executed-commit).
-//   - DiscoverVerdictExecution — pure, I/O-free function mapping branch evidence
-//     to a VerdictDiscoveryState and the resulting ReconciliationCategory. The
-//     daemon's startup detector calls this per investigator branch BEFORE
-//     dispatching ordinary workflows.
-//   - ReconciliationClassificationGate — records the RC-026 startup-ordering
-//     rule: reconciliation classification MUST complete before the daemon
-//     transitions to `ready`; ordinary dispatch is gated behind detection
-//     completion. See OQ-RC-003 for the fail-open escalation open question.
-//
-// This is a pure, I/O-free layer. The actual branch inspection (git log +
-// trailer parsing), Cat 3b re-execution, and ready-transition gating are
-// performed by the daemon's reconciliation startup pass (RC-026, PL-005
-// step 7), which consumes this logic. The separation mirrors the
-// CheckVerdictStaleness / VerdictStalenessResult split for RC-024.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-026;
-// specs/reconciliation/schemas.md §6.3 (Cat 3b row);
-// specs/process-lifecycle.md §4.2 PL-005.
-
 // VerdictDiscoveryState is the result of inspecting an investigator task branch
 // for the presence of the verdict commit and the verdict-executed commit per
 // RC-026.
@@ -156,21 +121,12 @@ type BranchVerdictEvidence struct {
 func DiscoverVerdictExecution(e BranchVerdictEvidence) (VerdictDiscoveryState, ReconciliationCategory) {
 	switch {
 	case !e.HasVerdictCommit:
-		// No verdict commit: clean branch. Treat as Cat 5 (clean restart).
-		// A reconciliation workflow either never reached the investigator or
-		// crashed before the verdict commit was emitted; no Cat 3b trigger.
 		return VerdictDiscoveryStateClean, ReconciliationCategoryCat5
 
 	case !e.HasVerdictExecutedCommit:
-		// Verdict commit present, no verdict-executed commit: Cat 3b.
-		// The daemon crashed after emitting the verdict but before or during
-		// the mechanical action. Auto-resolver re-executes per RC-026.
 		return VerdictDiscoveryStateCat3b, ReconciliationCategoryCat3b
 
 	default:
-		// Both commits present: fully resolved.
-		// Cat 5 is returned as the "no further action" sentinel.
-		// Callers MUST check VerdictDiscoveryState == VerdictDiscoveryStateResolved.
 		return VerdictDiscoveryStateResolved, ReconciliationCategoryCat5
 	}
 }

@@ -1,31 +1,5 @@
 package daemon
 
-// handlerpause_9hwbw.go — HandlerPauseController: in-memory pause-state +
-// in-flight-bead freeze-list (hk-9hwbw).
-//
-// HandlerPauseController is the single-writer-disciplined component that
-// owns per-handler-type pause state inside the daemon.  It implements the
-// queue.HandlerPauseChecker interface so the queue-submit validation path
-// (hk-siuo2 / QM-052a) can gate submissions when a handler is paused.
-//
-// Architecture placement: internal/daemon/ (composition root).
-// Rationale: the controller fans into three cross-subsystem surfaces —
-// eventbus.EventBus (event emission), the RunRegistry snapshot (freeze-list),
-// and queue.HandlerPauseChecker (queue-submit gate) — making the composition
-// root the narrowest package that can legally see all three without introducing
-// a new cycle.  A dedicated internal/handlerpause/ package would need to
-// import internal/daemon for the RunRegistry, which would be a cycle.
-//
-// Persistence hook-point: hk-m0k0a will wire .harmonik/handler-state.json
-// load/save here.  See the PERSISTENCE NOTE comments throughout this file
-// for the exact seam.  State is in-memory only; daemon restart resets
-// all handlers to live.
-//
-// Spec ref: specs/handler-pause.md §7, §8, §9.
-// Event types: core.EventTypeHandlerPaused, core.EventTypeHandlerResumed (§8.11).
-// Interface: queue.HandlerPauseChecker (hk-siuo2).
-// Bead ref: hk-9hwbw.
-
 import (
 	"context"
 	"encoding/json"
@@ -39,14 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// Verify HandlerPauseController satisfies queue.HandlerPauseChecker at compile
-// time.  This is load-bearing: if the interface changes (e.g. hk-siuo2 adds a
-// method) the compiler will catch the drift here.
 var _ queue.HandlerPauseChecker = (*HandlerPauseController)(nil)
-
-// ---------------------------------------------------------------------------
-// AccountID — per-account identifier within a handler type
-// ---------------------------------------------------------------------------
 
 // AccountID identifies an individual account within a handler type's account
 // pool (e.g., one API key in a Claude account pool).
@@ -63,10 +30,6 @@ type AccountID string
 // handler-state.json that has no per-account map.  A v1 whole-type pause is
 // represented in memory as a single account with this ID.
 const AnonymousAccountID AccountID = ""
-
-// ---------------------------------------------------------------------------
-// InFlightBeadRecord — one entry in the freeze-list snapshot
-// ---------------------------------------------------------------------------
 
 // InFlightBeadRecord is a single entry in the in_flight_at_pause freeze-list
 // captured when a handler type is paused.
@@ -88,11 +51,6 @@ type InFlightBeadRecord struct {
 	DispatchedAt string `json:"dispatched_at"`
 }
 
-// ---------------------------------------------------------------------------
-// handlerEntry — internal state for one agent type
-// ---------------------------------------------------------------------------
-
-// pauseStatus is the per-handler-type pause state enum.
 type pauseStatus int8
 
 const (
@@ -100,15 +58,6 @@ const (
 	pauseStatusPaused pauseStatus = 1 // handler is paused
 )
 
-// accountEntry holds the mutable pause state for one account within a handler
-// type.  It mirrors the per-type fields of handlerEntry but without the
-// auto-resume machinery (auto-resume is a per-handler-type policy, not
-// per-account).
-//
-// All reads and writes MUST be performed while the controller's mu lock is held.
-//
-// Spec ref: specs/handler-pause.md §12.3 HP-072.
-// Bead ref: hk-lhxzc.
 type accountEntry struct {
 	// status is the current pause status for this account.
 	status pauseStatus
@@ -125,8 +74,6 @@ type accountEntry struct {
 	pausedEpoch int
 }
 
-// handlerEntry holds the mutable state for one agent type.
-// All reads and writes MUST be performed while the controller's mu lock is held.
 type handlerEntry struct {
 	// status is the current pause status for this handler type.
 	status pauseStatus
@@ -149,8 +96,6 @@ type handlerEntry struct {
 	// PauseAccount call for this handler type.  Key is the AccountID string.
 	accounts map[AccountID]*accountEntry
 
-	// --- auto-resume state (hk-0otqs) ---
-
 	// scheduledResumeCancel cancels a pending auto-resume goroutine.
 	// Non-nil when a Schedule call has fired and the timer has not yet expired
 	// or been superseded.  Nil when no auto-resume is pending.
@@ -167,10 +112,6 @@ type handlerEntry struct {
 	// Zero value means no auto-resume has fired for this handler.
 	lastAutoResumedAt time.Time
 }
-
-// ---------------------------------------------------------------------------
-// HandlerPauseStatusSnapshot — operator-visible snapshot
-// ---------------------------------------------------------------------------
 
 // AccountPauseStatusSnapshot is the point-in-time view of one account's pause
 // state within a handler type.
@@ -222,10 +163,6 @@ type HandlerPauseStatusSnapshot struct {
 	// AccountID string.  Absent / nil when no per-account pauses are recorded.
 	Accounts map[AccountID]AccountPauseStatusSnapshot `json:"accounts,omitempty"`
 }
-
-// ---------------------------------------------------------------------------
-// HandlerPauseController
-// ---------------------------------------------------------------------------
 
 // HandlerPauseController is the daemon-singleton component that tracks
 // per-handler-type pause state and maintains the in-flight-bead freeze-list.
@@ -349,17 +286,10 @@ func (c *HandlerPauseController) SetAutoResumeConfig(agentType core.AgentType, c
 	c.mu.Unlock()
 }
 
-// autoResumeCfgLocked returns the AutoResumeConfig for agentType.
-// MUST be called while mu is held.
 func (c *HandlerPauseController) autoResumeCfgLocked(agentType core.AgentType) AutoResumeConfig {
 	return c.autoResumeCfgs[agentType] // zero value when absent
 }
 
-// runDiagnose calls adapter.Diagnose (HC-014a) and returns the result.
-//
-// Returns (report, true) on success.  Returns (zero, false) when the adapter
-// is nil, returns ErrDeterministic (not supported), or returns any other error.
-// Must NOT be called while mu is held (Diagnose may block on I/O).
 func (c *HandlerPauseController) runDiagnose(ctx context.Context) (handlercontract.DiagnosticReport, bool) {
 	c.mu.RLock()
 	adapter := c.adapter
@@ -374,10 +304,6 @@ func (c *HandlerPauseController) runDiagnose(ctx context.Context) (handlercontra
 	}
 	return report, true
 }
-
-// ---------------------------------------------------------------------------
-// Pause — trip the handler-type pause state
-// ---------------------------------------------------------------------------
 
 // Pause records a pause for agentType with the given cause and in-flight bead
 // snapshot, then emits a handler_paused event on the bus.
@@ -410,9 +336,6 @@ func (c *HandlerPauseController) Pause(
 		return fmt.Errorf("HandlerPauseController.Pause: invalid cause for agent_type %q", string(agentType))
 	}
 
-	// HC-014a: invoke Diagnose seam before acquiring the lock (Diagnose may
-	// block on I/O; lock should not be held across I/O).  If the adapter is
-	// not wired or returns ErrDeterministic, ok=false and we skip enrichment.
 	if report, ok := c.runDiagnose(ctx); ok {
 		cause.DiagnosticMessage = report.Message
 	}
@@ -421,14 +344,10 @@ func (c *HandlerPauseController) Pause(
 
 	entry := c.getOrCreate(agentType)
 	if entry.status == pauseStatusPaused {
-		// Already paused — single-writer no-op.
 		c.mu.Unlock()
 		return nil
 	}
 
-	// Flap detection (hk-0otqs): if the handler was recently auto-resumed and
-	// is being re-paused, increment the flap counter so the next Schedule call
-	// applies exponential backoff.
 	if !entry.lastAutoResumedAt.IsZero() {
 		elapsed := time.Since(entry.lastAutoResumedAt)
 		if elapsed < autoResumeFlapWindow {
@@ -437,21 +356,17 @@ func (c *HandlerPauseController) Pause(
 		entry.lastAutoResumedAt = time.Time{} // reset; the new pause starts a fresh epoch
 	}
 
-	// Cancel any pending auto-resume for this handler type.  The new pause
-	// supersedes the scheduled resume from the previous epoch.
 	if entry.scheduledResumeCancel != nil {
 		entry.scheduledResumeCancel()
 		entry.scheduledResumeCancel = nil
 	}
 
-	// Mutate state.
 	entry.status = pauseStatusPaused
 	causeCopy := cause
 	entry.cause = &causeCopy
 	entry.pausedEpoch++
 	epoch := entry.pausedEpoch
 
-	// Snapshot freeze-list (defensive copy so the caller's slice is not aliased).
 	if len(inFlight) > 0 {
 		entry.inFlightAtPause = make([]InFlightBeadRecord, len(inFlight))
 		copy(entry.inFlightAtPause, inFlight)
@@ -461,10 +376,6 @@ func (c *HandlerPauseController) Pause(
 
 	inFlightCount := len(entry.inFlightAtPause)
 
-	// Persist under the lock before emitting the bus event (hk-m0k0a).
-	// Rationale: writing inside the lock is the simplest safe option; the
-	// controller already owns the lock and disk write latency (~ms) is
-	// acceptable at the low call frequency of operator-driven pauses.
 	if c.persistFn != nil {
 		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
 			c.mu.Unlock()
@@ -474,9 +385,6 @@ func (c *HandlerPauseController) Pause(
 
 	c.mu.Unlock()
 
-	// Emit handler_paused event (outside the lock — bus.Emit may block on I/O
-	// for fsync-boundary events; holding the lock across I/O would serialize
-	// all pause/resume/check calls unnecessarily).
 	payload := core.HandlerPausedPayload{
 		AgentType:     agentType,
 		Cause:         cause,
@@ -492,10 +400,6 @@ func (c *HandlerPauseController) Pause(
 	}
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Resume — clear the handler-type pause state
-// ---------------------------------------------------------------------------
 
 // Resume clears the pause for agentType and emits a handler_resumed event.
 //
@@ -528,36 +432,23 @@ func (c *HandlerPauseController) Resume(
 		return &ErrHandlerNotPaused{AgentType: agentType}
 	}
 
-	// Capture the prior cause and epoch for the event payload.
 	priorCause := *entry.cause
 	epoch := entry.pausedEpoch
 
-	// Cancel any pending auto-resume timer for this handler type.
-	// The operator resume supersedes it.
 	if entry.scheduledResumeCancel != nil {
 		entry.scheduledResumeCancel()
 		entry.scheduledResumeCancel = nil
 	}
 
-	// Clear state.
 	entry.status = pauseStatusLive
 	entry.cause = nil
 	entry.inFlightAtPause = nil
-	// pausedEpoch is NOT reset — it is monotonically increasing to support the
-	// dispatcher's dedup contract (queue_item_held_for_handler_pause §8.11.3).
 
-	// Operator resume resets the flap counter: the operator has confirmed the
-	// handler is operational, so prior auto-resume history is irrelevant.
-	//
-	// Auto-backoff resume does NOT reset these fields: the next Pause call may
-	// detect a flap (re-pause within autoResumeFlapWindow) and must see the
-	// lastAutoResumedAt timestamp set by doAutoResume.
 	if resumedBy == core.HandlerResumedByOperator {
 		entry.autoResumeAttempts = 0
 		entry.lastAutoResumedAt = time.Time{}
 	}
 
-	// Persist under the lock before emitting the bus event (hk-m0k0a).
 	if c.persistFn != nil {
 		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
 			c.mu.Unlock()
@@ -567,13 +458,8 @@ func (c *HandlerPauseController) Resume(
 
 	c.mu.Unlock()
 
-	// HC-014a: invoke Diagnose on Resume to verify the triggering condition has
-	// cleared.  The result is informational only; Resume proceeds
-	// regardless of Healthy.  Later the controller MAY gate Resume on
-	// Healthy=true (spec §4.3a HC-014a).
 	_, _ = c.runDiagnose(ctx) // result is currently ignored; logging is deferred
 
-	// Emit handler_resumed event (outside the lock).
 	payload := core.HandlerResumedPayload{
 		AgentType:   agentType,
 		By:          resumedBy,
@@ -589,10 +475,6 @@ func (c *HandlerPauseController) Resume(
 	}
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// PauseAccount / ResumeAccount / IsAccountPaused — per-account pause (HP-072)
-// ---------------------------------------------------------------------------
 
 // PauseAccount records a pause for a specific account within agentType and
 // persists the updated state.
@@ -631,7 +513,6 @@ func (c *HandlerPauseController) PauseAccount(
 		entry.accounts[accountID] = acct
 	}
 	if acct.status == pauseStatusPaused {
-		// Already paused — idempotent no-op.
 		c.mu.Unlock()
 		return nil
 	}
@@ -693,7 +574,6 @@ func (c *HandlerPauseController) ResumeAccount(
 	acct.status = pauseStatusLive
 	acct.cause = nil
 	acct.inFlightAtPause = nil
-	// pausedEpoch is NOT reset (monotonic, used for dedup).
 
 	if c.persistFn != nil {
 		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
@@ -725,10 +605,6 @@ func (c *HandlerPauseController) IsAccountPaused(agentType core.AgentType, accou
 	c.mu.RUnlock()
 	return paused
 }
-
-// ---------------------------------------------------------------------------
-// IsPaused — query pause status
-// ---------------------------------------------------------------------------
 
 // IsPaused reports whether the handler for agentType is currently paused.
 // Returns false for unknown handler types (default-live per §5.3 "absent ⇒ all live").
@@ -768,10 +644,6 @@ func (c *HandlerPauseController) PausedEpochFor(agentType core.AgentType) (epoch
 	return epoch, paused
 }
 
-// ---------------------------------------------------------------------------
-// queue.HandlerPauseChecker implementation
-// ---------------------------------------------------------------------------
-
 // ResolvedAgentType implements queue.HandlerPauseChecker.
 //
 // All beads use the same agent type (claude-code).  This method
@@ -791,10 +663,6 @@ func (c *HandlerPauseController) ResolvedAgentType(_ context.Context, _ core.Bea
 func (c *HandlerPauseController) IsHandlerPaused(_ context.Context, agentType core.AgentType) (bool, error) {
 	return c.IsPaused(agentType), nil
 }
-
-// ---------------------------------------------------------------------------
-// Status — point-in-time snapshot for CLI + persistence
-// ---------------------------------------------------------------------------
 
 // Status returns a point-in-time snapshot of the pause state for all known
 // handler types.
@@ -817,7 +685,6 @@ func (c *HandlerPauseController) Status(agentType core.AgentType) []HandlerPause
 		return []HandlerPauseStatusSnapshot{c.snapshotEntryLocked(agentType, entry)}
 	}
 
-	// All known handler types.
 	out := make([]HandlerPauseStatusSnapshot, 0, len(c.handlers))
 	for at, entry := range c.handlers {
 		out = append(out, c.snapshotEntryLocked(at, entry))
@@ -825,8 +692,6 @@ func (c *HandlerPauseController) Status(agentType core.AgentType) []HandlerPause
 	return out
 }
 
-// snapshotEntryLocked builds a HandlerPauseStatusSnapshot from an entry.
-// MUST be called while mu is held.
 func (c *HandlerPauseController) snapshotEntryLocked(at core.AgentType, entry *handlerEntry) HandlerPauseStatusSnapshot {
 	snap := HandlerPauseStatusSnapshot{
 		AgentType:   at,
@@ -863,9 +728,6 @@ func (c *HandlerPauseController) snapshotEntryLocked(at core.AgentType, entry *h
 	return snap
 }
 
-// snapshotAllLocked returns snapshots for all known handler types.
-// MUST be called while mu is held.
-// Used by persistFn to capture the full state for serialisation (hk-m0k0a).
 func (c *HandlerPauseController) snapshotAllLocked() []HandlerPauseStatusSnapshot {
 	out := make([]HandlerPauseStatusSnapshot, 0, len(c.handlers))
 	for at, entry := range c.handlers {
@@ -874,12 +736,6 @@ func (c *HandlerPauseController) snapshotAllLocked() []HandlerPauseStatusSnapsho
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-// getOrCreate returns the handlerEntry for agentType, creating one if absent.
-// MUST be called while mu is held.
 func (c *HandlerPauseController) getOrCreate(agentType core.AgentType) *handlerEntry {
 	entry, exists := c.handlers[agentType]
 	if !exists {
@@ -888,10 +744,6 @@ func (c *HandlerPauseController) getOrCreate(agentType core.AgentType) *handlerE
 	}
 	return entry
 }
-
-// ---------------------------------------------------------------------------
-// ErrHandlerNotPaused — typed error for Resume on a live handler
-// ---------------------------------------------------------------------------
 
 // ErrHandlerNotPaused is returned by Resume when the target handler type is
 // not currently paused.
@@ -906,10 +758,6 @@ type ErrHandlerNotPaused struct {
 func (e *ErrHandlerNotPaused) Error() string {
 	return fmt.Sprintf("handler %q is not currently paused", string(e.AgentType))
 }
-
-// ---------------------------------------------------------------------------
-// InFlightBeadRecordFromRunHandle — helper for the caller-side freeze-list
-// ---------------------------------------------------------------------------
 
 // InFlightBeadRecordFromRunHandle builds an InFlightBeadRecord from a
 // RunHandle for use in the Pause freeze-list argument.

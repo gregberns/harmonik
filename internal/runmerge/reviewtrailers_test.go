@@ -1,13 +1,5 @@
 package runmerge
 
-// reviewtrailers_hkdyim_test.go — unit tests for AppendReviewTrailersToHEAD (hk-dyim).
-//
-// Verifies that AppendReviewTrailersToHEAD amends the HEAD commit in a git
-// worktree to carry Reviewed-By: and Review-Verdict: trailers from an APPROVE
-// verdict, making the review audit trail visible in git history.
-//
-// Bead: hk-dyim.
-
 import (
 	"context"
 	"encoding/json"
@@ -20,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// initTestRepoDyim initialises a minimal git repository in dir with a single
-// initial commit that includes a Refs: trailer (mimicking the implementer commit).
 func initTestRepoDyim(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -46,7 +36,6 @@ func initTestRepoDyim(t *testing.T, dir string) {
 	run("commit", "-m", "feat: agent work\n\nRefs: hk-test")
 }
 
-// headCommitMsgDyim reads the HEAD commit message from dir.
 func headCommitMsgDyim(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "log", "-1", "--format=%B", "HEAD")
@@ -82,17 +71,14 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 
 	msg := headCommitMsgDyim(t, dir)
 
-	// Reviewed-By: trailer must be present.
 	if !strings.Contains(msg, "Reviewed-By: "+reviewedByTrailerValue) {
 		t.Errorf("commit message missing Reviewed-By trailer; got:\n%s", msg)
 	}
 
-	// Review-Verdict: trailer must contain valid JSON with the APPROVE verdict.
 	if !strings.Contains(msg, "Review-Verdict: ") {
 		t.Errorf("commit message missing Review-Verdict trailer; got:\n%s", msg)
 	}
 
-	// Find the Review-Verdict line and parse it.
 	var verdictLine string
 	for _, line := range strings.Split(msg, "\n") {
 		if strings.HasPrefix(line, "Review-Verdict: ") {
@@ -143,7 +129,6 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 
 	msg := headCommitMsgDyim(t, dir)
 
-	// Count occurrences of "Reviewed-By:" — must appear exactly once.
 	count := strings.Count(msg, "Reviewed-By: "+reviewedByTrailerValue)
 	if count != 1 {
 		t.Errorf("Reviewed-By: appears %d times (want 1); msg:\n%s", count, msg)

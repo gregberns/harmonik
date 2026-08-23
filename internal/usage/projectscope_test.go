@@ -9,9 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sessiondata"
 )
 
-// slugForTest spells the Claude Code transcript-directory convention by hand so
-// the tests state it independently of the production helper. Claude Code
-// replaces every "/" and "." of the resolved absolute path with "-".
 func slugForTest(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
@@ -21,9 +18,6 @@ func slugForTest(t *testing.T, path string) string {
 	return strings.NewReplacer("/", "-", ".", "-").Replace(resolved)
 }
 
-// writeTranscript puts one assistant turn in
-// <claudeProjectsDir>/<dirName>/<sessionID>.jsonl. The turn carries the token
-// counts and the git branch that the orchestrator scan reads.
 func writeTranscript(t *testing.T, claudeProjectsDir, dirName, sessionID, branch string, inTok, outTok int) {
 	t.Helper()
 	dir := filepath.Join(claudeProjectsDir, dirName)
@@ -50,8 +44,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// newScopeCase makes a project directory and an empty Claude transcript store,
-// and returns the config that points the report at both.
 func newScopeCase(t *testing.T) (projectDir, claudeProjectsDir string, cfg Config) {
 	t.Helper()
 	root := t.TempDir()
@@ -98,7 +90,6 @@ func TestRunAnalysis_CountsTheNamedProjectAndExcludesTheNeighbour(t *testing.T) 
 	if len(result.TopOrchestrators) != 1 || result.TopOrchestrators[0].SessionID != "own-session" {
 		t.Errorf("TopOrchestrators = %+v, want only own-session", result.TopOrchestrators)
 	}
-	// One million input tokens of claude-opus-4 at $15 per million.
 	wantCost := sessiondata.ComputeCost(
 		sessiondata.TokenUsage{Input: 1_000_000, Output: 100_000}, "claude-opus-4")
 	if diff := result.OrchestratorCostUSD - wantCost; diff > 0.0001 || diff < -0.0001 {
@@ -209,7 +200,6 @@ func TestRunAnalysis_UnpricedRunIsNotReportedAsZeroDollars(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// A codex run: the collector knows no model, so it writes no cost.
 	if err := sessiondata.Append(projectDir, sessiondata.Record{
 		SchemaVersion: 1, RunID: "run-unpriced", BeadID: "bx-unpriced",
 		Harness: "codex", Success: true,
@@ -279,7 +269,6 @@ func TestRunAnalysis_FindsSessionsWhenTheProjectPathIsASymlink(t *testing.T) {
 	if err := os.MkdirAll(claudeProjectsDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	// Claude Code names the directory after the RESOLVED path.
 	writeTranscript(t, claudeProjectsDir, slugForTest(t, realDir), "own-session", "work/alpha", 1_000_000, 0)
 
 	result, err := RunAnalysis(Config{

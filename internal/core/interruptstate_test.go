@@ -140,7 +140,6 @@ func TestInterruptStateMarshalText(t *testing.T) {
 func TestInterruptStateRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all five values.
 	type wrapper struct {
 		State InterruptState `json:"state"`
 	}
@@ -176,7 +175,6 @@ func TestInterruptStateRoundTrip(t *testing.T) {
 func TestInterruptStateUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all five declared values.
 	var s InterruptState
 	err := s.UnmarshalText([]byte("made_up"))
 	if err == nil {

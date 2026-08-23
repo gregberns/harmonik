@@ -60,7 +60,6 @@ func (OSProcessLister) ListOrphanBrPIDs(ctx context.Context) ([]int, error) {
 		ppidStr := fields[1]
 		comm := fields[2]
 
-		// Only "br" with PPID==1 (re-parented to init).
 		if comm != "br" {
 			continue
 		}
@@ -80,15 +79,8 @@ func (OSProcessLister) ListOrphanBrPIDs(ctx context.Context) ([]int, error) {
 	return pids, nil
 }
 
-// orphanSweepGracePeriod is the time the sweep waits after SIGTERM before
-// escalating to SIGKILL. Declared as a var so tests can shorten it without
-// changing the production call-site signature.
-//
-// Spec ref: beads-integration.md §4.5 BI-014a — "wait up to 5s, then SIGKILL."
 var orphanSweepGracePeriod = 5 * time.Second
 
-// orphanSweepPollInterval is how often the sweep polls for process exit during
-// the grace period.
 var orphanSweepPollInterval = 100 * time.Millisecond
 
 // SweepOrphanBr enumerates `br` processes re-parented to init (PPID==1),
@@ -120,7 +112,6 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 
 	orphanLog(logger, "SweepOrphanBr: found %d orphan br process(es): %v", len(pids), pids)
 
-	// Phase 1: SIGTERM all candidates.
 	for _, pid := range pids {
 		if sigErr := syscall.Kill(pid, syscall.SIGTERM); sigErr != nil {
 			orphanLog(logger, "SweepOrphanBr: SIGTERM pid %d: %v (may have already exited)", pid, sigErr)
@@ -129,7 +120,6 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 		}
 	}
 
-	// Phase 2: wait up to 5 s for each process to exit.
 	deadline := time.Now().Add(orphanSweepGracePeriod)
 	alive := make(map[int]bool, len(pids))
 	for _, pid := range pids {
@@ -146,10 +136,8 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 		if len(alive) == 0 {
 			break
 		}
-		// Brief pause before next poll — respect context cancellation.
 		select {
 		case <-ctx.Done():
-			// Context cancelled during grace period: proceed directly to SIGKILL.
 			orphanLog(logger, "SweepOrphanBr: context cancelled during grace period; escalating to SIGKILL")
 		case <-time.After(orphanSweepPollInterval):
 		}
@@ -158,9 +146,6 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 		}
 	}
 
-	// Phase 3: SIGKILL any still-alive processes — after re-verifying identity
-	// via a fresh enumeration, so a recycled PID (unrelated process that
-	// inherited the number after the target exited) is never SIGKILLed.
 	if len(alive) > 0 {
 		fresh, freshErr := lister.ListOrphanBrPIDs(ctx)
 		if freshErr != nil {
@@ -183,7 +168,6 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 		}
 	}
 
-	// Phase 4: collect survivors (still alive after SIGKILL — Cat 0 failure).
 	for pid := range alive {
 		if orphanSweepIsPidLive(pid) {
 			survived = append(survived, pid)
@@ -194,14 +178,6 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 	return survived, nil
 }
 
-// reverifyCandidatePIDs guards the SIGTERM→SIGKILL escalation against PID
-// reuse: kill(pid, 0) alone cannot distinguish the original target from an
-// unrelated process that inherited a recycled PID after the target exited.
-// Before SIGKILL, the caller re-runs its identity-based enumeration (comm /
-// command-line / provenance match) and passes the fresh PID set here; only
-// candidates still present in the fresh enumeration remain kill-eligible.
-// A candidate absent from the fresh set either exited (goal achieved) or its
-// PID was recycled by a non-matching process (must not be signalled).
 func reverifyCandidatePIDs(alive map[int]bool, fresh []int) map[int]bool {
 	freshSet := make(map[int]bool, len(fresh))
 	for _, pid := range fresh {
@@ -216,9 +192,6 @@ func reverifyCandidatePIDs(alive map[int]bool, fresh []int) map[int]bool {
 	return confirmed
 }
 
-// orphanSweepIsPidLive probes whether pid is a live process by sending signal
-// 0. Returns false for ESRCH (not found). Returns true for EPERM (exists but
-// unpermitted). Returns true if kill(pid, 0) returns nil.
 func orphanSweepIsPidLive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	if err == nil {
@@ -227,11 +200,9 @@ func orphanSweepIsPidLive(pid int) bool {
 	if errors.Is(err, syscall.ESRCH) {
 		return false
 	}
-	// EPERM: process exists but we cannot signal it — treat as alive.
 	return true
 }
 
-// orphanLog writes a formatted log message to logger if logger is non-nil.
 func orphanLog(logger *log.Logger, format string, args ...any) {
 	if logger == nil {
 		return

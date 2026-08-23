@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// sidFilePath returns the absolute path to the single-writer session-id channel
-// <projectDir>/.harmonik/keeper/<agent>.sid (hk-8prq).
 func sidFilePath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".sid")
 }
@@ -51,22 +49,10 @@ func ReadSessionIDFile(projectDir, agent string) (string, time.Time, error) {
 // usable primary id or the keeper is on the fallback path. Refs: hk-8prq.
 func IsPrimarySID(sid string) bool { return isPrimarySID(sid) }
 
-// isPrimarySID reports whether sid is trustworthy as the keeper's PRIMARY
-// identity: a well-formed, lowercase UUIDv4. Interactive captain/crew sessions
-// use UUIDv4; daemon-spawned implementers use UUIDv7 (rejected here), and the
-// conversation/transcript-dir id is an uppercase UUID (rejected by the
-// lowercase-hex requirement). An empty or non-UUID value is likewise not
-// primary, so the gauge fallback is used instead of binding a worse identity.
-// Refs: hk-8prq, hk-lap (UUIDv7 vs v4), hk-mzdm (uppercase id).
 func isPrimarySID(sid string) bool {
 	return isUUIDv4(sid)
 }
 
-// isUUIDv4 reports whether s is a canonical, lowercase UUID version 4:
-// 36 bytes, hyphens at indices 8/13/18/23, version nibble '4' at index 14, and
-// all other characters lowercase hex. Uppercase hex is rejected so the
-// conversation/transcript-dir UUID (which Claude Code occasionally surfaces) is
-// never mistaken for the real session id. Refs: hk-8prq.
 func isUUIDv4(s string) bool {
 	if len(s) != 36 {
 		return false
@@ -88,14 +74,10 @@ func isUUIDv4(s string) bool {
 	return true
 }
 
-// isUUIDHyphenIndex reports whether i is one of the four hyphen positions in a
-// canonical 36-byte UUID (8-4-4-4-12).
 func isUUIDHyphenIndex(i int) bool {
 	return i == 8 || i == 13 || i == 18 || i == 23
 }
 
-// isLowerHexDigit reports whether c is 0-9 or a-f. Uppercase is deliberately
-// rejected — see isUUIDv4.
 func isLowerHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
 }

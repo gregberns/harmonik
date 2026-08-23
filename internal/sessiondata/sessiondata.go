@@ -26,8 +26,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ── Token types ───────────────────────────────────────────────────────────────
-
 // TokenUsage holds the four token categories from a Claude turn or rollup.
 type TokenUsage struct {
 	Input         int64 `json:"input"`
@@ -57,8 +55,6 @@ func (u TokenUsage) CacheReadPct() float64 {
 	}
 	return 100.0 * float64(u.CacheRead) / float64(t)
 }
-
-// ── Pricing ──────────────────────────────────────────────────────────────────
 
 // ModelPrice holds per-million-token prices (USD) for a model.
 type ModelPrice struct {
@@ -104,8 +100,6 @@ func ComputeCost(u TokenUsage, model string) float64 {
 		float64(u.CacheRead)*p.CacheRead/1_000_000
 }
 
-// ── Record schema (schema_version 1) ─────────────────────────────────────────
-
 // NodeRecord is the per-node breakdown element in Record.Nodes.
 type NodeRecord struct {
 	NodeID    string      `json:"node_id"`
@@ -140,8 +134,6 @@ func SessionDataPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "session-data.jsonl")
 }
 
-// ── Collect ───────────────────────────────────────────────────────────────────
-
 // CollectParams is the input to Collect.
 type CollectParams struct {
 	RunID             string
@@ -167,7 +159,6 @@ func Collect(p CollectParams) error {
 		return fmt.Errorf("sessiondata: buildRunEventData: %w", err)
 	}
 
-	// Prefer started_at from the run_started event if caller didn't pass a precise value.
 	startedAt := p.StartedAt
 	if runData.StartedAt != "" && startedAt.IsZero() {
 		if t, parseErr := time.Parse(time.RFC3339, runData.StartedAt); parseErr == nil {
@@ -177,7 +168,6 @@ func Collect(p CollectParams) error {
 	endedAt := p.EndedAt
 	wallTimeS := math.Round(endedAt.Sub(startedAt).Seconds()*10) / 10
 
-	// Prefer values passed from the run-terminal effector over those derived from events.
 	beadID := p.BeadID
 	if beadID == "" {
 		beadID = runData.BeadID
@@ -187,9 +177,6 @@ func Collect(p CollectParams) error {
 		queueID = runData.QueueID
 	}
 
-	// Build per-node time windows from node_dispatch_requested events.
-	// Each window spans from the node's dispatch time to the next node's dispatch
-	// time (or the run end time for the last node).
 	type nodeWindow struct {
 		NodeID  string
 		StartAt time.Time
@@ -208,7 +195,6 @@ func Collect(p CollectParams) error {
 		}
 	}
 
-	// Build node_id → log path from session_log_location events.
 	logByNodeID := make(map[string]string, len(runData.LogPaths))
 	for i, lp := range runData.LogPaths {
 		nid := runData.NodeIDs[i]
@@ -220,15 +206,11 @@ func Collect(p CollectParams) error {
 		}
 	}
 
-	// Read Claude-style transcript logs; attribute turns to nodes by time window
-	// when dispatch events are available (DOT multi-node runs), or by transcript
-	// file (single-node / non-DOT runs). Pi/codex token extraction is P2.
 	var total TokenUsage
 	var turnCount int
 	var nodes []NodeRecord
 
 	if len(windows) > 0 {
-		// DOT multi-node path: process in dispatch order with window-filtered attribution.
 		handledNodeIDs := make(map[string]bool, len(windows))
 		for _, w := range windows {
 			handledNodeIDs[w.NodeID] = true
@@ -236,7 +218,6 @@ func Collect(p CollectParams) error {
 
 			lp := logByNodeID[w.NodeID]
 			if lp == "" {
-				// Non-agentic node (e.g. shell gate): WallTimeS only, no tokens.
 				nodes = append(nodes, NodeRecord{NodeID: w.NodeID, WallTimeS: wallTimeS})
 				continue
 			}
@@ -251,7 +232,6 @@ func Collect(p CollectParams) error {
 			}
 			var nodeTok TokenUsage
 			for _, t := range turns {
-				// Filter by window when the turn carries a timestamp.
 				if !t.Timestamp.IsZero() {
 					if t.Timestamp.Before(w.StartAt) || !t.Timestamp.Before(w.EndAt) {
 						continue
@@ -268,7 +248,6 @@ func Collect(p CollectParams) error {
 			}
 			nodes = append(nodes, nr)
 		}
-		// Include any session_log nodes not covered by dispatch windows (edge case).
 		for i, lp := range runData.LogPaths {
 			nid := runData.NodeIDs[i]
 			if nid == "" {
@@ -297,7 +276,6 @@ func Collect(p CollectParams) error {
 			}
 		}
 	} else {
-		// Non-DOT path: attribute all turns from each transcript to its node.
 		for i, lp := range runData.LogPaths {
 			resolved := ResolveTranscriptPath(lp, p.ClaudeProjectsDir)
 			if resolved == "" {
@@ -324,7 +302,6 @@ func Collect(p CollectParams) error {
 		}
 	}
 
-	// Cost is nil when no price table entry exists (Pi/ornith with no known pricing).
 	var costUSD *float64
 	if p.Model != "" {
 		c := ComputeCost(total, p.Model)
@@ -361,8 +338,6 @@ func Append(projectDir string, rec Record) (err error) {
 	if err != nil {
 		return fmt.Errorf("sessiondata: OpenFile: %w", err)
 	}
-	// Write path: the flush error surfaces at Close, so join it into the named
-	// return — a dropped Close can mean the record never durably landed.
 	defer func() { err = errors.Join(err, f.Close()) }()
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -413,9 +388,6 @@ func ReadAll(projectDir, since, until string) ([]Record, error) {
 	return records, sc.Err()
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
-
-// nodeDispatchEvent holds one node_dispatch_requested event's key fields.
 type nodeDispatchEvent struct {
 	NodeID      string
 	RequestedAt time.Time
@@ -434,9 +406,6 @@ type runEventData struct {
 	NodeDispatchEvents []nodeDispatchEvent
 }
 
-// buildRunEventData scans events.jsonl for events belonging to runID.
-// Only envelope run_id is checked (session_log_location and run_started use
-// bus.EmitWithRunID). model_selected / harness_selected are read from the caller.
 func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 	//nolint:gosec // G304: eventsFile is projectDir-derived (operator config).
 	f, err := os.Open(eventsFile)
@@ -505,7 +474,6 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 			if nodeID == "" || requestedAtStr == "" {
 				continue
 			}
-			// Deduplicate by NodeID: skip retried dispatches for the same node.
 			alreadySeen := false
 			for _, ev := range d.NodeDispatchEvents {
 				if ev.NodeID == nodeID {
@@ -533,7 +501,6 @@ type transcriptTurn struct {
 	Timestamp time.Time // zero when the transcript entry carries no timestamp
 }
 
-// readTranscript reads ALL assistant turns from the given Claude transcript file.
 func readTranscript(path string) ([]transcriptTurn, error) {
 	//nolint:gosec // G304: path comes from session_log_location payload (operator-controlled).
 	f, err := os.Open(path)
@@ -585,7 +552,6 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 			Model: sdJSONStr(msg["model"]),
 			Usage: u,
 		}
-		// Parse the top-level "timestamp" field (RFC3339 with optional sub-seconds).
 		if tsStr := sdJSONStr(entry["timestamp"]); tsStr != "" {
 			if t, parseErr := time.Parse(time.RFC3339Nano, tsStr); parseErr == nil {
 				turn.Timestamp = t

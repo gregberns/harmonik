@@ -1,33 +1,5 @@
 package main
 
-// eval_metrics_cmd.go — harmonik eval metrics (WS3b)
-//
-// Computes deterministic objective quality feeders and writes
-// .harmonik/metrics.json in the eval run's working directory.
-//
-// Called from scripts/eval-grade.sh on grade SUCCESS so the metrics file is
-// present when the judge node reads it.  Each feeder is non-fatal: if a tool
-// is absent or fails, the corresponding field is null / empty.
-//
-// Feeders (specs/02-quality-assessment.md §Part 1):
-//   gofmt -l      → gofmt_clean, gofmt_unformatted
-//   go vet        → vet_clean, vet_issues
-//   gocyclo       → gocyclo_max (if tool installed)
-//   grep patterns → todo_count, fixme_count, stub_count
-//   git show HEAD → diff_added_lines vs reference_line_budget label
-//   bead labels   → expected_big_o, reference_line_budget
-//   hidden_test.go → hidden_test_pass, hidden_test_pass_count
-//   deadcode      → unused_symbols (if tool installed)
-//
-// Guardrail feeders (specs/02-quality-assessment.md §Part 3; WS3e, see
-// eval_guardrails_lygpp.go):
-//   rubric_version  → G6 rubric weight-set stamp
-//   diff self-ID scan → self_id_matches (G2)
-//   diff test-file scan → test_file_touched (G5)
-//   bead-id sample hash → cross_check_sample (O-Q4)
-//
-// Bead: hk-eval-prog-quality-feeders-k5bxl (WS3b).
-
 import (
 	"context"
 	"encoding/json"
@@ -62,7 +34,6 @@ OUTPUT
   .harmonik/metrics.json (compact JSON, schema_version 1)
 `
 
-// evalMetricsRecord is the metrics.json schema (schema_version 1).
 type evalMetricsRecord struct {
 	SchemaVersion       int      `json:"schema_version"`
 	RubricVersion       int      `json:"rubric_version"`
@@ -86,7 +57,6 @@ type evalMetricsRecord struct {
 	CrossCheckSample    bool     `json:"cross_check_sample"`
 }
 
-// runEvalMetrics implements `harmonik eval metrics`.
 func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {
 	fs := flag.NewFlagSet("eval metrics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -153,7 +123,6 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 	return 0
 }
 
-// evalComputeMetrics runs all feeders and assembles the metrics record.
 func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 	rec := evalMetricsRecord{
 		SchemaVersion:    1,
@@ -219,7 +188,6 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 	return rec, nil
 }
 
-// evalReadBeadIDFromTask reads the bead_id field from .harmonik/agent-task.md.
 func evalReadBeadIDFromTask(workdir string) (string, error) {
 	// #nosec G304 -- task metadata is read from the eval worktree selected by the local operator.
 	data, err := os.ReadFile(filepath.Join(workdir, ".harmonik", "agent-task.md"))
@@ -234,8 +202,6 @@ func evalReadBeadIDFromTask(workdir string) (string, error) {
 	return "", fmt.Errorf("bead_id not found in agent-task.md")
 }
 
-// evalDeriveTaskID strips the hk- prefix and the trailing random suffix.
-// hk-eval-fizzbuzz-avjjr → eval-fizzbuzz
 func evalDeriveTaskID(beadID string) string {
 	s := strings.TrimPrefix(beadID, "hk-")
 	if idx := strings.LastIndex(s, "-"); idx != -1 {
@@ -244,7 +210,6 @@ func evalDeriveTaskID(beadID string) string {
 	return s
 }
 
-// evalChangedGoFiles returns non-test .go files changed in HEAD.
 func evalChangedGoFiles(workdir string) ([]string, error) {
 	// #nosec G204 -- git arguments are fixed; workdir is the locally selected eval worktree.
 	cmd := exec.CommandContext(context.Background(), "git", "diff-tree", "--no-commit-id", "-r", "--name-only", "HEAD")
@@ -262,7 +227,6 @@ func evalChangedGoFiles(workdir string) ([]string, error) {
 	return files, nil
 }
 
-// evalGofmtCheck runs gofmt -l on changed files and returns clean status.
 func evalGofmtCheck(workdir string, files []string) (clean bool, unformatted []string) {
 	if len(files) == 0 {
 		return true, []string{}
@@ -286,7 +250,6 @@ func evalGofmtCheck(workdir string, files []string) (clean bool, unformatted []s
 	return len(unformatted) == 0, unformatted
 }
 
-// evalVetCheck runs go vet and returns clean status and any issues.
 func evalVetCheck(workdir, evaltaskDir string) (clean bool, issues []string) {
 	// #nosec G204 -- evaltaskDir is derived from the bead ID read from local task metadata.
 	cmd := exec.CommandContext(context.Background(), "go", "vet", "./"+evaltaskDir+"/...")
@@ -303,7 +266,6 @@ func evalVetCheck(workdir, evaltaskDir string) (clean bool, issues []string) {
 	return err == nil, issues
 }
 
-// evalGocycloMax runs gocyclo and returns the max complexity, or nil if unavailable.
 func evalGocycloMax(workdir string, files []string) *int {
 	if len(files) == 0 {
 		return nil
@@ -333,13 +295,11 @@ func evalGocycloMax(workdir string, files []string) *int {
 		}
 	}
 	if !found {
-		// No parseable gocyclo output — distinct from a real max of 0.
 		return nil
 	}
 	return &maxSeen
 }
 
-// evalGetHeadDiff returns the unified diff of the HEAD commit.
 func evalGetHeadDiff(workdir string) (string, error) {
 	// #nosec G204 -- git arguments are fixed; workdir is the locally selected eval worktree.
 	cmd := exec.CommandContext(context.Background(), "git", "show", "HEAD")
@@ -367,7 +327,6 @@ func evalCountDiffMarkers(diff string) (todo, fixme, stub int) {
 	return
 }
 
-// evalCountDiffAddedLines counts added non-test, non-metadata lines in a diff.
 func evalCountDiffAddedLines(diff string) int {
 	inTestFile := false
 	count := 0
@@ -385,9 +344,6 @@ func evalCountDiffAddedLines(diff string) int {
 	return count
 }
 
-// evalRunHiddenTest runs tests whose name contains "Hidden" (e.g. TestHiddenFoo)
-// and returns pass status and count. -run matches the full "TestXxx" name, so
-// the pattern must not anchor past the mandatory "Test" prefix.
 func evalRunHiddenTest(workdir, evaltaskDir string) (pass *bool, count *int) {
 	// #nosec G204 -- evaltaskDir is derived from the bead ID read from local task metadata.
 	cmd := exec.CommandContext(context.Background(), "go", "test", "./"+evaltaskDir+"/...", "-run", "Hidden", "-timeout", "60s", "-v")
@@ -405,7 +361,6 @@ func evalRunHiddenTest(workdir, evaltaskDir string) (pass *bool, count *int) {
 	return
 }
 
-// evalDeadcodeCheck runs deadcode if available and returns unused symbol lines.
 func evalDeadcodeCheck(workdir, evaltaskDir string) []string {
 	if _, err := exec.LookPath("deadcode"); err != nil {
 		return []string{}

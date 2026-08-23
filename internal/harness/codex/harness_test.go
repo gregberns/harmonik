@@ -1,26 +1,5 @@
 package codex_test
 
-// codexharness_test.go — CodexHarness unit tests (codex-harness C2/T8, hk-m57va).
-//
-// Coverage:
-//   - constant-method enums: AgentType=codex, SessionIDPolicy=Captured,
-//     Completion=ProcessExit.
-//   - DetectReady: true for agent_ready, false for launch_initiated (HC-041) and
-//     unrelated events.
-//   - LaunchSpec delegates to buildCodexLaunchSpec: initial argv on nil
-//     PriorSessionID, resume argv on non-nil PriorSessionID (captured thread_id),
-//     credential strip parity (OPENAI_API_KEY/CODEX_API_KEY → empty overrides),
-//     CODEX_HOME present, WorkDir = workspace.
-//   - Seed/Retask/Teardown are no-op / nil-safe.
-//
-// A test that calls LaunchSpec MUST pass t.TempDir() as codexHome. An empty
-// codexHome normalises to $HOME/.codex (resolveCodexHome), and LaunchSpec runs
-// the fail-closed billing guard, which WRITES config.toml before it asserts. So
-// an empty value makes the test read and rewrite the operator's real Codex home:
-// the result then depends on the machine, and parallel tests race each other on
-// one shared file. The constant-method, DetectReady and Seed/Retask/Teardown
-// tests never reach the guard, so they may keep the empty default.
-
 import (
 	"context"
 	"io"
@@ -31,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constant-method tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexHarness_AgentType verifies AgentType returns AgentTypeCodex.
 func TestCodexHarness_AgentType(t *testing.T) {
@@ -67,10 +42,6 @@ func TestCodexHarness_Completion(t *testing.T) {
 		t.Errorf("Completion = %v; want CompletionProcessExit", got)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DetectReady tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexHarness_DetectReady_AgentReady verifies DetectReady returns true for
 // an agent_ready event.
@@ -108,10 +79,6 @@ func TestCodexHarness_DetectReady_OtherEvent(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// LaunchSpec delegation tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCodexHarness_LaunchSpec_InitialDelegates verifies the harness LaunchSpec
 // produces the same initial-turn argv as buildCodexLaunchSpec: codex exec --json
 // -c sandbox_mode="danger-full-access" -C <wt> <seed>, with no "resume".
@@ -146,7 +113,6 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 	if codexHarnessArgsContain(spawn.Args, "resume") {
 		t.Errorf("initial-turn argv must not contain \"resume\": %v", spawn.Args)
 	}
-	// Seed prompt references the bead ID.
 	if !codexHarnessSeedReferencesBead(spawn.Args, rc.BeadID) {
 		t.Errorf("seed prompt does not reference bead ID %q in args %v", rc.BeadID, spawn.Args)
 	}
@@ -172,10 +138,8 @@ func TestCodexHarness_LaunchSpec_ResumeDelegates(t *testing.T) {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
 	}
 
-	// argv: exec resume <thread_id> ...
 	codexHarnessAssertArgContainsSeq(t, spawn.Args, "exec", "resume", threadID)
 
-	// hk-mzgh: codex exec resume rejects -C; it must be absent from the resume argv.
 	if codexHarnessArgsContain(spawn.Args, "-C") {
 		t.Errorf("resume argv must not contain -C (codex exec resume rejects it): %v", spawn.Args)
 	}
@@ -218,14 +182,6 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 		},
 	}
 
-	// CodexHarness.LaunchSpec runs the fail-closed billing guard (C3/T11) by
-	// default — handlercontract.RunCtx exposes no SkipBillingGuard and
-	// Harness.LaunchSpec builds the internal codex.RunCtx without it, so no test
-	// on this seam can turn the guard off. We point CODEX_HOME at a
-	// writable temp dir and let the guard materialize a valid
-	// forced_login_method=chatgpt config.toml and PASS, exactly as the production
-	// cascade (T12) sets up CODEX_HOME. (An unwritable/real home would make the
-	// guard's mkdir/assert fail and short-circuit this credential-strip check.)
 	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
@@ -241,7 +197,6 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 			}
 		}
 	}
-	// Empty override must be present.
 	for _, dk := range denyKeys {
 		want := dk + "="
 		if !codexHarnessArgsContain(spawn.Env, want) {
@@ -261,12 +216,6 @@ func TestCodexHarness_LaunchSpec_CodexHomePresent(t *testing.T) {
 		Model:         "o4-mini",
 	}
 
-	// Use a writable temp dir as CODEX_HOME so the fail-closed billing guard
-	// (C3/T11, which CodexHarness.LaunchSpec always runs, because SkipBillingGuard
-	// is not on handlercontract.RunCtx and the adapter does not set it) can
-	// materialize a valid forced_login_method=chatgpt
-	// config.toml and PASS — the same setup the production cascade (T12) performs.
-	// The previous "/custom/codex/home" tripped mkdir on a read-only path.
 	codexHome := t.TempDir()
 	h := codex.ExportedNewCodexHarness("", codexHome)
 	spawn, err := h.LaunchSpec(rc)
@@ -288,17 +237,6 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 		BeadID:        "hk-m57va-test-err",
 	}
 
-	// t.TempDir() here is defence in depth rather than a fix for a live defect.
-	// A REVIEWER REFUTED THE STRONGER CLAIM THIS COMMENT USED TO MAKE, and the
-	// refutation is worth keeping: BuildLaunchSpec returns on an empty
-	// WorkspacePath at the top of the function, and runCodexBillingGuard runs
-	// near the bottom, so the guard can NEVER supply this test's error. The
-	// isolated home costs nothing and keeps every LaunchSpec test in this file
-	// spelled the same way, which is what stops the next one being written wrong.
-	//
-	// The real weakness was never the home. It was that `err != nil` passes for
-	// an error from any of the three things LaunchSpec does, so the test could
-	// report success while measuring something else. Assert the identity.
 	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	_, err := h.LaunchSpec(rc)
 	if err == nil {
@@ -329,12 +267,8 @@ func TestCodexHarness_LaunchSpec_EmptyModelAccountDefault(t *testing.T) {
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-nomodel",
 		BeadID:        "hk-m57va-test-nomodel",
-		// Model deliberately empty → account-default (no --model flag).
 	}
 
-	// t.TempDir() CODEX_HOME mirrors the positive sibling test: the billing guard
-	// materializes forced_login_method=chatgpt into a fresh home and asserts, so the
-	// launch shape is exercised without touching the operator's ~/.codex.
 	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spec, err := h.LaunchSpec(rc)
 	if err != nil {
@@ -369,10 +303,6 @@ func TestCodexHarness_LaunchSpec_ModelFlagInInitialArgv(t *testing.T) {
 	}
 	codexHarnessAssertArgValue(t, spawn.Args, "--model", "o4-mini")
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Seed / Retask / Teardown no-op tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexHarness_Seed_NoOp verifies Seed returns nil (codex delivers the task
 // via argv; there is nothing to paste).
@@ -422,11 +352,6 @@ func TestCodexHarness_Teardown_LiveSessionKilled(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers + fake session
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexHarnessArgsContain reports whether args contains the exact element want.
 func codexHarnessArgsContain(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
@@ -436,8 +361,6 @@ func codexHarnessArgsContain(args []string, want string) bool {
 	return false
 }
 
-// codexHarnessAssertArgContainsSeq asserts that seq appears as a contiguous
-// subsequence within args (in order).
 func codexHarnessAssertArgContainsSeq(t *testing.T, args []string, seq ...string) {
 	t.Helper()
 	for start := 0; start+len(seq) <= len(args); start++ {
@@ -455,8 +378,6 @@ func codexHarnessAssertArgContainsSeq(t *testing.T, args []string, seq ...string
 	t.Errorf("argv %v does not contain contiguous sequence %v", args, seq)
 }
 
-// codexHarnessAssertArgValue asserts that flag is immediately followed by
-// wantValue in args.
 func codexHarnessAssertArgValue(t *testing.T, args []string, flag, wantValue string) {
 	t.Helper()
 	for i, a := range args {
@@ -474,8 +395,6 @@ func codexHarnessAssertArgValue(t *testing.T, args []string, flag, wantValue str
 	t.Errorf("%s not found in args %v", flag, args)
 }
 
-// codexHarnessSeedReferencesBead reports whether any arg contains the bead ID
-// (the seed prompt instructs codex to commit with a Refs:<bead> trailer).
 func codexHarnessSeedReferencesBead(args []string, beadID string) bool {
 	for _, a := range args {
 		if strings.Contains(a, beadID) {
@@ -485,9 +404,6 @@ func codexHarnessSeedReferencesBead(args []string, beadID string) bool {
 	return false
 }
 
-// codexHarnessFakeSession is a minimal handlercontract.Session stub that records
-// whether Kill was called. Only Kill is exercised by the Teardown tests; the
-// other methods return zero values.
 type codexHarnessFakeSession struct {
 	killed bool
 }

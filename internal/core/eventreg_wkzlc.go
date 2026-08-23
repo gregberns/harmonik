@@ -1,20 +1,9 @@
 package core
 
-// eventreg_wkzlc.go — startup-time registration of the §8.12 run_stale event
-// payload type into the global event registry per EV-032 / EV-034.
-//
-// Spec ref: specs/event-model.md §6.3 EV-032, §4.9 EV-034.
-// Bead ref: hk-wkzlc.
-
 func init() {
 	registerStalenessEvents()
 }
 
-// registerStalenessEvents registers all §8.12 staleness-detection event payload
-// constructors (hk-wkzlc).
-//
-// Durability classes per §8.12 table:
-//   - run_stale (§8.12.1): O (ordinary — observational; orchestrator decides action)
 func registerStalenessEvents() {
 	mustRegister("run_stale", func() EventPayload { return &RunStalePayload{} })
 }
@@ -147,7 +136,6 @@ func (p RunStalePayload) Valid() bool {
 	if p.EmitCount < 1 {
 		return false
 	}
-	// LastEventType and LastEventAt must be either both set or both empty.
 	if (p.LastEventType == "") != (p.LastEventAt == "") {
 		return false
 	}

@@ -1,19 +1,5 @@
 package queue
 
-// ---------------------------------------------------------------------------
-// JSON-RPC error-code constants for QueueValidationReason (QM-029b)
-// ---------------------------------------------------------------------------
-//
-// The range -32010..-32019 is reserved for queue-model per
-// specs/process-lifecycle.md §4.4 PL-003a. Each constant maps 1:1 to a
-// QueueValidationReason enum value per the normative table in
-// specs/queue-model.md §6.11a QM-029b. These are wire-level constants: once
-// assigned they are immutable; changes require a spec amendment.
-//
-// -32019 remains reserved for a future QueueValidationReason addition within
-// the v0.1 error-code block. Do not assign it without a spec amendment and
-// a QM-029b table update.
-
 const (
 	// ErrorCodeQueueAlreadyActive is the JSON-RPC error code for
 	// ReasonQueueAlreadyActive (QM-027 — single active queue, submit-only).
@@ -67,10 +53,6 @@ const (
 	// Bead ref: hk-tigaf.2.
 	ErrorCodeQueueNameInvalid = -32019
 )
-
-// ---------------------------------------------------------------------------
-// JSONRPCError — map QueueValidationReason to (code, message)
-// ---------------------------------------------------------------------------
 
 // JSONRPCError returns the JSON-RPC error code and a default message string
 // for the given QueueValidationReason. Both the code and the message string

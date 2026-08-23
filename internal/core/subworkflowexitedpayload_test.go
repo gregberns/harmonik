@@ -7,9 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// subwfExitedFixture returns a fully-populated SubWorkflowExitedPayload with
-// all required fields set to valid non-zero values.
-// Used as the base for structural tests (hk-b3f.48).
 func subwfExitedFixture(t *testing.T) SubWorkflowExitedPayload {
 	t.Helper()
 	return SubWorkflowExitedPayload{
@@ -196,7 +193,6 @@ func TestSubWorkflowExitedPayload_JSONKeys(t *testing.T) {
 func TestSubWorkflowExitedPayload_TerminalOutcomeCorrelatesEM036a(t *testing.T) {
 	t.Parallel()
 
-	// Simulate: last expanded node produced SUCCESS.
 	lastNodeOutcome := subwfTerminalOutcomeFixture(t)
 
 	p := subwfExitedFixture(t)
@@ -218,7 +214,6 @@ func TestSubWorkflowExitedPayload_CorrelationFields(t *testing.T) {
 
 	p := subwfExitedFixture(t)
 
-	// EM-036: "Both events correlate via run_id and the parent namespaced node_id"
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		t.Error("RunID is zero: run_id correlation field cannot be the zero UUID (EM-036)")
 	}

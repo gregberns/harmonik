@@ -1,34 +1,5 @@
 package daemon_test
 
-// mergetomain_hkftyvo_test.go — integration tests for the §4.12 merge-to-main
-// sequence introduced by EM-052/EM-053 (bead hk-ftyvo).
-//
-// Test assertions per §10.2 EM-052–EM-053 obligation:
-//   (a) refs/heads/main advances to the run-branch tip on success.
-//   (b) A push-origin-main attempt is made (observed via git push --dry-run).
-//   (c) outcome_emitted{kind=approved} emitted before bead_closed.
-//   (d) bead_closed emitted after CloseBead.
-//   (e) run_completed{success:true} is the final lifecycle event.
-//   (f) ReopenBead called on non-FF.
-//   (g) outcome_emitted{kind=rejected, reason=non_ff_merge} emitted on non-FF.
-//   (h) CloseBead NOT called on non-FF.
-//
-// The test wires the work loop with:
-//   - productionWorktreeFactory so a real git worktree (and run-branch) is created.
-//   - A shell handler that writes a file and commits it onto the run-branch, then
-//     exits 0 (auto-close heuristic branch, EM-052 branch 2).
-//   - A recording bead ledger so Close/Reopen calls are observable.
-//   - A recording event bus so event ordering is verifiable.
-//
-// Helper prefix: mergeToMainFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-ftyvo).
-//
-// Spec refs:
-//   - specs/execution-model.md §4.12 EM-052, EM-053
-//   - specs/workspace-model.md §4.2 WM-005b (task-branch naming)
-//
-// Bead: hk-ftyvo.
-
 import (
 	"context"
 	"encoding/json"
@@ -47,15 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeToMainFixtureGitRepo initialises a git repository in dir with:
-//   - git identity set to daemon@harmonik.local
-//   - "main" branch with an initial commit
-//
-// Returns the repo root path (== dir).
 func mergeToMainFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -80,7 +42,6 @@ func mergeToMainFixtureGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "init")
 }
 
-// mergeToMainFixtureProjectDir creates the minimal .harmonik/ directory tree.
 func mergeToMainFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -95,7 +56,6 @@ func mergeToMainFixtureProjectDir(t *testing.T) string {
 	return dir
 }
 
-// mergeToMainFixtureHeadSHA resolves the HEAD SHA of branch in repoRoot.
 func mergeToMainFixtureHeadSHA(t *testing.T, repoRoot, branch string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "refs/heads/"+branch)
@@ -107,10 +67,6 @@ func mergeToMainFixtureHeadSHA(t *testing.T, repoRoot, branch string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// mergeToMainFixtureAdvanceMain creates a diverging commit on main in repoRoot
-// so that any run-branch is no longer a fast-forward. The commit touches a
-// different file than the agent's work.txt, so a rebase will succeed without
-// conflicts. Used to test the rebase-success path (hk-j1aq5).
 func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -131,9 +87,6 @@ func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	run("commit", "-m", "diverging commit on main")
 }
 
-// mergeToMainFixtureAdvanceMainConflicting creates a diverging commit on main
-// that edits work.txt — the same file the agent writes — producing a rebase
-// conflict. Used to exercise the EM-053 rebase_conflict reopen path.
 func mergeToMainFixtureAdvanceMainConflicting(ctx context.Context, t *testing.T, repoRoot string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -154,11 +107,6 @@ func mergeToMainFixtureAdvanceMainConflicting(ctx context.Context, t *testing.T,
 	run("commit", "-m", "conflicting commit on main")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Recording bead ledger (captures Close/Reopen)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeToMainRecordingLedger captures CloseBead and ReopenBead calls.
 type mergeToMainRecordingLedger struct {
 	mu sync.Mutex
 
@@ -186,23 +134,11 @@ func newMergeToMainRecordingLedger(beadID core.BeadID) *mergeToMainRecordingLedg
 	}
 }
 
-// mergeToMainFixtureLabels is the bead label set every merge-to-main fixture
-// bead carries.
-//
-// The label is load-bearing, not decoration. resolveWorkflow sends a bead with
-// no workflow label to the REVIEWED graph (internal/daemon/standard-bead.dot),
-// whose commit_gate node shells out to `go build ./... && go vet ./... && go
-// test ...` inside the run worktree. These fixtures build a bare git repo with
-// one README, so that gate can only fail, and the run never reaches the merge
-// these tests are about. The exact "workflow:single" label is the sanctioned
-// selector for the no-review graph (implement → close), which is the shape each
-// test's own header describes.
 var mergeToMainFixtureLabels = []string{"workflow:single"}
 
 func (l *mergeToMainRecordingLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// Return the bead only once — after it is consumed, Ready returns empty.
 	if l.closedCount+l.reopenedCount == 0 && !l.isDoneNoLock() {
 		return []core.BeadRecord{{BeadID: l.beadID, Status: core.CoarseStatusOpen, Labels: mergeToMainFixtureLabels}}, nil
 	}
@@ -261,34 +197,6 @@ func (l *mergeToMainRecordingLedger) getReopenedCount() int {
 	return l.reopenedCount
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The committing agent: a fake handler that commits DURING its run
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeToMainCommittingHandlerArgs returns the `/bin/sh -c` argument pair for a
-// fake agent that writes and commits work.txt onto the run branch while it runs,
-// then exits 0.
-//
-// Wire it as TestRuntimeParams.HandlerArgs and leave WorktreeFactory nil so the
-// production factory cuts the worktree.
-//
-// WHY THE COMMIT LIVES HERE AND NOT IN THE WORKTREE FACTORY. The graph node
-// (dispatchDotAgenticNode) reads the worktree HEAD BEFORE it launches the agent
-// and keeps that SHA as the node baseline. It then fails the node when HEAD has
-// not moved past the baseline by the time the agent exits. A fixture that
-// commits inside the worktree factory commits before the launch, so the baseline
-// already contains the commit and the guard correctly refuses the node. Such a
-// fixture models an agent that never existed: no implementer produces its commit
-// before it starts. It only ever passed because the baseline probe threw its
-// error away and left an empty baseline, which the guard could never match. See
-// TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails for the case this
-// arrangement must keep failing.
-//
-// The script calls git by absolute path because handler.Launch replaces the
-// child environment with LaunchSpec.Env, which carries no PATH. It also sends
-// its own stdout to stderr, because the handler contract reads the child's
-// stdout as an NDJSON event stream and git chatter there reads as a malformed
-// line.
 func mergeToMainCommittingHandlerArgs(t *testing.T) []string {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
@@ -302,33 +210,14 @@ func mergeToMainCommittingHandlerArgs(t *testing.T) []string {
 	return []string{"-c", script}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// worktreeFactory that also commits a file onto the run-branch
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeToMainCommittingFactory wraps productionWorktreeFactory and, after the
-// worktree is created, writes a file and commits it onto the run-branch.
-//
-// It hands back a worktree whose run branch is ALREADY one commit ahead of main
-// before any agent runs. Use it only where the caller needs that starting state
-// directly — for example a unit test that calls the merge function itself, or
-// the negative test that proves an idle agent on a pre-committed worktree still
-// fails.
-//
-// Do NOT wire it as TestRuntimeParams.WorktreeFactory in a work-loop test. It
-// commits before the launch, so the node baseline already contains the commit
-// and the no-advance guard refuses the node. Use
-// mergeToMainCommittingHandlerArgs instead, which commits during the run.
 func mergeToMainCommittingFactory(t *testing.T) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	t.Helper()
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
-		// Create the real git worktree (run-branch is created here).
 		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
 		if err != nil {
 			return "", nil, err
 		}
 
-		// Write a file and commit it inside the worktree.
 		workFile := filepath.Join(wtPath, "work.txt")
 		//nolint:gosec // G306: 0644 is fine for a test fixture file
 		if err2 := os.WriteFile(workFile, []byte("agent work\n"), 0o644); err2 != nil {
@@ -356,12 +245,6 @@ func mergeToMainCommittingFactory(t *testing.T) func(ctx context.Context, projec
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers to inspect the event stream
-// ─────────────────────────────────────────────────────────────────────────────
-
-// mergeToMainFindEvents returns all events with the given event type from the
-// collector. Returns nil if none are found.
 func mergeToMainFindEvents(collector *stubEventCollector, eventType string) []stubEmittedEvent {
 	var found []stubEmittedEvent
 	for _, ev := range collector.allEvents() {
@@ -372,12 +255,10 @@ func mergeToMainFindEvents(collector *stubEventCollector, eventType string) []st
 	return found
 }
 
-// mergeToMainEventOrder returns the slice of event types in emission order.
 func mergeToMainEventOrder(collector *stubEventCollector) []string {
 	return collector.eventTypes()
 }
 
-// mergeToMainPayloadKind unmarshals the "kind" field from an outcome_emitted payload.
 func mergeToMainPayloadKind(t *testing.T, ev stubEmittedEvent) string {
 	t.Helper()
 	var m map[string]interface{}
@@ -388,7 +269,6 @@ func mergeToMainPayloadKind(t *testing.T, ev stubEmittedEvent) string {
 	return k
 }
 
-// mergeToMainPayloadReason unmarshals the "reason" field from a payload.
 func mergeToMainPayloadReason(t *testing.T, ev stubEmittedEvent) string {
 	t.Helper()
 	var m map[string]interface{}
@@ -398,10 +278,6 @@ func mergeToMainPayloadReason(t *testing.T, ev stubEmittedEvent) string {
 	r, _ := m["reason"].(string)
 	return r
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test: success path (EM-052 assertions a–e)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestMergeToMain_SuccessPath verifies that on a successful run (auto-close
 // heuristic branch, exit=0) the daemon:
@@ -427,13 +303,11 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 	projectDir := mergeToMainFixtureProjectDir(t)
 	mergeToMainFixtureGitRepo(t, projectDir)
 
-	// Create a bare remote (origin) so git push succeeds.
 	originDir := t.TempDir()
 	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
 	if out, err := initBareCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
-	// Push current main to origin to prime it.
 	primeCmd := exec.CommandContext(t.Context(), "git", "remote", "add", "origin", originDir)
 	primeCmd.Dir = projectDir
 	if out, err := primeCmd.CombinedOutput(); err != nil {
@@ -450,9 +324,6 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 	ledger := newMergeToMainRecordingLedger(beadID)
 	collector := &stubEventCollector{}
 
-	// The handler commits work.txt and exits 0 — triggers the auto-close
-	// heuristic (branch 2). WorktreeFactory is left nil so the production
-	// factory cuts the worktree and the node baseline is the pre-agent HEAD.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -472,7 +343,6 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for the bead to be closed or reopened (doneCh) or test timeout.
 	select {
 	case <-ledger.doneCh:
 		cancel()
@@ -482,13 +352,11 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── Assertion (a): main advanced beyond mainSHABefore. ────────────────────
 	mainSHAAfter := mergeToMainFixtureHeadSHA(t, projectDir, "main")
 	if mainSHAAfter == mainSHABefore {
 		t.Errorf("main HEAD unchanged after success run: still %s; want run-branch tip", mainSHABefore)
 	}
 
-	// ── Assertion (c): CloseBead called exactly once. ─────────────────────────
 	if got := ledger.getClosedCount(); got != 1 {
 		t.Errorf("CloseBead call count = %d; want 1", got)
 	}
@@ -496,11 +364,8 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 		t.Errorf("ReopenBead call count = %d; want 0 on success path", got)
 	}
 
-	// ── Assertion (b, d): event sequence includes outcome_emitted{approved},
-	//    bead_closed, run_completed — in that order. ──────────────────────────
 	types := mergeToMainEventOrder(collector)
 
-	// Find the indices of the key events.
 	outcomeIdx := -1
 	beadClosedIdx := -1
 	runCompletedIdx := -1
@@ -543,7 +408,6 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 		t.Errorf("run_completed not found in event stream: %v", types)
 	}
 
-	// Order checks: outcome_emitted < bead_closed < run_completed.
 	if outcomeIdx != -1 && beadClosedIdx != -1 && outcomeIdx > beadClosedIdx {
 		t.Errorf("outcome_emitted (idx %d) must precede bead_closed (idx %d)", outcomeIdx, beadClosedIdx)
 	}
@@ -551,7 +415,6 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 		t.Errorf("bead_closed (idx %d) must precede run_completed (idx %d)", beadClosedIdx, runCompletedIdx)
 	}
 
-	// ── Assertion (e): run_completed carries success=true. ────────────────────
 	runCompletedEvs := mergeToMainFindEvents(collector, "run_completed")
 	if len(runCompletedEvs) == 0 {
 		t.Error("no run_completed events found")
@@ -569,10 +432,6 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 	t.Logf("merge-to-main success path OK: main %s → %s, events: %v",
 		mainSHABefore[:8], mainSHAAfter[:8], types)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test: the guard the success-path fixture must not buy back
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails is the negative
 // twin of TestMergeToMain_SuccessPath. It runs the SAME work loop with the SAME
@@ -600,10 +459,6 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 	projectDir := mergeToMainFixtureProjectDir(t)
 	mergeToMainFixtureGitRepo(t, projectDir)
 
-	// A working bare origin, exactly as the success path has one. Without it the
-	// merge would fail on the push and the bead would stay open for a reason
-	// that has nothing to do with the guard, and every close assertion below
-	// would pass for free.
 	originDir := t.TempDir()
 	//nolint:gosec // G204: originDir is this test's own t.TempDir(), not user input
 	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
@@ -627,8 +482,6 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 	ledger := newMergeToMainRecordingLedger(beadID)
 	collector := &stubEventCollector{}
 
-	// The worktree arrives with the work already committed, and the agent does
-	// nothing at all. This is the fixture shape the guard exists to refuse.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -661,7 +514,6 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 
 	types := mergeToMainEventOrder(collector)
 
-	// ── The bead must NOT close. ──────────────────────────────────────────────
 	if got := ledger.getClosedCount(); got != 0 {
 		t.Errorf("CloseBead call count = %d; want 0. A node whose agent produced nothing must not close its bead", got)
 	}
@@ -669,21 +521,14 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 		t.Errorf("ReopenBead call count = %d; want >= 1. The refused node must return the bead to the pool", got)
 	}
 
-	// ── The refusal must be the HEAD-advance guard, not some other failure. ───
-	// Without this the test would still pass if the run died for an unrelated
-	// reason, and it would stop defending the guard.
-	// The baseline it names is the run-branch tip, which already carries the
-	// factory's commit — that is the whole point: the agent added nothing to it.
 	if reason := ledger.getReopenReason(); !strings.Contains(reason, `node "implement" (implementer) exited without advancing HEAD past `) {
 		t.Errorf("ReopenBead reason = %q; want the implementer no-advance refusal", reason)
 	}
 
-	// ── Nothing may reach the target branch. ──────────────────────────────────
 	if got := mergeToMainFixtureHeadSHA(t, projectDir, "main"); got != mainSHABefore {
 		t.Errorf("main HEAD = %s; want it pinned at %s. A refused node must not merge", got, mainSHABefore)
 	}
 
-	// ── No success-shaped events. ─────────────────────────────────────────────
 	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
 		t.Errorf("bead_closed emitted for a node that did no work; event stream: %v", types)
 	}
@@ -701,10 +546,6 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 	t.Logf("pre-committed worktree with an idle agent refused as required: main pinned at %s, events: %v",
 		mainSHABefore[:8], types)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test: non-FF path (EM-053 assertions f–h)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestMergeToMain_NonFFReopen verifies that when main has advanced with a
 // conflicting commit (same file the agent modified), the daemon hits a rebase
@@ -732,10 +573,6 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 	ledger := newMergeToMainRecordingLedger(beadID)
 	collector := &stubEventCollector{}
 
-	// Use a custom worktreeFactory that:
-	//   1. Creates the real run-branch (no commit — the agent makes that).
-	//   2. Then advances main with a conflicting commit to work.txt so the
-	//      rebase of the agent's later work.txt commit fails.
 	conflictFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
 		if err != nil {
@@ -745,7 +582,6 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 		return wtPath, cleanup, nil
 	}
 
-	// Handler commits work.txt and exits 0 — triggers the auto-close heuristic branch.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
@@ -775,17 +611,14 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// ── Assertion (f): ReopenBead called. ────────────────────────────────────
 	if got := ledger.getReopenedCount(); got < 1 {
 		t.Errorf("ReopenBead call count = %d; want ≥ 1 on rebase-conflict path", got)
 	}
 
-	// ── Assertion (h): CloseBead NOT called. ─────────────────────────────────
 	if got := ledger.getClosedCount(); got != 0 {
 		t.Errorf("CloseBead call count = %d; want 0 on rebase-conflict path (EM-053)", got)
 	}
 
-	// ── Assertion (g): outcome_emitted{kind=rejected, reason=rebase_conflict}. ──
 	outcomeEvs := mergeToMainFindEvents(collector, "outcome_emitted")
 	if len(outcomeEvs) == 0 {
 		t.Errorf("no outcome_emitted events found; event stream: %v", mergeToMainEventOrder(collector))
@@ -800,7 +633,6 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 		}
 	}
 
-	// bead_closed must NOT appear.
 	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
 		t.Errorf("bead_closed emitted on rebase-conflict path; want absent (EM-053): %v", evs)
 	}

@@ -10,18 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// hc061 — per-bead helper prefix for test helpers in this file.
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-emggz)
-//
-// Spec refs:
-//
-//	specs/handler-contract.md §4.2a HC-058 — per-node-type Outcome emission obligations table.
-//	specs/handler-contract.md §4.2a HC-061 — sub-workflow boundary handlers MUST NOT emit Outcome.
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-061: spec-corpus sensor
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC061_SpecCorpusClause verifies that handler-contract.md contains HC-061
 // and the key normative constraint clauses.
 func TestHC061_SpecCorpusClause(t *testing.T) {
@@ -32,19 +20,13 @@ func TestHC061_SpecCorpusClause(t *testing.T) {
 	if !strings.Contains(spec, "HC-061") {
 		t.Error("handler-contract.md missing HC-061 clause")
 	}
-	// HC-061 must state the prohibition.
 	if !strings.Contains(spec, "MUST NOT emit an Outcome") {
 		t.Error("handler-contract.md HC-061 missing 'MUST NOT emit an Outcome' prohibition; spec may have drifted")
 	}
-	// HC-061 must name the sub-reason.
 	if !strings.Contains(spec, "subworkflow_boundary_emit") {
 		t.Error("handler-contract.md HC-061 missing 'subworkflow_boundary_emit' sub-reason; spec may have drifted")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-061: sub-reason constant sensor
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC061_SubReasonConstantValue verifies that SubworkflowBoundaryEmitSubReason
 // has the exact wire value required by HC-061.
@@ -58,10 +40,6 @@ func TestHC061_SubReasonConstantValue(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-061: runtime enforcement — watcher rejects outcome_emitted on sub-workflow
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC061_WatcherRejectsOutcomeOnSubWorkflowNode verifies that SpawnWatcher
 // emits agent_failed{structural, subworkflow_boundary_emit} when it receives an
 // outcome_emitted progress-stream message while cfg.NodeType is
@@ -74,9 +52,6 @@ func TestHC061_WatcherRejectsOutcomeOnSubWorkflowNode(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000001","session_id":"test-hc061","node_id":"subwf-node","outcome_status":"SUCCESS"}` + "\n"
 
-	// A strings.Reader delivers the single NDJSON line and then EOF, which is
-	// exactly the io.Pipe write-then-close sequence this test used to spawn a
-	// goroutine for — without the unchecked Write/Close or the goroutine race.
 	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
@@ -96,14 +71,12 @@ func TestHC061_WatcherRejectsOutcomeOnSubWorkflowNode(t *testing.T) {
 		t.Fatal("HC-061: watcher did not terminate within 5s after outcome_emitted on sub-workflow node")
 	}
 
-	// The watcher MUST NOT have forwarded outcome_emitted to the bus.
 	for _, et := range pub.EventTypes() {
 		if et == handlercontract.ProgressMsgTypeOutcomeEmitted {
 			t.Error("HC-061: watcher forwarded outcome_emitted to bus; MUST reject it for sub-workflow nodes")
 		}
 	}
 
-	// The watcher MUST have published agent_failed.
 	found := false
 	for _, et := range pub.EventTypes() {
 		if et == handlercontract.ProgressMsgTypeAgentFailed {
@@ -123,9 +96,6 @@ func TestHC061_WatcherAllowsOutcomeOnNonSubWorkflowNode(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000002","session_id":"test-hc061-allow","node_id":"agentic-node","outcome_status":"SUCCESS"}` + "\n"
 
-	// A strings.Reader delivers the single NDJSON line and then EOF, which is
-	// exactly the io.Pipe write-then-close sequence this test used to spawn a
-	// goroutine for — without the unchecked Write/Close or the goroutine race.
 	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
@@ -164,9 +134,6 @@ func TestHC061_WatcherAllowsOutcomeWhenNodeTypeUnset(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000003","session_id":"test-hc061-zero","node_id":"some-node","outcome_status":"SUCCESS"}` + "\n"
 
-	// A strings.Reader delivers the single NDJSON line and then EOF, which is
-	// exactly the io.Pipe write-then-close sequence this test used to spawn a
-	// goroutine for — without the unchecked Write/Close or the goroutine race.
 	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
@@ -177,7 +144,6 @@ func TestHC061_WatcherAllowsOutcomeWhenNodeTypeUnset(t *testing.T) {
 		ProgressStream: pr,
 		Publisher:      pub,
 		DeadLetter:     dl,
-		// NodeType deliberately omitted (zero value) — backward-compat path.
 	})
 
 	select {

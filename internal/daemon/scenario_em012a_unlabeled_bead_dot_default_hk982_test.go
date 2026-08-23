@@ -2,72 +2,6 @@
 
 package daemon_test
 
-// scenario_em012a_unlabeled_bead_dot_default_hk982_test.go — scenario test for
-// EM-012a tier-4 flip: an unlabeled bead dispatches via standard-bead.dot DOT
-// mode by default.
-//
-// # What this guards
-//
-// EM-012a flipped the tier-4 built-in workflow_mode fallback from `single` to
-// `dot` at v1.0 (kerf work `dot-default` / hk-30vlb). Two claims require
-// end-to-end coverage:
-//
-//  1. Mode-resolution tier-4: an unlabeled bead with no daemon default resolves
-//     to `dot`, NEVER `single`.
-//
-//  2. Mode-resolution tier-3 (v1.0 production default): an unlabeled bead with
-//     WorkflowModeDefault=dot (the daemon's v1.0 startup default per PL-004a)
-//     also resolves to `dot`.
-//
-//  3. DOT dispatch via standard-bead.dot: after the mode resolves to `dot`,
-//     the embedded standard-bead.dot graph drives the cascade to completion,
-//     reaching the `close` terminal node on the happy path
-//     (start → implement → commit_gate(SUCCESS) → review(APPROVE) → close).
-//
-// # Tier-4 vs tier-3 distinction
-//
-// The tier-4 fallback fires when `deps.workflowModeDefault` is invalid/absent.
-// In production, daemon.Start REQUIRES a valid WorkflowModeDefault (line 659 of
-// start.go); the tier-4 path in resolveWorkflowMode is a defensive safety net.
-// ExportedTestRuntime normalises a zero WorkflowModeDefault to WorkflowModeSingle
-// (mirroring the historical test-seam behaviour); to exercise tier-4 we call
-// ExportedResolveWorkflowMode directly with an empty daemonDefault.
-//
-// # Test project worktree
-//
-// The commit_gate in standard-bead.dot runs `make core` (D3=v3).
-//
-// To make this pass inside the test worktree we create:
-//   - A minimal go.mod (module em012a-test; go 1.21) and one doc.go, so the
-//     worktree is a real Go module.
-//   - A Makefile whose `full` and `core` targets exit 0.
-//
-// The Makefile is the fixture's own, not this repo's. What is under test here
-// is mode resolution, not the gate, so the gate is stubbed to pass and every
-// worktree derived from this project starts green.
-//
-// # Handler script (agentic nodes)
-//
-// A single /bin/sh script handles both implementer and reviewer invocations
-// (driveDotWorkflow dispatches all agentic nodes through the same HandlerBinary):
-//   - Odd invocations  → implementer: commit a unique file to advance HEAD.
-//   - Even invocations → reviewer:    write APPROVE verdict to
-//     $HARMONIK_WORKSPACE_PATH/.harmonik/review.json.
-//
-// The counter lives in wtPath/.harmonik/em012a_count so it persists across
-// the single implement→review pair.
-//
-// # Spec refs
-//   - specs/execution-model.md §4.3 EM-012a (four-tier mode-resolution)
-//   - specs/execution-model.md §4.3 EM-012a-FLOOR (review-floor guarantee)
-//   - specs/execution-model.md §7.5 (dot-mode binding)
-//   - specs/workflow-graph.md §17 WG-047..WG-052 (standard-bead.dot invariants)
-//
-// Run: go test -tags=scenario -run TestScenario_EM012a ./internal/daemon/...
-//
-// Bead: hk-982.
-// Helper prefix: em012a (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"encoding/json"
@@ -86,17 +20,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// em012a fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// em012aProjectDir creates a test project directory with:
-//   - .harmonik/events/ and .harmonik/beads-intents/ directories
-//   - a minimal go.mod (empty module → `go build ./...` exits 0)
-//   - a Makefile whose `full` target exits 0
-//
-// All files are staged and committed so the derived worktree starts with a
-// passing commit_gate.
 func em012aProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -110,32 +33,20 @@ func em012aProjectDir(t *testing.T) string {
 		t.Fatalf("em012aProjectDir: mkdir beads-intents: %v", err)
 	}
 
-	// Minimal go.mod + package source so `go build ./...` and `go vet ./...` find
-	// at least one package and exit 0 (an empty module returns "no packages to
-	// vet" with exit code 1, which fails the commit_gate).
 	goMod := "module em012a-test\n\ngo 1.21\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("em012aProjectDir: write go.mod: %v", err)
 	}
-	// Minimal package so go build / go vet have something to analyse.
 	docGo := "// Package em012atest is a minimal test module for the em012a scenario.\npackage em012atest\n"
 	if err := os.WriteFile(filepath.Join(dir, "doc.go"), []byte(docGo), 0o644); err != nil {
 		t.Fatalf("em012aProjectDir: write doc.go: %v", err)
 	}
 
-	// Makefile — commit_gate runs the per-bead gate, and this fixture stubs it
-	// green because the subject under test is mode resolution, not the gate.
-	// BOTH target names are defined on purpose. The graph named `make full`
-	// until 2026-08-13 and names `make core` from D3=v3 on; a fixture that
-	// stubs only the current one goes red with "No rule to make target" the
-	// next time that policy moves, and that failure looks like a gate bug
-	// rather than a stale fixture.
 	makefile := ".PHONY: full core\nfull core:\n\t@exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(makefile), 0o644); err != nil {
 		t.Fatalf("em012aProjectDir: write Makefile: %v", err)
 	}
 
-	// Initialise the git repo and commit everything.
 	run := func(args ...string) {
 		t.Helper()
 		//nolint:gosec // G204: git args are test-internal literals
@@ -155,8 +66,6 @@ func em012aProjectDir(t *testing.T) string {
 	return dir
 }
 
-// em012aWorktree creates a detached git worktree from projectDir, creates the
-// .harmonik/ subdirectory inside it, and registers cleanup.
 func em012aWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string) {
 	t.Helper()
 
@@ -193,18 +102,6 @@ func em012aWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string) 
 	return wtPath, parentSHA
 }
 
-// em012aHandlerScript writes a /bin/sh handler script for the agentic nodes in
-// the standard-bead.dot happy path.
-//
-// Dispatch routing uses the $HARMONIK_PHASE env var set by the DOT cascade:
-//   - "reviewer"             → write APPROVE verdict to .harmonik/review.json.
-//   - "implementer-initial"  → commit a unique file to advance HEAD.
-//   - "implementer-resume"   → commit a unique file (after a gate fix-loop).
-//
-// Using $HARMONIK_PHASE instead of an odd/even invocation counter ensures
-// correct routing even when the cascade re-enters the implementer node
-// (e.g. after a deterministic commit_gate failure), since the phase value is
-// authoritative regardless of invocation order.
 func em012aHandlerScript(t *testing.T, wtPath string) string {
 	t.Helper()
 
@@ -244,7 +141,6 @@ exit 0
 	return scriptPath
 }
 
-// em012aRunID returns a fresh RunID for the test.
 func em012aRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -254,9 +150,6 @@ func em012aRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// em012aStandardBeadDotPath returns the absolute path to the canonical
-// specs/examples/standard-bead.dot. The test binary's working directory is the
-// package directory (internal/daemon/), so the spec is two levels up.
 func em012aStandardBeadDotPath(t *testing.T) string {
 	t.Helper()
 	repoRoot := filepath.Join("..", "..")
@@ -266,10 +159,6 @@ func em012aStandardBeadDotPath(t *testing.T) string {
 	}
 	return dotPath
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// (1) Mode-resolution: tier-4 and tier-3 both yield dot, never single
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_EM012a_TierFour_YieldsDotNeverSingle verifies the EM-012a tier-4
 // flip: an unlabeled bead with an absent/invalid daemon default MUST resolve to
@@ -281,9 +170,7 @@ func TestScenario_EM012a_TierFour_YieldsDotNeverSingle(t *testing.T) {
 	t.Parallel()
 
 	bus := &modeResolveFixtureBus{}
-	// Unlabeled bead — no workflow:* label, so tier-1 is absent.
 	bead := modeResolveFixtureBead(t, nil)
-	// Empty daemon default → tier-3 absent → tier-4 fires.
 	daemonDefault := core.WorkflowMode("")
 
 	got := daemon.ExportedResolveWorkflowMode(t.Context(), bead, daemonDefault, bus)
@@ -295,7 +182,6 @@ func TestScenario_EM012a_TierFour_YieldsDotNeverSingle(t *testing.T) {
 	if got != core.WorkflowModeDot {
 		t.Errorf("EM-012a tier-4: resolved to %q, want %q", got, core.WorkflowModeDot)
 	}
-	// No conflict events should have fired (unlabeled bead has no workflow labels).
 	events := modeResolveFixtureBusEvents(t, bus)
 	for _, e := range events {
 		if e.EventType == core.EventTypeBeadLabelConflict {
@@ -315,7 +201,6 @@ func TestScenario_EM012a_TierThree_ProductionDefault_YieldsDot(t *testing.T) {
 
 	bus := &modeResolveFixtureBus{}
 	bead := modeResolveFixtureBead(t, nil) // no workflow:* labels
-	// Tier-3: daemon started with WorkflowModeDefault=dot (v1.0 production default).
 	daemonDefault := core.WorkflowModeDot
 
 	got := daemon.ExportedResolveWorkflowMode(t.Context(), bead, daemonDefault, bus)
@@ -337,7 +222,6 @@ func TestScenario_EM012a_UnrelatedLabels_TierFour_YieldsDot(t *testing.T) {
 	t.Parallel()
 
 	bus := &modeResolveFixtureBus{}
-	// Bead has area/size labels but NO workflow:* label.
 	bead := modeResolveFixtureBead(t, []string{"area:daemon", "size:S", "priority:1"})
 	daemonDefault := core.WorkflowMode("") // tier-3 absent
 
@@ -351,10 +235,6 @@ func TestScenario_EM012a_UnrelatedLabels_TierFour_YieldsDot(t *testing.T) {
 		t.Errorf("EM-012a: non-workflow-labelled bead: got %q, want %q", got, core.WorkflowModeDot)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// (2) DOT dispatch via standard-bead.dot: happy path to close terminal node
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_EM012a_StandardBeadDotHappyPath drives the standard-bead.dot
 // graph through its full happy path using driveDotWorkflow:
@@ -377,7 +257,6 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 	wtPath, parentSHA := em012aWorktree(t, projectDir)
 	scriptPath := em012aHandlerScript(t, wtPath)
 
-	// Load the canonical standard-bead.dot from the spec path.
 	dotPath := em012aStandardBeadDotPath(t)
 	graph, loadErr := workflow.LoadDotWorkflow(dotPath)
 	if loadErr != nil {
@@ -397,9 +276,6 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot, // v1.0 production default
 	})
 
-	// Budget: standard-bead.dot happy path runs one implementer + one gate check +
-	// one reviewer. The gate runs `go build/vet` (fast on an empty module) plus the
-	// trivial stub Makefile. Allow generous wall-clock time.
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 
@@ -424,7 +300,6 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 
 	t.Logf("EM-012a: result=%+v events=%v", result, collector.eventTypes())
 
-	// ── Result assertions ────────────────────────────────────────────────────
 	if !result.Success {
 		t.Errorf("EM-012a: expected success=true on APPROVE happy path; summary=%q",
 			result.Summary)
@@ -438,10 +313,8 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 			"BLOCK/cap-hit → close-needs-attention)", result.TerminalNodeID, "close")
 	}
 
-	// ── Event assertions: DOT cascade dispatch events ────────────────────────
 	events := collector.eventTypes()
 
-	// reviewer_verdict must be present (APPROVE verdict was written and read).
 	foundReviewerVerdict := false
 	for _, et := range events {
 		if et == string(core.EventTypeReviewerVerdict) {
@@ -454,7 +327,6 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 			"did not complete correctly; events=%v", events)
 	}
 
-	// ── Verify reviewer_verdict carries workflow_mode=dot (EM-012a) ──────────
 	for _, ev := range collector.allEvents() {
 		if ev.EventType != string(core.EventTypeReviewerVerdict) {
 			continue
@@ -472,11 +344,9 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 				}
 			}
 		}
-		// Only check the first reviewer_verdict event.
 		break
 	}
 
-	// run_stale must NOT have fired (clean termination, no hang).
 	for _, et := range events {
 		if et == string(core.EventTypeRunStale) {
 			t.Errorf("EM-012a: run_stale must NOT fire on a clean happy-path run; "+

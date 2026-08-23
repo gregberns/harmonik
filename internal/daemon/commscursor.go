@@ -1,64 +1,5 @@
 package daemon
 
-// commscursor.go — daemon-owned per-agent cursor store for durable comms recv.
-//
-// Each agent that reads agent_message events via "comms recv" has a persistent
-// cursor recording the last-consumed event_id. On reconnect (or daemon restart)
-// recv resumes from the stored cursor — nothing is re-delivered beyond the
-// unacked tail, nothing is silently lost.
-//
-// # Layout
-//
-//	<cursorDir>/<name>    — plain UTF-8 file containing one event_id per line (last wins)
-//
-// In practice the cursor directory is <ProjectDir>/.harmonik/comms/cursors/.
-//
-// # Durability contract (agent-comms spec §5 / Q1 / T7)
-//
-//   - get: reads the stored cursor; returns "" when no cursor exists (= scan from
-//     beginning of events.jsonl, i.e. deliver all matching events).
-//   - advance: monotonically advances the cursor using temp+rename+fsync so that
-//     a crash mid-write cannot corrupt the previous cursor value. Advance NEVER
-//     moves the cursor backward: under a cross-process exclusive lock it re-reads
-//     the currently-persisted value and writes the new event_id ONLY if it is
-//     strictly greater (chronologically later, by UUIDv7 byte order — EV-002).
-//     An equal-or-older event_id is a no-op. This is the load-bearing invariant.
-//   - per-agent serialization: CursorStore.AgentMu(name) returns a per-agent
-//     mutex that callers MUST hold across the Get→scan→Advance critical section.
-//     This prevents concurrent recv ops for the same agent within ONE process
-//     from delivering duplicate messages. Concurrent ops for different agents are
-//     independent.
-//
-// # Multi-daemon / cross-process race (hk-fvo9e)
-//
-// AgentMu is an in-process mutex; it does NOT span processes. Two daemons (or
-// two separate processes) running `comms recv` for the SAME agent share no
-// in-process lock: each Gets the same cursor, scans, and Advances. A process
-// that scanned an OLDER snapshot would, with a blind overwrite, rename an OLDER
-// event_id over a NEWER one — moving the cursor BACKWARD and re-delivering
-// already-consumed messages (lost-advance). The single-daemon mitigation
-// (hk-fww4e per-agent mutex) cannot prevent this because the serialization must
-// span processes.
-//
-// Two mechanisms close the cross-process gap, both inside Advance:
-//
-//  1. A cross-process advisory exclusive flock on a per-agent sidecar lockfile
-//     (<cursorDir>.locks/<name>) serializes the read-current-then-write critical
-//     section across ALL processes, not just within one.
-//  2. A monotonic guard: under the lock, Advance re-reads the persisted cursor
-//     and refuses to write an event_id that is not strictly greater. This makes a
-//     laggard write a no-op even if it somehow interleaved — the cursor can only
-//     ever move forward.
-//
-// # Name validation
-//
-// Agent names must be non-empty and must not contain path separators or other
-// filesystem-unsafe characters. Validation is enforced at Advance/Get boundaries
-// so that a malformed name cannot escape the cursor directory.
-//
-// Bead ref: hk-0ezlo (T7).
-// Spec ref: agent-comms spec §5 Q1 / T7 (07-tasks.md).
-
 import (
 	"context"
 	"errors"
@@ -76,15 +17,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// cursorLockTimeout bounds how long Advance waits to acquire the per-agent
-// cross-process flock before failing. Generous enough to absorb a normal
-// read-modify-write cycle under contention, but bounded so a wedged peer turns
-// an indefinite hang into a prompt error rather than blocking recv forever.
 const cursorLockTimeout = 10 * time.Second
 
-// cursorLockRetryInterval is the poll interval for the bounded LOCK_EX|LOCK_NB
-// acquire loop — short enough to grab a freed lock promptly, long enough not to
-// spin-burn a core.
 const cursorLockRetryInterval = 25 * time.Millisecond
 
 // CursorStore is a daemon-owned, file-backed store of per-agent cursors.
@@ -157,10 +91,6 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if eventID == "" {
 		return fmt.Errorf("commscursor: Advance %q: eventID must be non-empty", name)
 	}
-	// Validate eventID is a well-formed UUID unconditionally so a malformed string
-	// can never land in the cursor file. cursorStrictlyGreater also checks the
-	// candidate, but only when an existing cursor is present — a first-advance on
-	// an empty store would otherwise skip the check entirely.
 	if _, err := uuid.Parse(eventID); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: malformed event_id %q: %w", name, eventID, err)
 	}
@@ -169,12 +99,6 @@ func (s *CursorStore) Advance(name, eventID string) error {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, s.dir, err)
 	}
 
-	// Cross-process serialization (hk-fvo9e): take an advisory exclusive flock on
-	// a per-agent sidecar lockfile so the read-current-then-write critical section
-	// is atomic across separate processes, not just within one (AgentMu is
-	// in-process only). The sidecar is keyed per agent so different agents never
-	// contend. Lockfiles live in a dedicated subdirectory so they never appear
-	// alongside cursor files. Held only for one RMW cycle, then released on close.
 	lockDir := s.lockDir()
 	if err := os.MkdirAll(lockDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, lockDir, err)
@@ -193,12 +117,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if err := acquireCursorLock(int(lockFd.Fd()), cursorLockTimeout); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: acquire lock: %w", name, err)
 	}
-	// Lock is released automatically when lockFd is closed by the deferred call.
 
-	// Monotonic guard: re-read the persisted cursor UNDER the lock and refuse to
-	// move backward. We compare raw UUIDv7 bytes (lexicographic == chronological,
-	// EV-002). A malformed stored cursor is treated as "no usable floor" so we do
-	// not wedge on a corrupt file — the new (well-formed) eventID wins.
 	current, err := s.Get(name)
 	if err != nil {
 		return fmt.Errorf("commscursor: Advance %q: read current: %w", name, err)
@@ -209,14 +128,11 @@ func (s *CursorStore) Advance(name, eventID string) error {
 			return fmt.Errorf("commscursor: Advance %q: %w", name, cmpErr)
 		}
 		if !newer {
-			// eventID is equal to or older than the persisted cursor — a laggard
-			// or duplicate advance. Drop it: the cursor must not regress.
 			return nil
 		}
 	}
 
 	target := s.path(name)
-	// Write to a sibling temp file, then rename into place.
 	tmp, err := os.CreateTemp(s.dir, ".cursor-*.tmp")
 	if err != nil {
 		return fmt.Errorf("commscursor: Advance %q: create temp: %w", name, err)
@@ -248,12 +164,6 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	return nil
 }
 
-// cursorStrictlyGreater reports whether candidate is chronologically later than
-// current by comparing their raw UUIDv7 bytes (lexicographic byte order ==
-// chronological order, EV-002 — the same comparison ScanAfter uses). Both must
-// parse as UUIDs; a parse failure on candidate is an error (the caller passes a
-// well-formed event_id). A parse failure on current is signalled separately so
-// the caller can choose to overwrite a corrupt floor rather than wedge.
 func cursorStrictlyGreater(candidate, current string) (bool, error) {
 	cu, err := uuid.Parse(candidate)
 	if err != nil {
@@ -261,8 +171,6 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 	}
 	pu, valid := parseCursorUUID(current)
 	if !valid {
-		// Corrupt persisted cursor: treat as "no usable floor" so a well-formed
-		// advance can recover rather than the cursor wedging forever.
 		return true, nil
 	}
 	cb := [16]byte(cu)
@@ -275,35 +183,19 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 	return false, nil // equal — not strictly greater
 }
 
-// parseCursorUUID converts a persisted cursor into its comparison form. The
-// validity bit is deliberate: a corrupt persisted floor is recoverable state,
-// not an error returned to the caller (see cursorStrictlyGreater).
 func parseCursorUUID(value string) (uuid.UUID, bool) {
 	parsed, err := uuid.Parse(value)
 	return parsed, err == nil
 }
 
-// lockDir is the directory holding per-agent sidecar lockfiles. It is a SIBLING
-// of the cursor directory (<cursorDir>.locks), not a child, so a directory
-// listing of the cursor dir shows only cursor files (one per agent) and never a
-// lock artifact — preserving the "one cursor file per agent, nothing else"
-// invariant.
 func (s *CursorStore) lockDir() string {
 	return s.dir + ".locks"
 }
 
-// lockPath returns the per-agent sidecar lockfile path, under lockDir. Agent
-// names are validated (no path separators, not "."/".."), so the join cannot
-// escape the lock directory.
 func (s *CursorStore) lockPath(name string) string {
 	return filepath.Join(s.lockDir(), name)
 }
 
-// acquireCursorLock acquires an advisory exclusive flock on fd, retrying the
-// non-blocking LOCK_EX|LOCK_NB attempt every cursorLockRetryInterval until it
-// succeeds or timeout elapses. On timeout it returns an error so Advance fails
-// promptly rather than blocking recv indefinitely behind a wedged peer. Mirrors
-// the bounded-acquire idiom in internal/workspace (hk-bfvby).
 func acquireCursorLock(fd int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -338,14 +230,10 @@ func (s *CursorStore) AgentMu(name string) *sync.Mutex {
 	return mu
 }
 
-// path returns the file path for the given agent name.
 func (s *CursorStore) path(name string) string {
 	return filepath.Join(s.dir, name)
 }
 
-// validateCursorName rejects names that are empty or contain characters that
-// could escape the cursor directory (path separators, null bytes, dots that
-// resolve to parent directories).
 func validateCursorName(name string) error {
 	if name == "" {
 		return fmt.Errorf("commscursor: agent name must be non-empty")

@@ -1,20 +1,5 @@
 package daemon_test
 
-// workloop_qcancel_ppt32_test.go — durable queue restart drain.
-//
-// A clean work-loop exit parks each active queue at paused-by-drain. It keeps
-// the canonical file and sets the one-shot restart intent. Startup consumes
-// that intent and continues the queue.
-//
-// This test mocks SIGINT by cancelling the workloop context immediately after
-// a queue is loaded but before any items are dispatched.
-//
-// Helper prefix: queueCancelFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-ppt32).
-//
-// Spec ref: specs/queue-model.md §8 (shutdown drain).
-// Bead ref: hk-ppt32.
-
 import (
 	"context"
 	"path/filepath"
@@ -26,12 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// queueCancelFixturePendingQueue builds a minimal one-group wave queue with all
-// items in pending status (no items dispatched).
 func queueCancelFixturePendingQueue(t *testing.T, beadIDs ...core.BeadID) *queue.Queue {
 	t.Helper()
 	items := make([]queue.Item, len(beadIDs))
@@ -59,8 +38,6 @@ func queueCancelFixturePendingQueue(t *testing.T, beadIDs ...core.BeadID) *queue
 	}
 }
 
-// queueCancelFixtureHasActiveQueue returns true when queue.json exists and
-// contains status=active. Used to assert the file is absent / non-active after cancel.
 func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {
 	t.Helper()
 	q, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
@@ -73,10 +50,6 @@ func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {
 	}
 	return q.Status == queue.QueueStatusActive
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestQueueShutdown_PersistsRestartDrain
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueShutdown_PersistsRestartDrain verifies that a cancelled work-loop
 // context preserves the queue and its automatic restart intent.
@@ -92,24 +65,18 @@ func TestQueueShutdown_PersistsRestartDrain(t *testing.T) {
 
 	const beadID = core.BeadID("hk-ppt32-cancel-test-bead-001")
 
-	// Persist the queue to disk so queue.json exists, mirroring the production
-	// path where run.go calls queue.Persist before starting the daemon.
 	q := queueCancelFixturePendingQueue(t, beadID)
 	if err := queue.Persist(context.Background(), projectDir, q); err != nil {
 		t.Fatalf("Persist initial queue: %v", err)
 	}
 
-	// Verify queue.json exists and is active before the test begins.
 	if !queueCancelFixtureHasActiveQueue(t, projectDir) {
 		t.Fatal("precondition: expected active queue.json before workloop start")
 	}
 
-	// Wire a QueueStore pre-loaded with the queue.
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
 
-	// Use a stubBeadLedger that never returns ready beads — the workloop should
-	// idle on the queue path without dispatching any items.
 	ledger := &stubBeadLedger{}
 	bus := &stubEventCollector{}
 
@@ -127,7 +94,6 @@ func TestQueueShutdown_PersistsRestartDrain(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	// Cancel the context immediately — simulates SIGINT before any dispatch.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancelled before workloop even enters the loop
 
@@ -139,8 +105,6 @@ func TestQueueShutdown_PersistsRestartDrain(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// The durable and in-memory records stay paused and carry the one-shot
-	// restart intent.
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load after shutdown: %v", loadErr)
@@ -166,7 +130,6 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
-	// Build a queue already in paused-by-failure state.
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
@@ -218,7 +181,6 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// queue.json must still exist with paused-by-failure.
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load: %v", loadErr)
@@ -248,7 +210,6 @@ func TestQueueShutdown_NamedQueuePersistsRestartDrain(t *testing.T) {
 	const queueName = "cp"
 	const beadID = core.BeadID("hk-u6m4l-named-queue-cancel-bead-001")
 
-	// Build a named queue with status=active (one pending item, no dispatch).
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
@@ -272,13 +233,11 @@ func TestQueueShutdown_NamedQueuePersistsRestartDrain(t *testing.T) {
 		t.Fatalf("Persist named queue: %v", err)
 	}
 
-	// Precondition: named queue file is present and active.
 	loaded, err := queue.Load(context.Background(), projectDir, queueName)
 	if err != nil || loaded == nil || loaded.Status != queue.QueueStatusActive {
 		t.Fatalf("precondition: expected active %q queue on disk; loaded=%v err=%v", queueName, loaded, err)
 	}
 
-	// Wire a QueueStore pre-loaded with the named queue.
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q) // SetQueue normalises to q.Name = "cp"
 
@@ -299,7 +258,6 @@ func TestQueueShutdown_NamedQueuePersistsRestartDrain(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	// Cancel immediately — simulates SIGINT before any dispatch.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

@@ -2,11 +2,6 @@ package core
 
 import "testing"
 
-// rc73InvFixtureWorkflow returns a reconciliation Workflow fixture, reusing the
-// rc73WorkflowFixtureReconciliation helper from reconciliationworkflow_rc001_test.go
-// under a distinct WorkflowID to avoid collision.
-//
-// Spec ref: specs/reconciliation/spec.md §5 RC-INV-001.
 func rc73InvFixtureWorkflow(t *testing.T) Workflow {
 	t.Helper()
 	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006310")
@@ -40,9 +35,6 @@ func rc73InvFixtureWorkflow(t *testing.T) Workflow {
 	}
 }
 
-// rc73InvFixtureOrdinaryWorkflow returns an ordinary (non-reconciliation)
-// Workflow fixture used to validate that non-reconciliation workflows MUST NOT
-// be associated with reconciliation_verdict_* events per RC-INV-001.
 func rc73InvFixtureOrdinaryWorkflow(t *testing.T) Workflow {
 	t.Helper()
 	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006311")
@@ -75,15 +67,6 @@ func rc73InvFixtureOrdinaryWorkflow(t *testing.T) Workflow {
 	}
 }
 
-// rc73InvFixtureIsReconciliationWorkflow returns true if the given Workflow
-// has workflow_class = reconciliation. This is the daemon's audit-time check
-// for RC-INV-001: every reconciliation_verdict_* event source workflow must
-// pass this predicate.
-//
-// Spec ref: specs/reconciliation/spec.md §5 RC-INV-001 Sensor — "(a) Daemon
-// MUST tag the Workflow record in its registry with workflow_class; startup
-// audit log samples emitted workflows and asserts every reconciliation_verdict_*
-// event traces back to a Workflow whose workflow_class = reconciliation."
 func rc73InvFixtureIsReconciliationWorkflow(wf Workflow) bool {
 	return wf.WorkflowClass != nil && *wf.WorkflowClass == WorkflowClassReconciliation
 }
@@ -179,26 +162,9 @@ func TestRCINV001_AuditSensorDistinguishesReconciliationFromOrdinary(t *testing.
 func TestRCINV001_ExactlyOneVerdictEventPerDispatch(t *testing.T) {
 	t.Parallel()
 
-	// The invariant: a reconciliation workflow is a Workflow with workflow_class
-	// = reconciliation (RC-001), emits exactly one verdict commit (RC-002),
-	// and is the sole source of reconciliation_verdict_* events per dispatch.
-	//
-	// At the structural level: two reconciliation workflows for the same
-	// target_run_id are prevented by RC-002a (flock dedup). The invariant
-	// holds because:
-	//   1. Each reconciliation dispatch acquires exactly one lock (RC-002a).
-	//   2. Each locked dispatch produces exactly one workflow run (RC-001).
-	//   3. Each workflow run emits exactly one verdict commit (RC-002).
-	//   4. Each verdict commit emits exactly one reconciliation_verdict_emitted (RC-021).
-	//
-	// This test models the invariant by verifying that two distinct reconciliation
-	// workflow fixtures have distinct WorkflowIDs, establishing the one-workflow-
-	// per-dispatch contract at the identity level.
-
 	wf1 := rc73InvFixtureWorkflow(t)
 	wf2 := rc73WorkflowFixtureReconciliation(t)
 
-	// Both must be reconciliation workflows.
 	if !rc73InvFixtureIsReconciliationWorkflow(wf1) {
 		t.Error("RC-INV-001: wf1 is not a reconciliation workflow")
 	}
@@ -206,8 +172,6 @@ func TestRCINV001_ExactlyOneVerdictEventPerDispatch(t *testing.T) {
 		t.Error("RC-INV-001: wf2 is not a reconciliation workflow")
 	}
 
-	// Two dispatches for different target runs produce two distinct workflow
-	// instances (different WorkflowIDs).
 	if wf1.WorkflowID == wf2.WorkflowID {
 		t.Error("RC-INV-001: two reconciliation workflow fixtures share the same WorkflowID; " +
 			"each dispatch must produce a distinct workflow instance")
@@ -237,8 +201,6 @@ func TestRCINV001_WorkflowClassConstantIsTheAuditAnchor(t *testing.T) {
 			string(WorkflowClassReconciliation), auditAnchor)
 	}
 
-	// The audit predicate: wf.WorkflowClass != nil && *wf.WorkflowClass == WorkflowClassReconciliation
-	// is equivalent to *wf.WorkflowClass == "reconciliation" — the JSONL query anchor.
 	wf := rc73InvFixtureWorkflow(t)
 	if wf.WorkflowClass == nil {
 		t.Fatal("RC-INV-001: fixture workflow has nil WorkflowClass; cannot verify audit anchor")

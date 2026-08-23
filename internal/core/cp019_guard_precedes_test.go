@@ -1,33 +1,11 @@
 package core
 
-// cp019_guard_precedes_test.go — Conformance tests for CP-019
-//
-// specs/control-points.md §4.4.CP-019:
-//
-//	In the edge-selection cascade of [execution-model.md §4.10 EM-042], Guards
-//	MUST run BEFORE the condition cascade. The cascade then operates on the
-//	Guard-reordered edge list as its input; subsequent precedence rules
-//	(condition match, preferred_label, suggested_next_ids, weight, ordering_key)
-//	are applied in the order defined by the execution-model spec.
-//
-// Tests:
-//  1. Guard fires before the condition evaluator is called.
-//  2. Condition evaluator receives edges in the guard-reordered order.
-//  3. Guard-reordered order is preserved through the condition filter step for
-//     equal-weight, equal-ordering-key edges (stable sort).
-//  4. preferred_label hint is applied downstream of guard reordering.
-//  5. suggested_next_ids hint is applied downstream of guard reordering.
-//
-// Refs: hk-a8bg.18
-
 import (
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// ── fixtures ──────────────────────────────────────────────────────────────────
 
 func cp019FixtureRun(t *testing.T) *Run {
 	t.Helper()
@@ -49,8 +27,6 @@ func cp019FixtureEdge(t *testing.T, toNode NodeID, weight int, key string) Edge 
 }
 
 func cp019EvalAlwaysTrue(_ PolicyExpression, _ map[string]any, _ Outcome) bool { return true }
-
-// ── CP-019 §1: guard fires before condition evaluator ─────────────────────────
 
 // TestCP019_GuardFiresBeforeConditionEvaluator verifies that the guard evaluator
 // is invoked before any condition expression is evaluated against the run context.
@@ -89,8 +65,6 @@ func TestCP019_GuardFiresBeforeConditionEvaluator(t *testing.T) {
 	}
 }
 
-// ── CP-019 §2: condition evaluator receives guard-reordered list ──────────────
-
 // TestCP019_ConditionEvaluatorReceivesGuardReorderedList verifies that the
 // condition evaluator is called for edges in the order returned by the guard,
 // not the original candidate order.
@@ -110,7 +84,6 @@ func TestCP019_ConditionEvaluatorReceivesGuardReorderedList(t *testing.T) {
 	eC := Edge{FromNode: "node-src", ToNode: "node-c", Condition: &condC, Weight: 1, OrderingKey: "c"}
 	candidates := []Edge{eA, eB, eC}
 
-	// Guard reverses the candidate list: output order is [C, B, A].
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		reversed := make([]Edge, len(edges))
 		for i, e := range edges {
@@ -119,7 +92,6 @@ func TestCP019_ConditionEvaluatorReceivesGuardReorderedList(t *testing.T) {
 		return reversed
 	}
 
-	// Record which edge each condition evaluation corresponds to, in call order.
 	var evalOrder []NodeID
 	eval := func(expr PolicyExpression, _ map[string]any, _ Outcome) bool {
 		switch string(expr) {
@@ -136,7 +108,6 @@ func TestCP019_ConditionEvaluatorReceivesGuardReorderedList(t *testing.T) {
 	cycles := NewCycleCounter()
 	DispatchEdge(run, candidates, outcome, eval, cycles, guard, PermitGate)
 
-	// Condition evaluator must be called in guard-reordered order: C, B, A.
 	want := []NodeID{"node-c", "node-b", "node-a"}
 	if len(evalOrder) != len(want) {
 		t.Fatalf("CP-019: condition evaluator called %d times, want %d; got %v", len(evalOrder), len(want), evalOrder)
@@ -147,8 +118,6 @@ func TestCP019_ConditionEvaluatorReceivesGuardReorderedList(t *testing.T) {
 		}
 	}
 }
-
-// ── CP-019 §3: guard order preserved through condition filter ─────────────────
 
 // TestCP019_GuardOrderPreservedThroughConditionFilter verifies that when the
 // guard reorders edges and the condition filter eliminates some, the remaining
@@ -163,14 +132,11 @@ func TestCP019_GuardOrderPreservedThroughConditionFilter(t *testing.T) {
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
 
 	condFail := PolicyExpression("fail")
-	// Three edges with identical weight and ordering key; sort tie-break is stable.
-	// Guard places B first.
 	eA := Edge{FromNode: "node-src", ToNode: "node-a", Weight: 5, OrderingKey: "x"}
 	eB := Edge{FromNode: "node-src", ToNode: "node-b", Weight: 5, OrderingKey: "x"}
 	eC := Edge{FromNode: "node-src", ToNode: "node-c", Weight: 5, OrderingKey: "x", Condition: &condFail}
 	candidates := []Edge{eA, eC, eB}
 
-	// Guard reorders to [B, A, C].
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		var b, a, c Edge
 		for _, e := range edges {
@@ -186,7 +152,6 @@ func TestCP019_GuardOrderPreservedThroughConditionFilter(t *testing.T) {
 		return []Edge{b, a, c}
 	}
 
-	// Condition evaluator: fail for condFail, pass for everything else.
 	eval := func(expr PolicyExpression, _ map[string]any, _ Outcome) bool {
 		return string(expr) != "fail"
 	}
@@ -197,14 +162,10 @@ func TestCP019_GuardOrderPreservedThroughConditionFilter(t *testing.T) {
 	if !result.Advance {
 		t.Fatalf("CP-019: expected Advance=true; got failure: %s / %s", result.FailureClass, result.FailureReason)
 	}
-	// After guard reorder [B, A, C] and condition filter (C removed): matched = [B, A].
-	// Equal weight + equal key → stable sort preserves guard's order → B wins.
 	if result.Edge.ToNode != "node-b" {
 		t.Errorf("CP-019: selected %q, want %q — guard's reordering must be preserved through condition filter (guard placed B first)", result.Edge.ToNode, "node-b")
 	}
 }
-
-// ── CP-019 §4: preferred_label step is downstream of guard ───────────────────
 
 // TestCP019_PreferredLabelStepIsDownstreamOfGuard verifies that the
 // preferred_label hint (EM-041 step b) narrows the guard-reordered,
@@ -223,14 +184,11 @@ func TestCP019_PreferredLabelStepIsDownstreamOfGuard(t *testing.T) {
 		PreferredLabel: &labelStr,
 	}
 
-	// eOther has higher weight; without preferred_label it would win.
-	// ePick carries the matching label.
 	ePick := cp019FixtureEdge(t, "node-pick", 5, "b")
 	ePick.Label = &labelStr
 	eOther := cp019FixtureEdge(t, "node-other", 10, "a")
 	candidates := []Edge{eOther, ePick}
 
-	// Guard reverses to [ePick, eOther] — guard order should not affect preferred_label result.
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return []Edge{edges[1], edges[0]}
 	}
@@ -241,13 +199,10 @@ func TestCP019_PreferredLabelStepIsDownstreamOfGuard(t *testing.T) {
 	if !result.Advance {
 		t.Fatalf("CP-019: expected Advance=true; failure: %s / %s", result.FailureClass, result.FailureReason)
 	}
-	// preferred_label "pick-me" must select ePick even though eOther has higher weight.
 	if result.Edge.ToNode != "node-pick" {
 		t.Errorf("CP-019: preferred_label selected %q, want %q — preferred_label step must operate on guard-reordered list", result.Edge.ToNode, "node-pick")
 	}
 }
-
-// ── CP-019 §5: suggested_next_ids step is downstream of guard ────────────────
 
 // TestCP019_SuggestedNextIDsStepIsDownstreamOfGuard verifies that the
 // suggested_next_ids hint (EM-041 step c) narrows the guard-reordered,
@@ -265,12 +220,10 @@ func TestCP019_SuggestedNextIDsStepIsDownstreamOfGuard(t *testing.T) {
 		SuggestedNextIDs: []NodeID{"node-hint"},
 	}
 
-	// eOther has higher weight; without the hint it would win.
 	eHint := cp019FixtureEdge(t, "node-hint", 1, "b")
 	eOther := cp019FixtureEdge(t, "node-other", 10, "a")
 	candidates := []Edge{eOther, eHint}
 
-	// Guard reverses to [eHint, eOther].
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return []Edge{edges[1], edges[0]}
 	}
@@ -281,7 +234,6 @@ func TestCP019_SuggestedNextIDsStepIsDownstreamOfGuard(t *testing.T) {
 	if !result.Advance {
 		t.Fatalf("CP-019: expected Advance=true; failure: %s / %s", result.FailureClass, result.FailureReason)
 	}
-	// suggested_next_ids narrows to eHint even though eOther has higher weight.
 	if result.Edge.ToNode != "node-hint" {
 		t.Errorf("CP-019: suggested_next_ids selected %q, want %q — hint step must operate on guard-reordered list", result.Edge.ToNode, "node-hint")
 	}

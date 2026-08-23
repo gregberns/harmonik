@@ -1,46 +1,5 @@
 package core
 
-// budgetexhaustion_rc018.go — Budget exhaustion terminates with fallback verdict (RC-018).
-//
-// RC-018 requires that on wall-clock budget exhaustion the daemon execute a
-// deterministic 5-step sequence:
-//
-//  1. Terminate investigator subprocess (SIGTERM, then SIGKILL after HC-018 interval).
-//  2. Wait for watcher-observation of process termination per HC-011.
-//  3. Emit reconciliation_budget_exhausted (class F per event-model.md §8.4.3).
-//  4. Emit fallback escalate-to-human verdict (class F per RC-021).
-//  5. Verdict-executor (RC-025a) consumes fallback as if investigator-emitted.
-//
-// Steps (3) and (4) are NOT atomic but each is an fsync-boundary write. A crash
-// between them leaves the budget_exhausted event durably written with no
-// subsequent verdict commit; the next daemon startup detects this state and
-// routes through the Cat 3b retry cap (RC-026a).
-//
-// This file declares the pure, I/O-free layer:
-//
-//   - BudgetExhaustionStep — typed label for each of the five steps.
-//   - BudgetExhaustionHandlerStep — struct pairing a step label with its
-//     canonical description (for documentation and crash-recovery invariant tests).
-//   - BudgetExhaustionHandlerSequence — returns the canonical ordered slice of
-//     all five steps.
-//   - SynthesizeBudgetExhaustionFallbackVerdict — pure function that constructs
-//     the fallback VerdictEvent (escalate-to-human) that RC-018 requires the
-//     daemon to emit at step (4). The synthesized event is structurally identical
-//     to an investigator-emitted escalate-to-human, satisfying the
-//     "indistinguishable" requirement of RC-018.
-//
-// Actual process-signal delivery (steps 1–2), event emission (steps 3–4), and
-// verdict-executor dispatch (step 5) are performed by the daemon layer, which
-// consumes these types and function. The separation mirrors the
-// PlanForVerdict / verdict-executor split for RC-025.
-//
-// Spec ref: specs/reconciliation/spec.md §4.4 RC-018;
-// specs/handler-contract.md §4.3 HC-018 (SIGTERM-to-SIGKILL interval);
-// specs/handler-contract.md §4.3 HC-011 (watcher process-exit observation);
-// specs/event-model.md §8.4.3 (durability class F).
-//
-// Refs: hk-63oh.27
-
 import (
 	"fmt"
 

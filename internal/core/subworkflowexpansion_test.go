@@ -2,8 +2,6 @@ package core
 
 import "testing"
 
-// subwfExpandFixturePin returns a valid SubWorkflowExpansionPin for use in
-// SubWorkflowExpansion fixtures (EM-034c).
 func subwfExpandFixturePin() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     SubWorkflowRef("workflows/reconciliation-v1"),
@@ -12,8 +10,6 @@ func subwfExpandFixturePin() SubWorkflowExpansionPin {
 	}
 }
 
-// subwfExpandFixtureNode returns a valid Node of the given type, with a
-// namespaced NodeID of the form "<parentNodeID>/<subNodeID>" per EM-034a.
 func subwfExpandFixtureNode(t *testing.T, nodeID NodeID) Node {
 	t.Helper()
 	n := b3f73NodeNonAgentic(t)
@@ -21,13 +17,6 @@ func subwfExpandFixtureNode(t *testing.T, nodeID NodeID) Node {
 	return n
 }
 
-// subwfExpandFixture returns a fully-populated SubWorkflowExpansion with all
-// required fields set to valid non-zero values (EM-034).
-//
-// The expansion represents a sub-workflow node "dispatch" in the parent
-// workflow, expanded into two namespaced nodes:
-//
-//	"dispatch/start-node" and "dispatch/end-node"
 func subwfExpandFixture(t *testing.T) SubWorkflowExpansion {
 	t.Helper()
 

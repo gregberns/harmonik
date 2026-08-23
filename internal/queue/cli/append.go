@@ -68,9 +68,6 @@ func RunQueueAppend(ctx context.Context, subArgs []string, out, errOut io.Writer
 	}
 	beadIDs := positional[1:]
 
-	// Build the socket request envelope. The HandlerAdapter.HandleQueueAppend
-	// unmarshals the entire SocketRequest into QueueAppendRequest, so we merge
-	// queue_id, name, group_index, and bead_ids with the "op" field.
 	type appendPayload struct {
 		Op         string   `json:"op"`
 		QueueID    string   `json:"queue_id,omitempty"`

@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// Tests for ArchiveVerdict and ReviewVerdictArchivePath per
-// workspace-model.md §4.7.WM-027a §(c) (bead hk-7om2q.16 / T-WM-016).
-//
-// Helper prefix: archiveVerdictFixture (distinct from reviewVerdictFixture
-// used by the T-WM-015 tests in reviewverdict_wm027a_test.go).
-
-// archiveVerdictFixtureMakeWorkspace creates a temp directory representing a
-// workspace and ensures the .harmonik subdirectory exists.
 func archiveVerdictFixtureMakeWorkspace(t *testing.T) string {
 	t.Helper()
 	workspacePath := t.TempDir()
@@ -26,8 +18,6 @@ func archiveVerdictFixtureMakeWorkspace(t *testing.T) string {
 	return workspacePath
 }
 
-// archiveVerdictFixtureWriteSource writes a minimal valid verdict JSON payload
-// to ${workspacePath}/.harmonik/review.json so ArchiveVerdict has a source.
 func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 	t.Helper()
 	payload := []byte(`{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Looks good."}`)
@@ -37,16 +27,10 @@ func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ReviewVerdictArchivePath — path helper shape
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM016_ArchivePathShape verifies that ReviewVerdictArchivePath produces
 // the canonical path ${workspace_path}/.harmonik/review.iter-<N>.json.
 func TestWM016_ArchivePathShape(t *testing.T) {
 	t.Parallel()
-	// Built rather than written as a "/ws" literal so the separator is not
-	// embedded in a filepath.Join argument.
 	wsRoot := filepath.Join(string(filepath.Separator), "ws")
 	cases := []struct {
 		iterN int
@@ -65,10 +49,6 @@ func TestWM016_ArchivePathShape(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ArchiveVerdict — happy path
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM016_ArchivePlacesFileAtCorrectPath verifies that ArchiveVerdict renames
 // review.json to review.iter-<N>.json at the correct canonical path.
 func TestWM016_ArchivePlacesFileAtCorrectPath(t *testing.T) {
@@ -80,13 +60,11 @@ func TestWM016_ArchivePlacesFileAtCorrectPath(t *testing.T) {
 		t.Fatalf("ArchiveVerdict: unexpected error: %v", err)
 	}
 
-	// Source must be gone.
 	src := ReviewVerdictPath(workspacePath)
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Errorf("source %q still exists after archive (want: absent)", src)
 	}
 
-	// Destination must exist.
 	dst := ReviewVerdictArchivePath(workspacePath, 1)
 	if _, err := os.Stat(dst); err != nil {
 		t.Errorf("destination %q absent after archive: %v", dst, err)
@@ -130,10 +108,6 @@ func TestWM016_ArchiveIterationN3(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ArchiveVerdict — double-archive at same N returns error
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM016_DoubleArchiveSameNReturnsError verifies that calling ArchiveVerdict
 // twice with the same iterationN returns an error on the second call.
 func TestWM016_DoubleArchiveSameNReturnsError(t *testing.T) {
@@ -141,32 +115,23 @@ func TestWM016_DoubleArchiveSameNReturnsError(t *testing.T) {
 	workspacePath := archiveVerdictFixtureMakeWorkspace(t)
 	archiveVerdictFixtureWriteSource(t, workspacePath)
 
-	// First archive — succeeds.
 	if err := ArchiveVerdict(workspacePath, 1); err != nil {
 		t.Fatalf("first ArchiveVerdict: unexpected error: %v", err)
 	}
 
-	// Write a new source file to simulate the next iteration's reviewer writing
-	// review.json again.
 	archiveVerdictFixtureWriteSource(t, workspacePath)
 
-	// Second archive at the same N=1 — MUST fail because review.iter-1.json exists.
 	err := ArchiveVerdict(workspacePath, 1)
 	if err == nil {
 		t.Fatal("second ArchiveVerdict at same N=1: expected error, got nil")
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ArchiveVerdict — absent source returns ErrNotFound
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestWM016_AbsentSourceReturnsErrNotFound verifies that ArchiveVerdict returns
 // an error wrapping ErrNotFound when review.json does not exist.
 func TestWM016_AbsentSourceReturnsErrNotFound(t *testing.T) {
 	t.Parallel()
 	workspacePath := archiveVerdictFixtureMakeWorkspace(t)
-	// Deliberately do NOT write review.json.
 
 	err := ArchiveVerdict(workspacePath, 1)
 	if err == nil {

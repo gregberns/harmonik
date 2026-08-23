@@ -1,35 +1,11 @@
 package supervisecmd
 
-// on008a_budgetpaused_test.go — conformance tests for ON-008a.
-//
-// ON-008a has two obligations:
-//  1. `harmonik supervise start` MUST inject the credential into Pi from the
-//     non-committed scoped source (CI-006). Tested separately in
-//     ci006_ci001_explore_hk96s75_test.go.
-//  2. The `budget-paused` pause-reason MUST be surfaced to the operator via
-//     `harmonik supervise status` alongside `circuit-tripped`.
-//
-// This file covers obligation 2: verifying that:
-//   - CognitionLoopStatus declares budget-paused and circuit-tripped as valid values.
-//   - WriteLoopStatusAtomic / ReadLoopStatus round-trip correctly.
-//   - buildStatus includes loop_status and pause_reason from loop-status.json.
-//   - The human-readable status output includes loop_status when the file is present.
-//   - The JSON status output includes loop_status and pause_reason fields.
-//
-// Spec ref: specs/operator-nfr.md §4.3 ON-008a;
-//           specs/cognition-loop.md §6 LoopStatus.
-// Bead: hk-cy8rp.
-
 import (
 	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 )
-
-// ---------------------------------------------------------------------------
-// TestON008a_CognitionLoopStatusDeclaresRequiredValues
-// ---------------------------------------------------------------------------
 
 // TestON008a_CognitionLoopStatusDeclaresRequiredValues confirms that the
 // CognitionLoopStatus type declares all seven LoopStatus values from
@@ -77,10 +53,6 @@ func TestON008a_BudgetPausedAndCircuitTrippedAreKnown(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestON008a_LoopStatusRoundTrip
-// ---------------------------------------------------------------------------
 
 // TestON008a_LoopStatusRoundTrip verifies that WriteLoopStatusAtomic followed
 // by ReadLoopStatus produces the original record without loss.
@@ -148,10 +120,6 @@ func TestON008a_ReadLoopStatusAbsent(t *testing.T) {
 		t.Errorf("ON-008a: ReadLoopStatus on missing file: got %+v; want nil", rec)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestON008a_BuildStatusIncludesLoopStatus
-// ---------------------------------------------------------------------------
 
 // TestON008a_BuildStatusIncludesLoopStatus verifies that buildStatus populates
 // LoopStatus and PauseReason from loop-status.json, surfacing the
@@ -223,10 +191,6 @@ func TestON008a_BuildStatusNoLoopStatusWhenFileAbsent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestON008a_HumanReadableOutputIncludesLoopStatus
-// ---------------------------------------------------------------------------
-
 // TestON008a_HumanReadableOutputIncludesLoopStatus verifies that RunStatus in
 // text mode emits loop_status and pause_reason lines when the file is present.
 // This encodes the operator-visible surface for budget-paused (ON-008a).
@@ -292,10 +256,6 @@ func TestON008a_JSONOutputIncludesLoopStatusFields(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestON008a_LoopStatusPathUnderCognitionDir
-// ---------------------------------------------------------------------------
-
 // TestON008a_LoopStatusPathUnderCognitionDir verifies that LoopStatusPath
 // returns a path inside .harmonik/cognition/ — the gitignored cognition
 // directory used by the supervise file surface.
@@ -317,10 +277,6 @@ func TestON008a_LoopStatusPathUnderCognitionDir(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestON008a_UnknownStatusStringRejected
-// ---------------------------------------------------------------------------
-
 // TestON008a_UnknownStatusStringRejected verifies that an unrecognised string
 // is not reported as IsKnown — preventing spurious values from being accepted
 // silently.
@@ -332,7 +288,3 @@ func TestON008a_UnknownStatusStringRejected(t *testing.T) {
 		t.Errorf("ON-008a: CognitionLoopStatus(%q).IsKnown() = true; unexpected string must not be known", bogus)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------

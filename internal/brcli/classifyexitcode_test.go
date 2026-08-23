@@ -10,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 )
 
-// b87228FixtureMockBinary writes a shell script that exits with the given code
-// and prints nothing. Used by exit-code classification tests.
 func b87228FixtureMockBinary(t *testing.T, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,7 +22,6 @@ func b87228FixtureMockBinary(t *testing.T, exitCode int) string {
 	return path
 }
 
-// b87228FixtureAdapter returns an Adapter pointed at the given brPath.
 func b87228FixtureAdapter(t *testing.T, brPath string) *brcli.Adapter {
 	t.Helper()
 	a, err := brcli.New(brPath)
@@ -34,10 +31,6 @@ func b87228FixtureAdapter(t *testing.T, brPath string) *brcli.Adapter {
 	return a
 }
 
-// b87228FixtureSpecTable returns the §6.1a illustrative exit-code → BrError
-// mapping entries. BrUnavailable is excluded because it is not reachable via
-// exit code (it is assigned on timeout / exec error, not by the subprocess's
-// exit code).
 func b87228FixtureSpecTable() []struct {
 	code  int
 	want  brcli.BrError
@@ -89,9 +82,6 @@ func TestB87228ResultBrErrSpecTable(t *testing.T) {
 // Spec ref: specs/beads-integration.md §6.1a ("other → Other: unrecognized;
 // emits store_divergence_detected per BI-025a"), §4.8a BI-025a.
 func TestB87228ResultBrErrUnknownExitCodes(t *testing.T) {
-	// Codes 5–8 and 127 are outside the §6.1a table (exit 127 is shell "command
-	// not found"; exit 8 is harmonik's own beads-unavailable daemon exit, not a
-	// br exit code). All must classify as BrOther.
 	unknownCodes := []int{5, 6, 7, 8, 127}
 	for _, code := range unknownCodes {
 		t.Run(fmt.Sprintf("exit-%d-other", code), func(t *testing.T) {
@@ -117,7 +107,6 @@ func TestB87228ResultBrErrUnknownExitCodes(t *testing.T) {
 // Spec ref: specs/beads-integration.md §6.1a (BrUnavailable row: "(timeout)" and
 // "(exec error)", NOT a numeric exit code).
 func TestB87228ResultBrErrNeverUnavailableFromExitCode(t *testing.T) {
-	// Scan all spec-listed codes plus several unknown codes.
 	codes := []int{0, 1, 2, 3, 4, 5, 127}
 	for _, code := range codes {
 		t.Run(fmt.Sprintf("exit-%d-not-unavailable", code), func(t *testing.T) {
@@ -154,8 +143,6 @@ func TestB87228ExecErrorLeavesZeroBrErr(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing binary, got nil")
 	}
-	// BrErr must be the zero value — no subprocess ran so no exit-code
-	// classification occurred.
 	if result.BrErr != "" {
 		t.Errorf("BrErr = %q on exec error; want zero value (empty string)", result.BrErr)
 	}
@@ -173,7 +160,6 @@ func TestB87228RunWithTimeoutBrErrSpecTable(t *testing.T) {
 			path := b87228FixtureMockBinary(t, tc.code)
 			a := b87228FixtureAdapter(t, path)
 
-			// Use generous timeout so the subprocess exits normally (not via SIGTERM).
 			cfg := brcli.TimeoutConfig{}
 			result, err := a.RunWithTimeout(context.Background(), cfg, brcli.CommandKindRead)
 			if err != nil {

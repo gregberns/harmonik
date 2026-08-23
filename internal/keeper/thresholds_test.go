@@ -13,10 +13,6 @@ import (
 // any value here is a deliberate band-retune — an operator decision, never a
 // side effect of a refactor. Refs: hk-bpkv, codename:keeper-redesign, hk-8hr1.
 func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
-	// Pin the named default constants (the single source of truth). These values
-	// are operator-decided; do NOT change them to make a test pass.
-	// Checkpoint trial: compatibility warn=NOTICE 170K, act=WARN 200K,
-	// force_act=HARD 220K.
 	cases := []struct {
 		name string
 		got  float64
@@ -39,8 +35,6 @@ func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
 		}
 	}
 
-	// WatcherConfig and CyclerConfig MUST agree on every shared warn-band value
-	// after applyDefaults. This is the anti-drift invariant the consolidation buys.
 	var w WatcherConfig
 	w.applyDefaults()
 	var cy CyclerConfig
@@ -56,7 +50,6 @@ func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
 		t.Errorf("WarnPctCeil drift: watcher=%v cycler=%v", w.WarnPctCeil, cy.WarnPctCeil)
 	}
 
-	// Resolved HARD defaults are operator-pinned for the first trial.
 	if cy.ForceActAbsTokens != 220_000 {
 		t.Errorf("ForceActAbsTokens = %d; want 220000 (act 200k + 20k offset)", cy.ForceActAbsTokens)
 	}
@@ -100,9 +93,6 @@ func TestThresholdInvariant_WarnLtActLtForceAct(t *testing.T) {
 			cy.ActPctCeil, cy.ForceActPctCeil)
 	}
 
-	// Young-session guard window is pinned alongside the band: under the
-	// aggressive earlier band a just-resumed session must be protected from an
-	// immediate restart, so this must stay > 0 (hk-8hr1).
 	if DefaultBootGracePeriod != 5*time.Minute {
 		t.Errorf("DefaultBootGracePeriod = %v; want 5m (young-session guard window)", DefaultBootGracePeriod)
 	}
@@ -122,7 +112,6 @@ func TestMinAbsOrPctCeil(t *testing.T) {
 		windowSize int64
 		want       int64
 	}{
-		// 200k window: the pct-ceil wins for warn (0.70*200k=140k < 200k).
 		{"200k-window-pct-ceil-wins", 200_000, 0.70, 200_000, 140_000},
 		// 1M window: the abs cap wins (0.70*1M=700k > 200k) — the [1m]-model case.
 		{"1m-window-abs-cap-wins", 200_000, 0.70, 1_000_000, 200_000},
@@ -195,8 +184,6 @@ func TestPromotedDefaults_ByteIdentity(t *testing.T) {
 		t.Errorf("DefaultMaxHeartbeatMisses = %d; want 12", DefaultMaxHeartbeatMisses)
 	}
 
-	// Package-const aliases must equal their exported Default* source so every
-	// existing call site keeps resolving the same value.
 	if warnCooldown != DefaultWarnCooldown {
 		t.Errorf("warnCooldown alias = %v; want DefaultWarnCooldown %v", warnCooldown, DefaultWarnCooldown)
 	}

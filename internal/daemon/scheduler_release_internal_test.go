@@ -14,23 +14,8 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// The release is the other half of the reservation, and the half that had no
-// durability test at all. Deleting the persist from the old raw revert left the
-// suite green, because the tests that depend on the revert read the in-memory
-// store and never the file. Every assertion below reads the queue back off
-// disk for that reason.
-//
-// Bead ref: hk-mk4cl.
-
-// releaseQueueName is the queue every case below reserves on. The release is
-// per-item, so a second queue name would add no coverage.
 const releaseQueueName = "main"
 
-// The fixture deliberately holds TWO groups and TWO items, and the target is
-// the SECOND item of the SECOND group. A one-group one-item fixture cannot tell
-// a lookup that honours the group index, the item index and the bead id from
-// one hardcoded to the first of each — the three dimensions this change claims
-// to identify its item by. The decoys are what make the claim falsifiable.
 const (
 	releaseDecoyGroupBead = core.BeadID("hk-release-decoy-group")
 	releaseDecoyItemBead  = core.BeadID("hk-release-decoy-item")
@@ -38,8 +23,6 @@ const (
 	releaseItemIndex      = 1
 )
 
-// releaseFixture builds a project directory holding one active queue whose
-// target item sits behind a completed group and a sibling item.
 func releaseFixture(t *testing.T, beadID core.BeadID) (string, *queuewiring.QueueStore) {
 	t.Helper()
 	projectDir := t.TempDir()
@@ -74,7 +57,6 @@ func releaseFixture(t *testing.T, beadID core.BeadID) (string, *queuewiring.Queu
 	return projectDir, store
 }
 
-// releaseTarget names the item every case acts on.
 func releaseTarget(beadID core.BeadID, runID core.RunID) queueReservation {
 	return queueReservation{
 		QueueName:  releaseQueueName,
@@ -85,8 +67,6 @@ func releaseTarget(beadID core.BeadID, runID core.RunID) queueReservation {
 	}
 }
 
-// loadReleasedItem reads the TARGET item back off disk, and also returns the
-// two decoys so a test can prove the write did not touch them.
 func loadReleasedItem(t *testing.T, projectDir string) (target, decoyGroup, decoyItem queue.Item) {
 	t.Helper()
 	//nolint:gosec // the path is built from t.TempDir(); the test wrote this file itself
@@ -104,8 +84,6 @@ func loadReleasedItem(t *testing.T, projectDir string) (target, decoyGroup, deco
 	return persisted.Groups[1].Items[1], persisted.Groups[0].Items[0], persisted.Groups[1].Items[0]
 }
 
-// reserveForRelease drives the fixture to the state a release starts from: the
-// target item durably dispatched, carrying the returned run.
 func reserveForRelease(t *testing.T, beadID core.BeadID) (string, *queuewiring.QueueStore, core.RunID) {
 	t.Helper()
 	projectDir, store := releaseFixture(t, beadID)
@@ -143,13 +121,9 @@ func TestReleaseReservation_ReturnsTheItemToPendingDurably(t *testing.T) {
 	if persisted.LastFailureReason != "claim_failed" {
 		t.Errorf("persisted LastFailureReason = %q; want %q", persisted.LastFailureReason, "claim_failed")
 	}
-	// hk-6pspu: the attempt budget is monotonic. Resetting it here would let a
-	// bead that can never be claimed cycle for as long as the daemon runs.
 	if persisted.Attempts != 1 {
 		t.Errorf("persisted Attempts = %d; want 1 — the release must not refund the attempt", persisted.Attempts)
 	}
-	// The release must touch exactly one item. A lookup that ignores the group
-	// index or the item index would reopen a neighbour for dispatch.
 	if decoyGroup.Status != queue.ItemStatusCompleted {
 		t.Errorf("completed group's item = %q; want %q — the release reached into another group",
 			decoyGroup.Status, queue.ItemStatusCompleted)
@@ -250,7 +224,6 @@ func TestReleaseReservation_SecondReleaseLeavesTheItemPendingAndSaysSo(t *testin
 		t.Errorf("persisted RunID = %q; want nil — a released item names no run", *target.RunID)
 	}
 
-	// The operator sentence must not contradict the state two lines above.
 	advice := releaseOutcomeAdvice(second.Verdict)
 	if strings.Contains(advice, "still dispatched") {
 		t.Errorf("advice for %q says %q — the item is pending on disk and the next tick re-selects it, "+
@@ -338,8 +311,6 @@ func TestReleaseReservation_QuarantinedQueueStaysLoud(t *testing.T) {
 		t.Fatalf("first verdict = %q; want %q", first.Verdict, reservationWriteFailed)
 	}
 
-	// Repairing the directory must not un-quarantine the queue: QM-001 says the
-	// daemon refuses further mutations, and recovery is an operator restart.
 	if err := os.Chmod(queuesDir, 0o700); err != nil { //nolint:gosec // restoring write access to prove the quarantine is sticky
 		t.Fatalf("chmod queues dir: %v", err)
 	}
@@ -352,15 +323,6 @@ func TestReleaseReservation_QuarantinedQueueStaysLoud(t *testing.T) {
 	}
 }
 
-// bumpGeneration performs the raw write that every completion goroutine does:
-// it installs the queue it just read, which advances the store generation and
-// makes any snapshot taken before it stale.
-//
-// It also changes a byte, on the decoy item rather than the item under test.
-// Transact checks the generation BEFORE it compares snapshot bytes, so a
-// generation-only bump would exercise only the first of the two guards, and a
-// future reordering would leave these tests passing for the wrong reason. A
-// real completion goroutine changes both.
 func bumpGeneration(store *queuewiring.QueueStore) {
 	locked := store.LockForMutation()
 	defer locked.Done()
@@ -415,8 +377,6 @@ func TestReleaseFrom_RetriesAfterLosingTheSnapshotRace(t *testing.T) {
 	const beadID = core.BeadID("hk-release-8")
 	projectDir, store, runID := reserveForRelease(t, beadID)
 
-	// The first attempt is guaranteed to lose: this snapshot is stale before the
-	// loop ever runs.
 	stale := store.Snapshot(releaseQueueName)
 	bumpGeneration(store)
 
@@ -465,8 +425,6 @@ func TestReleaseFrom_GivesUpAfterTheRetryBudgetAndSaysTheItemIsStranded(t *testi
 			gaveUp.Verdict, gaveUp.Err, reservationReleaseContended)
 	}
 
-	// The verdict has to describe the disk. The item is still dispatched to a run
-	// that is not going to execute it, and nothing re-selects a dispatched item.
 	persisted, _, _ := loadReleasedItem(t, projectDir)
 	if persisted.Status != queue.ItemStatusDispatched {
 		t.Errorf("persisted status = %q; want %q — a release that gave up must not have written",
@@ -477,9 +435,6 @@ func TestReleaseFrom_GivesUpAfterTheRetryBudgetAndSaysTheItemIsStranded(t *testi
 			persisted.RunID, runID)
 	}
 
-	// The other half: a caller handed this verdict must speak. Silence here is
-	// the same stall as a false success — the group waits forever on an item no
-	// run will execute and nothing says why.
 	report := adoptedReleaseReport(releaseQueueName, string(beadID), runID, gaveUp)
 	if report == "" {
 		t.Fatal("the give-up produced no operator report; the strand then reads as a slow daemon rather than an error")

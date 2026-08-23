@@ -17,12 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// keeperBuildParams carries the per-invocation, side-effect-free inputs the
-// keeper Cycler/Watcher config literals are built from. It exists so the
-// resolve→construct path that `harmonik keeper` uses (ResolveKeeperConfig +
-// buildKeeperConfigs) is reachable from a test WITHOUT spinning the full
-// runKeeperSubcommand (which acquires a lock, runs doctor, and blocks on signals).
-// Refs: hk-yy57 (live config-driven-thresholds E2E test seam).
 type keeperBuildParams struct {
 	AgentName    string
 	ProjectDir   string
@@ -41,20 +35,7 @@ type keeperBuildParams struct {
 	KeeperCfg projectconfig.KeeperConfig
 }
 
-// buildKeeperConfigs builds the CyclerConfig and WatcherConfig literals the keeper
-// start path constructs, from the already-resolved ResolvedKeeperConfig and the
-// per-invocation params. It is SIDE-EFFECT-FREE: it returns the two config literals
-// (data) and does NOT call NewCycler / RecoverFromCrash / NewWatcher — the caller
-// (runKeeperSubcommand) owns those side effects so behaviour is byte-identical to
-// the prior inline construction. The returned WatcherConfig.Cycler is left nil; the
-// caller assigns the constructed *Cycler after crash recovery. Factored out (no
-// behaviour change) so the config-driven-threshold resolution + construction is
-// testable end-to-end without the lock/doctor/signal machinery. Refs: hk-yy57.
 func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (keeper.CyclerConfig, keeper.WatcherConfig) {
-	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
-	// applyDefaults). When neither flag nor config set it, use DefaultBootGracePeriod
-	// (5m); when set, honor the configured value VERBATIM including the 0 = disabled
-	// sentinel.
 	resolvedBootGrace := keeper.DefaultBootGracePeriod
 	if resolved.BootGraceSet {
 		resolvedBootGrace = resolved.BootGrace
@@ -177,35 +158,6 @@ func buildKeeperCycleDeps(
 	return deps
 }
 
-// runKeeperSubcommand implements `harmonik keeper`.
-//
-// Flags:
-//
-//	--agent <name>        agent name (required); identifies the lockfile and .managed marker
-//	--tmux <target>       tmux pane target (optional; injected into on warn/act crossing)
-//	--warn-pct N          context-use percentage that triggers a warning (default 0 = unset → use abs band; tighten-only)
-//	--act-pct N           context-use percentage that triggers handoff action (default 0 = unset → use abs band; .managed-gated; tighten-only)
-//	--window-size N       assumed context-window token size when gauge reports WindowSize==0; 0=unset
-//	--warn-abs-tokens N   absolute-token warn threshold; 0=unset → OPERATOR-REQUIRED (reads from config)
-//	--act-abs-tokens N    absolute-token act threshold; 0=unset → OPERATOR-REQUIRED (reads from config)
-//
-// Behaviour (Phase-2, .managed-gated):
-//  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
-//  2. Check .harmonik/keeper/<agent>.managed; if absent, log no-op message and exit 0.
-//  3. If present: run crash recovery (resume any interrupted cycle from a prior crash),
-//     then start the watcher loop. On the first upward crossing of warn-pct, inject a
-//     wrap-up-warning prompt into the managed pane (via --tmux) and emit
-//     session_keeper_warn. On crossing act-pct with CrispIdle and no in-flight dispatch,
-//     run the intent-preserving handoff→/clear→resume cycle. Emit session_keeper_no_gauge
-//     when the gauge file is absent or stale. Block until SIGINT/SIGTERM.
-//
-// Exit codes:
-//
-//	0  — exited cleanly (no-op or signal shutdown)
-//	1  — argument or I/O error
-//	2  — lock already held by another keeper
-//
-// Spec ref: codename:session-keeper (hk-ekap1); beads hk-8vzek, hk-22i70, hk-lm9it.
 func runKeeperSubcommand(args []string) int {
 	fs := flag.NewFlagSet("keeper", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -222,9 +174,6 @@ func runKeeperSubcommand(args []string) int {
 		forceRestartFlag  bool
 		warnOnlyFlag      bool
 
-		// TIER-1 tunable flags (hk-4gtu): high-traffic knobs get a CLI flag
-		// (FLAG > CONFIG > DEFAULT). Long-tail cadence/budget stays config-only
-		// but is still THREADED from config into the Watcher/Cycler literals.
 		stalenessFlag       time.Duration
 		idleQuiesceFlag     time.Duration
 		pollIntervalFlag    time.Duration
@@ -237,11 +186,6 @@ func runKeeperSubcommand(args []string) int {
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
 	fs.StringVar(&tmuxFlag, "tmux", "", "tmux pane target (optional; injected into on warn crossing)")
-	// W7 (hk-x7s): default 0 = UNSET → use the abs band. The advertised 80/90
-	// defaults were never applied (only an EXPLICITLY-set flag flows through the
-	// pct-ceil seam via fs.Visit), so a reader trusting the help text got a silent
-	// no-op. Defaulting to 0 makes "unset → abs band" honest; an explicit value is
-	// still honored (and tighten-only clamped) below.
 	fs.IntVar(&warnPctFlag, "warn-pct", 0, "context-use percentage that triggers a warning (0 = unset; use abs band)")
 	fs.IntVar(&actPctFlag, "act-pct", 0, "context-use percentage that triggers handoff action (0 = unset; use abs band; .managed-gated)")
 	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0; 0=unset")
@@ -250,7 +194,6 @@ func runKeeperSubcommand(args []string) int {
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
 	fs.BoolVar(&warnOnlyFlag, "warn-only", false, "warn-only mode: emit warn events but never trigger restart, respawn, or live-pane recovery (for crew keepers; hk-yfcc)")
-	// TIER-1 tunable flags (hk-4gtu). Each FLAG > CONFIG > DEFAULT; 0/"" = unset → defer.
 	fs.DurationVar(&stalenessFlag, "staleness", 0, "gauge-staleness window before the gauge is treated as absent (default 120s)")
 	fs.DurationVar(&idleQuiesceFlag, "idle-quiesce", 0, "minimum gauge quiescence before the pane is considered idle (default 8s)")
 	fs.DurationVar(&pollIntervalFlag, "poll-interval", 0, "watcher gauge-poll cadence (default 5s)")
@@ -264,20 +207,9 @@ func runKeeperSubcommand(args []string) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return 1
 		}
-		// Unrecognized flag (incl. a stray leading-dash token): loud exit 2.
 		return 2
 	}
 
-	// hk-5da7: HONOR explicitly-set --warn-pct/--act-pct instead of silently
-	// ignoring them. Previously these flags were inert on 1M-window models — the
-	// gate consulted only the hardcoded pct-CEILS (0.70/0.85) and abs caps
-	// (200k/215k), so on a 1M window the abs cap always won and the operator's
-	// `--warn-pct 30 --act-pct 35` did nothing. We now feed an explicit pct flag
-	// in as the pct-ceil (pct/100), so it flows through the SAME min(abs, ceil*window)
-	// band logic. The EARLIER of the two thresholds fires, so a lower pct than the
-	// abs default restarts sooner (the operator's intent) and a higher one is
-	// harmlessly capped by abs. The threshold math itself is unchanged — this only
-	// routes the flag into the existing pctCeil seam. Refs: hk-odhh, hk-5da7.
 	var warnPctSet, actPctSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -287,9 +219,6 @@ func runKeeperSubcommand(args []string) int {
 			actPctSet = true
 		}
 	})
-	// Emit the honoring acknowledgment EARLY (before agent resolution) so it is
-	// visible even when the command later fails for another reason — this is the
-	// loud, no-silent-misconfig signal the old inert warning used to be.
 	if warnPctSet {
 		fmt.Fprintf(os.Stderr, "keeper: honoring --warn-pct %d as warn ceil %.2f of window\n", warnPctFlag, float64(warnPctFlag)/100.0)
 	}
@@ -297,8 +226,6 @@ func runKeeperSubcommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "keeper: honoring --act-pct %d as act ceil %.2f of window\n", actPctFlag, float64(actPctFlag)/100.0)
 	}
 
-	// Resolve the target agent: FLAG-ONLY (hk-5da7). --agent is required; a
-	// positional argument is rejected with exit 2.
 	resolvedAgent, code := resolveKeeperAgent(fs, "harmonik keeper", agentFlag)
 	if resolvedAgent == "" {
 		return code
@@ -311,16 +238,8 @@ func runKeeperSubcommand(args []string) int {
 		return 1
 	}
 
-	// Load .harmonik/config.yaml keeper: block for threshold + text defaults.
-	// Errors are non-fatal (logged to stderr); missing file is silently a no-op.
-	// Precedence: CLI flag > config.yaml > compiled default (applied in applyDefaults).
 	projCfg, projCfgErr := projectconfig.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
-		// hk-9f3f (operator decision): an unknown / typo'd key under the keeper:
-		// block is a HARD ERROR — `harmonik keeper` REFUSES to start so the
-		// operator notices and fixes the key, rather than silently running on
-		// defaults with their intended config dropped. Other loader errors remain
-		// non-fatal (logged; defaults used) per the prior keeper-startup contract.
 		var unknownKey *projectconfig.ErrUnknownConfigKey
 		if errors.As(projCfgErr, &unknownKey) {
 			fmt.Fprintf(os.Stderr, "keeper: refusing to start: %v\n", projCfgErr)
@@ -330,10 +249,7 @@ func runKeeperSubcommand(args []string) int {
 	}
 	keeperCfg := projCfg.Keeper
 
-	// Detect which threshold flags were explicitly set by the caller so we can
-	// distinguish "caller passed 0" from "caller omitted the flag".
 	var absWarnSet, absActSet bool
-	// TIER-1 explicit-set detection (hk-4gtu): so a 0 flag can override config.
 	var stalenessSet, idleQuiesceSet, pollIntervalSet, handoffTimeoutSet bool
 	var bootGraceSet, idleFloorSet, hardCeilingAbsSet, hardCeilingModeSet bool
 	fs.Visit(func(f *flag.Flag) {
@@ -361,11 +277,6 @@ func runKeeperSubcommand(args []string) int {
 		}
 	})
 
-	// Pre-flight doctor: runs BEFORE ResolveKeeperConfig so config gaps are
-	// visible in the keeper's output even when the config-missing-key error
-	// causes an early exit. Non-fatal: the resolve below is the hard gate.
-	// The new "config" check in runKeeperDoctor directly reports missing keys.
-	// Refs: hk-zou19.
 	{
 		home, homeErr := os.UserHomeDir()
 		if homeErr == nil {
@@ -374,15 +285,6 @@ func runKeeperSubcommand(args []string) int {
 		}
 	}
 
-	// Resolve the effective threshold band through the SINGLE precedence resolver
-	// (hk-4pnv): FLAG > CONFIG > DEFAULT per field, tighten-only pct, force-act
-	// precedence (abs wins over offset), defaults read from internal/keeper's
-	// exported Default* consts. FAIL-LOUD (operator decision): on ANY bad config
-	// value, bad CLI flag, pct>1, or a cross-field band inversion the resolver
-	// returns a *KeeperConfigError — we log it and REFUSE to start. We do NOT
-	// silently default and do NOT revert the block to compiled defaults: a
-	// misconfiguration MUST be learned, never masked. This matches the daemon
-	// block's fail-fast posture.
 	resolved, resolveErr := ResolveKeeperConfig(KeeperFlags{
 		WarnAbsTokens: warnAbsTokensFlag,
 		WarnAbsSet:    absWarnSet,
@@ -411,18 +313,12 @@ func runKeeperSubcommand(args []string) int {
 		HardCeilingModeSet: hardCeilingModeSet,
 	}, keeperCfg, projectDir)
 	if resolveErr != nil {
-		// The missing-value error is self-contained ("keeper: refusing to start — …");
-		// the bad-value error is a bare "keeper config: …", so prefix it. Avoid a
-		// doubled "refusing to start" for the missing-value class.
 		var kme *KeeperConfigMissingError
 		if errors.As(resolveErr, &kme) {
 			fmt.Fprintf(os.Stderr, "keeper: %v\n", resolveErr)
 		} else {
 			fmt.Fprintf(os.Stderr, "keeper: refusing to start — %v\n", resolveErr)
 		}
-		// Surface a durable event too: the keeper events.jsonl is reachable here
-		// (FileEmitter derives its path from projectDir), so a fail-loud
-		// misconfiguration is not stderr-only.
 		emitKeeperConfigRejected(projectDir, agentFlag, resolveErr)
 		return 1
 	}
@@ -432,7 +328,6 @@ func runKeeperSubcommand(args []string) int {
 	resolvedActPctCeil := resolved.ActPctCeil
 	resolvedWarnPctCeil := resolved.WarnPctCeil
 
-	// Step 1: acquire single-keeper lockfile.
 	lock, err := keeper.AcquireLock(projectDir, agentFlag)
 	if err != nil {
 		if errors.Is(err, keeper.ErrLockHeld) {
@@ -444,34 +339,19 @@ func runKeeperSubcommand(args []string) int {
 	}
 	defer func() { _ = lock.Release() }() //nolint:errcheck // best-effort on shutdown
 
-	// Step 2: check .managed opt-in guard (fail-safe: absent = no-op).
 	if !keeper.IsManaged(projectDir, agentFlag) {
 		fmt.Fprintf(os.Stderr, "keeper: %s not opted-in (.managed marker missing); no-op\n", agentFlag)
 		return 0
 	}
 
-	// Step 3: resolve the effective tmux target.
-	// If --tmux was provided, use it as-is. Otherwise attempt to auto-derive the
-	// session name from the harmonik convention: "harmonik-<hash12>-<agent>".
 	resolvedTmux := keeper.ResolveTmuxTarget(projectDir, agentFlag, tmuxFlag, nil)
 	if resolvedTmux != "" && resolvedTmux != tmuxFlag {
 		fmt.Fprintf(os.Stderr, "keeper: auto-resolved tmux target from convention: %q\n", resolvedTmux)
 	}
 
-	// Step 4: agent is managed — start the watcher and block until signal.
-	// W7 (hk-x7s): print the EFFECTIVE resolved band (the abs tokens the gate
-	// actually fires on, tighten-only-clamped by any explicit pct ceil) rather than
-	// the raw pct flag — the old banner printed warn-pct=80/act-pct=90 even when the
-	// abs band is what fires, which is exactly the misleading-default class W7 closes.
-	// windowSizeFlag is the startup fallback (0 = resolved at runtime from the gauge);
-	// when 0 the pct ceil is applied later, so the banner shows the abs values.
 	effWarn, effAct, effForce := keeper.EffectiveBandTokens(
 		resolvedWarnAbs, resolvedActAbs, resolvedForceActAbs,
 		resolvedWarnPctCeil, resolvedActPctCeil, windowSizeFlag)
-	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
-	// applyDefaults, per the opt-in-per-construction-site contract in thresholds.go).
-	// When neither flag nor config set it, use DefaultBootGracePeriod (5m); when
-	// set, honor the configured value VERBATIM including the 0 = disabled sentinel.
 	resolvedBootGrace := keeper.DefaultBootGracePeriod
 	if resolved.BootGraceSet {
 		resolvedBootGrace = resolved.BootGrace
@@ -487,8 +367,6 @@ func runKeeperSubcommand(args []string) int {
 	fmt.Fprintf(os.Stderr,
 		"keeper started for %s (effective band: warn=%d act=%d force=%d tokens%s, tmux=%q%s)\n",
 		agentFlag, effWarn, effAct, effForce, pctNote, resolvedTmux, warnOnlyNote)
-	// hk-4gtu: report the EFFECTIVE resolved timing/cadence/budget so a
-	// misconfiguration (or an applied tunable) is visible at boot, not silent.
 	fmt.Fprintf(os.Stderr,
 		"keeper effective tunables: poll=%s idle_quiesce=%s staleness=%s handoff_timeout=%s boot_grace=%s "+
 			"hard_ceiling=%d/%s idle_floor=%d no_gauge_backoff=%s heartbeat_max_misses=%d\n",
@@ -501,10 +379,6 @@ func runKeeperSubcommand(args []string) int {
 
 	emitter := keeper.NewFileEmitter(projectDir)
 
-	// hk-yy57: build the Cycler/Watcher config LITERALS through the shared,
-	// side-effect-free buildKeeperConfigs helper (resolve→construct seam). The
-	// side-effecting NewCycler / RecoverFromCrash / NewWatcher calls stay here so
-	// behaviour is byte-identical to the prior inline construction.
 	cyclerCfg, cfg := buildKeeperConfigs(resolved, keeperBuildParams{
 		AgentName:    agentFlag,
 		ProjectDir:   projectDir,
@@ -518,8 +392,6 @@ func runKeeperSubcommand(args []string) int {
 		KeeperCfg:    keeperCfg,
 	})
 
-	// In warn-only mode skip the cycler entirely — no handoff/clear/resume cycles.
-	// Refs: hk-yfcc.
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
 		var constructErr error
@@ -538,13 +410,10 @@ func runKeeperSubcommand(args []string) int {
 			return 1
 		}
 
-		// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
-		// starting the watcher loop (resume any interrupted /clear, or abort cleanly).
 		if recoverErr := cycler.RecoverFromCrash(ctx); recoverErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik keeper: crash recovery: %v\n", recoverErr)
 		}
 	}
-	// Assign the constructed *Cycler (nil in warn-only mode) after crash recovery.
 	cfg.Cycler = cycler
 
 	w := keeper.NewWatcher(cfg, emitter)
@@ -556,15 +425,6 @@ func runKeeperSubcommand(args []string) int {
 	return 0
 }
 
-// keeperForceRestartFn returns the force-restart effect to wire into CycleDeps for
-// the handoff-timeout hard-restart escalation (cycle.go:767). It is FAIL-CLOSED:
-// nil — the escalation stays dormant and behaviour is byte-identical to today —
-// UNLESS the operator BOTH opts in with --force-restart AND supplies a
-// --respawn-cmd to launch from. The returned closure reuses
-// NewLiveRecoverViaRespawn, which re-verifies the bound .sid identity at the
-// moment of firing and refuses (returns ErrLiveRecoverIdentityUntrusted, no
-// restart) on a non-UUIDv4 — force-restart is the most destructive keeper action.
-// Refs: hk-suxt (wire dormant restart capability), hk-qoz (escalation path).
 func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if !forceRestart || respawnCmd == "" {
 		return nil
@@ -572,10 +432,6 @@ func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
 }
 
-// keeperLiveRecoverFn returns the LiveRecoverFn for the watcher. In warn-only
-// mode this is always nil — crew keepers never trigger live-pane recovery.
-// Outside warn-only mode it falls through to NewLiveRecoverViaRespawn (nil when
-// --respawn-cmd is empty). Refs: hk-yfcc, hk-75mr.
 func keeperLiveRecoverFn(warnOnly bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if warnOnly {
 		return nil
@@ -583,18 +439,6 @@ func keeperLiveRecoverFn(warnOnly bool, projectDir, respawnCmd string) func(ctx 
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
 }
 
-// keeperHardCeilingRestartFn returns the HardCeilingRestartFn to wire into
-// WatcherConfig for the SID-independent blind-path hard-ceiling auto-restart
-// (watcher.go Backstop 2). It is FAIL-CLOSED: nil — the ceiling stays alarm-only,
-// behaviour-identical to the dormant-failsafe state hk-746u captured — UNLESS the
-// operator selects restart mode AND supplies a --respawn-cmd to launch from AND a
-// durable pane target is resolvable. The returned closure reuses
-// NewLiveRecoverViaRespawn, which re-verifies the bound .sid identity at the moment
-// of firing and refuses (no restart) on a non-UUIDv4 — the auto-restart is the most
-// destructive keeper action on the blind path. When mode != restart this is nil,
-// so the gate (which calls the fn ONLY in restart mode) never reaches a non-restart
-// path; the explicit mode check here is belt-and-suspenders. Refs: hk-z8d0 (wire
-// the dormant ceiling restart), resolves hk-746u.
 func keeperHardCeilingRestartFn(mode keeper.HardCeilingMode, tmuxTarget, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if mode != keeper.HardCeilingModeRestart || respawnCmd == "" || tmuxTarget == "" {
 		return nil
@@ -602,14 +446,6 @@ func keeperHardCeilingRestartFn(mode keeper.HardCeilingMode, tmuxTarget, project
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
 }
 
-// keeperOperatorWarnFn returns the OperatorWarnFn for WatcherConfig backstop B
-// (hk-ehm8s): at each warn-threshold upward crossing the keeper emits an
-// out-of-band notification via `harmonik comms send --to operator --topic
-// keeper-warn`, so operators watching via remote-control / iOS / a detached pane
-// see the warning before any ACT cycle fires. Best-effort: a comms-send error
-// (e.g. daemon not running) is printed to stderr and pane injection continues
-// unaffected. os.Executable resolves the current binary so the same binary
-// handles the comms send (no PATH lookup needed). Refs: hk-ehm8s.
 func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context, sessionID string, tokens, warnTokens, actTokens int64) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -632,15 +468,6 @@ func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context
 	}
 }
 
-// keeperReloadWarnMessagesFn returns the SK-034 live-reload closure the watcher
-// calls when config.yaml's mtime advances (T4). It re-parses the config with the
-// SAME strict loader used at startup (daemon.LoadProjectConfig), so an unknown
-// key introduced by a live edit still yields *ErrUnknownConfigKey — the watcher
-// then keeps the last-good text rather than absorbing it. It returns ONLY the
-// keeper.warn_messages overrides; threshold / band / self_service edits in the
-// file are parsed but discarded here (and the watcher applies only these fields),
-// keeping the live-reload strictly scoped to warn_messages. This lives in
-// cmd/harmonik because internal/keeper may not import internal/daemon (depguard).
 func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTexts, error) {
 	return func() (keeper.WarnMessageTexts, error) {
 		cfg, err := projectconfig.LoadProjectConfig(projectDir)
@@ -658,10 +485,6 @@ func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTex
 	}
 }
 
-// newKeeperMarkerFlags builds the flag set shared by the keeper marker/action
-// subcommands (set-dispatching, clear-dispatching, restart-now, ping): a
-// --project override and the required --agent. Keeping the registration in one
-// place guarantees parser parity and gives tests a single seam.
 func newKeeperMarkerFlags(name string) (fs *flag.FlagSet, projectFlag, agentFlag *string) {
 	fs = flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -670,13 +493,6 @@ func newKeeperMarkerFlags(name string) (fs *flag.FlagSet, projectFlag, agentFlag
 	return fs, projectFlag, agentFlag
 }
 
-// resolveKeeperAgent resolves the target agent for a keeper subcommand from the
-// already-parsed flag set. FLAG-ONLY (hk-5da7): the agent MUST be supplied via
-// --agent; ANY positional argument is rejected with exit 2. Positional args were
-// the recurring restart-now failure mode (a positional silently took the place
-// of --agent and routed to the wrong project), so they are no longer accepted.
-// Returns (agent, 0) on success; ("", code) when the caller should return code
-// (2 = unexpected positional/stray token, 1 = no --agent supplied).
 func resolveKeeperAgent(fs *flag.FlagSet, label, agentFlag string) (string, int) {
 	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "%s: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
@@ -690,16 +506,12 @@ func resolveKeeperAgent(fs *flag.FlagSet, label, agentFlag string) (string, int)
 	return agentFlag, 0
 }
 
-// parseKeeperMarkerArgs parses args for a marker subcommand and resolves the
-// target agent + project directory. Returns (agent, project, 0) on success, or
-// ("", "", code) when the caller should return code immediately.
 func parseKeeperMarkerArgs(label string, args []string) (agent, project string, code int) {
 	fs, projectFlag, agentFlag := newKeeperMarkerFlags(label)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return "", "", 1
 		}
-		// Unrecognized flag (incl. a stray leading-dash token): loud exit 2.
 		return "", "", 2
 	}
 	agent, code = resolveKeeperAgent(fs, "harmonik "+label, *agentFlag)
@@ -715,13 +527,6 @@ func parseKeeperMarkerArgs(label string, args []string) (agent, project string, 
 		}
 		project = wd
 	}
-	// W5 (hk-x7s / round-1 bug-2a): Abs-normalize the project dir so a relative
-	// --project (or a worktree CWD) resolves to the SAME .harmonik/keeper/ dir the
-	// watcher uses (it derives projectDir from os.Getwd(), always absolute). enable
-	// and doctor already normalize; the marker verbs (set/clear/restart-now) skipped
-	// it, so two commands could "agree" on --project yet touch different files. The
-	// os.Getwd() default is intentionally KEPT (load-bearing for the live captain /
-	// dispatch scripts — adversary 08 §W5); only the normalization is added.
 	abs, err := normalizeProjectDir(label, project)
 	if err != nil {
 		return "", "", 1
@@ -730,11 +535,6 @@ func parseKeeperMarkerArgs(label string, args []string) (agent, project string, 
 	return agent, project, 0
 }
 
-// normalizeProjectDir applies filepath.Abs to a keeper marker-verb project dir so
-// every marker verb resolves to the SAME .harmonik/keeper/ directory the watcher
-// uses (the watcher's projectDir comes from os.Getwd(), always absolute). It is
-// the single chokepoint for the W5 relative-path parity fix; on error it logs to
-// stderr and returns the error so the caller can return exit 1.
 func normalizeProjectDir(label, project string) (string, error) {
 	abs, err := filepath.Abs(project)
 	if err != nil {
@@ -744,18 +544,6 @@ func normalizeProjectDir(label, project string) (string, error) {
 	return abs, nil
 }
 
-// runKeeperSetDispatching implements `harmonik keeper set-dispatching <agent>`.
-//
-// Writes .harmonik/keeper/<agent>.dispatching so HoldingDispatch returns true.
-// The orchestrator calls this before submitting a batch to the daemon queue so
-// the session-keeper cycle defers the handoff action until dispatch completes.
-//
-// Exit codes:
-//
-//	0  — marker written successfully
-//	1  — argument error, path-traversal validation failure, or I/O error
-//
-// Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
 func runKeeperSetDispatching(args []string) int {
 	agent, project, code := parseKeeperMarkerArgs("keeper set-dispatching", args)
 	if agent == "" {
@@ -765,12 +553,6 @@ func runKeeperSetDispatching(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: %v\n", err)
 		return 1
 	}
-	// W5 (hk-x7s) fail-open WARNING: the marker write above always succeeds (exit 0),
-	// even when no keeper is watching the resolved project+agent — so the operator can
-	// get a green exit while the dispatch is actually unguarded. Emit a non-fatal
-	// stderr warning when no live keeper holds the <agent>.lock for this dir, so
-	// "I set the marker but nobody's watching" is visible. NOT a hard-fail: a keeper
-	// may legitimately start later (adversary 08 §W5 — advisory only, exit stays 0).
 	if !keeper.LiveKeeperPresent(project, agent) {
 		fmt.Fprintf(os.Stderr,
 			"keeper set-dispatching: WARNING — no live keeper found for agent %q under %q "+
@@ -781,19 +563,6 @@ func runKeeperSetDispatching(args []string) int {
 	return 0
 }
 
-// runKeeperClearDispatching implements `harmonik keeper clear-dispatching <agent>`.
-//
-// Removes .harmonik/keeper/<agent>.dispatching so HoldingDispatch returns false.
-// Idempotent: an already-absent marker is not an error. The orchestrator calls
-// this once all in-flight queue work has completed so the session-keeper cycle
-// may resume normal threshold checks.
-//
-// Exit codes:
-//
-//	0  — marker removed (or was already absent)
-//	1  — argument error, path-traversal validation failure, or I/O error
-//
-// Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
 func runKeeperClearDispatching(args []string) int {
 	agent, project, code := parseKeeperMarkerArgs("keeper clear-dispatching", args)
 	if agent == "" {
@@ -806,15 +575,6 @@ func runKeeperClearDispatching(args []string) int {
 	return 0
 }
 
-// runKeeperHold implements `harmonik keeper hold --agent <name>`.
-// Writes .harmonik/keeper/<agent>.hold.<sessionID> (keyed by the live .sid
-// session-id, RFC3339-timestamped) so the keeper suspends the ACT/restart cutoff
-// while the operator co-works. AUTO-REVERTS: the session-id is re-minted on /clear
-// so the hold can never survive a restart, and a timer backstop expires it.
-// WARN still fires under hold. Refs: hk-9waz.
-//
-// Exit codes: 0 — hold written; 1 — no trustworthy live session / arg / I/O error;
-// 2 — unexpected positional (flag-only).
 func runKeeperHold(args []string) int {
 	agent, project, code := parseKeeperMarkerArgs("keeper hold", args)
 	if agent == "" {
@@ -825,8 +585,6 @@ func runKeeperHold(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper hold: %v\n", err)
 		return 1
 	}
-	// Fail-open advisory (mirrors set-dispatching): a hold with no live keeper
-	// watching is meaningless — surface it but keep exit 0.
 	if !keeper.LiveKeeperPresent(project, agent) {
 		fmt.Fprintf(os.Stderr,
 			"keeper hold: WARNING — no live keeper found for agent %q under %q "+
@@ -837,12 +595,6 @@ func runKeeperHold(args []string) int {
 	return 0
 }
 
-// runKeeperRelease implements `harmonik keeper release --agent <name>`.
-// Removes the agent's hold marker(s) so normal keeper behavior resumes.
-// Idempotent: an already-absent hold is not an error. Refs: hk-9waz.
-//
-// Exit codes: 0 — released (or already clear); 1 — arg/validation/I/O error;
-// 2 — unexpected positional (flag-only).
 func runKeeperRelease(args []string) int {
 	agent, project, code := parseKeeperMarkerArgs("keeper release", args)
 	if agent == "" {
@@ -856,28 +608,7 @@ func runKeeperRelease(args []string) int {
 	return 0
 }
 
-// runKeeperRestartNow implements
-// `harmonik keeper restart-now --agent <name> [--nonce N] [--project DIR]`.
-//
-// SIMPLIFIED (hk-5da7): this runs the restart SYNCHRONOUSLY in-process — verify
-// the session id, ONE handoff-freshness check, inject an ACK line (so the agent
-// can verify receipt), then inject /clear and /session-resume. It does NOT write
-// a marker for a watcher to pick up — that indirection was the silent-no-op bug
-// (marker written under the wrong project dir, watcher polled elsewhere). Every
-// step logs at INFO/WARN and any failure returns a non-zero exit with the reason.
-//
-// Exit codes:
-//
-//	0  — restart driven (ack + /clear + /session-resume injected)
-//	1  — argument error, no pane, unverifiable session id, missing/stale handoff,
-//	     or an injection failure (the log names which step)
-//	2  — unexpected positional argument (flag-only)
-//
-// Refs: hk-5da7, hk-wjzf, hk-xjlq, ON-059.
 func runKeeperRestartNow(args []string) int {
-	// Flag-set (not parseKeeperMarkerArgs) so a net-new --nonce can be parsed
-	// alongside --agent/--project, mirroring `keeper ping` (SK-030). Omitting
-	// --nonce preserves today's behavior (a derived rn-<ms> token).
 	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper restart-now")
 	nonceFlag := fs.String("nonce", "",
 		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
@@ -905,17 +636,12 @@ func runKeeperRestartNow(args []string) int {
 		}
 		projectDir = wd
 	}
-	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor /
-	// ping — the emitted event and the pane must resolve to the same .harmonik dir.
 	absRN, absRNErr := normalizeProjectDir("keeper restart-now", projectDir)
 	if absRNErr != nil {
 		return 1
 	}
 	projectDir = absRN
 
-	// Resolve the tmux pane the same way the watcher does (convention-derived
-	// when not explicit). restart-now has no --tmux flag — it is always the
-	// agent's own pane.
 	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
 
 	requestedAt := time.Now().UTC()
@@ -937,23 +663,11 @@ func runKeeperRestartNow(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)
 		return 1
 	}
-	// Print the nonce so an external watcher can match the injected
-	// '[KEEPER ACK <nonce>] received restart' line in the pane scrollback.
 	fmt.Printf("keeper restart-now: agent=%q nonce=%s restart driven (ack + /clear + agent brief --wake keeper-restart injected into %q)\n",
 		agent, nonce, tmuxTarget)
 	return 0
 }
 
-// runKeeperPing implements `harmonik keeper ping --agent <name> [--nonce N]`.
-//
-// Injects ONLY the verifiability ACK line into the agent's pane (no /clear, no
-// resume) so the agent can confirm the keeper is alive and reachable. Refs: hk-5da7.
-//
-// Exit codes:
-//
-//	0  — ack injected
-//	1  — argument error, no pane, or injection failure
-//	2  — unexpected positional argument (flag-only)
 func runKeeperPing(args []string) int {
 	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper ping")
 	nonceFlag := fs.String("nonce", "", "verifiability nonce echoed in the [KEEPER ACK <nonce>] line (default: timestamp)")
@@ -976,7 +690,6 @@ func runKeeperPing(args []string) int {
 		}
 		projectDir = wd
 	}
-	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor.
 	absPing, absPingErr := normalizeProjectDir("keeper ping", projectDir)
 	if absPingErr != nil {
 		return 1
@@ -999,35 +712,10 @@ func runKeeperPing(args []string) int {
 	return 0
 }
 
-// restartNowNonce derives a compact verifiability nonce from the request time.
-// The agent that fired restart-now matches the [KEEPER ACK <nonce>] line on this
-// token; uniqueness within a session is all that is required, so a millisecond
-// timestamp suffices.
 func restartNowNonce(t time.Time) string {
 	return fmt.Sprintf("rn-%d", t.UnixMilli())
 }
 
-// runKeeperAwaitAck implements
-// `harmonik keeper await-ack --agent <name> --nonce <N> [--kind restart|ping]
-//
-//	[--timeout 15s] [--poll 1s] [--project DIR]`.
-//
-// It is the AGENT-SIDE half of the ACK handshake (hk-uldg): resolve the agent's
-// pane, poll `tmux capture-pane` every --poll for the exact line
-// `[KEEPER ACK <nonce>]` until match (exit 0) or timeout. On timeout it emits a
-// durable session_keeper_ack_timeout event (via the keeper FileEmitter) and
-// exits 3. The BINARY does NOT send comms — the calling skill owns the comms
-// alert (design §3, operator-confirmed).
-//
-// Exit codes:
-//
-//	0  — ack observed within the timeout (keeper proven alive)
-//	1  — argument error (missing --agent / --nonce) or working-dir error
-//	2  — unexpected positional argument or unrecognized flag (flag-only)
-//	3  — timeout: no [KEEPER ACK <nonce>] observed (event emitted), OR no pane
-//	     could be resolved, OR capture-pane failed repeatedly
-//
-// Refs: hk-uldg; design plans/2026-06-20-keeper-architecture-critique/18-design-agent-side-ack.md.
 func runKeeperAwaitAck(args []string) int {
 	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper await-ack")
 	nonceFlag := fs.String("nonce", "", "exact verifiability nonce to match in the [KEEPER ACK <nonce>] line (required)")
@@ -1057,7 +745,6 @@ func runKeeperAwaitAck(args []string) int {
 		}
 		projectDir = wd
 	}
-	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor.
 	absAA, absAAErr := normalizeProjectDir("keeper await-ack", projectDir)
 	if absAAErr != nil {
 		return 1
@@ -1075,8 +762,6 @@ func runKeeperAwaitAck(args []string) int {
 		Poll:       *pollFlag,
 	}, emitter)
 	if err != nil {
-		// Timeout (incl. no-pane / repeated capture failure): exit 3 so the
-		// caller can distinguish it from flag misuse (2) and confirmed-alive (0).
 		fmt.Fprintf(os.Stderr, "harmonik keeper await-ack: %v\n", err)
 		if errors.Is(err, keeper.ErrAckTimeout) {
 			return 3

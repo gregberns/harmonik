@@ -1,14 +1,5 @@
 package codextest_test
 
-// The AIS-INV-001 bounded-liveness conformance ORACLE (T9;
-// harness-acceptance-design §"Bounded-liveness oracle"). Unlike the discrete
-// matrix (a manual virtual cursor), this test drives the REAL substrate.Run loop
-// over an injected FakeClock: it arms the driver ack-timeout, waits until the
-// reactor's sleep is live on the clock (arm-before-advance — the BlockUntil
-// idiom, avoiding the advance-before-arm race), advances virtual time across the
-// window, and asserts exactly one agent_input_stale fired past it and NOT before.
-// Timing rides the injected ClockPort; there is no wall-clock wait for the window.
-
 import (
 	"context"
 	"sync"
@@ -19,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// aisChanSource is a dynamic EventSource: the test and the timer effector feed
-// events into `in`; Events relays them to Run and closes on ctx cancel.
 type aisChanSource struct{ in chan codexinput.Event }
 
 func (s *aisChanSource) Events(ctx context.Context) <-chan codexinput.Event {
@@ -43,9 +32,6 @@ func (s *aisChanSource) Events(ctx context.Context) <-chan codexinput.Event {
 	return out
 }
 
-// aisTimerEffector translates ArmTimer/CancelTimer into ClockPort sleeps
-// (RS-015): on ArmTimer it sleeps on the FakeClock and, when the full window
-// elapses, feeds a TimerFired event back in. It records Emit actions.
 type aisTimerEffector struct {
 	mu    sync.Mutex
 	clock *substrate.FakeClock
@@ -91,7 +77,6 @@ func (e *aisTimerEffector) Execute(_ context.Context, a codexinput.Action) error
 		e.emits = append(e.emits, a)
 		e.mu.Unlock()
 	default:
-		// SendHandshake/WriteInput/CloseInput/Interrupt: no bounded-liveness effect.
 	}
 	return nil
 }
@@ -160,21 +145,17 @@ func TestAIS_BoundedLiveness_StaleFiresPastWindow(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- r.Run(ctx, src, eff) }()
 
-	// Drive to a pending submission.
 	src.in <- codexinput.Event{Type: codexinput.EventTypeSpawned}
 	src.in <- codexinput.Event{Type: codexinput.EventTypeHandshakeOK}
 	src.in <- codexinput.Event{Type: codexinput.EventTypeInputSubmitted, InputSeq: 1}
 
-	// Arm-before-advance: wait until the ack timer is live on the clock.
 	eff.waitArmed(codexinput.TimerInputAck)
 
-	// Just before the window: nothing stale yet.
 	clock.Advance(window - time.Nanosecond)
 	if eff.hasEmit(codexinput.EmitInputStale) {
 		t.Fatal("agent_input_stale fired BEFORE the window elapsed")
 	}
 
-	// Past the window: exactly one agent_input_stale for seq 1, no positive ack.
 	clock.Advance(2 * time.Nanosecond)
 	stale := eff.waitEmit(t, codexinput.EmitInputStale)
 	if stale.InputSeq != 1 {

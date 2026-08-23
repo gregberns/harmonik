@@ -1,15 +1,5 @@
 package main
 
-// eval_report_cmd.go — harmonik eval report (EH4)
-//
-// Aggregates .harmonik/eval-results.jsonl (the EH1 collector's record
-// format) grouped by (model, difficulty): pass-rate, median wall_time_s,
-// mean judge_grade. This is the comparison table referenced by DESIGN.md
-// §1.3 — the router's training set.
-//
-// Read-only over the collector output. Deterministic.
-// Bead: hk-eval-harness-report-346ta (EH4).
-
 import (
 	"bufio"
 	"encoding/json"
@@ -45,7 +35,6 @@ EXIT CODES
   1   Error reading input
 `
 
-// evalReportRecord is the subset of the EH1 record schema this report needs.
 type evalReportRecord struct {
 	Model      string   `json:"model"`
 	Difficulty string   `json:"difficulty"`
@@ -54,7 +43,6 @@ type evalReportRecord struct {
 	JudgeGrade *float64 `json:"judge_grade"`
 }
 
-// evalReportGroup accumulates one (model, difficulty) bucket.
 type evalReportGroup struct {
 	Model           string    `json:"model"`
 	Difficulty      string    `json:"difficulty"`
@@ -68,7 +56,6 @@ type evalReportGroup struct {
 	judgeCount      int       `json:"-"`
 }
 
-// runEvalReport is the testable entry-point for `harmonik eval report`.
 func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string, error)) int {
 	fs := flag.NewFlagSet("eval report", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -145,7 +132,6 @@ func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string
 	return 0
 }
 
-// evalReadReportRecords reads eval-results.jsonl, skipping malformed lines.
 func evalReadReportRecords(path string) ([]evalReportRecord, error) {
 	// #nosec G304 -- path is explicitly selected by the local CLI operator via --input.
 	f, err := os.Open(path)
@@ -181,9 +167,6 @@ func evalReadReportRecords(path string) ([]evalReportRecord, error) {
 	return records, nil
 }
 
-// evalAggregateReport groups records by (model, difficulty) and computes
-// pass-rate, median wall_time_s, and mean judge_grade per group. Groups are
-// returned sorted by (model, difficulty) for stable output.
 func evalAggregateReport(records []evalReportRecord) []evalReportGroup {
 	index := map[string]*evalReportGroup{}
 	var order []string
@@ -225,7 +208,6 @@ func evalAggregateReport(records []evalReportRecord) []evalReportGroup {
 	return groups
 }
 
-// evalMedian returns the median of a slice of float64 (does not mutate the input).
 func evalMedian(vals []float64) float64 {
 	if len(vals) == 0 {
 		return 0
@@ -239,7 +221,6 @@ func evalMedian(vals []float64) float64 {
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
-// evalPrintReportTable renders the aggregation as a plain-text table.
 func evalPrintReportTable(w io.Writer, groups []evalReportGroup) error {
 	if len(groups) == 0 {
 		if _, err := fmt.Fprintln(w, "harmonik eval report: no records found"); err != nil {

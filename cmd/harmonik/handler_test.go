@@ -1,21 +1,5 @@
 package main
 
-// handler_test.go — unit tests for `harmonik handler status` (hk-39ryh).
-//
-// Helper prefix: handlerFixture (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Tests cover:
-//   - absent handler-state.json → all-live output
-//   - paused handler → correct text and JSON output shape
-//   - --type filter → single handler scoped
-//   - --format json → machine-parseable JSON with held_count
-//   - forward-incompatible schema_version → exit 2
-//   - unknown flag / missing verb → exit 1
-//
-// All tests are parallel-safe (no flag.CommandLine or os.Args mutation).
-//
-// Acceptance: hk-39ryh.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -27,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// handlerFixtureTempDir creates a temporary directory with the .harmonik/
-// subdirectory pre-created and returns the project root path.
 func handlerFixtureTempDir(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -39,8 +21,6 @@ func handlerFixtureTempDir(t *testing.T) string {
 	return root
 }
 
-// handlerFixtureWriteStateFile writes content to .harmonik/handler-state.json
-// inside projectDir.
 func handlerFixtureWriteStateFile(t *testing.T, projectDir, content string) {
 	t.Helper()
 	p := filepath.Join(projectDir, ".harmonik", "handler-state.json")
@@ -48,10 +28,6 @@ func handlerFixtureWriteStateFile(t *testing.T, projectDir, content string) {
 		t.Fatalf("handlerFixtureWriteStateFile: %v", err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 // TestHandlerStatus_FileAbsent verifies that when handler-state.json does not
 // exist the command exits 0 and reports "no handler-pause records".
@@ -218,7 +194,6 @@ func TestHandlerStatus_PausedHandler_JSON(t *testing.T) {
 	if entry.PausedEpoch != 2 {
 		t.Errorf("paused_epoch = %d, want 2", entry.PausedEpoch)
 	}
-	// held_count always 0 at the CLI level.
 	if entry.HeldCount != 0 {
 		t.Errorf("held_count = %d, want 0", entry.HeldCount)
 	}
@@ -403,16 +378,11 @@ func TestHandlerStatus_JSONAlias(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0; stderr: %s", code, errOut.String())
 	}
-	// Must be valid JSON.
 	var got handlerStatusJSONOutput
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("--json output is not valid JSON: %v\nraw: %s", err, out.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// harmonik handler resume tests (hk-ejyku)
-// ---------------------------------------------------------------------------
 
 // TestHandlerResume_PausedHandler verifies that resume on a paused handler
 // exits 0, transitions status to live, and prints the prior cause.
@@ -457,7 +427,6 @@ func TestHandlerResume_PausedHandler(t *testing.T) {
 	}
 	stdout := out.String()
 
-	// Confirm prior cause is printed.
 	for _, want := range []string{
 		"claude-code",
 		"resumed",
@@ -470,7 +439,6 @@ func TestHandlerResume_PausedHandler(t *testing.T) {
 		}
 	}
 
-	// Verify handler-state.json was updated to live.
 	stateFile := filepath.Join(projectDir, ".harmonik", "handler-state.json")
 	//nolint:gosec // G304: stateFile is rooted in this test's t.TempDir project fixture
 	rawState, err := os.ReadFile(stateFile)
@@ -605,7 +573,6 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 	t.Parallel()
 
 	projectDir := handlerFixtureTempDir(t)
-	// Pre-create events/ directory.
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
 	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
@@ -638,7 +605,6 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 		t.Errorf("exit code = %d, want 0; stderr: %s", code, errOut.String())
 	}
 
-	// Verify events.jsonl contains a handler_resumed line.
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
 	//nolint:gosec // G304: eventsPath is rooted in this test's t.TempDir event fixture
 	eventsData, err := os.ReadFile(eventsPath)
@@ -649,7 +615,6 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 		t.Errorf("events.jsonl missing %q; content:\n%s", core.EventTypeHandlerResumed, eventsData)
 	}
 
-	// Verify the event parses as a valid shared envelope.
 	var event core.Event
 	if parseErr := json.Unmarshal(bytes.TrimRight(eventsData, "\n"), &event); parseErr != nil {
 		t.Errorf("events.jsonl line is not valid JSON: %v\nraw: %s", parseErr, eventsData)
@@ -729,13 +694,11 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 	}`
 	handlerFixtureWriteStateFile(t, projectDir, originalContent)
 
-	// Make .harmonik directory read-only so CreateTemp fails.
 	harmDir := filepath.Join(projectDir, ".harmonik")
 	//nolint:gosec // G302: read-only directory mode is required to exercise the atomic-write failure path
 	if err := os.Chmod(harmDir, 0o555); err != nil {
 		t.Fatalf("chmod .harmonik: %v", err)
 	}
-	// Restore permissions on cleanup so t.TempDir cleanup can remove the dir.
 	t.Cleanup(func() {
 		if err := os.Chmod(harmDir, 0o750); err != nil {
 			t.Errorf("cleanup chmod .harmonik: %v", err)
@@ -748,7 +711,6 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 		&out, &errOut,
 	)
 
-	// Command must fail (exit non-zero) because the atomic write could not proceed.
 	if code == 0 {
 		t.Errorf("exit code = 0, want non-zero (temp-file creation should fail with read-only dir)")
 	}
@@ -759,7 +721,6 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 		t.Fatalf("restore chmod .harmonik: %v", err)
 	}
 
-	// The original handler-state.json must be intact (not corrupted).
 	stateFile := filepath.Join(harmDir, "handler-state.json")
 	//nolint:gosec // G304: stateFile is rooted in this test's t.TempDir project fixture
 	rawState, err := os.ReadFile(stateFile)
@@ -774,11 +735,9 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 	if !ok {
 		t.Fatal("handler-state.json missing 'claude-code' after failed resume")
 	}
-	// Status must still be "paused" — the write never completed.
 	if entry.Status != "paused" {
 		t.Errorf("after failed atomic write: status = %q, want paused (original must be preserved)", entry.Status)
 	}
-	// PausedEpoch must be unchanged.
 	if entry.PausedEpoch != 1 {
 		t.Errorf("after failed atomic write: paused_epoch = %d, want 1", entry.PausedEpoch)
 	}
@@ -789,15 +748,11 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 func TestHandlerSubcommand_ResumeVerb_Dispatch(t *testing.T) {
 	t.Parallel()
 
-	// Without --type the resume path should error with exit 1, not the
-	// "unrecognised verb" error which also exits 1. We confirm by checking
-	// stderr content.
 	var out, errOut bytes.Buffer
 	code := runHandlerSubcommandIO([]string{"resume"}, &out, &errOut)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	// Should be the missing-type error, not the unrecognised-verb error.
 	if strings.Contains(errOut.String(), "unrecognised verb") {
 		t.Errorf("got unrecognised-verb error; resume verb not dispatched; stderr: %s", errOut.String())
 	}

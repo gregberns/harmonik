@@ -1,20 +1,5 @@
 package queuewiring
 
-// recovery.go — the production driver for failed-queue recovery (QM-052b).
-//
-// `queue.ResumeFromFailure` is the pure mutation: it re-arms failed items and
-// flips the queue back to active. It had no production caller, so a queue that
-// parked at `paused-by-failure` had no way out short of a daemon restart plus a
-// fresh submit. This file is the effectful half that gives it one: a ledger
-// preflight, one QM-001 transaction, and one typed refusal per QM-052b.
-//
-// Ordering matters and is deliberate. The ledger preflight runs BEFORE any
-// candidate mutation, so a queue is never made durably active with items whose
-// beads cannot be claimed. A refused preflight leaves the queue, the ledger, and
-// the dispatcher untouched.
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b, §3.1 QM-001.
-
 import (
 	"context"
 	"errors"
@@ -76,9 +61,6 @@ type FailedRecoveryOutcome struct {
 	AlreadyRecovered bool
 }
 
-// errRecoveryStatusRaced marks the narrow window where the queue left
-// paused-by-failure between the snapshot read and the candidate mutation. It is
-// mapped back to a typed refusal by RecoverFailed and never escapes.
 var errRecoveryStatusRaced = errors.New("queuewiring: queue left paused-by-failure during recovery")
 
 // RecoverFailed moves one queue out of `paused-by-failure` and back into
@@ -158,12 +140,6 @@ func (s *QueueStore) RecoverFailed(ctx context.Context, req FailedRecoveryReques
 	}, nil
 }
 
-// rearmedFromReceipt reads the re-armed bead IDs off the durable receipt.
-//
-// The in-memory mutation knows the same list, but the receipt is the record
-// that outlives the process. Reporting the receipt's list means the answer an
-// operator reads is the answer a later reader of the receipt gets, and a
-// receipt that lost an item cannot be hidden by a healthy in-memory list.
 func rearmedFromReceipt(receipt queue.FailedRecoveryReceipt) []core.BeadID {
 	ids := make([]core.BeadID, 0, len(receipt.RecoveredItems))
 	for _, item := range receipt.RecoveredItems {
@@ -172,10 +148,6 @@ func rearmedFromReceipt(receipt queue.FailedRecoveryReceipt) []core.BeadID {
 	return ids
 }
 
-// recoveryPreflight asserts every failed item's bead is open before recovery
-// mutates anything. A nil reader skips the check.
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b (BI-013f recovery preflight).
 func recoveryPreflight(ctx context.Context, beads RecoveryBeadReader, name string, q *queue.Queue) error {
 	if beads == nil {
 		return nil
@@ -210,9 +182,6 @@ func recoveryPreflight(ctx context.Context, beads RecoveryBeadReader, name strin
 	return nil
 }
 
-// recoveryTransactionError maps a transaction outcome onto the QM-052b refusal
-// reasons. A rejection never reached I/O, so it is a stale snapshot; anything
-// else that did not commit durably is a write failure.
 func recoveryTransactionError(name, queueID string, result TransactionResult) error {
 	if result.Committed() && result.CleanupErr == nil {
 		return nil

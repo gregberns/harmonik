@@ -1,20 +1,5 @@
 package keeper_test
 
-// cycle_operator_attached_test.go — -short unit tests for the operator-attached
-// guard on the keeper act-path (hk-6qf).
-//
-// When a human operator is attached to the managed tmux session, the keeper's
-// reset-cycle injection (/session-handoff, /clear, agent brief) would race
-// the operator's own keystrokes and could clobber an in-flight turn. The guard
-// makes the act-path warn-only while attached: it SUPPRESSES the destructive
-// injection (no inject calls, no handoff_started event) and emits a
-// session_keeper_operator_attached event. Once the operator detaches the cycle
-// PROCEEDS exactly as before.
-//
-// These tests use a FAKE OperatorAttachedFn (no real tmux) so they run under
-// `go test -short`. The real `tmux list-clients` path is covered by the
-// integration test in cycle_operator_attached_integration_test.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// fakeAttach is a controllable OperatorAttachedFn whose return value can be
-// flipped between calls to simulate an operator detaching mid-session.
 type fakeAttach struct {
 	mu       sync.Mutex
 	attached bool
@@ -47,9 +30,6 @@ func (f *fakeAttach) set(v bool) {
 	f.attached = v
 }
 
-// newAttachTestCycler builds a Cycler wired with test fakes whose
-// OperatorAttachedFn is the supplied attach probe. Mirrors newTestCyclerManaged
-// but threads OperatorAttachedFn so the guard can be exercised deterministically.
 func newAttachTestCycler(
 	agent, projectDir, cycleID string,
 	em keeper.Emitter,
@@ -94,8 +74,6 @@ func TestCycler_OperatorAttached_SuppressesInjection(t *testing.T) {
 	jc := &journalCapture{}
 	attach := &fakeAttach{attached: true}
 
-	// Handoff/gauge fakes that WOULD let a normal cycle complete — proving the
-	// only thing stopping it is the attach guard.
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	alwaysNonce := func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
@@ -109,19 +87,15 @@ func TestCycler_OperatorAttached_SuppressesInjection(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// No injection at all (warn-only).
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls while operator attached; got %d: %v", n, spy.texts())
 	}
-	// No handoff_started (the cycle never opened).
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(evts) != 0 {
 		t.Errorf("want 0 handoff_started while operator attached; got %d", len(evts))
 	}
-	// operator_attached is no longer persisted (logmine TA3 / finish F55).
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
 		t.Errorf("want 0 operator_attached events (non-durable since TA3); got %d", len(evts))
 	}
-	// The guard probe was consulted.
 	if attach.calls == 0 {
 		t.Error("OperatorAttachedFn was never consulted")
 	}
@@ -155,12 +129,10 @@ func TestCycler_OperatorDetached_Proceeds(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Cycle ran: handoff, /clear, agent brief (T8/I1).
 	texts := spy.texts()
 	if len(texts) < 3 {
 		t.Fatalf("want >=3 inject calls when detached; got %d: %v", len(texts), texts)
 	}
-	// cycle_complete emitted; operator_attached NOT emitted.
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 1 {
 		t.Errorf("want 1 cycle_complete when detached; got %d", len(evts))
 	}
@@ -188,7 +160,6 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 	attach := &fakeAttach{attached: true} // attached at first
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
-	// Handoff returns the nonce immediately once polled; gauge flips to newSID.
 	alwaysNonce := func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
@@ -196,23 +167,18 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 
-	// First tick: attached → suppressed.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun(attached): %v", err)
 	}
 	if n := len(spy.texts()); n != 0 {
 		t.Fatalf("want 0 inject calls on attached tick; got %d", n)
 	}
-	// operator_attached is no longer persisted (logmine TA3 / finish F55).
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
 		t.Errorf("want 0 operator_attached (non-durable since TA3); got %d", len(evts))
 	}
 
-	// Operator detaches.
 	attach.set(false)
 
-	// Second tick on the SAME session: cycle now proceeds (anti-loop did NOT
-	// latch because the first tick never fired a real cycle).
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun(detached): %v", err)
 	}
@@ -223,7 +189,6 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 1 {
 		t.Errorf("want 1 cycle_complete after detach; got %d", len(evts))
 	}
-	// operator_attached is no longer persisted (logmine TA3 / finish F55).
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
 		t.Errorf("want 0 operator_attached total (non-durable since TA3); got %d", len(evts))
 	}
@@ -283,11 +248,9 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 	if cleared != 1 {
 		t.Errorf("want precompact marker cleared exactly once (bounded-fallback); got %d", cleared)
 	}
-	// operator_attached is no longer persisted (logmine TA3 / finish F55).
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
 		t.Errorf("want 0 operator_attached under precompact (non-durable since TA3); got %d", len(evts))
 	}
-	// precompact_blocked recorded the operator_attached action.
 	pcb := em.EventsOfType(core.EventTypeSessionKeeperPrecompactBlocked)
 	if len(pcb) != 1 {
 		t.Fatalf("want 1 precompact_blocked; got %d", len(pcb))

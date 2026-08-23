@@ -1,42 +1,5 @@
 package daemon_test
 
-// pasteinject_resume_reseed_test.go — guards for the implementer-RESUME submit
-// path and the one-shot reseed-Enter that rescues it.
-//
-// # Why this file exists
-//
-// These two functions — sendResumeSubmitEnter and the reseed-Enter branch of
-// pasteInjectQuitOnCommit — were covered only by
-// reviewloop_resume_reseed_hk8oy_test.go, which was deleted with the review-loop
-// driver. That deletion was wrong on this point: both functions are LIVE, they
-// are how the DOT cascade drives implementer-resume on a REQUEST_CHANGES
-// back-edge, and nothing about the failure mode they defend is review-loop
-// specific. This restores the coverage aimed at the code that actually runs.
-//
-// # The incident being guarded (2026-06-10, hk-8oy / hk-76n5g)
-//
-// After `claude --resume <id>` the daemon pastes the combined task+feedback
-// brief, then sends the submit Enters (hk-ip33d: 1 + resumeSubmitRetries, over
-// ~800 ms). In production the TUI was still absorbing the bracketed paste when
-// ALL of those Enters arrived, so every one was swallowed. The brief sat
-// typed-but-unsubmitted, the resumed implementer stayed idle and committed
-// nothing, and the run burned to the 30-minute commitPollTimeout. Worse, the
-// failure then MISREPORTED itself: HEAD was unchanged at the next iteration, so
-// the run was classified as the implementer refusing to address reviewer
-// feedback rather than never having seen it.
-//
-// The recovery is a one-shot reseed-Enter fired after implementerReseedGrace
-// (75 s in production) when no commit has appeared. It submits the pending
-// input and restores normal flow.
-//
-// The original test reproduced this end-to-end through the review-loop driver in
-// ~580 lines. These are unit-level guards on the same two behaviours: cheaper,
-// and they do not need a driver to exist.
-//
-// Helper prefix: prr (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Beads: hk-8oy, hk-76n5g, hk-ip33d.
-
 import (
 	"context"
 	"os"
@@ -49,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// prrRecorder is a quitSender + enterSender + sessionKiller stub that counts
-// each call. It is the whole substrate these paths touch.
 type prrRecorder struct {
 	mu      sync.Mutex
 	enters  int
@@ -87,9 +48,6 @@ func (r *prrRecorder) counts() (enters, quits, kills int) {
 	return r.enters, r.quits, r.kills
 }
 
-// prrGitRepoWithCommit creates a throwaway git repo with one commit and returns
-// its path and HEAD SHA. pasteInjectQuitOnCommit polls HEAD via git, so it needs
-// a real repo; nothing ever commits again, which is the wedged case under test.
 func prrGitRepoWithCommit(t *testing.T) (wtPath, headSHA string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -159,7 +117,6 @@ func TestResumeSubmitEnter_StopsOnCancelledContext(t *testing.T) {
 	rec := &prrRecorder{}
 	daemon.ExportedSendResumeSubmitEnter(ctx, rec)
 
-	// The first Enter is unconditional; every retry must bail on ctx.Done.
 	if enters, _, _ := rec.counts(); enters != 1 {
 		t.Errorf("cancelled resume submit sent %d Enters, want exactly 1 (the unconditional first)", enters)
 	}
@@ -178,15 +135,6 @@ func TestQuitOnCommit_ReseedEnterRescuesTheSwallowedSubmit(t *testing.T) {
 	*daemon.ExportedImplementerReseedGrace = 50 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
 
-	// Shrink the poll interval too, for the "exactly 1" assertion below rather
-	// than for the reseed itself. The reseed is due long before tick 1 at any
-	// poll setting, but a regression that RE-fires it on a later tick can only
-	// be caught if later ticks happen. At the production 500ms poll this
-	// test's 1500ms context holds about 3 ticks, so "one-shot by design" was
-	// checked against almost no opportunity to repeat. At 25ms it holds tens of
-	// them. Measured, with the one-shot latch deleted from the production
-	// branch: 2 firings at the 500ms poll, 32-49 at 25ms. (Not the ~60 the
-	// arithmetic suggests — every tick pays for a git subprocess.)
 	origPoll := *daemon.ExportedCommitPollInterval
 	*daemon.ExportedCommitPollInterval = 25 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedCommitPollInterval = origPoll })
@@ -196,8 +144,6 @@ func TestQuitOnCommit_ReseedEnterRescuesTheSwallowedSubmit(t *testing.T) {
 	close(briefDelivered) // brief is on the pane; the submit Enters were swallowed
 	noChange := make(chan struct{}, 1)
 
-	// Bounded: long enough for the grace to elapse and several ticks to run,
-	// far below any kill deadline, so the reseed is the only thing observed.
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
@@ -222,27 +168,6 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	wtPath, headSHA := prrGitRepoWithCommit(t)
 
 	origGrace := *daemon.ExportedImplementerReseedGrace
-	// 700ms, NOT an hour. The grace MUST come due inside this test's context, or
-	// the test proves nothing: with an hour-long grace the reseed is never due,
-	// so "no Enter was sent" holds even if commit detection is broken. At 700ms
-	// the reseed WOULD fire, and the only thing stopping it is the watchdog
-	// returning on commit detection first — which is the property under test.
-	// Verified by mutation: deleting the return after commit detection turns
-	// this red, and it stays green 5/5 unmutated.
-	//
-	// The grace figure alone does not make the test sound. What makes it sound
-	// is the RATIO of the grace to the commit poll interval, so the poll is
-	// pinned here as well. Both checks live in the same poll tick and the
-	// reseed check runs FIRST, so the commit must be seen on a tick that lands
-	// before the grace expires. The loop has no immediate first probe: tick 1
-	// lands one poll interval after two pre-loop git forks (rev-parse and
-	// status --porcelain). At the production 500ms poll tick 1 must still land
-	// inside the 700ms grace and has already spent 500ms of it, which leaves the
-	// forks about 200ms — a ratio of 1.4x, where
-	// production runs 150x (75s grace over a 500ms poll). That is a false red
-	// waiting for a slow or loaded machine, not a real one. A 25ms poll
-	// restores a 28x ratio: the forks would have to take about 675ms to push
-	// tick 1 past the grace.
 	*daemon.ExportedImplementerReseedGrace = 700 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
 
@@ -250,7 +175,6 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	*daemon.ExportedCommitPollInterval = 25 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedCommitPollInterval = origPoll })
 
-	// Land a second commit so HEAD != initialSHA on the first poll.
 	cmd := exec.CommandContext(t.Context(), "git", "commit", "-q", "--allow-empty", "-m", "implementer work")
 	cmd.Dir = wtPath
 	cmd.Env = append(os.Environ(),
@@ -303,8 +227,6 @@ func TestImplementerResume_WiresTheSubmitBurst(t *testing.T) {
 	daemon.ExportedSetSplashDismissDelay(time.Millisecond)
 	t.Cleanup(func() { daemon.ExportedSetSplashDismissDelay(origSplash) })
 
-	// pasteInjectImplementerResume stats <wtPath>/.harmonik/agent-task.md and
-	// bails early if it is absent, so the brief has to be on disk.
 	wtPath := t.TempDir()
 	harmonikDir := filepath.Join(wtPath, ".harmonik")
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
@@ -336,19 +258,12 @@ func TestImplementerResume_WiresTheSubmitBurst(t *testing.T) {
 			enters, wantEnters, *daemon.ExportedResumeSubmitRetries)
 	}
 
-	// The submit burst must land AFTER the paste, not before it — Enters that
-	// precede the paste submit an empty prompt and leave the brief pending.
 	if rec.entersBeforeFirstWrite != 1 {
 		t.Errorf("%d Enters preceded the paste, want exactly 1 (the splash dismiss)",
 			rec.entersBeforeFirstWrite)
 	}
 }
 
-// prrPaster is a pasteInjecter that is also an enterSender, so it can drive
-// pasteInjectImplementerResume end to end and record the ORDER of Enters
-// relative to the paste. It deliberately does NOT implement paneCapturer:
-// injectAndVerifySeed trusts the write when the substrate cannot capture, which
-// keeps this test on the submit-wiring property rather than the verify loop.
 type prrPaster struct {
 	prrRecorder
 	writes                 int

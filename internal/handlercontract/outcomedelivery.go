@@ -1,9 +1,5 @@
 package handlercontract
 
-// outcomeDelivery — per-bead helper prefix for test helpers in outcomedelivery_test.go.
-// (The prefix declaration is here as a godoc anchor per implementer-protocol.md
-// §Helper-prefix discipline.)
-
 // OutcomeEmittedMsg is the on-wire NDJSON message the handler subprocess emits
 // as the final progress-stream message (specs/handler-contract.md §4.2.HC-008).
 //
@@ -179,12 +175,8 @@ type CrashAgentFailedPayload struct {
 func ClassifyCrash(exitCode int, state OutcomeDeliveryState) CrashAgentFailedPayload {
 	err := ClassifyExit(exitCode, state)
 	if err == nil {
-		// Clean shutdown or dirty-exit inside the shutdown window (HC-008a).
-		// Caller emits agent_completed; no agent_failed needed.
 		return CrashAgentFailedPayload{}
 	}
-	// outcome_emitted was never published. Both exit-0 (handler bug) and
-	// exit-nonzero (crash) map to ErrStructural per ClassifyExit.
 	return CrashAgentFailedPayload{
 		ErrorCategory: Class(err),
 		Reason:        CrashWithoutOutcomeSubReason,
@@ -215,11 +207,7 @@ func ClassifyCrash(exitCode int, state OutcomeDeliveryState) CrashAgentFailedPay
 // Cite: specs/handler-contract.md §4.2.HC-008, §4.6.HC-024.
 func ClassifyExit(exitCode int, state OutcomeDeliveryState) error {
 	if state == OutcomeDelivered {
-		// Outcome is durable regardless of exit code.  A non-zero exit is a
-		// dirty exit inside the post-outcome shutdown window; HC-008a governs.
 		return nil
 	}
-	// outcome_emitted was never published; any exit (clean or crash) is a
-	// structural failure — the handler violated the wire protocol.
 	return ErrStructural
 }

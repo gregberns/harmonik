@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// projectHashFixtureValid returns a known-good 12-char hex ProjectHash value
-// for table tests.
 func projectHashFixtureValid(t *testing.T) ProjectHash {
 	t.Helper()
-	// 12 lowercase hex characters — representative SHA-256 prefix shape.
 	h, err := projectHashFixtureParse(t, "a1b2c3d4e5f6")
 	if err != nil {
 		t.Fatalf("projectHashFixtureValid: unexpected parse failure: %v", err)
@@ -18,7 +15,6 @@ func projectHashFixtureValid(t *testing.T) ProjectHash {
 	return h
 }
 
-// projectHashFixtureParse attempts to unmarshal a ProjectHash from s.
 func projectHashFixtureParse(t *testing.T, s string) (ProjectHash, error) {
 	t.Helper()
 	var h ProjectHash
@@ -86,7 +82,6 @@ func TestProjectHash_UnmarshalText_TooLong(t *testing.T) {
 }
 
 func TestProjectHash_UnmarshalText_Uppercase(t *testing.T) {
-	// Spec mandates lowercase hex only.
 	_, err := projectHashFixtureParse(t, "A1B2C3D4E5F6")
 	if err == nil {
 		t.Error("expected error for uppercase hex input, got nil")

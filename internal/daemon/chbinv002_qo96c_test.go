@@ -1,32 +1,5 @@
 package daemon_test
 
-// chbinv002_qo96c_test.go — CHB-INV-002 sensor: single terminal event per session.
-//
-// Bead: hk-qo96c
-// Spec: specs/claude-hook-bridge.md §5 CHB-INV-002
-//
-// CHB-INV-002 states: "The handler-process is the sole emitter of agent_completed
-// and agent_failed for a claude-code session. The relay MUST NEVER emit a terminal
-// event."
-//
-// This test has two assertion surfaces:
-//
-//  1. Relay-level: a StopFailure{error_type=invalid_request} hook envelope
-//     dispatched to the hookSessionStore produces an outcome_emitted (non-terminal)
-//     ACK, NOT an agent_failed/agent_completed payload. The dispatch must return
-//     status="ok" and the resulting latestOutcome must carry kind=FAILURE_SIGNAL,
-//     not a terminal message type.
-//
-//  2. Session-level cardinality: after a complete bead run driven through the
-//     work loop (handler exits non-zero after injecting the relay envelope),
-//     the bus (stubEventCollector) contains exactly one terminal event
-//     {agent_completed | agent_failed}, and every relay-originated event type
-//     recorded in the hookStore dispatch log is confined to the non-terminal set
-//     {outcome_emitted, agent_heartbeat, agent_rate_limited}.
-//
-// Helper prefix: chbInv002Fixture
-// (per implementer-protocol.md §Helper-prefix discipline; bead hk-qo96c).
-
 import (
 	"context"
 	"encoding/json"
@@ -40,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// chbInv002FixtureMakeEnvelope builds a hookRelayEnvelopeExported for a given
-// message type and JSON payload.
 func chbInv002FixtureMakeEnvelope(msgType string, payload json.RawMessage) daemon.HookRelayEnvelopeExported {
 	return daemon.HookRelayEnvelopeExported{
 		Type:             msgType,
@@ -57,11 +24,6 @@ func chbInv002FixtureMakeEnvelope(msgType string, payload json.RawMessage) daemo
 	}
 }
 
-// chbInv002FixtureStopFailurePayload returns the JSON payload for an
-// outcome_emitted{kind=FAILURE_SIGNAL} that the relay synthesizes from a
-// StopFailure{error_type=invalid_request} hook event per §4.5 CHB-013.
-//
-// Per the spec table: error_type becomes "claude_" + error_type in the payload.
 func chbInv002FixtureStopFailurePayload(t *testing.T) json.RawMessage {
 	t.Helper()
 	pl, err := json.Marshal(map[string]interface{}{
@@ -76,10 +38,6 @@ func chbInv002FixtureStopFailurePayload(t *testing.T) json.RawMessage {
 	return pl
 }
 
-// chbInv002FixtureProjectDir creates a minimal project directory tree for
-// work-loop integration tests: .harmonik/events/, .harmonik/beads-intents/,
-// and a git repository with an initial commit (required for resolveParentCommit
-// during bead dispatch).
 func chbInv002FixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -91,7 +49,6 @@ func chbInv002FixtureProjectDir(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "beads-intents"), 0o755); err != nil {
 		t.Fatalf("chbInv002FixtureProjectDir: mkdir beads-intents: %v", err)
 	}
-	// Initialise git repo with one commit so resolveParentCommit succeeds.
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -113,10 +70,6 @@ func chbInv002FixtureProjectDir(t *testing.T) string {
 	return dir
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 1: Relay-level — StopFailure dispatch is non-terminal
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestCHBINV002_StopFailureInvalidRequest_RelayEmitsNonTerminal verifies that
 // the hookSessionStore dispatch of an outcome_emitted{kind=FAILURE_SIGNAL}
 // envelope (the relay translation of StopFailure{error_type=invalid_request})
@@ -135,9 +88,6 @@ func TestCHBINV002_StopFailureInvalidRequest_RelayEmitsNonTerminal(t *testing.T)
 	store := daemon.ExportedNewHookSessionStore()
 	daemon.ExportedHookRegister(store, runID, sessionID)
 
-	// 1. Dispatch an outcome_emitted{kind=FAILURE_SIGNAL} envelope — this is
-	//    what the relay emits for StopFailure{error_type=invalid_request}
-	//    per §4.5 CHB-013.
 	payload := chbInv002FixtureStopFailurePayload(t)
 	env := chbInv002FixtureMakeEnvelope("outcome_emitted", payload)
 	status, reason := daemon.ExportedHookDispatch(store, env)
@@ -147,7 +97,6 @@ func TestCHBINV002_StopFailureInvalidRequest_RelayEmitsNonTerminal(t *testing.T)
 			"relay outcome_emitted must be accepted by the store (CHB-INV-002)", status, reason)
 	}
 
-	// 2. Verify the stored latestOutcome carries kind=FAILURE_SIGNAL (non-terminal).
 	got := daemon.ExportedHookLatestOutcome(store, runID, sessionID)
 	if got == nil {
 		t.Fatal("latestOutcome is nil after StopFailure dispatch; want non-nil FAILURE_SIGNAL payload")
@@ -161,10 +110,6 @@ func TestCHBINV002_StopFailureInvalidRequest_RelayEmitsNonTerminal(t *testing.T)
 		t.Errorf("latestOutcome kind=%q, want FAILURE_SIGNAL; relay must not promote StopFailure to a terminal event", gotMap["kind"])
 	}
 
-	// 3. Assert the stored payload is NOT a terminal message type.
-	//    Terminal message types per CHB-INV-002 and §4.5 mapping table are
-	//    "agent_completed" and "agent_failed". The envelope type must be
-	//    "outcome_emitted" (non-terminal).
 	terminalTypes := map[string]bool{
 		"agent_completed": true,
 		"agent_failed":    true,
@@ -173,10 +118,6 @@ func TestCHBINV002_StopFailureInvalidRequest_RelayEmitsNonTerminal(t *testing.T)
 		t.Errorf("relay envelope type=%q is a terminal event type; relay MUST NOT emit terminal events per CHB-INV-002", env.Type)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test 2: Session cardinality — exactly one terminal event per session
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCHBINV002_SessionContainsExactlyOneTerminalEvent verifies that after a
 // complete bead run where the relay injects outcome_emitted{kind=FAILURE_SIGNAL}
@@ -197,34 +138,13 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 	}
 	collector := &stubEventCollector{}
 
-	// Construct a hookSessionStore where we can inject relay envelopes and
-	// track what the relay dispatched. We use ExportedNewHookSessionStore()
-	// so we can observe and control relay dispatch independent of the work loop.
 	store := daemon.ExportedNewHookSessionStore()
 
-	// Track every relay-dispatched envelope type. We will register a session
-	// key matching what the work loop will register, then dispatch relay events
-	// before the handler exits.
 	const relayRunID = "chbinv002-wl-run-01"
 	const relaySessionID = "chbinv002-relay-sess-01" // independent of work loop's session ID
 
-	// Pre-register the session so relay dispatches before the handler exits
-	// are accepted. The work loop registers its own key with runID generated
-	// at dispatch time; we track relay envelopes separately here to verify
-	// the type constraint.
 	relayDispatched := []string{}
 
-	// Dispatch simulated relay envelopes directly to the store to verify
-	// type constraints independently of the work loop's run_id.
-	//
-	// Relay-emitted types for StopFailure{invalid_request}:
-	//   - outcome_emitted{kind=FAILURE_SIGNAL}  (non-terminal, CHB-013)
-	// Relay-emitted types for Notification (heartbeat proxy):
-	//   - agent_heartbeat                        (non-terminal, CHB-013)
-	// Relay-emitted type for StopFailure{rate_limit}:
-	//   - agent_rate_limited                     (non-terminal, CHB-013)
-	//
-	// The relay MUST NOT emit agent_completed or agent_failed (CHB-INV-002).
 	daemon.ExportedHookRegister(store, relayRunID, relaySessionID)
 
 	relayEnvelopes := []struct {
@@ -252,7 +172,6 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		relayDispatched = append(relayDispatched, env.msgType)
 	}
 
-	// 1. Assert all relay-dispatched types are non-terminal per CHB-INV-002.
 	terminalSet := map[string]bool{
 		string(core.EventTypeAgentCompleted): true,
 		string(core.EventTypeAgentFailed):    true,
@@ -263,24 +182,6 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		}
 	}
 
-	// 2. Run the work loop with a handler that exits non-zero (simulating the
-	//    handler-process failing after receiving outcome_emitted{FAILURE_SIGNAL}
-	//    from the relay). The work loop is the handler-process's emitter of the
-	//    single terminal event.
-	//
-	//    ExportedTestRuntime uses a real hookSessionStore (hk-ngw3d); the work
-	//    loop hits the 3-second stopHookGrace window after handler exit before
-	//    proceeding on exit code. The handler exits non-zero → ReopenBead.
-	//    The bus (collector) captures all emitted events including agent_failed
-	//    from the watcher (via handler stdout).
-	//
-	//    The terminal event here comes from the handler subprocess's progress-stream
-	//    watcher, not from the relay-side store — confirming the handler-process
-	//    holds sole emitter authority per CHB-INV-002.
-
-	// Write a shell script that emits an agent_failed NDJSON line (as the
-	// real harmonik handler subprocess would after processing a FAILURE_SIGNAL
-	// from the relay), then exits non-zero.
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "chbinv002_handler.sh")
 	agentFailedLine := `{"type":"agent_failed","run_id":"00000000-0000-0000-0000-000000000000","class":"ErrStructural","sub_reason":"claude_invalid_request","summary":"StopFailure: invalid_request"}`
@@ -310,7 +211,6 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for the bead to be reopened (exit=1 → ReopenBead path).
 	deadline := time.After(10 * time.Second)
 	for len(ledger.reopenedIDs()) == 0 && len(ledger.closedIDs()) == 0 {
 		select {
@@ -325,9 +225,6 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 	cancel()
 	<-waitDone
 
-	// 3. Count terminal events in the bus. Exactly one of {agent_completed,
-	//    agent_failed} must appear per CHB-INV-002 (handler-process is the sole
-	//    emitter of terminal events).
 	allEvents := collector.allEvents()
 	terminalCount := 0
 	for _, ev := range allEvents {
@@ -344,8 +241,6 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 			terminalCount, collector.eventTypes())
 	}
 
-	// 4. Confirm the terminal event in the bus came from agent_failed (not
-	//    agent_completed), consistent with a StopFailure(invalid_request) run.
 	foundTerminalType := ""
 	for _, ev := range allEvents {
 		if terminalSet[ev.EventType] {

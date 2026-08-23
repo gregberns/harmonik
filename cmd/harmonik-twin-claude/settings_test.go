@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// Test helpers use the per-bead prefix declared in implementer-protocol.md:
-// twinSettingsFixture (bead hk-e66ht).
-
-// twinSettingsFixtureDir creates a temp dir with a .claude subdirectory and
-// returns the "worktree root" path.
 func twinSettingsFixtureDir(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -22,8 +17,6 @@ func twinSettingsFixtureDir(t *testing.T) string {
 	return root
 }
 
-// twinSettingsFixtureWrite writes raw JSON bytes to
-// <root>/.claude/settings.json and returns the worktree root.
 func twinSettingsFixtureWrite(t *testing.T, root string, content []byte) {
 	t.Helper()
 	p := filepath.Join(root, ".claude", "settings.json")
@@ -45,7 +38,6 @@ func twinSettingsFixtureMarshal(t *testing.T, value any) []byte {
 // a zero-value cloneSettings with no error (both flags false).
 func TestLoadCloneSettings_Absent(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
-	// Do not write a settings.json file.
 
 	cs, err := loadCloneSettings(root)
 	if err != nil {
@@ -99,7 +91,6 @@ func TestLoadCloneSettings_ValidNoHooks(t *testing.T) {
 // containing a Stop hook produces stopHookPresent=true and the correct command.
 func TestLoadCloneSettings_ValidWithStopHook(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
-	// Build a minimal settings.json matching CHB-003 shape.
 	content := twinSettingsFixtureMarshal(t, map[string]any{
 		"dangerouslyAllowedPermissions": []string{"Bash(*)", "Read(*)"},
 		"hooks": map[string]any{
@@ -161,14 +152,12 @@ func TestLoadCloneSettings_MissingStopHook(t *testing.T) {
 // dangerouslyAllowedPermissions: null counts as present.
 func TestLoadCloneSettings_PermissionsKeyPresentNull(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
-	// Write raw JSON with explicit null value for dangerouslyAllowedPermissions.
 	twinSettingsFixtureWrite(t, root, []byte(`{"dangerouslyAllowedPermissions": null}`))
 
 	cs, err := loadCloneSettings(root)
 	if err != nil {
 		t.Fatalf("loadCloneSettings null permissions: unexpected error: %v", err)
 	}
-	// json.RawMessage is non-nil when key is present even if value is null.
 	if !cs.permissionsPresent {
 		t.Error("permissionsPresent = false, want true (key present even though value is null)")
 	}

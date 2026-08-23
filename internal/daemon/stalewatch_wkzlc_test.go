@@ -1,19 +1,5 @@
 package daemon_test
 
-// stalewatch_wkzlc_test.go — unit tests for StaleWatcher (hk-wkzlc).
-//
-// Test coverage per bead acceptance criteria:
-//
-//   - TestStaleWatch_NoEmitBelowThreshold       — active run below M → no run_stale
-//   - TestStaleWatch_EmitAtThreshold             — active run at M → run_stale emitted
-//   - TestStaleWatch_ExponentialBackoff          — second emit at 2M, third at 4M
-//   - TestStaleWatch_NoEmitAfterRunDeregistered  — run removed from registry → pruned, no emit
-//   - TestStaleWatch_BeadIDFromRegistry          — bead_id populated from RunHandle
-//   - TestStaleWatch_LastEventTypeTracked        — observer updates lastEventType on each event
-//   - TestStaleWatch_PayloadValid                — emitted RunStalePayload passes Valid()
-//
-// Bead ref: hk-wkzlc.
-
 import (
 	"context"
 	"encoding/json"
@@ -28,25 +14,16 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test helpers (prefix: staleFixture)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// staleFixtureBus builds a sealed in-memory bus that records emitted run_stale
-// events into a collector.
 type staleFixtureBus struct {
 	bus     eventbus.EventBus
 	mu      sync.Mutex
 	emitted []core.RunStalePayload
 }
 
-// staleFixtureNewBus creates a bus, subscribes a run_stale collector, and seals
-// the bus. All events emitted after the seal are captured into the collector.
 func staleFixtureNewBus(t *testing.T) *staleFixtureBus {
 	t.Helper()
 	sfb := &staleFixtureBus{}
 	sfb.bus = eventbus.NewBusImpl()
-	// Subscribe an observer that captures run_stale payloads.
 	sub := core.Subscription{
 		ConsumerID:    "stale-test-collector",
 		ConsumerClass: core.ConsumerClassObserver,
@@ -83,7 +60,6 @@ func (sfb *staleFixtureBus) collected() []core.RunStalePayload {
 	return out
 }
 
-// staleFixtureNewRunID returns a UUIDv7-based RunID.
 func staleFixtureNewRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -93,10 +69,6 @@ func staleFixtureNewRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStaleWatch_NoEmitBelowThreshold verifies that no run_stale event is emitted
 // when the run's age is strictly less than staleAfter.
 func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
@@ -104,7 +76,6 @@ func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Register the run; started 5 minutes ago; staleAfter is 10 min.
 	reg.Register(runID, &daemon.RunHandle{
 		BeadID:    "hk-test1",
 		StartedAt: startedAt,
@@ -113,9 +84,6 @@ func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
 	now := startedAt.Add(5 * time.Minute)
 
 	sfb := staleFixtureNewBus(t)
-	// For this test we need a fresh unsealed bus to subscribe before Seal —
-	// the collector is already sealed above, so we build a second bus
-	// specifically for the watcher subscription.
 	unsealed := eventbus.NewBusImpl()
 	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
 		SubscribeBus: unsealed,
@@ -132,7 +100,6 @@ func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// Manually trigger a scan.
 	daemon.ExportedStalewatchScan(w, context.Background())
 
 	got := sfb.collected()
@@ -153,7 +120,6 @@ func TestStaleWatch_EmitAtThreshold(t *testing.T) {
 		StartedAt: startedAt,
 	})
 
-	// exactly at threshold
 	now := startedAt.Add(10 * time.Minute)
 
 	sfb := staleFixtureNewBus(t)
@@ -175,7 +141,6 @@ func TestStaleWatch_EmitAtThreshold(t *testing.T) {
 
 	daemon.ExportedStalewatchScan(w, context.Background())
 
-	// Wait briefly for async observer dispatch.
 	time.Sleep(50 * time.Millisecond)
 	got := sfb.collected()
 	if len(got) != 1 {
@@ -209,7 +174,6 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 	})
 
 	staleAfter := 10 * time.Minute
-	// Controllable clock: starts at threshold.
 	clockMu := sync.Mutex{}
 	clockVal := startedAt.Add(staleAfter)
 	nowFn := func() time.Time {
@@ -251,14 +215,12 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First scan at M → emit 1.
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 1 {
 		t.Fatalf("after first scan: expected 1 event, got %d", n)
 	}
 
-	// Advance to M + 1 min (< 2M = 20 min) → no new emit.
 	advanceClock(1 * time.Minute)
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -266,7 +228,6 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 		t.Fatalf("at M+1min: expected still 1 event, got %d", n)
 	}
 
-	// Advance to M + 10 min (= 2M total from startedAt) → emit 2.
 	advanceClock(9 * time.Minute)
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -278,8 +239,6 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 		t.Errorf("second event emit_count: got %d want 2", evts[1].EmitCount)
 	}
 
-	// Advance by another 19 min (total age = 39 min; 2M=20min → next at 4M=40min)
-	// → still 2 events (just under 4M threshold).
 	advanceClock(19 * time.Minute)
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -287,7 +246,6 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 		t.Fatalf("at 3.9M: expected still 2 events, got %d", n)
 	}
 
-	// Advance by 1 more min (= 40 min from startedAt; total age = 4M) → emit 3.
 	advanceClock(1 * time.Minute)
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -334,20 +292,16 @@ func TestStaleWatch_NoEmitAfterRunDeregistered(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First scan → emit 1.
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 1 {
 		t.Fatalf("expected 1 event, got %d", n)
 	}
 
-	// Deregister the run.
 	reg.Unregister(runID)
 
-	// Advance clock far past any backoff window.
 	now = startedAt.Add(2 * time.Hour)
 
-	// Second scan: run is gone from registry → state is pruned → no new emit.
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 1 {
@@ -369,12 +323,10 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 
 	staleAfter := 10 * time.Minute
 
-	// Build the watcher on an unsealed bus; subscribe, then seal.
 	unsealedForWatcher := eventbus.NewBusImpl()
 	sfb := &staleFixtureBus{}
 	sfb.bus = unsealedForWatcher
 
-	// Subscribe the collector (for run_stale) on the same bus.
 	collectorSub := core.Subscription{
 		ConsumerID:    "stale-test-collector-track",
 		ConsumerClass: core.ConsumerClassObserver,
@@ -398,11 +350,6 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 		t.Fatalf("Subscribe collector: %v", err)
 	}
 
-	// clockNow drives what Now() returns. Starts just before threshold so that
-	// the heartbeat arrives while clock < staleAfter. After the heartbeat,
-	// clock is advanced past staleAfter from the heartbeat time so the run is
-	// considered stale (the heartbeat resets the reference, and 10+ min later
-	// the run is stale again). Closed over by nowFn.
 	var clockMu sync.Mutex
 	clockNow := startedAt.Add(1 * time.Minute) // well before threshold
 	nowFn := func() time.Time {
@@ -427,16 +374,11 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Deliver a synthetic agent_heartbeat event for the run so the watcher
-	// records the last event type for this run.
 	if err := unsealedForWatcher.EmitWithRunID(ctx, runID, core.EventTypeAgentHeartbeat, json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("EmitWithRunID heartbeat: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Advance clock: heartbeat was recorded at startedAt+1min (the clockNow
-	// when the observer ran). Now advance to 1min + staleAfter + 1s to make
-	// the age cross the threshold.
 	clockMu.Lock()
 	clockNow = startedAt.Add(1*time.Minute + staleAfter + time.Second)
 	clockMu.Unlock()
@@ -501,14 +443,12 @@ func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Register the run with a 20-minute per-bead override; watcher default is 10 min.
 	reg.Register(runID, &daemon.RunHandle{
 		BeadID:    "hk-testlabel",
 		Labels:    []string{"stale_after=1200"}, // 1200s = 20 min
 		StartedAt: startedAt,
 	})
 
-	// Advance clock to 10 min (past default, but not yet past per-bead override).
 	now := startedAt.Add(10 * time.Minute)
 
 	sfb := staleFixtureNewBus(t)
@@ -528,14 +468,12 @@ func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// At 10 min the per-bead threshold (20 min) is not crossed → no emit.
 	daemon.ExportedStalewatchScan(w, context.Background())
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 0 {
 		t.Fatalf("at default threshold (10min): expected 0 events, got %d (per-bead override not applied)", n)
 	}
 
-	// Advance to 20 min — crosses the per-bead override → emit 1.
 	now = startedAt.Add(20 * time.Minute)
 	daemon.ExportedStalewatchScan(w, context.Background())
 	time.Sleep(50 * time.Millisecond)
@@ -556,7 +494,6 @@ func TestStaleWatch_PerBeadColonFormLabelOverride(t *testing.T) {
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// 120s per-bead override; watcher default is 10 min.
 	reg.Register(runID, &daemon.RunHandle{
 		BeadID:    "hk-testcolonlabel",
 		Labels:    []string{"stale_after:120"},
@@ -582,14 +519,12 @@ func TestStaleWatch_PerBeadColonFormLabelOverride(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// At 1 min the per-bead threshold (120s = 2 min) is not crossed → no emit.
 	daemon.ExportedStalewatchScan(w, context.Background())
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 0 {
 		t.Fatalf("before per-bead threshold: expected 0 events, got %d", n)
 	}
 
-	// Advance to 121s — crosses the 120s colon-form override → emit 1.
 	now = startedAt.Add(121 * time.Second)
 	daemon.ExportedStalewatchScan(w, context.Background())
 	time.Sleep(50 * time.Millisecond)
@@ -620,7 +555,6 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 	defaultStaleAfter := 10 * time.Minute
 	reviewerLaunchStaleAfter := 30 * time.Minute
 
-	// Controllable clock: starts at startedAt.
 	var clockMu sync.Mutex
 	clockVal := startedAt
 	nowFn := func() time.Time {
@@ -630,8 +564,6 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 	}
 
 	sfb := staleFixtureNewBus(t)
-	// Build a second bus that the watcher subscribes to (and the reviewer_launched
-	// event is emitted on). The watcher emits run_stale to sfb.bus.
 	unsealedForWatcher := eventbus.NewBusImpl()
 
 	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
@@ -652,15 +584,11 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Deliver reviewer_launched at t=0. The watcher observes it and records
-	// lastEventType = "reviewer_launched".
 	if err := unsealedForWatcher.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("EmitWithRunID reviewer_launched: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// Advance to just past the default threshold (10 min + 1 s).
-	// Without the gate this would fire run_stale; with the gate it must not.
 	clockMu.Lock()
 	clockVal = startedAt.Add(defaultStaleAfter + time.Second)
 	clockMu.Unlock()
@@ -670,8 +598,6 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 		t.Fatalf("at default threshold+1s after reviewer_launched: expected 0 run_stale events (gate suppressed), got %d", n)
 	}
 
-	// Advance to just past the reviewer-launch floor (30 min + 1 s) — run_stale
-	// must now fire because the reviewer has been silent for the full floor window.
 	clockMu.Lock()
 	clockVal = startedAt.Add(reviewerLaunchStaleAfter + time.Second)
 	clockMu.Unlock()
@@ -736,13 +662,11 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Deliver reviewer_launched at t=0.
 	if err := unsealedForWatcher.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("EmitWithRunID reviewer_launched: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	// First emission at the reviewer-launch floor (30 min).
 	clockMu.Lock()
 	clockVal = startedAt.Add(reviewerLaunchStaleAfter)
 	clockMu.Unlock()
@@ -751,13 +675,6 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 	if n := len(sfb.collected()); n != 1 {
 		t.Fatalf("first emit: expected 1, got %d", n)
 	}
-	// After first emit, nextEmitAfter is set to effectiveThreshold*2 = 30*2 = 60 min.
-	// Because the gate raised the base from 10 min to 30 min, the doubling
-	// now uses the gate floor so the backoff schedule is: 30, 60, 120, ...
-	// Second emission fires when age from startedAt >= 30 + 60 = 90 min.
-	// (age is measured from lastEventAt = startedAt+0, so threshold is 60 min
-	//  but age is already 30 min; we need age to reach 60 min, i.e. clockVal = startedAt+60 min.)
-	// Actually: age = clockVal - startedAt; nextEmitAfter = 60 min; fires when age >= 60 min.
 	clockMu.Lock()
 	clockVal = startedAt.Add(59 * time.Minute)
 	clockMu.Unlock()

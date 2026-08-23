@@ -1,13 +1,5 @@
 package daemon_test
 
-// reconcilewireup_th378_test.go — composition-root test confirming that
-// brAdapterErr at all three brcli.NewForProject call sites in daemon.Start
-// is classified via BrErrReconciliationCategoryWithEmit and emits
-// divergence_inconclusive on BrSchemaMismatch.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-// Bead ref: hk-th378.
-
 import (
 	"bufio"
 	"context"
@@ -23,9 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// recwireupFixture378ProjectDir creates a temp directory wired as a project
-// root with the .harmonik/events sub-tree for JSONL logging.  Returns
-// projectDir and the jsonlPath for event observation.
 func recwireupFixture378ProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -38,14 +27,11 @@ func recwireupFixture378ProjectDir(t *testing.T) (projectDir, jsonlPath string) 
 	return projectDir, jsonlPath
 }
 
-// recwireupFixture378ReadJSONLLines reads all non-empty lines from the JSONL
-// log at path, returning them as a slice of raw JSON strings.
 func recwireupFixture378ReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
 	f, err := os.Open(path)
 	if err != nil {
-		// File may not yet exist if Start returned before any writes.
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -63,19 +49,12 @@ func recwireupFixture378ReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// recwireupFixture378SchemaMismatchFactory returns a br-adapter factory
-// (for use with daemon.WithBrAdapterFactory) that always fails with a wrapped
-// BrSchemaMismatch sentinel, simulating a br binary whose schema version is
-// incompatible with harmonik's pinned version.
 func recwireupFixture378SchemaMismatchFactory() func(brPath, projectDir string) (*brcli.Adapter, error) {
 	return func(_, _ string) (*brcli.Adapter, error) {
 		return nil, fmt.Errorf("stub: schema version mismatch: %w", brcli.BrSchemaMismatch)
 	}
 }
 
-// recwireupFixture378StartDaemon starts daemon.StartForTesting in a background
-// goroutine with a cancellable context.  It returns the cancel func and a done
-// channel.  Callers MUST call cancel() after the test to avoid goroutine leaks.
 func recwireupFixture378StartDaemon(t *testing.T, cfg daemon.Config, opts ...daemon.TestOption) (cancel context.CancelFunc, done <-chan error) {
 	t.Helper()
 	ctx, cancelFn := context.WithCancel(context.Background())
@@ -113,20 +92,12 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 		daemon.WithBrAdapterFactory(recwireupFixture378SchemaMismatchFactory()),
 	)
 
-	// Allow a brief settle window for the startup path (sites 1–3) to execute
-	// and flush divergence_inconclusive events to the JSONL log.  All three
-	// brAdapterErr sites run synchronously before the work loop goroutine is
-	// even launched, so 200 ms is more than sufficient on CI.
 	time.Sleep(200 * time.Millisecond)
 
-	// Cancel the daemon context to stop the work loop.
 	cancel()
 
-	// Wait for daemon.Start to return (with context-cancel error or nil).
 	select {
 	case <-done:
-		// Returned — OK; no assertion on the error because a cancelled context
-		// may produce context.Canceled, which is a normal shutdown.
 	case <-time.After(daemon.ExportedDaemonExitHangBudget):
 		t.Fatalf("daemon.Start did not return within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
@@ -136,10 +107,6 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 		t.Fatal("JSONL log has 0 lines after Start; want at least one event")
 	}
 
-	// At least one divergence_inconclusive event must appear in the JSONL.
-	// All three brAdapterErr sites in daemon.Start emit one when the factory
-	// returns BrSchemaMismatch; we therefore expect ≥3, but assert ≥1 to
-	// avoid fragility if future refactors merge sites.
 	divergenceEventType := string(core.EventTypeDivergenceInconclusive)
 	foundCount := 0
 	for _, line := range lines {
@@ -183,20 +150,13 @@ func TestDaemonStart_BrSchemaMismatch_DaemonProceedsQueueless(t *testing.T) {
 	)
 	defer cancel()
 
-	// Allow time for startup path to complete (pre-work-loop code is synchronous).
 	time.Sleep(200 * time.Millisecond)
 
-	// Cancel the daemon and wait for it to return.
 	cancel()
 	select {
 	case err := <-done:
-		// daemon.Start either returned nil or context.Canceled (both acceptable).
-		// The only unacceptable outcome is a fatal startup error triggered by the
-		// BrSchemaMismatch on the adapter construction sites.
 		if err != nil && !strings.Contains(err.Error(), "context canceled") &&
 			!strings.Contains(err.Error(), "context deadline exceeded") {
-			// A non-context error means the daemon treated BrSchemaMismatch as
-			// fatal — that violates the RecCat0 → proceed-queue-less rule.
 			t.Errorf("daemon.Start returned unexpected fatal error on BrSchemaMismatch: %v; "+
 				"want nil or context-cancel (RecCat0 → proceed queue-less per BI-031b)", err)
 		}

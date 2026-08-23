@@ -14,20 +14,16 @@ func TestAgentTypeValid(t *testing.T) {
 		input AgentType
 		want  bool
 	}{
-		// Reserved consts — all must pass.
 		{"claude-code", AgentTypeClaudeCode, true},
 		{"pi", AgentTypePi, true},
 		{"claude-twin", AgentTypeClaudeTwin, true},
 		{"pi-twin", AgentTypePiTwin, true},
 
-		// Boundary positives.
 		{"min length 2 (ab)", "ab", true},
 		{"max length 63", AgentType(strings.Repeat("a", 62) + "b"), true},
 
-		// Single char — fails: {1,62} requires at least one char after the leading letter.
 		{"single char (a)", "a", false},
 
-		// Negatives.
 		{"empty string", "", false},
 		{"starts with digit", "1foo", false},
 		{"uppercase letter", "Foo", false},

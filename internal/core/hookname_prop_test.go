@@ -1,20 +1,5 @@
 package core
 
-// Property tests for HookName using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. String round-trip: converting a HookName to string and back preserves
-//     the underlying value for any non-empty input.
-//
-//  2. Valid matches non-empty: Valid() returns true iff the HookName is
-//     non-empty.
-//
-// See hookname.go and control-points.md §6.2.
-
 import (
 	"testing"
 

@@ -10,10 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// wipcapture_rc019_test.go — tests for CaptureWIP and WriteWIPCapture.
-//
-// Spec ref: specs/reconciliation/spec.md §4.4 RC-019.
-
 // TestRC019_extractUntrackedFiles verifies that extractUntrackedFiles correctly
 // parses `git status --porcelain -z` output and returns only untracked paths.
 func TestRC019_extractUntrackedFiles(t *testing.T) {
@@ -96,7 +92,6 @@ func TestRC019_WriteWIPCapture_WritesFilesCorrectly(t *testing.T) {
 		t.Fatalf("WriteWIPCapture: unexpected error: %v", err)
 	}
 
-	// Verify git-status.txt was written with the expected content.
 	statusPath := filepath.Join(destDir, core.WIPCaptureStatusFile)
 	statusBytes := mustReadFile(t, statusPath)
 	if string(statusBytes) != capture.GitStatusPorcelain {
@@ -104,7 +99,6 @@ func TestRC019_WriteWIPCapture_WritesFilesCorrectly(t *testing.T) {
 			core.WIPCaptureStatusFile, string(statusBytes), capture.GitStatusPorcelain)
 	}
 
-	// Verify git-diff.patch was written.
 	diffPath := filepath.Join(destDir, core.WIPCaptureDiffFile)
 	diffBytes := mustReadFile(t, diffPath)
 	if string(diffBytes) != capture.GitDiff {
@@ -112,7 +106,6 @@ func TestRC019_WriteWIPCapture_WritesFilesCorrectly(t *testing.T) {
 			core.WIPCaptureDiffFile, string(diffBytes), capture.GitDiff)
 	}
 
-	// Verify untracked-files.txt was written with newline-separated paths.
 	untrackedPath := filepath.Join(destDir, core.WIPCaptureUntrackedFile)
 	untrackedBytes := mustReadFile(t, untrackedPath)
 	untrackedContent := string(untrackedBytes)
@@ -140,7 +133,6 @@ func TestRC019_WriteWIPCapture_SkipsEmptyFiles(t *testing.T) {
 		t.Fatalf("WriteWIPCapture: unexpected error on clean capture: %v", err)
 	}
 
-	// No files should be written for an empty capture.
 	for _, name := range []string{core.WIPCaptureStatusFile, core.WIPCaptureDiffFile, core.WIPCaptureUntrackedFile} {
 		p := filepath.Join(destDir, name)
 		if _, err := os.Stat(p); err == nil {
@@ -188,7 +180,6 @@ func TestRC019_CaptureWIP_DirtyWorktreeHasWIP(t *testing.T) {
 
 	repoDir := wipCaptureTestInitGitRepo(t)
 
-	// Write a file, add and commit it, then modify it to create WIP.
 	filePath := filepath.Join(repoDir, "tracked.go")
 	if err := os.WriteFile(filePath, []byte("package main\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile tracked.go: %v", err)
@@ -196,7 +187,6 @@ func TestRC019_CaptureWIP_DirtyWorktreeHasWIP(t *testing.T) {
 	wipCaptureTestGitCmd(t, repoDir, "add", "tracked.go")
 	wipCaptureTestGitCmd(t, repoDir, "commit", "-m", "initial commit")
 
-	// Modify the file without staging to create WIP.
 	if err := os.WriteFile(filePath, []byte("package main // modified\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile tracked.go (modify): %v", err)
 	}
@@ -219,7 +209,6 @@ func TestRC019_CaptureWIP_UntrackedFileDetected(t *testing.T) {
 	repoDir := wipCaptureTestInitGitRepo(t)
 	wipCaptureTestGitCmd(t, repoDir, "commit", "--allow-empty", "-m", "initial commit")
 
-	// Create an untracked file.
 	untrackedPath := filepath.Join(repoDir, "untracked.go")
 	if err := os.WriteFile(untrackedPath, []byte("package main\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile untracked.go: %v", err)
@@ -244,8 +233,6 @@ func TestRC019_CaptureWIP_UntrackedFileDetected(t *testing.T) {
 	}
 }
 
-// wipCaptureTestInitGitRepo creates a temporary directory, initialises a git
-// repository in it, and returns the repo path.
 func wipCaptureTestInitGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -255,7 +242,6 @@ func wipCaptureTestInitGitRepo(t *testing.T) string {
 	return dir
 }
 
-// wipCaptureTestGitCmd runs a git subcommand in dir and fails the test on error.
 func wipCaptureTestGitCmd(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...) //nolint:noctx // test helper

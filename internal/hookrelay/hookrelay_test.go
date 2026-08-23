@@ -17,7 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hookrelay"
 )
 
-// hookRelayFixtureEnv returns a minimal Env for tests.
 func hookRelayFixtureEnv(workspacePath string) hookrelay.Env {
 	return hookrelay.Env{
 		RunID:            "01HVTEST000000000000000001",
@@ -32,7 +31,6 @@ func hookRelayFixtureEnv(workspacePath string) hookrelay.Env {
 	}
 }
 
-// hookRelayFixtureJSON marshals v, failing the test if it cannot be encoded.
 func hookRelayFixtureJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -42,7 +40,6 @@ func hookRelayFixtureJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-// hookRelayFixtureStdin builds a JSON stdin payload for tests.
 func hookRelayFixtureStdin(t *testing.T, sessionID, hookEventName string, extra map[string]interface{}) *bytes.Reader {
 	t.Helper()
 	m := map[string]interface{}{
@@ -58,8 +55,6 @@ func hookRelayFixtureStdin(t *testing.T, sessionID, hookEventName string, extra 
 	return bytes.NewReader(hookRelayFixtureJSON(t, m))
 }
 
-// hookRelayFixtureEnvelope decodes a message the relay wrote to the fixture
-// socket into its envelope map and its decoded payload object.
 func hookRelayFixtureEnvelope(t *testing.T, what string, msgBytes []byte) (envelope map[string]json.RawMessage, payload map[string]interface{}) {
 	t.Helper()
 	if err := json.Unmarshal(msgBytes, &envelope); err != nil {
@@ -75,7 +70,6 @@ func hookRelayFixtureEnvelope(t *testing.T, what string, msgBytes []byte) (envel
 	return envelope, payload
 }
 
-// hookRelayFixtureString decodes a string-valued envelope field.
 func hookRelayFixtureString(t *testing.T, what string, envelope map[string]json.RawMessage, field string) string {
 	t.Helper()
 	raw, ok := envelope[field]
@@ -89,8 +83,6 @@ func hookRelayFixtureString(t *testing.T, what string, envelope map[string]json.
 	return s
 }
 
-// hookRelayFixtureShortSockDir creates a short-path temp dir suitable for Unix
-// socket paths (macOS limit: 104 bytes including the filename).
 func hookRelayFixtureShortSockDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hr")
@@ -105,16 +97,10 @@ func hookRelayFixtureShortSockDir(t *testing.T) string {
 	return dir
 }
 
-// hookRelayFixtureExchange reads one NDJSON line from conn, publishes a copy of
-// it on ch, and writes ackJSON back. The scan buffer is raised to the relay's
-// own 1 MiB NDJSON line limit (CHB-015): bufio's 64 KiB default would silently
-// drop any larger message and leave the test looking like a delivery failure.
 func hookRelayFixtureExchange(conn net.Conn, ackJSON string, ch chan<- []byte) error {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	if scanner.Scan() {
-		// scanner.Bytes() aliases the scanner's own buffer, which is only valid
-		// until the next Scan. Hand the reader an independent copy.
 		select {
 		case ch <- bytes.Clone(scanner.Bytes()):
 		default:
@@ -129,10 +115,6 @@ func hookRelayFixtureExchange(conn net.Conn, ackJSON string, ch chan<- []byte) e
 	return nil
 }
 
-// hookRelayFixtureServe accepts up to len(ackSequence) connections and answers
-// each with the corresponding ACK. Accept failing with net.ErrClosed is the
-// listener being closed at teardown — the normal end of the loop; any other
-// Accept failure is reported.
 func hookRelayFixtureServe(ln net.Listener, ackSequence []string, ch chan<- []byte) error {
 	errs := make([]error, 0, 2*len(ackSequence))
 	for _, ack := range ackSequence {
@@ -148,11 +130,6 @@ func hookRelayFixtureServe(ln net.Listener, ackSequence []string, ch chan<- []by
 	return errors.Join(errs...)
 }
 
-// hookRelayFixtureWatch runs serve on a background goroutine and reports the
-// errors it observed through t at teardown. Discarding them would hide a broken
-// fixture behind an unrelated "no message received on socket" failure. The
-// listener is closed first so a parked Accept unwinds; a server still blocked
-// after that grace window is one the test deliberately never dialled.
 func hookRelayFixtureWatch(t *testing.T, what string, ln net.Listener, serve func() error) {
 	t.Helper()
 
@@ -173,16 +150,11 @@ func hookRelayFixtureWatch(t *testing.T, what string, ln net.Listener, serve fun
 	})
 }
 
-// hookRelayFixtureListenAndRespond starts a fake Unix domain socket listener
-// that responds once with the given ackJSON (e.g. {"status":"ok"}) then stops.
-// Returns the socket path and a channel that receives the received message bytes.
 func hookRelayFixtureListenAndRespond(t *testing.T, ackJSON string) (socketPath string, received <-chan []byte) {
 	t.Helper()
 	return hookRelayFixtureListenSequence(t, []string{ackJSON})
 }
 
-// hookRelayFixtureListenSequence starts a listener that responds to multiple
-// connections in order. Each response in ackSequence is sent to successive callers.
 func hookRelayFixtureListenSequence(t *testing.T, ackSequence []string) (socketPath string, received <-chan []byte) {
 	t.Helper()
 
@@ -202,10 +174,6 @@ func hookRelayFixtureListenSequence(t *testing.T, ackSequence []string) (socketP
 	return sockPath, ch
 }
 
-// hookRelayFixtureListenDelayed returns a socket path that has NO listener yet;
-// after delay, a listener binds and responds once with ackJSON. It models the
-// cold-boot / in-place-swap startup race (CHB-016): the first dial gets ENOENT,
-// and later dials succeed once the daemon starts listening.
 func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON string) (socketPath string, received <-chan []byte) {
 	t.Helper()
 
@@ -216,8 +184,6 @@ func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON st
 	errCh := make(chan error, 1)
 	go func() {
 		time.Sleep(delay)
-		// Not t.Context(): the listener is created after the test body has
-		// already started and must survive independently of it.
 		ln, listenErr := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
 		if listenErr != nil {
 			errCh <- fmt.Errorf("delayed listen on %s: %w", sockPath, listenErr)
@@ -239,16 +205,9 @@ func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON st
 	return sockPath, ch
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 func TestHookRelay_UnknownEventKind_NoOp(t *testing.T) {
 	t.Parallel()
 
-	// CHB-011: unknown event kind MUST exit 0 without writing to the daemon
-	// socket and without writing to stderr.  This is the distinct conformance
-	// invariant for CHB-011 — all three properties are asserted explicitly.
-
-	// Set up a real listener so we can confirm nothing arrives on the socket.
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.DaemonSocket = sockPath
@@ -257,28 +216,22 @@ func TestHookRelay_UnknownEventKind_NoOp(t *testing.T) {
 	var stderr bytes.Buffer
 	code := hookrelay.Run("FutureEvent", stdin, &stderr, &e)
 
-	// (1) Must exit 0.
 	if code != 0 {
 		t.Errorf("CHB-011: unknown event kind: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// (2) Must not write to stderr.
 	if s := stderr.String(); s != "" {
 		t.Errorf("CHB-011: unknown event kind: non-empty stderr %q, want empty", s)
 	}
-	// (3) Must not write to the daemon socket.
 	select {
 	case msg := <-received:
 		t.Errorf("CHB-011: unknown event kind: unexpected socket message %q", msg)
 	default:
-		// No message received — correct.
 	}
 }
 
 func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013 (as amended by hk-p63bz): SessionStart synthesizes agent_ready
-	// with provenance="claude_session_start" and sends it to the daemon socket.
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.DaemonSocket = sockPath
@@ -289,14 +242,12 @@ func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 		t.Errorf("SessionStart: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	// The relay should have sent an agent_ready message to the socket.
 	select {
 	case msgBytes := <-received:
 		msg, payload := hookRelayFixtureEnvelope(t, "SessionStart", msgBytes)
 		if msgType := hookRelayFixtureString(t, "SessionStart", msg, "type"); msgType != "agent_ready" {
 			t.Errorf("SessionStart: message type = %q; want %q", msgType, "agent_ready")
 		}
-		// Verify payload carries provenance="claude_session_start".
 		if payload["provenance"] != "claude_session_start" {
 			t.Errorf("SessionStart: payload.provenance = %v; want %q", payload["provenance"], "claude_session_start")
 		}
@@ -308,7 +259,6 @@ func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 func TestHookRelay_SessionEnd_NoOp(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: SessionEnd is a no-op.
 	e := hookRelayFixtureEnv(t.TempDir())
 	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionEnd", nil)
 	var stderr bytes.Buffer
@@ -321,7 +271,6 @@ func TestHookRelay_SessionEnd_NoOp(t *testing.T) {
 func TestHookRelay_SessionIDMismatch(t *testing.T) {
 	t.Parallel()
 
-	// CHB-012: session_id mismatch → exit 1 with bridge_session_id_mismatch on stderr.
 	e := hookRelayFixtureEnv(t.TempDir())
 	stdin := hookRelayFixtureStdin(t, "wrong-session-id", "Stop", nil)
 	var stderr bytes.Buffer
@@ -337,9 +286,7 @@ func TestHookRelay_SessionIDMismatch(t *testing.T) {
 func TestHookRelay_EventKindMismatch(t *testing.T) {
 	t.Parallel()
 
-	// CHB-012: hook_event_name mismatch → exit 1 with bridge_event_kind_mismatch on stderr.
 	e := hookRelayFixtureEnv(t.TempDir())
-	// stdin says "Stop" but argv says "Notification"
 	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Notification", stdin, &stderr, &e)
@@ -354,7 +301,6 @@ func TestHookRelay_EventKindMismatch(t *testing.T) {
 func TestHookRelay_MalformedPayload(t *testing.T) {
 	t.Parallel()
 
-	// CHB-012: malformed JSON stdin → exit 1.
 	e := hookRelayFixtureEnv(t.TempDir())
 	stdin := strings.NewReader(`{not valid json}`)
 	var stderr bytes.Buffer
@@ -370,7 +316,6 @@ func TestHookRelay_MalformedPayload(t *testing.T) {
 func TestHookRelay_Stop_WorkComplete(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: Stop in single/implementer phase → outcome_emitted{kind=WORK_COMPLETE}.
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.Phase = "single"
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
@@ -397,7 +342,6 @@ func TestHookRelay_Stop_WorkComplete(t *testing.T) {
 func TestHookRelay_Stop_ReviewerVerdictPresent(t *testing.T) {
 	t.Parallel()
 
-	// CHB-014: reviewer phase Stop → reads review.json and packages verdict.
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -441,7 +385,6 @@ func TestHookRelay_Stop_ReviewerVerdictPresent(t *testing.T) {
 func TestHookRelay_Stop_ReviewerVerdictAbsent(t *testing.T) {
 	t.Parallel()
 
-	// CHB-014: reviewer phase Stop, file absent → error payload.
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.Phase = "reviewer"
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
@@ -463,7 +406,6 @@ func TestHookRelay_Stop_ReviewerVerdictAbsent(t *testing.T) {
 func TestHookRelay_Stop_ReviewerVerdictMalformed(t *testing.T) {
 	t.Parallel()
 
-	// CHB-014: reviewer phase Stop, file malformed → malformed_review_file error.
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -496,7 +438,6 @@ func TestHookRelay_Stop_ReviewerVerdictMalformed(t *testing.T) {
 func TestHookRelay_StopFailure_RateLimit(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: StopFailure{error_type:rate_limit} → agent_rate_limited{retry_after_seconds:60}.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -522,7 +463,6 @@ func TestHookRelay_StopFailure_RateLimit(t *testing.T) {
 func TestHookRelay_StopFailure_ServerError(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: StopFailure{error_type:server_error} → outcome_emitted{kind=FAILURE_SIGNAL,suggested_class=transient}.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -554,7 +494,6 @@ func TestHookRelay_StopFailure_ServerError(t *testing.T) {
 func TestHookRelay_StopFailure_Structural(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: StopFailure{error_type:authentication_failed} → FAILURE_SIGNAL with structural class.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -580,7 +519,6 @@ func TestHookRelay_StopFailure_Structural(t *testing.T) {
 func TestHookRelay_Notification_WaitingInput(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: Notification{idle_prompt} → agent_heartbeat{phase:waiting_input}.
 	for _, notifType := range []string{"idle_prompt", "permission_prompt"} {
 		t.Run(notifType, func(t *testing.T) {
 			t.Parallel()
@@ -613,7 +551,6 @@ func TestHookRelay_Notification_WaitingInput(t *testing.T) {
 func TestHookRelay_Notification_Reasoning(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: Notification{other type} → agent_heartbeat{phase:reasoning}.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -636,9 +573,6 @@ func TestHookRelay_Notification_Reasoning(t *testing.T) {
 func TestHookRelay_DialFailed_NonSocketFatal(t *testing.T) {
 	t.Parallel()
 
-	// CHB-017: a genuinely-fatal dial error — the target path exists but is not a
-	// socket (ENOTSOCK) — is NOT the startup race. It must fail fast with
-	// bridge_dial_failed and must NOT enter the CHB-016 retry loop.
 	e := hookRelayFixtureEnv(t.TempDir())
 	notASocket := filepath.Join(t.TempDir(), "regular-file")
 	if err := os.WriteFile(notASocket, []byte("x"), 0o600); err != nil {
@@ -663,10 +597,6 @@ func TestHookRelay_DialFailed_NonSocketFatal(t *testing.T) {
 func TestHookRelay_DialRetry_SocketAppearsLate(t *testing.T) {
 	t.Parallel()
 
-	// CHB-016 / RU-14: the daemon socket is absent at first dial (ENOENT — the
-	// cold-boot / in-place-swap race) and only appears after a short delay. The
-	// relay must retry the dial within the startup window and then succeed —
-	// NOT return bridge_dial_failed on the first miss.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, _ := hookRelayFixtureListenDelayed(t, 250*time.Millisecond, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -685,10 +615,8 @@ func TestHookRelay_DialRetry_SocketAppearsLate(t *testing.T) {
 func TestHookRelay_DaemonNotReady_RetryThenSuccess(t *testing.T) {
 	t.Parallel()
 
-	// CHB-016: daemon_not_ready typed-error → retry with exponential backoff, eventual success.
 	e := hookRelayFixtureEnv(t.TempDir())
 
-	// First response: daemon_not_ready. Second response: ok.
 	sockPath, _ := hookRelayFixtureListenSequence(t, []string{
 		`{"status":"daemon_not_ready","reason":"unknown_run_id"}`,
 		`{"status":"ok"}`,
@@ -701,13 +629,11 @@ func TestHookRelay_DaemonNotReady_RetryThenSuccess(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("daemon_not_ready retry: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// The channel is buffered at 1; successful completion proves the retry ACK path.
 }
 
 func TestHookRelay_EnvelopeFields(t *testing.T) {
 	t.Parallel()
 
-	// Verify the envelope fields on a Stop→outcome_emitted message.
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.Phase = "single"
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
@@ -721,7 +647,6 @@ func TestHookRelay_EnvelopeFields(t *testing.T) {
 
 	msg, _ := hookRelayFixtureEnvelope(t, "envelope", <-received)
 
-	// CHB-015: envelope must carry run_id and claude_session_id.
 	for _, tc := range []struct{ field, want string }{
 		{"run_id", e.RunID},
 		{"claude_session_id", e.ClaudeSessionID},
@@ -733,17 +658,6 @@ func TestHookRelay_EnvelopeFields(t *testing.T) {
 	}
 }
 
-// hookRelayFixtureListenRestart simulates a daemon restart in the middle of an
-// exchange, which is the shape a redeploy produces (docs/daemon-redeploy.md).
-// The first listener accepts the relay's connection, reads the whole envelope,
-// then closes the connection WITHOUT acknowledging it and drops its listener —
-// exactly what an in-place binary swap or a SIGTERM does to a connection that
-// was established a moment earlier. A second listener then comes up on the same
-// path and acknowledges normally, standing in for the restarted daemon.
-//
-// It returns the socket path and a channel carrying the envelope the SECOND
-// (restarted) listener received, so a caller can prove the message actually
-// arrived rather than merely that the relay exited 0.
 func hookRelayFixtureListenRestart(t *testing.T, ackJSON string) (socketPath string, received <-chan []byte) {
 	t.Helper()
 
@@ -753,7 +667,6 @@ func hookRelayFixtureListenRestart(t *testing.T, ackJSON string) (socketPath str
 	ch := make(chan []byte, 1)
 	errCh := make(chan error, 1)
 
-	// Not t.Context(): both listeners must outlive the test body's own call.
 	first, listenErr := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
 	if listenErr != nil {
 		t.Fatalf("hookRelayFixtureListenRestart: first listen on %s: %v", sockPath, listenErr)
@@ -766,8 +679,6 @@ func hookRelayFixtureListenRestart(t *testing.T, ackJSON string) (socketPath str
 			errCh <- fmt.Errorf("first accept: %w", acceptErr)
 			return
 		}
-		// Consume the envelope so the relay's writes complete, then die
-		// before acknowledging. The relay sees EOF on the ACK read.
 		if _, readErr := bufio.NewReader(conn).ReadString('\n'); readErr != nil {
 			errs = append(errs, fmt.Errorf("first read: %w", readErr))
 		}
@@ -799,14 +710,6 @@ func hookRelayFixtureListenRestart(t *testing.T, ackJSON string) (socketPath str
 func TestHookRelay_Reconnects_WhenDaemonDiesBeforeAck(t *testing.T) {
 	t.Parallel()
 
-	// The 79-minute silent stall. A daemon restart drops a connection the relay
-	// had ALREADY established, so the CHB-016 retry — which only ever covered
-	// the dial — never ran, and the relay failed instantly on a race it was
-	// built to survive. Whether a restart lands on the dial or mid-exchange is
-	// pure timing, so both halves must retry within the same startup window.
-	//
-	// Guards the reconnect in sendToSocket. To see it fail, make
-	// isConnectionLostErr return false: the relay stops re-dialling and exits 1.
 	e := hookRelayFixtureEnv(t.TempDir())
 	sockPath, received := hookRelayFixtureListenRestart(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
@@ -818,8 +721,6 @@ func TestHookRelay_Reconnects_WhenDaemonDiesBeforeAck(t *testing.T) {
 		t.Fatalf("daemon died before ACK: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	// The restarted daemon must actually hold the message. Exit 0 alone would
-	// also be satisfied by a relay that gave up quietly.
 	select {
 	case msg := <-received:
 		if len(msg) == 0 {
@@ -829,8 +730,6 @@ func TestHookRelay_Reconnects_WhenDaemonDiesBeforeAck(t *testing.T) {
 		t.Fatal("daemon died before ACK: restarted daemon received no envelope")
 	}
 
-	// The failure must never again be reported as a dial problem: the dial had
-	// already succeeded when the daemon went away.
 	if strings.Contains(stderr.String(), "bridge_dial_failed") {
 		t.Errorf("daemon died before ACK: mid-exchange drop reported as a dial failure: %q", stderr.String())
 	}

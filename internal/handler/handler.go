@@ -204,7 +204,6 @@ type Handler interface {
 	Launch(ctx context.Context, spec LaunchSpec) (Session, *handlercontract.Watcher, error)
 }
 
-// handler is the concrete implementation of Handler.
 type handler struct {
 	publisher  handlercontract.EventEmitter
 	deadLetter handlercontract.WatcherDeadLetterSink
@@ -243,56 +242,17 @@ func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontra
 	}
 }
 
-// newDeadLetterFailureLogger builds the
-// handlercontract.SpawnWatcherConfig.OnDeadLetterFailure hook this package
-// installs on every watcher it spawns. Each call returns a fresh closure with
-// its own counter, so sampling is per-watcher rather than process-global.
-//
-// A failed handlercontract.WatcherDeadLetterSink.Append means an event escaped
-// both the bus and the dead-letter store and is gone. handlercontract is a
-// contract package and deliberately carries no logger, so the daemon-side
-// caller — this package — owns the reporting.
-//
-// # Why this samples instead of logging every failure
-//
-// The hook runs inline on the watcher goroutine's read loop, and the failure it
-// reports is not rare by nature: when the bus is down,
-// handlercontract.Watcher.publishOrDeadLetter spills EVERY progress line to the
-// dead-letter sink, so a sink that is also down fails once per line read. One
-// unbuffered write per failure would turn a broken sink into an unbounded write
-// storm on the read loop, and each write parks the goroutine that advances
-// handlercontract.Watcher.LastReadEventAt — the timestamp HC-011a wedge
-// detection watches. The signal the bead asked for would then be able to wedge
-// the session it exists to make observable.
-//
-// So the logger writes on failure 1, 2, 4, 8, … — O(log n) lines for n failures
-// — and carries the running count in every line. Sampling loses nothing: the
-// EXACT count and the most recent error are always readable from the watcher
-// handle (handlercontract.Watcher.DeadLetterFailures /
-// handlercontract.Watcher.LastDeadLetterFailure), which this hook does not gate
-// and which no sampling touches.
-//
-// The returned closure must not panic: a panic here would surface on the
-// watcher goroutine, inside the read loop's recover barrier.
-//
-// Bead ref: hk-0eqik.
 func newDeadLetterFailureLogger(out io.Writer) func(handlercontract.EventType, string, error) {
 	var failures atomic.Uint64
 	var muted atomic.Bool
 	return func(eventType handlercontract.EventType, reason string, err error) {
 		n := failures.Add(1)
-		// Sample: emit only when n is a power of two (1, 2, 4, 8, …).
 		if n&(n-1) != 0 || muted.Load() {
 			return
 		}
 		if _, werr := fmt.Fprintf(out,
 			"handler: watcher dead-letter sink failed (failure #%d for this watcher; log sampled at powers of two — exact count is Watcher.DeadLetterFailures()): event=%s reason=%q err=%v\n",
 			n, eventType, reason, err); werr != nil {
-			// The log sink itself is gone — a closed pipe, a full device. There
-			// is no second place to report that, and every later sampled write
-			// would hit the same fault, so stop writing rather than keep paying
-			// for it on the watcher's read loop. The always-on counter on the
-			// watcher handle is unaffected.
 			muted.Store(true)
 		}
 	}
@@ -314,25 +274,10 @@ func newDeadLetterFailureLogger(out io.Writer) func(handlercontract.EventType, s
 func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	sessionID := handlercontract.NewSessionID()
 
-	// CHB-007: refuse launch if spec.Args contains a forbidden Claude flag or
-	// spec.Env contains a forbidden env var.  This guard runs before any
-	// subprocess is started so neither the exec.CommandContext path nor the
-	// substrate path can bypass it.
-	//
-	// Spec: specs/claude-hook-bridge.md §4.2 CHB-007.
 	if err := CheckForbiddenFlags(spec.Args, spec.Env); err != nil {
 		return nil, nil, fmt.Errorf("handler: Launch: %w", err)
 	}
 
-	// Substrate dispatch: when spec.Substrate is non-nil, delegate subprocess
-	// hosting to the substrate (e.g. a tmux window) instead of exec.CommandContext.
-	// The substrate path does not wire HandlerSpec delivery or SpawnWatcher when
-	// Stdout() is nil — the bridge wire is the daemon Unix socket in that case.
-	//
-	// When spec.Substrate is nil, the current exec.CommandContext path is preserved
-	// (backward compatible; all existing callers are unaffected).
-	//
-	// Spec ref: process-lifecycle.md §4.7 PL-021b; handler-contract.md HC-054.
 	if spec.Substrate != nil {
 		return h.launchViaSubstrate(ctx, sessionID, spec)
 	}
@@ -341,8 +286,6 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	cmd.Env = spec.Env
 	cmd.SysProcAttr = lifecycle.SpawnChildSysProcAttr(lifecycle.RecordedPGID())
 
-	// Resolve runID for the lifecycle Machine: use HandlerSpec.RunID when
-	// available; fall back to "unknown" for the legacy/test path.
 	runIDStr := "unknown"
 	var watcherRunID core.RunID
 	if spec.HandlerSpec != nil {
@@ -355,44 +298,24 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		return nil, nil, fmt.Errorf("handler: Launch: NewSession: %w", err)
 	}
 
-	// hk-y20d2: newSessionWithIDs always opens stdin as a pipe (needed for HC-005
-	// HandlerSpec delivery below). When there is no HandlerSpec to deliver, that
-	// pipe is never fed or closed on this path, so argv-driven ProcessExit
-	// harnesses (pi, codex — see StdinDevNull in pilaunchspec.go / codexlaunchspec.go)
-	// block forever reading fd0 and never reach the model. StdinDevNull was only
-	// honored on the tmux/substrate path (launchViaSubstrate below); honor it here
-	// too by closing the write end immediately so the subprocess sees startup EOF.
 	if spec.HandlerSpec == nil && spec.StdinDevNull {
 		if closeErr := sess.CloseStdin(); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin (StdinDevNull): %v\n", closeErr)
 		}
 	}
 
-	// HC-005: if a HandlerSpec is provided, encode it as compact JSON and write
-	// it to subprocess stdin followed by a newline, then close the write end so
-	// the subprocess sees EOF after reading exactly one JSON object. The delivery
-	// runs in a goroutine bounded by ctx so that a slow subprocess cannot block
-	// Launch indefinitely.
 	if spec.HandlerSpec != nil {
 		hs := spec.HandlerSpec
 		go deliverHandlerSpec(ctx, sess, hs)
 	}
 
-	// Apply optional StdoutWrapper before wiring to SpawnWatcher (CHB-023).
-	// When StdoutWrapper is nil the raw pipe is used directly (no-op for existing callers).
 	progressStream := sess.Stdout()
 	if spec.StdoutWrapper != nil {
 		progressStream = spec.StdoutWrapper(progressStream)
 	}
 
-	// WS3-Claude-A daemon opt-in: when HARMONIK_WIRE_CAPTURE_DIR is set (capture
-	// harness only), tee the raw NDJSON wire to <dir>/<scn>/wire.ndjson. Unset →
-	// nil → byte-identical no-op.
 	wireTap, wtErr := openWireTap()
 	if wtErr != nil {
-		// The subprocess is already spawned; reap it (and its runWait /
-		// drainStderr goroutines) before returning, or it leaks with no
-		// handle until the daemon orphan sweep. Kill is best-effort here.
 		_ = sess.Kill(ctx) //nolint:errcheck // best-effort reap of the already-spawned subprocess before returning wtErr
 		return nil, nil, wtErr
 	}
@@ -415,7 +338,6 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	if wireTap != nil {
 		go func() {
 			<-watcher.Done()
-			// Wire capture is best-effort; a close error here is non-fatal.
 			if cerr := wireTap.Close(); cerr != nil {
 				return
 			}
@@ -425,13 +347,6 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	return sess, watcher, nil
 }
 
-// buildLaunchCmd builds the *exec.Cmd for the non-substrate Launch path.
-//
-// M4-C4 (T6): the command is built through spec.Runner when a worker was
-// selected so the argv-driven agent process (pi/codex) spawns ON THE WORKER via
-// the SSHRunner. spec.Runner == nil ⇒ exec.CommandContext, byte-identical to the
-// pre-existing LOCAL path (NFR7). cmd.Env and SysProcAttr are applied by the
-// caller unchanged either way (the runner is the only host-selection axis).
 func buildLaunchCmd(ctx context.Context, spec LaunchSpec) *exec.Cmd {
 	if spec.Runner == nil {
 		//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
@@ -440,19 +355,7 @@ func buildLaunchCmd(ctx context.Context, spec LaunchSpec) *exec.Cmd {
 		return cmd
 	}
 
-	// hk-fufel: a worker-tunneling runner (ssh) runs the child ON THE WORKER, so
-	// spec.WorkDir is a REMOTE worktree path. Applying it as the LOCAL
-	// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process (the crit3 crash),
-	// and without a remote `cd` the child runs in the ssh login $HOME. When the
-	// runner advertises RemoteCwdRunner, apply the cwd REMOTELY via CommandInDir
-	// and leave the local exec.Cmd.Dir UNSET; otherwise keep the byte-identical
-	// Command()+cmd.Dir=WorkDir path.
 	if rc, ok := spec.Runner.(RemoteCwdRunner); ok && spec.WorkDir != "" {
-		// hk-qxvc2: ssh does NOT forward the local process env (cmd.Env), so
-		// spec.Env (e.g. CLAUDE_CONFIG_DIR) would never reach the remote agent.
-		// Deliver it via an `env KEY=VAL … <binary> <args>` argv prefix that the
-		// remote login-shell `exec`s in place. cmd.Env stays load-bearing only for
-		// the LOCAL branches.
 		name, argv := RemoteExecArgv(spec.Env, spec.Binary, spec.Args)
 		return rc.CommandInDir(ctx, spec.WorkDir, name, argv...)
 	}
@@ -462,17 +365,7 @@ func buildLaunchCmd(ctx context.Context, spec LaunchSpec) *exec.Cmd {
 	return cmd
 }
 
-// deliverHandlerSpec encodes hs as compact JSON, writes it to the session's
-// stdin as one NDJSON line, and closes the write end so the subprocess sees EOF
-// after reading exactly one JSON object (HC-005).
-//
-// It runs as a background goroutine, so failures cannot be returned to Launch;
-// each is reported to stderr and stdin is closed regardless so the subprocess
-// sees EOF rather than hanging on a read that will never be satisfied.
 func deliverHandlerSpec(ctx context.Context, sess Session, hs *handlercontract.LaunchSpec) {
-	// MarshalLaunchSpec validates the spec and returns compact JSON. Validation
-	// or encoding failure is a programmer error; log and close stdin so the
-	// subprocess sees EOF rather than hanging.
 	encoded, encErr := handlercontract.MarshalLaunchSpec(hs)
 	if encErr != nil {
 		fmt.Fprintf(os.Stderr, "handler: Launch: MarshalLaunchSpec: %v\n", encErr)
@@ -481,11 +374,7 @@ func deliverHandlerSpec(ctx context.Context, sess Session, hs *handlercontract.L
 		}
 		return
 	}
-	// SendInput writes the compact JSON line + '\n' (NDJSON framing). ctx bounds
-	// the write: if ctx is cancelled the subprocess stdin pipe will return an
-	// error and the goroutine exits.
 	if writeErr := sess.SendInput(ctx, string(encoded)); writeErr != nil {
-		// Subprocess may have already exited; log and continue to close.
 		fmt.Fprintf(os.Stderr, "handler: Launch: stdin write: %v\n", writeErr)
 	}
 	if closeErr := sess.CloseStdin(); closeErr != nil {
@@ -493,21 +382,6 @@ func deliverHandlerSpec(ctx context.Context, sess Session, hs *handlercontract.L
 	}
 }
 
-// launchViaSubstrate handles the non-nil Substrate path in Launch.
-//
-// It builds a SubstrateSpawn from spec and calls Substrate.SpawnWindow. The
-// returned SubstrateSession is wrapped in a substrateSessionAdapter so it
-// satisfies the Session interface. SpawnWatcher is wired only when
-// SubstrateSession.Stdout() returns a non-nil io.Reader; for tmux-hosted
-// sessions the bridge wire is the daemon Unix socket, so Stdout() returns nil
-// and the watcher is nil (the caller uses HookSessionStore.WaitForOutcome
-// for completion detection instead).
-//
-// HandlerSpec delivery is skipped for substrate sessions: the pty stdin is
-// owned by the substrate (tmux) and the LaunchSpec is injected via env vars
-// (CHB-006) or the hook-bridge socket instead.
-//
-// Spec ref: process-lifecycle.md §4.7 PL-021b.
 func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontract.SessionID, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	argv := append([]string{spec.Binary}, spec.Args...)
 	spawn := SubstrateSpawn{
@@ -524,7 +398,6 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		return nil, nil, fmt.Errorf("handler: Launch: Substrate.SpawnWindow: %w", err)
 	}
 
-	// Resolve runID for the lifecycle Machine (same logic as the exec path).
 	subRunIDStr := "unknown"
 	var watcherRunID core.RunID
 	if spec.HandlerSpec != nil {
@@ -536,9 +409,6 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		return nil, nil, fmt.Errorf("handler: Launch: %w", err)
 	}
 
-	// Wire SpawnWatcher only when the substrate exposes a stdout pipe.
-	// For tmux-hosted sessions Stdout() returns nil; in that case return a
-	// nil watcher — callers use HookSessionStore.WaitForOutcome instead.
 	stdout := subSess.Stdout()
 	if stdout == nil {
 		return adapted, nil, nil
@@ -549,12 +419,8 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		progressStream = spec.StdoutWrapper(progressStream)
 	}
 
-	// WS3-Claude-A daemon opt-in (substrate path): same wire-capture wiring as
-	// the exec path — only active when HARMONIK_WIRE_CAPTURE_DIR is set.
 	wireTap, wtErr := openWireTap()
 	if wtErr != nil {
-		// The substrate window is already spawned; reap it before returning so
-		// the hosted subprocess does not leak until the daemon orphan sweep.
 		_ = adapted.Kill(ctx) //nolint:errcheck // best-effort reap of the already-spawned substrate window before returning wtErr
 		return nil, nil, wtErr
 	}
@@ -577,7 +443,6 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	if wireTap != nil {
 		go func() {
 			<-watcher.Done()
-			// Wire capture is best-effort; a close error here is non-fatal.
 			if cerr := wireTap.Close(); cerr != nil {
 				return
 			}

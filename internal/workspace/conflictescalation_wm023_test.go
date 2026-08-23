@@ -1,24 +1,5 @@
 package workspace
 
-// conflictescalation_wm023_test.go — tests for WM-023 escalation execution path
-// (hk-8mwo.35).
-//
-// Covers:
-//   - BuildConflictEscalationPayload: state guard, valid payload construction, field
-//     validation, and workspace_id/run_id derivation.
-//   - Single-entry invariant: workspace enters conflict-resolving exactly once per
-//     merge-pending cycle; escalation can only execute from conflict-resolving.
-//   - Integration with ShouldDispatchConflictResolver: all three escalate decisions
-//     route to the BuildConflictEscalationPayload path.
-//   - Full WM-023 sequence: conflict-resolving → (escalation event) → discarded;
-//     workspace_discarded follows merge_conflict_escalation in the §7.1 table row.
-//
-// Spec ref: workspace-model.md §4.6 WM-023; §7.1 transition table row
-//   "conflict-resolving | re-dispatch exhausted OR all-mechanical per WM-022a |
-//    WM-023 trigger conditions | discarded | merge_conflict_escalation, workspace_discarded".
-//
-// Bead ref: hk-8mwo.35.
-
 import (
 	"errors"
 	"testing"
@@ -28,13 +9,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// wm023FixtureRunID returns a deterministic test RunID for WM-023 tests.
 func wm023FixtureRunID() core.RunID {
 	return core.RunID(uuid.MustParse("0196b200-0000-7000-8000-000000023500"))
 }
 
-// wm023FixtureWorkspace returns a *Workspace in the conflict-resolving state,
-// ready for escalation tests. Uses a non-zero RunID so the payload validator passes.
 func wm023FixtureWorkspace() *Workspace {
 	runID := wm023FixtureRunID()
 	ref := core.HandlerRef("agentic-claude")
@@ -56,13 +34,9 @@ func wm023FixtureWorkspace() *Workspace {
 	}
 }
 
-// wm023FixtureConflictPaths is a minimal non-empty conflict-paths list for tests.
 var wm023FixtureConflictPaths = []string{"internal/core/foo.go", "cmd/harmonik/main.go"}
 
-// wm023FixtureEscalatedAt is a valid RFC 3339 timestamp for tests.
 const wm023FixtureEscalatedAt = "2026-05-07T12:00:00Z"
-
-// ── BuildConflictEscalationPayload — state guard ────────────────────────────
 
 // TestWM023_StateGuard_RequiresConflictResolving verifies that
 // BuildConflictEscalationPayload rejects any state other than conflict-resolving
@@ -128,8 +102,6 @@ func TestWM023_StateGuard_NilWorkspace(t *testing.T) {
 	}
 }
 
-// ── BuildConflictEscalationPayload — payload field validation ───────────────
-
 // TestWM023_Payload_EmptyConflictPathsRejected verifies that an empty
 // conflictPaths slice is rejected per §8.5.6 (non-nil and non-empty).
 func TestWM023_Payload_EmptyConflictPathsRejected(t *testing.T) {
@@ -179,8 +151,6 @@ func TestWM023_Payload_ZeroRunIDRejected(t *testing.T) {
 		t.Error("WM-023: zero RunID: expected error (invalid payload), got nil")
 	}
 }
-
-// ── BuildConflictEscalationPayload — payload field correctness ──────────────
 
 // TestWM023_Payload_ConflictPathsCarried verifies that the conflictPaths slice is
 // carried into the payload unchanged per event-model.md §8.5.6.
@@ -248,20 +218,16 @@ func TestWM023_Payload_WorkspaceIDDerived(t *testing.T) {
 		t.Fatalf("WM-023: unexpected error: %v", err)
 	}
 
-	// workspace_id UUID = run_id UUID per WM-004 derivation rule.
 	wantWorkspaceID := core.WorkspaceID(ws.RunID)
 	if payload.WorkspaceID != wantWorkspaceID {
 		t.Errorf("WM-023: payload.WorkspaceID = %v, want %v (core.WorkspaceID(ws.RunID) per WM-004)",
 			payload.WorkspaceID, wantWorkspaceID)
 	}
 
-	// WorkspaceID must not be uuid.Nil.
 	if uuid.UUID(payload.WorkspaceID) == uuid.Nil {
 		t.Error("WM-023: payload.WorkspaceID is uuid.Nil; want non-nil UUID derived from RunID")
 	}
 }
-
-// ── Single-entry invariant ───────────────────────────────────────────────────
 
 // TestWM023_SingleEntryInvariant_ConflictResolvingEnteredOnce verifies that
 // workspace enters conflict-resolving exactly once per merge-pending cycle.
@@ -276,8 +242,6 @@ func TestWM023_SingleEntryInvariant_ConflictResolvingEnteredOnce(t *testing.T) {
 	t.Parallel()
 
 	ws := wm023FixtureWorkspace()
-	// Workspace is already in conflict-resolving per the fixture.
-	// Attempting to re-enter conflict-resolving from conflict-resolving must fail.
 	err := Transition(ws, core.WorkspaceStateConflictResolving)
 	if err == nil {
 		t.Error("WM-023[single-entry]: Transition(conflict-resolving → conflict-resolving): want ErrInvalidTransition, got nil")
@@ -285,7 +249,6 @@ func TestWM023_SingleEntryInvariant_ConflictResolvingEnteredOnce(t *testing.T) {
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("WM-023[single-entry]: expected ErrInvalidTransition; got: %v", err)
 	}
-	// State must remain unchanged after the rejected transition.
 	if ws.State != core.WorkspaceStateConflictResolving {
 		t.Errorf("WM-023[single-entry]: ws.State changed to %q after rejected transition; want conflict-resolving",
 			ws.State)
@@ -301,7 +264,6 @@ func TestWM023_SingleEntryInvariant_EscalationGoesDirectlyToDiscarded(t *testing
 
 	ws := wm023FixtureWorkspace() // conflict-resolving
 
-	// Build payload (step 1 of WM-023 caller discipline).
 	payload, err := BuildConflictEscalationPayload(ws, wm023FixtureConflictPaths, wm023FixtureEscalatedAt)
 	if err != nil {
 		t.Fatalf("WM-023: BuildConflictEscalationPayload: %v", err)
@@ -310,8 +272,6 @@ func TestWM023_SingleEntryInvariant_EscalationGoesDirectlyToDiscarded(t *testing
 		t.Fatalf("WM-023: payload.Valid() = false")
 	}
 
-	// Step 2 (caller responsibility): emit merge_conflict_escalation on the bus.
-	// Step 3: transition to discarded — must succeed from conflict-resolving.
 	if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 		t.Fatalf("WM-023[single-entry]: Transition(conflict-resolving → discarded): %v", err)
 	}
@@ -319,8 +279,6 @@ func TestWM023_SingleEntryInvariant_EscalationGoesDirectlyToDiscarded(t *testing
 		t.Errorf("WM-023[single-entry]: state = %q; want discarded", ws.State)
 	}
 
-	// Post-discard: BuildConflictEscalationPayload must now fail (state is discarded,
-	// not conflict-resolving; escalation cannot re-occur from a terminal state).
 	_, err = BuildConflictEscalationPayload(ws, wm023FixtureConflictPaths, wm023FixtureEscalatedAt)
 	if err == nil {
 		t.Error("WM-023[single-entry]: BuildConflictEscalationPayload from discarded state: expected error, got nil")
@@ -329,8 +287,6 @@ func TestWM023_SingleEntryInvariant_EscalationGoesDirectlyToDiscarded(t *testing
 		t.Errorf("WM-023[single-entry]: post-discard: expected ErrEscalationNotInConflictResolving; got: %v", err)
 	}
 }
-
-// ── Integration with ShouldDispatchConflictResolver ─────────────────────────
 
 // TestWM023_AllEscalateDecisionsRouteToEscalation verifies that each of the three
 // ConflictResolveDecision escalate variants — EscalateNullRef, EscalateRetiredHandler,
@@ -381,20 +337,16 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Decision must be an escalate variant (not Dispatch).
 			dec := ShouldDispatchConflictResolver(tc.ref, tc.attempts, attemptCap, tc.retire)
 			if dec != tc.wantDec {
 				t.Fatalf("WM-023: ShouldDispatchConflictResolver = %q; want %q", dec, tc.wantDec)
 			}
-			// All escalate variants (non-Dispatch) must route to the escalation path.
 			if dec == ConflictResolveDispatch {
 				t.Fatalf("WM-023: unexpected Dispatch decision for %q; want escalate", tc.name)
 			}
 
-			// Build the workspace (in conflict-resolving).
 			ws := wm023FixtureWorkspace()
 
-			// BuildConflictEscalationPayload must succeed.
 			payload, err := BuildConflictEscalationPayload(ws, wm023FixtureConflictPaths, wm023FixtureEscalatedAt)
 			if err != nil {
 				t.Fatalf("WM-023[%s]: BuildConflictEscalationPayload: %v", tc.name, err)
@@ -403,7 +355,6 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 				t.Errorf("WM-023[%s]: payload.Valid() = false", tc.name)
 			}
 
-			// Transition to discarded must succeed.
 			if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 				t.Fatalf("WM-023[%s]: Transition(conflict-resolving → discarded): %v", tc.name, err)
 			}
@@ -411,7 +362,6 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 				t.Errorf("WM-023[%s]: state = %q; want discarded", tc.name, ws.State)
 			}
 
-			// WM-037a: terminal state clears interrupt_state.
 			if ws.InterruptState != core.InterruptStateNone {
 				t.Errorf("WM-023[%s]+WM-037a: interrupt_state = %q after discarded; want none",
 					tc.name, ws.InterruptState)
@@ -419,8 +369,6 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 		})
 	}
 }
-
-// ── Full WM-023 sequence ─────────────────────────────────────────────────────
 
 // TestWM023_FullEscalationSequence verifies the complete §7.1 escalation path:
 //
@@ -462,23 +410,18 @@ func TestWM023_FullEscalationSequence(t *testing.T) {
 
 	rec := workspaceEventsFixtureNewRecorder()
 
-	// Step 1: leased → merge-pending.
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateMergePending, rec, nil)
 	if ws.State != core.WorkspaceStateMergePending {
 		t.Fatalf("WM-023[full-seq]: state after merge-pending transition = %q", ws.State)
 	}
 
-	// Step 1b: merge-pending → conflict-resolving (initial conflict detection; single-entry).
 	if err := Transition(ws, core.WorkspaceStateConflictResolving); err != nil {
 		t.Fatalf("WM-023[full-seq]: merge-pending → conflict-resolving: %v", err)
 	}
-	// NOTE: merge_conflict_escalation is NOT tied to the state transition but to
-	// resolution exhaustion. The workspace entered conflict-resolving here (single-entry).
 	if ws.State != core.WorkspaceStateConflictResolving {
 		t.Fatalf("WM-023[full-seq]: state after conflict-resolving transition = %q", ws.State)
 	}
 
-	// Step 2: Resolution path exhausted (3 attempts at cap; decision = EscalateCapExhausted).
 	noRetire := func(_ core.HandlerRef) bool { return false }
 	dec := ShouldDispatchConflictResolver(
 		ws.ImplementerHandlerRef, DefaultConflictResolutionAttemptCap,
@@ -488,7 +431,6 @@ func TestWM023_FullEscalationSequence(t *testing.T) {
 		t.Fatalf("WM-023[full-seq]: decision = %q; want EscalateCapExhausted", dec)
 	}
 
-	// Step 3: Build escalation payload.
 	payload, err := BuildConflictEscalationPayload(
 		ws, wm023FixtureConflictPaths, wm023FixtureEscalatedAt,
 	)
@@ -496,18 +438,15 @@ func TestWM023_FullEscalationSequence(t *testing.T) {
 		t.Fatalf("WM-023[full-seq]: BuildConflictEscalationPayload: %v", err)
 	}
 
-	// Step 4: Caller emits merge_conflict_escalation (simulated via recorder).
 	rec.record("merge_conflict_escalation", core.WorkspaceStateConflictResolving,
 		map[string]string{
 			"workspace_id": payload.WorkspaceID.String(),
 			"escalated_at": payload.EscalatedAt,
 		})
 
-	// Step 5: conflict-resolving → discarded (AFTER escalation event).
 	workspaceEventsFixtureTransitionAndRecord(t, ws, core.WorkspaceStateDiscarded, rec,
 		map[string]string{"reason": "post_escalation"})
 
-	// Verify: merge_conflict_escalation precedes workspace_discarded.
 	posEsc := rec.positionOf("merge_conflict_escalation")
 	posDisc := rec.positionOf("workspace_discarded")
 	if posEsc < 0 {
@@ -521,18 +460,15 @@ func TestWM023_FullEscalationSequence(t *testing.T) {
 			posEsc, posDisc)
 	}
 
-	// Verify: workspace_discarded fires exactly once.
 	if rec.countOf("workspace_discarded") != 1 {
 		t.Errorf("WM-023[full-seq]: workspace_discarded emitted %d times; want 1",
 			rec.countOf("workspace_discarded"))
 	}
 
-	// Verify: workspace is in terminal discarded state.
 	if ws.State != core.WorkspaceStateDiscarded {
 		t.Errorf("WM-023[full-seq]: final state = %q; want discarded", ws.State)
 	}
 
-	// WM-037a: interrupt_state cleared to none in terminal state.
 	if ws.InterruptState != core.InterruptStateNone {
 		t.Errorf("WM-023[full-seq]+WM-037a: interrupt_state = %q; want none", ws.InterruptState)
 	}
@@ -553,14 +489,12 @@ func TestWM023_AllMechanicalFullSequence(t *testing.T) {
 	ws := wm023FixtureWorkspace()
 	ws.ImplementerHandlerRef = nil // all-mechanical per WM-022a
 
-	// Decision: null ref → EscalateNullRef (no re-dispatch attempts).
 	noRetire := func(_ core.HandlerRef) bool { return false }
 	dec := ShouldDispatchConflictResolver(nil, 0, DefaultConflictResolutionAttemptCap, noRetire)
 	if dec != ConflictResolveEscalateNullRef {
 		t.Fatalf("WM-023[all-mechanical]: decision = %q; want EscalateNullRef", dec)
 	}
 
-	// BuildConflictEscalationPayload succeeds from conflict-resolving (even with nil ref).
 	payload, err := BuildConflictEscalationPayload(ws, wm023FixtureConflictPaths, wm023FixtureEscalatedAt)
 	if err != nil {
 		t.Fatalf("WM-023[all-mechanical]: BuildConflictEscalationPayload: %v", err)
@@ -569,7 +503,6 @@ func TestWM023_AllMechanicalFullSequence(t *testing.T) {
 		t.Errorf("WM-023[all-mechanical]: payload.Valid() = false")
 	}
 
-	// Transition to discarded.
 	if err := Transition(ws, core.WorkspaceStateDiscarded); err != nil {
 		t.Fatalf("WM-023[all-mechanical]: Transition(conflict-resolving → discarded): %v", err)
 	}

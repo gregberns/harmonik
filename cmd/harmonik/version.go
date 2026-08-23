@@ -23,34 +23,10 @@ package main
 
 import "runtime/debug"
 
-// commitHash is stamped at build time via:
-//
-//	-ldflags "-X main.commitHash=$(git rev-parse HEAD)"
-//
-// It defaults to "unknown" so that binaries built without the stamp emit a
-// recognisable sentinel rather than an empty string.
-//
-// Cite: specs/event-model.md §8.7.1; bead hk-mz0x4.
 var commitHash = "unknown" //nolint:gochecknoglobals // build-time injection target
 
-// version is stamped at build time via:
-//
-//	-ldflags "-X main.version=$(git describe --tags --exact-match)"
-//
-// It defaults to "dev" so that binaries built without the stamp emit a
-// recognisable sentinel rather than an empty string.
-//
-// Cite: specs/release-pipeline.md §2.3; bead hk-t0yvy.
 var version = "dev" //nolint:gochecknoglobals // build-time injection target
 
-// resolvedCommitHash returns the best available commit hash for the running
-// binary.  It prefers the ldflags-stamped commitHash (set at build time via
-// -X main.commitHash=<sha>).  When that value is still the sentinel "unknown",
-// it falls back to the VCS revision embedded by the Go toolchain in the
-// binary's build info (go build / go install from a git worktree since Go
-// 1.18).  Returns "unknown" when neither source has a value.
-//
-// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
 func resolvedCommitHash() string {
 	if commitHash != "unknown" && commitHash != "" {
 		return commitHash

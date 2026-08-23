@@ -74,7 +74,6 @@ type RemoteCwdRunner interface {
 	CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd
 }
 
-// localRunner is the default CommandRunner: plain exec.CommandContext.
 type localRunner struct{}
 
 func (localRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -179,7 +178,6 @@ type Options struct {
 	WritableRoots func(worktreeCwd string) []string
 }
 
-// codexSubstrate is the handler.Substrate implementation.
 type codexSubstrate struct {
 	opts Options
 }
@@ -214,17 +212,7 @@ func (c *codexSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSp
 	return c.spawn(ctx, in, "")
 }
 
-// spawn is the shared spawn body for SpawnWindow (fresh thread) and the resident
-// owner's respawn path (resume). When resumeThreadID is non-empty the session's
-// launch handshake issues `thread/resume <resumeThreadID>` instead of
-// `thread/start`, re-attaching to the prior server-side thread after a child
-// death (hk-160yb G1: reconnect via respawn→initialize→thread/resume, using the
-// G2 wire method). resumeThreadID is otherwise the empty string and the path is
-// byte-for-byte the pre-G1 fresh-thread launch.
 func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, resumeThreadID string) (handler.SubstrateSession, error) {
-	// Ungraceful-kill recovery seam (G4): clean any stale WAL a killed/crashed
-	// prior child left behind BEFORE launching. Fail-closed — never launch onto a
-	// known-stale state.
 	if c.opts.PreSpawn != nil {
 		if err := c.opts.PreSpawn(ctx); err != nil {
 			return nil, fmt.Errorf("codexdriver: pre-spawn guard: %w", err)
@@ -239,24 +227,10 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 		argv = append([]string{c.opts.Binary}, c.opts.Args...)
 	}
 
-	// The child must outlive the spawn call: tie the exec ctx to a
-	// session-owned cancel (released by Kill or by process exit), never to the
-	// dispatch-scoped spawn ctx.
 	procCtx, procCancel := context.WithCancel(context.Background())
 
-	// Remote-cwd-aware spawn (hk-czb11). A remote transport (ssh) runs the child
-	// ON THE WORKER, so in.Cwd is a REMOTE worktree path. Applying it as the LOCAL
-	// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process, and without a
-	// remote `cd` the child runs in the ssh login $HOME rather than the worktree.
-	// When the runner advertises RemoteCwdRunner, apply the cwd REMOTELY and leave
-	// the local exec.Cmd.Dir UNSET; a local runner keeps the direct
-	// exec.Cmd.Dir = in.Cwd path (byte-identical to before).
 	var cmd *exec.Cmd
 	if rc, ok := c.opts.Runner.(RemoteCwdRunner); ok && in.Cwd != "" {
-		// hk-okqyx: ssh does NOT forward the local process env (cmd.Env below),
-		// so in.Env would never reach the remote codex. Deliver it via an
-		// `env KEY=VAL … <binary> <args>` argv prefix the remote login-shell
-		// `exec`s in place. cmd.Env below stays load-bearing for the LOCAL branch.
 		name, remoteArgv := handler.RemoteExecArgv(in.Env, argv[0], argv[1:])
 		cmd = rc.CommandInDir(procCtx, in.Cwd, name, remoteArgv...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
 	} else {
@@ -287,15 +261,7 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 
 	//nolint:contextcheck // captureDegradeLogger logs from the session-lifetime-owned tee; no request ctx to inherit (same rationale as runLoop).
 	s := newCodexSession(c.opts, cmd, procCancel, stdin, stdout, stderrRing)
-	// resumeThreadID is immutable for the session's life; set before start() so
-	// the readLoop's handshake branch (handleResponse pendingInitialize) reads a
-	// fully-published value with no race against the reactor goroutines.
 	s.resumeThreadID = resumeThreadID
-	// spawnCwd is the worktree the thread/start|resume writable-roots hook keys off
-	// (hk-daegv). Captured from in.Cwd — NOT cmd.Dir — because the remote (ssh)
-	// spawn path leaves cmd.Dir UNSET (the cwd is applied on the worker via `cd`).
-	// Immutable for the session's life; set before start() so the readLoop handshake
-	// branch reads a fully-published value with no goroutine race.
 	s.spawnCwd = in.Cwd
 	s.start(ctx)
 	return s, nil

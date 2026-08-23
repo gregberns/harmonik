@@ -1,27 +1,5 @@
 package daemon_test
 
-// stalewatch_noprogress_test.go — the stale watcher must report a run that
-// beats but never moves.
-//
-// The failure this pins. An implementer finished its work and its completion
-// signal never reached the daemon. The run sat at an idle prompt for 79 minutes
-// with no terminal event and no stall event, and every health surface said it
-// was fine. The reason is that the daemon emits agent_heartbeat for the run
-// every 5 minutes for as long as the agent process exists, the stale watcher
-// measured its deadline from the last event OF ANY KIND, and 5 minutes is less
-// than the 10-minute quiet window — so the daemon refreshed its own deadline
-// forever and run_stale could never fire.
-//
-// The tests below hold the halves of that apart. One drives a run that beats
-// and never moves and requires run_stale. One drives a run that works quietly
-// for a long time and then reports a phase, and requires silence. One requires
-// that the no-progress alarm REPORTS without cancelling — the quiet window
-// still cancels, the new clock does not, and that boundary is the whole reason
-// its window is allowed to be approximately right. The last two pin the events
-// that must not count as motion.
-//
-// Bead: hk-stop-hook-failure-wedges-run-dc5z6.
-
 import (
 	"context"
 	"encoding/json"
@@ -36,10 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// noProgressFixture is one watcher wired to one bus, with a settable clock and a
-// collector for the run_stale events it emits. The watcher and the collector
-// share a bus so that the watcher's own emissions are also delivered back to its
-// observer, exactly as they are in the daemon.
 type noProgressFixture struct {
 	t   *testing.T
 	bus eventbus.EventBus
@@ -67,10 +41,6 @@ func newNoProgressFixture(t *testing.T, reg *daemon.RunRegistry, start time.Time
 			}
 			var pl core.RunStalePayload
 			if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-				// Surface it rather than swallow it. A dropped payload here
-				// would leave `emitted` empty, which is the exact signature of
-				// the bug under test — the test would fail saying the watchdog
-				// never fired when in fact it fired and this collector lost it.
 				return fmt.Errorf("collector: unmarshal run_stale payload: %w", err)
 			}
 			f.emitMu.Lock()
@@ -111,8 +81,6 @@ func (f *noProgressFixture) setClock(at time.Time) {
 	f.clockMu.Unlock()
 }
 
-// emit delivers one run-stamped event and waits for the bus to hand it to the
-// watcher's observer, which runs on its own goroutine.
 func (f *noProgressFixture) emit(runID core.RunID, typ core.EventType) {
 	f.t.Helper()
 	if err := f.bus.EmitWithRunID(context.Background(), runID, typ, json.RawMessage(`{}`)); err != nil {
@@ -155,17 +123,10 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 		NoProgressAfter: 120 * time.Minute,
 	})
 
-	// A healthy launch: the run starts, dispatches, and the agent reports ready.
-	// This disarms the launch-stall check and both never-spawned reapers, so the
-	// only thing that can fire below is run_stale.
 	f.emit(runID, core.EventTypeRunStarted)
 	f.emit(runID, core.EventTypeLaunchInitiated)
 	f.emit(runID, core.EventTypeAgentReady)
 
-	// Now the agent wedges. The daemon keeps beating every 5 minutes, which is
-	// what a live agent process produces whether or not it is doing anything.
-	// Walk 119 minutes of that: the quiet window can never be crossed, and the
-	// no-progress window has not been.
 	const beat = 5 * time.Minute
 	for elapsed := beat; elapsed <= 119*time.Minute; elapsed += beat {
 		f.setClock(start.Add(elapsed))
@@ -176,8 +137,6 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 		t.Fatalf("run_stale before the no-progress window: got %d events, want 0", got)
 	}
 
-	// Cross the window. This is the assertion the pre-fix watcher fails: it
-	// emits nothing here, and nothing at any later time either.
 	f.setClock(start.Add(121 * time.Minute))
 	f.emit(runID, core.EventTypeAgentHeartbeat)
 	f.scan()
@@ -190,10 +149,6 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 	if pl.BeadID != "hk-wedged" {
 		t.Errorf("bead_id: got %q want %q", pl.BeadID, "hk-wedged")
 	}
-	// The payload must carry the age that justified the alarm — the time since
-	// the run last MOVED — in its own field. Without it the alarm cannot say why
-	// it fired, because age_seconds is the seconds since the last beat and looks
-	// perfectly healthy.
 	if pl.NoProgressSeconds == nil {
 		t.Fatalf("no_progress_seconds: nil; the alarm cannot say which clock fired")
 	}
@@ -201,10 +156,6 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 		t.Errorf("no_progress_seconds: got %d, want at least %d (time since agent_ready)",
 			*pl.NoProgressSeconds, int64((121 * time.Minute).Seconds()))
 	}
-	// age_seconds keeps its spec'd meaning — seconds since the last event of any
-	// kind. The run just beat, so it is small. The PAIR is the diagnosis, and
-	// redefining age_seconds to carry the no-progress age would make the payload
-	// disagree with itself in exactly this case.
 	if pl.AgeSeconds > int64((1 * time.Minute).Seconds()) {
 		t.Errorf("age_seconds: got %d, want small — it must stay the seconds since the last event, which was the beat",
 			pl.AgeSeconds)
@@ -212,8 +163,6 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 	if pl.AgeSeconds < 1 {
 		t.Errorf("age_seconds: got %d, want at least 1 — core.RunStalePayload.Valid drops a payload with age_seconds <= 0", pl.AgeSeconds)
 	}
-	// last_event_type=agent_heartbeat next to a large age IS the signature of
-	// this failure: the run is beating and has not moved.
 	if pl.LastEventType != string(core.EventTypeAgentHeartbeat) {
 		t.Errorf("last_event_type: got %q want %q", pl.LastEventType, string(core.EventTypeAgentHeartbeat))
 	}
@@ -242,8 +191,6 @@ func TestStaleWatch_QuietButProgressingRunIsNotStale(t *testing.T) {
 	f.emit(runID, core.EventTypeLaunchInitiated)
 	f.emit(runID, core.EventTypeAgentReady)
 
-	// 80 minutes of real work: quiet apart from the beat, which is what the
-	// longest legitimate implementer phases in this fleet look like.
 	const beat = 5 * time.Minute
 	for elapsed := beat; elapsed <= 80*time.Minute; elapsed += beat {
 		f.setClock(start.Add(elapsed))
@@ -251,13 +198,9 @@ func TestStaleWatch_QuietButProgressingRunIsNotStale(t *testing.T) {
 		f.scan()
 	}
 
-	// The phase lands. This is progress, so the no-progress clock restarts here.
 	f.setClock(start.Add(80 * time.Minute))
 	f.emit(runID, core.EventTypeImplementerPhaseComplete)
 
-	// The review node then works quietly for another 110 minutes — a total run
-	// age of 190 minutes, well past the no-progress window, with no stale,
-	// because the clock restarted at the phase.
 	for elapsed := 85 * time.Minute; elapsed <= 190*time.Minute; elapsed += beat {
 		f.setClock(start.Add(elapsed))
 		f.emit(runID, core.EventTypeAgentHeartbeat)
@@ -337,8 +280,6 @@ func TestStaleWatch_NoProgressReportsButDoesNotCancel(t *testing.T) {
 	f.emit(runID, core.EventTypeLaunchInitiated)
 	f.emit(runID, core.EventTypeAgentReady)
 
-	// Beat past the no-progress window. The run is never quiet, so the only
-	// clock that can fire is the no-progress one.
 	const beat = 5 * time.Minute
 	for elapsed := beat; elapsed <= 130*time.Minute; elapsed += beat {
 		f.setClock(start.Add(elapsed))
@@ -379,8 +320,6 @@ func TestStaleWatch_QuietRunStillCancels(t *testing.T) {
 	f.emit(runID, core.EventTypeLaunchInitiated)
 	f.emit(runID, core.EventTypeAgentReady)
 
-	// No beat at all — the run stops emitting entirely. The quiet window is the
-	// clock that catches this, and it has always cancelled.
 	f.setClock(start.Add(15 * time.Minute))
 	f.scan()
 
@@ -428,9 +367,6 @@ func TestStaleWatch_DaemonOwnEventsAreNotProgress(t *testing.T) {
 			f.emit(runID, core.EventTypeLaunchInitiated)
 			f.emit(runID, core.EventTypeAgentReady)
 
-			// The run beats, and every 15 minutes the daemon also emits the event
-			// under test. Nothing the AGENT did is in this stream after
-			// agent_ready, so the no-progress clock must run out on schedule.
 			const beat = 5 * time.Minute
 			for elapsed := beat; elapsed <= 130*time.Minute; elapsed += beat {
 				f.setClock(start.Add(elapsed))

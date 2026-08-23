@@ -2,9 +2,6 @@ package core
 
 import "testing"
 
-// b3f72WorkflowValid returns a fully-populated Workflow with all required
-// fields set to valid values. Tests mutate individual fields to probe Valid().
-// Bead prefix: b3f72 (per implementer-protocol.md helper-prefix discipline).
 func b3f72WorkflowValid(t *testing.T) Workflow {
 	t.Helper()
 	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000000001")
@@ -37,7 +34,6 @@ func b3f72WorkflowValid(t *testing.T) Workflow {
 	}
 }
 
-// b3f72WorkflowReconciliation returns a valid reconciliation-class Workflow.
 func b3f72WorkflowReconciliation(t *testing.T) Workflow {
 	t.Helper()
 	wf := b3f72WorkflowValid(t)
@@ -138,7 +134,6 @@ func TestWorkflowValid_TerminalNodeIDNotInNodes(t *testing.T) {
 func TestWorkflowValid_MultipleTerminalNodes(t *testing.T) {
 	t.Parallel()
 
-	// Add a second terminal node to Nodes and TerminalNodeIDs.
 	extra := Node{
 		NodeID:           NodeID("done-alt"),
 		Type:             NodeTypeNonAgentic,
@@ -157,7 +152,6 @@ func TestWorkflowValid_MultipleTerminalNodes(t *testing.T) {
 func TestWorkflowValid_MultipleTerminalNodesOneAbsent(t *testing.T) {
 	t.Parallel()
 
-	// One terminal node is valid, the other is not in Nodes.
 	wf := b3f72WorkflowValid(t)
 	wf.TerminalNodeIDs = append(wf.TerminalNodeIDs, NodeID("ghost"))
 	if wf.Valid() {
@@ -198,7 +192,6 @@ func TestWorkflowValid_SchemaVersionOne(t *testing.T) {
 func TestWorkflowValid_NilWorkflowClass(t *testing.T) {
 	t.Parallel()
 
-	// Absence of WorkflowClass = ordinary workflow; always valid per §4.9.EM-038.
 	wf := b3f72WorkflowValid(t)
 	wf.WorkflowClass = nil
 	if !wf.Valid() {
@@ -241,7 +234,6 @@ func TestWorkflowValid_InvalidWorkflowClass(t *testing.T) {
 func TestWorkflowValid_NilPolicies(t *testing.T) {
 	t.Parallel()
 
-	// nil Policies slice is valid (no resolved policies).
 	wf := b3f72WorkflowValid(t)
 	wf.Policies = nil
 	if !wf.Valid() {
@@ -262,7 +254,6 @@ func TestWorkflowValid_PopulatedPolicies(t *testing.T) {
 func TestWorkflowValid_NilMetadata(t *testing.T) {
 	t.Parallel()
 
-	// nil Metadata is equivalent to empty map — valid.
 	wf := b3f72WorkflowValid(t)
 	wf.Metadata = nil
 	if !wf.Valid() {
@@ -355,7 +346,6 @@ func TestWorkflowValid_EdgeInvalidStructure(t *testing.T) {
 func TestWorkflowValid_StartNodeEqualToTerminal(t *testing.T) {
 	t.Parallel()
 
-	// A single-node workflow where start == terminal is structurally valid.
 	node := Node{
 		NodeID:           NodeID("only"),
 		Type:             NodeTypeNonAgentic,

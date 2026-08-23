@@ -17,8 +17,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// hkb3f36ValidPayload returns a fully-populated TransitionEventPayload for
-// use in hk-b3f.36 / hk-hqwn.59.6 projection tests.
 func hkb3f36ValidPayload(t *testing.T) TransitionEventPayload {
 	t.Helper()
 	return TransitionEventPayload{
@@ -126,7 +124,6 @@ func TestTransitionEventPayload_ProjectionFields(t *testing.T) {
 
 	p := hkb3f36ValidPayload(t)
 
-	// All §8.1.6 / §6.3 required fields must be non-zero.
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		t.Error("RunID must be set on a valid projection payload (EM-028 / §8.1.6)")
 	}

@@ -42,12 +42,6 @@ func codexTwinFixtureString(t *testing.T, m map[string]any, key string) string {
 	return value
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexTwinFixtureDecodeAll splits buf into NDJSON lines and decodes all into
-// a []map[string]any.  Calls t.Fatalf on any JSON error.
 func codexTwinFixtureDecodeAll(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	raw := buf.String()
@@ -69,16 +63,12 @@ func codexTwinFixtureDecodeAll(t *testing.T, buf *bytes.Buffer) []map[string]any
 	return out
 }
 
-// codexTwinFixtureEmitter returns a codexEmitter writing to a fresh bytes.Buffer.
 func codexTwinFixtureEmitter(t *testing.T) (*codexEmitter, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
 	return newCodexEmitter(&buf), &buf
 }
 
-// codexTwinFixtureGitRepo initialises a bare git repo in t.TempDir and returns
-// its path.  The initial empty commit is required so that HEAD is valid and git
-// operations have a base commit to append to.
 func codexTwinFixtureGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -107,7 +97,6 @@ func codexTwinFixtureGitRepo(t *testing.T) string {
 	return dir
 }
 
-// codexTwinFixtureGitLog returns the one-line log of the HEAD commit in dir.
 func codexTwinFixtureGitLog(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--oneline", "-1")
@@ -119,7 +108,6 @@ func codexTwinFixtureGitLog(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// codexTwinFixtureGitCommitMsg returns the full commit message of HEAD in dir.
 func codexTwinFixtureGitCommitMsg(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--format=%B", "-1")
@@ -131,8 +119,6 @@ func codexTwinFixtureGitCommitMsg(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// codexTwinFixtureGitStatusClean returns true iff the worktree in dir has no
-// uncommitted changes (tracked or untracked).
 func codexTwinFixtureGitStatusClean(t *testing.T, dir string) bool {
 	t.Helper()
 	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "status", "--porcelain")
@@ -144,15 +130,9 @@ func codexTwinFixtureGitStatusClean(t *testing.T, dir string) bool {
 	return strings.TrimSpace(string(out)) == ""
 }
 
-// codexTwinFixtureGitStatusDirty returns true iff the worktree in dir has at
-// least one uncommitted file (tracked or untracked — any porcelain output).
 func codexTwinFixtureGitStatusDirty(t *testing.T, dir string) bool {
 	return !codexTwinFixtureGitStatusClean(t, dir)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// threadIDForScenario
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestThreadIDForScenarioDeterministic verifies that threadIDForScenario
 // returns the same value on repeated calls for the same scenario name.
@@ -181,10 +161,6 @@ func TestThreadIDForScenarioDistinct(t *testing.T) {
 		ids[id] = true
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codexEmitter — unit tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestEmitThreadStarted verifies that emitThreadStarted emits a single JSONL
 // line with type=thread.started and the supplied thread_id.
@@ -249,10 +225,6 @@ func TestEmitTurnFailed(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: no-edits (C2 AC2.5 — noChange path)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestScenarioNoEditsJSONL verifies that the no-edits scenario emits exactly
 // two JSONL lines: thread.started then turn.completed.
 func TestScenarioNoEditsJSONL(t *testing.T) {
@@ -303,10 +275,6 @@ func TestScenarioNoEditsGitClean(t *testing.T) {
 		t.Error("no-edits scenario left uncommitted changes in the worktree; expected clean")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: turn-failed (C2 edge case)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenarioTurnFailedJSONL verifies that the turn-failed scenario emits
 // exactly two JSONL lines: thread.started then turn.failed.
@@ -362,10 +330,6 @@ func TestScenarioTurnFailedNoGitSideEffects(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: edits-no-commit (C2 AC2.4 — adapter commit-after-exit fallback)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestScenarioEditsNoCommitJSONL verifies that the edits-no-commit scenario
 // emits thread.started then turn.completed.
 func TestScenarioEditsNoCommitJSONL(t *testing.T) {
@@ -411,7 +375,6 @@ func TestScenarioEditsNoCommitNoNewCommit(t *testing.T) {
 	dir := codexTwinFixtureGitRepo(t)
 	cfg := scenarioConfig{worktreePath: dir}
 
-	// Capture HEAD SHA before the scenario.
 	headBefore := codexTwinFixtureGitLog(t, dir)
 
 	var buf bytes.Buffer
@@ -424,10 +387,6 @@ func TestScenarioEditsNoCommitNoNewCommit(t *testing.T) {
 		t.Errorf("edits-no-commit created a new commit: HEAD changed from %q to %q", headBefore, headAfter)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: trailer-commit (C2 AC2.3 — Refs: commit on process exit)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenarioTrailerCommitJSONL verifies that the trailer-commit scenario
 // emits thread.started then turn.completed.
@@ -524,10 +483,6 @@ func TestScenarioTrailerCommitCleanAfterCommit(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// runScenario — error paths
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunScenarioUnknownScenario verifies that runScenario returns an error
 // for an unrecognised scenario name.
 func TestRunScenarioUnknownScenario(t *testing.T) {
@@ -537,10 +492,6 @@ func TestRunScenarioUnknownScenario(t *testing.T) {
 		t.Fatal("runScenario: expected error for unknown scenario, got nil")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// run() entry-point tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunVersionFlag verifies that run() returns exit code 0 when --version
 // is passed and does not require --scenario.
@@ -623,10 +574,6 @@ func TestRunExecResumeSubcommandStripped(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// stripExecSubcommand
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStripExecSubcommandNoExec verifies that args without a leading "exec"
 // are returned unchanged.
 func TestStripExecSubcommandNoExec(t *testing.T) {
@@ -656,10 +603,6 @@ func TestStripExecSubcommandResume(t *testing.T) {
 		t.Errorf("stripExecSubcommand(%v) = %v, want first elem --json", args, got)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// version stamp (HC-043)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCommitHashVarIsSettable verifies that the commitHash package-level
 // variable can be set from a test, confirming that -ldflags "-X
@@ -724,10 +667,6 @@ func TestWriteVersion(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// JSONL ordering invariant: thread.started is always first
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestThreadStartedAlwaysFirst verifies that every scenario emits thread.started
 // as the first JSONL line.
 func TestThreadStartedAlwaysFirst(t *testing.T) {
@@ -745,7 +684,6 @@ func TestThreadStartedAlwaysFirst(t *testing.T) {
 	for _, tc := range scenarios {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			// Each trailer-commit or edits-no-commit needs a fresh git dir.
 			if tc.name == ScenarioTrailerCommit {
 				fresh := codexTwinFixtureGitRepo(t)
 				tc.cfg.worktreePath = fresh
@@ -801,10 +739,6 @@ func TestTerminalEventIsLast(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: no-worktree-path is not a hard failure for commit-free scenarios
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestScenarioTrailerCommitNoWorktreeReturnsNil verifies that trailer-commit
 // with no worktree path still emits JSONL successfully (no git ops attempted).
 func TestScenarioTrailerCommitNoWorktreeReturnsNil(t *testing.T) {
@@ -833,10 +767,6 @@ func TestScenarioEditsNoCommitNoWorktreeReturnsNil(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Parallel commit safety: multiple trailer-commits use unique sentinel files
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestTrailerCommitSentinelFilesUnique verifies that two back-to-back
 // trailer-commit invocations on the same worktree each create a distinct
 // sentinel file (no collision on the nanosecond timestamp).
@@ -844,19 +774,16 @@ func TestTrailerCommitSentinelFilesUnique(t *testing.T) {
 	dir := codexTwinFixtureGitRepo(t)
 	cfg := scenarioConfig{worktreePath: dir, beadID: "hk-test"}
 
-	// First run.
 	var buf1 bytes.Buffer
 	if err := runScenario(&buf1, ScenarioTrailerCommit, cfg); err != nil {
 		t.Fatalf("first runScenario(trailer-commit): %v", err)
 	}
 
-	// Second run.
 	var buf2 bytes.Buffer
 	if err := runScenario(&buf2, ScenarioTrailerCommit, cfg); err != nil {
 		t.Fatalf("second runScenario(trailer-commit): %v", err)
 	}
 
-	// Each run creates exactly one new commit; two runs → two commits ahead of the initial.
 	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--oneline", "-3")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -867,7 +794,6 @@ func TestTrailerCommitSentinelFilesUnique(t *testing.T) {
 	if len(lines) < 2 {
 		t.Errorf("expected at least 2 commits after two trailer-commits, got %d lines:\n%s", len(lines), out)
 	}
-	// First two lines should be distinct commits.
 	if lines[0] == lines[1] {
 		t.Errorf("two consecutive trailer-commits produced the same commit line: %q", lines[0])
 	}
@@ -879,7 +805,6 @@ func TestEditsNoCommitSentinelFileCreated(t *testing.T) {
 	dir := codexTwinFixtureGitRepo(t)
 	cfg := scenarioConfig{worktreePath: dir}
 
-	// Capture the list of untracked files before.
 	untrackedBefore := func() []string {
 		cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "ls-files", "--others", "--exclude-standard")
 		cmd.Dir = dir
@@ -903,10 +828,6 @@ func TestEditsNoCommitSentinelFileCreated(t *testing.T) {
 			countBefore+1, countAfter)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: worktree path with -C flag via run()
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunTrailerCommitWithCFlag verifies that run() honours the -C flag to
 // specify the worktree path, creating a Refs: commit in the supplied dir.
@@ -982,10 +903,6 @@ func TestRunCFlagViaExecInterface(t *testing.T) {
 		t.Errorf("commit message %q missing Refs: hk-exec-test", msg)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario: filepath for edits-no-commit uses .harmonik-twin-codex- prefix
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestEditsNoCommitSentinelFileNamePrefix verifies that the untracked file
 // created by edits-no-commit uses the expected ".harmonik-twin-codex-edit-"

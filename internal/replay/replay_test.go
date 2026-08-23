@@ -16,19 +16,12 @@ import (
 	"github.com/gregberns/harmonik/internal/replay"
 )
 
-// --- fixture helpers -------------------------------------------------------
-
-// line is one recorded event, with a logical sequence that drives EventID
-// order. The sequence is embedded in the high bytes of a UUIDv7-shaped id so
-// the harness's EventID-sort is deterministic and independent of file order.
 type line struct {
 	seq     byte
 	evType  core.EventType
 	payload core.EventPayload
 }
 
-// mkID builds a deterministic, ordering-controlled UUIDv7-shaped EventID. The
-// high byte carries seq, so larger seq ⇒ lexicographically larger id.
 func mkID(seq byte) core.EventID {
 	var b [16]byte
 	b[0] = seq
@@ -37,8 +30,6 @@ func mkID(seq byte) core.EventID {
 	return core.EventID(uuid.UUID(b))
 }
 
-// writeLog marshals the events (in the given FILE order, which may differ from
-// seq order) to a temp events.jsonl and returns its path.
 func writeLog(t *testing.T, lines []line) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -79,8 +70,6 @@ func writeLog(t *testing.T, lines []line) string {
 	return path
 }
 
-// appendRaw appends an arbitrary JSON object as one more log line (for the
-// unknown-type case, whose type has no registered constructor).
 func appendRaw(t *testing.T, path string, obj map[string]any) {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
@@ -98,8 +87,6 @@ func appendRaw(t *testing.T, path string, obj map[string]any) {
 	}
 }
 
-// violationRules returns the (Rule, CycleID) pairs of a report's violations,
-// sorted, for order-independent comparison.
 func violationKeys(vs []replay.Violation) []string {
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {
@@ -109,7 +96,6 @@ func violationKeys(vs []replay.Violation) []string {
 	return out
 }
 
-// short constructors for the payloads used across cases.
 func hs(agent, cid string) core.EventPayload {
 	return core.SessionKeeperHandoffStartedPayload{AgentName: agent, CycleID: cid}
 }
@@ -138,13 +124,9 @@ func cu(agent, cid string) core.EventPayload {
 	return core.SessionKeeperClearUnconfirmedPayload{AgentName: agent, CycleID: cid}
 }
 
-// cp is a park. reason selects the flavor: "handoff_pending" (a suspension the
-// same cycle_id resumes from) or "operator_turn_recent" (final for the cycle).
 func cp(agent, cid, reason string) core.EventPayload {
 	return core.SessionKeeperCycleParkedPayload{AgentName: agent, CycleID: cid, Reason: reason}
 }
-
-// --- the acceptance test ---------------------------------------------------
 
 // TestReplay_AcceptanceFixture is the T4 acceptance case: a fixture log with
 // (a) a clean cycle, (b) an SR4-violating cycle (clear before model-done), and
@@ -156,9 +138,7 @@ func cp(agent, cid, reason string) core.EventPayload {
 // the harness keyed on cycle_id alone they would merge and the unterminated
 // cycle would be hidden behind the clean cycle's terminal.
 func TestReplay_AcceptanceFixture(t *testing.T) {
-	// File order is intentionally shuffled relative to seq to prove EventID-sort.
 	lines := []line{
-		// (a) clean cycle: paul / cyc-1  (seq 1..6)
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "cyc-1")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "cyc-1")},
 		{3, core.EventTypeSessionKeeperModelDone, md("paul", "cyc-1")},
@@ -166,19 +146,15 @@ func TestReplay_AcceptanceFixture(t *testing.T) {
 		{5, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "cyc-1")},
 		{6, core.EventTypeSessionKeeperCycleComplete, cc("paul", "cyc-1")},
 
-		// (b) SR4-violating cycle: paul / cyc-2 — clear_sent with NO model_done.
 		{11, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "cyc-2")},
 		{12, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "cyc-2")},
 		{13, core.EventTypeSessionKeeperClearSent, cs("paul", "cyc-2")},
 		{14, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "cyc-2")},
 		{15, core.EventTypeSessionKeeperCycleComplete, cc("paul", "cyc-2")},
 
-		// (c) unterminated cycle: leto / cyc-1 — same cycle_id as (a), different
-		// agent. handoff_started + handoff_written, no terminal.
 		{21, core.EventTypeSessionKeeperHandoffStarted, hs("leto", "cyc-1")},
 		{22, core.EventTypeSessionKeeperHandoffWritten, hw("leto", "cyc-1")},
 	}
-	// Shuffle file order (reverse) — the harness must sort by EventID.
 	shuffled := make([]line, len(lines))
 	for i, ln := range lines {
 		shuffled[len(lines)-1-i] = ln
@@ -208,8 +184,6 @@ func TestReplay_AcceptanceFixture(t *testing.T) {
 		}
 	}
 
-	// operator_attached is registered but its emitter is a no-op — the standing
-	// "registered but never observed → report, not fail" precedent (§4.6).
 	if !containsType(rep.RegisteredNeverObserved, core.EventTypeSessionKeeperOperatorAttached) {
 		t.Errorf("RegisteredNeverObserved missing session_keeper_operator_attached; got %v", rep.RegisteredNeverObserved)
 	}
@@ -224,10 +198,7 @@ func containsType(ts []core.EventType, want core.EventType) bool {
 	return false
 }
 
-// --- per-invariant focused tests -------------------------------------------
-
 func TestReplay_SR3_ClearBeforeHandoffWritten(t *testing.T) {
-	// model_done present (so SR4 is satisfied) but handoff_written absent.
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("x", "c")},
 		{2, core.EventTypeSessionKeeperModelDone, md("x", "c")},
@@ -243,7 +214,6 @@ func TestReplay_SR3_ClearBeforeHandoffWritten(t *testing.T) {
 }
 
 func TestReplay_SR6_CompleteWithoutNewSession(t *testing.T) {
-	// Full interior sequence but neither new_session_up nor clear_unconfirmed.
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("z", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("z", "c")},
@@ -259,7 +229,6 @@ func TestReplay_SR6_CompleteWithoutNewSession(t *testing.T) {
 }
 
 func TestReplay_SR6_DegradedPathClean(t *testing.T) {
-	// clear_unconfirmed (degraded) satisfies SR6 in place of new_session_up.
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("z", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("z", "c")},
@@ -276,11 +245,9 @@ func TestReplay_SR6_DegradedPathClean(t *testing.T) {
 }
 
 func TestReplay_SR7_OverlappingRestart(t *testing.T) {
-	// Two handoff_started for the same agent before the first terminates.
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("y", "c-A")},
 		{2, core.EventTypeSessionKeeperHandoffStarted, hs("y", "c-B")},
-		// neither terminates → also two SR9 unterminated
 	}
 	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
 	if err != nil {
@@ -288,12 +255,6 @@ func TestReplay_SR7_OverlappingRestart(t *testing.T) {
 	}
 	assertExactly(t, rep, []string{"SR7/c-B", "SR9/c-A", "SR9/c-B"})
 }
-
-// --- park: suspension vs. final, and the authority anchor ------------------
-//
-// These five defend the model in session-keeper.md SK-INV-005 / SK-025: park is
-// not a terminal, restart authority begins at handoff_written, and liveness is
-// owed only by a cycle that reached authority.
 
 // TestReplay_ParkPendingThenResume_IsClean: the SK-025 resume path. One
 // cycle_id parks with reason handoff_pending, then resumes under the SAME id
@@ -398,9 +359,6 @@ func TestReplay_OpenedAndAbandoned_IsStillUnterminated(t *testing.T) {
 }
 
 func TestReplay_HistoricalCorpus_NoFalseSR6(t *testing.T) {
-	// Pre-change cycle: only §8.16 types, no interior events. A cycle_complete
-	// with no new_session_up must NOT be flagged (version-aware, §7.5). SR9 must
-	// still see it as terminated.
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("old", "c")},
 		{2, core.EventTypeSessionKeeperCycleComplete, cc("old", "c")},
@@ -412,10 +370,7 @@ func TestReplay_HistoricalCorpus_NoFalseSR6(t *testing.T) {
 	assertExactly(t, rep, nil)
 }
 
-// --- unknown-type: observational skip vs strict error ----------------------
-
 func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
-	// A clean cycle plus one line whose type has no registered constructor.
 	good := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("p", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("p", "c")},
@@ -425,7 +380,6 @@ func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
 		{6, core.EventTypeSessionKeeperCycleComplete, cc("p", "c")},
 	}
 	path := writeLog(t, good)
-	// Append an unknown-type line to the same file.
 	appendRaw(t, path, map[string]any{
 		"event_id":         mkID(7).String(),
 		"schema_version":   1,
@@ -435,7 +389,6 @@ func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
 		"payload":          map[string]any{"foo": "bar"},
 	})
 
-	// Observational: unknown type skipped, no error, clean cycle passes.
 	rep, err := replay.Replay(path, core.EventID{}, false, replay.DefaultCheckers())
 	if err != nil {
 		t.Fatalf("observational Replay error: %v", err)
@@ -445,7 +398,6 @@ func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
 	}
 	assertExactly(t, rep, nil)
 
-	// Strict: unknown type is a hard finding → error.
 	_, err = replay.Replay(path, core.EventID{}, true, replay.DefaultCheckers())
 	if err == nil {
 		t.Fatal("strict Replay: expected an error for the unknown type, got nil")
@@ -492,9 +444,6 @@ func TestReplay_Since_Watermark(t *testing.T) {
 		{4, core.EventTypeSessionKeeperClearSent, cs("p", "c")},
 	}
 	path := writeLog(t, lines)
-	// Replay only events after seq 2: leaves model_done + clear_sent. On
-	// clear_sent, handoff_written is NOT in the (windowed) state → SR3 fires;
-	// model_done IS present → SR4 does not.
 	rep, err := replay.Replay(path, mkID(2), false, replay.DefaultCheckers())
 	if err != nil {
 		t.Fatal(err)
@@ -504,8 +453,6 @@ func TestReplay_Since_Watermark(t *testing.T) {
 	}
 	assertExactly(t, rep, []string{"SR3/c"})
 }
-
-// --- assertions ------------------------------------------------------------
 
 func assertExactly(t *testing.T, rep replay.Report, want []string) {
 	t.Helper()

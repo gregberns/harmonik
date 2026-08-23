@@ -1,35 +1,5 @@
 package eventbus_test
 
-// busimpl_test.go — sensors for the concrete EventBus implementation (EV-035, EV-014a).
-//
-// Spec refs: specs/event-model.md §4.4 EV-035, §4.2 EV-014a;
-// specs/handler-contract.md §4.7.HC-031.
-// Bead refs: hk-8mup.62, hk-hqwn.19.
-//
-// Helper prefix: busImplFixture (per implementer-protocol.md §Helper-prefix
-// discipline; distinct from jsonlWriter helpers).
-//
-// What this file provides:
-//
-//  1. TestBusImplEmit_RedactsSecretNamedFieldBeforeDispatch — Emit applies
-//     HC-031 field-name redaction before delivering the event to any consumer
-//     (EV-035). A field named "secret" in the input payload MUST arrive at the
-//     consumer as "<redacted>".
-//
-//  2. TestBusImplEmit_SafeFieldsReachConsumerUnchanged — Emit does NOT redact
-//     fields whose names do not match the HC-031 regex (no over-redaction).
-//
-//  3. TestBusImplEmit_NoConsumersReturnsNil — Emit with zero subscribers
-//     returns nil (no dispatch, no error).
-//
-//  4. TestBusImplSubscribe_AfterSealReturnsError — Subscribe called after Seal
-//     returns a non-nil error (EV-009).
-//
-//  5. TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot — Emit blocks until
-//     the synchronous consumer returns AND does NOT block on async/observer
-//     consumers (EV-014a dispatch-order contract: redact → JSONL-stub →
-//     sync-dispatch → Emit-returns, async/observer off critical path).
-
 import (
 	"context"
 	"encoding/json"
@@ -50,9 +20,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// busImplFixtureEventType is a synthetic event type string used in busimpl
-// tests. The real EventType enum (hk-hqwn.59) is not yet landed; string
-// satisfies the core.EventType alias.
 const busImplFixtureEventType core.EventType = "test.busimpl.v1"
 
 func TestBusImplEmit_UnknownTypeReturnsTypedError(t *testing.T) {
@@ -63,15 +30,9 @@ func TestBusImplEmit_UnknownTypeReturnsTypedError(t *testing.T) {
 	}
 }
 
-// busImplFixtureWildcardPattern returns an EventPattern that matches every
-// event type. Used to wire consumer subscriptions in tests.
 func busImplFixtureWildcardPattern() core.EventPattern {
 	return core.EventPattern{Wildcard: true}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-035: redaction before dispatch
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBusImplEmit_RedactsSecretNamedFieldBeforeDispatch asserts that Emit
 // applies HC-031 common-prefix redaction to the payload before invoking any
@@ -130,7 +91,6 @@ func TestBusImplEmit_RedactsSecretNamedFieldBeforeDispatch(t *testing.T) {
 		t.Errorf("consumer received payload[\"secret\"] = %q, want %q (EV-035 / HC-031)", got, sentinel)
 	}
 
-	// Safe field must pass through unchanged.
 	if got, ok := receivedPayload["node_id"]; !ok {
 		t.Error("consumer payload missing 'node_id' key")
 	} else if got != "node-abc-123" {
@@ -247,10 +207,6 @@ func TestBusImplSubscribe_AfterSealReturnsError(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-030 / HC-032: registry middleware in the producer path (hk-8i31.37)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch is the runtime
 // sensor for hk-8i31.37.
 //
@@ -270,9 +226,6 @@ func TestBusImplSubscribe_AfterSealReturnsError(t *testing.T) {
 func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 	t.Parallel()
 
-	// Register a value pattern that matches the literal string "ghp_TOKENVALUE".
-	// Using a fixed literal keeps the sensor deterministic; real tokens use
-	// the HC-032 regex shapes declared by each handler subsystem.
 	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("busimpl_test_subsystem", []*regexp.Regexp{
 		regexp.MustCompile(`^ghp_TOKENVALUE$`),
@@ -301,8 +254,6 @@ func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// "api_token" is not a secret-prefix name (HC-031 does not redact it).
-	// Only the HC-032 value-pattern match should trigger redaction here.
 	payload, err := json.Marshal(map[string]any{
 		"api_token": "ghp_TOKENVALUE",
 		"run_id":    "run-999",
@@ -321,7 +272,6 @@ func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 
 	const sentinel = "<redacted>"
 
-	// HC-032: the value matching the registered pattern MUST be redacted.
 	if got, ok := receivedPayload["api_token"]; !ok {
 		t.Error("consumer payload missing 'api_token' key")
 	} else if got != sentinel {
@@ -333,17 +283,12 @@ func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 		)
 	}
 
-	// Safe field MUST pass through unchanged.
 	if got, ok := receivedPayload["run_id"]; !ok {
 		t.Error("consumer payload missing 'run_id' key")
 	} else if got != "run-999" {
 		t.Errorf("consumer payload[\"run_id\"] = %v, want %q; safe value MUST NOT be redacted", got, "run-999")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-014a: dispatch-order contract (hk-hqwn.19)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot is the EV-014a
 // dispatch-order sensor for hk-hqwn.19.
@@ -367,13 +312,9 @@ func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 
 	bus := eventbus.NewBusImpl()
 
-	// syncDone is set to 1 by the synchronous handler just before it returns.
 	var syncDone atomic.Int32
 
-	// asyncGate is closed by the test after Emit returns, allowing the async
-	// handler to proceed and confirm it runs off the critical path.
 	asyncGate := make(chan struct{})
-	// asyncRan is set to 1 by the async handler once it has been unblocked.
 	var asyncRan atomic.Int32
 
 	syncSub := core.Subscription{
@@ -382,9 +323,6 @@ func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		EventPattern:  busImplFixtureWildcardPattern(),
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, _ core.Event) error {
-			// A small sleep makes the ordering difference visible: if Emit
-			// returns before this function records syncDone, the invariant is
-			// violated.
 			time.Sleep(5 * time.Millisecond)
 			syncDone.Store(1)
 			return nil
@@ -397,8 +335,6 @@ func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		EventPattern:  busImplFixtureWildcardPattern(),
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, _ core.Event) error {
-			// Block until the test confirms Emit has already returned,
-			// verifying the async handler runs off the critical path.
 			<-asyncGate
 			asyncRan.Store(1)
 			return nil
@@ -411,8 +347,6 @@ func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		EventPattern:  busImplFixtureWildcardPattern(),
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, _ core.Event) error {
-			// Observer shares the asyncGate to confirm observer dispatch is
-			// also off the critical path.
 			<-asyncGate
 			return nil
 		},
@@ -432,26 +366,20 @@ func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	// --- Contract assertion 1: Emit blocks on sync consumer ----------------
 	if err := bus.Emit(context.Background(), busImplFixtureEventType, payload); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	// Emit has returned. The synchronous handler MUST have completed already.
 	if syncDone.Load() != 1 {
 		t.Error("EV-014a violated: Emit returned before synchronous consumer handler finished; " +
 			"sync consumer MUST run on caller goroutine and complete before Emit returns")
 	}
 
-	// --- Contract assertion 2: async/observer did NOT block Emit -----------
-	// asyncRan is still 0 here because asyncGate is not yet closed.
 	if asyncRan.Load() != 0 {
 		t.Error("EV-014a violated: async consumer handler completed before Emit returned; " +
 			"async/observer dispatch MUST NOT extend Emit latency")
 	}
 
-	// --- Contract assertion 3: async/observer handlers eventually execute --
-	// Unblock the async and observer handlers, then wait via Drain.
 	close(asyncGate)
 
 	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -520,7 +448,6 @@ func TestBusImplEmit_NilRegistryFallsBackToHC031Only(t *testing.T) {
 
 	const sentinel = "<redacted>"
 
-	// HC-031 MUST still fire even with nil registry.
 	if got, ok := receivedPayload["secret"]; !ok {
 		t.Error("consumer payload missing 'secret' key")
 	} else if got != sentinel {
@@ -539,16 +466,8 @@ func TestBusImplEmit_NilRegistryFallsBackToHC031Only(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-016 / EV-016a: JSONL append + fsync-boundary wiring (hk-8mup.63)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// busImplFixtureFsyncEventType is an F-class (fsync-boundary) event type
-// (daemon_started, §8.7.1) used to exercise the sync=true path in Emit.
 const busImplFixtureFsyncEventType core.EventType = "daemon_started"
 
-// busImplFixtureOrdinaryEventType is an O-class (ordinary) event type
-// (daemon_orphan_sweep_completed, §8.7.14) used to exercise the sync=false path.
 const busImplFixtureOrdinaryEventType core.EventType = "daemon_orphan_sweep_completed"
 
 // TestBusImplEmit_FsyncBoundaryEventWritesToJSONL asserts that when the bus
@@ -619,7 +538,6 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// Emit one O-class event.
 	ordinaryPayload, err := json.Marshal(map[string]any{
 		"tmux_sessions_killed": 0,
 		"swept_at":             "2026-05-12T00:00:01Z",
@@ -631,7 +549,6 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 		t.Fatalf("Emit (O-class): %v; want nil", emitErr)
 	}
 
-	// Emit one F-class event after the ordinary one.
 	fsyncPayload, err := json.Marshal(map[string]any{
 		"started_at":         "2026-05-12T00:00:02Z",
 		"pid":                99,
@@ -695,10 +612,6 @@ func TestBusImplEmitAgentPresence_RefreshPersistsForWhoProjection(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PARA-1 / hk-n9f51: EmitWithRunID stamps run_id on the envelope
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBusImplEmitWithRunID_RunIDAppearsInJSONL asserts that EmitWithRunID
 // appends a JSONL line whose "run_id" field matches the supplied RunID.
 //
@@ -743,7 +656,6 @@ func TestBusImplEmitWithRunID_RunIDAppearsInJSONL(t *testing.T) {
 		t.Fatalf("JSONL contains %d lines after EmitWithRunID, want 1", len(lines))
 	}
 
-	// Parse the envelope and assert run_id is present and matches.
 	var envelope map[string]any
 	if parseErr := json.Unmarshal([]byte(lines[0]), &envelope); parseErr != nil {
 		t.Fatalf("parse JSONL envelope: %v", parseErr)
@@ -787,7 +699,6 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 		t.Fatalf("json.Marshal payload: %v", marshalErr)
 	}
 
-	// daemon_started is F-class (daemon-level, no run in flight).
 	if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, payload); emitErr != nil {
 		t.Fatalf("Emit: %v", emitErr)
 	}
@@ -806,10 +717,6 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 		t.Errorf("plain Emit MUST NOT set run_id; got %q (omitempty should suppress)", runID)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-fx6zl: per-run Drain coordination — DrainRun isolates run B from run A
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBusImplDrainRun_IsolatesRunFromSlowPeer is the acceptance sensor for
 // hk-fx6zl.
@@ -830,18 +737,12 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 
 	bus := eventbus.NewBusImpl()
 
-	// Gate used to let run A's consumer block indefinitely until the test is done.
 	runAGate := make(chan struct{})
-	// runBRan records whether run B's consumer executed.
 	var runBRan atomic.Int32
 
-	// runAID and runBID are set before EmitWithRunID; the handler closure
-	// captures them by pointer so the handler can distinguish the two runs.
 	runAID := busImplDrainFixtureNewRunID(t)
 	runBID := busImplDrainFixtureNewRunID(t)
 
-	// Register a single wildcard async consumer. The handler distinguishes
-	// runs by comparing evt.RunID against the captured run IDs.
 	sub := core.Subscription{
 		ConsumerID:    "drain-run-isolation-async",
 		ConsumerClass: core.ConsumerClassAsynchronous,
@@ -853,10 +754,8 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 			}
 			switch *evt.RunID {
 			case runBID:
-				// Run B: complete quickly.
 				runBRan.Store(1)
 			case runAID:
-				// Run A: block until the test releases the gate.
 				<-runAGate
 			}
 			return nil
@@ -875,32 +774,18 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	// Emit run A's event — async consumer blocks on runAGate.
 	if emitErr := bus.EmitWithRunID(context.Background(), runAID, busImplFixtureEventType, payload); emitErr != nil {
 		t.Fatalf("EmitWithRunID (run A): %v", emitErr)
 	}
-	// Emit run B's event — async consumer runs quickly.
 	if emitErr := bus.EmitWithRunID(context.Background(), runBID, busImplFixtureEventType, payload); emitErr != nil {
 		t.Fatalf("EmitWithRunID (run B): %v", emitErr)
 	}
 
-	// Type-assert to RunDrainer to access per-run quiescence.
 	rd, ok := bus.(eventbus.RunDrainer)
 	if !ok {
 		t.Fatal("bus does not implement eventbus.RunDrainer; hk-fx6zl requires per-run drain support")
 	}
 
-	// DrainRun for run B must RETURN even though run A is still hanging.
-	//
-	// THE DEADLINE IS DELIBERATELY GENEROUS, AND THAT MAKES THE TEST STRONGER
-	// RATHER THAN WEAKER (hk-vp02y). Run A's consumer blocks on a channel this
-	// test does not close until later, so a bus that failed to isolate the two
-	// runs would leave DrainRun(runB) blocked FOREVER. The two answers are
-	// "returns" and "never returns". A 100ms budget did not separate them any
-	// better than 30s does — it only added a third answer, "the box was busy",
-	// which is not a property of the bus. This test previously carried both a
-	// 100ms context AND a 100ms elapsed assertion, so a loaded machine failed it
-	// twice over for a bus that was working correctly.
 	drainBCtx, cancelB := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelB()
 
@@ -914,7 +799,6 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 		t.Error("run B's async consumer never ran before DrainRun returned")
 	}
 
-	// Clean up: release run A's consumer so the global Drain can complete.
 	close(runAGate)
 	globalDrainCtx, cancelGlobal := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancelGlobal()
@@ -923,9 +807,6 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 	}
 }
 
-// busImplDrainFixtureNewRunID generates a fresh UUIDv7-based RunID for use in
-// per-run drain tests. Distinct from the busImplFixture prefix intentionally:
-// this prefix is reserved for hk-fx6zl helpers.
 func busImplDrainFixtureNewRunID(t *testing.T) core.RunID {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -935,18 +816,11 @@ func busImplDrainFixtureNewRunID(t *testing.T) core.RunID {
 	return core.RunID(id)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// hk-xvpwb: DeadLetterSink wiring in busimpl.Emit consumer-error path
-// ─────────────────────────────────────────────────────────────────────────────
-
-// deadLetterSinkFixtureRecord is one entry captured by the stub sink.
 type deadLetterSinkFixtureRecord struct {
 	reason string
 	evtID  string
 }
 
-// deadLetterSinkFixtureStub is an in-memory DeadLetterSink for testing.
-// It records all calls to Record so tests can assert on them.
 type deadLetterSinkFixtureStub struct {
 	mu      sync.Mutex
 	records []deadLetterSinkFixtureRecord
@@ -1003,7 +877,6 @@ func TestBusImplWithSink_NilSinkDoesNotPanicOnAsyncError(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	// Emit MUST return nil; the async error should be silently absorbed.
 	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
 		t.Fatalf("Emit: %v; want nil (nil sink MUST NOT propagate async errors)", emitErr)
 	}
@@ -1013,7 +886,6 @@ func TestBusImplWithSink_NilSinkDoesNotPanicOnAsyncError(t *testing.T) {
 	if err := bus.Drain(drainCtx); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	// If we reach here without panic, the contract holds.
 }
 
 // TestBusImplWithSink_AsyncConsumerErrorRecordedToSink verifies that an async
@@ -1100,7 +972,6 @@ func TestBusImplWithSink_ObserverPanicRecordedToSink(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	// Emit must return nil — panic occurs off the critical path.
 	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
 		t.Fatalf("Emit: %v; want nil", emitErr)
 	}
@@ -1160,12 +1031,7 @@ func TestBusImplWithSink_NilSinkDoesNotPanicOnObserverPanic(t *testing.T) {
 	if err := bus.Drain(drainCtx); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	// Reaching here without panic satisfies the nil-sink safety contract.
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EV-INV-003 / EV-014 / EV-010: synchronous consumer invariants (hk-hqwn.49)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBusImplSubscribe_DuplicateSynchronousConsumerReturnsError is the
 // cardinality sensor for hk-hqwn.49.
@@ -1264,7 +1130,6 @@ func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *
 
 	bus := eventbus.NewBusImpl()
 
-	// Consumer A: subscribes to X, declares it emits Y.
 	consumerA := core.Subscription{
 		ConsumerID:    "hqwn49-acyclic-A",
 		ConsumerClass: core.ConsumerClassSynchronous,
@@ -1280,8 +1145,6 @@ func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *
 		t.Fatalf("Subscribe (consumer A, emits Y from X): %v; want nil", err)
 	}
 
-	// Consumer B: subscribes to Y, declares it emits X — completing the cycle.
-	// Registration MUST fail-closed with ErrSynchronousConsumerCycle.
 	consumerB := core.Subscription{
 		ConsumerID:    "hqwn49-acyclic-B",
 		ConsumerClass: core.ConsumerClassSynchronous,
@@ -1315,14 +1178,11 @@ func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *
 	}
 }
 
-// busImplFixtureJSONLPath returns a temporary file path for use as a JSONL log.
 func busImplFixtureJSONLPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "events.jsonl")
 }
 
-// busImplFixtureReadJSONLLines reads all non-empty lines from the JSONL file
-// at path and returns them without trailing newlines.
 func busImplFixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.

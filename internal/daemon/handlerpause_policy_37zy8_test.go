@@ -1,22 +1,5 @@
 package daemon_test
 
-// handlerpause_policy_37zy8_test.go — unit tests for HandlerPausePolicyGoroutine (hk-37zy8).
-//
-// Test coverage per bead acceptance criteria:
-//
-//   - TestHandlerPausePolicy_NoTripOnSingleRateLimit        — one active event → no pause
-//   - TestHandlerPausePolicy_TripOnTwoConsecutiveRateLimits — two consecutive active events → pause
-//   - TestHandlerPausePolicy_NoTripAfterClearance            — active + cleared + active → no pause (reset)
-//   - TestHandlerPausePolicy_TripOnBudgetExhausted           — budget_exhausted → immediate pause
-//   - TestHandlerPausePolicy_InFlightFreezeListPopulated     — freeze-list populated from RunRegistry at pause time
-//   - TestHandlerPausePolicy_IdempotentOnDoubleBudgetExhausted — second budget_exhausted while paused → no-op
-//
-// Tests use synthetic event delivery: we call the handler methods via exported
-// test-seam wrappers rather than relying on live bus dispatch.  This avoids
-// coupling to bus lifecycle and is consistent with the testing idiom in this package.
-//
-// Bead ref: hk-37zy8.
-
 import (
 	"context"
 	"encoding/json"
@@ -30,11 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hppNewController builds a HandlerPauseController backed by a sealed in-memory bus.
 func hppNewController(t *testing.T) *daemon.HandlerPauseController {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -44,8 +22,6 @@ func hppNewController(t *testing.T) *daemon.HandlerPauseController {
 	return daemon.NewHandlerPauseController(bus, nil)
 }
 
-// hppNewPolicy builds a HandlerPausePolicyGoroutine wired to ctrl and reg for
-// AgentTypeClaudeCode.
 func hppNewPolicy(t *testing.T, ctrl *daemon.HandlerPauseController, reg *daemon.RunRegistry) *daemon.HandlerPausePolicyGoroutine {
 	t.Helper()
 	return daemon.ExportedNewHandlerPausePolicyGoroutine(daemon.ExportedHandlerPausePolicyConfig{
@@ -55,7 +31,6 @@ func hppNewPolicy(t *testing.T, ctrl *daemon.HandlerPauseController, reg *daemon
 	})
 }
 
-// hppMakeRunID returns a UUIDv7-based RunID.
 func hppMakeRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -65,9 +40,6 @@ func hppMakeRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// hppMakeSyntheticEvent builds a minimal core.Event with the given type and payload.
-// EventID, SchemaVersion, TimestampWall, and SourceSubsystem are filled with
-// non-zero sentinels sufficient for handler consumption.
 func hppMakeSyntheticEvent(t *testing.T, evtType string, payload json.RawMessage) core.Event {
 	t.Helper()
 	evID, err := uuid.NewV7()
@@ -84,7 +56,6 @@ func hppMakeSyntheticEvent(t *testing.T, evtType string, payload json.RawMessage
 	}
 }
 
-// hppRateLimitEvent builds a synthetic rate-limit event with the given status.
 func hppRateLimitEvent(t *testing.T, status core.AgentRateLimitStatus) core.Event {
 	t.Helper()
 	runID := hppMakeRunID(t)
@@ -101,7 +72,6 @@ func hppRateLimitEvent(t *testing.T, status core.AgentRateLimitStatus) core.Even
 	return hppMakeSyntheticEvent(t, string(core.EventTypeAgentRateLimitStatus), json.RawMessage(payloadJSON))
 }
 
-// hppBudgetExhaustedEvent builds a synthetic budget_exhausted event.
 func hppBudgetExhaustedEvent(t *testing.T) core.Event {
 	t.Helper()
 	runID := hppMakeRunID(t)
@@ -117,7 +87,6 @@ func hppBudgetExhaustedEvent(t *testing.T) core.Event {
 	return hppMakeSyntheticEvent(t, string(core.EventTypeBudgetExhausted), json.RawMessage(payloadJSON))
 }
 
-// hppDeliverRateLimit delivers a synthetic rate-limit event to the policy handler.
 func hppDeliverRateLimit(t *testing.T, policy *daemon.HandlerPausePolicyGoroutine, status core.AgentRateLimitStatus) {
 	t.Helper()
 	evt := hppRateLimitEvent(t, status)
@@ -126,8 +95,6 @@ func hppDeliverRateLimit(t *testing.T, policy *daemon.HandlerPausePolicyGoroutin
 	}
 }
 
-// hppDeliverBudgetExhausted delivers a synthetic budget_exhausted event to the
-// policy handler.
 func hppDeliverBudgetExhausted(t *testing.T, policy *daemon.HandlerPausePolicyGoroutine) {
 	t.Helper()
 	evt := hppBudgetExhaustedEvent(t)
@@ -135,10 +102,6 @@ func hppDeliverBudgetExhausted(t *testing.T, policy *daemon.HandlerPausePolicyGo
 		t.Fatalf("hppDeliverBudgetExhausted: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHandlerPausePolicy_NoTripOnSingleRateLimit verifies that a single
 // rate-limit active event does NOT trip the pause (hysteresis = 2).
@@ -165,13 +128,11 @@ func TestHandlerPausePolicy_TripOnTwoConsecutiveRateLimits(t *testing.T) {
 	reg := daemon.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
-	// First active — should NOT trip.
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
 	if ctrl.IsPaused(core.AgentTypeClaudeCode) {
 		t.Fatal("paused after first active; want no-trip yet")
 	}
 
-	// Second consecutive active — SHOULD trip.
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
 	if !ctrl.IsPaused(core.AgentTypeClaudeCode) {
 		t.Fatal("not paused after two consecutive active events; want trip")
@@ -203,13 +164,10 @@ func TestHandlerPausePolicy_NoTripAfterClearance(t *testing.T) {
 	reg := daemon.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
-	// First active — count becomes 1.
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
 
-	// Cleared — resets count to 0.
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusCleared)
 
-	// Second active after clearance — count becomes 1 again (not 2).
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
 
 	if ctrl.IsPaused(core.AgentTypeClaudeCode) {
@@ -257,7 +215,6 @@ func TestHandlerPausePolicy_InFlightFreezeListPopulated(t *testing.T) {
 	reg := daemon.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
-	// Register two in-flight runs before triggering the pause.
 	runID1 := hppMakeRunID(t)
 	runID2 := hppMakeRunID(t)
 	reg.Register(runID1, &daemon.RunHandle{
@@ -269,7 +226,6 @@ func TestHandlerPausePolicy_InFlightFreezeListPopulated(t *testing.T) {
 		StartedAt: time.Now(),
 	})
 
-	// Trip via budget exhausted (simplest single-hit path).
 	hppDeliverBudgetExhausted(t, policy)
 
 	if !ctrl.IsPaused(core.AgentTypeClaudeCode) {
@@ -285,7 +241,6 @@ func TestHandlerPausePolicy_InFlightFreezeListPopulated(t *testing.T) {
 		t.Errorf("InFlightAtPause has %d entries, want 2 (the two registered runs)", len(snap.InFlightAtPause))
 	}
 
-	// Verify each in-flight record has non-empty required fields.
 	for _, rec := range snap.InFlightAtPause {
 		if rec.RunID == "" {
 			t.Error("InFlightBeadRecord.RunID is empty")
@@ -309,20 +264,17 @@ func TestHandlerPausePolicy_IdempotentOnDoubleBudgetExhausted(t *testing.T) {
 	reg := daemon.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
-	// First budget_exhausted — trips pause (epoch 1).
 	hppDeliverBudgetExhausted(t, policy)
 	if !ctrl.IsPaused(core.AgentTypeClaudeCode) {
 		t.Fatal("not paused after first budget_exhausted")
 	}
 	epoch1, _ := ctrl.PausedEpochFor(core.AgentTypeClaudeCode)
 
-	// Second budget_exhausted while already paused — must be a no-op.
 	hppDeliverBudgetExhausted(t, policy)
 	if !ctrl.IsPaused(core.AgentTypeClaudeCode) {
 		t.Fatal("handler not paused after second budget_exhausted (should remain paused)")
 	}
 
-	// Epoch must not have changed (second Pause was a no-op).
 	epoch2, _ := ctrl.PausedEpochFor(core.AgentTypeClaudeCode)
 	if epoch2 != epoch1 {
 		t.Errorf("paused_epoch changed from %d to %d after double-trip; want no change (idempotent no-op)", epoch1, epoch2)

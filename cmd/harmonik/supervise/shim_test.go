@@ -1,16 +1,5 @@
 package supervisecmd
 
-// CI-005 regression tests: buildPiEnv scoped-injection builder.
-//
-// Verifies that:
-//  1. Credential deny-list keys (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
-//     CLAUDE_CODE_OAUTH*) are stripped from the ambient env.
-//  2. The scoped apiKey is injected as ANTHROPIC_API_KEY when non-empty.
-//  3. Non-deny-list keys pass through unchanged.
-//  4. When apiKey is empty, no ANTHROPIC_API_KEY entry appears in the result.
-//
-// Spec: specs/credential-isolation.md §4.3 CI-005.
-
 import (
 	"os"
 	"strings"
@@ -37,14 +26,12 @@ func TestBuildPiEnv_StripsCredentialDenyListKeys(t *testing.T) {
 			t.Errorf("deny-list key %q must be absent from Pi env; got %q", k, envMap[k])
 		}
 	}
-	// Passthrough key must survive.
 	if v, ok := envMap["HARMONIK_TEST_PASSTHROUGH"]; !ok || v != "keep-me" {
 		t.Errorf("HARMONIK_TEST_PASSTHROUGH = %q ok=%v; want %q", v, ok, "keep-me")
 	}
 }
 
 func TestBuildPiEnv_InjectsAPIKeyWhenNonEmpty(t *testing.T) {
-	// Ensure no ambient ANTHROPIC_API_KEY leaks in.
 	if err := os.Unsetenv("ANTHROPIC_API_KEY"); err != nil {
 		t.Fatalf("unsetenv: %v", err)
 	}
@@ -72,7 +59,6 @@ func TestBuildPiEnv_NoKeyWhenEmpty(t *testing.T) {
 }
 
 func TestBuildPiEnv_ScopedKeyOverridesAmbient(t *testing.T) {
-	// Ambient key must be stripped; scoped key must win.
 	t.Setenv("ANTHROPIC_API_KEY", "ambient-key-must-not-pass")
 
 	env := buildPiEnv("scoped-key")
@@ -81,7 +67,6 @@ func TestBuildPiEnv_ScopedKeyOverridesAmbient(t *testing.T) {
 	if got, ok := envMap["ANTHROPIC_API_KEY"]; !ok || got != "scoped-key" {
 		t.Errorf("ANTHROPIC_API_KEY = %q ok=%v; want %q", got, ok, "scoped-key")
 	}
-	// Ensure no duplicate entries.
 	count := 0
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
@@ -93,7 +78,6 @@ func TestBuildPiEnv_ScopedKeyOverridesAmbient(t *testing.T) {
 	}
 }
 
-// toEnvMap converts a "KEY=VALUE" slice to a map. Last value wins on duplicate.
 func toEnvMap(env []string) map[string]string {
 	m := make(map[string]string, len(env))
 	for _, kv := range env {
@@ -123,7 +107,6 @@ func TestBuildDaemonCmdNamesTheStartVerb(t *testing.T) {
 		t.Fatal("buildDaemonCmd returned nil; cannot resolve the executable")
 	}
 
-	// The verb must lead, before any flag: the dispatch reads os.Args[1:3].
 	if len(cmd) < 3 || cmd[1] != "start" || cmd[2] != "daemon" {
 		t.Fatalf("revival argv = %q; want the `start daemon` verb immediately after the executable", cmd)
 	}

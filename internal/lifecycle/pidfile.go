@@ -99,7 +99,6 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: open pidfile %q: %w", pidfilePath, err)
 	}
 
-	// Step 2: PL-002a — exclusive non-blocking advisory lock.
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after flock failure", "err", closeErr, "path", pidfilePath)
@@ -110,7 +109,6 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("%w: %w", ErrPidfileLockError, err)
 	}
 
-	// Step 3: truncate only after lock acquisition (PL-002b step 3).
 	if err := fd.Truncate(0); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after ftruncate failure", "err", closeErr, "path", pidfilePath)
@@ -125,7 +123,6 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: seek: %w", err)
 	}
 
-	// Step 4: write three newline-terminated lines; short-write loop per spec.
 	content := []byte(fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID))
 	if err := writeAll(fd, content); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
@@ -134,7 +131,6 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: write: %w", err)
 	}
 
-	// Step 5a: fsync the fd.
 	if err := fd.Sync(); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after fsync failure", "err", closeErr, "path", pidfilePath)
@@ -142,9 +138,6 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync fd: %w", err)
 	}
 
-	// Step 5b: fsync the parent directory (required for APFS / ext4-data=ordered
-	// power-loss durability). A failure here is best-effort on some filesystems;
-	// we return the error to the caller rather than silently swallowing it.
 	parentDir := filepath.Dir(pidfilePath)
 	//nolint:gosec // G304: parentDir is derived from projectDir, an operator-controlled parameter; not user input
 	pfd, err := os.Open(parentDir)
@@ -165,16 +158,12 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync parent dir: %w", syncErr)
 	}
 
-	// Step 6: retain fd for daemon's lifetime.
 	return &Pidfile{
 		path: pidfilePath,
 		fd:   fd,
 	}, nil
 }
 
-// writeAll writes buf to w in a loop, re-slicing on partial writes, and
-// returns the first error encountered. This satisfies the PL-002b requirement
-// that short writes MUST loop.
 func writeAll(w *os.File, buf []byte) error {
 	for len(buf) > 0 {
 		n, err := w.Write(buf)

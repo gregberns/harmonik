@@ -5,15 +5,10 @@ import (
 	"testing"
 )
 
-// nonTxFixtureRunID returns a deterministic, valid UUIDv7-shaped run ID for
-// EM-033 no-transactionality tests. The counter space is offset from
-// durableFixtureRunID to avoid collisions across concurrent test packages.
 func nonTxFixtureRunID(n int) string {
 	return durableFixtureRunID(100 + n)
 }
 
-// nonTxFixtureIsAncestor reports whether ancestor is an ancestor of (or equal
-// to) descendant via `git merge-base --is-ancestor`. Returns true on success.
 func nonTxFixtureIsAncestor(t *testing.T, repoDir, ancestor, descendant string) bool {
 	t.Helper()
 
@@ -22,8 +17,6 @@ func nonTxFixtureIsAncestor(t *testing.T, repoDir, ancestor, descendant string) 
 	)
 	return cmd.Run() == nil
 }
-
-// --- Tests for EM-033 ---
 
 // TestEM033_PriorCheckpointsDurableAfterNodeFailure is the primary EM-033 sensor.
 //
@@ -44,27 +37,17 @@ func TestEM033_PriorCheckpointsDurableAfterNodeFailure(t *testing.T) {
 	runID := nonTxFixtureRunID(1)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Commit N=3 durable checkpoints (nodes 1..3).
 	sha1 := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-1")
 	sha2 := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-2")
 	sha3 := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-3")
 
-	// Simulate node-4 failure: no commit is landed. The branch tip stays at sha3.
-	// (No git operation here — the absence of a commit IS the test.)
-
 	tipAfterFailure := durableFixtureReadTip(t, repoDir, "run/"+runID)
 
-	// Primary assertion: tip must still be the Nth checkpoint commit (sha3).
-	// Any rollback mechanism that removed sha3 or pointed tip to an earlier
-	// commit would be caught here.
 	if tipAfterFailure != sha3 {
 		t.Errorf("EM-033 violation: node-4 failure must not move branch tip; got %q, want sha3 %q",
 			tipAfterFailure, sha3)
 	}
 
-	// Durability assertions: every prior checkpoint must be an ancestor of the
-	// current tip. If any checkpoint were removed or the branch were force-reset,
-	// the ancestor check would fail.
 	if !nonTxFixtureIsAncestor(t, repoDir, sha1, tipAfterFailure) {
 		t.Errorf("EM-033 violation: sha1 (node-1) is not an ancestor of the post-failure tip %q; "+
 			"node-1 checkpoint was rolled back", tipAfterFailure)
@@ -95,10 +78,8 @@ func TestEM033_FailureAtFirstNodeLeavesNoCheckpoints(t *testing.T) {
 	runID := nonTxFixtureRunID(2)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Record branch tip before any checkpoint: the root commit.
 	tipBeforeAnyCheckpoint := durableFixtureReadTip(t, repoDir, "run/"+runID)
 
-	// Simulate node-1 failure: no commit is landed. The branch tip must not move.
 	tipAfterFailure := durableFixtureReadTip(t, repoDir, "run/"+runID)
 
 	if tipAfterFailure != tipBeforeAnyCheckpoint {
@@ -126,25 +107,21 @@ func TestEM033_PartialRunCheckpointsPreservedAcrossMultipleFailures(t *testing.T
 	runID := nonTxFixtureRunID(3)
 	durableFixtureCreateTaskBranch(t, repoDir, runID)
 
-	// Two durable checkpoints for nodes 1 and 2.
 	sha1 := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-1")
 	sha2 := durableFixtureCommitCheckpoint(t, repoDir, runID, "node-2")
 
-	// First failure at node-3: no commit.
 	tipAfterFirstFailure := durableFixtureReadTip(t, repoDir, "run/"+runID)
 	if tipAfterFirstFailure != sha2 {
 		t.Errorf("EM-033: first node-3 failure must not move tip; got %q, want sha2 %q",
 			tipAfterFirstFailure, sha2)
 	}
 
-	// Second failure at node-3 (retry also fails): still no commit.
 	tipAfterSecondFailure := durableFixtureReadTip(t, repoDir, "run/"+runID)
 	if tipAfterSecondFailure != sha2 {
 		t.Errorf("EM-033: second node-3 failure must not move tip; got %q, want sha2 %q",
 			tipAfterSecondFailure, sha2)
 	}
 
-	// Both prior checkpoints must remain ancestors of the unchanged tip.
 	if !nonTxFixtureIsAncestor(t, repoDir, sha1, tipAfterSecondFailure) {
 		t.Errorf("EM-033 violation: sha1 (node-1) not ancestor of tip after repeated failure; " +
 			"checkpoint was rolled back")
@@ -178,16 +155,13 @@ func TestEM033_LargeNCheckpointsAllDurableAfterFailure(t *testing.T) {
 		shas[i] = durableFixtureCommitCheckpoint(t, repoDir, runID, nodeID)
 	}
 
-	// Simulate node-(N+1) failure: no commit.
 	tipAfterFailure := durableFixtureReadTip(t, repoDir, "run/"+runID)
 
-	// Tip must equal the last checkpoint.
 	if tipAfterFailure != shas[nodeCount-1] {
 		t.Errorf("EM-033 violation (large N): tip moved after node-%d failure; "+
 			"got %q, want %q", nodeCount+1, tipAfterFailure, shas[nodeCount-1])
 	}
 
-	// Every checkpoint must be an ancestor of the tip.
 	for i, sha := range shas {
 		if !nonTxFixtureIsAncestor(t, repoDir, sha, tipAfterFailure) {
 			t.Errorf("EM-033 violation (large N): checkpoint[%d] sha=%q is not an ancestor of tip %q; "+

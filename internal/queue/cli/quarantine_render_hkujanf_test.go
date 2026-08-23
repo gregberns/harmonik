@@ -1,16 +1,5 @@
 package cli
 
-// quarantine_render_hkujanf_test.go — the quarantine marker on the queue read
-// commands.
-//
-// A quarantined queue keeps its persisted status and its item counts, so every
-// column of a `queue list` row reads like a healthy queue. Before this marker a
-// permanently dead queue and a slow one were the same picture, and the one
-// daemon event that said otherwise had usually scrolled away.
-//
-// Spec ref: specs/queue-model.md §3.1 QM-001.
-// Bead ref: hk-ujanf.
-
 import (
 	"encoding/json"
 	"strings"
@@ -41,8 +30,6 @@ func TestRenderQueueListText_MarksTheQuarantinedQueueOnly(t *testing.T) {
 		t.Errorf("output omits the cause; an operator cannot tell a full disk from a replaced queue file:\n%s", text)
 	}
 
-	// The marker must attach to the shut queue, not to the healthy one that
-	// happens to follow it.
 	mainRow := strings.Index(text, "main")
 	paulRow := strings.Index(text, "paul")
 	marker := strings.Index(text, "QUARANTINED")

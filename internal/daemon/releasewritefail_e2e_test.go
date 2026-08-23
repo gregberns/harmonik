@@ -17,17 +17,8 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// errReleaseE2EClaimRefused is what the fake ledger returns from ClaimBead.
-//
-// DO NOT put the word "blocked" in this text. runWorkLoop's dependency-blocked
-// detector is a bare strings.Contains(claimErr.Error(), "blocked"), so any error
-// carrying that substring routes the item through evaluateGroupAdvanceWithOutcome
-// instead of the claim-failure release this test exists to drive.
 var errReleaseE2EClaimRefused = errors.New("release-writefail fake: claim refused")
 
-// breakQueuesOnClaimLedger lets the reservation commit and then takes write
-// access to the queues directory away from inside ClaimBead, so the release that
-// follows is the FIRST write that cannot reach disk.
 type breakQueuesOnClaimLedger struct {
 	queuesDir  string
 	claimCalls atomic.Int64
@@ -59,10 +50,6 @@ func (l *breakQueuesOnClaimLedger) ReopenBead(_ context.Context, _ string, _ brc
 	return nil
 }
 
-// waitFor blocks until cond holds, or fails the test naming what it was waiting
-// for. A poll beats a fixed sleep here: it is faster on an idle machine, it does
-// not flake on a loaded one, and a starved work loop reports as a timeout on a
-// named condition instead of as a zero-event assertion failure.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
@@ -157,32 +144,14 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Wait for the work the assertions describe, rather than for a fixed span of
-	// wall clock. internal/daemon is a heavily parallel package on a machine that
-	// may be loaded, and a sleep long enough to be safe there is a sleep every
-	// future run pays for. Polling also turns a starved loop into a named
-	// timeout instead of a confusing zero-event failure.
-	//
-	// This does NOT exercise the once-per-queue report bound, and waiting longer
-	// would not: the failed release leaves the item at dispatched, nothing
-	// re-selects a dispatched item, and it is the only item, so no second report
-	// opportunity ever arises. That unreachability is what makes the event count
-	// below trustworthy. The dedup bound is pinned by the reserve-path sibling,
-	// TestReservationWriteFailure_NeverClaimsAndNeverLaunches.
 	waitFor(t, "the claim to fail and the release to report", func() bool {
 		return ledger.claimCalls.Load() > 0 &&
 			len(collectEventsByType(bus, string(core.EventTypeInfrastructureUnavailable))) > 0
 	})
-	// Cheap insurance only. What actually preserves the exactly-one count is that
-	// the assertions read the bus AFTER the loop has exited, so every emission is
-	// already recorded; reportQueueWriteError also emits its pair back to back on
-	// the loop goroutine, so the two cannot be observed apart.
 	time.Sleep(200 * time.Millisecond)
 	cancel()
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// Positive control. A run with zero claims never reached the release, and
-	// every assertion below would then pass for the wrong reason.
 	if claims := ledger.claimCalls.Load(); claims == 0 {
 		t.Fatal("ClaimBead was never called — the loop never reached the release this test exists to drive")
 	}

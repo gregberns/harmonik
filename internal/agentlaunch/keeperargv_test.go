@@ -7,7 +7,6 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// flagValue returns the token immediately following flag in argv, or "".
 func flagValue(argv []string, flag string) string {
 	for i := 0; i < len(argv)-1; i++ {
 		if argv[i] == flag {
@@ -123,7 +122,6 @@ func TestKeeperWindowArgv_OmitsEmptyOptionals(t *testing.T) {
 		AgentName: "captain",
 		Session:   "s",
 		WarnOnly:  true,
-		// ProjectDir + RespawnCmd empty
 	})
 	if contains(argv, "--project") {
 		t.Errorf("empty ProjectDir must omit --project: %v", argv)

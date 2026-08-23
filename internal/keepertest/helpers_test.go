@@ -1,9 +1,5 @@
 package keepertest_test
 
-// Shared helpers for the keeper L0–L3 tiers (T10; measurement-design §3).
-// Corpus-path resolution follows the codex l1 idiom (runtime.Caller-relative;
-// RS-019: the idiom is part of the copied template, not substrate code).
-
 import (
 	"bytes"
 	"context"
@@ -25,13 +21,8 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// knownUnterminatedCKey is the ONE recorded unterminated baseline cycle
-// (measurement-design §2.4 / §7 metric 3). The NEW reactor must FIX it —
-// terminate within bound — never match the old wedge.
 const knownUnterminatedCKey = "kk-test|cyc-20260610T215853-000004"
 
-// corpusRoot resolves testdata/keeper-cycles/baseline-2026-07-13 relative to
-// this source file.
 func corpusRoot(t *testing.T) string {
 	t.Helper()
 	_, self, _, ok := runtime.Caller(0)
@@ -42,13 +33,11 @@ func corpusRoot(t *testing.T) string {
 		"testdata", "keeper-cycles", "baseline-2026-07-13")
 }
 
-// corpusCyclesDir resolves the per-cycle corpus directory.
 func corpusCyclesDir(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(corpusRoot(t), "cycles")
 }
 
-// loadSummary reads one golden summary.json.
 func loadSummary(t *testing.T, path string) keepertwin.CycleSummary {
 	t.Helper()
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: test-owned corpus testdata
@@ -62,7 +51,6 @@ func loadSummary(t *testing.T, path string) keepertwin.CycleSummary {
 	return sum
 }
 
-// summaryFiles returns the sorted list of *.summary.json basenames.
 func summaryFiles(t *testing.T) []string {
 	t.Helper()
 	dir := corpusCyclesDir(t)
@@ -80,7 +68,6 @@ func summaryFiles(t *testing.T) []string {
 	return names
 }
 
-// allSummaries loads every corpus cycle summary, sorted by filename.
 func allSummaries(t *testing.T) []keepertwin.CycleSummary {
 	t.Helper()
 	dir := corpusCyclesDir(t)
@@ -92,7 +79,6 @@ func allSummaries(t *testing.T) []keepertwin.CycleSummary {
 	return sums
 }
 
-// pickPerStratum returns the lexically-first corpus cycle of each stratum.
 func pickPerStratum(t *testing.T) map[keepertwin.Stratum]keepertwin.CycleSummary {
 	t.Helper()
 	dir := corpusCyclesDir(t)
@@ -116,8 +102,6 @@ func pickPerStratum(t *testing.T) map[keepertwin.Stratum]keepertwin.CycleSummary
 	return picked
 }
 
-// testConfig is the explicit-scalar reactor config for replay (NewCycle does
-// not apply defaults; values mirror keeper's documented defaults).
 func testConfig(agent string) *keeper.CyclerConfig {
 	return &keeper.CyclerConfig{
 		AgentName:            agent,
@@ -133,11 +117,6 @@ func testConfig(agent string) *keeper.CyclerConfig {
 	}
 }
 
-// flatReplayCycle replays sum through the FLAT pipe (pre-scheduled TimerFired
-// lines, T9 shape): corpus summary → SynthesizeStimulus → EncodeStimulus →
-// keepertwin.Twin → pure reactor → FakeEffector. Boundary-outcome fidelity
-// only (measurement-design §2.2 note): interior re-inject counts are NOT
-// live-faithful on this path — the L2 discrete-event harness owns those.
 func flatReplayCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action {
 	t.Helper()
 	events, err := keepertwin.SynthesizeStimulus(sum)
@@ -149,8 +128,6 @@ func flatReplayCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action 
 		t.Fatalf("encode %s: %v", sum.CKey, err)
 	}
 
-	// Wall-clock backstop only: converts a genuine code-hang into a failure.
-	// The replay itself is virtual-time and completes in microseconds.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -169,7 +146,6 @@ func flatReplayCycle(t *testing.T, sum keepertwin.CycleSummary) []keeper.Action 
 	return eff.Actions()
 }
 
-// emittedTypes collects the emitted event types from recorded actions.
 func emittedTypes(actions []keeper.Action) []core.EventType {
 	var types []core.EventType
 	for _, a := range actions {
@@ -180,7 +156,6 @@ func emittedTypes(actions []keeper.Action) []core.EventType {
 	return types
 }
 
-// countType counts occurrences of one emitted event type.
 func countType(types []core.EventType, want core.EventType) int {
 	n := 0
 	for _, tp := range types {
@@ -191,22 +166,9 @@ func countType(types []core.EventType, want core.EventType) int {
 	return n
 }
 
-// ─── Cycle outcomes ──────────────────────────────────────────────────────────
-
-// cycleOutcome is what ONE keeper cycle ended with, carried as one value.
-//
-// The tiers used to carry this as a pair of booleans (wantComplete,
-// wantUnconfirmed). That pair can spell (complete=false, unconfirmed=true),
-// which names nothing the machine has ever produced, and it cannot spell a
-// park at all — so when the handoff-timeout edge stopped aborting and started
-// parking (session-keeper.md §8.4), every assertion built on it read the new
-// behavior as "no outcome". One value with four inhabitants removes both
-// problems (PRINCIPLES §2).
 type cycleOutcome string
 
 const (
-	// outcomeComplete is the clean terminal (§8.1): /clear confirmed by a new
-	// session id, brief injected.
 	outcomeComplete cycleOutcome = "cycle_complete"
 	// outcomeDegradedComplete is the §8.3 degraded terminal: the clear
 	// backstop expired without a session change, and the cycle completes
@@ -222,16 +184,10 @@ const (
 	outcomeParkedOperator cycleOutcome = "cycle_parked{operator_turn_recent}"
 )
 
-// isCompletion reports whether an outcome is one of the two completions. Use
-// it where the claim is "the destructive tail finished", clean or degraded.
 func isCompletion(o cycleOutcome) bool {
 	return o == outcomeComplete || o == outcomeDegradedComplete
 }
 
-// parkReason decodes the reason a cycle_parked emit carries and refuses any
-// value outside the §8.4 pair. The reason is not a detail on this event: it is
-// what separates a suspension the same cycle id resumes from an end, so a park
-// with an empty or unknown reason is a defect and fails here.
 func parkReason(t *testing.T, a keeper.Action) string {
 	t.Helper()
 	var p core.SessionKeeperCycleParkedPayload
@@ -248,14 +204,6 @@ func parkReason(t *testing.T, a keeper.Action) string {
 	}
 }
 
-// cycleEndings reduces an emitted action stream to the outcomes it recorded,
-// in emit order. An ending is any emit that returns the machine to Idle:
-// cycle_complete, cycle_parked (either flavor), and cycle_aborted.
-//
-// cycle_aborted has had no producer since keeper checkpoints became
-// agent-paced (§8.2). It is decoded here anyway, with its reason, so that a
-// regression which revives it is NAMED in the failure message instead of
-// arriving as an unexplained extra outcome.
 func cycleEndings(t *testing.T, actions []keeper.Action) []cycleOutcome {
 	t.Helper()
 	var out []cycleOutcome
@@ -283,15 +231,11 @@ func cycleEndings(t *testing.T, actions []keeper.Action) []cycleOutcome {
 			}
 			out = append(out, cycleOutcome("cycle_aborted{"+p.Reason+"}"))
 		default:
-			// Interior events (handoff_started, handoff_written, model_done,
-			// clear_sent, new_session_up, cycle_recovered) end nothing.
 		}
 	}
 	return out
 }
 
-// soleOutcome asserts the stream recorded exactly one cycle ending and returns
-// it. Zero endings is the silence SK-INV-005 forbids; two is an overlap.
 func soleOutcome(t *testing.T, actions []keeper.Action, ckey string) cycleOutcome {
 	t.Helper()
 	got := cycleEndings(t, actions)
@@ -302,8 +246,6 @@ func soleOutcome(t *testing.T, actions []keeper.Action, ckey string) cycleOutcom
 	return got[0]
 }
 
-// assertOutcome asserts the stream recorded exactly one cycle ending and that
-// it is want.
 func assertOutcome(t *testing.T, actions []keeper.Action, ckey string, want cycleOutcome) {
 	t.Helper()
 	if got := soleOutcome(t, actions, ckey); got != want {
@@ -311,12 +253,6 @@ func assertOutcome(t *testing.T, actions []keeper.Action, ckey string, want cycl
 	}
 }
 
-// writeReplayedStream replays ALL corpus cycles through the flat pipe and
-// re-envelopes every emitted event into an events.jsonl at path (the T10
-// envelope-writer, shared by TestL1_ReplayedStreamInvariants and the T13
-// out-of-band metrics export). Envelopes carry deterministic, ordering-
-// controlled EventIDs and virtual timestamps so the file is byte-stable
-// across runs. Returns the number of envelopes written.
 func writeReplayedStream(t *testing.T, path string) int {
 	t.Helper()
 	sums := allSummaries(t)
@@ -359,9 +295,6 @@ func writeReplayedStream(t *testing.T, path string) int {
 	return int(seq)
 }
 
-// mkEventID builds a deterministic, ordering-controlled UUIDv7-shaped EventID
-// whose big-endian counter in the leading bytes drives the internal/replay
-// EventID sort (the replay_test fixture idiom, widened to a uint32 counter).
 func mkEventID(seq uint32) core.EventID {
 	var b [16]byte
 	binary.BigEndian.PutUint32(b[:4], seq)

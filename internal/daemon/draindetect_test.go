@@ -1,16 +1,5 @@
 package daemon
 
-// draindetect_test.go — unit tests for the drain-fact oracle (hk-95uf /
-// hk-pfr4). These are pure in-package unit tests in internal/daemon (NOT
-// daemon-boot scenario tests), so they carry no 30-minute commit-budget risk.
-//
-// Phase A: queue / run-state / ready axes (via GenuineDrain bridge).
-// Phase B: ledger/epic axis (via GenuineDrain bridge).
-// Phase C (hk-pfr4): GatherDrainFacts — new axes (InProgress / Draft /
-//
-//	Deferred / NeedsDecomposition / NeedsAttention), no-short-circuit,
-//	Unsure-as-flag, counts + lists.
-
 import (
 	"context"
 	"errors"
@@ -25,11 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// --- fakes ---------------------------------------------------------------
-
-// fakeReady is a readySource fake. When err is non-nil ReadyAll returns it;
-// otherwise it returns records. It also records that ReadyAll (the --limit 0
-// path) was the method invoked, never the paginated Ready — defense #1.
 type fakeReady struct {
 	records   []core.BeadRecord
 	err       error
@@ -44,12 +28,8 @@ func (f *fakeReady) ReadyAll(_ context.Context) ([]core.BeadRecord, error) {
 	return f.records, nil
 }
 
-// drainedReady is a readySource that always reports zero dispatchable beads.
 func drainedReady() *fakeReady { return &fakeReady{records: []core.BeadRecord{}} }
 
-// fakeLister is an openBeadLister fake. byStatus maps a br status string to the
-// records ListBeadsByStatus returns for it; err (when non-nil) is returned for
-// every call (the fail-closed path). A missing status key yields nil (empty).
 type fakeLister struct {
 	byStatus map[string][]core.BeadRecord
 	err      error
@@ -62,11 +42,6 @@ func (f *fakeLister) ListBeadsByStatus(_ context.Context, status string) ([]core
 	return f.byStatus[status], nil
 }
 
-// fakeLedger is a queue.BeadLedger fake reusing the internal/queue edge-map
-// convention (edges[[2]{blocker,blocked}]==true means blocker must complete
-// before blocked may start). edgeErr (when non-nil) is returned for every
-// BlocksEdge call (the fail-closed path). LookupStatus is an unused stub —
-// scanOpenEpics keys only off BlocksEdge.
 type fakeLedger struct {
 	edges   map[[2]core.BeadID]bool
 	edgeErr error
@@ -83,16 +58,9 @@ func (f *fakeLedger) BlocksEdge(_ context.Context, blocker, blocked core.BeadID)
 	return f.edges[[2]core.BeadID{blocker, blocked}], nil
 }
 
-// drainedLister / drainedLedger are the empty (positively-drained) epic-axis
-// seams: no open epics, no blocked children, no blocks edges. Phase A tests use
-// them now that the epic axis is real (the Phase-A DRAINED stub is gone, so a
-// nil seam would fail-close to UNSURE).
 func drainedLister() *fakeLister { return &fakeLister{} }
 func drainedLedger() *fakeLedger { return &fakeLedger{} }
 
-// openEpic / blockedChild build minimal epic-axis BeadRecords. An open epic
-// reports status "open" with type "epic"; a child waiting on an open blocker
-// reports status "blocked".
 func openEpic(id core.BeadID) core.BeadRecord {
 	return core.BeadRecord{BeadID: id, BeadType: beadTypeEpic, Status: core.CoarseStatusOpen}
 }
@@ -101,8 +69,6 @@ func blockedChild(id core.BeadID) core.BeadRecord {
 	return core.BeadRecord{BeadID: id, BeadType: "task", Status: core.CoarseStatusBlocked}
 }
 
-// emptyTestProjectDir returns a temp dir with an empty .harmonik/queues and
-// .harmonik/worktrees, the on-disk baseline of a fully-drained project.
 func emptyTestProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -113,8 +79,6 @@ func emptyTestProjectDir(t *testing.T) string {
 	}
 	return dir
 }
-
-// --- Phase A tests -------------------------------------------------------
 
 // TestGenuineDrain_PaginatedReadyHidesWork asserts the oracle keys off ReadyAll
 // (`br ready --limit 0`), not a default-paginated empty. The seam exposes ONLY
@@ -253,8 +217,6 @@ func TestGenuineDrain_PhaseADrained(t *testing.T) {
 		t.Fatalf("State = %q; want %q (reasons: %v)", got.State, DrainStateDrained, got.Reasons)
 	}
 }
-
-// --- Phase B tests: ledger/epic axis (scanOpenEpics) ---------------------
 
 // TestGenuineDrain_OpenEpicWithReadyChild asserts the load-bearing epic axis:
 // an OPEN epic whose otherwise-ready child the ledger says it blocks (the child
@@ -396,10 +358,6 @@ func TestGenuineDrain_TrulyDrainedReturnsDrained(t *testing.T) {
 	}
 }
 
-// --- Phase C tests: GatherDrainFacts (hk-pfr4) ---------------------------
-
-// fullLister is an openBeadLister fake that serves beads by status and also
-// lets tests assert which statuses were queried.
 type fullLister struct {
 	byStatus    map[string][]core.BeadRecord
 	errByStatus map[string]error // per-status errors
@@ -416,8 +374,6 @@ func (f *fullLister) ListBeadsByStatus(_ context.Context, status string) ([]core
 	return f.byStatus[status], nil
 }
 
-// minimalBead builds a BeadRecord with enough fields for filter / projection
-// logic (does NOT satisfy BeadRecord.Valid() since AuditTrailRef is empty).
 func minimalBead(id core.BeadID, status core.CoarseStatus, btype string, labels ...string) core.BeadRecord {
 	return core.BeadRecord{
 		BeadID:   id,
@@ -428,8 +384,6 @@ func minimalBead(id core.BeadID, status core.CoarseStatus, btype string, labels 
 	}
 }
 
-// drainedFullLister returns a fullLister that answers every status with nil
-// (empty) — positively drained on all ledger axes.
 func drainedFullLister() *fullLister {
 	return &fullLister{byStatus: map[string][]core.BeadRecord{}}
 }
@@ -586,7 +540,6 @@ func TestGatherDrainFacts_UnsureIsFlagNotVerdict(t *testing.T) {
 	if len(facts.UnsureReasons) == 0 {
 		t.Errorf("UnsureReasons is empty; want at least one reason")
 	}
-	// In-progress axis must still be populated despite the ready-axis error.
 	if facts.InProgress.Count != 1 {
 		t.Errorf("InProgress.Count = %d; want 1 (axes continue past error)", facts.InProgress.Count)
 	}

@@ -146,7 +146,6 @@ func TestFailureClassMarshalText(t *testing.T) {
 func TestFailureClassRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all declared values.
 	type wrapper struct {
 		Class FailureClass `json:"class"`
 	}
@@ -183,7 +182,6 @@ func TestFailureClassRoundTrip(t *testing.T) {
 func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all six declared values.
 	var f FailureClass
 	err := f.UnmarshalText([]byte("made_up"))
 	if err == nil {

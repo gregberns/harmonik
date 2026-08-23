@@ -1,17 +1,5 @@
 package crewrun
 
-// launchspec_test.go — unit tests for buildCrewLaunchSpec (C2 AC-5).
-//
-// Acceptance criterion AC-5: buildCrewLaunchSpec produces
-//
-//	argv = [<claude> --dangerously-skip-permissions --remote-control "<name>" --session-id <uuid>]
-//
-// with the caller-supplied UUID, HARMONIK_AGENT/HARMONIK_PROJECT in env,
-// --dangerously-skip-permissions present (hk-672di), and NO worktree.
-//
-// Run: go test ./internal/crewrun/ -run CrewLaunchSpec
-// Bead: hk-kbqto.
-
 import (
 	"os"
 	"path/filepath"
@@ -19,8 +7,6 @@ import (
 	"testing"
 )
 
-// argvHasFlagValue reports whether args contains the pair [flag, value] adjacent
-// (flag immediately followed by value).
 func argvHasFlagValue(args []string, flag, value string) bool {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag && args[i+1] == value {
@@ -30,7 +16,6 @@ func argvHasFlagValue(args []string, flag, value string) bool {
 	return false
 }
 
-// argvHasFlag reports whether args contains flag anywhere.
 func argvHasFlag(args []string, flag string) bool {
 	for _, a := range args {
 		if a == flag {
@@ -84,8 +69,6 @@ func TestBuildCrewLaunchSpec_ModelInjection(t *testing.T) {
 			if c.want && !argvHasFlagValue(spec.Args, "--model", c.model) {
 				t.Errorf("%s: argv missing [--model %s]; got %v", c.label, c.model, spec.Args)
 			}
-			// The model flag must follow the session/resume flag (the base argv
-			// is unchanged), so the first five elements are untouched.
 			if spec.Args[1] != "--remote-control" {
 				t.Errorf("%s: base argv mutated; Args[1]=%q want --remote-control", c.label, spec.Args[1])
 			}
@@ -149,7 +132,6 @@ captain_name: captain
 		})
 	}
 
-	// Empty path and missing file both return "".
 	if got := ReadMissionModel(""); got != "" {
 		t.Errorf("readMissionModel(\"\") = %q; want \"\"", got)
 	}
@@ -177,7 +159,6 @@ func TestBuildCrewLaunchSpec_Argv(t *testing.T) {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "claude")
 	}
 
-	// argv must be exactly [--dangerously-skip-permissions --remote-control <name> --session-id <uuid>]
 	if len(spec.Args) != 5 {
 		t.Fatalf("len(Args) = %d; want 5: got %v", len(spec.Args), spec.Args)
 	}
@@ -398,8 +379,6 @@ func TestBuildCrewLaunchSpec_WorkDir(t *testing.T) {
 	}
 }
 
-// argvFlagValue returns the value immediately following flag in args, or "" if
-// the flag is absent or has no following element.
 func argvFlagValue(args []string, flag string) string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag {
@@ -504,7 +483,6 @@ func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
 			t.Errorf("resume parity broken: fresh label %q != resume label %q", labelFresh, labelResume)
 		}
 
-		// HARMONIK_AGENT must remain BARE (no prefix) on both branches.
 		for _, spec := range []struct {
 			label string
 			env   []string

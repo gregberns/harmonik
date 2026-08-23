@@ -6,15 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// vocab.go — the shared flat, JSON-round-trippable Event / Action vocabulary
-// for the two pure run-lifecycle reactors (RSM-001; runexec-design §1–§2). One
-// vocabulary serves both the per-session Dispatch machine (dispatch.go) and the
-// per-run Run machine (run.go); kinds are namespaced by consumer. The shell
-// (internal/daemon/runshell.go, landed in RT7) samples I/O into Events and
-// executes Actions via an effector — this package performs no I/O, reads no
-// clock, and mints no identifiers: every timestamp in reactor state derives
-// from an event's shell-stamped At (RSM-001), mirroring internal/keeper/step.go.
-
 // SessionRef identifies one agent session (shell-minted; opaque here).
 type SessionRef string
 

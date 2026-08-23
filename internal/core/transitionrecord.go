@@ -8,14 +8,11 @@ import (
 	"time"
 )
 
-// transitionWireCommitRange is the JSON wire shape for CommitRange.
 type transitionWireCommitRange struct {
 	FirstCommitSHA string `json:"first_commit_sha"`
 	LastCommitSHA  string `json:"last_commit_sha"`
 }
 
-// transitionWireState is the JSON wire shape for State.
-// Field names follow the snake_case convention of execution-model.md §6.1 RECORD State.
 type transitionWireState struct {
 	StateID           StateID                   `json:"state_id"`
 	RunID             RunID                     `json:"run_id"`
@@ -24,21 +21,12 @@ type transitionWireState struct {
 	TransitionHistory transitionWireCommitRange `json:"transition_history"`
 }
 
-// transitionWireRemoteEndpoint is the JSON wire shape for RemoteEndpoint
-// (execution-model.md §6.1 RECORD RemoteEndpoint).
 type transitionWireRemoteEndpoint struct {
 	WorkerName string `json:"worker_name"`
 	Host       string `json:"host"`
 	RepoPath   string `json:"repo_path"`
 }
 
-// transitionWireReleaseClaim is the JSON wire shape for ReleaseClaim
-// (execution-model.md §6.1 RECORD ReleaseClaim).
-//
-// remote_endpoint is omitted for local work rather than written as null, so a
-// local claim and a remote claim differ by the presence of the key. §6.1
-// declares the field `RemoteEndpoint | None` and EM-031b treats an
-// incompletely-recorded endpoint as unusable, so absence is the clearer signal.
 type transitionWireReleaseClaim struct {
 	DispatchHeadSHA string                        `json:"dispatch_head_sha"`
 	MergeTargetRef  string                        `json:"merge_target_ref"`
@@ -46,13 +34,6 @@ type transitionWireReleaseClaim struct {
 	RemoteEndpoint  *transitionWireRemoteEndpoint `json:"remote_endpoint,omitempty"`
 }
 
-// transitionWire is the JSON wire shape for a Transition sibling file.
-// Field names follow the snake_case convention of execution-model.md §6.1 RECORD Transition.
-// schema_version is included per §4.4.EM-018 and MUST match the commit's
-// Harmonik-Schema-Version trailer. The field is the N-1-readable sentinel per
-// §4.4.EM-022: readers MUST accept the immediately prior schema version (N-1);
-// breaking changes (rename or removal of fields) require a migration release
-// and MUST increment schema_version.
 type transitionWire struct {
 	TransitionID      TransitionID        `json:"transition_id"`
 	RunID             RunID               `json:"run_id"`
@@ -75,8 +56,6 @@ type transitionWire struct {
 	SchemaVersion int                         `json:"schema_version"`
 }
 
-// releaseClaimToWire converts a ReleaseClaim to its wire representation.
-// It returns nil for a nil claim, which the omitempty tag then drops.
 func releaseClaimToWire(c *ReleaseClaim) *transitionWireReleaseClaim {
 	if c == nil {
 		return nil
@@ -96,7 +75,6 @@ func releaseClaimToWire(c *ReleaseClaim) *transitionWireReleaseClaim {
 	return wire
 }
 
-// releaseClaimFromWire converts a wire release claim back to its typed form.
 func releaseClaimFromWire(w *transitionWireReleaseClaim) *ReleaseClaim {
 	if w == nil {
 		return nil
@@ -116,7 +94,6 @@ func releaseClaimFromWire(w *transitionWireReleaseClaim) *ReleaseClaim {
 	return claim
 }
 
-// stateToWire converts a State to its wire representation.
 func stateToWire(s State) transitionWireState {
 	return transitionWireState{
 		StateID:   s.StateID,
@@ -169,7 +146,6 @@ func MarshalTransitionRecord(tr Transition) ([]byte, error) {
 	return data, nil
 }
 
-// wireToState converts a wire state back to its typed form.
 func wireToState(w transitionWireState) State {
 	return State{
 		StateID:   w.StateID,

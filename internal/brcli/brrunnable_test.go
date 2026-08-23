@@ -9,9 +9,6 @@ import (
 )
 
 func TestCheckBrRunnableAcceptsAWorkingBr(t *testing.T) {
-	// Trailing whitespace is real here. brcliFixtureMockBinary quotes its stdout
-	// through `sh printf '%s'`, which passes an escape like \n through as two
-	// literal characters, so a space is the way to exercise the trim.
 	path := brcliFixtureMockBinary(t, "br 0.5.2 ", "", 0)
 
 	adapter, err := brcli.New(path)
@@ -35,12 +32,7 @@ func TestCheckBrRunnableAcceptsAWorkingBr(t *testing.T) {
 // disliked bricked startup on 2026-08-04. Startup MUST now succeed on ANY output
 // as long as `br` exits zero.
 func TestCheckBrRunnableAcceptsOutputTheOldVersionRegexRejected(t *testing.T) {
-	// Each of these fails the retired regex: no dotted triple, no `br` prefix,
-	// or empty output altogether.
 	cases := map[string]string{
-		// The banner from the 2026-08-04 incident. Note that `br 0.0.0` WOULD
-		// have satisfied the old regex — the build blocked startup because it
-		// dropped the `br ` prefix, not because of the digits.
 		"the 2026-08-04 incident banner": "0.0.0",
 
 		"no version at all":     "not a version string at all",
@@ -78,8 +70,6 @@ func TestCheckBrRunnableRejectsNonZeroExit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected BrUnavailable for non-zero exit, got nil")
 	}
-	// BrUnavailable, not BrSchemaMismatch: `br` is on disk but harmonik cannot
-	// get an answer out of it. Nothing here observed a schema.
 	if !errors.Is(err, brcli.BrUnavailable) {
 		t.Errorf("errors.Is(err, BrUnavailable) = false; got %v", err)
 	}
@@ -101,8 +91,6 @@ func TestCheckBrRunnableRejectsAnUnexecutableBr(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for exec failure, got nil")
 	}
-	// Exec failure wraps no BrError sentinel — the binary could not be launched,
-	// so there is no invocation to classify.
 	if errors.Is(err, brcli.BrSchemaMismatch) {
 		t.Error("exec failure should NOT wrap BrSchemaMismatch")
 	}

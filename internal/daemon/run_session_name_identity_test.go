@@ -1,21 +1,5 @@
 package daemon
 
-// run_session_name_identity_test.go — the run session name has to name the RUN.
-//
-// The name goes into the run registry record and it decides whether
-// SpawnRunSession's ErrWindowCollision branch is safe. Both readers assume one
-// name means one run. Nothing checked that assumption, because every other test
-// that touches the name uses a single hard-coded run id, and one id can never
-// collide with itself.
-//
-// Run ids are UUIDv7. The first 48 bits are a millisecond timestamp and the
-// disambiguating rand_a sequence sits in the two bytes after it — hex chars 12
-// through 15. A 12-char prefix is therefore a timestamp, and the daemon
-// dispatches beads concurrently, so two runs starting in the same millisecond
-// took one name between them.
-//
-// Helper prefix: nameIdentity.
-
 import (
 	"strings"
 	"sync"
@@ -24,10 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// nameIdentityConcurrentRunIDs mints n run ids the way the scheduler does, from
-// several goroutines at once, so they land in as few distinct milliseconds as
-// the host allows. That crowding is the point: it is what a burst of concurrent
-// dispatch looks like, and it is the condition the old name could not survive.
 func nameIdentityConcurrentRunIDs(t *testing.T, goroutines, per int) []string {
 	t.Helper()
 
@@ -70,9 +50,6 @@ func TestRunSessionName_TwoRunsInOneMillisecondGetTwoSessions(t *testing.T) {
 	sub := w4cFixtureSubstrate(t, &sessionCollideAdapter{})
 	ids := nameIdentityConcurrentRunIDs(t, 8, 250)
 
-	// Prove the burst actually crowded a few milliseconds. Without this the test
-	// could pass on a slow host that spread every id into its own millisecond,
-	// which is the one condition under which the old code was also correct.
 	stamps := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		stamps[strings.ReplaceAll(id, "-", "")[:12]] = true

@@ -1,25 +1,5 @@
 package daemon
 
-// workloopsubsystems_test.go — subsystem partitioning of the two non-core
-// subsystems that used to be welded inline into runWorkLoop: the dashboard
-// forcing gate and the sentinel movement governor.
-//
-// Both states are driven through the REAL config edge — a .harmonik/config.yaml
-// written to disk and read by projectconfig.LoadProjectConfig (subpartLoadConfig,
-// shared with reconciliationsubsystem_test.go). Nothing here hand-builds a
-// SubsystemsConfig, because the thing under test is the whole path from operator
-// YAML to construction seam.
-//
-// "Off" is asserted BEHAVIOURALLY, not just as a nil pointer. Each subsystem is
-// given a world that makes it do something loud and observable when present — a
-// dashboard that has never been written (so the gate MUST trip and block a
-// curated queue), a `br ready` adapter that counts its calls (so the governor
-// MUST shell out and emit governor_signal) — and the disabled case asserts that
-// nothing at all happened. A constructed-but-inert subsystem would still make
-// those calls; an absent one cannot.
-//
-// Helper prefix: wlsub — work-loop subsystems, the behaviour these helpers serve.
-
 import (
 	"context"
 	"io"
@@ -35,12 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// wlsub* stubs
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wlsubBus is a recording EventEmitter. It counts events by type so a test can
-// assert both "this fired" and "nothing fired at all".
 type wlsubBus struct {
 	mu      sync.Mutex
 	n       map[core.EventType]int
@@ -77,9 +51,6 @@ func (b *wlsubBus) lastPayload(t core.EventType) []byte {
 	return append([]byte(nil), b.payload[t]...)
 }
 
-// wlsubCountingLedger is a beadLedger whose only job is to report how many times
-// the governor shelled out to `br ready`. That call is the governor's dominant
-// per-evaluation cost and the sharpest evidence that it ran.
 type wlsubCountingLedger struct {
 	mu    sync.Mutex
 	ready int
@@ -114,15 +85,6 @@ func (l *wlsubCountingLedger) ReopenBead(_ context.Context, _ string, _ brcli.Ti
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dashboard forcing gate — subsystems.dashboard_gate
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wlsubSeedDashboardWorld writes the two files that make the forcing gate trip:
-// a dashboard: block with a max_staleness (without it the gate is not
-// "Configured" and stays off by data), and a lanes.json naming one captain-
-// curated queue (the scope of the block). dashboard.json is deliberately NOT
-// written — never-written is treated as maximally stale.
 func wlsubSeedDashboardWorld(t *testing.T, root string) {
 	t.Helper()
 	lanes := filepath.Join(root, lanesJSONPath)
@@ -183,7 +145,6 @@ subsystems:
 	}
 
 	bus := &wlsubBus{}
-	// The loop calls these unconditionally; on an absent gate they must be inert.
 	gate.tick(context.Background(), root, bus, time.Now())
 
 	if got := gate.blockedQueueSet(); got != nil {
@@ -197,11 +158,6 @@ subsystems:
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sentinel movement governor — subsystems.movement_governor
-// ─────────────────────────────────────────────────────────────────────────────
-
-// wlsubGovernorDeps builds the work-loop values the governor reads.
 func wlsubGovernorDeps(root string, bus *wlsubBus, ledger *wlsubCountingLedger) testRuntime {
 	return testRuntime{
 		env:    runloop.RunEnv{ProjectDir: root},
@@ -241,9 +197,6 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 		t.Fatalf("emitted governor_signal does not decode through the production registry: %v", err)
 	}
 
-	// The eval-cadence gate is load-bearing, not politeness: evaluating on every
-	// 2 s poll tick cost 25–50% daemon CPU on large event logs (hk-usn8o). A
-	// second immediate tick, far inside the default cadence, must do nothing.
 	governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times after a second immediate tick; want still 1 (the eval cadence must suppress it)", got)
@@ -272,7 +225,6 @@ subsystems:
 		t.Fatal("newMovementGovernorIfEnabled returned a governor with subsystems.movement_governor.enabled: false; it must be ABSENT, not constructed")
 	}
 
-	// The loop calls these unconditionally; on an absent governor they are inert.
 	for range 5 {
 		governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	}
@@ -300,7 +252,6 @@ func TestSubsystemPartition_MovementGovernor_DisabledReleasesDispatchGate(t *tes
 	t.Parallel()
 
 	blocker := NewDecisionBlocker()
-	// Exactly what LoadDecisionAckState does at boot for a pending sentinel trip.
 	blocker.AddQueueBlock(sentinelSubjectIDACT, "stale-trip-token")
 
 	enabledPC, enabledRoot := subpartLoadConfig(t, "schema_version: 1\n")
@@ -329,16 +280,6 @@ subsystems:
 	}
 }
 
-// The boot seam, not the loop seam. newGovernorPort reads the same
-// switch as newMovementGovernorIfEnabled, and it has to: it reads the sentinel:
-// block through digest.LoadSentinelConfig, and a malformed value there is FATAL
-// — daemon.Start returns the error and the daemon does not boot. A subsystem the
-// operator switched OFF must not be able to refuse the daemon's boot over config
-// it no longer reads (hk-e3y8x).
-//
-// The malformed value here is a suppression_ttl that is not a duration, which
-// parseSentinelConfig rejects. The pair is the point: OFF must swallow it, ON
-// must still fail loudly, or the gate has quietly become an error suppressor.
 const wlsubMalformedSentinelYAML = "schema_version: 1\nsentinel:\n  suppression_ttl: \"not-a-duration\"\n"
 
 func TestSubsystemPartition_MovementGovernor_DisabledSkipsFatalBootConfig(t *testing.T) {
@@ -359,7 +300,6 @@ func TestSubsystemPartition_MovementGovernor_DisabledSkipsFatalBootConfig(t *tes
 func TestSubsystemPartition_MovementGovernor_EnabledStillFailsOnBadConfig(t *testing.T) {
 	t.Parallel()
 
-	// No subsystems: block — the governor is ON, so the fatal path must survive.
 	pc, root := subpartLoadConfig(t, wlsubMalformedSentinelYAML)
 	_, enabled, err := newGovernorPort(Config{ProjectDir: root, ProjectCfg: pc}, time.Now())
 	if !enabled || err == nil {
@@ -399,9 +339,6 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 		t.Error("no-config zero threshold armed a liveness halt")
 	}
 
-	// The production no-config mode is observe. Exercise ACT as a focused
-	// threshold control: changing the mode alone must not turn a zero liveness
-	// threshold into a halt.
 	port.mode = "act"
 	actGovernor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
 	actGovernor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))

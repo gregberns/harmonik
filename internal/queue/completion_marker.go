@@ -278,10 +278,6 @@ func recoverOneCompletionReleaseMarker(
 	return InstallCompletionReleaseMarker(projectDir, inputs, releaseTime())
 }
 
-// confirmCompletedIdentityReleased reports an error unless the completed queue
-// identity has given up its canonical name. An absent canonical file counts as
-// released. A canonical file that a different, valid queue identity now owns
-// also counts as released.
 func confirmCompletedIdentityReleased(projectDir string, receipt CompletionReceipt) error {
 	canonicalPath := queuePath(projectDir, receipt.NormalizedName)
 	canonicalInfo, statErr := os.Lstat(canonicalPath)

@@ -1,14 +1,5 @@
 package readiness
 
-// capture.go — the thin shell around the pure record in snapshot.go.
-//
-// Two effects live here and nothing else: reading the live bead ledger through
-// a read-only port, and scanning the terminal-intent directory. Both hand plain
-// values to the pure constructor in snapshot.go, which does the judging.
-//
-// Spec ref: specs/beads-integration.md §4.5b BI-013e; §4.5a BI-013b (a
-// submit-time bead read is `br show` and never mutates).
-
 import (
 	"context"
 	"encoding/json"
@@ -132,7 +123,6 @@ func Capture(ctx context.Context, ledger BeadReader, req CaptureRequest) (Snapsh
 	})
 }
 
-// readCandidate turns one live ledger record into a [Candidate].
 func readCandidate(ctx context.Context, ledger BeadReader, id core.BeadID) (Candidate, error) {
 	rec, err := ledger.ShowBead(ctx, id)
 	if err != nil {
@@ -202,8 +192,6 @@ func WriteSnapshot(path string, s Snapshot) error {
 	return writeJSONFile(path, append(body, '\n'))
 }
 
-// writeJSONFile writes body to path, creating the parent directory. Shared by
-// the snapshot and the validation record so the two artifacts land the same way.
 func writeJSONFile(path string, body []byte) (err error) {
 	if mkErr := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("readiness: mkdir for %q: %w", path, mkErr)
@@ -212,8 +200,6 @@ func writeJSONFile(path string, body []byte) (err error) {
 	if openErr != nil {
 		return fmt.Errorf("readiness: open %q: %w", path, openErr)
 	}
-	// A failed Close can mean the record never reached the disk, so it joins the
-	// result rather than being dropped in favour of the write error.
 	defer func() { err = errors.Join(err, f.Close()) }()
 
 	if _, writeErr := f.Write(body); writeErr != nil {

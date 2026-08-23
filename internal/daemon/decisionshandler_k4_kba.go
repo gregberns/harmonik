@@ -1,39 +1,5 @@
 package daemon
 
-// decisionshandler_k4_kba.go — operator-side decisions ops for hitl-decisions
-// component K4 (bead hk-kba):
-//
-//   - decisions-list   → read the K3 open-decision projection and return ALL
-//                        open decisions (the cross-agent "what-needs-me" queue).
-//                        PURE READ: no event, no aggregator process (SPEC §3, S6).
-//   - decisions-answer → validate the decision is OPEN + the option is one of its
-//                        options (N7), emit decision_resolved (SPEC §1.2), no-op
-//                        on an unknown/already-terminal decision_id (N3).
-//
-// These methods are implemented on the SAME *commsSendHandlerImpl that already
-// carries the K2 emit ops (decisionshandler_xz9.go) and the comms ops — so
-// socket.go type-asserts ch.(DecisionsHandler) and no socket-listener signature
-// change is needed. Both ops read the open set via decisionsProjection(K3) over
-// h.eventsJSONLPath (set by SetRecvDeps; = cfg.JSONLLogPath).
-//
-// Orphaned-pending flag (N9, read-pure): the SPEC requires `decisions list` to
-// FLAG an open decision whose blocked_agent is Offline (past the ~10-min presence
-// cutoff, NOT merely Stale) as "orphaned-pending" — DISPLAY ONLY, the list op
-// MUST NOT emit any event. Agent presence (ComputePresenceRegistry /
-// GetPresenceState / the 10-min presenceStaleCutoff) is computable ONLY in the
-// cmd/harmonik (package main) layer — there is no daemon-side presence
-// projection. Per the SPEC.md §5 split ("if presence is only computable in one
-// layer, put the flag there and keep it display-only"), the daemon list op
-// returns the raw open set and the CLI (cmd/harmonik/decisions.go) computes the
-// Offline → orphaned-pending flag from the SAME events.jsonl, read-pure. This
-// keeps the daemon op a pure projection read (no emit, satisfies N9's read-side
-// half + S6) and reuses the single Offline determination the comms presence
-// registry already owns. K5 (the keeper-tick reaper, the SOLE emitter of
-// decision_withdrawn(orphaned)) shares that same presence source.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §2, §3, §5, §6 (N3,N6,N7,N9).
-// Bead ref: hk-kba (component K4).
-
 import (
 	"context"
 	"encoding/json"
@@ -123,7 +89,6 @@ func (h *commsSendHandlerImpl) HandleDecisionsList(_ context.Context, payload js
 	}
 
 	var req DecisionsListRequest
-	// Payload is optional for list; tolerate an empty/absent body.
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &req); err != nil {
 			return nil, fmt.Errorf("decisions-list: decode request payload: %w", err)
@@ -194,12 +159,6 @@ func (h *commsSendHandlerImpl) HandleDecisionsAnswer(ctx context.Context, payloa
 		return nil, fmt.Errorf("decisions-answer: chosen_option is required")
 	}
 
-	// N3 first-writer-wins: look the decision up in the CURRENT open set. If it
-	// is not open (unknown id, or already resolved/withdrawn), this answer is a
-	// no-op — NO error, NO emit. The projection's "open = needed − terminals"
-	// fold IS the first-writer-wins gate: once a decision_resolved (or
-	// decision_withdrawn) is in the log, the decision_id leaves the open set, so
-	// any later answer for it lands here and is swallowed.
 	open := decisionsProjection(h.eventsJSONLPath)
 	dec, isOpen := open[req.DecisionID]
 	if !isOpen {
@@ -211,9 +170,6 @@ func (h *commsSendHandlerImpl) HandleDecisionsAnswer(ctx context.Context, payloa
 		return resultBytes, nil
 	}
 
-	// N7 option validity: the chosen option MUST be one of the OPEN decision's
-	// options. A bad option on an open decision IS an error (distinct from the
-	// unknown-id no-op above).
 	if !decisionOptionValid(dec.Options, req.ChosenOption) {
 		return nil, fmt.Errorf("decisions-answer: chosen_option %q is not one of the decision's options %v (N7)", req.ChosenOption, dec.Options)
 	}
@@ -246,9 +202,6 @@ func (h *commsSendHandlerImpl) HandleDecisionsAnswer(ctx context.Context, payloa
 	return resultBytes, nil
 }
 
-// decisionOptionValid reports whether chosen is one of options (N7). Empty
-// options never validates (a decision with no options should not exist — K1
-// requires ≥1 — but be defensive).
 func decisionOptionValid(options []string, chosen string) bool {
 	for _, o := range options {
 		if o == chosen {

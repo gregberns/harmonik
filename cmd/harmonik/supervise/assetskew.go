@@ -1,21 +1,5 @@
 package supervisecmd
 
-// assetskew.go — supervisor wiring for asset version-skew detection (hk-yqx9,
-// plans/2026-06-20-doc-instruction-audit/10-asset-sync.md §"Daemon-safety").
-//
-// The DETECTION logic lives in package main (asset_skew.go) because it needs the
-// embedded asset manifest (//go:embed assets) and the reconcile planner, both of
-// which live there. supervisecmd is imported BY main, so it cannot import main back.
-// We bridge with a registration hook: main installs SkewCheckHook at init time, and
-// the shim calls RunAssetSkewCheck once at supervisor boot.
-//
-// SAFETY: the boot check is detection + NOTIFY only. It runs ONCE at supervisor
-// startup (not every loop — the supervisee runs as a long-lived exec, there is no
-// fast tick here to spam from), logs the verdict, and on skew posts a single comms
-// notice to the captain telling someone to run `harmonik sync-assets`. Auto-apply is
-// config-gated (AssetSyncConfig.AutoApply, OFF by default); AutoApplyHook executes
-// the apply when AutoApplyGateHook confirms the daemon is quiescent.
-
 import (
 	"context"
 	"fmt"
@@ -65,14 +49,11 @@ var AutoApplyHook func(projectDir string) (applied int, err error)
 // exec'ing it would re-run the entire test suite.
 var CommsSendNotifier func(projectDir, body string) error = execCommsSend
 
-// execCommsSend is the production implementation of CommsSendNotifier.
 func execCommsSend(projectDir, body string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	// Belt-and-suspenders: a test binary (name ends in .test) must never exec
-	// itself for comms send — it would re-run the entire test suite.
 	if strings.HasSuffix(filepath.Base(exe), ".test") {
 		return fmt.Errorf("supervisecmd: refusing comms send from test binary %q", exe)
 	}
@@ -97,7 +78,6 @@ func execCommsSend(projectDir, body string) error {
 // restart, which re-runs this check. So "at boot" already covers "on version bump".
 func RunAssetSkewCheck(projectDir string, cfg Config, log *slog.Logger, stderr io.Writer) {
 	if SkewCheckHook == nil {
-		// No detection hook wired (shouldn't happen in the real binary); nothing to do.
 		return
 	}
 	v, err := SkewCheckHook(projectDir)
@@ -124,15 +104,9 @@ func RunAssetSkewCheck(projectDir string, cfg Config, log *slog.Logger, stderr i
 
 	notifyCaptainSkew(projectDir, v, log, stderr)
 
-	// Optional, config-gated, OFF by default.
 	maybeAutoApply(projectDir, cfg, v, log, stderr)
 }
 
-// notifyCaptainSkew posts a single status notice to the captain over the comms bus
-// telling someone to run sync-assets. Delegates to CommsSendNotifier (injectable for
-// tests) so a 'go test' binary never exec's itself and fork-bombs the worker.
-//
-// Best-effort: a send failure (no daemon socket, no captain) is logged, not fatal.
 func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, _ io.Writer) {
 	var body string
 	if v.NeverSynced {
@@ -156,14 +130,6 @@ func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, 
 	}
 }
 
-// maybeAutoApply is the config-gated, OFF-by-default auto-apply path (doc 10
-// §Daemon-safety: "may auto-apply only the FAST-FORWARD, MANAGED (skill) files
-// during a quiescent window, surfacing every CONFLICT and every content-owned change
-// for human review").
-//
-// When AutoApply is OFF (the default) it is a no-op. When ON, it checks the
-// daemon-lull gate (AutoApplyGateHook) before delegating the actual apply to
-// AutoApplyHook (both installed by package main at init time).
 func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog.Logger, _ io.Writer) {
 	if !cfg.AssetSync.AutoApply {
 		if log != nil {
@@ -178,7 +144,6 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 		return
 	}
 
-	// Lull-gate: refuse to apply while the daemon is actively dispatching.
 	if AutoApplyGateHook != nil {
 		dispatching, reason, err := AutoApplyGateHook(projectDir)
 		if err != nil {

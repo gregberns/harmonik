@@ -2,46 +2,6 @@
 
 package scenario
 
-// pidfile_pl001_pl002_hk5bvd0_test.go — scenario tests for PL-001 and PL-002
-// pidfile lifecycle invariants (single-flywheel supervise lock, hk-li14r).
-//
-// PL-001: A second daemon started against the same project while the first
-//         daemon holds the pidfile lock MUST return lifecycle.ErrPidfileLocked,
-//         which the composition root maps to exit code 5 ("pidfile-locked").
-//
-// PL-002: A stale pidfile (present on disk, PID dead, advisory flock NOT held)
-//         MUST be overwritten by the next daemon startup, which proceeds cleanly
-//         and emits daemon_started.
-//
-// # Why this is a scenario test (not a unit test)
-//
-// The existing unit tests in internal/daemon/daemon_test.go
-// (TestDaemonStart_PidfileBlocksSecondInvocation) test the daemon.Start API in
-// isolation. These scenario tests cover the same invariants end-to-end:
-//   - PL-001 exercises the full lifecycle from "first daemon holds lock" through
-//     "second daemon.Start fails" with testify/require assertions.
-//   - PL-002 exercises the full recovery cycle: stale file on disk → daemon.Start
-//     overwrites it → daemon_started emitted → pidfile readable with current PID.
-//
-// # Design
-//
-// Both tests use daemon.Start in-process (established convention in
-// test/scenario/; see harness_test.go §Design decisions). The harmonik binary
-// requires $TMUX and a real tmux session, making subprocess tests brittle in CI.
-// daemon.Start with BrPath="" skips the work loop and returns promptly, which is
-// sufficient for these lifecycle-layer assertions.
-//
-// The exit-code mapping (ErrPidfileLocked → exit code 5 per PL-008a) lives in
-// cmd/harmonik/main.go and is separately covered by main_test.go.
-//
-// Coordinate with (NOT dep on) epic hk-fgy9o (P1 crash-recovery pidfile-lock
-// unit tests; this file is the scenario-level complement).
-//
-// Spec refs: specs/process-lifecycle.md §4.1 PL-001, PL-002, PL-002a, PL-008a,
-//            PL-024.
-// Bead refs: hk-5bvd0, hk-li14r.
-// Helper prefix: pfScenario (per implementer-protocol.md §Helper-prefix).
-
 import (
 	"errors"
 	"fmt"
@@ -59,10 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PL-001: second daemon returns ErrPidfileLocked (→ exit code 5)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_PL001_SecondDaemonPidfileLocked verifies that when a daemon
 // already holds the advisory pidfile lock for a project, a second daemon.Start
@@ -90,8 +46,6 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 
 	proj := pfScenarioProjectDir(t)
 
-	// Acquire the pidfile from this goroutine to simulate a running first daemon
-	// holding the advisory lock.
 	pid := os.Getpid()
 	pgid, err := syscall.Getpgid(pid)
 	require.NoError(t, err, "PL-001: Getpgid must not fail for current process")
@@ -100,12 +54,6 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 	require.NoError(t, err, "PL-001: first AcquirePidfile must succeed (no contention)")
 	defer func() { _ = pf.Release() }()
 
-	// Second daemon.Start must fail fast with ErrPidfileLocked.
-	//
-	// flock(LOCK_EX|LOCK_NB) returns EAGAIN/EWOULDBLOCK immediately when another
-	// fd holds the lock — there is no blocking wait. Run in a goroutine with a
-	// timeout guard so a regression that introduces a blocking flock would not
-	// hang the test suite indefinitely.
 	cfg := daemon.Config{
 		ProjectDir:          proj.projectDir,
 		JSONLLogPath:        proj.jsonlPath,
@@ -132,10 +80,6 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 		"PL-001: errors.Is(err, lifecycle.ErrPidfileLocked) must be true; "+
 			"this error maps to exit code 5 per PL-008a; got: %v", result.err)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PL-002: stale pidfile is overwritten; daemon starts cleanly
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_PL002_StalePidfileRecovery verifies that a stale pidfile — a
 // file present on disk from a crashed prior daemon with a dead PID recorded and
@@ -167,26 +111,19 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 
 	proj := pfScenarioProjectDir(t)
 
-	// Obtain a reliably dead PID by spawning a subprocess that exits immediately
-	// and waiting for kill(pid, 0) to return ESRCH.
 	deadPID := pfScenarioDeadPID(t)
 
-	// Write a stale pidfile: three-line format (PL-002b), dead PID, no flock.
-	// The file must exist on disk before daemon.Start so that AcquirePidfile
-	// opens an existing inode rather than creating a fresh one.
 	pidfilePath := filepath.Join(proj.projectDir, ".harmonik", "daemon.pid")
 	staleContent := fmt.Sprintf("%d\n%d\nstale-instance-pl002\n", deadPID, deadPID)
 	require.NoError(t,
 		os.WriteFile(pidfilePath, []byte(staleContent), 0o600),
 		"PL-002: writing stale pidfile must succeed")
 
-	// Confirm the stale PID is dead before proceeding.
 	killErr := syscall.Kill(deadPID, 0)
 	require.True(t, errors.Is(killErr, syscall.ESRCH),
 		"PL-002: dead PID %d must return ESRCH from kill(0); got %v — "+
 			"cannot safely test stale-pidfile path with a live PID", deadPID, killErr)
 
-	// daemon.Start with BrPath="" skips the work loop and returns promptly.
 	cfg := daemon.Config{
 		ProjectDir:          proj.projectDir,
 		JSONLLogPath:        proj.jsonlPath,
@@ -198,7 +135,6 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 		"PL-002: daemon.Start must return nil when recovering from a stale pidfile; "+
 			"got error — stale-pidfile recovery must not be mistaken for an active lock")
 
-	// Assert: daemon_started event is present in the JSONL log.
 	lines := scenarioFixtureReadJSONLLines(t, proj.jsonlPath)
 	found := false
 	for _, line := range lines {
@@ -211,7 +147,6 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 		"PL-002: daemon_started event must be emitted after stale-pidfile recovery; "+
 			"JSONL lines: %v", lines)
 
-	// Assert: pidfile now contains the current process's PID (stale PID gone).
 	gotPID, _, _, readErr := lifecycle.ReadPidfile(proj.projectDir)
 	require.NoError(t, readErr,
 		"PL-002: ReadPidfile must succeed after stale-pidfile recovery")
@@ -220,22 +155,11 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 			"stale PID was %d — AcquirePidfile must have overwritten stale content", deadPID)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers (pfScenario prefix per implementer-protocol.md §Helper-prefix)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// pfScenarioProjectPaths holds the temp-dir paths for a single scenario.
 type pfScenarioProjectPaths struct {
 	projectDir string
 	jsonlPath  string
 }
 
-// pfScenarioProjectDir creates a minimal harmonik project directory:
-//   - .harmonik/events/       (JSONL event log location)
-//   - .harmonik/beads-intents/ (intent-log protocol)
-//
-// Uses a short /tmp path when t.TempDir() would exceed the macOS 104-byte
-// sun_path limit for Unix domain sockets (sockaddr_un.sun_path).
 func pfScenarioProjectDir(t *testing.T) pfScenarioProjectPaths {
 	t.Helper()
 
@@ -268,13 +192,6 @@ func pfScenarioProjectDir(t *testing.T) pfScenarioProjectPaths {
 	}
 }
 
-// pfScenarioDeadPID spawns a subprocess that exits immediately and returns its
-// PID. The function polls kill(pid, 0) until ESRCH is returned, confirming the
-// PID is no longer in the kernel process table.
-//
-// This gives the caller a reliably dead PID for constructing stale pidfiles.
-// Using a subprocess avoids hard-coded PID magic numbers that may be live on
-// some systems.
 func pfScenarioDeadPID(t *testing.T) int {
 	t.Helper()
 
@@ -283,9 +200,6 @@ func pfScenarioDeadPID(t *testing.T) int {
 
 	pid := cmd.ProcessState.Pid()
 
-	// Poll until kill(pid, 0) returns ESRCH. cmd.Run() calls Wait() internally
-	// so the zombie is reaped; ESRCH is expected almost immediately. The 2-second
-	// deadline guards against PID recycling on a heavily loaded CI host.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if killErr := syscall.Kill(pid, 0); errors.Is(killErr, syscall.ESRCH) {

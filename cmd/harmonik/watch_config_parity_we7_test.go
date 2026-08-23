@@ -7,13 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// watch_config_parity_we7_test.go — WE7 parity test: every key in allWatchValues
-// (the single-source carrier) appears with its exact description in
-// watchConfigExampleYAML(). Enforces the single-source-of-truth invariant so
-// that --example output never drifts from the error-path descriptions.
-//
-// Bead ref: hk-we7-sender-redirect-clhh8.
-
 // TestWatchConfigParityWE7 verifies that every requiredWatchValue in
 // allWatchValues() has its keyPath AND description appearing verbatim in
 // watchConfigExampleYAML(). This is the parity invariant: whatever the
@@ -66,7 +59,6 @@ func TestResolveWatchTargets_ConfigOverrides(t *testing.T) {
 // WE9 behavioral keys (absent_thresh_s, stall_ticks) ARE fail-loud when zero/absent.
 // WE6 schedule interval keys (liveness_interval, digest_interval) ARE fail-loud when absent.
 func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
-	// With empty config: WE7 target keys must NOT appear in missing; WE9+WE6 keys must.
 	missing := checkMissingWatchValues(projectconfig.WatchConfig{})
 	missingPaths := map[string]bool{}
 	for _, m := range missing {
@@ -94,7 +86,6 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 		t.Error("staffing-starvation backstop: watch.staffing_starvation_grace must be missing when StaffingStarvationGrace=0 (fail-loud)")
 	}
 
-	// Fully populated config (all WE7 + WE9 + WE6 keys set) must have no missing entries.
 	cfg := projectconfig.WatchConfig{
 		StatusTarget:            "watch",
 		OpsmonitorTarget:        "watch",
@@ -113,13 +104,11 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 // TestCheckMissingWatchValues_WE6IntervalKeysFail is the WE6 RED test (b): a
 // missing interval key fails loud naming the key + description + 'see --example'.
 func TestCheckMissingWatchValues_WE6IntervalKeysFail(t *testing.T) {
-	// Only interval keys absent — all WE7+WE9 keys set.
 	cfg := projectconfig.WatchConfig{
 		StatusTarget:     "watch",
 		OpsmonitorTarget: "watch",
 		AbsentThreshSec:  600,
 		StallTicks:       3,
-		// LivenessInterval and DigestInterval intentionally left empty.
 	}
 	missing := checkMissingWatchValues(cfg)
 	missingPaths := map[string]string{}
@@ -134,7 +123,6 @@ func TestCheckMissingWatchValues_WE6IntervalKeysFail(t *testing.T) {
 		t.Error("WE6: watch.digest_interval must appear in missing when DigestInterval is empty")
 	}
 
-	// The WatchConfigMissingError must render "KeyPath — Description" and "see --example".
 	err := &WatchConfigMissingError{ProjectDir: "/tmp/proj", Missing: missing}
 	msg := err.Error()
 	if !strings.Contains(msg, "watch.liveness_interval") {

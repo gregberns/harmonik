@@ -61,7 +61,6 @@ func TestDistill_VerbatimDirectives(t *testing.T) {
 // only the most recent MaxDirectives entries to be kept (oldest are dropped).
 func TestDistill_MaxDirectivesPrune(t *testing.T) {
 	t.Parallel()
-	// Fill with MaxDirectives existing directives, then add 5 more.
 	existing := make([]string, MaxDirectives)
 	for i := range existing {
 		existing[i] = strings.Repeat("old", 1)
@@ -74,7 +73,6 @@ func TestDistill_MaxDirectivesPrune(t *testing.T) {
 	if len(gs.OperatorDirectives) != MaxDirectives {
 		t.Fatalf("MaxDirectivesPrune: got %d directives, want %d", len(gs.OperatorDirectives), MaxDirectives)
 	}
-	// The last 5 entries must be the new messages.
 	for i, want := range newMsgs {
 		got := gs.OperatorDirectives[MaxDirectives-len(newMsgs)+i]
 		if got != want {
@@ -87,7 +85,6 @@ func TestDistill_MaxDirectivesPrune(t *testing.T) {
 // exactly MaxDirectives after the append, no pruning occurs.
 func TestDistill_ExactlyAtMax_NoPrune(t *testing.T) {
 	t.Parallel()
-	// Start with MaxDirectives-1 existing and add exactly 1 more.
 	existing := make([]string, MaxDirectives-1)
 	for i := range existing {
 		existing[i] = "prior"
@@ -98,7 +95,6 @@ func TestDistill_ExactlyAtMax_NoPrune(t *testing.T) {
 	if len(gs.OperatorDirectives) != MaxDirectives {
 		t.Fatalf("ExactlyAtMax: got %d directives, want %d", len(gs.OperatorDirectives), MaxDirectives)
 	}
-	// Last entry must be the new message.
 	if last := gs.OperatorDirectives[MaxDirectives-1]; last != "exactly-max" {
 		t.Errorf("ExactlyAtMax: last entry = %q, want %q", last, "exactly-max")
 	}

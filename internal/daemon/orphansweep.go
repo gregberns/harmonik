@@ -34,9 +34,6 @@ const EnvHarmonikWorktreeMaxAgeDays = "HARMONIK_WORKTREE_MAX_AGE_DAYS"
 // almost certainly an orphan (active runs complete in hours).
 const DefaultHarmonikWorktreeMaxAgeDays = 7
 
-// harmonikWorktreeMaxAge returns the age threshold for .harmonik/worktrees/
-// no-lease-lock directories. Reads [EnvHarmonikWorktreeMaxAgeDays]; defaults
-// to [DefaultHarmonikWorktreeMaxAgeDays].
 func harmonikWorktreeMaxAge() time.Duration {
 	if v := os.Getenv(EnvHarmonikWorktreeMaxAgeDays); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -344,22 +341,18 @@ type DispatchReplayOwnership struct {
 	Receipts  map[core.RunID]dispatch.SessionStartReceipt
 }
 
-// coordinatorSentinelDir returns the path to .harmonik/cognition/ for projectDir.
 func coordinatorSentinelDir(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "cognition")
 }
 
-// coordinatorSentinelPath returns the supervisor.sentinel path (PL-006d).
 func coordinatorSentinelPath(projectDir string) string {
 	return filepath.Join(coordinatorSentinelDir(projectDir), "supervisor.sentinel")
 }
 
-// coordinatorPidfilePath returns the supervisor.pid path.
 func coordinatorPidfilePath(projectDir string) string {
 	return filepath.Join(coordinatorSentinelDir(projectDir), "supervisor.pid")
 }
 
-// probeCoordinatorSentinelResult is the outcome of [probeCoordinatorSentinel].
 type probeCoordinatorSentinelResult struct {
 	// Live is true when the coordinator sentinel is present AND the supervisor
 	// PID is still running. The flywheel session MUST be excluded from the
@@ -371,33 +364,16 @@ type probeCoordinatorSentinelResult struct {
 	SentinelRemoved bool
 }
 
-// probeCoordinatorSentinel checks whether the supervisor (flywheel) process is
-// live per PL-006d:
-//
-//   - Reads supervisor.sentinel at .harmonik/cognition/supervisor.sentinel.
-//   - If absent → coordinator is not running; result.Live = false.
-//   - If present → reads .harmonik/cognition/supervisor.pid and probes the PID
-//     via kill(pid, 0).
-//   - If PID live → result.Live = true (flywheel session MUST be excluded).
-//   - If PID dead or unreadable → result.Live = false; removes the stale sentinel
-//     and sets result.SentinelRemoved = true.
-//
-// Errors reading or removing the sentinel are non-fatal and are returned
-// alongside the result so the caller can log them.
 func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoordinatorSentinelResult, error) {
 	sentinelPath := coordinatorSentinelPath(projectDir)
 	pidfilePath := coordinatorPidfilePath(projectDir)
 
-	// Probe sentinel existence via stat.
 	if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
-		// Sentinel absent — coordinator is not running; nothing to exclude.
 		return probeCoordinatorSentinelResult{}, nil
 	}
 
-	// Sentinel present. Read supervisor PID.
 	pid, readErr := readSupervisorPID(pidfilePath)
 	if readErr != nil {
-		// Can't read PID — treat as stale sentinel; remove it.
 		if logger != nil {
 			logger.Printf("daemon: probeCoordinatorSentinel: cannot read supervisor.pid (%v); removing stale sentinel", readErr)
 		}
@@ -405,16 +381,13 @@ func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoord
 		return probeCoordinatorSentinelResult{SentinelRemoved: removed}, nil
 	}
 
-	// Probe PID liveness.
 	if err := syscall.Kill(pid, 0); err != nil {
 		if err == syscall.EPERM {
-			// Process exists but we lack permission — treat as live.
 			if logger != nil {
 				logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d EPERM (live); skipping flywheel session (PL-006d)", pid)
 			}
 			return probeCoordinatorSentinelResult{Live: true}, nil
 		}
-		// ESRCH or other error → process is dead; remove stale sentinel.
 		if logger != nil {
 			logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d is dead (%v); removing stale sentinel (PL-006d)", pid, err)
 		}
@@ -422,47 +395,18 @@ func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoord
 		return probeCoordinatorSentinelResult{SentinelRemoved: removed}, nil
 	}
 
-	// PID is live — coordinator is running; exclude its session.
 	if logger != nil {
 		logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d is live; skipping flywheel session (PL-006d)", pid)
 	}
 	return probeCoordinatorSentinelResult{Live: true}, nil
 }
 
-// reapDeadCoordinatorSession force-kills the coordinator (flywheel) tmux session
-// for projectHash when its owning supervisor has been confirmed dead (caller
-// established this via probeCoordinatorSentinel: sentinel present, kill(pid,0) →
-// ESRCH).  It only kills the session if it is actually present in the live tmux
-// session list — never a live supervisor's session, because the caller only
-// invokes this on the dead-PID branch.
-//
-// SAFETY (hk-9vp51 fix-forward): the ONLY session this reaper can ever target is
-// lifecycle.TmuxSessionName(projectHash, "flywheel") — the "-flywheel"-suffixed
-// coordinator session.  The daemon's own implementer-spawn-target session is a
-// DIFFERENT name (the ambient session the daemon runs in, or the
-// "-default"-suffixed session per DefaultSessionName), so this reaper can NEVER
-// kill the daemon's own live spawn-target session.  This is the explicit guard
-// the original sub-fix #3 lacked: that revert was caused by the spawn target
-// vanishing; here we prove by construction the reaper cannot be the cause.  As a
-// belt-and-suspenders assertion we refuse to kill anything that does not carry
-// the flywheel suffix.
-//
-// Returns the count of sessions reaped (0 or 1).  Non-fatal: a nil adapter, a
-// ListSessions error, or a KillSession error is logged and treated as 0/handled.
-//
-// Mirrors the reconciler-reaper pattern (hk-5pg37) and the dead-PID liveness
-// discipline of sessionIsOrphaned.  hk-9vp51.
 func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHash, adapter ltmux.Adapter, logger *log.Logger) int {
 	if adapter == nil {
 		return 0
 	}
 	flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
 
-	// Belt-and-suspenders self-guard: the reaper must ONLY ever target the
-	// flywheel-suffixed coordinator session, never the daemon's own spawn-target
-	// session.  If the name does not carry the flywheel suffix something is badly
-	// wrong; refuse rather than risk reaping a live spawn target (the prime
-	// suspect that broke the original sub-fix #3).
 	if !strings.HasSuffix(flywheelSession, "-flywheel") {
 		if logger != nil {
 			logger.Printf("daemon: reapDeadCoordinatorSession: refusing to reap %q — not a flywheel-suffixed coordinator session (hk-9vp51 self-guard)", flywheelSession)
@@ -470,9 +414,6 @@ func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHas
 		return 0
 	}
 
-	// Confirm the session exists before issuing the kill (avoids a spurious
-	// KillSession error log for the common case where the supervisor exited
-	// cleanly and already tore down its session).
 	sessions, listErr := adapter.ListSessions(ctx)
 	if listErr != nil {
 		if logger != nil {
@@ -495,8 +436,6 @@ func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHas
 		logger.Printf("daemon: reapDeadCoordinatorSession: supervisor dead — reaping leaked coordinator session %q (hk-9vp51)", flywheelSession)
 	}
 	if killErr := adapter.KillSession(ctx, flywheelSession); killErr != nil {
-		// TOCTOU (session vanished) or other error: log and still count it — we
-		// identified it as a dead-supervisor leak.
 		if logger != nil {
 			logger.Printf("daemon: reapDeadCoordinatorSession: kill-session %q error (proceeding): %v", flywheelSession, killErr)
 		}
@@ -504,7 +443,6 @@ func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHas
 	return 1
 }
 
-// readSupervisorPID reads a single ASCII decimal PID line from path.
 func readSupervisorPID(path string) (int, error) {
 	//nolint:gosec // G304: path is constructed from operator-controlled projectDir
 	f, err := os.Open(path)
@@ -525,8 +463,6 @@ func readSupervisorPID(path string) (int, error) {
 	return 0, fmt.Errorf("supervisor.pid is empty")
 }
 
-// removeStaleSentinel unlinks the sentinel file and fsyncs its parent directory.
-// Returns true if the remove succeeded, false on error (non-fatal).
 func removeStaleSentinel(sentinelPath string, logger *log.Logger) bool {
 	if err := os.Remove(sentinelPath); err != nil && !os.IsNotExist(err) {
 		if logger != nil {
@@ -534,7 +470,6 @@ func removeStaleSentinel(sentinelPath string, logger *log.Logger) bool {
 		}
 		return false
 	}
-	// fsync parent directory so the unlink is durable.
 	dir := filepath.Dir(sentinelPath)
 	//nolint:gosec // G304: dir is derived from operator-controlled projectDir
 	if dirFd, openErr := os.Open(dir); openErr == nil {
@@ -544,39 +479,14 @@ func removeStaleSentinel(sentinelPath string, logger *log.Logger) bool {
 	return true
 }
 
-// captainSentinelPath returns the captain.sentinel path (PL-006d mechanism ii).
 func captainSentinelPath(projectDir string) string {
 	return filepath.Join(coordinatorSentinelDir(projectDir), "captain.sentinel")
 }
 
-// captainPidfilePath returns the captain.pid path.
 func captainPidfilePath(projectDir string) string {
 	return filepath.Join(coordinatorSentinelDir(projectDir), "captain.pid")
 }
 
-// probeCaptainSentinel checks whether the captain session is live per PL-006d
-// mechanism (ii). Liveness is determined from the LIVE captain tmux session
-// FIRST (mirroring the crew probe), falling back to the recorded captain.pid:
-//
-//   - Reads captain.sentinel at .harmonik/cognition/captain.sentinel.
-//   - If absent → captain is not running; returns false.
-//   - If present and the captain tmux session is in the snapshot with a live
-//     pane PID → returns true (captain session MUST be excluded).
-//   - Else if the recorded captain.pid is live → returns true.
-//   - Else (session gone AND recorded PID dead/absent) → returns false and
-//     removes the stale sentinel.
-//
-// Hardening (hk-wuxg): the captain.pid file is written ONCE at launch, but the
-// captain's pane PID churns across keeper wind-down cycles (handoff → /clear →
-// /session-resume) and force-restarts. Trusting only the stale captain.pid let
-// a sweep remove the sentinel while the captain session was genuinely alive —
-// the next sweep then reaped the live captain (the "captain dies suddenly"
-// chain: handoff_timeout abort → orphan_sweep with captain_sessions_skipped:0).
-// Resolving the current pane PID from tmux makes the exclusion survive a cycle
-// abort and pid churn, exactly as probeCrewRegistrySessions does for crews.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (ii).
-// Bead ref: hk-qp3, hk-wuxg.
 func probeCaptainSentinel(
 	ctx context.Context,
 	projectDir string,
@@ -591,7 +501,6 @@ func probeCaptainSentinel(
 		return false
 	}
 
-	// PRIMARY: trust the live captain tmux session over the write-once pidfile.
 	sessionName := lifecycle.TmuxSessionName(projectHash, "captain")
 	if adapter != nil {
 		if _, present := sessionSnapshot[sessionName]; present {
@@ -605,9 +514,6 @@ func probeCaptainSentinel(
 		}
 	}
 
-	// FALLBACK: no adapter / session absent from snapshot / pane PID dead. Probe
-	// the recorded captain.pid before declaring the captain gone — covers the
-	// no-tmux daemon and the brief window before the session enters the snapshot.
 	if pid, readErr := readSupervisorPID(captainPidfilePath(projectDir)); readErr == nil && pidIsLive(pid) {
 		if logger != nil {
 			logger.Printf("daemon: probeCaptainSentinel: captain PID %d live; skipping (PL-006d ii)", pid)
@@ -615,8 +521,6 @@ func probeCaptainSentinel(
 		return true
 	}
 
-	// Captain is genuinely gone: neither the live session nor the recorded PID is
-	// alive. Remove the stale sentinel and let the generic sweep reap the session.
 	if logger != nil {
 		logger.Printf("daemon: probeCaptainSentinel: captain session %q and recorded pid both dead/absent; removing stale sentinel", sessionName)
 	}
@@ -624,49 +528,11 @@ func probeCaptainSentinel(
 	return false
 }
 
-// pidIsLive reports whether pid is a live process via kill(pid, 0). EPERM means
-// the process exists but is owned by another user — still live.
 func pidIsLive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || err == syscall.EPERM
 }
 
-// probeRunRegistrySessions exempts the tmux session of every bead run that
-// survived the last daemon from the session sweep, and returns those runs' ids.
-//
-// The ids are returned because the session is not the only thing a surviving run
-// owns. Its worktree carries a lease naming the DEAD daemon that wrote it, so
-// the lease sweep classifies that worktree stale and the step after it would
-// force-remove the directory the live agent is working in.
-//
-// The sweep at (a1) kills EVERY session carrying this project's hash that is not
-// in the exclusion set. It does not ask whether anything is alive inside. That is
-// right for the sessions it was written for and wrong for a bead run: a run in a
-// session of its own is exactly a run that was built to outlive the daemon, and
-// the boot that is supposed to adopt it killed it first. The adoption pass then
-// found a dead session and reset a bead whose agent this daemon had just killed —
-// so the protection ran, and reported success, on work it had already destroyed.
-//
-// Exemption is driven by the registry record and by a live pane, both. A record
-// naming a session whose pane is dead is a genuine orphan: the sweep reaps it and
-// adoptDeadRunSessions resets the bead, which is the recovery working.
-//
-// There is deliberately NO by-prefix fallback of the kind the crew probe carries.
-// A run writes its record BEFORE its session exists, so a live run session with no
-// record is not a cold-registry case — it is a session nothing can ever adopt or
-// attribute to a bead. Killing it costs a re-dispatch; keeping it leaks a tmux
-// session and an agent for ever.
-//
-// The second return value is what the caller acts on when the registry cannot be
-// read at all. runpkg.ScanRegistry is all-or-nothing on purpose: one torn write,
-// one file that is not a record, and it answers with an error rather than a
-// partial list. An empty exemption set is then not the truth — the truth is that
-// this boot does not know which runs are live, and the two sets read the same.
-// Returning false says so, and the caller must not destroy anything it cannot
-// prove is dead.
-//
-// A nil adapter is NOT that case: there is no tmux, so the probe has nothing to
-// ask about and no session can be live. That answer is known and empty.
 func probeRunRegistrySessions(
 	ctx context.Context,
 	projectDir string,
@@ -681,8 +547,6 @@ func probeRunRegistrySessions(
 	}
 	registry, err := runpkg.ScanRegistry(projectDir)
 	if err != nil {
-		// Never silent, whatever the caller wired: this is the boot saying it is
-		// blind, and every destructive step below it stands down because of it.
 		msg := fmt.Sprintf("daemon: probeRunRegistrySessions: THE RUN REGISTRY COULD NOT BE READ (%v). "+
 			"This boot cannot tell a live run from an orphan, so the sweep will kill no agent session "+
 			"and remove no worktree directory. The narrower steps still run: the coordinator reap "+
@@ -731,28 +595,6 @@ func probeRunRegistrySessions(
 	return liveRunIDs, true
 }
 
-// logRegistryStandDown says which destructive pass the sweep is not running
-// because it cannot tell a live run from an orphan.
-//
-// It names the pass rather than the whole sweep. The sweep does not stop: the
-// coordinator reap, the window sweep, the lease-lock file sweep, the subprocess
-// kills, the intent GC, the reconciliation-lock sweep and the stale-bead pass
-// all still run. None of those removes a worktree, and none of them kills an
-// agent tmux session, which is what the passes this function names could do.
-//
-// Their safety is not uniform, and the differences are worth knowing. The
-// window sweep reaches no live run only because ltmux.WindowName has no
-// production caller. The stale-bead pass is held off by the queue-dispatched
-// exclusion, not by the registry. The handler sweep is the real gap: it kills
-// every parentless process that carries this project hash and consults no
-// live-run set, so it is safe here only because ReadProcessEnviron reads
-// /proc, which darwin does not have. The window sweep and the handler sweep
-// each carry a bead; the stale-bead point does not, because the exclusion it
-// relies on is a designed one.
-//
-// It writes to the standard logger when no logger is injected. The daemon wires
-// no logger into the sweep, so a message that only went to the injected one
-// would be silent in exactly the deployment where it matters.
 func logRegistryStandDown(logger *log.Logger, pass string) {
 	const format = "daemon: RunOrphanSweep: SKIPPING THE %s — the run registry is unreadable, so this " +
 		"boot cannot prove any run is dead. Orphans leak until the next boot; that is recoverable and " +
@@ -764,19 +606,6 @@ func logRegistryStandDown(logger *log.Logger, pass string) {
 	log.Printf(format, pass)
 }
 
-// worktreesNotHeldByALiveRun drops from paths every worktree that belongs to a
-// run in liveRunIDs, and returns the rest.
-//
-// The lease sweep hands over the worktrees whose lease names a process that is
-// no longer running, and the caller force-removes them. For a run that ended
-// with the daemon that started it, that is the reclaim working. For a run that
-// OUTLIVED the daemon it is destruction: the lease names the dead daemon because
-// the daemon is what wrote it, while the agent that is still working in that
-// directory is a different process entirely. Every uncommitted change it has
-// made goes with the directory.
-//
-// A worktree directory is named after its run, which is how a path is matched to
-// a run without reading anything else.
 func worktreesNotHeldByALiveRun(paths []string, liveRunIDs map[string]struct{}, logger *log.Logger) []string {
 	if len(liveRunIDs) == 0 {
 		return paths
@@ -794,18 +623,6 @@ func worktreesNotHeldByALiveRun(paths []string, liveRunIDs map[string]struct{}, 
 	return kept
 }
 
-// probeCrewRegistrySessions lists crew registry records, checks each crew's
-// tmux session against the live session snapshot, and adds live crew sessions
-// (session present AND first-pane PID alive) to excludeSessions.
-//
-// REVIEW-FIX: session ABSENT from snapshot → launch-in-flight; skip
-// conservatively (do NOT call crew.Remove). Session present + PID dead →
-// let the generic sweep handle it (do NOT call crew.Remove).
-//
-// Returns the count of sessions added to excludeSessions.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (iii).
-// Bead ref: hk-qp3.
 func probeCrewRegistrySessions(
 	ctx context.Context,
 	projectDir string,
@@ -824,16 +641,12 @@ func probeCrewRegistrySessions(
 		if logger != nil {
 			logger.Printf("daemon: probeCrewRegistrySessions: crew.List error (%v); falling back to live-session scan", err)
 		}
-		// Fall through with nil records — the live-session scan below protects any
-		// crew sessions present in the snapshot despite the registry error (hk-aoapq).
 	}
 
 	skipped := 0
 	for _, rec := range records {
 		sessionName := lifecycle.TmuxSessionName(projectHash, "crew-"+rec.Name)
 
-		// If the session is not in the live snapshot, it may be launch-in-flight.
-		// Skip conservatively — do NOT call crew.Remove.
 		if _, present := sessionSnapshot[sessionName]; !present {
 			if logger != nil {
 				logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q absent from snapshot (launch-in-flight?); skipping", rec.Name, sessionName)
@@ -841,7 +654,6 @@ func probeCrewRegistrySessions(
 			continue
 		}
 
-		// Session is present — probe the first-pane PID.
 		firstHandle := ltmux.WindowHandle(sessionName + ":")
 		pid, pidErr := adapter.WindowPanePID(ctx, firstHandle)
 		if pidErr != nil {
@@ -857,16 +669,13 @@ func probeCrewRegistrySessions(
 			continue
 		}
 
-		// kill(pid, 0) probes liveness.
 		if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
-			// ESRCH = dead; let the generic sweep handle it. Do NOT call crew.Remove.
 			if logger != nil {
 				logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q pane PID %d dead (%v); letting sweep handle it", rec.Name, sessionName, pid, err)
 			}
 			continue
 		}
 
-		// PID live (or EPERM = exists but no permission = alive): exempt.
 		excludeSessions[sessionName] = struct{}{}
 		skipped++
 		if logger != nil {
@@ -874,12 +683,6 @@ func probeCrewRegistrySessions(
 		}
 	}
 
-	// Live-session-first fallback (hk-aoapq): exempt crew-suffixed sessions in the
-	// snapshot that were not already covered by the registry pass. Activates when the
-	// registry is empty, errored, or missing an entry for a live crew (cold registry /
-	// truncated JSON). A live crew-suffixed session with a live pane PID is
-	// presumptively a real crew — mirrors probeCaptainSentinel's live-session-first
-	// logic (hk-wuxg).
 	crewPrefix := lifecycle.TmuxSessionName(projectHash, "crew-")
 	for sessionName := range sessionSnapshot {
 		if _, alreadyExcluded := excludeSessions[sessionName]; alreadyExcluded {
@@ -931,20 +734,8 @@ func RunOrphanSweep(
 	var result OrphanSweepResult
 	var errs []string
 
-	// The runs whose agents outlived the last daemon. Two steps below read it: the
-	// session kill pass, which must not kill their tmux sessions, and the worktree
-	// force-removal, which must not delete the directories they are working in.
 	liveRunIDs := map[string]struct{}{}
 
-	// Whether the boot knows what liveRunIDs holds. It stays true until the run
-	// registry refuses to be read, and every step that DESTROYS something reads
-	// it before acting. An unreadable registry gives an empty exemption set that
-	// is indistinguishable from "no run survived", and acting on it kills the
-	// session and force-removes the checkout of an agent that is still working.
-	//
-	// Standing down costs an orphaned session or directory that lives until the
-	// next boot, and that is recoverable by anyone at any later time. A deleted
-	// worktree is uncommitted work that no later boot can give back.
 	liveRunsKnown := true
 
 	for runID := range cfg.DispatchOwnership.Runs {
@@ -954,21 +745,10 @@ func RunOrphanSweep(
 		liveRunIDs[runID.String()] = struct{}{}
 	}
 
-	// (PL-006d) Probe the coordinator (flywheel) sentinel before the tmux sweep.
-	// If the sentinel is present and the supervisor PID is live, exclude the
-	// flywheel session from the sweep. If the sentinel is stale (dead PID), kill
-	// the session normally and remove the sentinel.
 	excludedTmuxSessions := map[string]struct{}{}
 	for sessionName := range cfg.DispatchOwnership.Sessions {
 		excludedTmuxSessions[sessionName] = struct{}{}
 	}
-	// hk-9vp51: ALWAYS exclude the daemon's own spawn-target session from the
-	// session-level sweep — regardless of coordinator state. In the fix-forward
-	// fallback case the daemon EnsureSessions a fresh "harmonik-<hash>-default"
-	// session whose only window is an idle zsh at boot; without this exclusion the
-	// generic sweep (sessionIsOrphaned: zero non-zsh windows → orphaned) would
-	// kill the daemon's own session before the first dispatch, reproducing the
-	// reverted sub-fix #3 "session does not exist" regression.
 	if cfg.DaemonSpawnSession != "" {
 		excludedTmuxSessions[cfg.DaemonSpawnSession] = struct{}{}
 		if cfg.Logger != nil {
@@ -976,9 +756,6 @@ func RunOrphanSweep(
 		}
 	}
 
-	// Build a snapshot of live tmux sessions (needed by probeCrewRegistrySessions).
-	// We snapshot once here to avoid repeated ListSessions calls in the loop below.
-	// A nil adapter means no tmux: snapshot is empty (no sessions to exempt).
 	sessionSnapshot := map[string]struct{}{}
 	if cfg.TmuxAdapter != nil {
 		liveSessions, listErr := cfg.TmuxAdapter.ListSessions(ctx)
@@ -997,7 +774,6 @@ func RunOrphanSweep(
 			errs = append(errs, fmt.Sprintf("coordinator-sentinel: %v", probeErr))
 		}
 		if probe.Live {
-			// Coordinator is live: exclude its flywheel session from the kill sweep.
 			flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
 			excludedTmuxSessions[flywheelSession] = struct{}{}
 			result.CoordinatorSessionsSkipped = 1
@@ -1005,34 +781,15 @@ func RunOrphanSweep(
 				cfg.Logger.Printf("daemon: RunOrphanSweep: skipping coordinator session %q (orphan_sweep_skipped_coordinator_session)", flywheelSession)
 			}
 		} else if probe.SentinelRemoved {
-			// hk-9vp51: the sentinel was present but the supervisor PID is DEAD
-			// (probeCoordinatorSentinel removed the stale sentinel after kill(pid,0)
-			// returned ESRCH).  Force-reap the dead supervisor's flywheel/coordinator
-			// session at boot: it is exempt from the generic orphan classification
-			// (sessionIsOrphaned can report it "alive" when the supervisor's
-			// re-parented bash children keep the first pane PID live), so without
-			// this it leaks forever.  The supervisor PID is verified dead by the
-			// probe, so this is safe — we never kill a session of a LIVE supervisor.
 			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
 			result.CoordinatorSessionsReaped = reaped
 			result.TmuxSessionsKilled += reaped
 		} else {
-			// hk-7u002: Sentinel absent — no supervisor was ever started, or it
-			// stopped cleanly and removed its own sentinel.  The flywheel session is
-			// unconditionally orphaned: sessionIsOrphaned misses sessions whose first
-			// pane PID is live (shells from prior implementer launches that outlived the
-			// daemon crash), so without this explicit reap, harmonik-<hash>-flywheel
-			// sessions accumulate across daemon restarts until tmux resource exhaustion
-			// blocks new spawns.  At daemon startup every project-scoped session is an
-			// orphan by definition (PL-006: "the new daemon has no in-memory tracking
-			// at this point"), so reaping a sentinel-absent flywheel session is safe.
 			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
 			result.CoordinatorSessionsReaped += reaped
 			result.TmuxSessionsKilled += reaped
 		}
 
-		// (PL-006d mechanism ii) Captain sentinel: exclude the captain session when
-		// captain.sentinel is present and captain PID is alive.
 		if probeCaptainSentinel(ctx, projectDir, projectHash, cfg.TmuxAdapter, cfg.Logger, sessionSnapshot) {
 			captainSession := lifecycle.TmuxSessionName(projectHash, "captain")
 			excludedTmuxSessions[captainSession] = struct{}{}
@@ -1042,16 +799,11 @@ func RunOrphanSweep(
 			}
 		}
 
-		// (PL-006d mechanism iii) Crew registry probe: exclude live crew sessions.
 		result.CrewSessionsSkipped = probeCrewRegistrySessions(
 			ctx, projectDir, projectHash, cfg.TmuxAdapter, cfg.Logger,
 			sessionSnapshot, excludedTmuxSessions,
 		)
 
-		// Run registry probe: exclude the session of every bead run whose agent is
-		// still working. It runs HERE, before the kill pass below, because the
-		// adoption pass that looks for these runs comes after the sweep — a session
-		// killed here is already gone by the time anything asks whether to adopt it.
 		registryRunIDs, registryRead := probeRunRegistrySessions(
 			ctx, projectDir, cfg.TmuxAdapter, cfg.Logger,
 			sessionSnapshot, excludedTmuxSessions,
@@ -1065,33 +817,13 @@ func RunOrphanSweep(
 		}
 	}
 
-	// (a) Tmux sessions — two passes, and the exclusion set is the only thing that
-	// holds either of them back. A surviving run's session was written into that
-	// set a few lines above, so with an unreadable registry the set is empty and
-	// both passes reach the terminal of every agent that outlived the last daemon.
-	// Neither runs until the boot knows what is live.
-	//
-	// The two do not agree on what they kill, and the weaker one is not a second
-	// line of defence. lifecycle.SweepOrphanTmuxSessions kills EVERY session that
-	// carries this project's hash and is not in the exclusion set — it asks nothing
-	// else. ltmux.SweepOrphanTmuxSessions asks one more question through
-	// sessionIsOrphaned and spares a session whose first pane reports a live PID
-	// and holds a non-shell window. That spares a live agent only where the pane
-	// PID reads, and the unconditional pass has already run by then.
 	if liveRunsKnown {
-		//   (a1) Kill orphan harmonik-owned sessions via the legacy TmuxLister/TmuxKiller path.
 		tmuxKilled, tmuxErr := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger, excludedTmuxSessions)
 		if tmuxErr != nil {
 			errs = append(errs, fmt.Sprintf("tmux: %v", tmuxErr))
 		}
-		// hk-9vp51: accumulate (+=) rather than assign so the dead-supervisor
-		// coordinator reaper's contribution above is not overwritten.
 		result.TmuxSessionsKilled += tmuxKilled
 
-		//   (a1b) Kill orphan harmonik-owned sessions via the Adapter path (hk-kqdpf.3):
-		//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those
-		//   with dead PIDs or zero non-zsh windows. Must run BEFORE the window sweep
-		//   so dead sessions are removed before we attempt to sweep their windows.
 		adapterSessionsKilled, adapterErr := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger, excludedTmuxSessions)
 		if adapterErr != nil {
 			errs = append(errs, fmt.Sprintf("tmux-sessions-adapter: %v", adapterErr))
@@ -1101,35 +833,18 @@ func RunOrphanSweep(
 		logRegistryStandDown(cfg.Logger, "session-kill passes")
 	}
 
-	// (a2) Tmux windows (PL-021c): kill orphan windows inside operator-owned
-	// sessions whose name matches the hk-<hash6>- sentinel prefix.
 	windowsKilled, err := ltmux.SweepOrphanTmuxWindows(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("tmux-windows: %v", err))
 	}
 	result.TmuxWindowsKilled = windowsKilled
 
-	// (b) Worktree lease-lock files.
 	sweepResult, err := workspace.SweepStaleLeaseLocks(ctx, projectDir, workspace.NoWorktreeRootOverride())
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("lease-locks: %v", err))
 	}
 	result.LocksCleared = len(sweepResult.Removed)
 
-	// (b2) Remove stale worktree directories identified by (b).
-	// `git worktree prune` cannot remove registered stale worktrees; each needs
-	// an explicit `git worktree remove --force --force` (hk-ldzp). Only paths
-	// whose lease-lock recorded a dead PID (sweepResult.Removed) are targeted —
-	// directories with live PIDs or absent lease-locks are not touched here.
-	//
-	// A run that outlived the daemon is the one case where a dead lease holder
-	// does NOT mean a dead run: the lease names the daemon that wrote it, and that
-	// daemon is gone while the agent is not. Its worktree is held out of this
-	// removal, or the force-remove takes the live agent's uncommitted work.
-	//
-	// The same holds for a boot that could not read the registry at all: the
-	// exemption below has nothing to work from, so every dead-lease worktree —
-	// including the ones live agents are writing into — reads as reclaimable.
 	if !liveRunsKnown {
 		logRegistryStandDown(cfg.Logger, "worktree force-removal and age-prune")
 	}
@@ -1141,20 +856,6 @@ func RunOrphanSweep(
 		}
 	}
 
-	// (b3) Age-prune .harmonik/worktrees/ directories with no lease-lock.
-	// These are orphaned run-worktrees that SweepStaleLeaseLocks skips because
-	// there is no lock to classify (leaked by SIGKILL, crashed before lock write,
-	// or stale reviewer worktrees). Age is a conservative proxy for liveness:
-	// any worktree without a lease-lock that is older than the threshold is
-	// almost certainly not an active run. hk-qe736.
-	//
-	// The live-run exemption applies here for the same reason it applies at (b2),
-	// and it is not the same case twice. The lease sweep RELEASES a lease it
-	// judged stale before it hands the path back, so a run that outlived the
-	// daemon arrives at the NEXT boot holding no lease at all and lands in this
-	// list rather than the one above. Age says nothing about that run: it is old
-	// because the checkout is old, not because the agent stopped. Guarding only
-	// the force-removal would spare a live agent for exactly one restart.
 	agedCandidates := worktreesNotHeldByALiveRun(sweepResult.NoLock, liveRunIDs, cfg.Logger)
 	if liveRunsKnown && len(agedCandidates) > 0 {
 		agedResult := workspace.RemoveAgedNoLockWorktrees(ctx, projectDir, agedCandidates, harmonikWorktreeMaxAge(), cfg.Logger)
@@ -1164,43 +865,18 @@ func RunOrphanSweep(
 		}
 	}
 
-	// (c-i) Handler subprocesses.
 	handlersKilled, err := lifecycle.SweepOrphanHandlers(ctx, projectHash, cfg.HandlerLister, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("handlers: %v", err))
 	}
 	result.SubprocessesKilled = handlersKilled
 
-	// (c-ii) br subprocesses.
 	brSurvived, err := lifecycle.SweepOrphanBr(ctx, cfg.BrLister, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("br: %v", err))
 	}
-	// br subprocesses killed = pids enumerated − survived (survived are Cat 0 failures).
-	// We don't have a direct killed count from SweepOrphanBr, so we approximate:
-	// any PIDs that did not survive were killed. We cannot call ListOrphanBrPIDs
-	// again after the fact, so BrSubprocessesKilled counts the processes that
-	// did NOT survive. This is conservative: it undercounts only if SweepOrphanBr
-	// was called with an empty lister (returns 0 survived anyway).
-	//
-	// NOTE: SweepOrphanBr returns survivors, not the full pid list. We report
-	// 0 for br-killed when survival count is 0 and the lister returns no error.
-	// A follow-up bead can refactor SweepOrphanBr to return a (killed, survived)
-	// pair for exact accounting.
 	_ = brSurvived // survival tracked for Cat 0 precondition, not used in count here
 
-	// (d) Stale intent files.
-	//
-	// When IntentGCLedger is wired: call GCRetiredIntentsWithRedrive to delete
-	// intent files whose op has already landed (BI-031 step-3 GC path), and when
-	// IntentRedriveWriter is also non-nil, re-drive writes for files whose bead
-	// is still at the pre-state (BI-031 step-4). StaleIntentsObserved is set to
-	// the retained count; IntentsGCd is set to removed + redriven (both result in
-	// a cleaned-up file). This prevents stale_intents_observed from growing
-	// unboundedly (hk-cizvu). Bead: hk-aev8t.
-	//
-	// When IntentGCLedger is nil: fall back to EnumerateStaleIntents (count
-	// only, no removal — the legacy behavior).
 	if cfg.IntentGCLedger != nil {
 		gcResult, gcErr := lifecycle.GCRetiredIntentsWithRedrive(ctx, lifecycle.GCRetiredIntentsConfig{
 			ProjectDir:      projectDir,
@@ -1214,8 +890,6 @@ func RunOrphanSweep(
 			errs = append(errs, fmt.Sprintf("intents-gc: %v", gcErr))
 		}
 		result.StaleIntentsObserved = gcResult.Retained
-		// Fold redriven files into IntentsGCd: both step-3 (already-landed remove)
-		// and step-4 (pre-state re-drive) result in the intent file being deleted.
 		result.IntentsGCd = gcResult.Removed + gcResult.RedriveCount
 	} else {
 		staleIntents, err := lifecycle.EnumerateStaleIntents(projectDir, daemonStartTime)
@@ -1225,7 +899,6 @@ func RunOrphanSweep(
 		result.StaleIntentsObserved = staleIntents
 	}
 
-	// (e) Stale reconciliation locks (RC-002b discrimination).
 	reconResult, err := lifecycle.SweepStaleReconciliationLocks(projectDir, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("recon-locks: %v", err))
@@ -1233,12 +906,6 @@ func RunOrphanSweep(
 	result.ReconciliationLocksRemoved = reconResult.Removed
 	result.Cat3bRunIDs = reconResult.Cat3bRunIDs
 
-	// (f) Stale in_progress bead markers (PL-006 sixth bullet — hk-iuaed.4).
-	// Run after the filesystem+process sweep and after the BI-024a `br` existence
-	// check has succeeded (the latter is the caller's responsibility — see
-	// the package doc in internal/lifecycle/orphansweepbeads.go for the
-	// sequencing rationale). Skipped silently when the bead-ledger / resetter
-	// adapter isn't wired (unit-test mode).
 	if cfg.BeadLedger != nil && cfg.BeadResetter != nil {
 		queueDispatched, queueOwned := queueOwnershipWithDispatch(cfg)
 		sweepResult, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
@@ -1262,19 +929,12 @@ func RunOrphanSweep(
 		result.BeadCat3cClosed = sweepResult.Cat3cCloseCount
 	}
 
-	// (g) Sub-agent .claude/worktrees/ orphan sweep (Gap-11 — hk-yhq3m).
-	// Parallel path: does NOT touch .harmonik/worktrees/ semantics.
-	// Dry-run by default; HARMONIK_SWEEP_CLAUDE_WORKTREES=1 enables removal.
 	claudeResult, claudeErr := SweepClaudeWorktrees(ctx, projectDir, cfg.Logger)
 	if claudeErr != nil {
 		errs = append(errs, fmt.Sprintf("claude-worktrees: %v", claudeErr))
 	}
 	result.ClaudeWorktreesSwept = len(claudeResult.Orphans)
 
-	// (h) Failed-queue archive OBSERVATION. This step reports and removes
-	// nothing. The counts ride out on daemon_orphan_sweep_completed and reach
-	// the captain through the boot digest, which is where the "may these go?"
-	// judgment belongs. See internal/lifecycle/queuearchiveobserver.go.
 	result.SweptAt = time.Now()
 	archiveReport, archiveErr := lifecycle.ObserveQueueArchives(projectDir, lifecycle.ObserveQueueArchivesConfig{
 		Now:    result.SweptAt,
@@ -1309,17 +969,6 @@ func queueOwnershipWithDispatch(cfg OrphanSweepConfig) (lifecycle.QueueDispatche
 	return dispatched, owned
 }
 
-// runPeriodicCoordinatorReap is the work-loop periodic counterpart of the
-// boot-time coordinator-session reaper (hk-t08m).
-//
-// It applies the SAME sentinel-PID-dead guard used at boot (hk-9vp51 /
-// hk-7u002): if the supervisor PID is live the function is a no-op. Only when
-// the sentinel is absent or the PID is dead does it call
-// reapDeadCoordinatorSession, which itself guards that ONLY the
-// "-flywheel"-suffixed session can be targeted.
-//
-// Callers are responsible for rate-limiting invocations (e.g., via a time
-// gate in the work loop). Returns the number of sessions reaped (0 or 1).
 func runPeriodicCoordinatorReap(ctx context.Context, projectDir string, projectHash core.ProjectHash, adapter ltmux.Adapter, logger *log.Logger) int {
 	if adapter == nil || projectDir == "" {
 		return 0
@@ -1332,9 +981,7 @@ func runPeriodicCoordinatorReap(ctx context.Context, projectDir string, projectH
 		return 0
 	}
 	if probe.Live {
-		// Supervisor is running — its flywheel session must be preserved.
 		return 0
 	}
-	// Sentinel absent or PID confirmed dead: safe to reap any leaked flywheel session.
 	return reapDeadCoordinatorSession(ctx, projectHash, adapter, logger)
 }

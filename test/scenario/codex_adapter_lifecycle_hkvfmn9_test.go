@@ -23,12 +23,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures (codexLifecycleFixture prefix — bead hk-vfmn9)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexLifecycleFixtureBrPath locates the real `br` binary. Skips the test if
-// br is not on PATH.
 func codexLifecycleFixtureBrPath(t *testing.T) string {
 	t.Helper()
 	brPath, err := exec.LookPath("br")
@@ -38,12 +32,6 @@ func codexLifecycleFixtureBrPath(t *testing.T) string {
 	return brPath
 }
 
-// codexLifecycleFixtureProjectDir creates the minimal harmonik project
-// directory tree (.harmonik/events/, .harmonik/beads-intents/). Returns the
-// project dir and JSONL log path.
-//
-// EvalSymlinks is applied so that br (which rejects symlinked paths on macOS)
-// receives the canonical path.
 func codexLifecycleFixtureProjectDir(t *testing.T) (string, string) {
 	t.Helper()
 	raw := t.TempDir()
@@ -67,14 +55,8 @@ func codexLifecycleFixtureProjectDir(t *testing.T) (string, string) {
 	return projectDir, jsonlPath
 }
 
-// codexLifecycleFixtureWorkflowDot installs the canonical implementer→reviewer
-// graph (specs/examples/review-loop.dot) as <projectDir>/workflow.dot, so a
-// dot-mode run walks that two-node topology instead of the embedded
-// standard-bead.dot with its Go-toolchain commit_gate. Read from the repo, not
-// embedded, so it cannot drift from the spec example it names.
 func codexLifecycleFixtureWorkflowDot(t *testing.T, projectDir string) {
 	t.Helper()
-	// This package lives at <root>/test/scenario.
 	src := filepath.Join("..", "..", "specs", "examples", "review-loop.dot")
 	//nolint:gosec // G304: fixed repo-relative path, not user input
 	content, err := os.ReadFile(src)
@@ -86,9 +68,6 @@ func codexLifecycleFixtureWorkflowDot(t *testing.T, projectDir string) {
 	}
 }
 
-// codexLifecycleFixtureGitRepo initialises a git repository in dir with a
-// single initial commit and a bare origin remote so the daemon's post-merge
-// `git push origin main` succeeds.
 func codexLifecycleFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(d string, args ...string) {
@@ -116,8 +95,6 @@ func codexLifecycleFixtureGitRepo(t *testing.T, dir string) {
 	run(dir, "push", "origin", "main")
 }
 
-// codexLifecycleFixtureBrWrapperScript writes a wrapper script that invokes
-// realBrPath with --db <dbPath> prepended. Returns its absolute path.
 func codexLifecycleFixtureBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	scriptPath := filepath.Join(t.TempDir(), "br")
@@ -129,8 +106,6 @@ func codexLifecycleFixtureBrWrapperScript(t *testing.T, realBrPath, dbPath strin
 	return scriptPath
 }
 
-// codexLifecycleFixtureInitBr initialises a beads workspace in projectDir,
-// creates one ready bead, and returns its ID.
 func codexLifecycleFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath string) string {
 	t.Helper()
 	//nolint:gosec // G204: br args are test-internal literals
@@ -153,18 +128,8 @@ func codexLifecycleFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapper
 	return id
 }
 
-// codexLifecycleFixtureHandlerScript writes a /bin/sh wrapper script that
-// dispatches to the implementer or reviewer path based on whether
-// .harmonik/review-target.md is present in $HARMONIK_WORKSPACE_PATH:
-//
-//   - Implementer (no review-target.md): invokes harmonik-twin-codex exec
-//     --scenario trailer-commit, which makes a Refs: commit. Twin stdout is
-//     directed to /dev/null so the daemon's NDJSON watcher sees only EOF.
-//   - Reviewer (review-target.md present): writes an APPROVE verdict JSON to
-//     $HARMONIK_WORKSPACE_PATH/.harmonik/review.json.
 func codexLifecycleFixtureHandlerScript(t *testing.T, codexTwinPath string) string {
 	t.Helper()
-	// Escape single quotes in the binary path for shell embedding.
 	codexTwinEsc := strings.ReplaceAll(codexTwinPath, "'", "'\\''")
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
@@ -194,8 +159,6 @@ exit 0
 	return scriptPath
 }
 
-// codexLifecycleFixturePollBeadClosed polls `br show <id>` at 10 ms intervals
-// for up to budget. Returns true if the bead reaches "closed" status.
 func codexLifecycleFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -217,10 +180,6 @@ func codexLifecycleFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID str
 	}
 	return false
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_CodexAdapter_FullLifecycle
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestScenario_CodexAdapter_FullLifecycle verifies the full codex-adapter
 // lifecycle on the twin substrate (bead hk-vfmn9):
@@ -247,12 +206,6 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 	handlerScript := codexLifecycleFixtureHandlerScript(t, codexTwinBinaryPath)
 	beadID := codexLifecycleFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
-	// Dispatch in dot mode over the implementer→reviewer graph this fixture's
-	// handler wrapper models (it was review-loop mode until EM-015d retired it).
-	// The embedded standard-bead.dot default would additionally run its
-	// commit_gate node — `make full` — inside
-	// this three-file temp worktree, which is not a Go module, so every run
-	// would fail for reasons unrelated to the codex adapter.
 	codexLifecycleFixtureWorkflowDot(t, projectDir)
 
 	cfg := daemon.Config{
@@ -266,24 +219,19 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 
 	cancel, daemonDone := scenarioFixtureStartDaemon(t, cfg)
 
-	// Phase 1: wait for reviewer_verdict (covers full implementer→reviewer cycle).
 	const verdictBudget = 90 * time.Second
 	gotVerdict := scenarioFixturePollJSONLForEvent(t, jsonlPath,
 		[]string{string(core.EventTypeReviewerVerdict)}, verdictBudget)
 
-	// Phase 2: wait for terminal event (run_completed or run_failed).
 	const terminalBudget = 30 * time.Second
 	gotTerminal := scenarioCheckRunCompleted(t, jsonlPath, terminalBudget)
 
-	// Allow bead close to propagate before cancelling the daemon.
 	if gotTerminal {
 		codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 10*time.Second)
 	}
 
 	cancel()
 	scenarioFixtureWaitDaemon(t, daemonDone, 10*time.Second)
-
-	// ── Assertions ──────────────────────────────────────────────────────────
 
 	if !gotVerdict {
 		t.Error("timed out waiting for reviewer_verdict event")
@@ -294,7 +242,6 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 
 	lines := scenarioFixtureReadJSONLLines(t, jsonlPath)
 
-	// Sequence: run_started → reviewer_verdict → run_completed.
 	if !scenarioEventSequence(t, lines, []string{
 		string(core.EventTypeRunStarted),
 		string(core.EventTypeReviewerVerdict),
@@ -304,7 +251,6 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 			strings.Join(lines, "\n"))
 	}
 
-	// Reviewer verdict must be APPROVE.
 	foundApprove := false
 	for _, line := range lines {
 		if strings.Contains(line, string(core.EventTypeReviewerVerdict)) &&
@@ -329,7 +275,6 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 		t.Logf("git log main: %v (non-fatal — commit check skipped)", logErr)
 	}
 
-	// Bead must be closed.
 	if !codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
 	}
@@ -337,15 +282,6 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 	t.Logf("PASS beadID=%s gotVerdict=%v gotTerminal=%v", beadID, gotVerdict, gotTerminal)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TestScenario_Codex_EmptyModel_FullLifecycle (GAP-6)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexEmptyModelFixtureInitBr initialises a beads workspace, creates ONE ready
-// bead labelled harness:codex (so the daemon routes it through the REAL codex
-// harness → buildCodexLaunchSpec, exercising the empty-model --model omission),
-// and returns its ID. Unlike codexLifecycleFixtureInitBr, the bead carries the
-// harness pin so routing does not fall back to the claude default.
 func codexEmptyModelFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath string) string {
 	t.Helper()
 	//nolint:gosec // G204: br args are test-internal literals
@@ -356,13 +292,6 @@ func codexEmptyModelFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrappe
 	}
 	//nolint:gosec // G204: br args are test-internal literals
 	createCmd := exec.CommandContext(t.Context(), brWrapperPath,
-		// workflow:single is LOAD-BEARING, not decoration. It is the tier-1
-		// per-bead label — the only audited input that selects single mode
-		// (moderesolve.go resolveWorkflowMode; a daemon-level default naming
-		// single is deliberately refused). Without it the run falls through to
-		// dot mode on the embedded standard-bead.dot, whose commit_gate node
-		// runs `make full` inside this three-file temp dir that is not a Go
-		// module, and the run dies on the traversal cap (hk-5ji8t).
 		"create", "codex empty-model lifecycle test bead",
 		"--status", "open", "--labels", "harness:codex,workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
@@ -376,20 +305,6 @@ func codexEmptyModelFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrappe
 	return id
 }
 
-// codexEmptyModelFixtureCodexShim writes an executable named exactly "codex" into
-// a fresh temp dir and returns that dir. The shim is the load-bearing sensor for
-// GAP-6:
-//
-//   - It is spawned by the daemon AS the codex binary (the daemon's exec fallback
-//     resolves the relative name "codex" against the process PATH, which the test
-//     prepends with this dir).
-//   - It receives the REAL daemon-built codex argv as "$@". BEFORE invoking the
-//     twin it asserts "$@" carries NO --model token — making the empty-model
-//     --model-omission branch load-bearing end-to-end (a regression that re-added
-//     --model would make the shim exit 3 → the run fails → this test fails).
-//   - It then invokes the model-blind harmonik-twin-codex with the trailer-commit
-//     scenario so the run lands a Refs: commit exactly as the codex adapter's
-//     happy path would.
 func codexEmptyModelFixtureCodexShim(t *testing.T, codexTwinPath string) string {
 	t.Helper()
 	shimDir := t.TempDir()
@@ -430,9 +345,6 @@ exit 0
 	return shimDir
 }
 
-// codexEmptyModelFixtureModelSelected scans the JSONL log for the FIRST
-// model_selected event and returns its decoded payload. found=false when no such
-// event is present.
 func codexEmptyModelFixtureModelSelected(t *testing.T, jsonlPath string) (core.ModelSelectedPayload, bool) {
 	t.Helper()
 	for _, line := range scenarioFixtureReadJSONLLines(t, jsonlPath) {
@@ -481,14 +393,10 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 		t.Skip("harmonik-twin-codex binary not built; skipping codex empty-model scenario")
 	}
 
-	// Hermetic HOME → hermetic CODEX_HOME (billing guard materializes into
-	// <tmp>/.codex, never the real ~/.codex) and redirect ~/.claude.json.
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(tmpHome, ".claude.json"))
 
-	// Prepend the codex shim dir so the daemon's exec fallback resolves the
-	// relative "codex" binary to our sensor shim (process-PATH lookup, handler.go).
 	shimDir := codexEmptyModelFixtureCodexShim(t, codexTwinBinaryPath)
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -500,17 +408,6 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 	brWrapper := codexLifecycleFixtureBrWrapperScript(t, realBrPath, dbPath)
 	beadID := codexEmptyModelFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
-	// Single mode — codex implementer only (no reviewer), matching the
-	// codex:local matrix cell. The twin's trailer-commit lands a Refs: commit;
-	// the daemon merges it to main and closes the bead.
-	//
-	// Single mode is selected by the fixture bead's workflow:single label, NOT
-	// by WorkflowModeDefault. Setting the daemon default to single does not work
-	// and is not a shortcut for the label: resolveWorkflow refuses a daemon-level
-	// default that names single, because it is not one of the two audited
-	// compatibility inputs. The default below is therefore the standard dot one
-	// PL-004a requires every daemon to declare — daemon.Start rejects a zero
-	// WorkflowModeDefault outright, so it cannot simply be omitted.
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
@@ -531,21 +428,12 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 	cancel()
 	scenarioFixtureWaitDaemon(t, daemonDone, 10*time.Second)
 
-	// ── Assertions ────────────────────────────────────────────────────────────
-
 	if !gotTerminal {
 		t.Error("timed out waiting for run_completed/run_failed event")
 	}
 
 	lines := scenarioFixtureReadJSONLLines(t, jsonlPath)
 
-	// The run must have COMPLETED (not failed). Report the failure's OWN summary
-	// rather than naming a likely cause: a leaked --model (shim exit 3) is only
-	// one of the ways this can go red, and guessing sends the reader after a
-	// product bug that may not be there (hk-5ji8t).
-	// Decode each envelope and compare its Type rather than substring-matching the
-	// raw line: "run_failed" can appear inside an unrelated payload (e.g. a stderr
-	// tail quoting it), which would false-positive this sensor.
 	sawFailed := false
 	failedSummary := ""
 	for _, line := range lines {
@@ -571,7 +459,6 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 			failedSummary, strings.Join(lines, "\n"))
 	}
 
-	// GAP-6 core: model_selected must report harness=codex with an EMPTY model.
 	pl, found := codexEmptyModelFixtureModelSelected(t, jsonlPath)
 	if !found {
 		t.Errorf("no model_selected event found; JSONL:\n%s", strings.Join(lines, "\n"))
@@ -597,14 +484,10 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 		t.Logf("git log main: %v (non-fatal — commit check skipped)", logErr)
 	}
 
-	// Bead must be closed.
 	if !codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
 	}
 
-	// Guarded by t.Failed(): this line used to print unconditionally, so it
-	// emitted "PASS" after t.Errorf had already failed the test and a reader
-	// tailing the log saw PASS on a red run (hk-5ji8t).
 	if !t.Failed() {
 		t.Logf("PASS beadID=%s gotTerminal=%v modelSelectedFound=%v", beadID, gotTerminal, found)
 	}

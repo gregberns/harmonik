@@ -236,9 +236,6 @@ func ObserveQueueArchives(projectDir string, cfg ObserveQueueArchivesConfig) (Qu
 	return report, nil
 }
 
-// resolveKeepPerQueue returns the operator's retention number and whether one
-// was set at all. It invents no value: an absent, unparseable, or non-positive
-// setting yields (0, false).
 func resolveKeepPerQueue(cfg ObserveQueueArchivesConfig) (int, bool) {
 	if cfg.KeepPerQueue != nil {
 		if *cfg.KeepPerQueue > 0 {
@@ -264,19 +261,11 @@ func resolveKeepPerQueue(cfg ObserveQueueArchivesConfig) (int, bool) {
 	return n, true
 }
 
-// overRetentionPaths returns, per queue name, the archives beyond the newest
-// keep. archives MUST already be sorted oldest first. The result keeps that
-// order, so the oldest candidate is first.
-//
-// This is a comparison against a number the operator chose. It is not a
-// recommendation and no caller in the daemon acts on it.
 func overRetentionPaths(archives []QueueArchive, keep int) []string {
 	perQueue := make(map[string]int)
 	for _, a := range archives {
 		perQueue[a.QueueName]++
 	}
-	// remaining[q] counts how many of q's archives are still ahead of the
-	// cursor. The first (count - keep) of each queue are over retention.
 	overCount := make(map[string]int, len(perQueue))
 	for name, total := range perQueue {
 		if total > keep {

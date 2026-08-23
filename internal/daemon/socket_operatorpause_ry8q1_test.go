@@ -1,18 +1,5 @@
 package daemon_test
 
-// socket_operatorpause_ry8q1_test.go — socket routing tests for operator-pause/resume (hk-ry8q1).
-//
-// Acceptance criteria:
-//   - operator-pause op dispatched to OperatorControlHandler; returns Ok=true
-//     and controller is paused.
-//   - operator-resume op dispatched to OperatorControlHandler; returns Ok=true
-//     and controller is no longer paused.
-//   - operator-pause with nil OperatorControlHandler returns Ok=false with an
-//     error message (graceful degradation).
-//   - operator-resume with nil OperatorControlHandler returns Ok=false.
-//
-// Bead ref: hk-ry8q1.
-
 import (
 	"context"
 	"encoding/json"
@@ -22,17 +9,9 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// socketOpFixtureStartListenerFull starts RunSocketListenerFull in a goroutine
-// with the supplied OperatorControlHandler. Returns the socket path,
-// cancel func, and done channel.
 func socketOpFixtureStartListenerFull(t *testing.T, oh daemon.OperatorControlHandler) (sockPath string, cancel context.CancelFunc) {
 	t.Helper()
 
-	// macOS enforces a 104-char limit on Unix-domain socket paths
-	// (sockaddr_un.sun_path). t.TempDir() yields a ~123-char
-	// /var/folders/... path that silently overflows the limit, so
-	// RunSocketListenerFull never binds and socketFixtureWaitReady times
-	// out at 5s. Use the shared short-path helper instead.
 	sockPath = socketFixtureTempSockPath(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -45,7 +24,6 @@ func socketOpFixtureStartListenerFull(t *testing.T, oh daemon.OperatorControlHan
 	return sockPath, cancel
 }
 
-// socketOpSend writes {"op": opName} to sockPath and returns the SocketResponse.
 func socketOpSend(t *testing.T, sockPath, opName string) daemon.SocketResponse {
 	t.Helper()
 
@@ -70,10 +48,6 @@ func socketOpSend(t *testing.T, sockPath, opName string) daemon.SocketResponse {
 	return resp
 }
 
-// ---------------------------------------------------------------------------
-// TestSocketRouting_OperatorPause_PausesController
-// ---------------------------------------------------------------------------
-
 // TestSocketRouting_OperatorPause_PausesController verifies that an
 // "operator-pause" socket op is dispatched to the OperatorControlHandler,
 // the daemon returns Ok=true, and IsPaused() is set.
@@ -94,16 +68,11 @@ func TestSocketRouting_OperatorPause_PausesController(t *testing.T) {
 		t.Fatal("expected controller IsPaused=true after operator-pause socket op")
 	}
 
-	// Emitted pausing + paused events.
 	pauseEvts := collectEventsByType(col, "operator_pause_status")
 	if len(pauseEvts) != 2 {
 		t.Fatalf("expected 2 operator_pause_status events; got %d", len(pauseEvts))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestSocketRouting_OperatorResume_ResumesController
-// ---------------------------------------------------------------------------
 
 // TestSocketRouting_OperatorResume_ResumesController verifies that after a
 // pause, an "operator-resume" socket op clears the paused state.
@@ -115,12 +84,10 @@ func TestSocketRouting_OperatorResume_ResumesController(t *testing.T) {
 
 	sockPath, _ := socketOpFixtureStartListenerFull(t, ctrl)
 
-	// Pause first.
 	if resp := socketOpSend(t, sockPath, "operator-pause"); !resp.Ok {
 		t.Fatalf("operator-pause: %q", resp.Error)
 	}
 
-	// Now resume.
 	resp := socketOpSend(t, sockPath, "operator-resume")
 	if !resp.Ok {
 		t.Fatalf("operator-resume: expected Ok=true; got error=%q", resp.Error)
@@ -136,16 +103,11 @@ func TestSocketRouting_OperatorResume_ResumesController(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestSocketRouting_OperatorPause_NilHandler_ReturnsError
-// ---------------------------------------------------------------------------
-
 // TestSocketRouting_OperatorPause_NilHandler_ReturnsError verifies that when
 // no OperatorControlHandler is registered, operator-pause returns Ok=false.
 func TestSocketRouting_OperatorPause_NilHandler_ReturnsError(t *testing.T) {
 	t.Parallel()
 
-	// nil OperatorControlHandler — operator-pause/resume must return errors.
 	sockPath, _ := socketOpFixtureStartListenerFull(t, nil)
 
 	resp := socketOpSend(t, sockPath, "operator-pause")
@@ -156,10 +118,6 @@ func TestSocketRouting_OperatorPause_NilHandler_ReturnsError(t *testing.T) {
 		t.Fatal("expected non-empty Error with nil handler")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestSocketRouting_OperatorResume_NilHandler_ReturnsError
-// ---------------------------------------------------------------------------
 
 func TestSocketRouting_OperatorResume_NilHandler_ReturnsError(t *testing.T) {
 	t.Parallel()

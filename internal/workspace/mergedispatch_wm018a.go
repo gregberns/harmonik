@@ -145,8 +145,6 @@ func DetectSquashMergeConflict(workDir, taskBranch string) (result ConflictDetec
 	mergeCmd.Dir = workDir
 	mergeErr := mergeCmd.Run()
 
-	// Always undo the trial merge's mutations (staged squash on success,
-	// conflict markers + half-staged index on conflict) before returning.
 	defer func() {
 		if err := resetSquashProbe(workDir); err != nil && retErr == nil {
 			retErr = err
@@ -155,14 +153,12 @@ func DetectSquashMergeConflict(workDir, taskBranch string) (result ConflictDetec
 	}()
 
 	if mergeErr != nil {
-		// Non-zero exit from git merge --squash → conflict per WM-018a.
 		return ConflictDetectionResult{
 			HasConflict: true,
 			Reason:      "merge-exit-nonzero",
 		}, nil
 	}
 
-	// Merge succeeded; check porcelain for conflict markers.
 	statusCmd := exec.Command("git", "status", "--porcelain") //nolint:noctx // called from non-context path
 	statusCmd.Dir = workDir
 	out, err := statusCmd.Output()
@@ -182,21 +178,12 @@ func DetectSquashMergeConflict(workDir, taskBranch string) (result ConflictDetec
 	return ConflictDetectionResult{HasConflict: false}, nil
 }
 
-// resetSquashProbe restores the worktree at workDir to a clean state after a
-// trial `git merge --squash`. `git reset --hard HEAD` discards the staged
-// squash / conflicted index and working-tree changes (files the trial merge
-// added to the index are removed from the working tree too, since they are
-// tracked in the index but absent from HEAD). A squash merge sets no
-// MERGE_HEAD, so `git merge --abort` is not applicable; the leftover
-// SQUASH_MSG/MERGE_MSG scratch files are removed best-effort.
 func resetSquashProbe(workDir string) error {
 	resetCmd := exec.Command("git", "reset", "--hard", "HEAD") //nolint:noctx // called from non-context path
 	resetCmd.Dir = workDir
 	if out, err := resetCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("workspace: DetectSquashMergeConflict: git reset --hard after squash probe: %w (output: %s)", err, out)
 	}
-	// Best-effort: clear the squash scratch files so a later unrelated commit
-	// does not inherit the trial merge's prepared message.
 	gitDirCmd := exec.Command("git", "rev-parse", "--absolute-git-dir") //nolint:noctx // called from non-context path
 	gitDirCmd.Dir = workDir
 	if out, err := gitDirCmd.Output(); err == nil {
@@ -210,7 +197,6 @@ func resetSquashProbe(workDir string) error {
 	return nil
 }
 
-// porcelainLines splits git status --porcelain output into individual lines.
 func porcelainLines(out string) []string {
 	if out == "" {
 		return nil
@@ -231,14 +217,6 @@ func porcelainLines(out string) []string {
 	return lines
 }
 
-// isConflictMarker returns true for git porcelain status codes that indicate
-// an unmerged or conflict state. In git's porcelain v1 format, the first two
-// characters are the XY status code:
-//
-//   - 'U' in X or Y position indicates unmerged
-//   - "AA" (both added), "DD" (both deleted) are conflict states
-//
-// Spec ref: git-status(1) porcelain format; WM-018a conflict detection.
 func isConflictMarker(xy string) bool {
 	if len(xy) < 2 {
 		return false
@@ -247,7 +225,6 @@ func isConflictMarker(xy string) bool {
 	if x == 'U' || y == 'U' {
 		return true
 	}
-	// Both added (AA) or both deleted (DD) are also conflict states.
 	if (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
 		return true
 	}

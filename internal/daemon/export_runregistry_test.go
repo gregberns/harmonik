@@ -1,11 +1,5 @@
 package daemon
 
-// export_runregistry_test.go — test-seam exports for internal/daemon run
-// registry, run-wait and per-run event-tap fan-out (RT19.18 split of
-// export_test.go): runregistry.go, workloopeventsource.go and the captured-
-// spawn-proof seams. package daemon test file; see export_test.go header for the
-// seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 
@@ -59,9 +53,6 @@ type ExportedPerRunEventTap struct {
 	*runloop.PerRunEventTap
 }
 
-// noopExportedEmitter is a no-op handlercontract.EventEmitter used as the tap's
-// underlying bus in the fan-out regression test: it discards all emits so the
-// test exercises ONLY the per-subscriber fan-out behaviour.
 type noopExportedEmitter struct{}
 
 func (noopExportedEmitter) Emit(context.Context, core.EventType, []byte) error { return nil }

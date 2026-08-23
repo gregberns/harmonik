@@ -28,7 +28,6 @@ func TestNormTS(t *testing.T) {
 
 // TestParseSince verifies duration shorthand and ISO parsing.
 func TestParseSince(t *testing.T) {
-	// Duration shorthand.
 	got, err := ParseSince("24h")
 	if err != nil {
 		t.Fatalf("ParseSince(24h): %v", err)
@@ -36,7 +35,6 @@ func TestParseSince(t *testing.T) {
 	if !strings.HasSuffix(got, "Z") {
 		t.Errorf("ParseSince(24h) = %q, want Z-suffix", got)
 	}
-	// Must be roughly 24h ago.
 	parsed, err := time.Parse("2006-01-02T15:04:05Z", got)
 	if err != nil {
 		t.Fatalf("parse ParseSince result: %v", err)
@@ -46,7 +44,6 @@ func TestParseSince(t *testing.T) {
 		t.Errorf("ParseSince(24h) diff=%v, want ~24h", diff)
 	}
 
-	// Day shorthand.
 	got2, err := ParseSince("1d")
 	if err != nil {
 		t.Fatalf("ParseSince(1d): %v", err)
@@ -55,7 +52,6 @@ func TestParseSince(t *testing.T) {
 		t.Errorf("ParseSince(1d) = %q, want Z-suffix", got2)
 	}
 
-	// ISO passthrough.
 	iso := "2026-06-21T15:00:00Z"
 	got3, err := ParseSince(iso)
 	if err != nil {
@@ -65,7 +61,6 @@ func TestParseSince(t *testing.T) {
 		t.Errorf("ParseSince(%q) = %q, want same", iso, got3)
 	}
 
-	// Bad input.
 	_, err = ParseSince("notadate")
 	if err == nil {
 		t.Error("ParseSince(notadate): expected error, got nil")
@@ -75,7 +70,6 @@ func TestParseSince(t *testing.T) {
 // TestRunAnalysis_NoData verifies that RunAnalysis succeeds even with no data.
 func TestRunAnalysis_NoData(t *testing.T) {
 	dir := t.TempDir()
-	// Create empty events directory (kept for interface compat).
 	evDir := filepath.Join(dir, ".harmonik", "events")
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions; path is t.TempDir()-based.
 	if err := os.MkdirAll(evDir, 0o755); err != nil {

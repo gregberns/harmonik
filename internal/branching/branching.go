@@ -37,11 +37,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// configRelPath is the path of the branching config file relative to the
-// repository root.
 const configRelPath = ".harmonik/branching.yaml"
 
-// currentVersion is the only schema version this loader accepts.
 const currentVersion = 1
 
 // LandingStrategy is the enumerated set of merge strategies supported by WM-019b.
@@ -82,10 +79,6 @@ type Defaults struct {
 	ProtectBranches []string
 }
 
-// rawFile is the top-level shape decoded from the YAML file.
-// Unknown keys cause a warning (not an error) because we use yaml.v3 in
-// non-strict mode at this level, and walk the node manually for the
-// defaults sub-map.
 type rawFile struct {
 	Version  int                    `yaml:"version"`
 	Defaults map[string]interface{} `yaml:"defaults"`
@@ -146,14 +139,12 @@ func Load(repoRoot string) (Defaults, error) {
 	return parse(path, data)
 }
 
-// parse decodes the raw YAML bytes into Defaults.
 func parse(path string, data []byte) (Defaults, error) {
 	var raw rawFile
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return Defaults{}, &ErrMalformedYAML{Path: path, Cause: err}
 	}
 
-	// A completely empty file unmarshals to zero-value; treat as absent.
 	if raw.Version == 0 && len(raw.Defaults) == 0 {
 		return Defaults{}, nil
 	}
@@ -164,7 +155,6 @@ func parse(path string, data []byte) (Defaults, error) {
 
 	out := Defaults{Version: raw.Version}
 
-	// Known keys under defaults:
 	knownKeys := map[string]bool{
 		"start_from":       true,
 		"lands_on":         true,
@@ -227,8 +217,6 @@ func parse(path string, data []byte) (Defaults, error) {
 	return out, nil
 }
 
-// cacheEntry holds a cached load result together with the file mtime at the
-// time of the load. A zero mtime means the file was absent.
 type cacheEntry struct {
 	mtime   time.Time
 	result  Defaults
@@ -251,7 +239,6 @@ func LoadCached(repoRoot string) (Defaults, error) {
 
 	mtime, statErr := fileMtime(path)
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		// Unexpected stat error; skip cache and delegate to Load.
 		return Load(repoRoot)
 	}
 
@@ -262,8 +249,6 @@ func LoadCached(repoRoot string) (Defaults, error) {
 		return e.result, e.loadErr
 	}
 
-	// Cache miss or mtime changed: reload (without holding the lock across I/O
-	// for simplicity at current scale; the lock is re-acquired to write back).
 	cacheMu.Unlock()
 	result, loadErr := Load(repoRoot)
 	cacheMu.Lock()
@@ -272,8 +257,6 @@ func LoadCached(repoRoot string) (Defaults, error) {
 	return result, loadErr
 }
 
-// fileMtime returns the modification time of path, or the zero time if the
-// file does not exist.
 func fileMtime(path string) (time.Time, error) {
 	info, err := os.Stat(path)
 	if err != nil {

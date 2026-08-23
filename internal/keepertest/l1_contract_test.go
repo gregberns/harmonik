@@ -1,41 +1,5 @@
 package keepertest_test
 
-// L1 contract tier — the 507-cycle corpus golden replay (T10; RS-017 L1;
-// measurement-design §3 "L1 contract" row). This is the PERMANENT regression
-// net (D13): it needs only the new reactor, no old-path scaffold.
-//
-// Three contracts:
-//
-//  1. TestL1_RecordedCorpusDecodesStrict — every recorded OUTPUT envelope in
-//     the corpus decodes through the internal/replay typed-decode harness
-//     (EV-U3/D6) in STRICT mode, and the SR checkers characterize the frozen
-//     baseline exactly: ONE SR9 unterminated violation (the known
-//     kk-test cycle), zero other violations.
-//
-//  2. TestL1_GoldenOutcomes — every cycle's synthesized INPUT schedule
-//     replayed through Twin → reactor → FakeEffector reproduces its golden
-//     summary.json outcome. Two strata assert a FIXED behavior instead of the
-//     recorded one (measurement-design §4 required-divergence): the ONE
-//     unterminated cycle must terminate within bound (SR9 — complete +
-//     clear_unconfirmed) rather than wedge, and the 79 handoff-timeout aborts
-//     must SUSPEND (cycle_parked{handoff_pending}, same cycle id still
-//     eligible) rather than fail, because a late handoff is pending work and
-//     not a failure (SK-025, session-keeper.md §8.2/§8.4).
-//
-//  3. TestL1_ReplayedStreamInvariants — the full replayed emitted-event
-//     stream, re-enveloped and written to an events.jsonl, passes
-//     replay.Replay in strict mode with the full SR3/SR4/SR6/SR7/SR9 checker
-//     set with ZERO violations, and its aggregate counts match the frozen
-//     anchors shifted by the SR9 fix (supports the §7 metric commands 2–6).
-//
-// Replay mode: FLAT stimulus schedules (pre-scheduled TimerFired lines, the
-// T9 shape). Justification (measurement-design §2.2 note): these L1 goldens
-// are BOUNDARY goldens — terminal outcome, degraded flag, and interior
-// FIRST-OCCURRENCE order (which the flat schedule preserves: handoff_written
-// < model_done < clear_sent < terminal). They deliberately do NOT assert
-// per-cycle interior attempt COUNTS (clear_settle re-injects), which the flat
-// schedule cannot reproduce — those live in the L2 discrete-event tier.
-
 import (
 	"path/filepath"
 	"strings"
@@ -89,8 +53,6 @@ func TestL1_RecordedCorpusDecodesStrict(t *testing.T) {
 		}
 	}
 
-	// Frozen-baseline characterization: exactly the ONE known unterminated
-	// cycle, nothing else (manifest anchors: unterminated:1, 0 dup terminals).
 	if len(sr9Unterminated) != 1 || sr9Unterminated[0] != knownUnterminatedCKey {
 		t.Fatalf("recorded-baseline SR9 unterminated = %v, want exactly [%s]",
 			sr9Unterminated, knownUnterminatedCKey)
@@ -103,10 +65,6 @@ func TestL1_RecordedCorpusDecodesStrict(t *testing.T) {
 	}
 }
 
-// wantReplayOutcome maps a golden summary onto the outcome the NEW reactor
-// must produce. Identity for the two completion strata; the other two are
-// REQUIRED DIVERGENCES from what the corpus recorded (measurement-design §4),
-// and reproducing the recorded behavior would be a failure in both.
 func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) cycleOutcome {
 	t.Helper()
 	stratum, err := keepertwin.Classify(sum)
@@ -119,16 +77,8 @@ func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) cycleOutcome {
 	case keepertwin.StratumDegradedComplete:
 		return outcomeDegradedComplete
 	case keepertwin.StratumAbortHandoffTimeout:
-		// Required divergence: the recorded cycle ABORTED when the marked
-		// handoff did not arrive in the window. A late handoff is pending
-		// work and not a failure (SK-025), so the new reactor SUSPENDS the
-		// same request instead — cycle_parked{handoff_pending}, no /clear, and
-		// the same cycle id stays eligible to resume. A cycle_aborted here
-		// would mean the retired producer came back (§8.2).
 		return outcomeParkedPending
 	case keepertwin.StratumUnterminated:
-		// Required divergence: NEW terminates within bound. Matching the old
-		// unterminated behavior would be a FAILURE.
 		if sum.CKey != knownUnterminatedCKey {
 			t.Fatalf("unexpected unterminated cycle %s (baseline pins exactly one: %s)",
 				sum.CKey, knownUnterminatedCKey)
@@ -148,9 +98,6 @@ func TestL1_GoldenOutcomes(t *testing.T) {
 		t.Fatalf("corpus has %d cycles, want 507 (D7 frozen anchor)", len(sums))
 	}
 
-	// The population is counted from what the reactor ACTUALLY emitted, never
-	// from the per-cycle expectation just checked, so the aggregate stays an
-	// independent anchor rather than a restatement of the strata.
 	got := map[cycleOutcome]int{}
 	for _, sum := range sums {
 		actions := flatReplayCycle(t, sum)
@@ -162,21 +109,6 @@ func TestL1_GoldenOutcomes(t *testing.T) {
 		got[outcome]++
 	}
 
-	// Aggregate goldens, derived from the frozen manifest anchors (canary_test
-	// frozenAnchors: 507 cycles = 80 clean + 347 degraded + 79 handoff-timeout
-	// aborts + 1 unterminated) and the two required divergences:
-	//
-	//	clean completes           80 = 80 recorded clean
-	//	degraded completes       348 = 347 recorded degraded + the 1 fixed
-	//	                               unterminated cycle, whose bounded
-	//	                               terminal is a degraded completion (SR9)
-	//	parked{handoff_pending}   79 = the 79 recorded aborts, which now
-	//	                               suspend instead of failing (SK-025)
-	//
-	// The old anchor read 428 completes / 79 aborted / 348 degraded. 428 was
-	// 80+348 counted as one bucket, and the 79 moved from aborted to parked;
-	// no cycle changed which PATH it takes, only what the tail of that path
-	// is named.
 	want := map[cycleOutcome]int{
 		outcomeComplete:         80,
 		outcomeDegradedComplete: 348,

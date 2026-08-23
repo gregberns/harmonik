@@ -1,18 +1,5 @@
 package main
 
-// help_exit_codes_jasul_test.go — the help text and the code must agree on
-// exit codes (hk-help-text-claims-not-kept-jasul).
-//
-// A substring test that only looks for the words "EXIT CODES" passes on a help
-// block that documents the wrong numbers, so it measures nothing. Every test
-// here pairs the two halves: it RUNS the real entry point for an input, reads
-// the exit code the process would return, and then requires the verb's own help
-// text to list that number. Either half going stale turns the test red.
-//
-// Helper prefix: jasul (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-help-text-claims-not-kept-jasul.
-
 import (
 	"bytes"
 	"io"
@@ -25,13 +12,8 @@ import (
 	"github.com/gregberns/harmonik/internal/hookrelay"
 )
 
-// jasulHeadingRe matches a section heading in this CLI's help style: an
-// all-capitals word at column 0.
 var jasulHeadingRe = regexp.MustCompile(`^[A-Z][A-Z0-9 ()/|-]*$`)
 
-// jasulExitCodeSection returns the lines of help that follow an "EXIT CODES"
-// heading, up to the next heading. It returns "" when there is no such heading,
-// which is itself a failure worth reporting by the caller.
 func jasulExitCodeSection(help string) string {
 	lines := strings.Split(help, "\n")
 	out := make([]string, 0, len(lines))
@@ -54,10 +36,6 @@ func jasulExitCodeSection(help string) string {
 	return strings.Join(out, "\n")
 }
 
-// jasulDocumentsCode reports whether section lists code as one of its entries.
-// An entry is an indented line whose first token is the number, which is the
-// shape every EXIT CODES block in this CLI uses. Prose that happens to contain
-// the digit does not count.
 func jasulDocumentsCode(section string, code int) bool {
 	want := strconv.Itoa(code)
 	for _, line := range strings.Split(section, "\n") {
@@ -73,16 +51,12 @@ func jasulDocumentsCode(section string, code int) bool {
 	return false
 }
 
-// jasulCase is one measured input and the exit code it really produces.
 type jasulCase struct {
 	name string
 	args []string
 	want int
 }
 
-// jasulCaptureStdout runs fn with os.Stdout replaced by a pipe and returns what
-// fn printed. Needed for the verbs that print help with fmt.Print rather than
-// to an injected writer.
 func jasulCaptureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -111,12 +85,6 @@ func jasulCaptureStdout(t *testing.T, fn func()) string {
 	return got
 }
 
-// jasulCaptureBoth runs fn with both process streams replaced by pipes and
-// returns what fn wrote to each. Needed where the diagnostic matters as much as
-// the exit code: `--project=` already exited 2 earlier in this same round of
-// work, so only the message it prints distinguishes the fix from the defect.
-// Before the round it exited 0 with the wrong hash, which an exit code would
-// have caught.
 func jasulCaptureBoth(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 	outR, outW, err := os.Pipe()
@@ -162,8 +130,6 @@ func jasulCaptureBoth(t *testing.T, fn func()) (stdout, stderr string) {
 	return stdout, stderr
 }
 
-// jasulAssert runs every case and requires the help section to list the exit
-// code that case really produced.
 func jasulAssert(t *testing.T, verb, help string, cases []jasulCase, run func(args []string) int) {
 	t.Helper()
 	section := jasulExitCodeSection(help)
@@ -218,9 +184,6 @@ func TestHandlerHelpDocumentsRealExitCodes(t *testing.T) {
 		t.Fatalf("handler --help: exit code = %d, want 0", code)
 	}
 
-	// A project with a handler-state.json that holds one LIVE handler. That file
-	// is what separates exit 2 (no record at all) from exit 3 (a record that is
-	// not paused), so both codes need a real file on disk.
 	project := t.TempDir()
 	if err := os.MkdirAll(project+"/.harmonik", 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
@@ -414,18 +377,12 @@ func TestHookRelayHelpDocumentsRealExitCodes(t *testing.T) {
 		AgentType:        "claude-code",
 	}
 
-	// Exit 0: an event kind the relay does not forward. It never looks at the
-	// daemon on this path, which is why the old wording misled.
 	if got := hookrelay.Run("PreToolUse", strings.NewReader(""), io.Discard, goodEnv); got != 0 {
 		t.Errorf("hook-relay PreToolUse: exit code = %d, want 0", got)
 	} else if !jasulDocumentsCode(section, 0) {
 		t.Errorf("hook-relay really exits 0 for an unforwarded kind, but the help does not list 0:\n%s", section)
 	}
 
-	// Exit 0: SessionEnd is a kind the relay KNOWS and still does not send. The
-	// help must not list it among the kinds that reach the daemon. goodEnv names
-	// a socket that does not exist, so a run that tried to send would fail rather
-	// than pass: this asserts the no-op, not just the exit code.
 	sessionEnd := `{"session_id":"claude-1","hook_event_name":"SessionEnd","transcript_path":"/tmp/t.jsonl"}`
 	if got := hookrelay.Run("SessionEnd", strings.NewReader(sessionEnd), io.Discard, goodEnv); got != 0 {
 		t.Errorf("hook-relay SessionEnd: exit code = %d, want 0 (it must not reach the socket)", got)
@@ -440,9 +397,6 @@ func TestHookRelayHelpDocumentsRealExitCodes(t *testing.T) {
 		}
 	}
 
-	// Exit 1: an exported-but-EMPTY required variable is broken wiring, not an
-	// unmanaged shell. The help must not describe the exit-0 case as "no
-	// HARMONIK_* variables" when an empty one exits 1.
 	for _, key := range jasulRequiredRelayEnvKeys {
 		mainFixtureSaveRestoreEnv(t, key, "", false)
 	}
@@ -450,21 +404,17 @@ func TestHookRelayHelpDocumentsRealExitCodes(t *testing.T) {
 		t.Errorf("hook-relay Stop with eight exported-but-empty variables: exit code = %d, want 1", got)
 	}
 
-	// Exit 1: hook JSON that is not JSON.
 	if got := hookrelay.Run("Stop", strings.NewReader("not json"), io.Discard, goodEnv); got != 1 {
 		t.Errorf("hook-relay Stop with bad stdin: exit code = %d, want 1", got)
 	} else if !jasulDocumentsCode(section, 1) {
 		t.Errorf("hook-relay really exits 1 for bad stdin, but the help does not list 1:\n%s", section)
 	}
 
-	// Exit 1: a session id that disagrees with the environment.
 	mismatch := `{"session_id":"someone-else","hook_event_name":"Stop","transcript_path":"/tmp/t.jsonl"}`
 	if got := hookrelay.Run("Stop", strings.NewReader(mismatch), io.Discard, goodEnv); got != 1 {
 		t.Errorf("hook-relay Stop with a mismatched session id: exit code = %d, want 1", got)
 	}
 
-	// Exit 1: harmonik wiring that is present but broken. envOverride is nil so
-	// the relay reads the real environment, which is the path main.go uses.
 	for _, key := range jasulRequiredRelayEnvKeys {
 		mainFixtureSaveRestoreEnv(t, key, "", true)
 	}
@@ -473,8 +423,6 @@ func TestHookRelayHelpDocumentsRealExitCodes(t *testing.T) {
 		t.Errorf("hook-relay Stop with partial harmonik wiring: exit code = %d, want 1", got)
 	}
 
-	// Exit 0: no harmonik wiring at all. This is the shell an operator types in,
-	// and it is why a direct call looks like it did nothing.
 	mainFixtureSaveRestoreEnv(t, "HARMONIK_RUN_ID", "", true)
 	if got := hookrelay.Run("Stop", strings.NewReader(sessionEnd), io.Discard, nil); got != 0 {
 		t.Errorf("hook-relay Stop outside a harmonik session: exit code = %d, want 0", got)
@@ -500,8 +448,6 @@ func TestWakeHelpDocumentsRealExitCodes(t *testing.T) {
 		t.Fatalf("wake --help has no EXIT CODES section:\n%s", help)
 	}
 
-	// A project with no crew registry and no sleeping sessions: the only names
-	// it knows are the two builtins.
 	project := t.TempDir()
 
 	cases := []jasulCase{
@@ -522,30 +468,18 @@ func TestWakeHelpDocumentsRealExitCodes(t *testing.T) {
 		}
 	}
 
-	// The help must not promise a nudge for exit 0. The daemon answers ok whether
-	// it woke a session or found it awake, so the CLI cannot know a pane moved.
 	if strings.Contains(section, "sessions nudged") {
 		t.Errorf("wake --help still promises %q for exit 0:\n%s", "sessions nudged", section)
 	}
 }
 
-// jasulRequiredRelayEnvKeys are the HARMONIK_* variables the hook relay cannot
-// work without. The relay reads its own copy in internal/hookrelay; this list is
-// only used to build the two environments the test needs.
 var jasulRequiredRelayEnvKeys = []string{
 	"HARMONIK_RUN_ID", "HARMONIK_DAEMON_SOCKET", "HARMONIK_WORKSPACE_PATH",
 	"HARMONIK_HANDLER_SESSION_ID", "HARMONIK_CLAUDE_SESSION_ID",
 	"HARMONIK_WORKFLOW_ID", "HARMONIK_NODE_ID", "HARMONIK_AGENT_TYPE",
 }
 
-// jasulKindsHelpSaysAreSent reads the hook-relay ARGUMENTS block and returns the
-// event kinds the help claims reach the daemon. It reads only the sentence that
-// makes the claim, so a kind named elsewhere in the help — SessionEnd in the
-// exit-0 list, or an example line — does not count as a claim that it is sent.
 func jasulKindsHelpSaysAreSent(help string) map[string]bool {
-	// The marker deliberately excludes the count word. Anchoring on "four" would
-	// turn a help text that grew a sixth kind into an unread claim rather than a
-	// wrong one, and this test exists to read the claim.
 	const marker = "kinds to the"
 	i := strings.Index(help, marker)
 	out := map[string]bool{}

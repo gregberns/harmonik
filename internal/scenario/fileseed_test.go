@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// fileSeedFixtureUTF8 returns a minimally valid FileSeed with explicit utf8 encoding.
 func fileSeedFixtureUTF8(t *testing.T) FileSeed {
 	t.Helper()
 	return FileSeed{
@@ -16,7 +15,6 @@ func fileSeedFixtureUTF8(t *testing.T) FileSeed {
 	}
 }
 
-// fileSeedFixtureBase64 returns a valid FileSeed with base64-encoded contents.
 func fileSeedFixtureBase64(t *testing.T) FileSeed {
 	t.Helper()
 	return FileSeed{
@@ -26,7 +24,6 @@ func fileSeedFixtureBase64(t *testing.T) FileSeed {
 	}
 }
 
-// fileSeedFixtureDefaults returns a FileSeed with empty Encoding and Mode (zero values).
 func fileSeedFixtureDefaults(t *testing.T) FileSeed {
 	t.Helper()
 	return FileSeed{
@@ -287,8 +284,6 @@ func TestFileSeed_JSONRoundTrip(t *testing.T) {
 func TestFileSeed_OmitEmptyFields(t *testing.T) {
 	t.Parallel()
 
-	// When Encoding == "" and Mode == "", marshaled JSON MUST NOT contain those keys
-	// (omitempty contract on struct tags).
 	f := FileSeed{Contents: "text content"}
 	data, err := json.Marshal(f)
 	if err != nil {

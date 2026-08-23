@@ -1,11 +1,5 @@
 package main
 
-// remote_control_prefix_cmd_coverage_test.go — behavior tests for
-// `harmonik remote-control-prefix`. The command reads
-// daemon.remote_control_prefix from .harmonik/config.yaml and prints it (empty
-// line when absent), exit 0; a config-load error exits 1. Side-effect-free — no
-// daemon involved.
-
 import (
 	"io"
 	"os"
@@ -14,7 +8,6 @@ import (
 	"testing"
 )
 
-// captureRCPrefixIO redirects stdout+stderr around a runRemoteControlPrefixSubcommand call.
 func captureRCPrefixIO(t *testing.T, args []string) (stdout, stderr string, code int) {
 	t.Helper()
 	oldOut, oldErr := os.Stdout, os.Stderr
@@ -42,8 +35,6 @@ func captureRCPrefixIO(t *testing.T, args []string) (stdout, stderr string, code
 	return string(outB), string(errB), code
 }
 
-// writeRCConfig writes a .harmonik/config.yaml with the given daemon block body
-// and returns the project dir.
 func writeRCConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -78,7 +69,6 @@ func TestRemoteControlPrefix_PrintsConfiguredPrefix(t *testing.T) {
 }
 
 func TestRemoteControlPrefix_AbsentPrefixPrintsEmptyLine(t *testing.T) {
-	// No remote_control_prefix field: prints a bare newline, exit 0.
 	dir := writeRCConfig(t, "schema_version: 1\ndaemon:\n  target_branch: main\n")
 	stdout, stderr, code := captureRCPrefixIO(t, []string{"--project=" + dir})
 	if code != 0 {
@@ -100,7 +90,6 @@ func TestRemoteControlPrefix_EmptyProjectFlagIsError(t *testing.T) {
 }
 
 func TestRemoteControlPrefix_MalformedConfigIsError(t *testing.T) {
-	// A structurally broken YAML config triggers a load error → exit 1.
 	dir := writeRCConfig(t, "schema_version: 1\ndaemon: [not-a: mapping\n  broken\n")
 	_, stderr, code := captureRCPrefixIO(t, []string{"--project", dir})
 	if code != 1 {

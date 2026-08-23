@@ -16,7 +16,6 @@ func TestPLINV003_StartupState_MarkAndAssert(t *testing.T) {
 	s := NewStartupState()
 	s.MarkOrphanSweepComplete()
 
-	// Must not panic.
 	s.AssertOrphanSweepComplete("cat3a-intent-detector")
 }
 
@@ -37,7 +36,6 @@ func TestPLINV003_StartupState_AssertPanicsWhenNotMarked(t *testing.T) {
 		}
 	}()
 
-	// Must panic: orphan_sweep_complete_at is nil.
 	s.AssertOrphanSweepComplete("startup-recon-dispatch")
 }
 
@@ -101,7 +99,6 @@ func TestPLINV003_StartupState_PanicMessageContainsDetectorName(t *testing.T) {
 		if msg == "" {
 			t.Error("PL-INV-003: panic message is empty")
 		}
-		// Panic message must identify the detector name for crash attribution.
 		if msg != "" {
 			found := false
 			for i := 0; i <= len(msg)-len(detectorName); i++ {
@@ -162,7 +159,6 @@ func TestPLINV003_StartupState_MultipleAssertAfterMark(t *testing.T) {
 	}
 
 	for _, d := range detectors {
-		// Must not panic.
 		s.AssertOrphanSweepComplete(d)
 		_ = d // suppress lint
 	}

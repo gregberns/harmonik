@@ -1,12 +1,5 @@
 package main
 
-// sleepwake_cmd_coverage_test.go — behavior tests for the `harmonik sleep` /
-// `wake` / `sleep-gate` pure logic: socket-path resolution, the dial-error
-// classifiers, the on-disk sleep-gate marker check, the arg/flag truth tables,
-// and the request round-trip against a real in-process unix socket. The
-// live-daemon protocol paths that require a running daemon are exercised only
-// via their deterministic socket-absent (exit 17) branch.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,8 +12,6 @@ import (
 	"testing"
 )
 
-// captureSleepWakeIO redirects os.Stdout+os.Stderr around fn, returning their
-// combined text plus fn's exit code.
 func captureSleepWakeIO(t *testing.T, fn func() int) (out string, code int) {
 	t.Helper()
 	oldOut, oldErr := os.Stdout, os.Stderr
@@ -45,7 +36,6 @@ func captureSleepWakeIO(t *testing.T, fn func() int) (out string, code int) {
 }
 
 func TestResolveSleepWakeSock(t *testing.T) {
-	// Explicit absolute project dir → deterministic socket path.
 	got, code := resolveSleepWakeSock("/proj/x", "sleep")
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
@@ -54,7 +44,6 @@ func TestResolveSleepWakeSock(t *testing.T) {
 		t.Errorf("sock = %q, want %q", got, want)
 	}
 
-	// A relative dir is resolved to an absolute path before joining.
 	got, code = resolveSleepWakeSock(".", "wake")
 	if code != 0 {
 		t.Fatalf("relative dir code = %d, want 0", code)
@@ -107,7 +96,6 @@ func TestIsSleepWakeConnRefused(t *testing.T) {
 }
 
 func TestRunSleepGateSubcommand(t *testing.T) {
-	// Awake: no marker present → exit 1.
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -116,7 +104,6 @@ func TestRunSleepGateSubcommand(t *testing.T) {
 		t.Errorf("awake gate code = %d, want 1", code)
 	}
 
-	// Sleeping: marker present → exit 0.
 	marker := filepath.Join(dir, ".harmonik", ".fleet-sleeping")
 	if err := os.WriteFile(marker, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write marker: %v", err)
@@ -125,28 +112,20 @@ func TestRunSleepGateSubcommand(t *testing.T) {
 		t.Errorf("sleeping gate code = %d, want 0", code)
 	}
 
-	// --project=DIR form is also accepted.
 	if _, code := captureSleepWakeIO(t, func() int { return runSleepGateSubcommand([]string{"--project=" + dir}) }); code != 0 {
 		t.Errorf("--project= form code = %d, want 0", code)
 	}
 
-	// Unrecognized argument → exit 2 (not 1: sleep-gate has its own taxonomy).
 	if _, code := captureSleepWakeIO(t, func() int { return runSleepGateSubcommand([]string{"--bogus"}) }); code != 2 {
 		t.Errorf("bad-arg gate code = %d, want 2", code)
 	}
 
-	// --help → exit 0 and prints usage.
 	out, code := captureSleepWakeIO(t, func() int { return runSleepGateSubcommand([]string{"--help"}) })
 	if code != 0 || !strings.Contains(out, "sleep-gate") {
 		t.Errorf("help gate: code=%d out=%q", code, out)
 	}
 }
 
-// shortProjectDir returns a project dir short enough that
-// <dir>/.harmonik/daemon.sock stays under the unix sun_path limit (~104 bytes
-// on darwin), so a dial against the absent socket yields ENOENT (→ exit 17)
-// rather than EINVAL from an over-long path. t.TempDir() lives under a long
-// /var/folders/... prefix and cannot be used here.
 func shortProjectDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hksw")
@@ -224,14 +203,11 @@ func TestRunWakeSubcommand_ArgAndSocket(t *testing.T) {
 func TestSendSleepWakeRequest(t *testing.T) {
 	ctx := context.Background()
 
-	// Socket-absent → exit 17.
 	absent := filepath.Join(t.TempDir(), "missing.sock")
 	if _, code := sendSleepWakeRequest(ctx, absent, []byte(`{}`), "sleep"); code != 17 {
 		t.Errorf("absent socket code = %d, want 17", code)
 	}
 
-	// A real listener that echoes a canned response. Keep the path short so it
-	// stays under the unix-socket sun_path limit (~104 bytes on darwin).
 	base, err := os.MkdirTemp("", "sw")
 	if err != nil {
 		t.Fatalf("mkdtemp: %v", err)
@@ -272,11 +248,9 @@ func TestSendSleepWakeRequest(t *testing.T) {
 		return string(<-done)
 	}
 
-	// ok=true: the server sees our payload and we decode Ok=true.
 	if req := serve(t, sleepWakeSocketResponse{Ok: true}); !strings.Contains(req, "daemon-sleep") {
 		t.Errorf("server received %q, want it to contain the op payload", req)
 	}
 	_ = os.Remove(sockPath)
-	// ok=false with an error message surfaces verbatim to the caller.
 	serve(t, sleepWakeSocketResponse{Ok: false, Error: "fleet still draining"})
 }

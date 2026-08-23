@@ -66,7 +66,6 @@ func (NoopWatcherDeadLetter) Append(_ core.EventType, _ []byte, _ string) error 
 // Bead ref: hk-2m3bq.
 type NoopDeadLetterSink = core.NoopDeadLetterSink
 
-// Compile-time interface checks.
 var (
 	_ EventEmitter          = (*CollectingEmitter)(nil)
 	_ WatcherDeadLetterSink = NoopWatcherDeadLetter{}

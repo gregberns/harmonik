@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// captureDispatch records which downstream launcher was called and with what
-// argv, so the parser can be asserted without spawning tmux or a daemon RPC.
 type captureDispatch struct {
 	captainCalled bool
 	captainArgv   []string
@@ -44,7 +42,6 @@ func TestRunStart_Parser(t *testing.T) {
 		// substring expected in stderr for error cases.
 		wantErrSubstr string
 	}{
-		// ---- SIMPLE form ----
 		{
 			name:     "simple captain: bare, no name, no flags",
 			args:     []string{"captain"},
@@ -96,10 +93,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "takes no positional argument",
 		},
 
-		// ---- assessor: first-class standing role (M6 WS5-3) ----
-		// Routes through the same crew-registry RPC path as commodore/admiral so
-		// the daemon writes crew.Record{Name:"assessor"} + the crew-assessor tmux
-		// session that probeCrewRegistrySessions exempts from RunOrphanSweep.
 		{
 			name:     "simple assessor: bare, no name, no flags",
 			args:     []string{"assessor"},
@@ -122,7 +115,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "takes no positional argument",
 		},
 
-		// ---- ADVANCED form (all-named, no positional) ----
 		{
 			name:     "advanced captain: all named",
 			args:     []string{"captain", "--name", "captain", "--tmux", "captain"},
@@ -146,7 +138,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantArgv: []string{"start", "--name=paul", "--queue=paul-q"},
 		},
 
-		// ---- MIXING errors (positional name + any flag) ----
 		{
 			name:          "mixing error: crew bare name + flag",
 			args:          []string{"crew", "paul", "--queue", "paul-q"},
@@ -173,7 +164,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "positional name not allowed alongside flags",
 		},
 
-		// ---- captain takes NO positional name ----
 		{
 			name:          "captain rejects a bare positional (simple form)",
 			args:          []string{"captain", "skip"},
@@ -182,7 +172,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "takes no positional argument",
 		},
 
-		// ---- too many positionals ----
 		{
 			name:          "crew rejects two bare positionals",
 			args:          []string{"crew", "paul", "alpha"},
@@ -191,7 +180,6 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "at most one positional name",
 		},
 
-		// ---- role errors ----
 		{
 			name:          "unknown role",
 			args:          []string{"keeper"},

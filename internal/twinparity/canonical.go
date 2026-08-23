@@ -32,16 +32,6 @@ type Stream struct {
 	Events []CanonEvent
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dual-field kind extraction (load-bearing)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// kindOf extracts the event kind using the dual-field rule that mirrors
-// test/scenario/harness_test.go:302-311: prefer the envelope "event_type"
-// field; fall back to the embedded raw-payload "type" field when "event_type"
-// is absent or empty. The daemon publishes with an "event_type" envelope while
-// the raw wire line carries only "type"; missing this fallback silently reads
-// empty kinds off raw wire lines.
 func kindOf(obj map[string]json.RawMessage) string {
 	var et string
 	if raw, ok := obj["event_type"]; ok {
@@ -59,12 +49,6 @@ func kindOf(obj map[string]json.RawMessage) string {
 	return et
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Volatile-field policy
-// ─────────────────────────────────────────────────────────────────────────────
-
-// volatileFields are dropped wholesale during canonicalization: identity/run
-// correlators, timestamps, and absolute-path carriers that vary per run.
 var volatileFields = map[string]struct{}{
 	"event_id":          {},
 	"timestamp":         {},
@@ -83,9 +67,6 @@ var volatileFields = map[string]struct{}{
 	"type":       {},
 }
 
-// isVolatileKey reports whether a field key is volatile and must be dropped:
-// the explicit set above, any *_at timestamp field, or any session_log_* path
-// carrier.
 func isVolatileKey(k string) bool {
 	if _, ok := volatileFields[k]; ok {
 		return true
@@ -99,17 +80,12 @@ func isVolatileKey(k string) bool {
 	return false
 }
 
-// Scrub regexes for free-text values retained in the whitelist. UUIDs, PIDs,
-// and absolute paths are replaced with stable placeholders so run-specific
-// noise embedded in an otherwise-stable field does not defeat equality.
 var (
 	uuidRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 	pathRe = regexp.MustCompile(`/(?:[^\s/]+/)+[^\s/]+`)
 	pidRe  = regexp.MustCompile(`\bpid[=:]\s*\d+\b`)
 )
 
-// scrubValue replaces UUID / PID / absolute-path substrings in a retained
-// free-text value with stable placeholders.
 func scrubValue(v string) string {
 	v = uuidRe.ReplaceAllString(v, "<uuid>")
 	v = pidRe.ReplaceAllString(v, "pid=<pid>")
@@ -117,13 +93,6 @@ func scrubValue(v string) string {
 	return v
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stable payload whitelist (start minimal per WS3-F1)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// stablePayloadFields is the per-kind whitelist of payload fields retained
-// after volatile-field dropping. Kinds absent from this map are kind-only
-// (no retained payload). Intentionally minimal — extend deliberately.
 var stablePayloadFields = map[string][]string{
 	"outcome_emitted":  {"outcome_status", "node_id"},
 	"agent_completed":  {"exit_code"},
@@ -131,8 +100,6 @@ var stablePayloadFields = map[string][]string{
 	"hook_fired":       {"hook_type"}, // retained only when present
 }
 
-// rawValueToString renders a raw JSON value as a stable string. String values
-// are returned unquoted; everything else falls back to its compact JSON form.
 func rawValueToString(raw json.RawMessage) string {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
@@ -141,9 +108,6 @@ func rawValueToString(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// canonRecord canonicalizes a single decoded JSONL object into a CanonEvent.
-// seq is the 0-based stream position; firstTS is the envelope timestamp of the
-// stream's first record (zero if unknown) used to derive elapsed.
 func canonRecord(obj map[string]json.RawMessage, seq int, firstTS time.Time) CanonEvent {
 	ev := CanonEvent{
 		Kind:   kindOf(obj),
@@ -151,7 +115,6 @@ func canonRecord(obj map[string]json.RawMessage, seq int, firstTS time.Time) Can
 		RawSeq: seq,
 	}
 
-	// Retain the envelope timestamp into elapsed (timing-only).
 	if ts, ok := recordTimestamp(obj); ok && !firstTS.IsZero() {
 		ev.elapsed = ts.Sub(firstTS)
 	}
@@ -173,9 +136,6 @@ func canonRecord(obj map[string]json.RawMessage, seq int, firstTS time.Time) Can
 	return ev
 }
 
-// recordTimestamp extracts the envelope timestamp of a record, trying the
-// common timestamp-bearing fields in priority order. Returns ok=false when no
-// parseable timestamp is present.
 func recordTimestamp(obj map[string]json.RawMessage) (time.Time, bool) {
 	for _, field := range []string{"timestamp", "emitted_at", "transitioned_at"} {
 		raw, ok := obj[field]

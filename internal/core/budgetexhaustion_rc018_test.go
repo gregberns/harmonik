@@ -6,27 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// budgetexhaustion_rc018_test.go — tests for the RC-018 budget-exhaustion
-// handler sequence and fallback-verdict synthesis.
-//
-// Covers:
-//   - BudgetExhaustionStep enum validity and count.
-//   - BudgetExhaustionHandlerSequence: 5 steps in spec order, non-empty labels
-//     and descriptions, correct fsync-boundary classification.
-//   - SynthesizeBudgetExhaustionFallbackVerdict: valid output for valid inputs;
-//     correct rejection of zero RunIDs and invalid SnapshotToken; fallback
-//     verdict is escalate-to-human; synthesized event passes VerdictEvent.Valid().
-//   - Indistinguishability: synthesized VerdictEvent has the same shape as an
-//     investigator-emitted escalate-to-human per RC-018.
-//   - Crash-between-steps: crash between step (3) and step (4) leaves
-//     budget_exhausted event without a verdict commit → Cat 3b via
-//     DiscoverVerdictExecution.
-//   - No-commit invariant: RC-018 does NOT write a reconciliation commit.
-//
-// Spec ref: specs/reconciliation/spec.md §4.4 RC-018.
-
-// ---- BudgetExhaustionStep enum ----
-
 // TestBudgetExhaustionStep_FiveValuesAreDeclared verifies that exactly five
 // BudgetExhaustionStep constants are declared and that their string values
 // match the spec ordering labels.
@@ -62,8 +41,6 @@ func TestBudgetExhaustionStep_FiveValuesAreDeclared(t *testing.T) {
 		})
 	}
 }
-
-// ---- BudgetExhaustionHandlerSequence ----
 
 // TestBudgetExhaustionHandlerSequence_HasFiveSteps verifies that
 // BudgetExhaustionHandlerSequence returns exactly five steps.
@@ -136,7 +113,6 @@ func TestBudgetExhaustionHandlerSequence_FsyncBoundaryOnSteps3And4(t *testing.T)
 		t.Fatalf("unexpected sequence length %d", len(seq))
 	}
 
-	// Steps are 0-indexed; step (3) = index 2, step (4) = index 3.
 	for i, step := range seq {
 		wantFsync := i == 2 || i == 3 // steps (3) and (4)
 		if step.IsFsyncBoundary != wantFsync {
@@ -146,9 +122,6 @@ func TestBudgetExhaustionHandlerSequence_FsyncBoundaryOnSteps3And4(t *testing.T)
 	}
 }
 
-// ---- SynthesizeBudgetExhaustionFallbackVerdict ----
-
-// rc018FallbackFixture returns valid inputs for SynthesizeBudgetExhaustionFallbackVerdict.
 func rc018FallbackFixture(t *testing.T) (RunID, RunID, SnapshotToken) {
 	t.Helper()
 	return RunID(uuid.Must(uuid.NewV7())),
@@ -207,13 +180,11 @@ func TestSynthesizeBudgetExhaustionFallbackVerdict_Indistinguishable(t *testing.
 
 	reconID, targetID, snap := rc018FallbackFixture(t)
 
-	// Daemon-synthesized fallback.
 	synthetic, err := SynthesizeBudgetExhaustionFallbackVerdict(reconID, targetID, snap)
 	if err != nil {
 		t.Fatalf("RC-018: unexpected error: %v", err)
 	}
 
-	// Investigator-emitted escalate-to-human (direct construction, same shape).
 	investigatorEmitted := VerdictEvent{
 		Verdict:           VerdictEscalateToHuman,
 		InvestigatorRunID: uuid.Must(uuid.NewV7()),
@@ -222,7 +193,6 @@ func TestSynthesizeBudgetExhaustionFallbackVerdict_Indistinguishable(t *testing.
 		SchemaVersion:     1,
 	}
 
-	// Both must be valid.
 	if !synthetic.Valid() {
 		t.Error("RC-018/indistinguishable: synthesized VerdictEvent.Valid() = false")
 	}
@@ -230,7 +200,6 @@ func TestSynthesizeBudgetExhaustionFallbackVerdict_Indistinguishable(t *testing.
 		t.Error("RC-018/indistinguishable: investigator-emitted VerdictEvent.Valid() = false; fixture error")
 	}
 
-	// Structural equality of shape-determining fields.
 	if synthetic.Verdict != investigatorEmitted.Verdict {
 		t.Errorf("RC-018/indistinguishable: Verdict mismatch: %q vs %q", synthetic.Verdict, investigatorEmitted.Verdict)
 	}
@@ -330,8 +299,6 @@ func TestSynthesizeBudgetExhaustionFallbackVerdict_SnapshotTokenPreserved(t *tes
 	}
 }
 
-// ---- Crash-between-steps invariants ----
-
 // TestRC018_CrashBetweenSteps3And4_RoutesViaCat3b verifies the spec invariant
 // that a crash between step (3) (budget_exhausted emitted, fsync-boundary) and
 // step (4) (fallback verdict emitted, fsync-boundary) routes through Cat 3b
@@ -343,37 +310,16 @@ func TestSynthesizeBudgetExhaustionFallbackVerdict_SnapshotTokenPreserved(t *tes
 func TestRC018_CrashBetweenSteps3And4_RoutesViaCat3b(t *testing.T) {
 	t.Parallel()
 
-	// After a crash between steps (3) and (4):
-	// - budget_exhausted event is durable (fsync-boundary), but
-	// - no verdict commit landed (step (4) did not complete).
-	// The startup detector sees: verdict commit absent → VerdictDiscoveryStateClean
-	// → Cat 5 appears from DiscoverVerdictExecution for a clean branch,
-	// BUT the budget_exhausted event in the JSONL log is the trigger for Cat 3b.
-	//
-	// At the pure type layer, we can verify that BranchVerdictEvidence{HasVerdictCommit: false}
-	// maps to VerdictDiscoveryStateClean, which is the state the startup detector
-	// sees; the Cat 3b routing is then applied by the detector when it also sees
-	// the durable budget_exhausted event.
-	//
-	// This test is a unit-layer proxy for the scenario-layer crash-recovery test
-	// described in TESTING.md §4 and RC-031. It verifies the detection-state
-	// transition, not the full daemon startup sequence.
 	evidence := BranchVerdictEvidence{
 		HasVerdictCommit:         false, // crash before step (4) → no verdict commit
 		HasVerdictExecutedCommit: false,
 	}
 	state, cat := DiscoverVerdictExecution(evidence)
 
-	// The branch is clean from a verdict-commit perspective; the Cat 3b routing
-	// arises from the durable budget_exhausted event detected by the JSONL-layer
-	// detector (not modeled at this pure layer). At this layer the clean-branch
-	// state correctly indicates no verdict commit.
 	if state != VerdictDiscoveryStateClean {
 		t.Errorf("RC-018/crash-3to4: VerdictDiscoveryState = %q, want %q (no verdict commit landed)",
 			state, VerdictDiscoveryStateClean)
 	}
-	// Cat 5 is the branch-inspection result; the full Cat 3b routing is applied
-	// by the daemon's JSONL-layer startup detector when it also sees budget_exhausted.
 	if cat != ReconciliationCategoryCat5 {
 		t.Errorf("RC-018/crash-3to4: branch-level category = %q, want %q (Cat 3b routing is applied at JSONL-detector layer)",
 			cat, ReconciliationCategoryCat5)
@@ -397,7 +343,6 @@ func TestRC018_NoCommitBeforeStep5(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RC-018: unexpected error: %v", err)
 	}
-	// EvidenceRef is nil because no reconciliation commit is written before step (5).
 	if v.EvidenceRef != nil {
 		t.Errorf("RC-018/no-commit: synthesized VerdictEvent.EvidenceRef = %q (non-nil); "+
 			"budget-exhaustion handler must NOT write a reconciliation commit (RC-018)",

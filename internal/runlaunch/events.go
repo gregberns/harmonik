@@ -1,13 +1,5 @@
 package runlaunch
 
-// events.go — the CHB-018 pre-exec announcement relay, the launch/ready anomaly
-// events, and the implementer phase-complete report.
-//
-// Carved out of internal/daemon/workloop.go by P2 unit E5 RT19b (pure move). No
-// emission string and no core.EventType constant changed, and the ORDERING
-// inside EmitPreExecBeforeLaunch (launch_initiated held back until after
-// SpawnWindow returns, hk-4l7zs) is preserved exactly.
-
 import (
 	"context"
 	"encoding/json"
@@ -43,12 +35,6 @@ func EmitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, r
 	if err := json.Unmarshal(msg, &envelope); err == nil && envelope.Type != "" {
 		eventType = core.EventType(envelope.Type)
 	}
-	// hk-sll-empty-logpath-7dxdw: session_log_location carries its own validity
-	// rule (core.SessionLogLocationPayload.Valid, event-model.md §8.3.7) and
-	// nothing on this path ever asked. A payload with an empty log_path reached
-	// events.jsonl on every pi and codex run. Ask now, and drop loudly: a missing
-	// event with a stderr line naming it is easier to diagnose than an event that
-	// lies about where the session log is.
 	if eventType == core.EventTypeSessionLogLocation {
 		var pl core.SessionLogLocationPayload
 		if err := json.Unmarshal(msg, &pl); err != nil || !pl.Valid() {
@@ -61,8 +47,6 @@ func EmitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, r
 	_ = bus.EmitWithRunID(ctx, runID, eventType, msg) //nolint:errcheck // best-effort observability emit; a bus failure must never fail the run, and the underlying condition is already surfaced on the reopen/done path
 }
 
-// preExecMsgType extracts the "type" field of a pre-exec message, or "" on
-// parse failure.
 func preExecMsgType(msg json.RawMessage) string {
 	var envelope struct {
 		Type string `json:"type"`

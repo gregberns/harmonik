@@ -1,9 +1,5 @@
 package core
 
-// templateparams_test.go — unit tests for ValidateTemplateParams (WG-045
-// ingestion hygiene). Defense-in-depth: reject malformed keys, control chars
-// (NUL/newline/tab), and over-length values before a value can reach substitution.
-
 import (
 	"errors"
 	"strings"

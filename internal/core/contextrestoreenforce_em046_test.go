@@ -8,10 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ctxRestoreEnforceFixtureTransitionBase returns a Transition skeleton suitable
-// for use with NewContextRestoreTransition. All required fields are set except
-// TransitionKind, OutcomeStatus, ActorRole, and Evidence (which are enforced by
-// the constructor). Helper prefix: ctxRestoreEnforce per hk-b3f.107.
 func ctxRestoreEnforceFixtureTransitionBase(t *testing.T, runID RunID) Transition {
 	t.Helper()
 
@@ -44,17 +40,12 @@ func ctxRestoreEnforceFixtureTransitionBase(t *testing.T, runID RunID) Transitio
 		ChosenAction:  ActionDescriptor("context-restore"),
 		PolicyVersion: PolicyVersion("v1.0.0"),
 		SchemaVersion: 1,
-		// TransitionKind, OutcomeStatus, ActorRole, Evidence are set by constructor.
 	}
 }
 
-// ctxRestoreEnforceFixtureRunID allocates a fixed RunID for context-restore
-// enforcement tests (hk-b3f.107).
 func ctxRestoreEnforceFixtureRunID() RunID {
 	return RunID(uuid.MustParse("01942b3c-0000-7000-8000-000000001073"))
 }
-
-// --- ValidateContextRestoreInitiationSource ---
 
 // TestContextRestoreEnforce_ValidateDaemonPermitted verifies that
 // ActorRoleDaemon is permitted to initiate a context-restore transition (EM-046).
@@ -120,15 +111,12 @@ func TestContextRestoreEnforce_ValidateNonContextRestoreKindsUnrestricted(t *tes
 		TransitionKindPolicyRollback,
 	}
 	for _, kind := range nonRestoreKinds {
-		// Even a handler role is fine for non-context-restore kinds.
 		err := ValidateContextRestoreInitiationSource(kind, ActorRolePlanner)
 		if err != nil {
 			t.Errorf("kind %q with Planner role: expected nil error, got: %v", kind, err)
 		}
 	}
 }
-
-// --- NewContextRestoreTransition ---
 
 // TestContextRestoreEnforce_NewDaemonInitiated verifies that
 // NewContextRestoreTransition succeeds for ActorRoleDaemon and enforces the
@@ -305,7 +293,6 @@ func TestContextRestoreEnforce_ErrSentinelIsDistinct(t *testing.T) {
 		t.Errorf("ValidateContextRestoreInitiationSource should wrap ErrContextRestoreHandlerForbidden; got: %v", err)
 	}
 
-	// Confirm it does NOT match unrelated sentinel.
 	if errors.Is(err, ErrRetryCapExhausted) {
 		t.Error("ErrContextRestoreHandlerForbidden must not match ErrRetryCapExhausted")
 	}

@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// diffhashFixtureRepo creates a git repository with an initial commit and
-// returns the repo path and the initial commit SHA.
-//
-// Prefixed diffhashFixture per implementer-protocol helper-prefix discipline
-// (bead hk-7om2q.17).
 func diffhashFixtureRepo(t *testing.T) (repoPath, initialSHA string) {
 	t.Helper()
 
@@ -44,11 +39,6 @@ func diffhashFixtureRepo(t *testing.T) (repoPath, initialSHA string) {
 	return dir, sha
 }
 
-// diffhashFixtureCommit adds a file with the given name and content to the
-// repo and creates a commit, returning the new commit SHA.
-//
-// Prefixed diffhashFixture per implementer-protocol helper-prefix discipline
-// (bead hk-7om2q.17).
 func diffhashFixtureCommit(t *testing.T, repoPath, filename, content string) string {
 	t.Helper()
 
@@ -89,7 +79,6 @@ func TestEM015e_ComputeDiffHash_EmptyDiffIsNonError(t *testing.T) {
 	if hash == "" {
 		t.Error("ComputeDiffHash (empty diff): returned empty hash; want non-empty SHA-256 hex string")
 	}
-	// SHA-256 hex is always 64 characters.
 	if len(hash) != 64 {
 		t.Errorf("ComputeDiffHash (empty diff): hash length = %d; want 64", len(hash))
 	}
@@ -136,10 +125,8 @@ func TestEM015e_ComputeDiffHash_DifferentDiffProducesDifferentHash(t *testing.T)
 
 	repoPath, parentSHA := diffhashFixtureRepo(t)
 
-	// First iteration: add one file.
 	headSHA1 := diffhashFixtureCommit(t, repoPath, "feature.txt", "hello world\n")
 
-	// Second iteration: add a different file (different diff vs parent).
 	headSHA2 := diffhashFixtureCommit(t, repoPath, "extra.txt", "extra content\n")
 
 	hashBase, err := ComputeDiffHash(t.Context(), repoPath, parentSHA, headSHA1)

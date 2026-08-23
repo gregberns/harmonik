@@ -1,18 +1,5 @@
 package core
 
-// Stress tests for EventIDGenerator per event-model.md §10.2 (EV-001–EV-008 ordering).
-//
-// Coverage matrix:
-//
-//	TestUUIDv7_IntraProcessMonotonicity  — 100 000-iteration tight-loop; EV-002a
-//	TestUUIDv7_SameMillisecondLoad       — same-ms injection at stress volume; EV-002a tiebreaker
-//	TestUUIDv7_ConcurrentMonotonicity    — N goroutines × M calls; no duplicates; EV-002a
-//	TestUUIDv7_CrossRestart              — generator state-rewind simulating daemon restart; EV-002c
-//	TestUUIDv7_ClockRegressionStress     — repeated rollback injections; EV-002a RFC 9562 §6.2 method 1
-//	TestUUIDv7_ShapeConformance          — every output is a valid UUIDv7; EV-002
-//
-// Helper prefix: uuidv7Fixture (per implementer-protocol.md helper-prefix discipline, bead hk-hqwn.62).
-
 import (
 	"bytes"
 	"fmt"
@@ -24,7 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// uuidv7FixtureLT returns true when a is strictly less than b as big-endian 128-bit unsigned integers.
 func uuidv7FixtureLT(a, b uuid.UUID) bool {
 	for i := 0; i < 16; i++ {
 		if a[i] < b[i] {
@@ -37,9 +23,6 @@ func uuidv7FixtureLT(a, b uuid.UUID) bool {
 	return false // equal
 }
 
-// uuidv7FixtureSortAndDedup sorts ids in-place (lexicographic) and returns the first
-// pair of indices where ids[i] >= ids[i+1] after sorting; (-1, -1) means all strictly
-// increasing.  Used by the concurrent test to report collision context.
 func uuidv7FixtureSortAndDedup(ids []EventID) (int, int) {
 	sort.Slice(ids, func(i, j int) bool {
 		ui := uuid.UUID(ids[i])
@@ -201,7 +184,6 @@ func TestUUIDv7_ConcurrentMonotonicity(t *testing.T) {
 //
 // Spec: event-model.md §4.1 EV-002c / §10.2 "HWM-restart".
 func TestUUIDv7_CrossRestart(t *testing.T) {
-	// Phase 1: pre-restart process — generate a few IDs.
 	preRestart := NewEventIDGenerator()
 	var hwm EventID
 	for i := 0; i < 10; i++ {
@@ -212,16 +194,11 @@ func TestUUIDv7_CrossRestart(t *testing.T) {
 		hwm = id
 	}
 
-	// Phase 2: simulate daemon restart.
-	// Build a new generator seeded with the HWM (as a daemon startup would do).
-	// The generator's `last` field is the mechanism: set it to the HWM so that
-	// any fresh UUID that is not strictly greater triggers the increment path.
 	postRestart := &EventIDGenerator{
 		last: uuid.UUID(hwm),
 		// Inject a newV7 that returns a value strictly less than the HWM
 		// (simulating NTP regression or VM pause/resume post-restart per EV-002c rationale).
 		newV7: func() (uuid.UUID, error) {
-			// Decrement the HWM by 1 to produce a "regressed" clock value.
 			regressed := uuid.UUID(hwm)
 			for i := 15; i >= 0; i-- {
 				if regressed[i] > 0 {
@@ -255,15 +232,11 @@ func TestUUIDv7_CrossRestart(t *testing.T) {
 func TestUUIDv7_ClockRegressionStress(t *testing.T) {
 	const n = 10_000
 
-	// Seed the generator with a known starting value.
 	seed, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("EV-002a clock-regression stress: uuid.NewV7() seed: %v", err)
 	}
 
-	// callCount tracks how many times the injected newV7 has been called.
-	// On call k, return seed decremented by k so the clock always appears to
-	// roll back relative to the current last value.
 	var callCount int
 	var mu sync.Mutex
 
@@ -273,8 +246,6 @@ func TestUUIDv7_ClockRegressionStress(t *testing.T) {
 			k := callCount
 			callCount++
 			mu.Unlock()
-			// Return seed - (k+1), which is always strictly less than seed,
-			// ensuring the clock regression path fires on every single call.
 			v := seed
 			for sub := k + 1; sub > 0; sub-- {
 				for i := 15; i >= 0; i-- {

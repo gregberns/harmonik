@@ -2,72 +2,6 @@
 
 package keeper
 
-// actionable_warn_self_service_zj1y_integration_test.go — LIVE/integration
-// definition-of-done test for hk-zj1y: prove, DETERMINISTICALLY (not via organic
-// context fill), the three keeper behaviors that compose the
-// "actionable warn → self-service restart → identity re-tie" flow:
-//
-//   R3 (hk-vs4u) — Actionable warn names the VERBATIM self-service command. A LOW
-//     configured warn threshold (set in .harmonik/config.yaml's keeper block, NOT
-//     a code default) drives a warn crossing on the very first tick. The text the
-//     production warn-inject path SELECTS (the exact selectWarnText call the
-//     watcher loop makes at watcher.go ~1286 on the nil-InjectFn branch) contains
-//     the verbatim `harmonik keeper restart-now --agent <agentname>` command. We
-//     ALSO run the real Watcher.Run loop end-to-end and assert a real
-//     session_keeper_warn event fires at the LOW configured threshold (proving the
-//     config value — not the compiled 200000 default — armed the warn).
-//
-//   hk-1ryc — Exactly ONE /clear (no double-restart). After the agent's own
-//     `harmonik keeper restart-now` synchronously injects /clear and the gauge
-//     drops below the act threshold, the Cycler's Gate-3 (belowActThreshold)
-//     suppresses any SECOND auto-cycle on the next tick — using the IN-PROCESS
-//     gauge signal, NO marker file. We drive one auto-cycle (one /clear), then a
-//     dropped gauge, and assert still exactly one /clear and exactly one
-//     cycle_complete.
-//
-//   R4 (hk-1tn2 re-resolve) — Identity re-tie after a post-/clear new-session-id
-//     mint. With .managed bound to the OLD SID and the gauge + .sid both endorsing
-//     a NEW (rotated) UUIDv4 SID, the Watcher re-adopts the new SID (calls
-//     WriteManagedSessionFn with it) WITHOUT emitting any no_gauge(foreign_session)
-//     event — i.e. no sustained (>1-tick) foreign blindness.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// HONESTY — what is proven MECHANICALLY here vs. what only LIVE fleet use validates
-// ─────────────────────────────────────────────────────────────────────────────
-// PROVEN MECHANICALLY by this test (no fakes for the parts under test):
-//   - The LOW config warn threshold flows config.yaml → LoadProjectConfig →
-//     ResolveKeeperConfig → buildKeeperConfigs is exercised by the SIBLING
-//     cmd/harmonik config_e2e test; HERE the low warn is applied directly to the
-//     real WatcherConfig and the real Watcher.Run loop fires a real
-//     session_keeper_warn at it (criterion 1).
-//   - The SELECTED warn text (the production selectWarnText path) carries the
-//     verbatim restart-now command for THIS agent name (criterion 2).
-//   - Gate-3 gauge-drop suppression: the real Cycler fires exactly ONE /clear and
-//     ONE cycle_complete across a high→drop gauge transition (criterion 3).
-//   - The real Watcher re-resolve path adopts a rotated UUIDv4 SID with NO
-//     foreign_session emission (criterion 4).
-//
-// ONLY LIVE FLEET USE VALIDATES (NOT mechanizable here, documented not overclaimed):
-//   - A human/agent actually TYPING /session-handoff and /session-resume into a
-//     real Claude REPL pane in response to the injected actionable warn, and that
-//     pane's REAL context dropping after the real /clear. This test simulates the
-//     post-/clear gauge drop and the post-/clear new-SID mint by writing the gauge
-//     and .sid directly (the same seam the SessionStart hook fills live); it does
-//     NOT drive a real Claude agent reading the warn and self-handing-off. The
-//     causal "agent reads warn, runs the command, pane clears" loop is exercised
-//     only on the live fleet (and partially by the real-tmux twin in
-//     cycle_twin_e2e_integration_test.go, which this test does NOT duplicate).
-//
-// A throwaway tmux pane IS spawned with a before/after leak guard (criterion 5);
-// the watcher/cycler logic under test is gauge-file driven, so the pane proves a
-// real pane lifecycle without leaking rather than carrying the assertions.
-//
-// Placement: package keeper (internal) so the SELECTED-text assertion can call the
-// unexported selectWarnText — the exact function the watcher's nil-InjectFn warn
-// branch invokes. Helper names are zj1y-prefixed to avoid collision with the
-// package-keeper helpers in actionable_warn_hkvs4u_test.go (restartNowStem,
-// ctxWith, primarySID) which this file REUSES.
-
 import (
 	"bytes"
 	"context"
@@ -84,16 +18,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// zj1yLowWarnTokens is the LOW configured warn threshold the test drives the warn
-// from — deliberately far below the compiled 200000 default so a warn crossing at
-// this level can ONLY be the configured value, never the default. The act/force
-// thresholds stay at their normal high values so the warn fires WITHOUT tripping a
-// cycle (warn-text selection is the thing under test in criterion 2).
 const zj1yLowWarnTokens int64 = 60_000
 
-// zj1yWriteGauge writes <agent>.ctx with the given tokens + session_id and a
-// WindowSize so the absolute-token gates are active (Tokens>0 && WindowSize>0).
-// Distinct name from the package-keeper_test writeGauge helper.
 func zj1yWriteGauge(t *testing.T, projectDir, agent string, tokens int64, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -116,9 +42,6 @@ func zj1yWriteGauge(t *testing.T, projectDir, agent string, tokens int64, sid st
 	}
 }
 
-// zj1yWriteSid writes <agent>.sid directly, modeling the SessionStart hook. Once a
-// valid UUIDv4 .sid is present, ReadCtxFile overrides the gauge's raw session_id
-// with it — the watcher's re-resolve gate then confirms .sid == gauge and re-adopts.
 func zj1yWriteSid(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
@@ -130,8 +53,6 @@ func zj1yWriteSid(t *testing.T, projectDir, agent, sid string) {
 	}
 }
 
-// zj1yInjectSpy records every text injected by the Cycler. Thread-safe so the
-// watcher/cycler can call it from any goroutine.
 type zj1yInjectSpy struct {
 	mu   sync.Mutex
 	sent []string
@@ -164,35 +85,18 @@ func (s *zj1yInjectSpy) snapshot() []string {
 	return out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Criterion 1 + 2: deterministic LOW-warn trigger + actionable warn names the
-// VERBATIM self-service command.
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *testing.T) {
 	projectDir := t.TempDir()
 	const agent = "captain"
 
-	// Spawn a throwaway tmux pane (criterion 5 leak guard). The warn path under
-	// test is gauge-driven; the pane proves a real lifecycle without leaking. We do
-	// NOT route the warn injection into this pane: the live Watcher loop below runs
-	// with TmuxTarget EMPTY (warn emits, no keystroke injection) and we assert the
-	// SELECTED text separately via selectWarnText — the exact call the watcher makes.
 	tmuxTarget := zj1ySpawnThrowawayTmuxPane(t)
 	_ = tmuxTarget // spawned + leak-guarded; not used for keystroke injection here
 
-	// Guard: the LOW config warn must differ from the compiled default, else the
-	// "config armed the warn, not the default" claim is trivial.
 	if zj1yLowWarnTokens >= DefaultWarnAbsTokens {
 		t.Fatalf("zj1y: low warn %d must be far below the %d default to be a real config-driven trigger",
 			zj1yLowWarnTokens, DefaultWarnAbsTokens)
 	}
 
-	// ── Criterion 2: the SELECTED warn text (production selectWarnText) carries the
-	// verbatim restart-now command for THIS agent. This is the exact function the
-	// watcher's nil-InjectFn warn branch calls (watcher.go ~1286). The actionable
-	// form requires SelfServiceEnabled + a primary UUIDv4 SID + CrispIdle +
-	// detached. We assert it contains the templated, agent-specific command.
 	cfg := WatcherConfig{
 		AgentName:          agent,
 		SelfServiceEnabled: true,
@@ -208,11 +112,6 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 			wantCmd, selected)
 	}
 
-	// ── Criterion 1: drive the LOW configured warn end-to-end through the real
-	// Watcher.Run loop and assert a real session_keeper_warn fires AT the low
-	// threshold. The gauge sits at 70000 — above the LOW 60000 config warn but FAR
-	// below the 200000 default — so a warn here can ONLY be the configured value.
-	// TmuxTarget empty: warn emits without injecting keystrokes into a real pane.
 	zj1yWriteGauge(t, projectDir, agent, 70_000, primarySID)
 	zj1yWriteSid(t, projectDir, agent, primarySID)
 
@@ -250,10 +149,6 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Criterion 3: exactly ONE /clear — Gate-3 gauge-drop suppression (hk-1ryc).
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 	const (
 		agent   = "captain"
@@ -285,18 +180,10 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		// Stop-hook .idle marker reads fresh so model-done lands on the first
-		// AwaitModelDone poll (SK-014) — without it the cycle waits the full
-		// ModelDoneTimeout (60s) fail-open before clearing, making this test
-		// needlessly slow. Model-done speed does not affect the /clear count; it
-		// only removes the 60s wait.
 	}
 	cycler := mustNewCyclerWithConfigOverrides(cfg, em, overrides)
 	ctx := context.Background()
 
-	// Tick 1: gauge ABOVE the act threshold, agent has not yet self-restarted —
-	// the keeper auto-cycle fires here (one /clear). This is the cycle the actionable
-	// warn nudged the agent to do; here we let it fire to establish "one cycle ran".
 	high := &CtxFile{Tokens: 210_000, WindowSize: 200_000, Pct: 95, SessionID: sid}
 	if err := cycler.MaybeRun(ctx, high); err != nil {
 		t.Fatalf("zj1y: MaybeRun(high): %v", err)
@@ -305,10 +192,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		t.Fatalf("zj1y: setup expected exactly 1 /clear from the first cycle; got %d (%v)", got, spy.snapshot())
 	}
 
-	// The agent's own `harmonik keeper restart-now` synchronously injects /clear and
-	// drops the gauge below the act threshold. Tick 2 reads that dropped gauge —
-	// SAME session_id, low context. Gate-3 (belowActThreshold) must suppress a
-	// SECOND cycle: NO new /clear, NO cross-process marker involved.
 	low := &CtxFile{Tokens: 40_000, WindowSize: 200_000, Pct: 20, SessionID: sid}
 	if err := cycler.MaybeRun(ctx, low); err != nil {
 		t.Fatalf("zj1y: MaybeRun(low): %v", err)
@@ -321,20 +204,12 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Criterion 4: SID adoption / identity re-tie — no sustained foreign_session (R4).
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestZJ1Y_PostClearNewSID_Adopted_NoForeignSession(t *testing.T) {
 	projectDir := t.TempDir()
 	const agent = "captain"
 	const oldSID = "11111111-2222-4333-8444-aaaaaaaaaaaa" // valid UUIDv4 (prior session)
 	const newSID = "55555555-6666-4333-8444-bbbbbbbbbbbb" // valid UUIDv4 (post-/clear mint)
 
-	// State the watcher starts in (the post-/clear new-SID-mint moment):
-	//   .managed = oldSID  (stale latch from before /clear)
-	//   gauge    = newSID  (rotated by the self-service /clear)
-	//   .sid     = newSID  (SessionStart hook endorses the new identity as primary)
 	zj1yWriteGauge(t, projectDir, agent, 70_000, newSID)
 	zj1yWriteSid(t, projectDir, agent, newSID)
 	if err := WriteManagedSessionID(projectDir, agent, oldSID); err != nil {
@@ -374,22 +249,13 @@ func TestZJ1Y_PostClearNewSID_Adopted_NoForeignSession(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("zj1y: watcher never re-resolved .managed within the run window (old=%q new=%q)", oldSID, newSID)
 	}
-	// Stop the watcher and WAIT for the loop goroutine to fully exit before reading
-	// em / before t.TempDir() teardown — otherwise a late tick can write the gauge
-	// file (or the .managed temp-rename) concurrently with cleanup (a benign but
-	// noisy race). Draining done makes the assertions and teardown deterministic.
 	cancel()
 	<-done
 
-	// (a) the adopted SID is the rotated/new one, not the stale old one.
 	if gotSID != newSID {
 		t.Errorf("zj1y: watcher adopted %q; want the rotated new SID %q (NOT the stale old %q)", gotSID, newSID, oldSID)
 	}
 
-	// (b) NO sustained foreign_session: the re-resolve path must recognize the
-	// mismatch as "same agent, new session after /clear" (endorsed by .sid) and
-	// re-adopt cleanly. Even ONE foreign_session emit means the gate rejected a
-	// valid same-agent rotation as a concurrent intruder (>1-tick blindness).
 	for _, ev := range em.EventsOfType(core.EventTypeSessionKeeperNoGauge) {
 		var payload core.SessionKeeperNoGaugePayload
 		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
@@ -400,12 +266,6 @@ func TestZJ1Y_PostClearNewSID_Adopted_NoForeignSession(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Leak-guarded throwaway tmux pane (criterion 5). zj1y-prefixed so it never
-// collides with the cmd/harmonik spawnThrowawayTmuxPane (different package).
-// Snapshots tmux ls before/after and kills in cleanup, asserting no leak.
-// ─────────────────────────────────────────────────────────────────────────────
 
 func zj1ySpawnThrowawayTmuxPane(t *testing.T) string {
 	t.Helper()

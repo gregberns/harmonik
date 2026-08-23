@@ -23,27 +23,16 @@ import (
 func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Parallel()
 
-	// mergeTarget models the WM-005b target_branch resolution for the purpose
-	// of this sensor: given a parent bead ID (empty = no parent context) and a
-	// resolved target_branch string (from branching.yaml lands_on, per-bead ##
-	// Branching section, or absent/empty for the spec-level default), it returns
-	// the branch name the task branch lands on. Inlined per bead discipline.
 	mergeTarget := func(parentBeadID string, operatorOverride string) string {
-		// A non-empty parentBeadID means the run has a parent-bead context;
-		// in that case the integration branch is derived per WM-006, regardless
-		// of operator policy (WM-008 only governs the parentless case).
 		if parentBeadID != "" {
 			return "harmonik/integration/" + parentBeadID
 		}
-		// Parentless run: apply operator policy.
 		switch operatorOverride {
 		case "main":
 			return "main"
 		case "integration", "":
-			// "" means absent override → default to "integration".
 			return "harmonik/integration"
 		default:
-			// Unrecognised override: fail-safe to default.
 			return "harmonik/integration"
 		}
 	}
@@ -51,7 +40,6 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Run("default-no-override-is-integration", func(t *testing.T) {
 		t.Parallel()
 
-		// No parent bead, no operator override → default MUST be integration.
 		got := mergeTarget("", "")
 		want := "harmonik/integration"
 		if got != want {
@@ -62,7 +50,6 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Run("explicit-integration-override", func(t *testing.T) {
 		t.Parallel()
 
-		// No parent bead, explicit "integration" override → integration.
 		got := mergeTarget("", "integration")
 		want := "harmonik/integration"
 		if got != want {
@@ -73,7 +60,6 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Run("explicit-main-override-small-scope-collapse", func(t *testing.T) {
 		t.Parallel()
 
-		// No parent bead, explicit "main" override → main (small-scope-collapse).
 		got := mergeTarget("", "main")
 		want := "main"
 		if got != want {
@@ -84,8 +70,6 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Run("parent-bead-ignores-override", func(t *testing.T) {
 		t.Parallel()
 
-		// A run WITH a parent bead uses the derived integration branch regardless
-		// of operator override — WM-008 only governs the parentless case.
 		got := mergeTarget("hk-8mwo", "main")
 		want := "harmonik/integration/hk-8mwo"
 		if got != want {
@@ -105,10 +89,8 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 func TestWM008_PolicyValuesAreExhaustive(t *testing.T) {
 	t.Parallel()
 
-	// The two normative policy values.
 	allowedPolicies := []string{"integration", "main"}
 
-	// Verify both allowed values produce ref-safe branch names.
 	for _, policy := range allowedPolicies {
 		t.Run("policy-"+policy+"-is-ref-safe", func(t *testing.T) {
 			t.Parallel()
@@ -125,12 +107,10 @@ func TestWM008_PolicyValuesAreExhaustive(t *testing.T) {
 		})
 	}
 
-	// Verify an unknown policy value falls back to the default "integration".
 	t.Run("unknown-policy-falls-back-to-integration", func(t *testing.T) {
 		t.Parallel()
 
 		unknownPolicy := "squash-to-feature"
-		// The policy gate function (inlined here) should treat unknown as default.
 		var got string
 		switch unknownPolicy {
 		case "main":

@@ -1,35 +1,5 @@
 package daemon
 
-// tmuxsubstrate_sessioncreation_bounded_test.go — the two independent-session
-// constructors, SpawnRunSession and SpawnCrewSession, must be externally bounded.
-//
-// # The claim these tests defend
-//
-// Neither constructor may wait on `tmux new-session` for longer than the
-// substrate's creation bound, even when the adapter ignores its context. The
-// production adapter's NewSessionIn is a bare cmd.CombinedOutput, so a wedged
-// tmux server returns neither a value nor an error; the context passed down these
-// two call chains carries no deadline of its own, so "unbounded" means the whole
-// bead run for SpawnRunSession and an operator waiting forever for
-// SpawnCrewSession. The shared-window path has had this bound since hk-r1rup;
-// these two siblings did not.
-//
-// Two claims about the abandoned call ride with them. Abandoning the call does
-// not abandon the work: a tmux server that is slow rather than dead can finish
-// creating the session after the caller has been told creation failed. The
-// substrate must NAME that session, so an operator has somewhere to look, and it
-// must NOT kill it. It cannot tell a late orphan from a session a concurrent
-// attempt legitimately owns, and a second attempt on a byte-identical name is
-// ordinary here: crewSessionName is a pure function of the project hash and the
-// crew name, so a scheduled crew start that fails re-fires on the same name at
-// its next boundary, and an operator running `harmonik crew start` reaches the
-// same name through the same HandleCrewStart path at any moment.
-//
-// # Helper prefix
-//
-// Helpers use the prefix "boundedCreation" per implementer-protocol.md
-// §Helper-prefix discipline.
-
 import (
 	"context"
 	"errors"
@@ -43,15 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// boundedCreationAdapter is a tmux.Adapter + sessionCreator double whose
-// NewSessionIn BLOCKS and IGNORES its context until release is closed. Ignoring
-// the context is the point: it reproduces the production hazard that
-// callNewSessionBounded's goroutine-and-select exists to survive. A double that
-// honoured the context would pass even with no bound at all, because the bounded
-// context alone would unblock it.
-//
-// It records every KillSession call, so a test can assert that a bounded-out
-// creation takes no corrective action on the session name.
 type boundedCreationAdapter struct {
 	// release gates NewSessionIn. The timeout tests never close it (a tmux server
 	// that is dead). The adopt test closes it once the bound has fired, to stand in
@@ -81,7 +42,6 @@ func (a *boundedCreationAdapter) KillSession(_ context.Context, name string) err
 	return nil
 }
 
-// killedSession reports whether name has been passed to KillSession.
 func (a *boundedCreationAdapter) killedSession(name string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -121,21 +81,12 @@ func (a *boundedCreationAdapter) WriteToPane(context.Context, string, string, []
 
 var _ tmux.Adapter = (*boundedCreationAdapter)(nil)
 
-// boundedCreationBound is the creation bound the tests configure. It is short
-// enough to keep the suite fast and long enough that a machine under load does
-// not fire it spuriously.
 const boundedCreationBound = 150 * time.Millisecond
 
-// boundedCreationRunID is the fixed run UUID the run-session tests spawn under.
 const boundedCreationRunID = "0f0e0d0c-0b0a-0908-0706-050403020100"
 
-// boundedCreationSlack is how much longer than the bound a constructor may take
-// before the test calls it a hang. Generous, because the claim is "bounded", not
-// "bounded to the millisecond".
 const boundedCreationSlack = 5 * time.Second
 
-// boundedCreationSubstrate builds a *tmuxSubstrate over adapter with the short
-// creation bound and the project hash that run- and crew-session naming require.
 func boundedCreationSubstrate(t *testing.T, adapter tmux.Adapter) *tmuxSubstrate {
 	t.Helper()
 	sub, ok := NewTmuxSubstrate(adapter, "bounded-creation-session",
@@ -147,18 +98,11 @@ func boundedCreationSubstrate(t *testing.T, adapter tmux.Adapter) *tmuxSubstrate
 	return sub
 }
 
-// boundedCreationResult carries a constructor's return values off the goroutine
-// the test runs it on, so the test can time out on the constructor rather than
-// deadlock with it.
 type boundedCreationResult struct {
 	sess handler.SubstrateSession
 	err  error
 }
 
-// boundedCreationRun runs spawn on its own goroutine and returns its result, or
-// fails the test if it has not returned within the bound plus slack. A hung
-// constructor leaves its goroutine parked for the rest of the test binary's life;
-// that is exactly the defect under test, and it does not block the failure.
 func boundedCreationRun(t *testing.T, spawn func() (handler.SubstrateSession, error)) boundedCreationResult {
 	t.Helper()
 
@@ -179,9 +123,6 @@ func boundedCreationRun(t *testing.T, spawn func() (handler.SubstrateSession, er
 	}
 }
 
-// boundedCreationAssertTimeout asserts that err is the bounded-creation timeout:
-// the ErrTmuxNewSessionTimeout sentinel wrapped in handler.ErrStructural, matching
-// how the shared-window path reports its own creation timeout.
 func boundedCreationAssertTimeout(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -301,15 +242,8 @@ func TestAbandonedSessionCreationLeavesTheSessionForTheNextAttemptToAdopt(t *tes
 	})
 	boundedCreationAssertTimeout(t, got.err)
 
-	// The tmux server was slow, not dead: it finishes creating the session after
-	// the caller has already been told the creation failed. Stand in for the next
-	// attempt on this name — the schedule's next boundary, or an operator — which
-	// adopts that session.
 	close(adapter.release)
 
-	// Wait out a full creation bound — the window in which a background killer
-	// armed by the abandoned call would have fired — then confirm nothing killed
-	// the name the retry is about to adopt.
 	time.Sleep(boundedCreationBound * 2)
 	if adapter.killedSession(sessName) {
 		t.Errorf("crew session %q was killed after the creation bound fired: the next attempt on "+

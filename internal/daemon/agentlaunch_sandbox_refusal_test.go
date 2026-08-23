@@ -1,20 +1,5 @@
 package daemon
 
-// agentlaunch_sandbox_refusal_test.go — the launch path must refuse to run a
-// real agent when the sandbox engagement probe cannot prove the sandbox applied.
-//
-// sandboxengagement_proof_test.go pins the probe's own decision. That is not the
-// whole property. The probe's doc comment says the CALLER must treat a non-nil
-// return as fatal and refuse to launch the agent unsandboxed, and a probe that
-// decides correctly while the launch proceeds anyway is the same hole. These two
-// tests observe the launch RESULT, so the refusal has to be acted on and not
-// merely computed.
-//
-// The probe honors spawn.SrtBinary, but nothing in production sets it, so the
-// launch path resolves "srt" from PATH. These tests put a stub srt first on PATH
-// and let the real resolution run. That keeps the wiring under test instead of
-// stepping around it.
-
 import (
 	"context"
 	"os"
@@ -32,12 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// sandboxRefusalInput builds a launch that the sandbox gate WILL arm: the
-// backend is srt and the run's harness is listed, so sandboxSpawnForRun returns
-// a spawn config and the engagement probe runs.
-//
-// It also puts stubBody on PATH as "srt". t.Setenv makes these tests serial,
-// which is the price of exercising the real PATH lookup.
 func sandboxRefusalInput(t *testing.T, spy handler.Substrate, stubBody string) agentLaunchInput {
 	t.Helper()
 

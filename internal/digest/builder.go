@@ -73,32 +73,24 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		GeneratedAt:   now,
 	}
 
-	// addErr records a non-fatal collection error per DC-007. Every individual
-	// source failure is surfaced in out.Errors; only a missing .harmonik/ (above)
-	// is a hard failure (DC-002).
 	addErr := func(source string, err error) {
 		if err != nil {
 			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", source, err))
 		}
 	}
 
-	// --- Queue summary ---
 	var queueErr error
 	out.Queue, queueErr = buildQueueSummary(ctx, in.ProjectDir, lim)
 	addErr("queue", queueErr)
-	// DC-005: surface the count of active runs hidden by the cap so the
-	// operator can tell how many runs were omitted (breaks DC-005 otherwise).
 	if out.Queue.ActiveRunsOmitted > 0 {
 		out.Truncated = ensureTruncation(out.Truncated)
 		out.Truncated.ActiveRunsOmitted = out.Queue.ActiveRunsOmitted
 	}
 
-	// --- Recent commits on origin/main ---
 	var commitsErr error
 	out.RecentCommits, commitsErr = recentCommits(ctx, in.ProjectDir, in.GitPath, 10)
 	addErr("recent_commits", commitsErr)
 
-	// --- Events via ScanAfter ---
 	eventsPath := filepath.Join(harmonikDir, "events", "events.jsonl")
 	var eventsTrunc *TruncationReport
 	out.RecentEvents, eventsTrunc = buildRecentEvents(eventsPath, in.SinceEventID, lim)
@@ -107,7 +99,6 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		out.Truncated.RecentEventsOmitted = eventsTrunc.RecentEventsOmitted
 	}
 
-	// --- br ready + br list --status in_progress ---
 	if in.BrPath != "" {
 		var readyErr, inProgErr error
 		out.ReadyBeads, readyErr = brReady(ctx, in.BrPath, in.ProjectDir)
@@ -116,70 +107,46 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		addErr("br_list", inProgErr)
 	}
 
-	// --- notes.jsonl ---
 	notesPath := filepath.Join(harmonikDir, "cognition", "notes.jsonl")
 	notes, notesErr := readOpenNotes(notesPath)
 	addErr("notes", notesErr)
 	out.OpenNotes, out.Truncated = applyNoteTruncation(notes, lim, out.Truncated)
 
-	// --- kerf next --format=json ---
 	if in.KerfPath != "" {
 		var kerfErr error
 		out.KerfNext, kerfErr = kerfNext(ctx, in.KerfPath, in.ProjectDir)
 		addErr("kerf_next", kerfErr)
 	}
 
-	// --- pending decision_required events (EV-044) ---
-	// Primary: scan events.jsonl from the beginning (ignoring SinceEventID) so
-	// that unacknowledged decisions surface even during quiet periods where the
-	// watermark has advanced past the event.
-	// Supplement: also scan .harmonik/decision_acks/ (the durable anchor) so
-	// decisions emitted before events.jsonl rotation still surface. The two sets
-	// are merged and deduplicated by ack_token (FW3 hk-4toh).
 	acksDir := filepath.Join(in.ProjectDir, ".harmonik", "decision_acks")
 	out.PendingDecisions = buildPendingDecisions(eventsPath, acksDir)
 
-	// --- suppression resolver (flywheel-motion.md §3) ---
-	// Deterministic, LLM-free. EXECUTE-BACKLOG is the default (Suppressed=false).
-	// Reads .harmonik/config.yaml sentinel: block; config errors are non-fatal
-	// (fail-open: the invalid source is treated as inactive per §3.2).
 	sentinelCfg, sentinelErr := LoadSentinelConfig(in.ProjectDir)
 	if sentinelErr != nil {
-		// Non-fatal: record as a collection error and use zero config (all defaults).
 		addErr("sentinel_config", sentinelErr)
 	}
 	out.SuppressionState = ResolveSuppressionState(eventsPath, now, sentinelCfg)
 
-	// --- HasUndeployedTail (flywheel-motion.md §5.2, §5.3) ---
-	// If Phase-2 classes are configured and br is available, check whether any
-	// closed bead carries a Phase-2 class label. Until the verify step lands a
-	// closed Phase-2 bead counts as merged-but-undeployed (actionable work for
-	// the opportunity gate).
 	if in.BrPath != "" && len(sentinelCfg.Phase2Classes()) > 0 {
 		var undeployedErr error
 		out.HasUndeployedTail, undeployedErr = buildHasUndeployedTail(ctx, in.BrPath, in.ProjectDir, sentinelCfg.Phase2Classes())
 		addErr("undeployed_tail", undeployedErr)
 	}
 
-	// --- comms who (agent presence, in-process — no daemon socket) ---
 	out.CommsWho = buildCommsWho(eventsPath, now)
 
-	// --- crew list (in-process durable registry read) ---
 	var crewErr error
 	out.Crews, crewErr = buildCrewList(in.ProjectDir)
 	addErr("crew_list", crewErr)
 
-	// --- tmux fleet ---
 	var tmuxErr error
 	out.TmuxFleet, tmuxErr = buildTmuxFleet(ctx)
 	addErr("tmux_fleet", tmuxErr)
 
-	// --- paused/failed queue sweep (file-based — no daemon socket) ---
 	var pausedErr error
 	out.PausedQueues, pausedErr = buildPausedQueues(ctx, in.ProjectDir)
 	addErr("paused_queues", pausedErr)
 
-	// --- kerf map ---
 	if in.KerfPath != "" {
 		var kerfMapErr error
 		out.KerfMap, kerfMapErr = kerfMapText(ctx, in.KerfPath)
@@ -189,16 +156,6 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 	return out, nil
 }
 
-// buildCommsWho computes the agent-presence projection via internal/presence
-// (the same projection `harmonik comms who` reads), matching NDJSON row shape
-// but computed in-process from events.jsonl — no daemon socket, no LLM
-// (DC-INV-001).
-//
-// Offline agents (an explicit leave beat, or effective_last_seen past the
-// stale cutoff) are omitted, matching `harmonik comms who`'s own filter
-// (runCommsWhoSubcommand only emits online/stale) — otherwise every agent
-// that ever sent a presence beat, however long ago, would remain in the list
-// forever.
 func buildCommsWho(eventsPath string, now time.Time) []CommsWhoEntry {
 	registry := presence.ComputeRegistry(eventsPath)
 	names := make([]string, 0, len(registry))
@@ -228,9 +185,6 @@ func buildCommsWho(eventsPath string, now time.Time) []CommsWhoEntry {
 	return out
 }
 
-// buildCrewList reads the durable crew registry (.harmonik/crew/*.json) via
-// internal/crew — the same file-based source `harmonik crew list` reads; no
-// daemon socket required.
 func buildCrewList(projectDir string) ([]CrewSummary, error) {
 	records, err := crew.List(projectDir)
 	if err != nil {
@@ -250,19 +204,6 @@ func buildCrewList(projectDir string) ([]CrewSummary, error) {
 	return out, nil
 }
 
-// buildTmuxFleet lists every live tmux session and its windows via
-// internal/lifecycle/tmux.OSAdapter. Absence of tmux or an idle server both
-// degrade to an empty fleet (OSAdapter.ListSessions' own no-tmux semantics),
-// not an error.
-//
-// A per-session tmux.ErrNoSession (the session vanished between
-// ListSessions and ListWindows — a TOCTOU race) is expected and silently
-// degrades that session to no windows, matching
-// internal/lifecycle/tmux/orphanwindow.go's own convention. Any other
-// ListWindows error is a genuine tmux failure and is joined into the
-// returned error so it reaches out.Errors (DC-007) instead of being
-// silently swallowed; the session still appears in the fleet with no
-// windows.
 func buildTmuxFleet(ctx context.Context) ([]TmuxSessionSummary, error) {
 	adapter := tmux.OSAdapter{}
 	sessions, err := adapter.ListSessions(ctx)
@@ -285,20 +226,8 @@ func buildTmuxFleet(ctx context.Context) ([]TmuxSessionSummary, error) {
 	return out, errors.Join(errs...)
 }
 
-// pausedQueueStatusRe matches queue-level statuses the paused-queue sweep
-// surfaces. Kept identical to scripts/captain-boot-digest.sh's own sweep
-// regex for parity: "complete-with-failures" is (today) a Group-level status
-// rather than a queue-level one, but the sweep checks the same pattern
-// against queue status text so a future queue-level status of that name is
-// caught without a code change.
 var pausedQueueStatusRe = regexp.MustCompile(`paused|complete-with-failures`)
 
-// buildPausedQueues enumerates every named queue via queue.EnumerateQueueNames
-// (file-based — no daemon socket, per DC-001/DC-INV-001; also skips
-// .tmp-/.failed-/.cancelled- archive files) and returns every queue whose
-// status matches pausedQueueStatusRe. A queue file that fails to load (e.g.
-// queue.ErrCorrupt) is joined into the returned error so it reaches
-// out.Errors (DC-007) rather than silently vanishing from the sweep.
 func buildPausedQueues(ctx context.Context, projectDir string) ([]PausedQueueSummary, error) {
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -325,9 +254,6 @@ func buildPausedQueues(ctx context.Context, projectDir string) ([]PausedQueueSum
 	return out, errors.Join(errs...)
 }
 
-// kerfMapText runs `kerf map` and returns its raw text output. kerf has no
-// --format=json for this subcommand, so the output is captured verbatim
-// rather than parsed.
 func kerfMapText(ctx context.Context, kerfPath string) (string, error) {
 	out, err := runCmd(ctx, kerfPath, "map")
 	if err != nil {
@@ -336,17 +262,6 @@ func kerfMapText(ctx context.Context, kerfPath string) (string, error) {
 	return string(out), nil
 }
 
-// buildPendingDecisions returns every unacknowledged decision_required entry.
-//
-// Two sources are scanned and merged (deduped by ack_token):
-//  1. events.jsonl (full scan from the beginning, ignoring SinceEventID) —
-//     the observational record, fast for live-running daemons.
-//  2. .harmonik/decision_acks/ (the durable anchor, FW3 hk-4toh) — survives
-//     events.jsonl rotation and daemon restarts; only pending files appear.
-//
-// "Quiet" suppression — where a watermark-advancing consumer would skip old events
-// — MUST NOT apply to decision_required: they must appear in every digest until
-// explicitly acknowledged.
 func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary {
 	type decisionRequiredPayload struct {
 		Subject struct {
@@ -361,7 +276,6 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 		AckToken string `json:"ack_token"`
 	}
 
-	// --- Source 1: events.jsonl ---
 	var decisions []struct {
 		eventID string
 		payload decisionRequiredPayload
@@ -391,11 +305,9 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 				ackedTokens[p.AckToken] = struct{}{}
 			}
 		default:
-			// Every other event type carries no decision for the digest.
 		}
 	}
 
-	// Filter events.jsonl source to unacknowledged decisions and build index.
 	seen := make(map[string]struct{}) // ack_token → already in out
 	out := make([]DecisionRequiredSummary, 0, len(decisions))
 	for _, d := range decisions {
@@ -413,10 +325,6 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 		seen[d.payload.AckToken] = struct{}{}
 	}
 
-	// --- Source 2: .harmonik/decision_acks/ (durable anchor) ---
-	// Supplement with any pending ack-state files not already in out (e.g.
-	// written before events.jsonl was created, or after log rotation).
-	// Acknowledged files (status != "pending") are skipped.
 	if entries, err := os.ReadDir(acksDir); err == nil {
 		type ackRecord struct {
 			SchemaVersion int    `json:"schema_version"`
@@ -457,7 +365,6 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 	return out
 }
 
-// ensureTruncation returns tr, allocating a fresh TruncationReport when tr is nil.
 func ensureTruncation(tr *TruncationReport) *TruncationReport {
 	if tr == nil {
 		return &TruncationReport{}
@@ -465,10 +372,6 @@ func ensureTruncation(tr *TruncationReport) *TruncationReport {
 	return tr
 }
 
-// buildQueueSummary reads queue.json and returns a QueueSummary. The caller's
-// ctx is threaded through to queue.Load. A nil error with Present=false means
-// queue.json is absent (no active queue, not an error); a non-nil error is a
-// genuine load failure to be surfaced per DC-007.
 func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (QueueSummary, error) {
 	q, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
@@ -498,14 +401,12 @@ func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (Queu
 			case queue.ItemStatusPending:
 				sum.PendingCount++
 			case queue.ItemStatusCompleted, queue.ItemStatusFailed, queue.ItemStatusDeferredForLedgerDep:
-				// Terminal and ledger-deferred items are neither active nor pending.
 			}
 		}
 	}
 
 	limit := lim.maxActiveRuns()
 	if limit > 0 && len(dispatched) > limit {
-		// DC-005: record the omission count so it can flow into out.Truncated.
 		sum.ActiveRunsOmitted = len(dispatched) - limit
 		sum.ActiveRuns = dispatched[:limit]
 	} else {
@@ -514,7 +415,6 @@ func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (Queu
 	return sum, nil
 }
 
-// buildRecentEvents collects events via ScanAfter and applies truncation.
 func buildRecentEvents(eventsPath string, sinceID core.EventID, lim Limits) ([]EventSummary, *TruncationReport) {
 	all := make([]EventSummary, 0)
 	for ev := range eventbus.ScanAfter(eventsPath, sinceID) {
@@ -537,7 +437,6 @@ func buildRecentEvents(eventsPath string, sinceID core.EventID, lim Limits) ([]E
 	return all, nil
 }
 
-// applyNoteTruncation applies the note cap and merges into an existing TruncationReport.
 func applyNoteTruncation(notes []noteEntry, lim Limits, existing *TruncationReport) ([]NoteSummary, *TruncationReport) {
 	summaries := make([]NoteSummary, 0, len(notes))
 	for _, n := range notes {
@@ -563,7 +462,6 @@ func applyNoteTruncation(notes []noteEntry, lim Limits, existing *TruncationRepo
 	return summaries, existing
 }
 
-// recentCommits runs `git log origin/main --oneline -<n>` and parses results.
 func recentCommits(ctx context.Context, projectDir, gitPath string, n int) ([]CommitSummary, error) {
 	if gitPath == "" {
 		gitPath = "git"
@@ -589,15 +487,6 @@ func recentCommits(ctx context.Context, projectDir, gitPath string, n int) ([]Co
 	return commits, nil
 }
 
-// brReady runs `br ready --limit 0 --json` and returns BeadSummary slice.
-// --limit 0 (unlimited) is REQUIRED: bare `br ready` silently caps at 20, which
-// would truncate the boot digest's ready list and mislead agents into thinking
-// the ready queue is shorter than it is.
-//
-// The flag MUST follow the subcommand (`br ready --json`, not `br --format
-// json ready`): br's CLI parser rejects `--format` as a global (pre-subcommand)
-// flag with exit 2 ("unexpected argument '--format' found") — this was the
-// digest-parity bug (br_ready collector always failed).
 func brReady(ctx context.Context, brPath, projectDir string) ([]BeadSummary, error) {
 	out, err := runCmd(ctx, brPath, "ready", "--limit", "0", "--json")
 	if err != nil {
@@ -630,7 +519,6 @@ func parseBrReadyJSON(data []byte, _ string) ([]BeadSummary, error) {
 	return out, nil
 }
 
-// brListByStatus runs `br list --status <status> --json` and returns BeadSummary.
 func brListByStatus(ctx context.Context, brPath, _, status string) ([]BeadSummary, error) {
 	out, err := runCmd(ctx, brPath, "list", "--status", status, "--json")
 	if err != nil {
@@ -667,7 +555,6 @@ func parseBrListJSON(data []byte) ([]BeadSummary, error) {
 	return out, nil
 }
 
-// kerfNext runs `kerf next --format=json` and returns the parsed output.
 func kerfNext(ctx context.Context, kerfPath, _ string) (interface{}, error) {
 	out, err := runCmd(ctx, kerfPath, "next", "--format=json")
 	if err != nil {
@@ -680,23 +567,15 @@ func kerfNext(ctx context.Context, kerfPath, _ string) (interface{}, error) {
 	return v, nil
 }
 
-// brBeadLabels holds the minimal fields needed to check Phase-2 class labels.
 type brBeadLabels struct {
 	Labels []string `json:"labels"`
 }
 
-// brBeadLabelsEnvelope is the JSON shape of `br list --status closed --json`.
 type brBeadLabelsEnvelope struct {
 	Issues []brBeadLabels `json:"issues"`
 }
 
-// brClosedBeadsWithLabels runs `br list --status closed --json` and returns a
-// slice of label sets for every closed bead. Errors are returned to the caller
-// for non-fatal surfacing per DC-007.
 func brClosedBeadsWithLabels(ctx context.Context, brPath string) ([][]string, error) {
-	// --limit 0 fetches all closed beads; the default (50) silently misses any
-	// Phase-2-labelled bead at position 51+, which would cause HasUndeployedTail
-	// to return false when the tail exists — violating §5.2.
 	out, err := runCmd(ctx, brPath, "list", "--status", "closed", "--limit", "0", "--json")
 	if err != nil {
 		return nil, err
@@ -720,10 +599,6 @@ func BuildHasUndeployedTail(ctx context.Context, brPath string, phase2Classes []
 	return buildHasUndeployedTail(ctx, brPath, "", phase2Classes)
 }
 
-// buildHasUndeployedTail returns true when at least one closed bead carries a
-// Phase-2 class label (flywheel-motion.md §5.2, §5.3). Phase-2 classes are
-// provided by the caller (SentinelConfig.Phase2Classes()). Any error querying
-// br is returned for non-fatal surfacing; the boolean is false on error.
 func buildHasUndeployedTail(ctx context.Context, brPath, _ string, phase2Classes []string) (bool, error) {
 	if len(phase2Classes) == 0 {
 		return false, nil
@@ -746,7 +621,6 @@ func buildHasUndeployedTail(ctx context.Context, brPath, _ string, phase2Classes
 	return false, nil
 }
 
-// runCmd executes a command and returns its stdout. Stderr is discarded.
 func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout bytes.Buffer

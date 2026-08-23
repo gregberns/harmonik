@@ -2,17 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// gatedecisionrecorded_jtxnr.go — event-bus payload type for the
-// gate_decision_recorded event (§8.2a, CP §6.5).
-//
-// Emitted by the gate-node dispatch module after the gate evaluator produces
-// a GateDecisionPayload outcome. The payload captures the full decision
-// envelope (policy_id, decision, actor) plus the run and node context, enabling
-// audit trail reconstruction and replay.
-//
-// Spec ref: specs/control-points.md §6.5 (gate_decision_recorded emission).
-// Bead ref: hk-jtxnr (T-IMPL-010).
-
 // GateDecisionRecordedPayload is the typed event payload for the
 // gate_decision_recorded event.
 //

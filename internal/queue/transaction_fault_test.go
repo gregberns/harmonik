@@ -941,8 +941,6 @@ func TestWriteReplacementRefusedRemovesCandidate(t *testing.T) {
 	plan := transactionFixturePlan(t, projectDir)
 	transactionSeedPrior(t, plan)
 
-	// Seed a conflicting intent owned by nobody in this test. durableNoReplace
-	// reads it, finds bytes that differ from ours, and refuses.
 	foreignIntent := []byte(`{"schema_version":1,"normalized_name":"main","note":"not ours"}`)
 	intentPath := replaceIntentPath(projectDir, QueueNameMain)
 	if err := os.MkdirAll(filepath.Dir(intentPath), 0o700); err != nil {
@@ -983,14 +981,10 @@ func TestWriteReplacementRefusedRemovesCandidate(t *testing.T) {
 		}
 		candidatePath := filepath.Join(queuesDir(projectDir), got.Intent.CandidateTempBasename)
 
-		// Positive evidence first: the candidate really was written. Without this
-		// the removal assertion below would also pass on a build that never
-		// created it.
 		if len(created) != 1 || created[0] != candidatePath {
 			t.Fatalf("attempt %d: candidate not created exactly once before the refusal: created=%v want=[%q]",
 				attempt, created, candidatePath)
 		}
-		// Then the removal itself, observed rather than inferred from a stat.
 		if len(removed) != 1 || removed[0] != candidatePath {
 			t.Fatalf("attempt %d: refused replacement did not remove its candidate: removed=%v want=[%q]",
 				attempt, removed, candidatePath)
@@ -1001,9 +995,6 @@ func TestWriteReplacementRefusedRemovesCandidate(t *testing.T) {
 		}
 	}
 
-	// The refusal must leave the other transaction's intent and the canonical
-	// queue exactly as they were. Cleaning up our own candidate is the only
-	// write a refused replacement is allowed to make.
 	survivingIntent, err := os.ReadFile(intentPath) //nolint:gosec // path is test-owned t.TempDir data
 	if err != nil {
 		t.Fatalf("foreign intent removed by a refused replacement: %v", err)

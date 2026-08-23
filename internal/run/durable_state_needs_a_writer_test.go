@@ -1,26 +1,5 @@
 package run_test
 
-// durable_state_needs_a_writer_test.go — the shape of the defect, stated once,
-// so the next one is caught by the same test.
-//
-// A durable store is a package that puts state on disk for a LATER process to
-// read. The state only means anything if both halves are wired: somebody writes
-// it while the fact is true, and somebody reads it after a restart. Delete the
-// write and nothing breaks loudly. The readers keep compiling, keep running and
-// keep returning the empty set, and every one of them silently switches to the
-// branch it takes when there is no state — which is usually the branch that
-// says "nothing was in flight", and is usually wrong.
-//
-// That is invisible to ordinary tests, because a test that wants to exercise a
-// reader writes a record itself. The store's unit tests stay green, the
-// readers' tests stay green, and the only thing that changed is that production
-// stopped producing.
-//
-// So this test asks a question no other test in the tree asks: does anything
-// OUTSIDE a test call the writer at all?
-//
-// Helper prefix: durable.
-
 import (
 	"go/ast"
 	"go/parser"
@@ -35,12 +14,6 @@ import (
 	"testing"
 )
 
-// durableStore names a package that owns state on disk and splits its surface
-// into the calls that put state there and the calls that act on state somebody
-// else put there.
-//
-// Add a row when a package starts owning durable state. The rule is the same
-// for every row and does not need restating per store.
 type durableStore struct {
 	// importPath is the package as it is imported. Import aliases are resolved,
 	// so a caller spelling it `runpkg` is found.
@@ -51,31 +24,14 @@ type durableStore struct {
 	consumers []string
 }
 
-// durableStores is the set this test guards.
 var durableStores = []durableStore{
 	{
-		// The run registry: the only durable statement that a bead is being
-		// worked on right now. The daemon decides session adoption, orphan
-		// reconciliation, dead-process reaping and the stranded-bead reset from
-		// it.
 		importPath: "github.com/gregberns/harmonik/internal/run",
 		producers:  []string{"Write"},
 		consumers:  []string{"Load", "List", "Remove"},
 	},
 }
 
-// durableCallSites counts, per function name, the calls to functions of
-// importPath found in the module. includeTests selects whether _test.go files
-// are scanned. It returns the counts and, per function, a sorted sample of the
-// files the calls are in.
-//
-// The scan is syntactic. It resolves the import alias each file gives the
-// package and then looks for a selector on that name. It therefore sees a call
-// written out, and does not see one reached only through a function value, an
-// interface or reflection. It also counts a call that no live path reaches. The
-// consequence is one-sided and that is the useful direction: a zero here means
-// the name is written nowhere in production, which is a fact no reachability
-// argument can talk its way out of.
 func durableCallSites(t *testing.T, importPath string, includeTests bool) (counts map[string]int, callerFiles map[string][]string) {
 	t.Helper()
 
@@ -93,13 +49,6 @@ func durableCallSites(t *testing.T, importPath string, includeTests bool) (count
 			switch d.Name() {
 			case ".git", "vendor", "node_modules", "testdata":
 				return filepath.SkipDir
-			// Nested agent worktrees and scratch checkouts live UNDER the repo
-			// root on this machine, so the walk reached their copies of the tree
-			// as well as the real one. Those copies hold whatever a partial write
-			// or a crashed tool left behind, and an unparseable placeholder file
-			// in one of them failed this sensor against a clean tree. The same
-			// skip was added to the event-parity sensor at 35c9b9e6 for the same
-			// reason.
 			case ".claire", ".claude", "worktrees":
 				return filepath.SkipDir
 			}
@@ -114,8 +63,6 @@ func durableCallSites(t *testing.T, importPath string, includeTests bool) (count
 
 		file, parseErr := parser.ParseFile(fset, path, nil, 0)
 		if parseErr != nil {
-			// A file this test cannot parse is a file it cannot vouch for, and
-			// silently skipping it would let the defect hide in it.
 			t.Errorf("durable: parse %s: %v", path, parseErr)
 			return nil
 		}
@@ -167,9 +114,6 @@ func durableCallSites(t *testing.T, importPath string, includeTests bool) (count
 	return counts, callerFiles
 }
 
-// durableImportName returns the name importPath is bound to in file, and
-// whether the file imports it at all. An aliased import returns the alias; a
-// plain one returns the last path segment, which is what Go binds.
 func durableImportName(file *ast.File, importPath string) (string, bool) {
 	for _, spec := range file.Imports {
 		value, err := strconv.Unquote(spec.Path.Value)
@@ -178,9 +122,6 @@ func durableImportName(file *ast.File, importPath string) (string, bool) {
 		}
 		if spec.Name != nil {
 			if spec.Name.Name == "_" || spec.Name.Name == "." {
-				// A blank import calls nothing; a dot import writes no selector
-				// and this scan cannot see through it. Report it rather than
-				// pass silently, because it is a hole in the check.
 				return "", false
 			}
 			return spec.Name.Name, true
@@ -190,18 +131,12 @@ func durableImportName(file *ast.File, importPath string) (string, bool) {
 	return "", false
 }
 
-// durableModuleRoot returns the repository root, two levels above this file.
-//
-// It confirms go.mod is there. A wrong root walks a directory with no Go files
-// in it, finds no call to anything, and the count that comes back is zero for a
-// reason that has nothing to do with the code under test.
 func durableModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("durable: cannot locate this source file, so the scan has nothing to walk")
 	}
-	// thisFile = <root>/internal/run/durable_state_needs_a_writer_test.go
 	root := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	if _, statErr := os.Stat(filepath.Join(root, "go.mod")); statErr != nil {
 		t.Fatalf("durable: %s holds no go.mod, so it is not the module root: %v\n"+
@@ -211,7 +146,6 @@ func durableModuleRoot(t *testing.T) string {
 	return root
 }
 
-// durableTotal sums the counts for a set of function names.
 func durableTotal(counts map[string]int, names []string) int {
 	total := 0
 	for _, n := range names {
@@ -220,8 +154,6 @@ func durableTotal(counts map[string]int, names []string) int {
 	return total
 }
 
-// durableNamesWithCalls lists the names in the set that were actually called,
-// with the files they were called from.
 func durableNamesWithCalls(counts map[string]int, samples map[string][]string, names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {

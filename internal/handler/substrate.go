@@ -137,17 +137,11 @@ type SubstrateSession interface {
 	Stdout() io.Reader
 }
 
-// substrateSessionAdapter adapts a SubstrateSession to the handler.Session
-// interface so that Handler.Launch can return a uniform Session regardless
-// of whether an exec.Cmd or a Substrate was used.
-//
-// Fields that have no substrate equivalent (stdin write, stderr) are stubbed.
 type substrateSessionAdapter struct {
 	inner   SubstrateSession
 	machine *hclifecycle.Machine
 }
 
-// Compile-time assertion: substrateSessionAdapter implements Session.
 var _ Session = (*substrateSessionAdapter)(nil)
 
 // SendInput retires the former silent no-op (AIS-001 / HC-069). Input to a
@@ -209,14 +203,6 @@ func (a *substrateSessionAdapter) Machine() *hclifecycle.Machine {
 	return a.machine
 }
 
-// newSubstrateAdapter wraps subSess in a substrateSessionAdapter and eagerly
-// initialises its lifecycle Machine (Spawning→Initializing). The sessID and
-// runID are used to identify the machine in lifecycle_transition events.
-//
-// Returns an error only if the FSM rejects the Spawning→Initializing edge, which
-// is statically valid and therefore indicates a defect in the state table rather
-// than a runtime condition. It is propagated rather than dropped so a regression
-// there cannot silently hand back an adapter whose machine is in the wrong state.
 func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) (*substrateSessionAdapter, error) {
 	if sessID == "" {
 		sessID = "substrate-unknown"
@@ -225,8 +211,6 @@ func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) (*subst
 		runID = "unknown"
 	}
 	m := hclifecycle.New(sessID, runID)
-	// Substrate sessions skip the exec.Cmd path, so we go directly to
-	// Initializing (the substrate has already spawned the process).
 	if err := m.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", ""); err != nil {
 		return nil, fmt.Errorf("handler: newSubstrateAdapter: lifecycle transition to initializing: %w: %w", err, ErrStructural)
 	}

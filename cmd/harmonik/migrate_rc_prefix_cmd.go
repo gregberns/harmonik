@@ -1,23 +1,5 @@
 package main
 
-// migrate_rc_prefix_cmd.go — `harmonik migrate-rc-prefix [--project DIR]`
-// (hk-f4w7).
-//
-// Interactive one-shot migration for existing projects that pre-date the
-// daemon.remote_control_prefix config field. When the field is absent or empty in
-// .harmonik/config.yaml, the command:
-//
-//  1. Reads the project's beads issue_prefix via `br config get issue_prefix`
-//     as a default suggestion (falls back to deriveBeadPrefix on br failure).
-//  2. Prompts the user to confirm or override the suggestion.
-//  3. Writes the chosen value in-place into .harmonik/config.yaml, preserving
-//     all existing content and comments.
-//
-// Satisfies locked decision §8.3 of the rc-prefix plan: do NOT silently
-// backfill; ask the user at migrate time.
-//
-// Bead ref: hk-f4w7.
-
 import (
 	"bufio"
 	"bytes"
@@ -33,12 +15,10 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// runMigrateRCPrefixSubcommand dispatches `harmonik migrate-rc-prefix [flags]`.
 func runMigrateRCPrefixSubcommand(args []string) int {
 	return runMigrateRCPrefix(args, os.Stdin, os.Stdout, os.Stderr)
 }
 
-// runMigrateRCPrefix is the testable core of migrate-rc-prefix.
 func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	projectDir := ""
 	for i := 0; i < len(args); i++ {
@@ -83,7 +63,6 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 1
 	}
 
-	// Load current config to check whether the prefix is already set.
 	cfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: load config: %v\n", err); writeErr != nil {
@@ -98,13 +77,11 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 0
 	}
 
-	// Suggestion: prefer beads issue_prefix, fall back to dir-derived slug.
 	suggestion := readBeadsIssuePrefix(projectDir)
 	if suggestion == "" {
 		suggestion = deriveBeadPrefix(projectDir)
 	}
 
-	// Prompt the user.
 	if _, err := fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: daemon.remote_control_prefix is not set.\n"); err != nil {
 		return 1
 	}
@@ -150,9 +127,6 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return 0
 }
 
-// readBeadsIssuePrefix returns the project's beads issue_prefix by running
-// `br config get issue_prefix` in projectDir. Returns "" on any error so the
-// caller can fall back to deriveBeadPrefix.
 func readBeadsIssuePrefix(projectDir string) string {
 	brPath, err := exec.LookPath("br")
 	if err != nil {
@@ -169,23 +143,8 @@ func readBeadsIssuePrefix(projectDir string) string {
 	return strings.TrimSpace(out.String())
 }
 
-// rcPrefixFieldRe matches an existing (non-commented) remote_control_prefix:
-// field line in the YAML, capturing leading whitespace. It does NOT match
-// comment lines like "  # remote_control_prefix: ..." because the '#' would
-// appear after the leading whitespace before the field name.
 var rcPrefixFieldRe = regexp.MustCompile(`(?m)^(\s*)remote_control_prefix:.*$`)
 
-// patchRCPrefixInConfig rewrites daemon.remote_control_prefix in the YAML file
-// at cfgPath. The rest of the file, including all comments, is preserved.
-//
-// Strategy:
-//  1. If a remote_control_prefix: line already exists (even with empty value),
-//     replace it in-place.
-//  2. Otherwise, insert the field line-by-line after the first daemon-block
-//     anchor found (workflow_mode, max_concurrent, or target_branch).
-//  3. If the daemon: block exists but none of those anchors do, insert
-//     immediately after the "daemon:" line itself.
-//  4. If no daemon: block exists at all, append a minimal daemon: block.
 func patchRCPrefixInConfig(cfgPath, prefix string) error {
 	//nolint:gosec // G304: cfgPath constructed from operator-supplied projectDir
 	data, err := os.ReadFile(cfgPath)
@@ -195,7 +154,6 @@ func patchRCPrefixInConfig(cfgPath, prefix string) error {
 	content := string(data)
 
 	if rcPrefixFieldRe.MatchString(content) {
-		// Replace the existing line, preserving its indentation.
 		content = rcPrefixFieldRe.ReplaceAllStringFunc(content, func(match string) string {
 			subs := rcPrefixFieldRe.FindStringSubmatch(match)
 			indent := subs[1]
@@ -211,12 +169,6 @@ func patchRCPrefixInConfig(cfgPath, prefix string) error {
 	return nil
 }
 
-// insertRCPrefixLine inserts "  remote_control_prefix: <prefix>" into content
-// using a line-by-line scan. Insertion anchors (tried in order):
-//  1. After workflow_mode:, max_concurrent:, or target_branch: (first found, in
-//     that order — these are the most common daemon-block fields).
-//  2. After the "daemon:" line itself (no known sub-fields found).
-//  3. Append a new "daemon:" block at the end of the file.
 func insertRCPrefixLine(content, prefix string) string {
 	lines := strings.Split(content, "\n")
 
@@ -230,7 +182,6 @@ func insertRCPrefixLine(content, prefix string) string {
 		return strings.Join(result, "\n")
 	}
 
-	// Locate the "daemon:" block header.
 	daemonIdx := -1
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "daemon:" {
@@ -239,7 +190,6 @@ func insertRCPrefixLine(content, prefix string) string {
 		}
 	}
 
-	// Pass 3 (no daemon: block at all): append a minimal one.
 	if daemonIdx == -1 {
 		if strings.HasSuffix(content, "\n") {
 			return content + "daemon:\n  remote_control_prefix: " + prefix + "\n"
@@ -247,8 +197,6 @@ func insertRCPrefixLine(content, prefix string) string {
 		return content + "\ndaemon:\n  remote_control_prefix: " + prefix + "\n"
 	}
 
-	// Determine the extent of the daemon block: it ends at the first following
-	// non-blank line that is NOT indented (i.e. a new top-level key).
 	blockEnd := len(lines)
 	for i := daemonIdx + 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == "" {
@@ -260,9 +208,6 @@ func insertRCPrefixLine(content, prefix string) string {
 		}
 	}
 
-	// Pass 1: insert after the first matching anchor field WITHIN the daemon
-	// block, so a like-named field in an unrelated top-level block is not
-	// mistaken for a daemon sub-field.
 	anchors := []string{"workflow_mode:", "max_concurrent:", "target_branch:"}
 	for _, anchor := range anchors {
 		for i := daemonIdx + 1; i < blockEnd; i++ {
@@ -272,8 +217,6 @@ func insertRCPrefixLine(content, prefix string) string {
 		}
 	}
 
-	// Pass 2: known daemon block but no anchor sub-field — insert right after
-	// the "daemon:" line itself.
 	return insertAfter(daemonIdx)
 }
 

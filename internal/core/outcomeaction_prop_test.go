@@ -1,20 +1,5 @@
 package core
 
-// Property tests for OutcomeAction using pgregory.net/rapid.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Invariants under test:
-//
-//  1. MarshalText/UnmarshalText round-trip: every declared OutcomeAction
-//     marshals to its string representation and unmarshals back identically.
-//
-//  2. Invalid values rejected: strings not in the declared set return errors
-//     from both MarshalText and UnmarshalText.
-//
-// See outcomeaction.go and control-points.md §4.2–§4.5.
-
 import (
 	"testing"
 

@@ -10,18 +10,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// --- Fixtures (prefix: monotonicityFixture) ---
-
-// monotonicityFixtureRunID returns a deterministic, valid UUIDv7-shaped run ID
-// string for use in EM-024a monotonicity tests. Uses the same format as
-// durableFixtureRunID so fixture helpers (durableFixtureCreateTaskBranch, etc.)
-// accept the result directly.
 func monotonicityFixtureRunID(n int) string {
 	return durableFixtureRunID(100 + n)
 }
 
-// monotonicityFixtureParseRunID parses a raw UUID string into a core.RunID,
-// failing the test on parse error.
 func monotonicityFixtureParseRunID(t *testing.T, raw string) core.RunID {
 	t.Helper()
 	var id core.RunID
@@ -31,11 +23,6 @@ func monotonicityFixtureParseRunID(t *testing.T, raw string) core.RunID {
 	return id
 }
 
-// monotonicityFixtureRepoAndProject creates:
-//   - a git repository in a temp dir (repoDir) with a root commit on main
-//   - a project dir (projectDir) where .harmonik/run-tips/ tip files land
-//
-// Returns (repoDir, projectDir). Both are sub-directories of t.TempDir().
 func monotonicityFixtureRepoAndProject(t *testing.T) (repoDir, projectDir string) {
 	t.Helper()
 	base := t.TempDir()
@@ -50,8 +37,6 @@ func monotonicityFixtureRepoAndProject(t *testing.T) (repoDir, projectDir string
 	durableFixtureInitRepo(t, repoDir)
 	return repoDir, projectDir
 }
-
-// --- Tests for EM-024a: WritePersistedTip / ReadPersistedTip ---
 
 // TestEM024a_WriteReadPersistedTip verifies that WritePersistedTip persists a
 // tip SHA and ReadPersistedTip retrieves it correctly.
@@ -107,7 +92,6 @@ func TestEM024a_WritePersistedTip_CreatesDir(t *testing.T) {
 	_, projectDir := monotonicityFixtureRepoAndProject(t)
 	runID := monotonicityFixtureParseRunID(t, monotonicityFixtureRunID(3))
 
-	// Verify the run-tips dir does not exist yet.
 	tipsDir := filepath.Join(projectDir, ".harmonik", "run-tips")
 	if _, statErr := os.Stat(tipsDir); !os.IsNotExist(statErr) {
 		t.Fatalf("precondition: run-tips dir should not exist yet")
@@ -118,12 +102,10 @@ func TestEM024a_WritePersistedTip_CreatesDir(t *testing.T) {
 		t.Fatalf("WritePersistedTip: %v", err)
 	}
 
-	// run-tips dir must now exist.
 	if _, statErr := os.Stat(tipsDir); statErr != nil {
 		t.Errorf("run-tips dir was not created: %v", statErr)
 	}
 
-	// Tip file must exist at <run-tips>/<run_id>.
 	tipPath := filepath.Join(tipsDir, runID.String())
 	if _, statErr := os.Stat(tipPath); statErr != nil {
 		t.Errorf("tip file not created at %s: %v", tipPath, statErr)
@@ -171,8 +153,6 @@ func TestEM024a_WritePersistedTip_OverwritesPreviousTip(t *testing.T) {
 	}
 }
 
-// --- Tests for IsFastForwardDescendant ---
-
 // TestEM024a_IsFastForwardDescendant_LinearChain verifies that for a linear
 // commit chain A → B → C, A is an ancestor of B and C, B is an ancestor of C,
 // but C is NOT an ancestor of A.
@@ -192,7 +172,6 @@ func TestEM024a_IsFastForwardDescendant_LinearChain(t *testing.T) {
 
 	ctx := t.Context()
 
-	// A is an ancestor of B.
 	ok, err := IsFastForwardDescendant(ctx, repoDir, shaA, shaB)
 	if err != nil {
 		t.Fatalf("IsFastForwardDescendant(A, B): %v", err)
@@ -201,7 +180,6 @@ func TestEM024a_IsFastForwardDescendant_LinearChain(t *testing.T) {
 		t.Errorf("IsFastForwardDescendant(A, B): got false, want true")
 	}
 
-	// A is an ancestor of C (transitivity).
 	ok, err = IsFastForwardDescendant(ctx, repoDir, shaA, shaC)
 	if err != nil {
 		t.Fatalf("IsFastForwardDescendant(A, C): %v", err)
@@ -210,7 +188,6 @@ func TestEM024a_IsFastForwardDescendant_LinearChain(t *testing.T) {
 		t.Errorf("IsFastForwardDescendant(A, C): got false, want true")
 	}
 
-	// B is an ancestor of C.
 	ok, err = IsFastForwardDescendant(ctx, repoDir, shaB, shaC)
 	if err != nil {
 		t.Fatalf("IsFastForwardDescendant(B, C): %v", err)
@@ -219,7 +196,6 @@ func TestEM024a_IsFastForwardDescendant_LinearChain(t *testing.T) {
 		t.Errorf("IsFastForwardDescendant(B, C): got false, want true")
 	}
 
-	// C is NOT an ancestor of A (reverse direction — rewind).
 	ok, err = IsFastForwardDescendant(ctx, repoDir, shaC, shaA)
 	if err != nil {
 		t.Fatalf("IsFastForwardDescendant(C, A): %v", err)
@@ -228,8 +204,6 @@ func TestEM024a_IsFastForwardDescendant_LinearChain(t *testing.T) {
 		t.Errorf("IsFastForwardDescendant(C, A): got true, want false (C is not an ancestor of A)")
 	}
 }
-
-// --- Tests for CheckBranchTipMonotonicity ---
 
 // TestEM024a_CheckMonotonicity_FirstObservation verifies that the first call
 // to CheckBranchTipMonotonicity with no prior tip file initializes the file
@@ -251,7 +225,6 @@ func TestEM024a_CheckMonotonicity_FirstObservation(t *testing.T) {
 		t.Fatalf("CheckBranchTipMonotonicity (first observation): unexpected error: %v", err)
 	}
 
-	// Tip file must now exist with the correct SHA.
 	got, err := ReadPersistedTip(projectDir, runID)
 	if err != nil {
 		t.Fatalf("ReadPersistedTip after first observation: %v", err)
@@ -276,17 +249,14 @@ func TestEM024a_CheckMonotonicity_NormalAdvance(t *testing.T) {
 	sha1 := durableFixtureCommitCheckpoint(t, repoDir, raw, "node-a")
 	sha2 := durableFixtureCommitCheckpoint(t, repoDir, raw, "node-b")
 
-	// Initialize with sha1.
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, sha1); err != nil {
 		t.Fatalf("CheckBranchTipMonotonicity (init): %v", err)
 	}
 
-	// Advance to sha2 (fast-forward).
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, sha2); err != nil {
 		t.Fatalf("CheckBranchTipMonotonicity (advance): unexpected error: %v", err)
 	}
 
-	// Persisted tip must be sha2.
 	got, err := ReadPersistedTip(projectDir, runID)
 	if err != nil {
 		t.Fatalf("ReadPersistedTip: %v", err)
@@ -309,12 +279,10 @@ func TestEM024a_CheckMonotonicity_SameTip(t *testing.T) {
 	durableFixtureCreateTaskBranch(t, repoDir, raw)
 	sha1 := durableFixtureCommitCheckpoint(t, repoDir, raw, "node-a")
 
-	// Initialize.
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, sha1); err != nil {
 		t.Fatalf("CheckBranchTipMonotonicity (init): %v", err)
 	}
 
-	// Re-check with the same tip — must be idempotent (no error, tip unchanged).
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, sha1); err != nil {
 		t.Fatalf("CheckBranchTipMonotonicity (same tip): unexpected error: %v", err)
 	}
@@ -342,8 +310,6 @@ func TestEM024a_CheckMonotonicity_RewindDetected(t *testing.T) {
 
 	repoDir, projectDir := monotonicityFixtureRepoAndProject(t)
 
-	// Create two independent branches from the same root commit so their tips
-	// are not ancestry-related — simulating a force-push to an unrelated SHA.
 	rawA := monotonicityFixtureRunID(30)
 	rawB := monotonicityFixtureRunID(31)
 
@@ -354,19 +320,16 @@ func TestEM024a_CheckMonotonicity_RewindDetected(t *testing.T) {
 	durableFixtureCreateTaskBranch(t, repoDir, rawB)
 	shaB := durableFixtureCommitCheckpoint(t, repoDir, rawB, "node-x")
 
-	// Initialize run A's persisted tip to shaA.
 	runID := monotonicityFixtureParseRunID(t, rawA)
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, shaA); err != nil {
 		t.Fatalf("CheckBranchTipMonotonicity (init): %v", err)
 	}
 
-	// Present shaB (from an unrelated branch) as the "new tip" — rewind simulation.
 	err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runID, shaB)
 	if !errors.Is(err, ErrBranchTipRewound) {
 		t.Fatalf("CheckBranchTipMonotonicity (rewind): got %v, want ErrBranchTipRewound", err)
 	}
 
-	// Persisted tip must still be shaA — NOT updated to shaB.
 	got, readErr := ReadPersistedTip(projectDir, runID)
 	if readErr != nil {
 		t.Fatalf("ReadPersistedTip: %v", readErr)
@@ -399,7 +362,6 @@ func TestEM024a_CheckMonotonicity_MultiRunIsolation(t *testing.T) {
 	durableFixtureCreateTaskBranch(t, repoDir, rawB)
 	shaB1 := durableFixtureCommitCheckpoint(t, repoDir, rawB, "node-b1")
 
-	// Initialize both runs.
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runIDA, shaA1); err != nil {
 		t.Fatalf("init run A: %v", err)
 	}
@@ -407,12 +369,10 @@ func TestEM024a_CheckMonotonicity_MultiRunIsolation(t *testing.T) {
 		t.Fatalf("init run B: %v", err)
 	}
 
-	// Advance run A to shaA2.
 	if err := CheckBranchTipMonotonicity(t.Context(), repoDir, projectDir, runIDA, shaA2); err != nil {
 		t.Fatalf("advance run A: %v", err)
 	}
 
-	// Run B's persisted tip must still be shaB1.
 	gotB, err := ReadPersistedTip(projectDir, runIDB)
 	if err != nil {
 		t.Fatalf("ReadPersistedTip run B: %v", err)
@@ -421,7 +381,6 @@ func TestEM024a_CheckMonotonicity_MultiRunIsolation(t *testing.T) {
 		t.Errorf("run B persisted tip after advancing run A: got %q, want %q", gotB, shaB1)
 	}
 
-	// Run A's persisted tip must be shaA2.
 	gotA, err := ReadPersistedTip(projectDir, runIDA)
 	if err != nil {
 		t.Fatalf("ReadPersistedTip run A: %v", err)

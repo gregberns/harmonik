@@ -7,31 +7,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// gate.go — the pure DOT-gate DECISION predicates: the gate-verdict.json parse,
-// the mechanism bool→GateAction mapping, and the pre-eval structural-failure
-// Outcome constructor.
-//
-// Moved out of internal/daemon (M5 slice 2 sub-slice C) WITHOUT semantic change.
-// The daemon shell still owns every effect: resolving gate_ref via the registry,
-// compiling/evaluating the mechanism PolicyExpression (core.PolicyExprEvaluator),
-// launching the cognition-gate subprocess, and reading gate-verdict.json off the
-// (possibly remote) filesystem. Only the value-in / value-out decisions live here.
-//
-// Unlike the earlier policy slices these predicates use internal/core types
-// (core.GateAction, core.Outcome) — permitted by the daemon → policy edge, which
-// allows $gostd + internal/core.
-//
-// Spec refs: specs/control-points.md §6.4 (expression environment: Gate mechanism
-// expressions return Bool; true → allow, false → deny), §7.2 (cognition dispatch /
-// gate-verdict.json schema). Frozen: the gate-verdict.json schema (schema_version:1,
-// decision enum).
-
 // GateVerdictSchemaVersion is the schema version expected in gate-verdict.json
 // files written by cognition gate evaluators. Frozen wire (schema_version:1).
 const GateVerdictSchemaVersion = 1
 
-// gateVerdictJSON is the on-disk format for gate-verdict.json written by
-// cognition gate evaluator subprocesses.
 type gateVerdictJSON struct {
 	SchemaVersion int    `json:"schema_version"`
 	Decision      string `json:"decision"`

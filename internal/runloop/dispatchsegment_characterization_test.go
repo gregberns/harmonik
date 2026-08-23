@@ -1,27 +1,5 @@
 package runloop
 
-// dispatchsegment_characterization_test.go — characterization of the LAUNCH and
-// DISPATCH steps of the shared launch → dispatch → wait → probe → teardown
-// sequence.
-//
-// DispatchSegment is the one primitive all four dispatch sites share:
-// workloop.go's single mode, reviewloop.go's implementer/reviewer phases,
-// dot_cascade_core.go's per-node dispatch, and dot_gate.go's cognition gates.
-// The pre-existing dispatchsegment_test.go covers the resume shape (the
-// stalled-resume ready-timeout edge and the transitional resume probe) plus the
-// launch-error classifier in isolation. This file covers the rest of the
-// contract: the fresh-launch happy path, the launch-failure branch as the
-// segment actually drives it, the two harness postures (adapter-less and
-// completion-by-process-exit), the exec-path agent exit, and the abort edge.
-//
-// What is pinned is the HOOK CONTRACT and the resulting terminal — which hooks
-// fire, in what order, and which ones must NOT fire on each branch. That is the
-// behaviour the four sites depend on and the behaviour a Phase-3 decomposition
-// must preserve; it says nothing about how the segment is structured
-// internally, so a refactor that keeps the contract keeps these green.
-//
-// Everything here runs in virtual time (substrate.FakeClock) or synchronously.
-
 import (
 	"context"
 	"errors"
@@ -34,10 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// hookLog records the order in which the segment invoked the site's hooks. The
-// order is the contract: launch_initiated is held back until the launch
-// succeeded (hk-4l7zs), and the brief is never delivered before readiness (the
-// hk-kunm4 "do not paste before the REPL accepts input" invariant).
 type hookLog struct {
 	mu   sync.Mutex
 	seen []string
@@ -73,8 +47,6 @@ func (l *hookLog) indexOf(name string) int {
 	return -1
 }
 
-// charSegConfig is the fresh-launch (non-resume) dispatch policy the single-mode
-// and DOT-implementer sites build. Durations are virtual.
 func charSegConfig() runexec.DispatchConfig {
 	return runexec.DispatchConfig{
 		MaxInputAttempts: 1,
@@ -84,8 +56,6 @@ func charSegConfig() runexec.DispatchConfig {
 	}
 }
 
-// newCharSegment builds a segment with every hook wired to the log. Callers
-// override the fields they are exercising.
 func newCharSegment(t *testing.T, log *hookLog, cfg runexec.DispatchConfig) (*DispatchSegment, *segRecordingEmitter) {
 	t.Helper()
 	runID := segTestRunID(t)
@@ -126,8 +96,6 @@ func TestDispatchSegment_FreshLaunchDeliversBriefAfterReady(t *testing.T) {
 	log := &hookLog{}
 	seg, _ := newCharSegment(t, log, charSegConfig())
 
-	// A relay-synthesized agent_ready, as the production SetAgentReadyCallback
-	// delivers it: emitted through the tap once the launch has been wired up.
 	seg.Adapter = segStubAdapter{ready: func(env core.EventEnvelope) bool {
 		return env.Type == core.EventTypeAgentReady
 	}}
@@ -181,9 +149,6 @@ func TestDispatchSegment_LaunchFailureHoldsBackLaunchInitiated(t *testing.T) {
 			t.Errorf("%s fired after a failed launch (order %v)", forbidden, log.order())
 		}
 	}
-	// The segment must not ALSO emit a launch-failure event: the site owns that
-	// emission because only the site has the rich payload. A segment that
-	// emitted here would double-report every capped spawn.
 	rec.mu.Lock()
 	n := len(rec.calls)
 	rec.mu.Unlock()
@@ -430,7 +395,6 @@ func TestDispatchSegment_UnsetReadyTimeoutHookSuppressesTheEmission(t *testing.T
 	}
 }
 
-// callTypes returns every event type the recording emitter observed.
 func (e *segRecordingEmitter) callTypes() []core.EventType {
 	e.mu.Lock()
 	defer e.mu.Unlock()

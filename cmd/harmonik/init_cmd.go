@@ -1,57 +1,5 @@
 package main
 
-// init_cmd.go — `harmonik init` subcommand implementation.
-//
-// # Purpose (hk-y171w, PL-029)
-//
-// First-time bootstrap of a new project for harmonik. Creates the .harmonik/
-// directory structure, provisions fleet skills and scaffold files from the
-// binary-embedded asset bundle, writes project config files, initialises the
-// beads database, renders AGENTS.md from the embedded template, and (optionally)
-// starts the supervisor.
-//
-// # Steps
-//
-//  1. Precondition check (git repo present, binaries on PATH).
-//  2. Create .harmonik/ subdirectories (events/, worktrees/, beads-intents/,
-//     comms/, crew/, keeper/, queues/, intent/).
-//  3. Run `br init --prefix <prefix>` to initialise the beads database
-//     (skipped when .beads/ already exists, unless --force).
-//  4. Write .harmonik/config.yaml (project-level daemon defaults).
-//  5. Write .harmonik/branching.yaml (branching defaults).
-//  6. Write .harmonik/.gitignore (excludes runtime files from git).
-//  7. Provision 9 fleet skills from the embedded asset bundle →
-//     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
-//     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}.
-//  8. Write scaffold files from the embedded asset bundle →
-//     AGENT_INDEX.md, STATUS.md (TASKS.md retired — hk-5qey).
-//  8a. Scaffold .harmonik/context/ tier files (project.yaml, captain-lanes.md,
-//     roadmap.md) + seed HANDOFF.md at the repo root from embedded templates.
-//  9. Render embedded AGENTS.template.md → AGENTS.md (substitutes
-//     $PROJECT_DIR and $TARGET_BRANCH). AGENTS.md is the three-kinds ROUTER
-//     (precedence + per-role load map + harmonik:managed markers).
-// 10. Symlink CLAUDE.md → AGENTS.md.
-// 11. Seed the goal-keeper schedule job in .harmonik/schedules.json (FW5,
-//     hk-z25w) — every 1h command backstop; idle-trigger wiring is FW6.
-// 12. (Optional) Run `harmonik supervise start --watch-restart` unless
-//     --no-supervise is passed.
-// 13. (Optional) Smoke test when --smoke is passed.
-//
-// # Idempotency
-//
-// By default each step is skipped when its output artifact already exists.
-// Pass --force to overwrite existing files (br init --force, file overwrites).
-//
-// # --target-branch
-//
-// The real fail-closed enforcement of the target branch is owned by the daemon's
-// own boot guard (branching.yaml lands_on → TargetBranch with flag > file >
-// default precedence per WM-005b, plus protect-branch / forbid-default-main
-// enforcement). init passes --target-branch through to config.yaml and
-// branching.yaml without imposing its own guard.
-//
-// Bead refs: hk-y171w, hk-7iyh (fleet-portability T11), hk-da3k (fleet-portability T12).
-
 import (
 	"context"
 	"errors"
@@ -66,22 +14,12 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// initSkewHintFn is the injectable hook that prints the stale-assets hint after
-// provisioning. Set to PrintSkewHintIfStale in production; can be overridden in
-// tests that do not want filesystem side-effects.
 var initSkewHintFn func(projectDir string, stderr io.Writer) = PrintSkewHintIfStale
 
-// runInitSubcommand dispatches `harmonik init [flags]`.
-//
-// Exit codes:
-//
-//	0  — success
-//	1  — argument, precondition, or I/O error
 func runInitSubcommand(args []string) int {
 	return runInit(args, os.Stdout, os.Stderr)
 }
 
-// runInit is the testable core of the init subcommand.
 func runInit(args []string, stdout, stderr io.Writer) int {
 	var (
 		projectDir   string
@@ -124,8 +62,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		case args[i] == "--no-supervise":
 			noSupervise = true
 		default:
-			// Fail closed: a mistyped flag (e.g. --target-branc) must not
-			// silently bootstrap against defaults.
 			if initWritef(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage) != nil {
 				return 1
 			}
@@ -133,7 +69,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Resolve project directory.
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -153,7 +88,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	}
 	projectDir = absProject
 
-	// Default values.
 	if targetBranch == "" {
 		targetBranch = "main"
 	}
@@ -161,7 +95,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		prefix = deriveBeadPrefix(projectDir)
 	}
 
-	// Run doctor checks.
 	if ok := runDoctorChecks(projectDir, stdout, stderr); !ok {
 		return 1
 	}
@@ -176,84 +109,64 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Step 3: create .harmonik/ subdirectories.
 	if code := mkdirAll(projectDir, stderr); code != 0 {
 		return code
 	}
 
-	// Step 4: run br init --prefix.
 	if code := runBrInit(projectDir, prefix, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 5: write .harmonik/config.yaml. The remote_control_prefix defaults to
-	// the SAME value passed to `br init --prefix` so the beads prefix and the
-	// Claude RC label prefix match out of the box (hk-igpg).
 	if code := writeConfigYAML(projectDir, targetBranch, prefix, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 6: write .harmonik/branching.yaml.
 	if code := writeBranchingYAML(projectDir, targetBranch, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 7: write .harmonik/.gitignore.
 	if code := writeHarmonikGitignore(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 8: provision 8 fleet skills from the embedded asset bundle.
 	if code := provisionSkills(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 10: write scaffold files (AGENT_INDEX.md, STATUS.md).
 	if code := provisionScaffolds(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 10b: scaffold .harmonik/context/ tier files + seed HANDOFF.md.
 	if code := provisionContextTiers(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 11: render AGENTS.md from embedded template.
 	if code := renderAgentsMD(projectDir, targetBranch, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 12: symlink CLAUDE.md → AGENTS.md.
 	if code := ensureClaudeMDSymlink(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 12b: seed the goal-keeper schedule job (flywheel FW5, hk-z25w).
 	if code := seedGoalKeeperSchedule(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 13: start supervisor (optional).
 	if !noSupervise {
 		if code := maybeStartSupervise(projectDir, stdout, stderr); code != 0 {
-			// Non-fatal: supervisor start failure is logged but does not abort init.
 			if initWritef(stderr, "harmonik init: warning: supervisor start skipped (see above). Start manually with: harmonik supervise start --watch-restart\n") != nil {
 				return 1
 			}
 		}
 	}
 
-	// Step 14: smoke test (optional).
 	if smoke {
 		if code := runSmokeTest(projectDir, stdout, stderr); code != 0 {
 			return code
 		}
 	}
 
-	// Emit the stale-assets hint when existing managed files are behind the
-	// running binary. Fires on re-init of an existing project (--no-force skips
-	// provisioning but the operator needs to know to run sync-assets).
-	// Best-effort: errors and zero-change results are silently suppressed.
 	if initSkewHintFn != nil {
 		initSkewHintFn(projectDir, stderr)
 	}
@@ -269,14 +182,6 @@ func initWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// deriveBeadPrefix derives a short lowercase bead prefix from a project
-// directory path. It takes the base name, splits on word boundaries
-// (hyphens, underscores, spaces, dots), and returns a slug:
-//   - ≥2 words → leading letter of each word, up to 4 characters
-//   - 1 word   → first 2 alphanumeric characters
-//
-// Falls back to "hk" only when the directory base name contains no usable
-// alphanumeric characters.
 func deriveBeadPrefix(projectDir string) string {
 	base := strings.ToLower(filepath.Base(projectDir))
 	words := strings.FieldsFunc(base, func(r rune) bool {
@@ -301,7 +206,6 @@ func deriveBeadPrefix(projectDir string) string {
 			return slug.String()
 		}
 	}
-	// Single word (or too-short initials): use first 2 characters.
 	word := words[0]
 	if len(word) >= 2 {
 		return word[:2]
@@ -309,12 +213,9 @@ func deriveBeadPrefix(projectDir string) string {
 	return word + "x"
 }
 
-// runDoctorChecks verifies prerequisites and reports results.
-// Returns true when all checks pass.
 func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 	ok := true
 
-	// Check: project dir exists.
 	if _, err := os.Stat(projectDir); err != nil {
 		if initWritef(stderr, "harmonik init: project directory %q does not exist or is not accessible: %v\n", projectDir, err) != nil {
 			return false
@@ -322,17 +223,11 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		ok = false
 	}
 
-	// Check: git repo.
 	gitDir := filepath.Join(projectDir, ".git")
 	if _, err := os.Stat(gitDir); err != nil {
-		// Also check for worktrees (where .git is a file, not a directory).
 		gitFile := filepath.Join(projectDir, ".git")
 		info, ferr := os.Stat(gitFile)
 		if ferr != nil || !info.IsDir() {
-			// More accurate: try `git -C <dir> rev-parse --git-dir`.
-			// context.Background(): `harmonik init` is a synchronous CLI entry
-			// point with no cancellable context in scope, and this probe is a
-			// sub-millisecond read-only git query.
 			cmd := exec.CommandContext(context.Background(), "git", "-C", projectDir, "rev-parse", "--git-dir")
 			if runErr := cmd.Run(); runErr != nil {
 				if initWritef(stderr, "harmonik init: %q is not a git repository (run git init first)\n", projectDir) != nil {
@@ -343,7 +238,6 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		}
 	}
 
-	// Check: br on PATH.
 	if _, err := exec.LookPath("br"); err != nil {
 		if initWritef(stderr, "harmonik init: 'br' (beads CLI) not found on PATH — install beads_rust first\n") != nil {
 			return false
@@ -351,7 +245,6 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		ok = false
 	}
 
-	// Check: harmonik on PATH.
 	if _, err := exec.LookPath("harmonik"); err != nil {
 		if initWritef(stderr, "harmonik init: 'harmonik' not found on PATH — ensure the binary is installed\n") != nil {
 			return false
@@ -367,7 +260,6 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 	return ok
 }
 
-// mkdirAll creates the required .harmonik/ subdirectories (PL-029d).
 func mkdirAll(projectDir string, stderr io.Writer) int {
 	dirs := []string{
 		filepath.Join(projectDir, ".harmonik"),
@@ -391,8 +283,6 @@ func mkdirAll(projectDir string, stderr io.Writer) int {
 	return 0
 }
 
-// runBrInit runs `br init --prefix <prefix>` in the project directory.
-// Skipped when .beads/ already exists and force is false.
 func runBrInit(projectDir, prefix string, force bool, stdout, stderr io.Writer) int {
 	beadsDir := filepath.Join(projectDir, ".beads")
 	if _, err := os.Stat(beadsDir); err == nil && !force {
@@ -428,20 +318,6 @@ func runBrInit(projectDir, prefix string, force bool, stdout, stderr io.Writer) 
 	return 0
 }
 
-// configYAMLContent is the project-level daemon config template.
-//
-// schema_version: 1 is emitted UNCOMMENTED so the file loads. parseProjectConfig
-// requires schema_version == 1 once any daemon:/keeper: block is present (else it
-// returns ErrUnsupportedConfigVersion). With it present, a third party may
-// uncomment a SINGLE keeper line below to override one tunable without tripping
-// the version check (hk-vxn8).
-//
-// The keeper: block is emitted COMPLETE and UNCOMMENTED (keeperConfigExampleYAML,
-// the shared source of truth with `harmonik keeper config --example`). harmonik
-// imposes NO built-in keeper defaults at runtime — every value must be set by the
-// operator or the keeper refuses to start — so a generated project ships with a
-// complete, valid, operator-editable keeper block. writeConfigYAML appends the
-// shared block after this daemon/sentinel template.
 const configYAMLContent = `# harmonik project configuration
 # Generated by: harmonik init
 # Spec ref: hk-y171w (harmonik init bootstrap), hk-9kgf (keeper config schema), hk-vxn8 (commented keeper template)
@@ -523,10 +399,6 @@ sentinel:
 # ("5m", "120s") — a bare number is REJECTED.
 `
 
-// writeConfigYAML writes .harmonik/config.yaml. rcPrefix is written as
-// daemon.remote_control_prefix; init passes the same value given to
-// `br init --prefix` so the beads prefix and the Claude RC label prefix match
-// out of the box (hk-igpg).
 func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	if _, err := os.Stat(path); err == nil && !force {
@@ -535,16 +407,6 @@ func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdo
 		}
 		return 0
 	}
-	// Append the COMPLETE keeper:, codex: and harnesses.pi: blocks from their single
-	// sources of truth (shared with `harmonik keeper config --example` and
-	// `harmonik pi config --example`) so a generated project starts with a valid,
-	// operator-editable config: keeper has no runtime defaults, folding in the
-	// harnesses.pi block lets the daemon dispatch the Pi harness out of the box
-	// (the operator tunes the suggested provider/model/api_key_env), and the codex:
-	// block carries codex.stale_wal_max_bytes — REQUIRED with no compiled default,
-	// so without it the FIRST codex launch in a fresh project fails loud at
-	// spec-build time (hk-yhvrh). YAML key order is not semantic, so appending these
-	// after the daemon/sentinel template is fine.
 	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix) +
 		keeperConfigExampleYAML() +
 		codexConfigExampleYAML() +
@@ -561,7 +423,6 @@ func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdo
 	return 0
 }
 
-// branchingYAMLContent is the branching defaults template.
 const branchingYAMLContent = `# harmonik branching defaults
 # Generated by: harmonik init
 # Spec ref: specs/workspace-model.md §4.2 WM-005b
@@ -575,7 +436,6 @@ defaults:
   landing_strategy: squash
 `
 
-// writeBranchingYAML writes .harmonik/branching.yaml.
 func writeBranchingYAML(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", "branching.yaml")
 	if _, err := os.Stat(path); err == nil && !force {
@@ -597,27 +457,6 @@ func writeBranchingYAML(projectDir, targetBranch string, force bool, stdout, std
 	return 0
 }
 
-// harmonikGitignoreContent excludes the whole .harmonik/ runtime tree, then
-// re-admits the few files a project is meant to track.
-//
-// hk-jcrzn: this list USED TO ENUMERATE what to hide (daemon.pid, daemon.sock,
-// events/, worktrees/, cognition/, beads-intents/, queue.json, comms/, crew/,
-// keeper/, queues/, schedules.json.lock, review.json, review.iter-*.json) and so
-// failed OPEN on everything it did not name — agent-task.md, commit-gate.log,
-// reviewer-feedback.iter-N.md, and this file itself. The daemon writes
-// agent-task.md into every run worktree, so in a freshly-initialised project a
-// run in which the agent did NOTHING still reported `?? .harmonik/`, the codex
-// fallback read that as uncommitted work, and it committed the daemon's own
-// scaffolding with a valid Refs trailer. commit_gate passed it, because by every
-// check the gate makes it was a real commit.
-//
-// Ignore-by-default with explicit exceptions means a newly-added runtime file is
-// hidden automatically instead of silently becoming forgeable "agent work". The
-// same enumerate-vs-membership failure was hk-1qgaz in sandbox.harnesses.
-//
-// Belt-and-braces only: codexWorktreeDirty and the fallback committer now
-// exclude .harmonik/ by pathspec (agentWorkPathspec), which holds regardless of
-// what any project's gitignore says. This makes fresh projects correct too.
 const harmonikGitignoreContent = `# harmonik runtime files — not committed
 # Generated by: harmonik init
 #
@@ -632,7 +471,6 @@ const harmonikGitignoreContent = `# harmonik runtime files — not committed
 !.gitignore
 `
 
-// writeHarmonikGitignore writes .harmonik/.gitignore.
 func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", ".gitignore")
 	if _, err := os.Stat(path); err == nil && !force {
@@ -654,11 +492,6 @@ func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Wri
 	return 0
 }
 
-// renderAgentsMD reads the embedded AGENTS.template.md (foreign-repo variant of
-// the three-kinds ROUTER: precedence + per-role load map + harmonik:managed
-// agents-router markers), substitutes $PROJECT_DIR and $TARGET_BRANCH, and
-// writes AGENTS.md at the project root. Skipped when AGENTS.md already exists
-// and force is false.
 func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	outPath := filepath.Join(projectDir, "AGENTS.md")
 	if _, err := os.Stat(outPath); err == nil && !force {
@@ -692,10 +525,6 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 	return 0
 }
 
-// provisionSkills extracts the 9 fleet skills from the embedded asset bundle
-// into the project's .claude/skills/ directory (PL-029a).
-// Idempotent: skips files that already exist unless force is true.
-// Does NOT delete or overwrite sibling skill directories (PL-029e).
 func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) int {
 	skillsRoot := filepath.Join(projectDir, ".claude", "skills")
 	//nolint:gosec // G301: 0755 for .claude/skills/
@@ -766,14 +595,6 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 	return 0
 }
 
-// provisionScaffolds writes the minimal scaffold files (AGENT_INDEX.md,
-// STATUS.md) from the embedded asset bundle (PL-029c).
-// Skipped when each file already exists and force is false.
-//
-// TASKS.md is NOT scaffolded — it is retired in the three-kinds instruction
-// model (hk-5qey). This-session work lives in HANDOFF.md (tier-1) and the
-// lane/epic tracker in .harmonik/context/captain-lanes.md (tier-2), both
-// rendered by provisionContextTiers below.
 func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer) int {
 	scaffolds := []string{"AGENT_INDEX.md", "STATUS.md"}
 	for _, name := range scaffolds {
@@ -805,19 +626,6 @@ func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer)
 	return 0
 }
 
-// provisionContextTiers scaffolds the operational-state tier files from the
-// embedded asset bundle (three-kinds instruction model, hk-5qey). It creates
-// .harmonik/context/ and renders the tier templates:
-//
-//	assets/context/project.yaml.tmpl       → .harmonik/context/project.yaml   (tier-3)
-//	assets/context/captain-lanes.md.tmpl   → .harmonik/context/captain-lanes.md (tier-2)
-//	assets/context/roadmap.md.tmpl         → .harmonik/context/roadmap.md      (tier-4)
-//	assets/context/HANDOFF.md.tmpl         → HANDOFF.md (repo root)            (tier-1)
-//
-// HANDOFF.md is a this-session file and lives at the repo root (where the
-// captain/orchestrator expects it), NOT under .harmonik/context/.
-//
-// Idempotent: each output is skipped when it already exists and force is false.
 func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writer) int {
 	contextDir := filepath.Join(projectDir, ".harmonik", "context")
 	if err := os.MkdirAll(contextDir, core.HarmonikDirMode); err != nil {
@@ -867,16 +675,12 @@ func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writ
 	return 0
 }
 
-// ensureClaudeMDSymlink creates CLAUDE.md → AGENTS.md at the project root.
-// Idempotent: skips when the symlink already points correctly.
-// With --force: removes and recreates the symlink.
 func ensureClaudeMDSymlink(projectDir string, force bool, stdout, stderr io.Writer) int {
 	claudePath := filepath.Join(projectDir, "CLAUDE.md")
 	target := "AGENTS.md" // relative symlink
 
 	if info, err := os.Lstat(claudePath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			// Check if it already points to AGENTS.md.
 			existing, lerr := os.Readlink(claudePath)
 			if lerr == nil && existing == target {
 				if initWritef(stdout, "harmonik init: CLAUDE.md → AGENTS.md symlink already exists — skipping\n") != nil {
@@ -911,9 +715,6 @@ func ensureClaudeMDSymlink(projectDir string, force bool, stdout, stderr io.Writ
 	return 0
 }
 
-// maybeStartSupervise attempts to start the supervisor. Non-fatal: logs a
-// warning and returns 1 when the daemon is not yet running (exit 17 from
-// `harmonik supervise start`), since the operator may start it later.
 func maybeStartSupervise(projectDir string, stdout, stderr io.Writer) int {
 	exe, err := os.Executable()
 	if err != nil {
@@ -944,13 +745,11 @@ func maybeStartSupervise(projectDir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runSmokeTest performs a basic post-init sanity check.
 func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 	if initWritef(stdout, "harmonik init --smoke: running sanity checks...\n") != nil {
 		return 1
 	}
 
-	// Check: .harmonik/ exists.
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 	if _, err := os.Stat(harmonikDir); err != nil {
 		if initWritef(stderr, "harmonik init --smoke: .harmonik/ missing: %v\n", err) != nil {
@@ -959,7 +758,6 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Check: .harmonik/config.yaml exists.
 	if _, err := os.Stat(filepath.Join(harmonikDir, "config.yaml")); err != nil {
 		if initWritef(stderr, "harmonik init --smoke: .harmonik/config.yaml missing\n") != nil {
 			return 1
@@ -967,7 +765,6 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Check: .harmonik/branching.yaml exists.
 	if _, err := os.Stat(filepath.Join(harmonikDir, "branching.yaml")); err != nil {
 		if initWritef(stderr, "harmonik init --smoke: .harmonik/branching.yaml missing\n") != nil {
 			return 1
@@ -975,7 +772,6 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Check: AGENTS.md exists.
 	if _, err := os.Stat(filepath.Join(projectDir, "AGENTS.md")); err != nil {
 		if initWritef(stderr, "harmonik init --smoke: AGENTS.md missing\n") != nil {
 			return 1
@@ -983,7 +779,6 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Check: br list exits 0 (database readable).
 	brPath, err := exec.LookPath("br")
 	if err == nil {
 		//nolint:gosec // G204: brPath from LookPath
@@ -1003,10 +798,6 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// seedGoalKeeperSchedule registers the goal-keeper recurring job in
-// .harmonik/schedules.json (flywheel FW5, hk-z25w). The job runs
-// `harmonik goal-keeper --project <dir>` on an every-1h backstop cadence.
-// Idempotent: skips if the job already exists and force is false.
 func seedGoalKeeperSchedule(projectDir string, force bool, stdout, stderr io.Writer) int {
 	store := schedule.NewStore(projectDir)
 	if err := store.Load(); err != nil {

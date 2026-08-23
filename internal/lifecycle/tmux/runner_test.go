@@ -109,18 +109,12 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 	sr := SSHRunner{Host: "worker-mac-1"}
 	rr := &RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
-			// Return a no-op cmd so nothing actually runs.
 			return exec.CommandContext(ctx, "true")
 		},
 	}
-	// Wrap the SSHRunner inside the RecordingRunner so we can inspect the
-	// fully-expanded argv that SSHRunner produces.
-	// Instead, call SSHRunner.Command directly and inspect the resulting Cmd.
 	ctx := context.Background()
 	_ = rr // silence unused warning; we use SSHRunner directly below
 
-	// Build a NewWindowIn with a space-containing workdir and a slash-containing
-	// window name — these are the hk-kuxxl slash class and argv-quoting risks.
 	p := NewWindowIn{
 		Session:    "mysession",
 		WindowName: "feat/my-feature",
@@ -133,12 +127,7 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 		t.Fatal("SSHRunner.Command: got nil cmd")
 	}
 
-	// cmd.Args[0] is the binary path; cmd.Args[1:] are the argv tokens.
-	// SSHRunner ships the remote command as a SINGLE shell-quoted operand after
-	// `--` (NOT a discrete argv vector — OpenSSH would space-join it and the
-	// remote login shell would re-parse it; see SSHRunner doc + the hkfxy9 test).
 	argv := cmd.Args
-	// Expected: [ssh, worker-mac-1, --, <one quoted remote string>]
 	if len(argv) != 4 {
 		t.Fatalf("SSHRunner argv = %v; want exactly 4 elements (ssh host -- <remote>)", argv)
 	}
@@ -152,7 +141,6 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 		t.Errorf("argv[2] = %q, want --", argv[2])
 	}
 	remote := argv[3]
-	// The remote string must be the per-token single-quoted join of tmux+args.
 	wantTokens := append([]string{"tmux"}, args...)
 	wantParts := make([]string, len(wantTokens))
 	for i, tk := range wantTokens {
@@ -161,10 +149,6 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 	if want := strings.Join(wantParts, " "); remote != want {
 		t.Fatalf("remote command not token-quoted:\n got=%q\nwant=%q", remote, want)
 	}
-	// The space-containing workdir and slash-containing window name must appear
-	// QUOTED (one literal word each), not raw-split: verify the quoted forms are
-	// present and the raw (unquoted) forms are NOT (which would mean the remote
-	// shell could re-split them).
 	if !strings.Contains(remote, shellQuoteArg("/home/user/work dir with spaces")) {
 		t.Errorf("remote %q: space-containing workdir not single-quoted", remote)
 	}
@@ -181,7 +165,6 @@ func TestSSHRunner_Opts(t *testing.T) {
 	ctx := context.Background()
 	cmd := sr.Command(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
 	argv := cmd.Args
-	// Expected: [ssh, -p, 2222, -i, /path/to/key, worker-mac-1, --, tmux, ...]
 	if argv[1] != "-p" || argv[2] != "2222" || argv[3] != "-i" || argv[4] != "/path/to/key" {
 		t.Errorf("Opts not prepended correctly: %v", argv)
 	}
@@ -205,11 +188,9 @@ func TestSSHRunner_LoadBufferForwardsStdin(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("SSHRunner.Command: got nil cmd")
 	}
-	// cmd.Stdin must be nil before the caller sets it.
 	if cmd.Stdin != nil {
 		t.Errorf("SSHRunner.Command: cmd.Stdin pre-set by runner; must be nil so caller can set it")
 	}
-	// Simulate what OSAdapter.LoadBuffer does: set cmd.Stdin.
 	cmd.Stdin = bytes.NewReader([]byte("hello"))
 	if cmd.Stdin == nil {
 		t.Error("cmd.Stdin: assignment lost — runner must not override it")
@@ -257,9 +238,6 @@ func TestIsSSHConnectionFailure_WrappedErrTmuxFailure(t *testing.T) {
 	}
 }
 
-// errTest255 is a plain error whose message mentions 255 but is neither an
-// *exec.ExitError nor an *ErrTmuxFailure — proves the check is type-based, not
-// string-based.
 type errTest255 struct{}
 
 func (errTest255) Error() string { return "exit status 255" }

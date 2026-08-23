@@ -1,22 +1,5 @@
 package handlercontract
 
-// skillsprovisioned_hc049.go — SkillsProvisionedMsg wire struct for HC-049.
-//
-// Spec refs: specs/handler-contract.md §4.11.HC-049 and §6.5 (progress-stream
-// wire protocol). Bead hk-8i31.58.
-//
-// HC-049 requires that after successful skill provisioning and BEFORE
-// agent_ready, the handler MUST emit a skills_provisioned progress-stream
-// message carrying the set of installed skills.  The on-wire payload schema
-// is co-owned by event-model.md §8.3.8 (§6.3 field list: run_id, session_id,
-// skills[] where each skill has name, source_path, version?).
-//
-// Ordering invariant (HC-INV-004, handler-contract.md §5):
-//
-//	handler_capabilities → session_log_location → skills_provisioned → agent_ready → …
-//
-// The handler MUST NOT emit agent_ready before skills_provisioned.
-
 // SkillProvisionedEntry is one entry in the SkillsProvisionedMsg.Skills slice.
 // Each entry describes a single installed skill.
 //

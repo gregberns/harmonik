@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// perSessionKillAdapter fails the kill for exactly one named session and
-// succeeds for every other, so a test can drive a PARTIAL-failure reap pass.
 type perSessionKillAdapter struct {
 	sessions []FlywheelSession
 	failFor  string
@@ -69,7 +67,6 @@ func TestReap_PartialKillFailure_KeepsGoingAndReportsSuccesses(t *testing.T) {
 		t.Errorf("error %q does not name the failing session %q", err, c)
 	}
 
-	// Every candidate was attempted — the loop did not abort on c.
 	wantAttempts := []string{a, b, c, d}
 	if len(adapter.killed) != len(wantAttempts) {
 		t.Fatalf("kill attempts = %v, want %v (loop aborted early)", adapter.killed, wantAttempts)
@@ -80,7 +77,6 @@ func TestReap_PartialKillFailure_KeepsGoingAndReportsSuccesses(t *testing.T) {
 		}
 	}
 
-	// The successes are reported; the failure is not.
 	wantReaped := []string{a, b, d}
 	if len(result.Reaped) != len(wantReaped) {
 		t.Fatalf("result.Reaped = %v, want %v", result.Reaped, wantReaped)
@@ -96,8 +92,6 @@ func TestReap_PartialKillFailure_KeepsGoingAndReportsSuccesses(t *testing.T) {
 		}
 	}
 
-	// One event per successful kill, in reap order — this is the observability
-	// that the first-error return silently dropped.
 	if len(result.Events) != len(wantReaped) {
 		t.Fatalf("result.Events = %+v, want %d events (%v)", result.Events, len(wantReaped), wantReaped)
 	}
@@ -202,7 +196,6 @@ func TestOSReapAdapter_ListKeepsRealFailures(t *testing.T) {
 		t.Fatalf("error %q omits tmux's output", err)
 	}
 
-	// Same for the kill path.
 	if killErr := (osReapAdapter{}).KillSession(context.Background(), "harmonik-0123456789ab-flywheel"); killErr == nil {
 		t.Fatal("permission-denied kill: got nil, want an error")
 	}

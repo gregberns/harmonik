@@ -69,10 +69,6 @@ func WorkerHarmonikPath(w workers.Worker) string {
 	return workers.DefaultHarmonikPath
 }
 
-// workerSocketPollInterval is the cadence at which WaitWorkerSocketLive probes
-// the worker-side reverse-tunnel TCP listener. The listener should appear within
-// ~1s of the forward establishing, so a sub-second cadence keeps the gate snappy
-// without hammering the ssh transport.
 const workerSocketPollInterval = 300 * time.Millisecond
 
 // WorkerSocketReadyTimeout is the default bound for WaitWorkerSocketLive: how
@@ -94,11 +90,6 @@ const WorkerSocketReadyTimeout = 10 * time.Second
 // either.
 var ReverseTunnelRunner = exec.CommandContext
 
-// tcpEndpointPrefix marks a HARMONIK_DAEMON_SOCKET value as a TCP loopback
-// endpoint (the REMOTE-run reverse-tunnel transport). A unix-socket path never
-// starts with this prefix, so the hookrelay dialer can distinguish the two purely
-// from the env value (see internal/hookrelay/hookrelay.go). Keep this string in
-// sync with the hookrelay dialer.
 const tcpEndpointPrefix = "tcp://"
 
 // WorkerTCPEndpoint returns the per-run worker-side reverse-tunnel TCP endpoint
@@ -113,9 +104,6 @@ func WorkerTCPEndpoint(port int) string {
 	return tcpEndpointPrefix + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 }
 
-// tcpEndpointAddr strips the "tcp://" prefix from a worker TCP endpoint, yielding
-// the bare host:port for net.JoinHostPort-style use. Returns ("", false) for a
-// value that is not a TCP endpoint (e.g. a unix-socket path).
 func tcpEndpointAddr(endpoint string) (addr string, ok bool) {
 	if strings.HasPrefix(endpoint, tcpEndpointPrefix) {
 		return strings.TrimPrefix(endpoint, tcpEndpointPrefix), true
@@ -123,10 +111,6 @@ func tcpEndpointAddr(endpoint string) (addr string, ok bool) {
 	return "", false
 }
 
-// reservedTunnelPorts tracks the worker-side reverse-tunnel ports currently
-// HELD by in-flight remote runs on THIS daemon, guarded by reservedTunnelPortsMu.
-// AllocatePort reserves a port here for the duration of a run; ReleasePort frees
-// it at tunnel teardown.
 var (
 	reservedTunnelPortsMu sync.Mutex
 	reservedTunnelPorts   = make(map[int]bool)
@@ -151,35 +135,7 @@ var (
 // parallel either.
 var AllocatePort = allocatePort
 
-// allocatePort picks a free TCP port to hand sshd for the worker-side
-// `-R 127.0.0.1:<port>:…` loopback bind, and RESERVES it (in reservedTunnelPorts)
-// until ReleasePort frees it at tunnel teardown.
-//
-// CONCURRENCY SAFETY (we run waves of 4+ simultaneous remote runs): each call binds
-// a TCP listener on box A's 127.0.0.1:0, lets the OS assign a currently-free
-// ephemeral port, reads it, and immediately closes the listener. The kernel hands
-// distinct ports to two SIMULTANEOUS Listen calls, but it will re-hand a port the
-// instant a sibling run closes its listener (the Listen→Close→worker-bind gap is a
-// TOCTOU window): two runs whose alloc/close interleave could otherwise be handed
-// the SAME port, and `-o ExitOnForwardFailure=yes` would then kill the losing
-// tunnel (hk-cnp17). The in-process reserved-port set closes that window — a port
-// just handed out is checked against (and added to) reservedTunnelPorts under a
-// mutex, so a port held by a live run is never re-handed; on a collision we simply
-// re-Listen for another. The port remains a HINT for sshd's worker-side bind (the
-// worker's free-port space is independent of box A's), so ExitOnForwardFailure=yes
-// still guards a clash on the worker itself, and the connect-probe readiness gate
-// (WaitWorkerSocketLive) reopens the bead rather than launching claude into a dead
-// tunnel. This avoids any monotonic counter and the TOCTOU false-green of
-// "test -S exists".
-//
-// Residual race: the set only de-conflicts allocations on THIS daemon; a port the
-// kernel hands here could in principle be grabbed by an unrelated box-A process in
-// the gap before the worker binds it — but box A never binds these ports itself
-// (they are hints for the worker's sshd), so that case is still caught on the
-// worker by ExitOnForwardFailure=yes + the readiness gate.
 func allocatePort() (int, error) {
-	// Bounded retry: in practice a collision resolves on the first re-Listen,
-	// since the kernel's free-ephemeral pool is large relative to in-flight runs.
 	const maxAttempts = 50
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -188,11 +144,6 @@ func allocatePort() (int, error) {
 		}
 		listenAddr := l.Addr()
 		tcpAddr, isTCP := listenAddr.(*net.TCPAddr)
-		// Close before reserving: the port is only a HINT for sshd's worker-side
-		// bind; box A does not hold the listener. A close failure would leave box A
-		// holding the very port we are about to hand the worker, so it is reported
-		// rather than swallowed (errcheck runs with check-blank, and this really is
-		// the one close whose failure matters here).
 		if closeErr := l.Close(); closeErr != nil {
 			return 0, fmt.Errorf("tunnel.AllocatePort: close probe listener: %w", closeErr)
 		}
@@ -208,7 +159,6 @@ func allocatePort() (int, error) {
 			return port, nil
 		}
 		reservedTunnelPortsMu.Unlock()
-		// Collided with a port a concurrent run already holds; try again.
 	}
 	return 0, fmt.Errorf("tunnel.AllocatePort: no free port after %d attempts", maxAttempts)
 }
@@ -295,8 +245,6 @@ func BuildArgs(port int, daemonSock, host string, opts []string) []string {
 	forward := net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + ":" + daemonSock
 	args := make([]string, 0, 13+len(opts)+1)
 	args = append(args, "-N", "-R", forward, "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no")
-	// hk-cnp17: force a dedicated, non-multiplexed, kept-warm connection. These
-	// precede opts so the worker's opts cannot override them (ssh: first value wins).
 	args = append(args,
 		"-o", "ControlPath=none",
 		"-o", "ServerAliveInterval=15",
@@ -402,13 +350,9 @@ func WaitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, endpoint
 	defer ticker.Stop()
 
 	for {
-		// `nc -z 127.0.0.1 <port>` exits 0 iff a TCP connection succeeds — an
-		// ACTUAL connectability check as the worker user, not a mere existence test.
 		if err := r.Command(ctx, "nc", "-z", "127.0.0.1", portStr).Run(); err == nil {
 			return nil
 		}
-		// Stop as soon as the deadline has passed (also covers timeout <= 0:
-		// we still probe once above before bailing).
 		if time.Now().After(deadline) {
 			return fmt.Errorf("tunnel.WaitWorkerSocketLive: endpoint %s not live within %s", endpoint, timeout)
 		}
@@ -416,7 +360,6 @@ func WaitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, endpoint
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			// next probe
 		}
 	}
 }

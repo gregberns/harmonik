@@ -2,19 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// workspaceevents_hqwn59.go — event-bus payload types for §8.5 workspace
-// lifecycle events covered by this implementer wave (hqwn59b):
-//   - workspace_created          (§8.5.1)
-//   - workspace_leased           (§8.5.2)
-//   - workspace_merge_status     (§8.5.3)
-//   - workspace_discarded        (§8.5.4)
-//   - workspace_interrupted      (§8.5.5)
-//   - merge_conflict_escalation  (§8.5.6)
-//
-// Spec ref: specs/event-model.md §8.5.
-// Bead refs: hk-hqwn.59.37, hk-hqwn.59.38, hk-hqwn.59.39, hk-hqwn.59.40,
-//            hk-hqwn.59.41, hk-hqwn.59.42.
-
 // WorkspaceCreatedPayload is the typed event payload for the workspace_created
 // event (event-model.md §8.5.1).
 //
@@ -225,7 +212,6 @@ func (p WorkspaceMergeStatusPayload) Valid() bool {
 	if p.TargetBranch == "" {
 		return false
 	}
-	// merge_commit_hash: null when pending, required when merged
 	switch p.Status {
 	case WorkspaceMergeStatusPending:
 		if p.MergeCommitHash != nil {

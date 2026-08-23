@@ -1,16 +1,5 @@
 package workers_test
 
-// routing_prop_test.go — property tests for per-queue local/remote routing
-// invariants (hk-f10xl [L5 Move 2]).
-//
-// Four invariants exercised:
-//   1. Routing — LocalOnly=true never yields a worker (always local).
-//   2. WorkerTarget — mismatched name always falls back to nil (local).
-//   3. Failover — disabled or slot-exhausted workers always return nil.
-//   4. No-collision — concurrent slot reservations never exceed MaxSlots.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-
 import (
 	"sync"
 	"sync/atomic"
@@ -21,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// drawWorkerName generates a non-empty worker name that is a valid DNS-label
-// subset: lowercase letters and digits only, 1–16 chars. Sufficient for test
-// discrimination without importing a full validation dependency.
 func drawWorkerName(rt *rapid.T, label string) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 	length := rapid.IntRange(1, 16).Draw(rt, label+"_len")
@@ -51,17 +37,6 @@ func makeWorkerCfg(name string, enabled bool, maxSlots int) workers.Config {
 	}
 }
 
-// ── Invariant 1: LocalOnly routing gate ─────────────────────────────────────
-//
-// When a queue has LocalOnly=true, the scheduling logic must bypass the worker
-// registry entirely — no worker must ever be selected regardless of registry
-// state. We model this by verifying that SelectWorkerByName("") returns nil
-// and SelectWorker on a disabled-equivalent path matches the gate's behaviour.
-//
-// The actual gate lives in daemon/workloop.go (the `if !itemLocalOnly` guard);
-// property tests here cover the two selectors the gate delegates to, plus the
-// gate's nil short-circuit path.
-
 func TestProp_Routing_LocalOnly_NeverSelectsWorker(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		name := drawWorkerName(rt, "worker")
@@ -69,19 +44,14 @@ func TestProp_Routing_LocalOnly_NeverSelectsWorker(t *testing.T) {
 		enabled := rapid.Bool().Draw(rt, "enabled")
 		r := workers.NewRegistry(makeWorkerCfg(name, enabled, maxSlots))
 
-		// Simulate the localOnly gate: skip SelectWorker entirely → local (nil).
-		// SelectWorkerByName("") is the identity check: empty target must return nil.
 		if got := r.SelectWorkerByName(""); got != nil {
 			rt.Fatalf("SelectWorkerByName empty target: expected nil (local), got worker %q", got.Name)
 		}
-		// No slot should have been reserved.
 		if inFlight := r.InFlight(); inFlight != 0 {
 			rt.Fatalf("localOnly gate: expected 0 in-flight after empty-target call, got %d", inFlight)
 		}
 	})
 }
-
-// ── Invariant 2: WorkerTarget name mismatch falls back to local ──────────────
 
 func TestProp_Routing_WorkerTarget_MatchYieldsWorker(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -104,7 +74,6 @@ func TestProp_Routing_WorkerTarget_MismatchFallsBackToLocal(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		name := drawWorkerName(rt, "worker")
 		other := drawWorkerName(rt, "other")
-		// Ensure the two names differ so the mismatch is real.
 		if name == other {
 			other += "x"
 		}
@@ -119,8 +88,6 @@ func TestProp_Routing_WorkerTarget_MismatchFallsBackToLocal(t *testing.T) {
 		}
 	})
 }
-
-// ── Invariant 3: Failover — disabled or slot-exhausted returns nil ───────────
 
 func TestProp_Routing_Failover_DisabledWorkerReturnsNil(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -143,21 +110,18 @@ func TestProp_Routing_Failover_SlotsExhaustedReturnsNil(t *testing.T) {
 		maxSlots := rapid.IntRange(1, 6).Draw(rt, "max_slots")
 		r := workers.NewRegistry(makeWorkerCfg(name, true, maxSlots))
 
-		// Exhaust all slots.
 		for i := 0; i < maxSlots; i++ {
 			w := r.SelectWorker()
 			if w == nil {
 				rt.Fatalf("slot %d/%d: expected non-nil, got nil", i+1, maxSlots)
 			}
 		}
-		// Any further selection must fail.
 		if w := r.SelectWorker(); w != nil {
 			rt.Fatalf("exhausted slots: SelectWorker expected nil, got %q", w.Name)
 		}
 		if w := r.SelectWorkerByName(name); w != nil {
 			rt.Fatalf("exhausted slots: SelectWorkerByName expected nil, got %q", w.Name)
 		}
-		// Release all slots.
 		for i := 0; i < maxSlots; i++ {
 			r.ReleaseSlot()
 		}
@@ -192,12 +156,6 @@ func TestProp_Routing_Failover_LiveDisableFlipsResult(t *testing.T) {
 	})
 }
 
-// ── Invariant 4: No-collision — concurrent selectors never exceed MaxSlots ───
-//
-// N goroutines race to call SelectWorker concurrently. The peak observed
-// in-flight count must never exceed MaxSlots. We track this with an atomic
-// high-water mark.
-
 func TestProp_Routing_NoCollision_ConcurrentSelectNeverExceedsMaxSlots(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		maxSlots := rapid.IntRange(1, 8).Draw(rt, "max_slots")
@@ -216,7 +174,6 @@ func TestProp_Routing_NoCollision_ConcurrentSelectNeverExceedsMaxSlots(t *testin
 				if w == nil {
 					return // slot not available — correct when saturated
 				}
-				// Observe current in-flight and update hwm.
 				cur := int64(r.InFlight())
 				for {
 					old := hwm.Load()
@@ -275,12 +232,6 @@ func TestProp_Routing_NoCollision_SelectWorkerByNameConcurrent(t *testing.T) {
 	})
 }
 
-// ── Mixed local+remote invariant ─────────────────────────────────────────────
-//
-// When some queues have LocalOnly=true and others don't, the overall system
-// must route correctly: local-only queues must never acquire a slot; non-local
-// queues must succeed when slots are available.
-
 func TestProp_Routing_MixedLocalAndRemote_SlotAccountingCorrect(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		maxSlots := rapid.IntRange(2, 8).Draw(rt, "max_slots")
@@ -290,14 +241,11 @@ func TestProp_Routing_MixedLocalAndRemote_SlotAccountingCorrect(t *testing.T) {
 		localRuns := rapid.IntRange(1, 4).Draw(rt, "local_runs")
 		remoteRuns := rapid.IntRange(1, maxSlots).Draw(rt, "remote_runs")
 
-		// Local-only runs: simulate by NOT calling SelectWorker (the gate skips it).
-		// Assert no in-flight before remote runs.
 		if inFlight := r.InFlight(); inFlight != 0 {
 			rt.Fatalf("before any run: expected 0 in-flight, got %d", inFlight)
 		}
 		_ = localRuns // local runs consume no slots
 
-		// Remote runs: acquire slots sequentially.
 		acquired := 0
 		for i := 0; i < remoteRuns; i++ {
 			w := r.SelectWorker()
@@ -307,7 +255,6 @@ func TestProp_Routing_MixedLocalAndRemote_SlotAccountingCorrect(t *testing.T) {
 			acquired++
 		}
 
-		// In-flight must equal acquired, must never exceed MaxSlots.
 		if inFlight := r.InFlight(); inFlight != acquired {
 			rt.Fatalf("in-flight=%d != acquired=%d", inFlight, acquired)
 		}
@@ -315,7 +262,6 @@ func TestProp_Routing_MixedLocalAndRemote_SlotAccountingCorrect(t *testing.T) {
 			rt.Fatalf("acquired %d > MaxSlots %d", acquired, maxSlots)
 		}
 
-		// Release all remote slots.
 		for i := 0; i < acquired; i++ {
 			r.ReleaseSlot()
 		}

@@ -1,27 +1,5 @@
 package daemon_test
 
-// socket_decisions_xz9_test.go — socket-level tests for the hitl-decisions
-// agent-side emit ops (hitl-decisions SPEC §2, component K2, bead hk-xz9):
-//   - decisions-raise    → emits decision_needed; returns the minted decision_id
-//                          (= the decision_needed event's own event_id, SPEC §1).
-//   - decisions-withdraw → emits decision_withdrawn(self_obsoleted); returns event_id.
-//
-// Acceptance criteria verified here:
-//   - the ops route to the DecisionsHandler (rode on the CommsSendHandler value)
-//     when registered.
-//   - a well-formed raise emits a decision_needed event AND the returned
-//     decision_id equals that event's own event_id (the K3 key contract, SPEC §1).
-//   - a well-formed withdraw emits a decision_withdrawn with payload.decision_id
-//     set to the supplied id and reason=self_obsoleted.
-//   - validation errors (missing question / no options for raise; missing id or
-//     bad reason for withdraw) return Ok=false with no event emitted.
-//   - a nil handler returns Ok=false ("DecisionsHandler not registered").
-//
-// Reuses the socketFixture* helpers (socket_test.go) and the same in-memory bus
-// pattern as socket_comms_nbrmf_test.go.
-//
-// Bead ref: hk-xz9 (K2).
-
 import (
 	"context"
 	"encoding/json"
@@ -34,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// dx9FixtureBuildBus builds a sealed in-memory bus capturing the three decision_*
-// event types into *captured.
 func dx9FixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync.Mutex) {
 	t.Helper()
 
@@ -73,8 +49,6 @@ func dx9FixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync.M
 func dx9FixtureStartListener(t *testing.T, bus eventbus.EventBus) string {
 	t.Helper()
 	sockPath := socketFixtureTempSockPath(t)
-	// NewCommsSendHandler also wires the TypedEmitter for the decisions-* ops
-	// (the same handler value rides as both CommsSendHandler and DecisionsHandler).
 	ch := daemon.NewCommsSendHandler(bus)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -129,7 +103,6 @@ func TestDecisionsRaise_HappyPath(t *testing.T) {
 	if ev.Type != core.EventTypeDecisionNeeded {
 		t.Errorf("captured event type = %q, want decision_needed", ev.Type)
 	}
-	// The decision_id MUST be the decision_needed event's OWN event_id (SPEC §1).
 	if ev.EventID.String() != result.DecisionID {
 		t.Errorf("decision_id %q != decision_needed event_id %q (SPEC §1 key contract)", result.DecisionID, ev.EventID.String())
 	}

@@ -1,26 +1,3 @@
-// inputtwin.go — the INPUT-direction digital twin for the structured Codex
-// app-server driver (agent-input-substrate M2, T9).
-//
-// The sibling twin.go replays a captured OUTPUT-direction corpus
-// (codexreactor.Event: turn/started, deltas, turn/completed) for the output
-// reactor. This file is its INPUT-direction peer: it replays a synthesized
-// codexinput.Event stimulus stream (the driver's ack/response direction — the
-// D9 seam-gap resolution: "model the driver's ack/response stream as E") through
-// the SAME generic substrate replay engine, so the four closed fault modes
-// (RS-012) apply to input stimuli with zero new fault code.
-//
-// # The sentinel-ignore idiom (keepertwin/codec.go path A)
-//
-// The two synthetic fault constructors return SENTINEL events whose EventType is
-// NOT in the codexinput reactor's Step switch (twin_transport_error /
-// twin_disconnected — distinct from the reactor's native "error"/"disconnected").
-// The reactor's total transition therefore IGNORES them (Step returns nil for an
-// unknown type) and proceeds to its OWN bounded-liveness terminal: the armed
-// input_ack_timeout fires → agent_input_stale (AIS-INV-001). This keeps the
-// production reactor untouched (RS-009: never a new fault mode or reactor vocab)
-// and is what makes the entry-foreclosed cells (Truncate@1 / Stall@1) open no
-// submission at all, exactly as the T9 acceptance requires.
-
 package codexdigitaltwin
 
 import (
@@ -33,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Synthetic fault-event sentinels (ignored by the reactor's Step) ──────────
-
 const (
 	// EvTwinTransportError is the FaultTruncate / fatal-decode stimulus. Its type
 	// is deliberately NOT codexinput.EventTypeError ("error"), so the reactor's
@@ -45,13 +20,6 @@ const (
 	EvTwinDisconnected codexinput.EventType = "twin_disconnected"
 )
 
-// ─── inputCodec ───────────────────────────────────────────────────────────────
-
-// inputCodec implements substrate.ReplayCodec[codexinput.Event]: it deserializes
-// synthesized stimulus lines (EncodeInputStimulus output — one JSON
-// codexinput.Event per line) and supplies the two ignored sentinel constructors
-// the substrate fault injector needs. Stateless: codexinput events carry their
-// own InputSeq, so no codec-internal sequence is required.
 type inputCodec struct{}
 
 // DecodeLine decodes one synthesized stimulus line. Every well-formed line is
@@ -78,8 +46,6 @@ func (inputCodec) ErrorEvent(msg string) codexinput.Event {
 func (inputCodec) DisconnectEvent() codexinput.Event {
 	return codexinput.Event{Type: EvTwinDisconnected}
 }
-
-// ─── InputTwin ─────────────────────────────────────────────────────────────────
 
 // InputTwin replays a synthesized codexinput.Event stimulus stream (NDJSON) as a
 // substrate.EventSource[codexinput.Event], optionally injecting transport faults.

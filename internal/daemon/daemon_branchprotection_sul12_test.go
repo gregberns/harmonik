@@ -11,15 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// daemon_branchprotection_sul12_test.go — targeted tests for the boot-time
-// fail-closed branch-protection validation added by hk-sul12:
-//
-//  1. ForbidUnprotectedDefault + empty TargetBranch → hard error before socket bind.
-//  2. resolved TargetBranch in ProtectBranches → hard error before socket bind.
-//  3. Happy path emits daemon_config with the resolved target branch.
-//
-// Bead ref: hk-sul12.
-
 func branchProtectionFixtureDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
 	projectDir = t.TempDir()

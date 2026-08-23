@@ -1,21 +1,5 @@
 package runlaunch_test
 
-// sessionlogloc_guard_hksll_test.go — regression test for the guard half of
-// hk-sll-empty-logpath-7dxdw.
-//
-// The daemon wrote a session_log_location event whose payload its own validator
-// rejects: log_path was empty, and core.SessionLogLocationPayload.Valid()
-// returns false for that (event-model.md §8.3.7). Observed live on 2026-08-09
-// against a daemon built from 6920f9cf3, on the pi seed bead as-p4i:
-//
-//	{"type":"session_log_location","payload":{"agent_type":"claude-code",
-//	 "log_format":"jsonl","log_path":"","node_id":"bead/as-p4i", ...}}
-//
-// The rule existed, the code that states it existed, and the emission path never
-// asked. EmitPreExecMessage now asks, and refuses.
-//
-// Helper prefix: hksll (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"context"
 	"encoding/json"
@@ -25,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runlaunch"
 )
 
-// hksllRecordingEmitter records the event type of every emit.
 type hksllRecordingEmitter struct {
 	types []string
 }
@@ -40,8 +23,6 @@ func (e *hksllRecordingEmitter) EmitWithRunID(_ context.Context, _ core.RunID, e
 	return nil
 }
 
-// hksllRunID returns a fixed non-nil run id. The value only has to be non-nil:
-// core.SessionLogLocationPayload.Valid() rejects the zero uuid.
 func hksllRunID(t *testing.T) core.RunID {
 	t.Helper()
 	var id core.RunID
@@ -51,8 +32,6 @@ func hksllRunID(t *testing.T) core.RunID {
 	return id
 }
 
-// hksllWithType re-encodes pl with a top-level "type" field, matching the
-// on-wire pre-exec message shape EmitPreExecMessage dispatches on.
 func hksllWithType(t *testing.T, pl core.SessionLogLocationPayload) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(pl)

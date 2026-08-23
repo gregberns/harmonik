@@ -1,18 +1,5 @@
 package daemon
 
-// followup_ledger_ac1_test.go — unit tests for the durable at-most-once
-// ledger helpers (hk-3ndb AC1).
-//
-// Observable behaviours covered:
-//
-//  1. loadFollowUpLedger returns an empty map for a missing file (no error).
-//  2. appendFollowUpLedger creates the file and writes one entry.
-//  3. loadFollowUpLedger reads back exactly the appended keys.
-//  4. Multiple appends accumulate; load returns all of them.
-//  5. Malformed or empty-key lines are skipped silently on load.
-//  6. loadFollowUpLedger returns the partial set on a scan error but does
-//     not return an empty-map sentinel — remaining valid entries survive.
-
 import (
 	"os"
 	"path/filepath"

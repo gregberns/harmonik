@@ -1,21 +1,5 @@
 package workspace
 
-// workertrust_race_test.go — regression coverage for the concurrent-slot
-// lost-update race in workerTrustUpsertProgram (the remote ~/.claude.json trust
-// writer). Under max_slots>1 the daemon spawns several remote runs at once, each
-// running this python program against the SAME worker ~/.claude.json. The naive
-// unlocked read-modify-write loses updates: concurrent writers each read the
-// config before either writes, add only their own worktree key, and the last
-// os.replace clobbers the others. The clobbered run's worktree is then untrusted
-// → Claude Code's folder-trust dialog → the launch hangs → agent_ready never
-// fires. The fix adds an fcntl.flock(LOCK_EX) on a ~/.claude.json.lock sidecar
-// held across the whole read-modify-write.
-//
-// TestWorkerTrustUpsert_UnlockedLosesUpdatesUnderBarrier reproduces the race
-// against an embedded copy of the OLD unlocked program (RED) and
-// TestWorkerTrustUpsert_ConcurrentAllKeysSurvive proves the shipped program keeps
-// every concurrent writer's key (GREEN).
-
 import (
 	"bytes"
 	"encoding/json"
@@ -27,13 +11,6 @@ import (
 	"testing"
 )
 
-// unlockedTrustUpsertProgramWithBarrier is the PRE-FIX unlocked upsert plus a
-// deterministic read-then-write barrier: it reads the config, waits HK_TEST_SLEEP
-// seconds, then writes. Launched concurrently, every copy reads the initial
-// (empty) config before any writes, so each writes back a config carrying ONLY
-// its own key — the last os.replace wins and all but one key are lost. This makes
-// the lost-update race deterministic so the RED assertion never flakes. It is the
-// bug the shipped program's LOCK_EX closes.
 const unlockedTrustUpsertProgramWithBarrier = `
 import json, os, sys, tempfile, time
 wt = os.path.realpath(sys.argv[1])
@@ -73,13 +50,6 @@ except BaseException:
     raise
 `
 
-// runTrustUpsert runs a trust-upsert python program against a private HOME with
-// worktreePath as argv[1]. env holds extra environment entries (e.g. HK_TEST_SLEEP).
-//
-// CLAUDE_CONFIG_HOME is cleared because the program consults it before ~: these
-// tests are about the HOME-expanding shape, so the config path must be
-// home/.claude.json and nothing else. hermetic.Main also clears it, but a test
-// that reads the config at a path it chose should say so itself.
 func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...string) error {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "python3", "-", worktreePath)
@@ -93,8 +63,6 @@ func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...str
 	return nil
 }
 
-// countTrustedWorktrees returns how many of worktreePaths are recorded as trusted
-// (projects[realpath].hasTrustDialogAccepted == true) in home/.claude.json.
 func countTrustedWorktrees(t *testing.T, home string, worktreePaths []string) int {
 	t.Helper()
 	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
@@ -119,8 +87,6 @@ func countTrustedWorktrees(t *testing.T, home string, worktreePaths []string) in
 	return n
 }
 
-// makeWorktreePaths creates n distinct existing worktree directories under home
-// (they must exist so os.path.realpath resolves them consistently across procs).
 func makeWorktreePaths(t *testing.T, home string, n int) []string {
 	t.Helper()
 	paths := make([]string, n)
@@ -149,9 +115,6 @@ func TestWorkerTrustUpsert_UnlockedLosesUpdatesUnderBarrier(t *testing.T) {
 		wg.Add(1)
 		go func(p string) {
 			defer wg.Done()
-			// 0.5s barrier guarantees all copies read the empty config before any write.
-			// A lost update is what this test measures, so an upsert that loses the
-			// race is not a failure; a writer that could not run at all is.
 			if err := runTrustUpsert(t, home, unlockedTrustUpsertProgramWithBarrier, p, "HK_TEST_SLEEP=0.5"); err != nil {
 				t.Errorf("concurrent trust upsert for %q did not run: %v", p, err)
 			}
@@ -178,8 +141,6 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	home := t.TempDir()
 	paths := makeWorktreePaths(t, home, n)
 
-	// Pre-seed a non-trivial config so the read-modify-write has real work,
-	// widening the window concurrent writers would race in.
 	projects := map[string]interface{}{}
 	for i := 0; i < 200; i++ {
 		projects[fmt.Sprintf("/preexisting/run-%05d", i)] = map[string]interface{}{
@@ -197,14 +158,10 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make([]error, n)
-	// A small barrier still exercises overlap; the lock must serialize it correctly.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(idx int, p string) {
 			defer wg.Done()
-			// Nothing to send across: this test is about the HOME-expanding
-			// production shape, so it hands the program "" and redirects HOME.
-			// runTrustUpsert clears CLAUDE_CONFIG_HOME so ~ is what gets used.
 			errs[idx] = runTrustUpsert(t, home, workerTrustUpsertProgram("", defaultTrustLockTimeout), p, "HK_TEST_SLEEP=0")
 		}(i, paths[i])
 	}
@@ -221,7 +178,6 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 			"the LOCK_EX read-modify-write must preserve every writer's key", survived, n)
 	}
 
-	// The pre-existing keys and top-level content must be preserved too.
 	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {

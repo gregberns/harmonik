@@ -9,9 +9,6 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
-// dispatchReplayObservations contains values read from each replay authority.
-// Claim, Git, and outcome facts stay explicit until their exact stores have
-// production readers. This function does not infer them from Beads or events.
 type dispatchReplayObservations struct {
 	Queue      *queue.Queue
 	Bead       *core.BeadRecord
@@ -24,8 +21,6 @@ type dispatchReplayObservations struct {
 	RunOutcome bool
 }
 
-// buildDispatchReplayFacts joins exact observations through the package-owned
-// classifiers. It performs no I/O and returns detached facts.
 func buildDispatchReplayFacts(
 	intent dispatch.Intent,
 	observations dispatchReplayObservations,

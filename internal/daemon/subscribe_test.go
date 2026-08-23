@@ -1,18 +1,5 @@
 package daemon
 
-// subscribe_test.go — unit tests for SubscribeHub / subscriptionStream
-// (bead hk-6ynv4). Tests cover:
-//
-//   - back-pressure: slow subscriber doesn't stall the bus; drop-oldest emits
-//     subscription_gap with accumulated drop count.
-//   - type filter: subscriber requesting [a,b] doesn't receive [c] events.
-//   - heartbeat: idle subscription emits heartbeat at configured cadence.
-//   - graceful close on client disconnect.
-//   - goroutine leak: goleak.VerifyNone after multiple close cycles (hk-6232r).
-//   - heartbeat clamp boundaries: 9s and 601s clamped to [10, 600] (hk-6232r).
-//   - slow-fast multi-subscriber asymmetry: fast drains, slow drops (hk-6232r).
-//   - daemon-shutdown-mid-subscribe: context cancel causes clean return (hk-6232r).
-
 import (
 	"bufio"
 	"context"
@@ -30,7 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// subscribeTestMakeEvent constructs a minimal core.Event with the given type.
 func subscribeTestMakeEvent(t *testing.T, evtType string) core.Event {
 	t.Helper()
 	evID, err := uuid.NewV7()
@@ -82,16 +68,13 @@ func TestSubscriptionStream_DropOldestBackpressure(t *testing.T) {
 		ch:       make(chan core.Event, 2),
 		wildcard: true,
 	}
-	// Fill: 2 events in a 2-cap channel.
 	e1 := subscribeTestMakeEvent(t, "first")
 	e2 := subscribeTestMakeEvent(t, "second")
 	s.offer(e1)
 	s.offer(e2)
-	// Overflow: each subsequent offer drops one oldest and enqueues new.
 	e3 := subscribeTestMakeEvent(t, "third")
 	e4 := subscribeTestMakeEvent(t, "fourth")
 
-	// Start a goroutine to verify offer() never blocks the producer.
 	done := make(chan struct{})
 	go func() {
 		s.offer(e3)
@@ -107,7 +90,6 @@ func TestSubscriptionStream_DropOldestBackpressure(t *testing.T) {
 	if got := s.dropped.Load(); got != 2 {
 		t.Errorf("dropped counter: got %d, want 2", got)
 	}
-	// Channel should now hold the two newest events.
 	g1 := <-s.ch
 	g2 := <-s.ch
 	if g1.Type != "third" || g2.Type != "fourth" {
@@ -131,15 +113,6 @@ func TestSubscribeHub_HeartbeatFires(t *testing.T) {
 		Bus: nil, // dispatch path not exercised here
 	})
 
-	// Use HeartbeatSeconds=10 (the minimum after clamp) but rely on the
-	// clamp-min so test latency is bounded. We override the heartbeat ticker
-	// by setting HeartbeatSeconds to a small value pre-clamp; the clamp will
-	// raise it to 10s, which exceeds our 5s test timeout, so instead we use
-	// a custom code path: invoke makeHeartbeat() directly to validate the
-	// heartbeat payload shape, and assert that HandleSubscribe writes it
-	// when the timer fires (separate timing-tolerant subtest).
-
-	// Validate heartbeat payload shape directly.
 	hb := hub.makeHeartbeat()
 	if hb.Type != "heartbeat" {
 		t.Errorf("heartbeat type: got %q, want %q", hb.Type, "heartbeat")
@@ -159,8 +132,6 @@ func TestSubscribeHub_HeartbeatFires(t *testing.T) {
 func TestSubscribeHub_HeartbeatTimerFiresOnIdle(t *testing.T) {
 	t.Parallel()
 
-	// fakeTimer fires once after 20ms regardless of the requested duration, then
-	// blocks so the test can observe the single heartbeat and terminate.
 	fakeTimer := func(_ time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
 		ch := make(chan time.Time, 1)
 		go func() {
@@ -196,7 +167,6 @@ func TestSubscribeHub_HeartbeatTimerFiresOnIdle(t *testing.T) {
 		close(done)
 	}()
 
-	// Read until we see a heartbeat line or 500ms timeout.
 	rdr := bufio.NewReader(cli)
 	deadline := time.Now().Add(500 * time.Millisecond)
 	var sawHeartbeat bool
@@ -244,7 +214,6 @@ func TestSubscribeHub_GracefulCloseOnClientDisconnect(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for hub to register the subscriber.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		hub.mu.RLock()
@@ -256,9 +225,6 @@ func TestSubscribeHub_GracefulCloseOnClientDisconnect(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Close the client side; the read goroutine in HandleSubscribe should
-	// detect EOF and cancel the inner context, causing HandleSubscribe to
-	// return.
 	_ = cli.Close()
 
 	select {
@@ -267,7 +233,6 @@ func TestSubscribeHub_GracefulCloseOnClientDisconnect(t *testing.T) {
 		t.Fatalf("HandleSubscribe did not return within %s of client close", daemonExitHangBudget)
 	}
 
-	// Subscriber must be deregistered.
 	hub.mu.RLock()
 	n := len(hub.subscribers)
 	hub.mu.RUnlock()
@@ -290,7 +255,6 @@ func TestSubscribeHub_DispatchFanOut(t *testing.T) {
 	hub.subscribers[s2] = struct{}{}
 	hub.mu.Unlock()
 
-	// Drive dispatch with three events.
 	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "a"))
 	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "b"))
 	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "a"))
@@ -302,7 +266,6 @@ func TestSubscribeHub_DispatchFanOut(t *testing.T) {
 		t.Errorf("s2 (wildcard): got %d events, want 3", got)
 	}
 
-	// last_event_id must reflect the most recently dispatched event.
 	if hub.loadLastEventID() == "" {
 		t.Error("last_event_id should be non-empty after dispatch")
 	}
@@ -315,15 +278,6 @@ func TestSubscribeHub_DispatchFanOut(t *testing.T) {
 // in the process — running concurrently with other parallel tests produces
 // false positives from those tests' goroutines.
 func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
-	// Ignoring the goroutines that already exist is load-bearing, and the
-	// snapshot must be taken HERE rather than at the check below. Not running in
-	// parallel is not enough: an earlier test in this binary drives a real run,
-	// and a run leaves substrate.After timer goroutines sleeping out their full
-	// duration after it ends. A bare VerifyNone reads those as this hub's leak
-	// and names a stack from coldstarttoken_test.go. Taken at the top, the
-	// snapshot covers what the neighbours left and still catches every goroutine
-	// this test creates. Taken at the bottom it would ignore this test's own
-	// leaks and the check would mean nothing.
 	preexisting := goleak.IgnoreCurrent()
 
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
@@ -342,7 +296,6 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 				hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
 				close(inner)
 			}()
-			// Allow registration to take effect.
 			time.Sleep(5 * time.Millisecond)
 			_ = cli.Close()
 			_ = srv.Close()
@@ -351,7 +304,6 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 	}
 	wg.Wait()
 
-	// (a) subscriber map must be empty.
 	hub.mu.RLock()
 	n := len(hub.subscribers)
 	hub.mu.RUnlock()
@@ -359,8 +311,6 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 		t.Errorf("subscribers map leaked: got %d after all sessions closed", n)
 	}
 
-	// (b) goroutine leak check — goleak retries for ~400ms to allow any
-	// lingering conn-read goroutines to drain after the pipe closes.
 	goleak.VerifyNone(t, preexisting)
 }
 
@@ -395,8 +345,6 @@ func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
 	}
 }
 
-// subscribeTestStartSocketHub starts a socket listener backed by a SubscribeHub
-// and returns the socket path. The listener is torn down via t.Cleanup.
 func subscribeTestStartSocketHub(t *testing.T, hub *SubscribeHub) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hk-subscribe-")
@@ -417,7 +365,6 @@ func subscribeTestStartSocketHub(t *testing.T, hub *SubscribeHub) string {
 		<-done
 	})
 
-	// Wait for socket to bind.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(sockPath); err == nil {
@@ -428,8 +375,6 @@ func subscribeTestStartSocketHub(t *testing.T, hub *SubscribeHub) string {
 	return sockPath
 }
 
-// subscribeTestDial opens a connection and sends a subscribe request.
-// Caller must close the returned conn.
 func subscribeTestDial(t *testing.T, sockPath string, req map[string]any) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
@@ -516,7 +461,6 @@ func TestSubscribe_ReplaySinceEventID(t *testing.T) {
 	e1 := makeEvt("historical_1")
 	e2 := makeEvt("historical_2")
 
-	// Write E1 and E2 to JSONL.
 	f, openErr := os.Create(jsonlPath)
 	if openErr != nil {
 		t.Fatalf("create jsonl: %v", openErr)
@@ -577,7 +521,6 @@ func TestSubscribe_ReplaySinceEventID(t *testing.T) {
 		t.Errorf("replayed[1].event_id mismatch")
 	}
 
-	// Send a live event and verify it arrives after replay.
 	e3 := makeEvt("live_1")
 	hub.dispatch(context.Background(), e3) //nolint:errcheck
 
@@ -656,7 +599,6 @@ func TestSubscribe_ReplayTypeFilter(t *testing.T) {
 		return string(ev.Type)
 	}
 
-	// eA and eC ("want") should arrive; eB ("skip") should be filtered.
 	if got := readType("first"); got != "want" {
 		t.Errorf("first replayed type: got %q, want %q", got, "want")
 	}
@@ -684,10 +626,8 @@ func TestSubscribe_ReplayEmptyLog(t *testing.T) {
 	})
 	defer func() { _ = conn.Close() }()
 
-	// Allow HandleSubscribe to register and complete (empty) replay.
 	time.Sleep(20 * time.Millisecond)
 
-	// Dispatch a live event — confirms the stream is active after empty replay.
 	liveEvt := subscribeTestMakeEvent(t, "live_after_empty_replay")
 	hub.dispatch(context.Background(), liveEvt) //nolint:errcheck
 
@@ -697,25 +637,19 @@ func TestSubscribe_ReplayEmptyLog(t *testing.T) {
 		t.Fatalf("read: %v", readErr)
 	}
 
-	// Must NOT be a SocketResponse error (distinguished by non-empty Error field).
-	// A core.Event has no "ok" field, so errResp.Ok will be false on unmarshal;
-	// we detect a real error response by checking Error != "".
 	var errResp SocketResponse
 	if jsonErr := json.Unmarshal(line, &errResp); jsonErr == nil && !errResp.Ok && errResp.Error != "" {
 		t.Fatalf("unexpected error from replay on missing JSONL: %s", errResp.Error)
 	}
-	// Live event or heartbeat proves the stream is active after empty replay.
 	var hb struct {
 		Type string `json:"type"`
 	}
 	if json.Unmarshal(line, &hb) == nil && (hb.Type != "") {
-		// Got a typed line (event or heartbeat) — stream is live.
 		return
 	}
 	t.Errorf("first line is neither a valid event nor heartbeat: %q", string(line))
 }
 
-// contains is a tiny substring helper to avoid pulling in strings just for this test.
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -738,7 +672,6 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		MaxConnections: cap,
 	})
 
-	// Hold connections open: cap × (srv, cli) pairs where HandleSubscribe blocks.
 	type pairHolder struct {
 		srv, cli net.Conn
 		done     chan struct{}
@@ -755,7 +688,6 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		}()
 		holders[i] = pairHolder{srv: srv, cli: cli, done: done, cancel: cancel}
 	}
-	// Wait until all cap slots are registered.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if hub.connCount.Load() == cap {
@@ -767,7 +699,6 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		t.Fatalf("connCount after %d accepted connections: got %d, want %d", cap, got, cap)
 	}
 
-	// The (cap+1)-th connect must be rejected immediately.
 	srv1, cli1 := net.Pipe()
 	rejDone := make(chan struct{})
 	go func() {
@@ -775,12 +706,9 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		close(rejDone)
 	}()
 
-	// Read the error from the client side.
 	_ = cli1.SetReadDeadline(time.Now().Add(3 * time.Second))
 	rdr := bufio.NewReader(cli1)
 	line, err := rdr.ReadBytes('\n')
-	// Server writes then returns (srv1 not closed here yet), so EOF after
-	// the line is fine; what matters is we got bytes.
 	if len(line) == 0 {
 		t.Fatalf("expected error line from capacity-exceeded reject; got err=%v", err)
 	}
@@ -795,19 +723,16 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		t.Errorf("error %q should contain %q", resp.Error, "subscribe_capacity_exceeded")
 	}
 
-	// HandleSubscribe for the rejected connection must have returned.
 	select {
 	case <-rejDone:
 	case <-time.After(daemonExitHangBudget):
 		t.Fatalf("HandleSubscribe did not return within %s after capacity rejection", daemonExitHangBudget)
 	}
 
-	// connCount must not have been incremented for the rejected connection.
 	if got := hub.connCount.Load(); got != cap {
 		t.Errorf("connCount after rejection: got %d, want %d (cap)", got, cap)
 	}
 
-	// Cleanup: cancel all held connections and verify count returns to 0.
 	_ = srv1.Close()
 	_ = cli1.Close()
 	for _, h := range holders {
@@ -828,8 +753,6 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 		t.Errorf("connCount after all connections closed: got %d, want 0", got)
 	}
 }
-
-// ── New tests added by hk-6232r ───────────────────────────────────────────────
 
 // TestSubscribeHub_HeartbeatClampBoundaries verifies that heartbeat_seconds
 // values outside the permitted range [10, 600] are clamped to the boundary.
@@ -855,9 +778,6 @@ func TestSubscribeHub_HeartbeatClampBoundaries(t *testing.T) {
 			var capturedDuration time.Duration
 			captureDone := make(chan struct{})
 
-			// Timer factory that records the first call's duration, then fires
-			// immediately so HandleSubscribe writes one heartbeat and can be
-			// shut down. Subsequent reset calls (after capture) also fire quickly.
 			mockTimer := func(d time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
 				select {
 				case <-captureDone:
@@ -887,7 +807,6 @@ func TestSubscribeHub_HeartbeatClampBoundaries(t *testing.T) {
 				close(done)
 			}()
 
-			// Wait until the timer factory captures the duration.
 			select {
 			case <-captureDone:
 			case <-ctx.Done():
@@ -915,9 +834,7 @@ func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
 
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
 
-	// fast: large buffer — should never drop.
 	fast := &subscriptionStream{ch: make(chan core.Event, 64), wildcard: true}
-	// slow: 1-slot buffer — drops oldest on overflow.
 	slow := &subscriptionStream{ch: make(chan core.Event, 1), wildcard: true}
 
 	hub.mu.Lock()
@@ -930,7 +847,6 @@ func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
 		_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "ping"))
 	}
 
-	// Fast consumer must have received all events without drops.
 	fastGot := len(fast.ch)
 	fastDropped := fast.dropped.Load()
 	if fastGot != total {
@@ -940,14 +856,12 @@ func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
 		t.Errorf("fast consumer: unexpected drops %d", fastDropped)
 	}
 
-	// Slow consumer must have dropped some events (channel capacity = 1 < total).
 	slowGot := len(slow.ch)
 	slowDropped := slow.dropped.Load()
 	if slowDropped == 0 {
 		t.Errorf("slow consumer (cap=1): expected drops for %d dispatched events, got none (channel=%d)",
 			total, slowGot)
 	}
-	// Items in channel + drop count must account for all events.
 	if int64(slowGot)+slowDropped != total {
 		t.Errorf("slow consumer: got(%d) + dropped(%d) = %d, want %d",
 			slowGot, slowDropped, int64(slowGot)+slowDropped, total)
@@ -960,9 +874,6 @@ func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
 // the same reason as TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles:
 // goleak snapshots the full process goroutine set.
 func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
-	// Snapshot the goroutines the neighbours left, for the reason spelled out on
-	// TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles. Taken at the top so
-	// it cannot swallow this test's own leak.
 	preexisting := goleak.IgnoreCurrent()
 
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
@@ -977,7 +888,6 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for the subscriber to register.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		hub.mu.RLock()
@@ -989,9 +899,7 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Simulate daemon shutdown: cancel the context. HandleSubscribe must return.
 	cancel()
-	// Close both conn ends so the read-goroutine inside HandleSubscribe unblocks.
 	_ = cli.Close()
 	_ = srv.Close()
 
@@ -1001,7 +909,6 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 		t.Fatalf("HandleSubscribe did not return within %s of daemon context cancellation", daemonExitHangBudget)
 	}
 
-	// Subscriber must be deregistered on shutdown.
 	hub.mu.RLock()
 	n := len(hub.subscribers)
 	hub.mu.RUnlock()
@@ -1009,8 +916,6 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 		t.Errorf("subscriber not deregistered after daemon shutdown; got %d", n)
 	}
 
-	// Goroutine leak check: after cancel + conn close, all internal goroutines
-	// (read-goroutine, heartbeat) must have exited.
 	goleak.VerifyNone(t, preexisting)
 }
 
@@ -1034,13 +939,10 @@ func TestSubscribeHub_ReapsStalledWriteOnDeadPeer(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		// Long heartbeat so the reap is driven by the dispatched event's
-		// stalled write, not an incidental heartbeat write.
 		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
 		close(done)
 	}()
 
-	// Wait for registration.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		hub.mu.RLock()
@@ -1055,9 +957,6 @@ func TestSubscribeHub_ReapsStalledWriteOnDeadPeer(t *testing.T) {
 		t.Fatalf("connCount before dispatch = %d, want 1", got)
 	}
 
-	// Deliver an event. The client (cli) never reads it, so the server-side
-	// write blocks on net.Pipe's synchronous rendezvous until WriteTimeout
-	// fires and errors the write out.
 	if err := hub.dispatch(ctx, subscribeTestMakeEvent(t, "run_completed")); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}

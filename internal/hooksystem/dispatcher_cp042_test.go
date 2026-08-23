@@ -43,11 +43,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// ---------------------------------------------------------------------------
-// Test-local stubs
-// ---------------------------------------------------------------------------
-
-// cp042StubEval is a stub CognitionHookEvaluator that records call count.
 type cp042StubEval struct {
 	returnVerdict core.HookVerdictRecord
 	returnErr     error
@@ -59,7 +54,6 @@ func (e *cp042StubEval) EvaluateCognitionHook(_ context.Context, _ core.ControlP
 	return e.returnVerdict, e.returnErr
 }
 
-// cp042StubVerdictWriter records every WriteAndCommit call.
 type cp042StubVerdictWriter struct {
 	calls     []cp042WriteCall
 	returnSHA string
@@ -79,7 +73,6 @@ func (w *cp042StubVerdictWriter) WriteAndCommit(_ context.Context, relPath strin
 	return w.returnSHA, nil
 }
 
-// cp042StubReader is a stub VerdictReader.
 type cp042StubReader struct {
 	found   bool
 	verdict core.HookVerdictRecord
@@ -89,16 +82,11 @@ func (r *cp042StubReader) LookupVerdict(_ context.Context, _ core.RunID, _ strin
 	return r.verdict, r.found, nil
 }
 
-// Compile-time interface satisfaction checks.
 var (
 	_ hooksystem.CognitionHookEvaluator = (*cp042StubEval)(nil)
 	_ hooksystem.VerdictFileWriter      = (*cp042StubVerdictWriter)(nil)
 	_ hooksystem.VerdictReader          = (*cp042StubReader)(nil)
 )
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 func cp042RunID() core.RunID {
 	return core.RunID(uuid.MustParse("019e7342-0000-7000-a000-000000000042"))
@@ -133,8 +121,6 @@ func cp042MakeCognitionHookCP(triggerEvent string) core.ControlPoint {
 	}
 }
 
-// cp042ComputeEnvelopeHash mirrors computeHookEnvelopeHash (unexported) for use
-// in replay tests that must pre-seed the reader with the correct hash.
 func cp042ComputeEnvelopeHash(t *testing.T, cp core.ControlPoint, evPayload json.RawMessage) string {
 	t.Helper()
 	type hookInputEnvelope struct {
@@ -182,10 +168,6 @@ func cp042BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 	}
 	return bus
 }
-
-// ---------------------------------------------------------------------------
-// CP-042.1: Production and persistence are separate operations
-// ---------------------------------------------------------------------------
 
 // TestCP042_ProductionAndPersistenceAreSeparateOperations verifies that on a
 // first-time cognition hook invocation:
@@ -238,13 +220,11 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 	}
 	cp012FixtureWaitDrain(t, bus)
 
-	// CP-042: cognition evaluator (production) called exactly once.
 	if eval.callCount != 1 {
 		t.Errorf("CP-042.1: cognition evaluator (production, Tags:cognition) called %d times, want 1 "+
 			"(idempotency=idempotent — one fresh LLM call per first invocation)", eval.callCount)
 	}
 
-	// CP-042: writer (persistence) called exactly once.
 	if len(writer.calls) != 1 {
 		t.Fatalf("CP-042.1: verdict writer (persistence, Tags:mechanism) called %d times, want 1 "+
 			"(idempotency=non-idempotent — one git write per verdict)", len(writer.calls))
@@ -252,7 +232,6 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 
 	writtenPath := writer.calls[0].Path
 
-	// Written path must carry the run_id component.
 	if !strings.HasPrefix(writtenPath, ".harmonik/hooks/") {
 		t.Errorf("CP-042.1: written path %q does not start with .harmonik/hooks/", writtenPath)
 	}
@@ -263,7 +242,6 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 		t.Errorf("CP-042.1: written path %q does not contain run_id %q", writtenPath, runID.String())
 	}
 
-	// Written JSON must be valid and carry the dispatcher-stamped HookName.
 	var written core.HookVerdictRecord
 	if err := json.Unmarshal(writer.calls[0].Contents, &written); err != nil {
 		t.Fatalf("CP-042.1: written contents not valid JSON: %v", err)
@@ -272,19 +250,13 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 		t.Errorf("CP-042.1: written HookName = %q, want %q "+
 			"(dispatcher stamps mechanical fields per CP-042)", written.HookName, cp.Name)
 	}
-	// Dispatcher must have generated a non-nil InvocationID.
 	if written.InvocationID == uuid.Nil {
 		t.Error("CP-042.1: written InvocationID is nil UUID; dispatcher must assign a non-nil ID")
 	}
-	// The path must incorporate the dispatcher-assigned InvocationID.
 	if !strings.Contains(writtenPath, written.InvocationID.String()) {
 		t.Errorf("CP-042.1: path %q does not contain InvocationID %q", writtenPath, written.InvocationID)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-042.2: Writer path is the canonical HookVerdictFilePath form
-// ---------------------------------------------------------------------------
 
 // TestCP042_WriterPathIsCanonical verifies that the path passed to the
 // mechanism-tagged writer is exactly the canonical form produced by
@@ -334,7 +306,6 @@ func TestCP042_WriterPathIsCanonical(t *testing.T) {
 
 	writtenPath := writer.calls[0].Path
 
-	// Parse the written verdict to recover the dispatcher-assigned InvocationID.
 	var written core.HookVerdictRecord
 	if err := json.Unmarshal(writer.calls[0].Contents, &written); err != nil {
 		t.Fatalf("CP-042.2: written contents not valid JSON: %v", err)
@@ -346,10 +317,6 @@ func TestCP042_WriterPathIsCanonical(t *testing.T) {
 			"(mechanism persister must use HookVerdictFilePath so replay-read can locate the verdict)", writtenPath, wantPath)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-042.3: Writer NOT called when cognition evaluator errors
-// ---------------------------------------------------------------------------
 
 // TestCP042_WriterNotCalledOnEvaluatorError verifies that when the cognition
 // evaluator (production, Tags: cognition) returns an error, the mechanism
@@ -387,18 +354,15 @@ func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 	}
 	cp012FixtureWaitDrain(t, bus)
 
-	// Evaluator must have been called (production was attempted).
 	if eval.callCount != 1 {
 		t.Errorf("CP-042.3: evaluator callCount = %d, want 1", eval.callCount)
 	}
 
-	// Writer MUST NOT be called — no valid verdict to persist.
 	if len(writer.calls) != 0 {
 		t.Errorf("CP-042.3: writer called %d times despite evaluator error, want 0 "+
 			"(mechanism persister must not write when production fails)", len(writer.calls))
 	}
 
-	// hook_failed must be emitted to signal the production failure.
 	events := collector.all()
 	hasFailed := false
 	for _, et := range events {
@@ -410,10 +374,6 @@ func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 		t.Errorf("CP-042.3: hook_failed not emitted after evaluator error; events: %v", events)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-042.4: Writer NOT called on replay (hash match)
-// ---------------------------------------------------------------------------
 
 // TestCP042_WriterNotCalledOnReplay verifies that when a persisted verdict
 // exists with a matching envelope hash, neither the cognition evaluator nor
@@ -467,19 +427,16 @@ func TestCP042_WriterNotCalledOnReplay(t *testing.T) {
 	}
 	cp012FixtureWaitDrain(t, bus)
 
-	// Cognition evaluator MUST NOT be called on replay (CP-INV-003, idempotency=idempotent).
 	if eval.callCount != 0 {
 		t.Errorf("CP-042.4: cognition evaluator (production) called %d times on replay, want 0 "+
 			"(CP-INV-003: idempotency=idempotent — persisted verdict reused, no second LLM call)", eval.callCount)
 	}
 
-	// Mechanism writer MUST NOT be called on replay (idempotency=non-idempotent — must not re-write).
 	if len(writer.calls) != 0 {
 		t.Errorf("CP-042.4: verdict writer (persistence) called %d times on replay, want 0 "+
 			"(idempotency=non-idempotent — already persisted, duplicate git write forbidden)", len(writer.calls))
 	}
 
-	// hook_fired MUST be emitted from the replayed verdict.
 	events := collector.all()
 	hasFired := false
 	for _, et := range events {

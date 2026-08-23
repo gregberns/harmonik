@@ -1,29 +1,5 @@
 package sentinel
 
-// adversary.go — independent fresh-context adversary spawn (flywheel V4, hk-9mr2).
-//
-// When the movement governor trips (ActivationActive), the caller invokes
-// SpawnAdversary to start a separate, fresh-context crew session that reviews
-// the captain's recent comms and commits as foreign artifacts. If the adversary
-// confirms the trip is legitimate, it writes the decision_required exception via
-// `harmonik sentinel emit-trip`.
-//
-// Independence is the active ingredient (spec §0.3, §2.3): the adversary runs in
-// its own fresh context, untainted by the captain's running conversation. A
-// fresh-context review of the same content lifts correction materially versus
-// self-critique inside the captain's context (which is biased toward approval).
-//
-// Trigger discipline (spec §2.4): the adversary is gated by the governor trip —
-// it is NOT run on a hot clock. The cheap, LLM-free governor fires the expensive
-// LLM adversary only on sustained-low-movement-with-actionable-work past warm-up.
-//
-// Overlap policy: if a sentinel-adversary crew is already online, SpawnAdversary
-// is a no-op (skip). This prevents stacked adversary sessions when the governor
-// trips on consecutive evaluation cycles while a prior adversary is still running.
-//
-// Spec ref: flywheel-motion.md §2.3, §2.4.
-// Bead ref: hk-9mr2. Epic: hk-0oca (codename:flywheel).
-
 import (
 	"context"
 	"encoding/json"
@@ -53,9 +29,6 @@ type AdversaryInput struct {
 	MissionPath string
 }
 
-// adversaryCrewStartRequest mirrors crewrun.CrewStartRequest without importing
-// the daemon package (which would create an import cycle). The JSON shape is
-// identical; the daemon socket decodes it to crewrun.CrewStartRequest.
 type adversaryCrewStartRequest struct {
 	Name        string `json:"name"`
 	Queue       string `json:"queue"`
@@ -74,9 +47,6 @@ type AdversaryCrewStarter interface {
 	HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
 
-// resolvedMissionPath returns the effective mission file path: the explicit
-// override when set, otherwise DefaultAdversaryMissionRelPath relative to
-// ProjectDir.
 func (in AdversaryInput) resolvedMissionPath() string {
 	if in.MissionPath != "" {
 		return in.MissionPath
@@ -105,8 +75,6 @@ func SpawnAdversary(
 	starter AdversaryCrewStarter,
 	onlineAgents map[string]struct{},
 ) (spawned bool, err error) {
-	// Overlap-skip: if the adversary crew is already online, do not spawn a
-	// duplicate. The prior session is still reviewing; wait for it to finish.
 	if _, online := onlineAgents[AdversaryCrewName]; online {
 		return false, nil
 	}

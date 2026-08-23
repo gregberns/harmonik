@@ -44,9 +44,6 @@ func TestWM005_TaskBranchNamingConvention(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// WM-005 specifies the task-branch naming convention as `run/<run_id>`.
-			// TaskBranchName is the production helper; TaskBranchPrefix is the
-			// normative constant. Any change requires a migration release (WM-009).
 			got := TaskBranchName(tc.runID)
 
 			if got != tc.want {
@@ -54,7 +51,6 @@ func TestWM005_TaskBranchNamingConvention(t *testing.T) {
 					tc.runID, got, tc.want)
 			}
 
-			// Additionally verify the constructed name starts with the normative prefix.
 			if len(got) < len(TaskBranchPrefix) || got[:len(TaskBranchPrefix)] != TaskBranchPrefix {
 				t.Errorf("WM-005: task branch %q does not begin with required prefix %q",
 					got, TaskBranchPrefix)
@@ -78,10 +74,8 @@ func TestWM005_TaskBranchCreatedInGit(t *testing.T) {
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0030"
 	taskBranch := TaskBranchName(runID)
 
-	// Verify that git check-ref-format accepts the task branch name.
 	branchNameFixtureAssertRefSafe(t, "WM-005", taskBranch)
 
-	// Create the branch in the repository to confirm it works end-to-end.
 	branchNameFixtureCreateBranch(t, repo, taskBranch, sha)
 }
 
@@ -103,12 +97,7 @@ func TestWM005a_SubWorkflowNoExtraTaskBranches(t *testing.T) {
 	parentRunID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0031"
 	parentTaskBranch := TaskBranchName(parentRunID)
 
-	// Create the parent task branch.
 	branchNameFixtureCreateBranch(t, repo, parentTaskBranch, sha)
 
-	// Simulate sub-workflow expansion: the sub-workflow does NOT create a new
-	// task branch. All commits produced by sub-workflow nodes land on the parent
-	// task branch. We verify that after "sub-workflow expansion", only the parent
-	// task branch exists — no additional run/* branches appear.
 	branchNameFixtureAssertOnlyOneBranch(t, repo, parentTaskBranch)
 }

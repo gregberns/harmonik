@@ -38,8 +38,6 @@ func TestResolveLaunchPath_HC042_RepoRelativeNonSystem(t *testing.T) {
 func TestResolveLaunchPath_HC042_SystemBareNameUsesPATH(t *testing.T) {
 	t.Parallel()
 
-	// "sh" is present on all Unix platforms; use it as a proxy for any
-	// operator-installed system handler (e.g. the Claude Code CLI).
 	const binaryRef = "sh"
 
 	expected, err := exec.LookPath(binaryRef)
@@ -87,8 +85,6 @@ func TestResolveLaunchPath_HC042_NonSystemBareNameDoesNotUsePATH(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveLaunchPath: unexpected error: %v", err)
 	}
-	// Spell out the expected path rather than using filepath.Join with a
-	// hardcoded absolute prefix, to satisfy gocritic's filepathJoin rule.
 	const repoRoot = "/repo"
 	want := repoRoot + "/claude"
 	if got != want {
@@ -144,10 +140,6 @@ func TestResolveLaunchPath_HC042_SystemRelativePathWithSeparator(t *testing.T) {
 		t.Errorf("ResolveLaunchPath = %q, want %q", got, want)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// ResolveTwinSearchPath — scenario-harness.md SH-009
-// ---------------------------------------------------------------------------
 
 // TestResolveTwinSearchPath_SH009_CLIOverrideWins verifies that a non-empty
 // cliOverride is returned as-is, taking precedence over both the environment

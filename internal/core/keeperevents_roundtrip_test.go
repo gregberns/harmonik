@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// keeperevents_roundtrip_test.go — registry round-trip tests for the two
-// previously-unregistered keeper event types (hk-wqdc).
-//
-// Both session_keeper_live_pane_recover and session_keeper_ack_timeout are
-// registered in registerKeeperEvents() (eventreg_hqwn59.go). These tests
-// assert that the global registry maps each type name to the correct payload
-// constructor and that a JSON round-trip decodes to the right concrete type.
-
 func TestKeeperEvents_LivePaneRecover_RoundTrip(t *testing.T) {
 	want := &SessionKeeperLivePaneRecoverPayload{
 		AgentName:    "test-agent",
@@ -63,8 +55,6 @@ func TestKeeperEvents_AckTimeout_RoundTrip(t *testing.T) {
 		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
 	}
 }
-
-// ── §8.20 Session-keeper interior cycle events (codename:session-restart-substrate) ──
 
 func TestKeeperEvents_HandoffWritten_RoundTrip(t *testing.T) {
 	want := &SessionKeeperHandoffWrittenPayload{

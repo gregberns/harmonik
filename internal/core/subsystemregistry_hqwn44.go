@@ -13,11 +13,6 @@ import (
 // typed error."
 var ErrDuplicateSourceSubsystem = errors.New("core: source_subsystem identifier already registered")
 
-// subsystemRegistry holds the set of registered source_subsystem identifiers.
-//
-// Registration is startup-time per EV-034a; the mutex prevents data-race
-// during init-order scenarios where multiple init() calls arrive concurrently
-// (e.g., test binaries with parallel package-level inits).
 type subsystemRegistry struct {
 	mu          sync.Mutex
 	identifiers map[string]struct{}
@@ -54,9 +49,6 @@ func RegisterSourceSubsystem(id string) error {
 	return nil
 }
 
-// subsystemRegistryReset replaces the global subsystem registry with an empty
-// one. MUST be called only from test cleanup (t.Cleanup) to restore state.
-// Not exported — visible only to tests in the same package (package core).
 func subsystemRegistryReset() {
 	globalSubsystemRegistry.mu.Lock()
 	defer globalSubsystemRegistry.mu.Unlock()

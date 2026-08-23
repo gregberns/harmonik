@@ -60,8 +60,6 @@ func WindowName(beadID core.BeadID, phase Phase, iteration int, projectHash core
 	return sentinelPrefix + beadPart + suffix
 }
 
-// windowNameSuffix returns the phase-dependent suffix appended to bead_id.
-// Returns "" for single-mode, "/i<n>" for implementer, "/r<n>" for reviewer.
 func windowNameSuffix(phase Phase, iteration int) string {
 	n := strconv.Itoa(iteration)
 	switch phase {
@@ -72,63 +70,36 @@ func windowNameSuffix(phase Phase, iteration int) string {
 	case PhaseReviewer:
 		return "/r" + n
 	default:
-		// Unknown phase: treat as single-mode (no suffix).
 		return ""
 	}
 }
 
-// windowNameSentinelPrefix returns "hk-<hash6>-" when ownsSession is false,
-// or "" when ownsSession is true.
-// hash6 is the first 6 hex chars of projectHash (which is a 12-char hex string).
 func windowNameSentinelPrefix(projectHash core.ProjectHash, ownsSession bool) string {
 	if ownsSession {
 		return ""
 	}
-	// ProjectHash is a 12-char lowercase-hex string per core.ProjectHash.
-	// WM-002a: first 6 hex chars.
 	h := string(projectHash)
 	if len(h) >= projectHashPrefixLen {
 		return "hk-" + h[:projectHashPrefixLen] + "-"
 	}
-	// Defensive: should never happen for a valid ProjectHash (validated at
-	// construction time by core.ProjectHash.UnmarshalText). Use the full hash.
 	return "hk-" + h + "-"
 }
 
-// windowNameBeadPart returns the bead_id portion of the window name, applying
-// truncation when sentinelPrefix+beadID+suffix would exceed windowNameMaxBytes.
-//
-// Truncation rule (WM-002a): replace bead_id with
-//
-//	<bead_id[:budget]> + "~" + lowercase-hex(SHA-256(bead_id))[:8]
-//
-// where budget = 64 - len(sentinelPrefix) - len(suffix) - len("~") - 8, so the
-// composed name never exceeds windowNameMaxBytes. (A fixed 56-byte bead budget
-// previously yielded 56+1+8 = 65 bytes even before any prefix/suffix.)
-// The sentinel prefix and suffix are excluded from truncation.
 func windowNameBeadPart(beadID core.BeadID, sentinelPrefix, suffix string) string {
 	raw := string(beadID)
 
-	// Fast path: no truncation needed.
 	if len(sentinelPrefix)+len(raw)+len(suffix) <= windowNameMaxBytes {
 		return raw
 	}
 
-	// Compute the SHA-256 hash suffix of the original bead_id. The number of
-	// hex chars is hashSuffixLen, so the width used here and the width reserved
-	// in the budget below cannot drift apart (hashSuffixLen must stay even).
 	sum := sha256.Sum256([]byte(raw))
 	hashHex := fmt.Sprintf("%x", sum[:hashSuffixLen/2]) // N bytes → hashSuffixLen lowercase hex chars
 
-	// Budget for the truncated bead_id: total max minus the fixed parts
-	// (sentinel prefix, suffix, "~" separator, 8-char hash).
 	budget := windowNameMaxBytes - len(sentinelPrefix) - len(suffix) - 1 - hashSuffixLen
 	if budget < 0 {
 		budget = 0
 	}
 
-	// Truncate bead_id to the budget (byte-level truncation, not rune-level;
-	// bead IDs are ASCII per Beads convention).
 	truncated := raw
 	if len(truncated) > budget {
 		truncated = raw[:budget]

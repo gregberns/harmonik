@@ -42,12 +42,10 @@ func TestB87254_WriteIntentEntry_RoundTrip(t *testing.T) {
 
 	written := testhelpers.B87254WriteIntentEntry(t, intentDir, entry)
 
-	// Verify the final file exists.
 	if _, err := os.Stat(written.FilePath); err != nil {
 		t.Fatalf("B87254WriteIntentEntry: intent file not found at %q: %v", written.FilePath, err)
 	}
 
-	// Verify no .tmp-* files survive (rename must have completed).
 	des, err := os.ReadDir(intentDir)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
@@ -58,7 +56,6 @@ func TestB87254_WriteIntentEntry_RoundTrip(t *testing.T) {
 		}
 	}
 
-	// Read back and verify round-trip fidelity.
 	recovered := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(recovered) != 1 {
 		t.Fatalf("want 1 recovered entry, got %d", len(recovered))
@@ -111,9 +108,6 @@ func TestB87254_CrashAndRecover_ConvergesIdempotent(t *testing.T) {
 	env := testhelpers.NewEnv(t)
 	intentDir := testhelpers.B87254IntentDirFor(t, env.Harmonik)
 
-	// Phase 1: pre-crash write.
-	// The adapter writes a durable intent entry before calling br per BI-030.
-	// This file survives a crash.
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
 	transitionID := core.TransitionID(uuid.Must(uuid.NewV7()))
 	entry := testhelpers.B87254NewIntentEntry(
@@ -126,11 +120,6 @@ func TestB87254_CrashAndRecover_ConvergesIdempotent(t *testing.T) {
 	written := testhelpers.B87254WriteIntentEntry(t, intentDir, entry)
 	_ = written // adapter is "killed" here; br was never called
 
-	// Phase 2: crash — no br call.
-	// The adapter was killed between the BI-030 fsync and the br call completing.
-	// The intent file remains on disk. We simulate this by not calling br.
-
-	// Phase 3: restart — scan surviving intent entries (BI-031 trigger).
 	surviving := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(surviving) != 1 {
 		t.Fatalf("Phase3: expected 1 surviving intent entry, got %d", len(surviving))
@@ -144,9 +133,6 @@ func TestB87254_CrashAndRecover_ConvergesIdempotent(t *testing.T) {
 		t.Errorf("Phase3: BeadID: want %q, got %q", entry.BeadID, recovered.Entry.BeadID)
 	}
 
-	// Phase 4: recovery — reissue the br write with a mock that exits 0 (BrOK).
-	// The adapter re-issues the br call for the surviving intent. In production
-	// this is br with the idempotency key; here a mock br exits 0.
 	mockBrPath := testhelpers.B87254NewMockBrDir(t)
 	testhelpers.B87254WriteMockBr(t, mockBrPath, testhelpers.B87254MockBrSpec{
 		Stdout:   `{"status":"ok"}`,
@@ -166,10 +152,8 @@ func TestB87254_CrashAndRecover_ConvergesIdempotent(t *testing.T) {
 		t.Errorf("Phase4: mock br stdout unexpected: %q", string(out))
 	}
 
-	// Phase 5: cleanup — delete the intent file on BrOK (BI-030 deletion).
 	testhelpers.B87254DeleteIntentEntry(t, recovered.FilePath)
 
-	// Phase 6: assert idempotent completion — intent dir must be empty.
 	finalEntries := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(finalEntries) != 0 {
 		t.Errorf("Phase6: expected 0 entries after recovery, got %d", len(finalEntries))
@@ -202,20 +186,17 @@ func TestB87254_WriteIntentEntry_ColonEncodingInKey(t *testing.T) {
 		core.CoarseStatusInProgress,
 	)
 
-	// Verify the key has colons before we test encoding.
 	if !strings.Contains(entry.IdempotencyKey, ":") {
 		t.Fatalf("expected idempotency key to contain colons, got %q", entry.IdempotencyKey)
 	}
 
 	written := testhelpers.B87254WriteIntentEntry(t, intentDir, entry)
 
-	// The file basename must not contain a raw colon.
 	base := filepath.Base(written.FilePath)
 	if strings.Contains(base, ":") {
 		t.Errorf("intent filename contains raw colon (encoding not applied): %q", base)
 	}
 
-	// Round-trip: the original key must be preserved in the JSON payload.
 	recovered := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(recovered) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(recovered))
@@ -239,7 +220,6 @@ func TestB87254_ReadIntentEntries_SkipsTmpFiles(t *testing.T) {
 	env := testhelpers.NewEnv(t)
 	intentDir := testhelpers.B87254IntentDirFor(t, env.Harmonik)
 
-	// Write one real intent entry.
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
 	transitionID := core.TransitionID(uuid.Must(uuid.NewV7()))
 	entry := testhelpers.B87254NewIntentEntry(
@@ -250,7 +230,6 @@ func TestB87254_ReadIntentEntries_SkipsTmpFiles(t *testing.T) {
 	)
 	_ = testhelpers.B87254WriteIntentEntry(t, intentDir, entry)
 
-	// Manually create a stale .tmp- file (simulates crash during write before rename).
 	tmpPath := filepath.Join(intentDir, "stale_key.json.tmp-aabbccdd")
 	if err := os.WriteFile(tmpPath, []byte(`{"stale":"yes"}`), 0o600); err != nil {
 		t.Fatalf("WriteFile stale tmp: %v", err)
@@ -329,9 +308,6 @@ func TestB87254_MockBr_SleepMs(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	// Runaway guard, not a budget under test. The assertion is the minElapsed
-	// floor below. This deadline only stops a broken mock from hanging the
-	// package, and it covers both runs.
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 
@@ -363,10 +339,6 @@ func TestB87254_MockBr_SleepMs(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 
-	// The mock must sleep for at least as long as it was told to. Every other
-	// term in elapsed - fork/exec, /bin/sh start-up, printf, exit, wait - is
-	// positive, and sleep(1) never returns early, so this floor holds by
-	// construction once the exec is warm. Load can only push elapsed up.
 	const minElapsed = sleepMs * time.Millisecond
 	if elapsed < minElapsed {
 		t.Errorf("mock br did not sleep for its full SleepMs: want ≥%v, got %v", minElapsed, elapsed)
@@ -391,7 +363,6 @@ func TestB87254_DeleteIntentEntry_CleansUp(t *testing.T) {
 	)
 	written := testhelpers.B87254WriteIntentEntry(t, intentDir, entry)
 
-	// Verify it is present.
 	before := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(before) != 1 {
 		t.Fatalf("before delete: expected 1 entry, got %d", len(before))
@@ -399,13 +370,11 @@ func TestB87254_DeleteIntentEntry_CleansUp(t *testing.T) {
 
 	testhelpers.B87254DeleteIntentEntry(t, written.FilePath)
 
-	// Verify it is gone.
 	after := testhelpers.B87254ReadIntentEntries(t, intentDir)
 	if len(after) != 0 {
 		t.Errorf("after delete: expected 0 entries, got %d", len(after))
 	}
 
-	// File must not exist on disk.
 	if _, err := os.Stat(written.FilePath); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("file still exists after delete: stat error = %v", err)
 	}

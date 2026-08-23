@@ -1,7 +1,5 @@
 package daemon
 
-// dashboardgate_test.go — unit tests for the hk-xg6rw forcing-gate evaluator.
-
 import (
 	"os"
 	"path/filepath"
@@ -173,7 +171,6 @@ func TestEvaluateDashboardGate_CLIUnlockOverride(t *testing.T) {
 		t.Error("Blocked: got true, want false (CLI unlock override active)")
 	}
 
-	// After expiry, the gate resumes.
 	result2, err2 := evaluateDashboardGate(dir, now.Add(2*time.Hour))
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)

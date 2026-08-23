@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// noteEntry is the per-line JSON shape in notes.jsonl per CL-040.
 type noteEntry struct {
 	SchemaVersion int       `json:"schema_version"`
 	Ts            time.Time `json:"ts"`

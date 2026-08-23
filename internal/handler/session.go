@@ -41,10 +41,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// closeAll closes every non-nil closer and returns the joined close errors, or
-// nil when all closes succeeded. Used on NewSession's failure paths so a close
-// failure during cleanup is reported alongside the failure that triggered it
-// rather than being discarded.
 func closeAll(closers ...io.Closer) error {
 	errs := make([]error, 0, len(closers))
 	for _, c := range closers {
@@ -140,26 +136,10 @@ type Outcome struct {
 	StderrTail []byte
 }
 
-// stderrRingCapBytes is the maximum number of stderr bytes captured for
-// Outcome.StderrTail.
 const stderrRingCapBytes = 4 * 1024 // 4 KiB
 
-// stderrDrainGrace bounds how long runWait waits for the stderr drain goroutine
-// to finish after the subprocess is reaped, before it force-closes the stderr
-// read-end to unblock the drain.
-//
-// On normal exit the drain reaches EOF immediately (all fd-holders are gone), so
-// this grace never elapses and stderr capture is unaffected.  It only matters on
-// the cancel/kill path when a surviving grandchild keeps the stderr write-end
-// open: without the bound, sess.Wait would wedge for the grandchild's full
-// runtime (the hk-4c7kw slow-shutdown bug).  500 ms is generous headroom over
-// the sub-millisecond normal drain while keeping shutdown well under the 10 s T3
-// budget.
-//
-// Bead: hk-4c7kw.
 const stderrDrainGrace = 500 * time.Millisecond
 
-// session is the concrete implementation of Session.
 type session struct {
 	cmd       *exec.Cmd
 	waitOwner *lifecycle.WaitOwner
@@ -215,22 +195,12 @@ func NewSession(ctx context.Context, cmd *exec.Cmd) (Session, error) {
 	return newSessionWithIDs(ctx, cmd, "", "")
 }
 
-// newSessionWithIDs is the internal constructor that accepts explicit sessID and
-// runID for the lifecycle Machine. When sessID is empty a placeholder is used;
-// callers that know the IDs at Session creation time (e.g. handler.Launch) SHOULD
-// use newSessionWithIDs directly.
 func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string) (Session, error) {
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("handler: NewSession: StdinPipe: %w: %w", err, ErrStructural)
 	}
 
-	// Use os.Pipe directly instead of cmd.StdoutPipe / cmd.StderrPipe.
-	// cmd.StdoutPipe adds the read-end to closeAfterWait, so cmd.Wait closes it
-	// while callers (e.g. io.ReadAll) may still be reading — a data race under
-	// parallel test load ("read |0: file already closed"). By owning the OS pipe
-	// ourselves and setting cmd.Stdout/Stderr to the write ends, closeAfterWait
-	// stays empty for stdout/stderr, and cmd.Wait never closes the read ends.
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("handler: NewSession: stdout Pipe: %w: %w", err, ErrStructural)
@@ -246,9 +216,6 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 	}
 	cmd.Stderr = stderrW
 
-	// Construct the lifecycle Machine in StateSpawning (HC-065 initial state).
-	// sessID and runID default to placeholder values when not provided; they are
-	// enriched by the caller after Launch returns.
 	if sessID == "" {
 		sessID = "unknown"
 	}
@@ -258,11 +225,6 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 	machine := hclifecycle.New(sessID, runID)
 
 	if err := cmd.Start(); err != nil {
-		// HC-065: Spawning→Failed when cmd.Start returns an error. The machine is
-		// discarded along with the error path — no caller can observe this session,
-		// so an invalid-transition error here can only mean an FSM defect. Join it
-		// (and any pipe-cleanup failure) onto the returned error rather than
-		// dropping it silently.
 		if tErr := machine.Transition(hclifecycle.StateFailed, hclifecycle.ReasonError, "cmd_start_error", err.Error()); tErr != nil {
 			err = errors.Join(err, fmt.Errorf("lifecycle transition to failed: %w", tErr))
 		}
@@ -272,20 +234,11 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 		return nil, fmt.Errorf("handler: NewSession: cmd.Start: %w: %w", err, ErrStructural)
 	}
 
-	// Close the parent's write ends — the subprocess inherited them; keeping
-	// them open in the parent would prevent EOF from reaching the readers, so a
-	// failure here would wedge every reader of this session. Reap the child we
-	// just started and fail the construction rather than handing back a session
-	// whose stdout/stderr can never reach EOF.
 	if closeErr := closeAll(stdoutW, stderrW); closeErr != nil {
 		return nil, abandonStartedSession(cmd, stdinPipe, stdoutR, stderrR,
 			fmt.Errorf("handler: NewSession: close parent write ends: %w: %w", closeErr, ErrStructural))
 	}
 
-	// HC-065: Spawning→Initializing — subprocess started successfully. An error
-	// here means the FSM rejected a statically-valid transition, i.e. a defect;
-	// surface it instead of handing back a session whose machine is in the wrong
-	// state (the watcher and workloop drive every later transition off it).
 	if tErr := machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", ""); tErr != nil {
 		return nil, abandonStartedSession(cmd, stdinPipe, stdoutR, stderrR,
 			fmt.Errorf("handler: NewSession: lifecycle transition to initializing: %w: %w", tErr, ErrStructural))
@@ -308,31 +261,16 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 		machine:     machine,
 	}
 
-	// Drain stderr into the ring buffer concurrently so it never blocks the
-	// subprocess. Close stderrDone when finished so runWait can safely read the
-	// ring buffer without racing the drain goroutine's writes.
 	go func() {
 		s.drainStderr(stderrR)
 		close(s.stderrDone)
 	}()
 
-	// Run WaitAndReap in the single dedicated goroutine per PL-014/PL-016, then
-	// populate outcome.
 	go s.runWait(ctx)
 
 	return s, nil
 }
 
-// abandonStartedCmd reaps a subprocess that cmd.Start already launched but that
-// newSessionWithIDs has decided not to hand back. Without it the child would be
-// left running with no Session handle and no WaitOwner, i.e. a zombie until the
-// daemon's orphan sweep. Both failures are best-effort: the caller is already
-// returning the error that made the session unusable.
-//
-// The direct cmd.Wait call is not a PL-014 violation. It is only reachable
-// before the session's lifecycle.WaitOwner is constructed, so no WaitOwner
-// exists for this cmd and no other goroutine can ever call cmd.Wait on it —
-// this is the single Wait the discipline requires, not a second one.
 func abandonStartedCmd(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
@@ -348,29 +286,6 @@ func abandonStartedCmd(cmd *exec.Cmd) {
 	}
 }
 
-// abandonStartedSession releases everything newSessionWithIDs owns once
-// cmd.Start has already succeeded but the constructor has decided not to hand
-// the session back, and returns the error the constructor should return.
-//
-// It closes the three parent-side handles the constructor opened — the stdin
-// write end and the stdout/stderr read ends — and then reaps the child via
-// abandonStartedCmd. Without the closes those descriptors leak: once the
-// constructor returns nil nothing in the process holds a reference to them, so
-// they survive until the garbage collector happens to run a finaliser, and a
-// burst of failed constructions can exhaust the descriptor limit first.
-//
-// The parent's stdout/stderr WRITE ends are deliberately not closed here. Every
-// caller reaches this point only after closeAll(stdoutW, stderrW) has run.
-//
-// Order matters. The stdin write end is closed BEFORE the reap: exec.Cmd.Wait
-// closes its own parentIOPipes list — which the StdinPipe write end is on — and
-// discards the result, so closing after the reap would surface a spurious
-// "file already closed" as a cleanup failure. Closing first also gives the
-// child stdin EOF on its way out.
-//
-// cause is returned unchanged when cleanup succeeds, and joined with the close
-// failures otherwise — the same reporting the cmd.Start failure path above uses,
-// so a cleanup failure is never swallowed by the failure that triggered it.
 func abandonStartedSession(cmd *exec.Cmd, stdinPipe io.Closer, stdoutR, stderrR *os.File, cause error) error {
 	closeErr := closeAll(stdinPipe, stdoutR, stderrR)
 	abandonStartedCmd(cmd)
@@ -380,17 +295,6 @@ func abandonStartedSession(cmd *exec.Cmd, stdinPipe io.Closer, stdoutR, stderrR 
 	return cause
 }
 
-// bridgeStdout copies stdoutR into an io.Pipe and returns the read end.
-//
-// Callers receive a clean io.Reader whose lifetime is independent of the OS file
-// descriptor. The bridge goroutine copies until EOF (subprocess exit closes the
-// write end), then closes both ends so callers see EOF. cmd.Wait has no
-// closeAfterWait entry for stdout, so it cannot race with ongoing reads.
-//
-// A copy or close error is delivered to the reader via CloseWithError rather
-// than dropped: closing the pipe cleanly would present a truncated stdout as a
-// clean EOF, and the watcher would then report a well-formed-but-short progress
-// stream instead of the read failure that actually ended it.
 func bridgeStdout(stdoutR *os.File) *io.PipeReader {
 	stdoutPR, stdoutPW := io.Pipe()
 	go func() {
@@ -401,8 +305,6 @@ func bridgeStdout(stdoutR *os.File) *io.PipeReader {
 		if copyErr != nil {
 			copyErr = fmt.Errorf("handler: session: stdout bridge: %w", copyErr)
 		}
-		// CloseWithError(nil) is exactly Close(); both propagate copyErr (or clean
-		// EOF) to every reader of stdoutPR.
 		if closeErr := stdoutPW.CloseWithError(copyErr); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "handler: session: close stdout bridge: %v\n", closeErr)
 		}
@@ -410,9 +312,6 @@ func bridgeStdout(stdoutR *os.File) *io.PipeReader {
 	return stdoutPR
 }
 
-// drainStderr reads all bytes from r into the ring buffer.  It runs as a
-// background goroutine so that a subprocess with voluminous stderr output
-// never blocks on a full pipe buffer.
 func (s *session) drainStderr(r io.Reader) {
 	buf := make([]byte, 512)
 	for {
@@ -426,33 +325,10 @@ func (s *session) drainStderr(r io.Reader) {
 	}
 }
 
-// runWait is the single dedicated goroutine that calls WaitOwner.WaitAndReap
-// per PL-014.  It populates s.outcome once Wait returns.
 func (s *session) runWait(_ context.Context) {
 	startedAt := s.startedAt
-	// WaitAndReap closes waitOwner.Done() before it returns, so Kill's exit edge
-	// fires the instant the child is reaped and is not delayed by the stderr
-	// drain join below.
 	waitErr := s.waitOwner.WaitAndReap()
 
-	// Wait for drainStderr to finish before reading stderrBuf so that concurrent
-	// ringBuffer.Write and ringBuffer.Bytes calls don't race.
-	//
-	// Normal exit: the subprocess and all its descendants are gone, so the
-	// stderr write-end is fully closed; drainStderr hits EOF and closes
-	// stderrDone essentially immediately — the grace below never elapses and
-	// stderr capture is unaffected.
-	//
-	// Cancel/kill path (hk-4c7kw): a grandchild the handler forked (e.g. a
-	// `sleep` left by a shell handler) inherited the stderr write-end and may
-	// still be alive after the immediate process was reaped, so drainStderr's
-	// Read stays blocked and stderrDone would never close — wedging sess.Wait
-	// (and therefore daemon shutdown) for the full grandchild runtime.  When the
-	// grace elapses, close the read-end to force drainStderr to return so
-	// stderrDone closes and the outcome is finalised promptly.  Closing the
-	// read-end makes the blocked Read return an error, ending drainStderr; we
-	// only read stderrBuf.Bytes() after stderrDone closes, so the no-race
-	// invariant on the unsynchronised ringBuffer is preserved either way.
 	select {
 	case <-s.stderrDone:
 	case <-time.After(stderrDrainGrace):
@@ -539,23 +415,14 @@ func (s *session) SendInput(ctx context.Context, line string) error {
 func (s *session) Kill(ctx context.Context) error {
 	pid := s.cmd.Process.Pid
 
-	// SIGTERM the subprocess.  ESRCH (process already exited and been reaped) is
-	// not an error — the reap below observes the exit either way.
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("handler: Session.Kill: SIGTERM pid %d: %w", pid, err)
 	}
 
-	// Wait for process exit or ctx deadline; on deadline, escalate to SIGKILL.
-	// waitOwner.Done() is closed the moment the child is reaped, so repeated Kill
-	// calls all observe the same edge; unlike a Wait, observing Done consumes
-	// nothing, so a later Wait still reports the child's exit error.
 	select {
 	case <-s.waitOwner.Done():
-		// Process exited cleanly after SIGTERM.
 		return nil
 	case <-ctx.Done():
-		// ctx expired (or was already cancelled when Kill was called) —
-		// escalate to SIGKILL.
 		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("handler: Session.Kill: SIGKILL pid %d: %w", pid, err)
 		}
@@ -567,9 +434,6 @@ func (s *session) Kill(ctx context.Context) error {
 // been fully populated (including stderr tail).  After Wait returns, Outcome()
 // is guaranteed to reflect the final process state.
 func (s *session) Wait(_ context.Context) error {
-	// Block until runWait has populated s.outcome so callers can call Outcome()
-	// immediately after Wait without racing the drain goroutine. waitOwner.Wait
-	// then returns the cached exit error, identically for every caller.
 	<-s.outcomeDone
 	return s.waitOwner.Wait()
 }
@@ -606,10 +470,6 @@ func (s *session) CloseStdin() error {
 func (s *session) Machine() *hclifecycle.Machine {
 	return s.machine
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ringBuffer — fixed-capacity byte ring that retains the last N bytes written.
-// ─────────────────────────────────────────────────────────────────────────────
 
 type ringBuffer struct {
 	buf  []byte

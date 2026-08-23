@@ -11,19 +11,12 @@ import (
 	"time"
 )
 
-// testDaemonBinaryPath is the fake absolute daemon binary path used by most
-// tests (hk-kqdpf.6). Tests that need the real os.Executable() path use it
-// directly.
 const testDaemonBinaryPath = "/usr/local/bin/harmonik-test"
 
-// claudeSettingsFixturePath returns the canonical settings path for a
-// workspace at workspacePath (helper for tests).
 func claudeSettingsFixturePath(workspacePath string) string {
 	return ClaudeSettingsPath(workspacePath)
 }
 
-// claudeSettingsFixtureReadJSON reads the settings.json at path and
-// unmarshals it into a map, failing the test on error.
 func claudeSettingsFixtureReadJSON(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
 	raw := mustReadFile(t, path)
@@ -34,8 +27,6 @@ func claudeSettingsFixtureReadJSON(t *testing.T, path string) map[string]interfa
 	return m
 }
 
-// claudeSettingsFixtureHooksMap extracts the top-level "hooks" object from m,
-// failing the test if absent or wrong type.
 func claudeSettingsFixtureHooksMap(t *testing.T, m map[string]interface{}) map[string]interface{} {
 	t.Helper()
 	hRaw, ok := m["hooks"]
@@ -49,8 +40,6 @@ func claudeSettingsFixtureHooksMap(t *testing.T, m map[string]interface{}) map[s
 	return h
 }
 
-// claudeSettingsFixtureHookEntries extracts the hooks array for eventKind
-// from hooksMap.
 func claudeSettingsFixtureHookEntries(t *testing.T, hooksMap map[string]interface{}, eventKind string) []interface{} {
 	t.Helper()
 	raw, ok := hooksMap[eventKind]
@@ -64,15 +53,6 @@ func claudeSettingsFixtureHookEntries(t *testing.T, hooksMap map[string]interfac
 	return arr
 }
 
-// claudeSettingsFixtureCountBridgeHooks counts, in one event-type array, the
-// hook ENTRIES that invoke harmonik's hook-relay verb and the matcher GROUPS
-// that hold at least one such entry.
-//
-// It walks the decoded JSON itself and spells the verb literally instead of
-// calling the product predicate or its constant. A test that used the function
-// under test as its own oracle would report "one group" while the file held
-// two, because the same false negative would hide the duplicate from both the
-// filter and the count.
 func claudeSettingsFixtureCountBridgeHooks(arr []interface{}) (groups, entries int) {
 	for _, elem := range arr {
 		groupMap, ok := elem.(map[string]interface{})
@@ -105,9 +85,6 @@ func claudeSettingsFixtureCountBridgeHooks(arr []interface{}) (groups, entries i
 	return groups, entries
 }
 
-// claudeSettingsFixtureHookEntryPresent reports whether any group in arr holds
-// a hook entry whose "command" field is wantCommand. Used to prove a foreign
-// entry survived a launch.
 func claudeSettingsFixtureHookEntryPresent(arr []interface{}, wantCommand string) bool {
 	for _, elem := range arr {
 		groupMap, ok := elem.(map[string]interface{})
@@ -131,10 +108,6 @@ func claudeSettingsFixtureHookEntryPresent(arr []interface{}, wantCommand string
 	return false
 }
 
-// claudeSettingsFixtureMarkerPresent reports whether any hook entry in any
-// group of arr carries marker somewhere in its encoded form. It re-encodes each
-// entry instead of reading a named field, so it works for an entry of any
-// shape — including one that is not an object at all.
 func claudeSettingsFixtureMarkerPresent(t *testing.T, arr []interface{}, marker string) bool {
 	t.Helper()
 	for _, elem := range arr {
@@ -159,17 +132,12 @@ func claudeSettingsFixtureMarkerPresent(t *testing.T, arr []interface{}, marker 
 	return false
 }
 
-// claudeSettingsFixtureBridgeGroupPresent reports whether arr contains
-// the bridge matcher-group for eventKind per CHB-003, checking that the hook
-// "command" field matches wantCommand (hk-kqdpf.6: must be an absolute path).
 func claudeSettingsFixtureBridgeGroupPresent(arr []interface{}, eventKind, wantCommand string) bool {
 	for _, elem := range arr {
 		m, ok := elem.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		// The bridge group is the one with an empty matcher; a missing or
-		// non-string matcher is some other group and is skipped the same way.
 		if matcher, ok := m["matcher"].(string); !ok || matcher != "" {
 			continue
 		}
@@ -212,12 +180,10 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 
 	settingsPath := claudeSettingsFixturePath(workspacePath)
 
-	// Assert: settings.json exists.
 	if _, err := os.Stat(settingsPath); err != nil {
 		t.Fatalf("WM-040a: settings.json not on disk: %v", err)
 	}
 
-	// Assert: no .tmp-* orphan present.
 	entries, err := os.ReadDir(filepath.Dir(settingsPath))
 	if err != nil {
 		t.Fatalf("WM-040a: ReadDir .claude/: %v", err)
@@ -228,7 +194,6 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 		}
 	}
 
-	// Assert: valid JSON with all five bridge event-kinds.
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
@@ -238,14 +203,10 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 		}
 	}
 
-	// Assert: no disableAllHooks key.
 	if _, ok := m["disableAllHooks"]; ok {
 		t.Errorf("WM-040a: disableAllHooks key present in output; MUST be stripped")
 	}
 
-	// hk-jvzc2: MaterializeClaudeSettings MUST NOT create or modify .gitignore.
-	// CHB-005 hygiene is an operator-setup obligation; per-launch writes leaked
-	// into the parent repo's working tree across dogfood runs.
 	gitignorePath := filepath.Join(workspacePath, ".gitignore")
 	if _, err := os.Stat(gitignorePath); !os.IsNotExist(err) {
 		t.Errorf("hk-jvzc2: MaterializeClaudeSettings created .gitignore (stat err=%v); MUST be operator-managed", err)
@@ -263,8 +224,6 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 
 	workspacePath := t.TempDir()
 
-	// Write a pre-existing settings.json with user hooks for two of the five
-	// event-kinds plus one unrelated key.
 	userHooks := map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"SessionStart": []interface{}{
@@ -315,7 +274,6 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 
-	// Assert: bridge groups present for ALL five event-kinds.
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
 		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, testDaemonBinaryPath) {
@@ -323,10 +281,6 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 		}
 	}
 
-	// Assert: the user hook is preserved and exactly one bridge group joins it.
-	// The count is EXACT on purpose. This assertion used to read ">= 2", which a
-	// duplicate satisfies, so it could not fail on the defect it exists to
-	// prevent — and duplicates did ship (hk-dknb2).
 	sessionStartArr := claudeSettingsFixtureHookEntries(t, hooks, "SessionStart")
 	if len(sessionStartArr) != 2 {
 		t.Errorf("WM-040a merge: SessionStart array len = %d; want exactly 2 (user + one bridge)", len(sessionStartArr))
@@ -337,7 +291,6 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 		t.Errorf("WM-040a merge: Stop array len = %d; want exactly 2 (user + one bridge)", len(stopArr))
 	}
 
-	// Assert: unrelated key "theme" is preserved.
 	if _, ok := m["theme"]; !ok {
 		t.Errorf("WM-040a merge: 'theme' key was removed; user settings must be preserved")
 	}
@@ -355,8 +308,6 @@ func TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup(t *testing.T) {
 
 	workspacePath := t.TempDir()
 
-	// A user hook that must survive every launch, so this also proves the
-	// de-duplication does not reach past harmonik's own groups.
 	userSettings := map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"Stop": []interface{}{
@@ -405,7 +356,6 @@ func TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup(t *testing.T) {
 		}
 	}
 
-	// The user's own Stop hook survived all four launches.
 	stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
 	if len(stopArr) != 2 {
 		t.Errorf("WM-040a: Stop array len = %d after %d launches; want exactly 2 (user + one bridge)", len(stopArr), launches)
@@ -428,8 +378,6 @@ func TestWM040a_StaleBridgeGroupIsReplacedNotKept(t *testing.T) {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 
-	// A bridge group written by an older binary: different path, different
-	// timeout, same verb.
 	stale := map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"Stop": []interface{}{
@@ -489,8 +437,6 @@ func TestWM040a_ForeignEntryInsideBridgeGroupSurvives(t *testing.T) {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 
-	// One default-matcher group holding TWO entries: harmonik's, and a foreign
-	// one that another writer added beside it.
 	shared := map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"Stop": []interface{}{
@@ -560,7 +506,6 @@ func TestWM040a_TwoLaunchesLeaveByteIdenticalSettings(t *testing.T) {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 
-	// Start from a file the user owns, so the merge path runs on both launches.
 	userSettings := map[string]interface{}{
 		"theme": "dark",
 		"hooks": map[string]interface{}{
@@ -602,7 +547,6 @@ func TestWM040a_TwoLaunchesLeaveByteIdenticalSettings(t *testing.T) {
 			string(afterFirst), string(afterSecond))
 	}
 
-	// Independent duplicate count, straight off the parsed file.
 	hooks := claudeSettingsFixtureHooksMap(t, claudeSettingsFixtureReadJSON(t, settingsPath))
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
@@ -639,13 +583,11 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 		entry  interface{}
 	}{
 		{
-			// The `group.(map[string]interface{})` fall-through.
 			name:   "entry is not an object",
 			marker: "not-an-object-survivor",
 			entry:  "not-an-object-survivor",
 		},
 		{
-			// The `entryMap["args"].([]interface{})` fall-through, absent key.
 			name:   "args key absent",
 			marker: "args-absent-survivor",
 			entry: map[string]interface{}{
@@ -655,7 +597,6 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 			},
 		},
 		{
-			// The same fall-through, wrong type.
 			name:   "args is not an array",
 			marker: "args-not-array-survivor",
 			entry: map[string]interface{}{
@@ -666,7 +607,6 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 			},
 		},
 		{
-			// The `len(args) == 0` fall-through.
 			name:   "args is empty",
 			marker: "args-empty-survivor",
 			entry: map[string]interface{}{
@@ -677,9 +617,6 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 			},
 		},
 		{
-			// The `args[0].(string)` fall-through. The verb is present at
-			// args[1], so a predicate that scanned the whole list instead of
-			// the first element would also fail this case.
 			name:   "args[0] is not a string",
 			marker: "args-first-not-string-survivor",
 			entry: map[string]interface{}{
@@ -707,7 +644,6 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 						map[string]interface{}{
 							"matcher": "",
 							"hooks": []interface{}{
-								// Harmonik's own entry, which MUST be removed.
 								map[string]interface{}{
 									"type":    "command",
 									"command": "/old/path/to/harmonik",
@@ -739,7 +675,6 @@ func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
 			if !claudeSettingsFixtureMarkerPresent(t, stopArr, tc.marker) {
 				t.Errorf("WM-040a: the entry harmonik cannot recognise (%s) was deleted; the predicate MUST fail closed and keep every shape it does not recognise", tc.name)
 			}
-			// Harmonik's own entry still went, and only one came back.
 			if claudeSettingsFixtureMarkerPresent(t, stopArr, "/old/path/to/harmonik") {
 				t.Errorf("WM-040a: harmonik's own stale entry survived; keeping the odd entry must not stop the removal of ours")
 			}
@@ -765,19 +700,16 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
-	// Write deliberately malformed JSON.
 	if err := os.WriteFile(settingsPath, []byte(`{bad json`), 0o600); err != nil {
 		t.Fatalf("WM-040a: WriteFile malformed: %v", err)
 	}
 
-	// Session log path for warning capture.
 	sessionLogPath := filepath.Join(t.TempDir(), "session.log")
 
 	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, sessionLogPath); err != nil {
 		t.Fatalf("WM-040a: MaterializeClaudeSettings (malformed): %v", err)
 	}
 
-	// Assert: settings.json is now valid JSON with bridge entries.
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
@@ -787,7 +719,6 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 		}
 	}
 
-	// Assert: warning line was written to session log.
 	logData := mustReadFile(t, sessionLogPath)
 	if !strings.Contains(string(logData), "malformed") && !strings.Contains(string(logData), "overwritten") {
 		t.Errorf("WM-040a: session log missing expected warning; got: %q", logData)
@@ -809,7 +740,6 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 
-	// Write settings with disableAllHooks: true.
 	userSettings := map[string]interface{}{
 		"disableAllHooks": true,
 		"hooks":           map[string]interface{}{},
@@ -828,12 +758,10 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 
-	// Assert: disableAllHooks is absent.
 	if _, ok := m["disableAllHooks"]; ok {
 		t.Errorf("WM-040a: disableAllHooks present in merged result; MUST be stripped")
 	}
 
-	// Assert: bridge hooks are present despite disableAllHooks having been set.
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
@@ -855,7 +783,6 @@ func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 	workspacePath := t.TempDir()
 	gitignorePath := filepath.Join(workspacePath, ".gitignore")
 
-	// Seed a pre-existing operator-style .gitignore.
 	preExisting := "# operator setup\n.harmonik/\n.claude/settings.json\n"
 	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o600); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
@@ -865,7 +792,6 @@ func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 		t.Fatalf("stat seeded .gitignore: %v", err)
 	}
 
-	// Two back-to-back Materialize calls.
 	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("hk-jvzc2: MaterializeClaudeSettings #1: %v", err)
 	}
@@ -873,14 +799,12 @@ func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 		t.Fatalf("hk-jvzc2: MaterializeClaudeSettings #2: %v", err)
 	}
 
-	// Assert: byte-identical content.
 	postData := mustReadFile(t, gitignorePath)
 	if string(postData) != preExisting {
 		t.Errorf("hk-jvzc2: .gitignore was mutated by MaterializeClaudeSettings:\nwant:\n%q\ngot:\n%q",
 			preExisting, string(postData))
 	}
 
-	// Assert: size unchanged (defensive cross-check).
 	postStat, err := os.Stat(gitignorePath)
 	if err != nil {
 		t.Fatalf("stat post-call .gitignore: %v", err)
@@ -916,14 +840,11 @@ func TestWM040a_OrderingSettingsBeforeWorkspaceLeased(t *testing.T) {
 	}
 
 	mtime := fi.ModTime()
-	// mtime must not be before the start of the call.
 	if mtime.Before(before) {
 		t.Errorf("WM-040a ordering: settings.json mtime %v is before call start %v; fsync ordering violated", mtime, before)
 	}
 	_ = after // after is an upper bound; not checked (mtime <= after is trivially true on local fs)
 
-	// Conceptual gate: workspace_leased would emit here.
-	// The file MUST be readable at this point.
 	raw := mustReadFile(t, settingsPath)
 	if len(raw) == 0 {
 		t.Errorf("WM-040a ordering: settings.json is empty; must contain bridge content before workspace_leased")
@@ -955,7 +876,6 @@ func TestWM040a_CHB003HookShape(t *testing.T) {
 			continue
 		}
 
-		// Find the bridge group (matcher == "").
 		var found bool
 		for _, elem := range arr {
 			group, ok := elem.(map[string]interface{})
@@ -976,11 +896,9 @@ func TestWM040a_CHB003HookShape(t *testing.T) {
 				break
 			}
 
-			// Validate fields.
 			if h["type"] != "command" {
 				t.Errorf("CHB-003: %q hook type = %q; want \"command\"", kind, h["type"])
 			}
-			// hk-kqdpf.6: command MUST be the absolute daemon binary path, not bare "harmonik".
 			if h["command"] != testDaemonBinaryPath {
 				t.Errorf("CHB-003: %q hook command = %q; want absolute path %q", kind, h["command"], testDaemonBinaryPath)
 			}
@@ -995,7 +913,6 @@ func TestWM040a_CHB003HookShape(t *testing.T) {
 					t.Errorf("CHB-003: %q hook args[1] = %q; want %q", kind, args[1], kind)
 				}
 			}
-			// timeout arrives as float64 from JSON unmarshal.
 			timeoutVal, ok := h["timeout"].(float64)
 			if !ok || int(timeoutVal) != 30 {
 				t.Errorf("CHB-003: %q hook timeout = %v; want 30", kind, h["timeout"])
@@ -1009,7 +926,6 @@ func TestWM040a_CHB003HookShape(t *testing.T) {
 		}
 	}
 
-	// Assert all five required event kinds are present in the hooks object.
 	wantKinds := []string{"SessionStart", "Stop", "SessionEnd", "StopFailure", "Notification"}
 	for _, kind := range wantKinds {
 		if _, ok := hooks[kind]; !ok {
@@ -1041,7 +957,6 @@ func TestWM040a_AtomicWriteNoOrphan(t *testing.T) {
 		}
 	}
 
-	// The canonical file must exist.
 	settingsPath := claudeSettingsFixturePath(workspacePath)
 	if _, err := os.Stat(settingsPath); err != nil {
 		t.Errorf("WM-040a atomic: canonical settings.json missing: %v", err)
@@ -1059,8 +974,6 @@ func TestWM040a_AtomicWriteNoOrphan(t *testing.T) {
 func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
 	t.Parallel()
 
-	// Use the real test binary path so this test exercises the os.Executable()
-	// contract used by production main.go.
 	execPath, err := os.Executable()
 	if err != nil {
 		t.Fatalf("TestWM040a_HookCommandIsAbsolutePath: os.Executable(): %v", err)
@@ -1082,7 +995,6 @@ func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
 		}
 	}
 
-	// Verify the command is not the bare "harmonik" name — the regression we are fixing.
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
 		for _, elem := range arr {
@@ -1132,12 +1044,10 @@ func TestWM040a_PermissionsAllowAbsent(t *testing.T) {
 	settingsPath := claudeSettingsFixturePath(workspacePath)
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 
-	// Assert: harmonik does NOT write a top-level "permissions" key on a fresh build.
 	if _, ok := m["permissions"]; ok {
 		t.Errorf("TestWM040a_PermissionsAllowAbsent: 'permissions' key present; harmonik must not write a permissions.allow block (trust-modal fix)")
 	}
 
-	// Assert: dangerouslySkipPermissions is NOT present (spec-forbidden, CHB-007).
 	if _, ok := m["dangerouslySkipPermissions"]; ok {
 		t.Errorf("TestWM040a_PermissionsAllowAbsent: dangerouslySkipPermissions present; must not be set (CHB-007 deny-list)")
 	}
@@ -1158,7 +1068,6 @@ func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
 		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: MkdirAll: %v", err)
 	}
 
-	// Write settings with a user-defined permissions.allow list.
 	userAllow := []interface{}{"MyCustomTool"}
 	userSettings := map[string]interface{}{
 		"hooks": map[string]interface{}{},
@@ -1195,7 +1104,6 @@ func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
 	if !ok {
 		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: 'permissions.allow' not an array")
 	}
-	// The user's "MyCustomTool" must still be present.
 	found := false
 	for _, v := range allowArr {
 		if v == "MyCustomTool" {
@@ -1239,8 +1147,6 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		// Pre-existing settings WITHOUT the autoload key (simulates the committed
-		// .claude/settings.json that lacks the field before T6 ships).
 		existing := map[string]interface{}{
 			"hooks": map[string]interface{}{},
 			"theme": "dark",
@@ -1257,7 +1163,6 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		}
 		m := claudeSettingsFixtureReadJSON(t, settingsPath)
 		assertAutoLoadedSkillsDisabled(t, m, "merge over existing without key")
-		// Unrelated key must be preserved.
 		if _, ok := m["theme"]; !ok {
 			t.Errorf("merge: 'theme' key was removed; user settings must be preserved")
 		}
@@ -1270,8 +1175,6 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		// Pre-existing settings with autoLoadedSkillsDirectories set to a
-		// non-empty list — harmonik MUST override this to [].
 		existing := map[string]interface{}{
 			"hooks":                       map[string]interface{}{},
 			"autoLoadedSkillsDirectories": []interface{}{"/some/skills/dir"},
@@ -1291,8 +1194,6 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 	})
 }
 
-// assertAutoLoadedSkillsDisabled is a helper that asserts the settings map
-// contains "autoLoadedSkillsDirectories": [] (the T6 hard invariant).
 func assertAutoLoadedSkillsDisabled(t *testing.T, m map[string]interface{}, ctx string) {
 	t.Helper()
 	raw, ok := m["autoLoadedSkillsDirectories"]
@@ -1333,8 +1234,6 @@ func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
 			t.Fatalf("MaterializeClaudeSettings: %v", err)
 		}
 		m := claudeSettingsFixtureReadJSON(t, claudeSettingsFixturePath(workspacePath))
-		// A bead worktree must NOT carry a harmonik-injected permissions block —
-		// otherwise it trips Claude Code's pre-approved-permissions consent modal.
 		if perm, ok := m["permissions"]; ok {
 			t.Errorf("consent-gate canary: fresh settings.json has top-level 'permissions' = %v; "+
 				"harmonik must not inject permissions.allow (would trip the consent modal, HC-056)", perm)
@@ -1345,9 +1244,6 @@ func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
 		t.Parallel()
 		workspacePath := t.TempDir()
 
-		// A user who deliberately commits their own permissions.allow keeps it —
-		// harmonik neither strips nor augments it. (If the user opts into the
-		// consent modal by declaring their own allow, that is their choice.)
 		userSettings := map[string]interface{}{
 			"permissions": map[string]interface{}{
 				"allow": []interface{}{"Read"},
@@ -1378,8 +1274,6 @@ func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
 		if !ok {
 			t.Fatalf("consent-gate canary: user 'permissions.allow' was dropped, got %T", permMap["allow"])
 		}
-		// The user's allow-list must be preserved verbatim — exactly ["Read"],
-		// NOT augmented with the retired harmonik default tool set.
 		if len(allowArr) != 1 || allowArr[0] != "Read" {
 			t.Errorf("consent-gate canary: user permissions.allow = %v; want [\"Read\"] preserved verbatim "+
 				"(harmonik must not augment it)", allowArr)

@@ -1,45 +1,5 @@
 package core
 
-// budgetexhaustion_on048.go — ON-048: Exhaustion protocol (4-step sequence).
-//
-// ON-048 requires that on budget exhaustion (any category reaches 100%) the
-// enforcing subsystem (agent runner for per-run budgets per CP §4.5) MUST
-// execute a deterministic 4-step sequence:
-//
-//  1. Emit budget_exhausted (event-model.md §8.4.3); tag category and scope
-//     via EV's structured-fields mechanism. Payload shape is EV-owned.
-//  2. Terminate the in-flight LLM call or tool invocation at the next safe
-//     boundary: post-chunk for token budgets; post-iteration for iterations
-//     budgets; post-step for wall-clock budgets.
-//  3. Route the run through the exhaustion-routing policy: default is
-//     pause-and-escalate — the run transitions to a failed state with a fallback
-//     verdict per RC-018, and the daemon MAY enter the paused state if the
-//     policy declares pause-on-exhaustion=true (default: false).
-//  4. Emit dispatch_deferred per §8 code 18 if exhaustion cascades to a
-//     multi-run ceiling breach.
-//
-// The protocol is deterministic (mechanism-tagged). The pause-vs-escalate
-// decision in step (3) is an operator-policy decision, not a spec decision.
-//
-// This file declares the pure, I/O-free layer:
-//
-//   - ExhaustionProtocolStep        — typed label for each of the four steps.
-//   - ExhaustionSafeBoundary        — typed enum for the three safe-boundary
-//                                     points keyed to BudgetResource.
-//   - ExhaustionRoutingPolicy       — per-policy struct governing step (3).
-//   - ExhaustionProtocolHandlerStep — struct pairing a step label with its
-//                                     canonical description.
-//   - ExhaustionProtocolSequence    — returns the canonical ordered 4-step slice.
-//   - SafeBoundaryForResource       — maps a BudgetResource to the correct
-//                                     ExhaustionSafeBoundary per ON-048 step (2).
-//   - DefaultExhaustionRoutingPolicy — returns the spec-mandated default policy.
-//
-// The new DispatchDeferredReasonBudgetExhaustedCascade constant is declared in
-// dispatchdeferredreason.go alongside the existing machine-ceiling reason.
-//
-// Spec ref: specs/operator-nfr.md §4.11 ON-048.
-// Refs: hk-sx9r.67
-
 // ExhaustionProtocolStep is the typed label for one step of the ON-048
 // exhaustion protocol sequence.
 type ExhaustionProtocolStep string

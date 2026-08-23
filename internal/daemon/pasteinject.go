@@ -1,34 +1,5 @@
 package daemon
 
-// pasteinject.go — post-spawn paste-inject step (hk-zrj83).
-//
-// After the daemon spawns a Claude pane via the tmux substrate, it must
-// deliver a kick-off instruction to the pane so Claude knows which task file
-// to read and begin work.  This is the B8 mechanism described in
-// docs/claude-session-comms-audit-2026-05-13.md §6.
-//
-// Ordering invariant per specs/process-lifecycle.md §4.7 PL-021d and
-// specs/claude-hook-bridge.md §4.11 CHB-028:
-//
-//  1. agent-task.md (or phase-variant) written to disk (owned by hk-9ow36).
-//  2. Pane is live (SpawnWindow returned non-error).
-//  3. pasteInjectOnLaunch fires — delivers the kick-off message via
-//     WriteLastPane (tmux load-buffer + paste-buffer per PL-021d).
-//
-// Phase mapping:
-//
-//   - implementer-initial (single-mode)  → "-task"    → "Please read .harmonik/agent-task.md and begin."
-//   - implementer-resume                 → "-task" (combined task + feedback in a single paste, hk-poy7k)
-//   - reviewer                           → "-review"  → "Please read .harmonik/review-target.md ..."
-//
-// Spec refs:
-//   - specs/process-lifecycle.md §4.7 PL-021d (paste mechanism, buffer-name discipline)
-//   - specs/claude-hook-bridge.md §4.11 CHB-028 (agent-task.md contract)
-//   - specs/execution-model.md §4.3 EM-015d-RFD (reviewer-feedback delivery)
-//   - specs/execution-model.md §4.3 EM-015d-RIA (reviewer input artifact)
-//
-// Bead: hk-zrj83.
-
 import (
 	"context"
 	"encoding/json"
@@ -51,26 +22,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// splashDismissDelay is the grace period between the Enter keypress (splash
-// dismiss) and the paste-buffer write (kick-off message delivery).  The
-// Claude Code welcome splash needs ~400–600ms to animate away and transition
-// the terminal to the REPL input state; 750ms provides a conservative margin.
-//
-// NOTE (hk-7rgqs): this single fixed wait is NOT sufficient on its own under
-// concurrent cold-boots, where the splash can take >750ms to clear and the
-// post-paste submit Enter then lands on the still-up splash and is swallowed.
-// The robust submit is the bounded-retry Enter (sendSubmitEnterWithRetry); this
-// delay just keeps the FIRST submit attempt from arriving absurdly early.
-//
-// Declared as a var (not const) so tests can override it without waiting real
-// wall time, matching every other timing knob in this file.
-//
-// Bead: hk-rf4ux, hk-7rgqs.
-// splashDismissDelayNs holds splashDismissDelay as nanoseconds behind an
-// atomic.Int64 so test helpers (running in parallel with production reads) can
-// shrink it without a data race.  Set once at init, only ever mutated by tests
-// via ExportedSplashDismissDelay; production code reads it through
-// splashDismissDelayDur().
 var splashDismissDelayNs atomic.Int64
 
 func init() { splashDismissDelayNs.Store(int64(750 * time.Millisecond)) }
@@ -79,44 +30,8 @@ func splashDismissDelayDur() time.Duration {
 	return time.Duration(splashDismissDelayNs.Load())
 }
 
-// resumeSubmitRetries and resumeSubmitRetryDelay govern the bounded submit-retry
-// on EVERY post-paste submit Enter (implementer-initial, reviewer, and the
-// implementer-resume iteration ≥ 2 path).
-//
-// Root cause (hk-ip33d, generalised by hk-7rgqs): the post-paste Enter that
-// SUBMITS the kick-off prompt is intermittently dropped because the Claude Code
-// REPL's input handler is not yet ready to accept the keypress at the instant
-// SendEnterToLastPane fires.  Two arrival paths exhibit this:
-//
-//   - implementer-resume (hk-ip33d): a freshly `claude --resume <id>` TUI is
-//     still settling after the welcome splash; the single Enter is dropped, the
-//     combined task+feedback prompt sits unsubmitted, claude stays idle, and the
-//     run goes run_stale with no iteration-2 progress.
-//   - reviewer / implementer-initial under load (hk-7rgqs): under concurrent
-//     cold-boots the splash takes >750ms to clear, so the FIXED splashDismissDelay
-//     elapses while the splash is still up; the post-paste submit Enter lands on
-//     the splash and is SWALLOWED, leaving the brief typed-but-UNSUBMITTED.  The
-//     reviewer then idles, never reads review-target.md, never writes review.json,
-//     and the run stalls until the verdict budget elapses.
-//
-// There is no pane-capture primitive on the enterSender interface to detect
-// "input cleared", so we cannot positively confirm submission.  Instead we send
-// the submit Enter, wait a short settle, and re-send it up to resumeSubmitRetries
-// additional times.  A redundant Enter at a REPL that has ALREADY submitted is a
-// harmless no-op (an empty line at the now-clear prompt), so the retries only
-// ever help: at least one of them lands after the input handler is ready (and
-// after a still-animating splash has cleared).  This reuses the same
-// send-keys-Enter key-event idiom as the splash-dismiss path (hk-rf4ux) and the
-// time-grace patterns already in this file.
-//
-// Declared as vars (not consts) so tests can override them without waiting real
-// wall time.
-//
-// Bead: hk-ip33d.
 var resumeSubmitRetries = 2
 
-// resumeSubmitRetryDelayNs holds resumeSubmitRetryDelay as nanoseconds behind an
-// atomic.Int64 (see splashDismissDelayNs for the rationale).
 var resumeSubmitRetryDelayNs atomic.Int64
 
 func init() { resumeSubmitRetryDelayNs.Store(int64(400 * time.Millisecond)) }
@@ -125,47 +40,11 @@ func resumeSubmitRetryDelayDur() time.Duration {
 	return time.Duration(resumeSubmitRetryDelayNs.Load())
 }
 
-// pasteVerifyAttempts, pasteVerifyBackoff and pasteVerifyScrollback govern the
-// seed-paste land-verification loop (hk-zexsj).
-//
-// Root cause: on a REMOTE SSH worker under concurrent cold-boots, ~1/3 of runs
-// hang because the seed paste is silently lost.  The seed is delivered via
-// `tmux load-buffer` + `tmux paste-buffer` (bracketed paste); tmux returns exit
-// 0 once it has handed the buffer to the pane, NOT once claude's React/ink TUI
-// has rendered it.  When the TUI reaches input-ready later than the blind
-// 750ms splash wait (common under load), the paste lands on a not-ready TUI and
-// is discarded — claude idles at an empty prompt, never emits agent_ready, and
-// the run burns the full 30-min timeout before failing.  (The shared SSH
-// ControlMaster dropping a multiplexed load/paste is the second, hardening-only
-// cause — see workloop.go SSHRunner Opts.)
-//
-// Fix: after WriteLastPane injects the seed (and BEFORE the submit Enter),
-// capture the pane and confirm a stable marker from the seed text actually
-// rendered into the input box.  If it is absent, re-run the paste — bounded to
-// pasteVerifyAttempts total attempts with pasteVerifyBackoff between them.  A
-// re-paste at a TUI that already absorbed the first copy is harmless (claude
-// reads the task file regardless of a duplicated instruction); the common case
-// is a fully-discarded first paste, where the retry delivers a clean single
-// copy once the TUI is ready.  If every attempt fails to land the marker, the
-// helper returns a non-empty failure reason so pasteInjectOnLaunch emits
-// pasteinject_failed and the run fails loud/fast instead of waiting out the
-// 30-min timeout.
-//
-// LOCAL runs are unaffected: a local paste lands instantly, so the first capture
-// passes and the loop is a single iteration (no extra wall time).  A substrate
-// without CaptureLastPane (test doubles) skips verification entirely.
-//
-// Declared as vars (not consts) so tests can override them without waiting real
-// wall time.
-//
-// Bead: hk-zexsj.
 var (
 	pasteVerifyAttempts   = 3
 	pasteVerifyScrollback = 200
 )
 
-// pasteVerifyBackoffNs holds pasteVerifyBackoff as nanoseconds behind an
-// atomic.Int64 (see splashDismissDelayNs for the rationale).
 var pasteVerifyBackoffNs atomic.Int64
 
 func init() { pasteVerifyBackoffNs.Store(int64(1500 * time.Millisecond)) }
@@ -174,18 +53,6 @@ func pasteVerifyBackoffDur() time.Duration {
 	return time.Duration(pasteVerifyBackoffNs.Load())
 }
 
-// enterSender is an optional interface for tmux-backed Substrates that can
-// send a bare Enter keypress to the last spawned pane via
-// `tmux send-keys -t <pane> Enter` (NOT the -l literal form).
-//
-// This is the mechanism used to dismiss the Claude Code welcome splash before
-// paste-inject, per the hk-rf4ux fix.  The splash is a React/ink TUI that
-// processes key events; paste-buffer operates in bracketed-paste mode on
-// modern terminals, which means literal bytes in the paste payload (including
-// '\n') are not dispatched as key events.  Only send-keys without -l can
-// generate a true Enter keypress that the TUI key-event handler sees.
-//
-// Bead: hk-rf4ux.
 type enterSender interface {
 	// SendEnterToLastPane sends a bare "Enter" key to the most recently
 	// spawned window's first pane.  Returns a non-nil error if no window
@@ -193,18 +60,6 @@ type enterSender interface {
 	SendEnterToLastPane(ctx context.Context) error
 }
 
-// paneCapturer is an optional interface implemented by tmux-backed Substrates
-// that can read the rendered text of the most recently spawned pane (plus a
-// bounded scrollback tail).  It is the read seam behind the seed-paste
-// land-verification (hk-zexsj): after WriteLastPane injects a kick-off seed the
-// caller captures the pane and checks for a marker substring to confirm the
-// bracketed paste actually rendered into the TUI input box.
-//
-// A substrate that does not implement this interface (e.g. a minimal test
-// double) makes the verify step a no-op — the paste is trusted after the first
-// successful WriteLastPane, preserving prior behaviour.
-//
-// Bead: hk-zexsj.
 type paneCapturer interface {
 	// CaptureLastPane returns the rendered pane text plus scrollback lines of
 	// history tail for the most recently spawned window's first pane.  Returns a
@@ -214,27 +69,8 @@ type paneCapturer interface {
 	CaptureLastPane(ctx context.Context, scrollback int) (string, error)
 }
 
-// errPaneCaptureUnsupported is returned (wrapped) by a paneCapturer whose
-// underlying adapter lacks pane-capture entirely — distinct from a transient
-// capture invocation failure.  The seed-verify loop treats it as "verification
-// unavailable" and trusts the paste (prior behaviour), rather than retrying to
-// exhaustion.  In production the adapter is always tmux.OSAdapter (capture
-// supported), so this only affects test doubles and exotic substrates.
-//
-// Bead: hk-zexsj.
 var errPaneCaptureUnsupported = errors.New("daemon: pane capture unsupported by adapter")
 
-// quitSender is an optional interface implemented by tmux-backed Substrates
-// that can send `/quit Enter` to the most recently spawned pane as real
-// key events (not bracketed paste).
-//
-// This is the mechanism for the daemon-side session-exit injection:  after
-// the task commit lands in the worktree, the daemon calls SendQuitToLastPane
-// to cause Claude Code's REPL to execute /quit, which fires the Stop hook
-// and delivers outcome_emitted to the daemon socket.
-//
-// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Bead: hk-cmybm.
 type quitSender interface {
 	// SendQuitToLastPane sends `/quit` followed by Enter to the most recently
 	// spawned window's first pane.  Returns a non-nil error if no window has
@@ -242,17 +78,6 @@ type quitSender interface {
 	SendQuitToLastPane(ctx context.Context) error
 }
 
-// paneOutputSizer is an optional interface that quitSender implementations
-// may also satisfy to report the current pane output fingerprint (scrollback
-// history size + cursor position).  Used by the activity-aware launch
-// suppression (hk-az4fd, hk-ue0u2) to detect read-heavy implementers that
-// are actively reading files and planning without yet editing the worktree.
-// Such beads produce visible pane output (streaming LLM responses, tool
-// results) even though git status is clean, so the worktree-activity
-// fingerprint alone (hk-az4fd) cannot distinguish them from a genuinely-
-// wedged pane.
-//
-// Bead: hk-ue0u2.
 type paneOutputSizer interface {
 	// PaneOutputFingerprint returns a string that changes as the pane
 	// produces visible output (history size grows, cursor advances).
@@ -261,24 +86,6 @@ type paneOutputSizer interface {
 	PaneOutputFingerprint(ctx context.Context) (string, bool)
 }
 
-// paneLivenessChecker is an optional interface that quitSender implementations
-// may also satisfy to report whether the tmux pane has an active child process
-// (i.e. claude is running under the shell).
-//
-// pasteInjectQuitOnCommit probes the qs parameter for this interface at
-// construction time.  When present, the liveness check is consulted before
-// firing the noChange kill path on a launch-heartbeat-timeout or heartbeat-
-// staleness event: if the pane has an active child process, the session is
-// still alive (thinking phase, not yet emitting heartbeats) and the kill is
-// suppressed; lastHeartbeat is reset so the staleness clock restarts.
-//
-// This distinguishes two cases the heartbeat watchdog cannot separate on its
-// own:
-//  1. Empty pane — paste delivered but claude never started → kill fast (~60s).
-//  2. Active thinking — claude is running and downloading tokens but has not
-//     yet made a tool call → do NOT kill.
-//
-// Bead: hk-fbydv.
 type paneLivenessChecker interface {
 	// PaneHasActiveProcess returns true when the tmux pane shell has at least
 	// one child process (i.e. the hosted claude process is still running).
@@ -286,32 +93,8 @@ type paneLivenessChecker interface {
 	PaneHasActiveProcess(ctx context.Context) bool
 }
 
-// livePaneCommandSubstrings are command-name fragments that identify a hosted
-// agent process running directly as the tmux pane's foreground process.
-//
-// hk-tgqy5: tmux often runs a pane command via `sh -c "<command>"`, and when
-// the command is a single program the shell may exec into it, so the pane PID
-// becomes the agent process itself (no child shell, no descendants while it is
-// in a thinking phase with no tool subprocess spawned).  In that arrangement a
-// children-only probe (`pgrep -P <panePID>`) returns nothing for a perfectly
-// healthy agent.  We therefore also accept the pane PID *itself* as evidence of
-// liveness when its command matches one of these fragments.
-//
-// This is the fallback used by hasChildProcess and by perRunSubstrate instances
-// whose HandlerBinary resolves to "claude". Derived-binary overrides are set per
-// run via agentCommandFragmentsFor.
 var livePaneCommandSubstrings = []string{"claude", "node"}
 
-// agentCommandFragmentsFor returns command-name substrings to match against the
-// tmux pane's foreground process command for liveness detection.
-//
-// When binary is empty or its basename is "claude", the function returns
-// livePaneCommandSubstrings (preserving the existing "claude"/"node" behaviour,
-// since the claude CLI is a Node.js application that may exec as "node").  For
-// any other binary the basename alone is returned so that custom handler binaries
-// (non-claude agents) are matched correctly.
-//
-// Bead: hk-vhped.
 func agentCommandFragmentsFor(binary string) []string {
 	if binary == "" {
 		return livePaneCommandSubstrings
@@ -323,71 +106,24 @@ func agentCommandFragmentsFor(binary string) []string {
 	return []string{base}
 }
 
-// hasChildProcess reports whether the process identified by pid represents a
-// live hosted agent — either because pid has at least one descendant process,
-// or because pid itself is a recognised agent command.  NOT a direct-children-
-// only check.
-//
-// hk-tgqy5 root cause: the watchdog drives the pane-liveness probe through this
-// function with the tmux pane PID.  A "true" result suppresses the no-commit
-// kill.  The original implementation only checked direct children
-// (`pgrep -P <pid>` exit-0).  Two failure modes produced false negatives for a
-// healthy claude implementer mid-work, causing the daemon to falsely declare
-// `no_commit_during_implementer` while the commit was still minutes away:
-//
-//  1. Pane runs `sh -c "claude …"` and the shell exec'd into claude → pane PID
-//     IS claude, with no children during a thinking phase → direct-children
-//     check returns false.
-//  2. Pane runs a wrapper shell that hosts claude as a descendant; during a
-//     thinking phase claude has spawned no tool subprocess, so the only live
-//     descendant is claude itself at some depth.
-//
-// The fix: (a) walk the full descendant subtree (any live descendant → active),
-// and (b) recognise the pane PID itself as a live agent when its command name
-// matches livePaneCommandSubstrings.  A pane where claude has genuinely exited
-// has no agent descendant and the residual shell command does not match, so it
-// still returns false — preserving legitimate dead-pane detection.
-//
-// A non-positive PID returns false.  Any probe error is treated conservatively
-// as "not alive at this level".
-//
-// Bead: hk-fbydv (original), hk-tgqy5 (descendant-tree + self-command fix).
 func hasChildProcess(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	// (a) Any descendant process at all → the pane hosts a live process tree.
-	//     If pid has even a single direct child, a descendant exists; a deeper
-	//     descendant cannot exist without its ancestor chain, so a single
-	//     direct-child probe is sufficient for existence.
 	if hasAnyDirectChild(pid) {
 		return true
 	}
-	// (b) No children — but the pane PID may itself be the agent (exec'd shell).
-	//     Treat a recognised agent command as live.
 	return commandMatchesLiveAgent(pid, livePaneCommandSubstrings)
 }
 
-// hasAnyDirectChild reports whether pid has at least one direct child process,
-// via `pgrep -P <pid>` (exit-0 ⇒ at least one match).
 func hasAnyDirectChild(pid int) bool {
 	return exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid)).Run() == nil
 }
 
-// hasAnyDirectChildVia is like hasAnyDirectChild but routes the pgrep probe
-// through runner instead of bare exec.Command.  Used by perRunSubstrate so
-// that remote-substrate workers can probe processes on the remote host via
-// SSHRunner.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
 func hasAnyDirectChildVia(ctx context.Context, runner tmux.CommandRunner, pid int) bool {
 	return runner.Command(ctx, "pgrep", "-P", fmt.Sprintf("%d", pid)).Run() == nil
 }
 
-// commandMatchesLiveAgent reports whether the command name of pid contains one
-// of the provided fragments (e.g. "claude" or its "node" runtime).  Uses
-// `ps -o comm= -p <pid>`, which is available on macOS and mainstream Linux.
-// Returns false on any error or empty output (conservative).
 func commandMatchesLiveAgent(pid int, fragments []string) bool {
 	out, err := exec.Command("ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if err != nil {
@@ -405,11 +141,6 @@ func commandMatchesLiveAgent(pid int, fragments []string) bool {
 	return false
 }
 
-// commandMatchesLiveAgentVia is like commandMatchesLiveAgent but routes the
-// ps probe through runner instead of bare exec.Command.  Used by
-// perRunSubstrate for remote-substrate liveness detection.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
 func commandMatchesLiveAgentVia(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) bool {
 	out, err := runner.Command(ctx, "ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if err != nil {
@@ -427,13 +158,6 @@ func commandMatchesLiveAgentVia(ctx context.Context, runner tmux.CommandRunner, 
 	return false
 }
 
-// hasAnyDirectChildOrSSHFail is like hasAnyDirectChildVia but also returns
-// whether the failure was an SSH connection error (ssh exit-255). Callers use
-// the connFailed flag to emit worker_offline and disable the worker in-memory.
-//
-// Returns: (alive bool, connFailed bool).
-//
-// Bead: hk-rs-b11-offline-dh57.
 func hasAnyDirectChildOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int) (alive bool, connFailed bool) {
 	err := runner.Command(ctx, "pgrep", "-P", fmt.Sprintf("%d", pid)).Run()
 	if err == nil {
@@ -442,12 +166,6 @@ func hasAnyDirectChildOrSSHFail(ctx context.Context, runner tmux.CommandRunner, 
 	return false, tmux.IsSSHConnectionFailure(err)
 }
 
-// commandMatchesLiveAgentOrSSHFail is like commandMatchesLiveAgentVia but also
-// returns whether the failure was an SSH connection error (ssh exit-255).
-//
-// Returns: (alive bool, connFailed bool).
-//
-// Bead: hk-rs-b11-offline-dh57.
 func commandMatchesLiveAgentOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) (alive bool, connFailed bool) {
 	out, err := runner.Command(ctx, "ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if err != nil {
@@ -465,15 +183,6 @@ func commandMatchesLiveAgentOrSSHFail(ctx context.Context, runner tmux.CommandRu
 	return false, false
 }
 
-// probeLivenessOrSSHFail runs both liveness probes (pgrep -P then ps comm=)
-// via runner and returns (alive, connFailed). connFailed is true when an SSH
-// connection failure (exit-255) is detected on any probe; in that case alive
-// is always false. The function returns immediately (no wedge) even when SSH
-// is unreachable because the underlying exec returns promptly on failure.
-//
-// This is the testable core used by perRunSubstrate.PaneHasActiveProcess.
-//
-// Bead: hk-rs-b11-offline-dh57.
 func probeLivenessOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) (alive bool, connFailed bool) {
 	alive1, cf1 := hasAnyDirectChildOrSSHFail(ctx, runner, pid)
 	if cf1 {
@@ -485,36 +194,10 @@ func probeLivenessOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid 
 	return commandMatchesLiveAgentOrSSHFail(ctx, runner, pid, fragments)
 }
 
-// commandRunnerProvider is an optional interface that a quitSender may
-// implement to expose its CommandRunner.  pasteInjectQuitOnCommit probes qs
-// for this interface so that gitprobe.ResolveWorktreeHEAD and worktreeActivityFingerprint
-// are routed through the run's CommandRunner (e.g. SSHRunner for remote
-// substrates) instead of bare exec.Command.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
 type commandRunnerProvider interface {
 	commandRunner() tmux.CommandRunner
 }
 
-// The git probes that used to live here — ResolveWorktreeHEADVia and
-// RunnerIsLocalFS — moved to internal/gitprobe in P2 unit E1a, so the extracted
-// harness packages can reach them without importing the daemon.
-// Bead: hk-rs-b9-liveness-1m9n (origin).
-
-// worktreeActivityFingerprintVia is like worktreeActivityFingerprint but routes
-// the git probes through runner.
-//
-// The per-file os.Stat(size, mtime) precision component is retained ONLY when
-// runner is local-filesystem (nil / tmux.LocalRunner) — for a LOCAL run wtPath
-// is on box A and the stat is meaningful, keeping the fingerprint byte-identical
-// to worktreeActivityFingerprint (NFR7). For a REMOTE run wtPath lives on the
-// worker, so a box-A os.Stat would either error (file absent) or read an
-// unrelated box-A file; we DROP that component and rely on the routed
-// HEAD + `git status --porcelain` (which run on the worker via the SSHRunner)
-// to detect implementer activity. This loses sub-status-change precision but
-// preserves correctness for remote runs.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
 func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, bool) {
 	head, err := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if err != nil {
@@ -545,267 +228,30 @@ func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunn
 	return sb.String(), true
 }
 
-// briefDeliveredTimeout is the maximum time pasteInjectQuitOnCommit will wait
-// for the briefDelivered channel to be closed (i.e. for pasteInjectOnLaunch to
-// confirm the kick-off paste landed in the pane) before proceeding with the
-// commit poll loop.
-//
-// 2 minutes is generous: paste delivery normally completes within ~1 second
-// (splashDismissDelay + WriteLastPane).  If briefDelivered is not signalled
-// within this window, the session is likely broken and the commit poll loop is
-// started anyway — the subsequent commitPollTimeout will clean it up.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-930o3.
 var briefDeliveredTimeout = 2 * time.Minute
 
-// commitPollInterval is the interval between git HEAD checks in
-// pasteInjectQuitOnCommit.  500ms balances responsiveness with avoiding
-// excessive git subprocess overhead.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
 var commitPollInterval = 500 * time.Millisecond
 
-// commitPollTimeout is the per-progress commit-budget window: the maximum time
-// pasteInjectQuitOnCommit will wait for a new commit WITHOUT evidence of work
-// before giving up.  It is NOT a flat wall-clock deadline — when the window
-// elapses the loop looks for observable progress (a changed working tree or
-// growing pane output) and extends by another commitPollTimeout window when it
-// finds some (see commitHardCeiling for the absolute backstop).  This is a
-// safety backstop only; the primary kill trigger is heartbeat staleness
-// (heartbeatStalenessThreshold).
-//
-// hk-9vp51: previously this was a FLAT 30-min wall clock that guillotined any
-// implementer that was genuinely working but slow to commit (e.g. a deep
-// go-test loop): the pane stayed "active" forever, slipping the 180s/8m
-// heartbeat checks, and was killed only by this flat deadline — silently, as
-// no_commit.  Making the budget progress-extended (with a hard ceiling) lets a
-// progressing session run as long as it keeps making progress, while a
-// stalled-but-active session is still killed once progress goes stale.
-//
-// hk-cw0fa: the extension used to fire on an agent_heartbeat as well, which made
-// this window unable to close.  The beat is a fixed 5-minute timer and the window
-// is 30 minutes, so any live process held the budget open and every wedged run
-// reached the 90-minute ceiling instead, under whatever cause fired there.  The
-// budget now advances on evidence of work only.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
 var commitPollTimeout = 30 * time.Minute
 
-// commitHardCeiling is the absolute wall-clock backstop for the commit-poll
-// loop.  Unlike commitPollTimeout it is NEVER extended by progress signals: once
-// the loop has run this long, the session is force-killed regardless of pane
-// activity or heartbeats.  This bounds a truly-hung-but-pane-active implementer
-// (one that emits heartbeats forever but never commits) so it cannot run
-// indefinitely.
-//
-// hk-9vp51: set to 90 min — generous enough that a legitimate long task (deep
-// go-test loops, multi-file refactors that run the full suite, ~30–45 min) that
-// keeps making progress survives well past the old flat 30-min guillotine, while
-// still bounding a genuinely-stuck session.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
 var commitHardCeiling = 90 * time.Minute
 
-// heartbeatStalenessThreshold is the maximum time pasteInjectQuitOnCommit will
-// tolerate without receiving an agent_heartbeat event before it fires the kill
-// path (sends /quit, waits noChangeKillDelay, calls killer.Kill).
-//
-// The daemon emits agent_heartbeat every ~5 minutes (handler.HeartbeatInterval =
-// 300 s).  8 minutes of staleness means we allow ~1.6 missed heartbeats before
-// concluding the session is stuck — long enough to survive a single missed beat
-// while still killing sessions that have gone dark.
-//
-// The threshold only applies when an event channel is provided (eventCh != nil).
-// When eventCh is nil the check is skipped and the function falls back to the
-// wall-clock commitPollTimeout as the sole guard.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-7srrd.
 var heartbeatStalenessThreshold = 8 * time.Minute
 
-// launchHeartbeatTimeout is the maximum time pasteInjectQuitOnCommit will wait
-// for the first agent_heartbeat event after brief delivery before concluding
-// the paste landed in an empty pane and killing the session.
-//
-// The "launch verification" window begins when briefDelivered closes (or when
-// the function enters the poll loop, if briefDelivered is nil) and ends when
-// either the first heartbeat arrives or launchHeartbeatTimeout elapses.  If it
-// elapses without a heartbeat (and without a commit landing), the session is
-// killed via the noChange path so the workloop reopens the bead for retry.
-//
-// 180s gives Claude Code time to start, read the brief, load context, and
-// emit its first activity.  The original 60s was too tight for complex beads
-// that require multi-file reads before the first tool call (which emits a
-// heartbeat).  Without this guard, an empty-pane stall (paste delivered to a
-// dead tmux pane) would not be detected until the 8-minute heartbeat-staleness
-// threshold fires, wasting a full slot.  The paneLivenessChecker provides a
-// secondary defense: when the pane has an active child process, the timeout
-// is suppressed and the deadline extended.
-//
-// Only active when eventCh is non-nil (heartbeatProvided = true).
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-3gq0b.
 var launchHeartbeatTimeout = 180 * time.Second
 
-// launchSuppressionCeiling is the ABSOLUTE bound on how long the launch-
-// verification window (hk-3gq0b) may be suppressed by a still-active pane
-// (hk-fbydv) before the kill fires unconditionally.
-//
-// hk-jgxqc root cause: the launch-verification branch resets launchDeadline on
-// every tick where the first agent_heartbeat has NOT yet arrived but the pane
-// reports an active child process.  Under concurrency the per-run heartbeat tap
-// (tapCh) is drained by a competing consumer (chanAgentEventSource feeding
-// waitAgentReady), so pasteInjectQuitOnCommit NEVER observes a heartbeat,
-// firstHeartbeatSeen stays false forever, and the suppression resets the launch
-// deadline UNBOUNDEDLY — the goroutine spins in a sleep/reset loop emitting
-// "launch-heartbeat-timeout suppressed" every launchWindow and never proceeds to
-// /quit → grace → force-kill, so sess.Wait never unblocks and the workflow never
-// advances from implement → merge.  The commit-budget path has commitHardCeiling
-// as its absolute backstop; the launch-verification path had NO such ceiling.
-//
-// This ceiling caps the TOTAL launch-suppression window measured from loopStart.
-// Once it elapses the launch-verification branch stops suppressing and fires the
-// noChange kill even when the pane still reports an active child process —
-// guaranteeing the post-spawn watchdog always terminates.  It does NOT regress
-// the legitimate launch-phase suppression: a genuinely-booting Claude emits its
-// first heartbeat (or commits) well within this window, which clears
-// firstHeartbeatSeen / triggers commit detection and exits the branch normally.
-//
-// 12 min is a generous multiple of the 180s launchWindow (≈4 windows): long
-// enough that no legitimate launch is guillotined, short enough that a wedged
-// run is freed in minutes rather than at the 90-min commitHardCeiling.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-jgxqc.
 var launchSuppressionCeiling = 12 * time.Minute
 
-// noChangeKillDelay is the grace period between the unconditional /quit send
-// (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code
-// time to respond to /quit and exit cleanly; if the pane is still alive after
-// this window the session is killed unconditionally.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-trjef.
 var noChangeKillDelay = 30 * time.Second
 
-// implementerReseedGrace is the window after brief delivery within which
-// pasteInjectQuitOnCommit expects a commit to land.  When this window elapses
-// without a new commit AND qs also implements enterSender, a one-shot
-// "reseed Enter" is sent to submit any pending unsubmitted input in the pane.
-//
-// The targeted failure mode (hk-76n5g): the brief was pasted into the input
-// bar and all retry Enters (hk-ip33d: 3 total, over ~800 ms) were swallowed
-// because the TUI was still absorbing the paste when they fired.  The seed
-// then sits typed-but-unsubmitted; the implementer never reads agent-task.md;
-// the run hangs until the 30-minute commitPollTimeout fires.  Sending one
-// additional Enter ~75 s later submits the pending input and restores normal
-// flow — long before the 30-minute kill that was the only prior recovery.
-//
-// 75 s is short enough to recover a wedged-at-unsubmitted seed quickly, yet
-// long enough that a fast implementer (committed in < 75 s) never sees a
-// spurious empty-line Enter.  A redundant Enter at an already-clear prompt is
-// a harmless no-op.
-//
-// Declared as var so tests can override it without waiting real wall time.
-//
-// Bead: hk-76n5g.
 var implementerReseedGrace = 75 * time.Second
 
-// postQuitKillGrace is the grace period between the post-commit /quit send and
-// the forced sess.Kill call on the substrate-path session.  Without this kill,
-// sess.Wait (which polls the tmux pane PID for liveness) can hang indefinitely
-// when claude has exited but the surrounding shell pid is still alive, or when
-// /quit landed in the wrong pane (stale handle from a prior daemon's killed
-// run).  60 s gives Claude Code plenty of time to respond to /quit and exit
-// cleanly under normal conditions; if the pane is still alive after that the
-// session is force-killed so the workloop's sess.Wait unblocks and the review
-// loop proceeds to the reviewer phase.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-//
-// Bead: hk-5s7tg.
 var postQuitKillGrace = 60 * time.Second
 
-// sessionKiller is a subset of handler.Session used by pasteInjectQuitOnCommit
-// to force-kill the hosted session when commitPollTimeout fires without a commit.
-//
-// Bead: hk-trjef.
 type sessionKiller interface {
 	Kill(ctx context.Context) error
 }
 
-// pasteInjectQuitOnCommit watches the worktree at wtPath for a new commit
-// (HEAD changing from initialSHA).  When detected, it sends `/quit Enter`
-// to the pane via qs to cause Claude Code to exit and fire the Stop hook.
-//
-// This is the daemon-side complement to the agent-task.md session-completion
-// instruction (CHB-028 / hk-cmybm).  Claude Code agents cannot execute slash
-// commands from their tool API; the daemon detects the commit landing and
-// injects /quit programmatically.
-//
-// briefDelivered is a channel that pasteInjectOnLaunch closes after the
-// kick-off message has been written to the pane via WriteLastPane.  The
-// function blocks on briefDelivered (up to briefDeliveredTimeout) before
-// entering the commit poll loop.  This prevents a stale-pane /exit race:
-// without the gate, if a stale tmux handle from a prior run receives the
-// /quit before the newly-launched claude sees the brief, the implementer
-// session is torn down with zero assistant turns (hk-930o3).  briefDelivered
-// may be nil — when nil the gate is skipped (backward-compat for callers
-// that do not have paste-inject capability).
-//
-// The function runs in a goroutine and returns when:
-//   - A new commit is detected and /quit is sent (success).  A post-quit
-//     watchdog goroutine is also launched (hk-5s7tg): it waits
-//     postQuitKillGrace then calls killer.Kill so sess.Wait unblocks even
-//     when the pane is stuck (stale tmux handle, surviving shell pid).
-//   - Heartbeat staleness exceeds heartbeatStalenessThreshold (when eventCh
-//     is non-nil): the session has gone dark without committing; /quit is sent
-//     unconditionally, noChangeKillDelay is waited, then killer.Kill is called,
-//     and noChangeTimeoutCh is closed (hk-7srrd).
-//   - commitPollTimeout (total wall-clock backstop) elapses without a new
-//     commit: same kill sequence as heartbeat-stale path (hk-trjef).
-//   - ctx is cancelled (daemon shutting down).
-//
-// eventCh receives core.EventEnvelope values from the per-run event tap (the
-// same channel used by waitAgentReady).  When an agent_heartbeat event arrives,
-// the last-heartbeat timestamp is refreshed and the staleness clock resets.
-// When eventCh is nil the heartbeat-staleness check is skipped; only the
-// wall-clock commitPollTimeout acts as the kill trigger.
-//
-// killer and noChangeTimeoutCh may be nil (the kill and signal steps are
-// skipped when either is absent).
-//
-// bus and runID drive the hk-9vp51 implementer_budget_exceeded diagnostic: when
-// a kill fires because the commit budget (hard ceiling or stale progress) was
-// exhausted, an implementer_budget_exceeded event is emitted carrying the
-// elapsed time and time-since-last-progress, so a previously-silent no_commit
-// becomes self-explaining.  Both may be nil (event emission is skipped); the
-// kill still fires.
-//
-// clk is the determinism port for EVERY wait and deadline in this watchdog
-// (P2 E5 RT19c).  The budget deadlines, the poll ticker and the kill graces are
-// all read from the SAME clock: a mixed pair (fake deadline, real ticker) would
-// leave the loop comparing virtual time against wall time and never terminate.
-// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
-//
-// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3, hk-7srrd, hk-9vp51.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	clk substrate.ClockPort,
@@ -823,11 +269,6 @@ func pasteInjectQuitOnCommit(
 		clk = substrate.SystemClock{}
 	}
 
-	// hk-930o3: wait for brief delivery confirmation before entering the commit
-	// poll loop.  This prevents a /quit racing the brief when a stale tmux pane
-	// handle from a prior run is reused: without this gate the commit watcher
-	// may fire /quit before the newly-launched claude has read agent-task.md,
-	// tearing down the session with zero assistant turns.
 	briefDeliveredFired := false
 	if briefDelivered != nil {
 		bdTimeout := briefDeliveredTimeout // snapshot before blocking
@@ -836,7 +277,6 @@ func pasteInjectQuitOnCommit(
 			return
 		case <-briefDelivered:
 			briefDeliveredFired = true
-			// Brief delivered — proceed to commit polling.
 		case <-substrate.After(clk, bdTimeout): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-commit: brief_delivered timeout after %v for %s; proceeding with commit poll (session may be broken)\n",
@@ -844,30 +284,6 @@ func pasteInjectQuitOnCommit(
 		}
 	}
 
-	// hk-1too: stale-spawn dead-pane fast-fail.
-	//
-	// When a daemon restarts while beads are mid-spawn, the prior daemon's
-	// KillAllWindows can kill the window the new daemon spawned for the same bead
-	// (both use the same deterministic window name, e.g. session:bead-X/i1).  The
-	// paste then fails ("implementer-initial WriteLastPane: can't find pane"),
-	// briefDelivered closes immediately, and without this check the watchdog
-	// waits 180 s for launchHeartbeatTimeout before firing noChangePath.  That
-	// 180 s delay causes 47% of no_commit failures in restart windows (4/9 in the
-	// 2026-06-16 logmine window).
-	//
-	// This check fires noChangePath immediately (instead of after 180 s) when all
-	// three conditions hold:
-	//   1. briefDelivered completed (not timed out): paste-inject goroutine exited.
-	//   2. eventCh is non-nil (heartbeat-tracking mode): without heartbeats we
-	//      cannot safely distinguish "pane dead" from "pane alive, claude loading"
-	//      — skipping the check is the conservative choice.
-	//   3. PaneHasActiveProcess returns false: the pane was killed before paste.
-	//
-	// False-positive safety: when waitAgentReady succeeds (the normal path) claude
-	// IS running in the pane before paste-inject starts, so PaneHasActiveProcess
-	// returns true and the check is skipped.  The pane can only be dead here if it
-	// was killed between waitAgentReady and the paste attempt — exactly the
-	// stale-spawn scenario this addresses.
 	if briefDeliveredFired && eventCh != nil {
 		if lc, ok := qs.(paneLivenessChecker); ok && !lc.PaneHasActiveProcess(ctx) {
 			stalePaneKillDelay := noChangeKillDelay // snapshot before the main snapshot block
@@ -896,79 +312,34 @@ func pasteInjectQuitOnCommit(
 		}
 	}
 
-	// Snapshot the tunable durations into locals so tests that restore
-	// package vars after the surrounding run returns do not race with our
-	// reads inside the for loop.  Only the values captured here matter.
 	pollTimeout := commitPollTimeout
 	pollInterval := commitPollInterval
 	killDelay := noChangeKillDelay
 	stalenessThreshold := heartbeatStalenessThreshold
 	launchWindow := launchHeartbeatTimeout
 	hardCeiling := commitHardCeiling
-	// hk-jgxqc: snapshot the absolute launch-suppression ceiling. After this
-	// window (measured from loopStart) the launch-verification branch may no
-	// longer suppress on an active pane — it fires the kill so the watchdog
-	// always terminates.
 	launchSuppressCeil := launchSuppressionCeiling
-	// hk-76n5g: snapshot the reseed-Enter grace so a test that restores the
-	// package var after the run returns does not race with the in-flight read.
 	reseedGrace := implementerReseedGrace
 
 	loopStart := clk.Now()
-	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on
-	// observed progress rather than run as a flat wall clock.
-	// hk-cw0fa: only the guarded checks in the ticker case extend it — a changed
-	// working tree or growing pane output.  An agent_heartbeat does not.
 	totalDeadline := loopStart.Add(pollTimeout)
-	// hk-9vp51: hardDeadline is the absolute backstop — never extended; bounds a
-	// truly-hung-but-pane-active session.
 	hardDeadline := loopStart.Add(hardCeiling)
 	lastHeartbeat := clk.Now() // initialised to now; first real beat resets it
-	// hk-9vp51: lastProgress tracks the last observed progress for the
-	// implementer_budget_exceeded diagnostic (since_last_progress_ms).
-	// hk-cw0fa: it advances with the budget, so it now reports the age of the
-	// last evidence of WORK.  It used to advance on every heartbeat, which made
-	// the number report the age of the last beat — never more than 5 minutes,
-	// whatever the session was doing.
 	lastProgress := loopStart
 	heartbeatProvided := eventCh != nil
-	// hk-3gq0b: launch-verification window — starts after brief delivery.
-	// When heartbeatProvided, the first heartbeat must arrive within launchWindow
-	// or the session is killed (paste likely landed in an empty pane).
 	launchDeadline := clk.Now().Add(launchWindow)
-	// hk-jgxqc: absolute backstop for the launch-verification window. Unlike
-	// launchDeadline (which the suppress branch resets on every active-pane
-	// tick), this is NEVER extended — once it passes the suppression is no
-	// longer permitted and the kill fires even on an active pane.
 	launchSuppressDeadline := loopStart.Add(launchSuppressCeil)
 	firstHeartbeatSeen := false
-	// lastLaunchSuppressLog / lastStalenessLog were throttle variables for
-	// "suppressed" diagnostic lines (F21). Log lines removed — the suppression
-	// behavior (clock reset) is the observable effect; no log needed.
 	var lastLaunchSuppressLog time.Time
 	var lastStalenessLog time.Time
 
-	// hk-rs-b9: resolve the CommandRunner from qs when it implements
-	// commandRunnerProvider (production: perRunSubstrate with an SSHRunner for
-	// remote workers).  Falls back to tmux.LocalRunner{} so local behaviour is
-	// unchanged when qs does not carry a runner.
 	probeRunner := tmux.CommandRunner(tmux.LocalRunner{})
 	if crp, ok := qs.(commandRunnerProvider); ok {
 		probeRunner = crp.commandRunner()
 	}
 
-	// hk-az4fd: worktree-activity fingerprint for activity-aware launch
-	// suppression.  An implementer that is ACTIVELY editing files (but has not
-	// yet committed or emitted a heartbeat the tap can observe) advances this
-	// fingerprint every tick; a truly-wedged pane (active child but doing
-	// nothing) leaves it stable.  When the launch-suppression ceiling elapses we
-	// consult this to distinguish "working past the ceiling" (defer to the 90-min
-	// hard budget) from "wedged at the ceiling" (kill — preserves hk-jgxqc).
 	lastActivityFingerprint, _ := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
 
-	// hk-ue0u2: pane-output fingerprint baseline — initialised before the
-	// loop so the first tick has a reference to diff against.  Nil when qs
-	// does not implement paneOutputSizer (e.g. test stubs, nil substrate).
 	var outputSizer paneOutputSizer
 	if sizer, ok := qs.(paneOutputSizer); ok {
 		outputSizer = sizer
@@ -978,20 +349,11 @@ func pasteInjectQuitOnCommit(
 		lastPaneOutputFP, _ = outputSizer.PaneOutputFingerprint(ctx)
 	}
 
-	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
-	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
 	var livenessChecker paneLivenessChecker
 	if lc, ok := qs.(paneLivenessChecker); ok {
 		livenessChecker = lc
 	}
 
-	// hk-76n5g: one-shot reseed-Enter setup.  When qs also implements
-	// enterSender (production: perRunSubstrate; test stubs that combine both),
-	// fire one Enter after reseedGrace if no commit has appeared — submits any
-	// pending unsubmitted input from a dropped paste-inject seed Enter.  A
-	// redundant Enter at an already-submitted REPL is a harmless empty line.
-	// Disable when qs has no enterSender capability (reseedEnterFired=true
-	// short-circuits the check on every tick).
 	var reseedES enterSender
 	if es, ok := qs.(enterSender); ok {
 		reseedES = es
@@ -1002,34 +364,19 @@ func pasteInjectQuitOnCommit(
 	ticker := clk.NewTicker(pollInterval)
 	defer ticker.Stop()
 
-	// fireNoChangePath sends /quit, waits killDelay, kills, and closes
-	// noChangeTimeoutCh.  Extracted to avoid duplication between the heartbeat-
-	// stale and total-deadline paths.
-	//
-	// hk-9vp51: budgetExceeded marks a kill caused by exhausting the commit
-	// budget (hard ceiling reached, or progress went stale).  When set, an
-	// implementer_budget_exceeded diagnostic is emitted (when bus != nil) carrying
-	// elapsed and since-last-progress so a previously-silent no_commit explains
-	// itself.  reasonTag is the short machine-readable reason for that payload.
 	fireNoChangePath := func(reason, reasonTag string, budgetExceeded bool) {
 		fmt.Fprintf(os.Stderr,
 			"daemon: pasteinject: quit-on-commit: %s in %s (initial=%s); sending /quit unconditionally\n",
 			reason, wtPath, initialSHA)
-		// hk-9vp51: emit the budget-exceeded diagnostic before tearing down so
-		// the event is durable even if the kill steps below block on ctx.Done().
 		if budgetExceeded {
 			now := clk.Now()
 			emitImplementerBudgetExceeded(ctx, bus, runID,
 				now.Sub(loopStart), now.Sub(lastProgress), reasonTag)
 		}
-		// Step 1: send /quit unconditionally — Claude may have self-quit
-		// without committing (e.g. detected nothing-to-do).
 		if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-commit: noChange SendQuitToLastPane: %v\n", qErr)
 		}
-		// Step 2: wait noChangeKillDelay for Claude to exit cleanly, then
-		// force-kill so sess.Wait unblocks in the workloop.
 		select {
 		case <-ctx.Done():
 			return
@@ -1041,26 +388,11 @@ func pasteInjectQuitOnCommit(
 					"daemon: pasteinject: quit-on-commit: noChange Kill: %v\n", kErr)
 			}
 		}
-		// Step 3: signal the workloop that we killed due to noChange-timeout.
 		if noChangeTimeoutCh != nil {
 			close(noChangeTimeoutCh)
 		}
 	}
 
-	// hk-cw0fa: noteHeartbeat records a beat for the two clocks it can honestly
-	// serve — heartbeat staleness and launch verification — and for nothing else.
-	//
-	// A beat proves the agent PROCESS is alive.  It does not prove the WORK
-	// advanced: RunHeartbeatLoop (internal/handler, RunHeartbeatLoop) is a fixed
-	// timer started at launch and stopped only when the process exits, and its
-	// payload is a session id plus a phase string that never varies.  It used to
-	// extend the commit budget too, and a 5-minute beat that always reopens a
-	// 30-minute window is a window that cannot close.  The budget is extended by
-	// the guarded checks in the ticker case below, which read a real working tree
-	// and real pane output first.
-	//
-	// Both places that consume a beat call this, so the event case and the drain
-	// below cannot drift apart again — they already had the same defect twice.
 	noteHeartbeat := func(at time.Time) {
 		lastHeartbeat = at
 		firstHeartbeatSeen = true
@@ -1072,12 +404,7 @@ func pasteInjectQuitOnCommit(
 			return
 
 		case env, ok := <-eventCh:
-			// eventCh is nil-safe: a nil channel blocks forever, so this case
-			// is never selected when eventCh is nil.
 			if !ok {
-				// Channel closed — treat as lost heartbeat source; fall through
-				// to poll-tick logic by nulling the channel so future selects
-				// don't re-enter this branch.
 				eventCh = nil
 				continue
 			}
@@ -1088,16 +415,6 @@ func pasteInjectQuitOnCommit(
 		case <-ticker.C():
 			now := clk.Now()
 
-			// hk-ukx: drain any heartbeats that arrived in eventCh between the
-			// last iteration and this tick, so the staleness clock and the
-			// launch-verification gate see a beat the tick would otherwise race
-			// past.  The drain is non-blocking (default: exit) and runs only for
-			// the heartbeat event type so other event types are not silently
-			// consumed.
-			//
-			// hk-cw0fa: this drain used to extend the commit budget as well, so
-			// draining a beat here could reopen the window the check below was
-			// about to close.  It no longer touches the budget.
 			if eventCh != nil {
 			drainHeartbeats:
 				for {
@@ -1116,11 +433,6 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			// hk-9vp51: absolute hard-ceiling backstop — never extended by
-			// progress.  Bounds a truly-hung-but-pane-active implementer (one
-			// that emits heartbeats forever, or keeps the pane active, but never
-			// commits) so it cannot run indefinitely.  Checked FIRST so it always
-			// wins over the progress-aware budget below.
 			if now.After(hardDeadline) {
 				fireNoChangePath(
 					fmt.Sprintf("hard-ceiling %v reached without a new commit", hardCeiling),
@@ -1128,31 +440,8 @@ func pasteInjectQuitOnCommit(
 				return
 			}
 
-			// hk-9vp51: per-progress commit-budget backstop.  Unlike the old flat
-			// wall-clock deadline, this fires only when the budget window has
-			// elapsed AND the pane is not making observable progress.
-			//
-			// hk-ukx: ACTIVITY-AWARE budget extension.  Previously an active child
-			// process alone was enough to extend the budget ("a long go-test loop
-			// that emits no agent_heartbeat").  But an idle Claude pane — one
-			// waiting for input with no pending tool calls — also has an active
-			// process, causing wedged runs to hang until the 90-min hardDeadline
-			// instead of the 30-min commitPollTimeout.  The fix mirrors the launch-
-			// verification block: require demonstrable progress (worktree change OR
-			// pane output growth) in addition to an active process before extending.
-			// A go-test loop produces pane output (test results streaming to the
-			// pane), so it still gets the extension.  An idle Claude waiting for
-			// input has a stable fingerprint and is killed at the 30-min boundary.
 			if now.After(totalDeadline) {
-				// hk-ukx / hk-cw0fa: the budget window has elapsed.  Whether any
-				// heartbeat arrived during it does not matter here — a beat says
-				// the process exists, and this check asks whether the work moved.
-				// Require observable progress before extending.
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					// hk-ej7k6: check pane output FIRST (no git subprocess) so a
-					// streaming session short-circuits before paying the worktree
-					// fingerprint round-trip.  The production perRunSubstrate always
-					// implements paneOutputSizer, so this is the common path.
 					budgetPaneOutputProgressed := false
 					if outputSizer != nil {
 						if fp, ok := outputSizer.PaneOutputFingerprint(ctx); ok && fp != lastPaneOutputFP {
@@ -1161,15 +450,6 @@ func pasteInjectQuitOnCommit(
 						}
 					}
 
-					// Only probe the worktree fingerprint when pane output alone
-					// was inconclusive AND a pane-output sizer is present (the
-					// production path).  When outputSizer is nil the substrate
-					// cannot distinguish idle from active via pane output, so we
-					// treat active-but-no-output as "no observable progress" and
-					// fire the kill without running git subprocesses.  In
-					// production perRunSubstrate always implements paneOutputSizer,
-					// so worktree probing is preserved for the silent-implementer
-					// case (planning without streaming output).
 					budgetWorktreeProgressed := false
 					if !budgetPaneOutputProgressed && outputSizer != nil {
 						wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
@@ -1190,9 +470,6 @@ func pasteInjectQuitOnCommit(
 						lastProgress = now
 						totalDeadline = now.Add(pollTimeout)
 					} else {
-						// Pane has active process but no observable progress —
-						// idle Claude or wedged session.  Fire the ceiling so the
-						// slot is freed within the 30-min window (hk-ukx).
 						fireNoChangePath("total-timeout waiting for new commit (pane active but no observable progress)",
 							"total-budget-stale-active", true)
 						return
@@ -1204,39 +481,7 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			// hk-3gq0b: launch-verification check — if the first heartbeat has
-			// not arrived within launchWindow after brief delivery, the paste
-			// likely landed in an empty/dead pane.  Kill so the workloop reopens
-			// the bead for retry.  Skipped once firstHeartbeatSeen is true.
-			//
-			// hk-fbydv: before killing, consult the pane liveness checker.  If
-			// the pane shell has an active child process, Claude is in its initial
-			// thinking phase (context loading, planning) and has not yet emitted
-			// a heartbeat.  Reset lastHeartbeat and extend the launch deadline so
-			// the kill does not fire until the session actually goes dark.
 			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
-				// hk-az4fd / hk-ue0u2: ACTIVITY-AWARE launch suppression.  Before
-				// applying the hk-jgxqc ceiling, check for demonstrable progress
-				// using two complementary signals:
-				//
-				//  1. Worktree activity (hk-az4fd): HEAD advanced, or working-tree
-				//     changes churning.  Covers implementers that are EDITING files.
-				//
-				//  2. Pane output growth (hk-ue0u2): tmux scrollback history size or
-				//     cursor position advanced.  Covers READ-HEAVY implementers that
-				//     are reading/planning (streaming LLM responses, tool results)
-				//     without yet editing the worktree — the T12 codex-registration
-				//     false-kill scenario.
-				//
-				// Either signal alone is sufficient to treat the tick as a heartbeat:
-				// clear firstHeartbeatSeen so the launch branch is permanently bypassed
-				// and the run defers to the per-progress commit budget bounded by the
-				// 90-minute hard ceiling (hk-9vp51) — NOT infinite.
-				//
-				// hk-jgxqc intent preserved: a pane that reports an active child but
-				// produces NO progress on EITHER signal (stable worktree + stable pane
-				// output) does NOT clear firstHeartbeatSeen, so the launch-suppression
-				// ceiling below still fires for the genuinely-wedged case.
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
 					wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
 					worktreeProgressed := wtOK && wtFP != lastActivityFingerprint
@@ -1270,20 +515,8 @@ func pasteInjectQuitOnCommit(
 					}
 				}
 
-				// hk-jgxqc: the active-pane suppression is bounded by an absolute
-				// ceiling (launchSuppressDeadline, NEVER extended).  Past that
-				// ceiling the suppression is no longer permitted: a pane that has
-				// reported "active child process" for the entire launch-suppression
-				// window WITHOUT ever emitting a heartbeat, committing, OR making
-				// observable worktree progress is wedged (e.g. an idle claude whose
-				// heartbeats were consumed by a competing tapCh reader under
-				// concurrency), so we MUST fire the kill so sess.Wait unblocks and
-				// the workflow advances.  Within the ceiling the legitimate launch-
-				// phase suppression is preserved unchanged.
 				if now.Before(launchSuppressDeadline) &&
 					livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					// F21: suppression log removed — fires per-run from a zero-time
-					// baseline; the clock reset is the behavior, no log needed.
 					_ = lastLaunchSuppressLog
 					lastHeartbeat = now
 					launchDeadline = now.Add(launchWindow)
@@ -1299,16 +532,8 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			// Check heartbeat staleness (only when eventCh was provided at init).
-			//
-			// hk-fbydv: before killing, consult the pane liveness checker.  If
-			// the pane shell still has an active child process, the session is
-			// alive but not emitting heartbeats (still in thinking phase).  Reset
-			// lastHeartbeat so the staleness clock restarts from now.
 			if heartbeatProvided && now.Sub(lastHeartbeat) > stalenessThreshold {
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					// F21: suppression log removed — same as launch-heartbeat suppression;
-					// fires per-run from a zero baseline; clock reset is the behavior.
 					_ = lastStalenessLog
 					lastHeartbeat = now
 				} else {
@@ -1320,13 +545,6 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			// hk-76n5g: one-shot reseed-Enter. After reseedGrace with no new
-			// commit, send one Enter to submit any pending unsubmitted input in
-			// the pane (brief typed but Enter dropped on all paste-inject retry
-			// attempts). Fires at most once per run. A redundant Enter at an
-			// already-submitted REPL is a harmless empty line; it will not
-			// re-submit a previously-processed prompt because the REPL is clear
-			// after a submission is handled.
 			if !reseedEnterFired && now.After(reseedEnterDeadline) {
 				reseedEnterFired = true
 				fmt.Fprintf(os.Stderr,
@@ -1340,41 +558,16 @@ func pasteInjectQuitOnCommit(
 
 			headSHA, err := gitprobe.ResolveWorktreeHEADVia(ctx, probeRunner, wtPath)
 			if err != nil {
-				// Worktree may not be ready yet; keep polling.
 				continue
 			}
 			if headSHA != initialSHA {
-				// New commit detected — send /quit to trigger Stop hook.
 				if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-commit: SendQuitToLastPane: %v\n", qErr)
 				}
-				// hk-5s7tg: schedule a post-quit watchdog that force-kills the
-				// session if it has not exited after postQuitKillGrace.  Without
-				// this, sess.Wait (substrate path) can hang indefinitely when
-				// /quit landed in the wrong pane (stale handle from a prior
-				// daemon's killed run) or when the surrounding shell pid stays
-				// alive after claude exits.  The 1.75-hour daemon hang on the
-				// hk-g0ckv dispatch (2026-05-21) had exactly this shape: the
-				// implementer committed cleanly but the daemon's sess.Wait never
-				// unblocked, so reviewer_launched was never emitted.
-				//
-				// killer may be nil (some callers pass nil); in that case we
-				// skip the kill step but still return — the workloop will then
-				// fall back to its own (much longer) ctx-cancel timeout.
 				if killer != nil {
-					// Snapshot the grace duration here so the goroutine does
-					// not race with test code that restores the package var
-					// after the run returns.
 					grace := postQuitKillGrace
 					go func() {
-						// hk-tvy3e: always fire Kill after grace — do NOT gate
-						// on ctx.Done(). The per-run ctx may be cancelled before
-						// the grace elapses (stale-watcher timeout, daemon
-						// shutdown) which would skip Kill entirely, leaving
-						// sess.Wait blocked indefinitely. Kill is idempotent
-						// (killOnce guard). Use context.Background() so the tmux
-						// KillWindow command cannot be cancelled mid-flight.
 						<-substrate.After(clk, grace)
 						if kErr := killer.Kill(context.Background()); kErr != nil {
 							fmt.Fprintf(os.Stderr,
@@ -1388,41 +581,6 @@ func pasteInjectQuitOnCommit(
 	}
 }
 
-// pasteInjectMsgs holds the phase-specific kick-off messages delivered to the
-// pane after spawn.  Newline-terminated so the pane receives a complete line
-// ready for Claude to act on.
-
-// pasteInjectOnLaunch fires the post-spawn paste-inject step for a single
-// agent launch.  It is a no-op when the substrate does not implement
-// pasteInjecter (e.g. in exec.CommandContext tests).
-//
-// Parameters:
-//   - ctx          — caller context; cancellation propagates into WriteLastPane.
-//   - clk          — the determinism port for the splash/backoff/submit waits
-//     (P2 E5 RT19c); nil is backstopped to substrate.SystemClock{}.
-//   - subst        — the handler.Substrate used for this launch; may be nil.
-//     (Named `subst`, not `substrate`, so it does not shadow the
-//     internal/substrate package this file now imports.)
-//   - claudeSessID — the Claude session ID minted for this launch (used in the
-//     buffer name per PL-021d: "harmonik-<session-id>-<purpose>").
-//   - phase        — the review-loop phase (empty string = single-mode / implementer-initial).
-//   - iterCount    — the 1-based iteration count (used in the feedback file name).
-//   - wtPath       — absolute worktree path; used to stat the task/review files.
-//   - bus          — event emitter used to emit pasteinject_failed on failure;
-//     may be nil (event emission is skipped when nil).
-//   - runID        — run identifier stamped on pasteinject_failed events; ignored
-//     when bus is nil.
-//
-// Returns a channel that is closed once the kick-off paste has been written
-// (or immediately when no paste is performed because the substrate does not
-// implement pasteInjecter).  The caller passes this channel to
-// pasteInjectQuitOnCommit as the briefDelivered gate (hk-930o3).
-//
-// Errors are non-fatal to the caller: a failed paste-inject is logged to
-// stderr but does not reopen the bead.  The operator may manually trigger a
-// paste using tmux.
-//
-// Bead: hk-fra5l (bus/runID parameters for pasteinject_failed emission).
 func pasteInjectOnLaunch(
 	ctx context.Context,
 	clk substrate.ClockPort,
@@ -1448,11 +606,6 @@ func pasteInjectOnLaunch(
 			return
 		}
 
-		// Extract the per-run runner for remote-aware file-stat probes (hk-hh5e).
-		// For local runs commandRunner() returns LocalRunner{} (gitprobe.RunnerIsLocalFS=true)
-		// so runner stays nil and statTaskFileVia falls back to os.Stat — unchanged
-		// local behaviour (NFR7).  For remote runs the SSHRunner is non-local, so
-		// runner is set and statTaskFileVia checks file existence on the worker.
 		var runner tmux.CommandRunner
 		if crp, ok2 := subst.(commandRunnerProvider); ok2 {
 			if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
@@ -1469,11 +622,9 @@ func pasteInjectOnLaunch(
 			failReason = pasteInjectImplementerResume(ctx, clk, inj, claudeSessID, iterCount, wtPath, runner)
 
 		default:
-			// Single-mode or implementer-initial: deliver agent-task.md kick-off.
 			failReason = pasteInjectImplementerInitial(ctx, clk, inj, claudeSessID, wtPath, runner)
 		}
 
-		// hk-fra5l: emit pasteinject_failed when the delivery failed.
 		if failReason != "" && bus != nil {
 			emitPasteInjectFailed(ctx, bus, runID, string(phase), failReason)
 		}
@@ -1481,11 +632,6 @@ func pasteInjectOnLaunch(
 	return ch
 }
 
-// emitPasteInjectFailed emits a pasteinject_failed event to bus.
-// Non-fatal: errors are silently discarded (the paste failure is already logged
-// to stderr by the calling helper).
-//
-// Bead: hk-fra5l.
 func emitPasteInjectFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, phase, reason string) {
 	pl := core.PasteInjectFailedPayload{
 		RunID:  runID.String(),
@@ -1502,18 +648,6 @@ func emitPasteInjectFailed(ctx context.Context, bus handlercontract.EventEmitter
 	}
 }
 
-// emitImplementerBudgetExceeded emits an implementer_budget_exceeded event
-// (hk-9vp51) when pasteInjectQuitOnCommit force-kills a hosted implementer
-// session for exhausting its commit budget.  It makes a previously-silent
-// no_commit self-explaining: operators see how long the session ran (elapsed)
-// and when it last made progress (sinceProgress).
-//
-// Non-fatal: a nil bus or a marshal error is silently discarded; the kill itself
-// is already surfaced via the reopen/done path.  elapsed/sinceProgress are
-// clamped so the payload always validates (Valid requires ElapsedMS > 0,
-// SinceLastProgressMS >= 0).
-//
-// Mirrors emitSpawnCapBlocked (hk-4l7zs).
 func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, elapsed, sinceProgress time.Duration, reason string) {
 	if bus == nil {
 		return
@@ -1545,12 +679,6 @@ func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.Even
 	}
 }
 
-// splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.
-// Used after SendEnterToLastPane to give the Claude Code welcome splash time
-// to animate away before the paste-buffer write arrives (hk-rf4ux).
-//
-// clk is the determinism port (P2 E5 RT19c); callers reach this helper through a
-// backstopped entry point, so it is never nil here.
 func splashDismissWait(ctx context.Context, clk substrate.ClockPort) {
 	select {
 	case <-ctx.Done():
@@ -1558,25 +686,6 @@ func splashDismissWait(ctx context.Context, clk substrate.ClockPort) {
 	}
 }
 
-// pasteInjectImplementerInitial delivers the task kick-off message for the
-// implementer-initial (and single-mode) phase.
-//
-// Buffer purpose slug: "task" → buffer name "harmonik-<session-id>-task".
-// Kick-off message: directs Claude to read .harmonik/agent-task.md.
-//
-// Splash-dismiss (hk-rf4ux): before writing the kick-off payload, an Enter
-// keypress is sent via SendEnterToLastPane (tmux send-keys Enter, NOT -l
-// literal) to dismiss the Claude Code welcome splash.  The splash is a
-// React/ink TUI that processes key events; paste-buffer operates in
-// bracketed-paste mode, meaning '\n' in the payload is NOT dispatched as an
-// Enter key event.  The send-keys form bypasses bracketed-paste mode.
-// A 750ms delay between Enter and paste allows the splash animation to
-// complete and the REPL input state to activate before the message arrives.
-//
-// Returns a non-empty failure reason string when the paste-inject step could
-// not complete (e.g. task file absent, WriteLastPane error).  The caller
-// (pasteInjectOnLaunch) emits pasteinject_failed when the reason is non-empty.
-// Returns "" on success.
 func pasteInjectImplementerInitial(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFileVia(ctx, runner, taskFile); err != nil {
@@ -1585,67 +694,26 @@ func pasteInjectImplementerInitial(ctx context.Context, clk substrate.ClockPort,
 		return reason
 	}
 
-	// Dismiss the welcome splash with an Enter keypress before the paste (hk-rf4ux).
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
-			// Non-fatal: log and proceed; the paste may still succeed if the
-			// splash has already auto-dismissed.
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial SendEnterToLastPane: %v\n", err)
 		}
-		// Wait for splash to dismiss before delivering the paste.
 		splashDismissWait(ctx, clk)
 	}
 
 	bufName := bufferName(claudeSessID, "task")
 	msg := "Please read .harmonik/agent-task.md and begin.\n"
-	// Verify the seed actually rendered into the input box, re-pasting on a
-	// silently-dropped paste, before submitting (hk-zexsj).  Marker "agent-task.md"
-	// is on the first line of the seed and guaranteed present on a successful
-	// render.  A non-empty reason means the paste never landed → fail loud/fast.
 	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial"); reason != "" {
 		return reason
 	}
-	// Settle after the paste before submitting (hk-76n5g, mirrors hk-jzpqo).
-	//
-	// The bracketed paste is still being absorbed by the TUI when the submit
-	// Enter fires; all retry Enters (hk-ip33d: up to 3, over ~800 ms) can land
-	// inside the absorption window and be swallowed, leaving the brief typed-
-	// but-unsubmitted.  Waiting splashDismissDelay gives the REPL time to finish
-	// absorbing the paste and return to an input-ready state before the first
-	// retry Enter arrives.
 	splashDismissWait(ctx, clk)
-	// Send Enter after paste to submit the message regardless of terminal
-	// bracketed-paste mode (hk-8cq23).  Under a concurrent cold-boot the splash
-	// can outlast the fixed splashDismissDelay, so a single submit Enter lands on
-	// the still-up splash and is swallowed, leaving the brief unsubmitted
-	// (hk-7rgqs).  Send the submit Enter with the same bounded retry the resume
-	// path uses so at least one keypress lands after the splash clears.
 	if es, ok := inj.(enterSender); ok {
 		sendSubmitEnterWithRetry(ctx, clk, es, "implementer-initial")
 	}
 	return ""
 }
 
-// pasteInjectImplementerResume delivers a single combined paste-inject message
-// for the implementer-resume phase containing both the task instruction and the
-// reviewer feedback for the prior iteration.
-//
-// Root cause of hk-poy7k: the previous two-message approach sent task+feedback
-// back-to-back with no synchronization between the first Enter (task submit) and
-// the second WriteLastPane (feedback). Claude was still processing the first
-// message when the second Enter fired, so the feedback message was dropped and
-// the resumed implementer reproduced the identical diff → no-progress failure.
-//
-// Fix (option b): combine task+feedback into a SINGLE paste buffer separated by
-// a blank line, submitted with one Enter. One paste → zero inter-message race.
-//
-// If the feedback file is absent (first iteration or write failure), the message
-// degrades gracefully to the task-only form used by implementer-initial.
-//
-// Returns a non-empty failure reason string when the paste-inject step could not
-// complete.  Returns "" on success.
 func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string, runner tmux.CommandRunner) string {
-	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume SendEnterToLastPane: %v\n", err)
@@ -1660,9 +728,6 @@ func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, 
 		return reason
 	}
 
-	// Build the combined message. Append the feedback section when the prior
-	// iteration's feedback file exists. Both sections are delivered in a single
-	// WriteLastPane call (one paste, one Enter) to eliminate the race (hk-poy7k).
 	priorIter := iterCount - 1
 	feedbackFile := filepath.Join(wtPath, ".harmonik", fmt.Sprintf("reviewer-feedback.iter-%d.md", priorIter))
 	feedbackExists := statTaskFileVia(ctx, runner, feedbackFile) == nil
@@ -1683,77 +748,16 @@ func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, 
 	}
 
 	bufName := bufferName(claudeSessID, "task")
-	// Verify the combined task+feedback seed rendered into the input box before
-	// submitting, re-pasting on a silently-dropped paste (hk-zexsj).  Marker
-	// "agent-task.md" is on the first line of the seed and guaranteed present.
 	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume"); reason != "" {
 		return reason
 	}
-	// Settle after the paste before submitting (hk-76n5g).
-	//
-	// Root cause of the iter-2 not-submitted seed (observed in production on
-	// 2026-06-10, even with the hk-ip33d retry fix in place): the TUI is still
-	// absorbing the bracketed-paste content when the first retry Enter fires,
-	// and ALL retry Enters (3 total, over ~800 ms) land within the absorption
-	// window and are swallowed.  The brief then sits typed-but-unsubmitted;
-	// the resumed implementer stays idle and the bead wedges until the 30-min
-	// commitPollTimeout fires.  Waiting splashDismissDelay gives the REPL time
-	// to finish absorbing the paste and return to an input-ready state, shifting
-	// the first retry Enter to ~750 ms post-paste where the input handler is
-	// reliably accepting keystrokes.  Mirrors the hk-jzpqo crew path fix.
 	splashDismissWait(ctx, clk)
-	// Send Enter after paste to submit the message regardless of terminal
-	// bracketed-paste mode (hk-8cq23).  On the resume path the freshly-resumed
-	// REPL is intermittently not yet input-ready when this fires, so the single
-	// Enter is dropped and the prompt sits unsubmitted → run_stale (hk-ip33d).
-	// Send the submit Enter with a bounded retry so at least one keypress lands
-	// after the input handler is ready; a redundant Enter at an already-submitted
-	// REPL is a harmless no-op.
 	if es, ok := inj.(enterSender); ok {
 		sendResumeSubmitEnter(ctx, clk, es)
 	}
 	return ""
 }
 
-// injectAndVerifySeed writes payload to the run's pane via WriteLastPane and
-// then confirms the seed landed by capturing the pane and checking for marker —
-// a substring guaranteed present in the seed text on a successful render (e.g.
-// the task-file path).  If the marker is absent (the paste was discarded by a
-// not-yet-ready TUI, or silently dropped by a churning SSH ControlMaster), it
-// re-runs the paste up to pasteVerifyAttempts total attempts with
-// pasteVerifyBackoff between them.
-//
-// Returns "" on success (marker observed, or the substrate cannot capture so the
-// paste is trusted after the first successful write).  Returns a non-empty
-// failure reason when every attempt either failed to write or failed to land the
-// marker; the caller emits pasteinject_failed for a non-empty reason.
-//
-// The capture+verify happens BEFORE the submit Enter, so the marker is matched
-// against the seed sitting unsubmitted in the input box.
-//
-// Bead: hk-zexsj.
-// submitSeedInput delivers one seed payload to this run's pane through the
-// agent-input structured input port (handler.InputPort.SubmitInput) when the
-// substrate exposes it — the daemon-run INPUT path per [agent-input.md AIS-011 /
-// AIS-012] and [execution-model.md EM-015d-RFD step 2 / EM-015d-RIA step 3]:
-// daemon-run input is delivered via SubmitInput→Ack, NOT by a direct tmux
-// load-buffer / paste-buffer call on this code path. The interim tmux/paste
-// driver's SubmitInput (perRunSubstrate.SubmitInput) encapsulates the bracketed
-// paste BEHIND the port (PL-021d demoted-not-deleted), so the daemon-run
-// delivery code here depends on the port, not on the tmux write verb — that is
-// the observation-only-tmux demotion. Positive acceptance is the async
-// agent_input_acked (sourced from the Claude-hook-bridge outcome_emitted /
-// agent_ready signal), never this synchronous Ack and never a capture-pane
-// scrape.
-//
-// A minimal test double that satisfies only pasteInjecter (no InputPort) falls
-// back to WriteLastPane so the pre-AIS test-double contract is preserved through
-// the bake window (pre-C6 deletion).
-//
-// Returns the delivery Ack (zero-value on the WriteLastPane fallback path) and a
-// write error, if any.
-//
-// Bead: T8 (codename:agent-input-substrate) — AIS-011/AIS-012 wiring.
 func submitSeedInput(ctx context.Context, inj pasteInjecter, bufName string, payload []byte) (handler.Ack, error) {
 	if ip, ok := inj.(handler.InputPort); ok {
 		return ip.SubmitInput(ctx, handler.InputRequest{Payload: payload})
@@ -1764,42 +768,20 @@ func submitSeedInput(ctx context.Context, inj pasteInjecter, bufName string, pay
 func injectAndVerifySeed(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
 	pc, canCapture := inj.(paneCapturer)
 	var lastErr error
-	// captureEverSucceeded records whether we ever captured the pane cleanly
-	// enough to actually judge marker presence (capErr == nil on some attempt).
-	// hk-89dye: distinguish a transient capture-INFRA failure (capErr != nil on
-	// EVERY attempt — e.g. a fresh ControlPath=none SSH connection that churns
-	// under concurrency) from a genuine marker-ABSENT (we saw the pane and the
-	// seed wasn't there).  The former must NOT fail-loud a run whose paste
-	// actually landed; the latter is a real discard and must.
 	captureEverSucceeded := false
 	for attempt := 1; attempt <= pasteVerifyAttempts; attempt++ {
-		// Deliver via the AIS structured input port (SubmitInput→Ack) on the
-		// daemon-run input path per AIS-011/AIS-012 + EM-015d-RFD/RIA; the interim
-		// tmux driver's SubmitInput encapsulates the bracketed paste behind the
-		// port (PL-021d demoted-not-deleted).  See submitSeedInput.
 		if ack, err := submitSeedInput(ctx, inj, bufName, payload); err != nil {
-			// A hard paste error is already loud (non-zero tmux/ssh exit) and is
-			// surfaced immediately, matching the pre-hk-zexsj contract.  The
-			// silent-discard case the verify loop targets is the OPPOSITE: tmux
-			// returns exit 0 (SubmitInput == nil) yet nothing rendered.
 			reason := fmt.Sprintf("%s SubmitInput: %v", phase, err)
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 			return reason
 		} else if attempt == 1 {
-			// Observability: the delivery went through the AIS port and returned a
-			// synchronous delivery Ack (positive acceptance still arrives async as
-			// agent_input_acked, AIS-004).  Logged once per seed.
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s delivered via SubmitInput (ack=%s)\n", phase, ack.Outcome)
 		}
 		if !canCapture {
-			// No capture capability (e.g. a minimal test double): trust the paste
-			// after the first successful write — prior behaviour, unchanged.
 			return ""
 		}
 		pane, capErr := pc.CaptureLastPane(ctx, pasteVerifyScrollback)
 		if errors.Is(capErr, errPaneCaptureUnsupported) {
-			// The substrate cannot capture this pane (e.g. a minimal test double):
-			// trust the paste that just succeeded — prior behaviour, unchanged.
 			return ""
 		}
 		switch {
@@ -1812,10 +794,6 @@ func injectAndVerifySeed(ctx context.Context, clk substrate.ClockPort, inj paste
 			}
 			return ""
 		default:
-			// Capture succeeded (capErr == nil) but the marker is genuinely
-			// absent — a real paste discard.  hk-89dye: record that we DID
-			// observe the pane, so the trust-the-write fallback below does not
-			// mask a true marker-absent as a capture-infra failure.
 			captureEverSucceeded = true
 			lastErr = fmt.Errorf("seed marker %q absent from pane", marker)
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s seed marker %q not yet in pane (attempt %d/%d)\n", phase, marker, attempt, pasteVerifyAttempts)
@@ -1828,13 +806,6 @@ func injectAndVerifySeed(ctx context.Context, clk substrate.ClockPort, inj paste
 			}
 		}
 	}
-	// hk-89dye: every capture attempt failed at the infra level (transient
-	// SSH/tmux capture error) while EVERY WriteLastPane (paste) returned exit 0.
-	// We never actually observed the pane, so we cannot say the marker is absent
-	// — and failing loud here would kill a run whose seed very likely landed
-	// (the paste uses the SAME SSH path and succeeded each attempt).  Trust the
-	// write.  This is strictly the capture-infra-down case: a genuine
-	// marker-absent sets captureEverSucceeded and falls through to fail-loud.
 	if canCapture && !captureEverSucceeded {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s pane capture failed on all %d attempts but every paste write succeeded; trusting the write: %v\n", phase, pasteVerifyAttempts, lastErr)
 		return ""
@@ -1842,21 +813,6 @@ func injectAndVerifySeed(ctx context.Context, clk substrate.ClockPort, inj paste
 	return fmt.Sprintf("%s: seed paste unverified after %d attempts: %v", phase, pasteVerifyAttempts, lastErr)
 }
 
-// sendSubmitEnterWithRetry delivers the post-paste submit Enter with a bounded
-// retry (hk-ip33d, generalised by hk-7rgqs).
-//
-// It sends Enter once, then re-sends it up to resumeSubmitRetries additional
-// times with resumeSubmitRetryDelay between attempts.  The retries defend against
-// the post-paste lost-Enter timing race where the REPL input handler is not yet
-// ready to accept the first keypress — either because a fresh `--resume` TUI is
-// still settling (hk-ip33d) or because the welcome splash is still up under a
-// concurrent cold-boot whose animation overran the fixed splashDismissDelay
-// (hk-7rgqs).  A dropped first Enter leaves the brief unsubmitted (claude idles →
-// run_stale); a redundant Enter at an already-submitted REPL is a harmless empty
-// line.  The loop returns early if ctx is cancelled.  phase is a short label used
-// only in the diagnostic log line.
-//
-// Bead: hk-ip33d, hk-7rgqs.
 func sendSubmitEnterWithRetry(ctx context.Context, clk substrate.ClockPort, es enterSender, phase string) {
 	if err := es.SendEnterToLastPane(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s post-paste SendEnterToLastPane: %v\n", phase, err)
@@ -1873,35 +829,15 @@ func sendSubmitEnterWithRetry(ctx context.Context, clk substrate.ClockPort, es e
 	}
 }
 
-// sendResumeSubmitEnter is the implementer-resume call site of
-// sendSubmitEnterWithRetry (hk-ip33d).  Retained as a named wrapper so the
-// hk-ip33d resume path reads clearly and existing references stay stable.
 func sendResumeSubmitEnter(ctx context.Context, clk substrate.ClockPort, es enterSender) {
 	sendSubmitEnterWithRetry(ctx, clk, es, "implementer-resume")
 }
 
-// reviewerSeedMaxLen bounds the reviewer kick-off seed so it can never grow back
-// into a long single-line paste that the Claude Code TUI collapses into a
-// placeholder chip (hk-zn3vs).  Enforced by TestReviewerKickoffSeedStaysShort.
 const reviewerSeedMaxLen = 300
 
-// reviewerKickoffSeed is the SHORT reviewer kick-off message pasted into the
-// reviewer pane.  It intentionally carries no constraints beyond "read
-// review-target.md and produce your verdict there" — every reviewer constraint
-// lives in review-target.md (buildReviewTargetContent).  The "review-target.md"
-// marker sits near the start so injectAndVerifySeed can verify the paste
-// rendered literally.  MUST stay under reviewerSeedMaxLen (hk-zn3vs).
 const reviewerKickoffSeed = "Read .harmonik/review-target.md in this worktree" +
 	" and produce your verdict exactly as instructed there.\n"
 
-// pasteInjectReviewer delivers the reviewer kick-off message.
-//
-// Buffer purpose slug: "review" → buffer name "harmonik-<session-id>-review".
-// Kick-off message: directs Claude to read .harmonik/review-target.md and
-// produce the verdict file.
-//
-// Returns a non-empty failure reason string when the paste-inject step could not
-// complete.  Returns "" on success.
 func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
 	if err := statTaskFileVia(ctx, runner, reviewFile); err != nil {
@@ -1910,7 +846,6 @@ func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj paste
 		return reason
 	}
 
-	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer SendEnterToLastPane: %v\n", err)
@@ -1919,168 +854,35 @@ func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj paste
 	}
 
 	bufName := bufferName(claudeSessID, "review")
-	// hk-zn3vs: this seed MUST stay short. A long single-line paste is collapsed
-	// by the Claude Code TUI into a "[Pasted text #N +L lines]" placeholder chip,
-	// so the literal text (including the "review-target.md" marker) never renders
-	// into the pane and injectAndVerifySeed fails deterministically ("seed marker
-	// absent from pane" x3 -> the reviewer idles taskless, holding a slot + a
-	// -32015 lock for hours). The 46-char implementer seed renders fine, which is
-	// why implement completes but review wedged on every run once a Claude Code
-	// update lowered the paste-collapse threshold (2026-07-11). ALL reviewer
-	// constraints (read-only, write-review-verdict usage, no-hand-write review.json,
-	// coverage check, spec-field-name check) live in review-target.md
-	// (buildReviewTargetContent), which the reviewer reads FIRST. Do NOT re-inline
-	// them here — keep the seed under reviewerSeedMaxLen (enforced by a test).
 	msg := reviewerKickoffSeed
-	// Verify the reviewer seed rendered into the input box before submitting,
-	// re-pasting on a silently-dropped paste (hk-zexsj).  Marker "review-target.md"
-	// is on the first line of the seed and guaranteed present on a successful
-	// render.  A non-empty reason means the paste never landed → fail loud/fast.
 	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "review-target.md", "reviewer"); reason != "" {
 		return reason
 	}
-	// Send Enter after paste to submit the message regardless of terminal
-	// bracketed-paste mode (hk-8cq23).  hk-7rgqs (the reviewer SEED-SUBMIT RACE):
-	// under concurrent claude cold-boots the splash takes >750ms to clear, so the
-	// fixed splashDismissDelay elapses while the splash is still up; a single
-	// submit Enter lands on the splash and is SWALLOWED, leaving the review brief
-	// typed-but-UNSUBMITTED — the reviewer idles, never reads review-target.md,
-	// never writes review.json, and the run stalls until the verdict budget.
-	// Send the submit Enter with the same bounded retry the resume path uses so at
-	// least one keypress lands after the splash clears.  The safety net in
-	// pasteInjectQuitOnReviewFile re-seeds once if even the retries lose the race.
 	if es, ok := inj.(enterSender); ok {
 		sendSubmitEnterWithRetry(ctx, clk, es, "reviewer")
 	}
 	return ""
 }
 
-// reviewFileTimeout is the BASE (floor) window to wait for .harmonik/review.json
-// to appear after the reviewer brief is delivered.  It is no longer the flat
-// deadline it once was: the effective deadline is reviewFileTimeout plus a
-// diff-size-scaled extension (see reviewBudgetForDiff), capped at
-// reviewFileHardCeiling.  After the effective deadline elapses /quit is sent
-// unconditionally and the session is force-killed.
-//
-// hk-sah87: the old behaviour was a FLAT 10-minute deadline.  On a heavy /
-// large-diff bead the implementer commits fine (~10–13 min) but the reviewer
-// claude — which must read the whole diff before it can write a verdict — was
-// /quit+killed at the flat 10 min BEFORE it wrote .harmonik/review.json, so
-// ReadReviewVerdict returned nil and the run false-failed as "verdict absent".
-// The implementer phase, by contrast, has a 90-minute progress-aware ceiling
-// (commitHardCeiling).  Scaling the reviewer budget by diff size — with a hard
-// ceiling well below the implementer's — bounds heavy reviews without letting a
-// hung reviewer (hk-m5axg: alive 31 min emitting zero events) run forever.
-//
-// Declared as var so tests can override.
-//
-// Bead: hk-zimkh, hk-sah87.
 var reviewFileTimeout = 10 * time.Minute
 
-// reviewFileHardCeiling is the absolute upper bound on the reviewer-verdict
-// wait, regardless of diff size.  A hung-at-empty-prompt reviewer keeps its
-// claude pane alive (so pane-liveness alone cannot distinguish it from a working
-// reviewer); this ceiling is the firm backstop that bounds it.  It is set well
-// below the implementer's commitHardCeiling (90 min) because a review is
-// read-only — it has no test loops or multi-file edits to run.
-//
-// hk-60t8: raised from 30 to 40 minutes — opus/high reviewers on non-trivial
-// DOT-mode cascade runs were killed at exactly the budget deadline (20 min for
-// a ~2000-line diff) because the hard ceiling left no headroom for the
-// heartbeat-based extension added in the same bead.  40 min gives those
-// reviewers sufficient runway while still bounding a genuinely hung session.
-//
-// hk-4p2h: raised from 40 to 60 minutes — coupled with the reviewFilePerKLineBudget
-// increase (5→10 min/kline), a 2000-line diff now gets a 30-min base budget with
-// room for up to three 10-min heartbeat-based extensions before hitting the ceiling.
-// The 60-min ceiling remains well below the 90-min implementer hard ceiling.
-//
-// Declared as var so tests can override.
-//
-// Bead: hk-sah87, hk-60t8, hk-4p2h.
 var reviewFileHardCeiling = 60 * time.Minute
 
-// reviewerHeartbeatActiveGrace is the window after the most-recent
-// agent_heartbeat within which the reviewer is considered "actively reasoning"
-// for the purposes of the budget-extension check.  Set to twice the heartbeat
-// interval (2×5 min = 10 min) so a single missed heartbeat tick does not
-// trigger a premature kill.
-//
-// hk-60t8: the paul canary (run 019ed1ad-77a3) was killed at EXACTLY 20 min
-// while the opus/high reviewer was still heartbeating (4×5-min beats observed).
-// PaneHasActiveProcess correctly returned true, but the extension only fires
-// when livenessChecker is non-nil.  Adding a heartbeat-based extension
-// (liveness OR recent heartbeat) ensures an actively-reasoning reviewer is
-// never killed while it is still emitting progress signals.
-//
-// Declared as var so tests can override.
-//
-// Bead: hk-60t8.
 var reviewerHeartbeatActiveGrace = 10 * time.Minute
 
-// reviewFilePerKLineBudget is the extra wait granted per 1000 changed lines in
-// the diff under review, added on top of reviewFileTimeout.  10 minutes/1000
-// lines means a 2000-line diff gets 10 (base) + 20 = 30 min, a 4000-line diff
-// gets 10 + 40 = 50 min (capped by reviewFileHardCeiling).  A small diff stays
-// at the 10-minute base.
-//
-// hk-4p2h: raised from 5 to 10 min/kline — the paul canary (run 019ed1ad-77a3,
-// hk-t1wd) had its opus/high reviewer killed at EXACTLY 20:00 (= 10+10 min for
-// a ~2000-line diff) because the 5 min/kline budget was too tight for an opus
-// reviewer to finish reading and reasoning over a large diff.  10 min/kline
-// gives a 2000-line diff a 30-min base budget, preventing the premature kill
-// without the reviewer needing the heartbeat-based extension as a crutch.
-//
-// Declared as var so tests can override.
-//
-// Bead: hk-sah87, hk-4p2h.
 var reviewFilePerKLineBudget = 10 * time.Minute
 
-// reviewFilePollInterval is how often to check for the review verdict file.
 var reviewFilePollInterval = 2 * time.Second
 
-// reviewerReseedGrace is the short window pasteInjectQuitOnReviewFile waits for
-// .harmonik/review.json to appear before it RE-SEEDS the reviewer brief once
-// (hk-7rgqs safety net).  If no verdict has appeared within this grace AND the
-// pane still hosts an active claude process, the brief was almost certainly typed
-// but never submitted (the splash swallowed the submit Enter under a concurrent
-// cold-boot — see pasteInjectReviewer), so we re-run the splash-dismiss +
-// paste-brief + submit-Enter sequence once.  This mirrors the implementer path's
-// activity-aware re-detection: a reviewer that already submitted writes review.json
-// well within the budget and never reaches the re-seed; a wedged-at-unsubmitted
-// reviewer is recovered without waiting out the full diff-scaled verdict budget.
-//
-// 75s is long enough that a reviewer which DID submit has begun reading the diff
-// (no spurious re-seed) yet short enough to recover a stalled reviewer minutes
-// before the 10-minute base budget would otherwise fire.
-//
-// Declared as var (not const) so tests can override it without waiting real wall
-// time.
-//
-// Bead: hk-7rgqs.
 var reviewerReseedGrace = 75 * time.Second
 
-// reviewBudgetForDiff computes the effective reviewer-verdict wait for a diff of
-// changedLines: the base timeout plus reviewFilePerKLineBudget per 1000 changed
-// lines, clamped to [base, reviewFileHardCeiling].  A negative changedLines
-// (diff size unknown / measurement failed) yields the base timeout — the
-// conservative pre-hk-sah87 behaviour.
-//
-// Snapshots of the package vars are passed in so the caller can read them once
-// (avoiding a race with tests that restore the vars after the run returns).
-//
-// Bead: hk-sah87.
 func reviewBudgetForDiff(changedLines int, base, perKLine, ceiling time.Duration) time.Duration {
 	if changedLines <= 0 {
-		// Unknown or empty diff → base budget.
 		if base > ceiling {
 			return ceiling
 		}
 		return base
 	}
-	// Scale linearly: perKLine for every 1000 changed lines (integer-safe via
-	// nanosecond arithmetic so a sub-1000-line diff still earns a proportional
-	// slice).
 	extra := time.Duration(int64(perKLine) * int64(changedLines) / 1000)
 	budget := base + extra
 	if budget > ceiling {
@@ -2092,20 +894,7 @@ func reviewBudgetForDiff(changedLines int, base, perKLine, ceiling time.Duration
 	return budget
 }
 
-// worktreeDiffLineCount returns the number of changed lines (added + deleted)
-// across the commits unique to the worktree branch at wtPath, measured against
-// the repository's default branch (origin/HEAD, falling back to origin/main).
-// It is the diff the reviewer must read, so it drives the reviewer's verdict
-// budget (reviewBudgetForDiff).
-//
-// Returns -1 when the count cannot be determined (any git error, no remote-
-// tracking ref, detached state) — callers treat -1 as "use the base budget".
-// Best-effort and side-effect-free: it only runs read-only git plumbing.
-//
-// Bead: hk-sah87.
 func worktreeDiffLineCount(ctx context.Context, wtPath string) int {
-	// Try refs in order; the three-dot form diffs against the merge-base so a
-	// stale default-branch tip does not inflate the count with unrelated work.
 	for _, ref := range []string{"origin/HEAD", "origin/main"} {
 		cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", ref+"...HEAD")
 		cmd.Dir = wtPath
@@ -2121,13 +910,6 @@ func worktreeDiffLineCount(ctx context.Context, wtPath string) int {
 	return -1
 }
 
-// sumNumstatLines parses `git diff --numstat` output and returns the sum of
-// added + deleted line counts.  Binary files (numstat emits "-\t-\t<path>") are
-// skipped.  The ok result is false only when no parseable data row was seen
-// AND the output was non-empty in a way that suggests a parse problem; an empty
-// diff (no rows) returns (0, true) — a genuinely empty diff is a valid result.
-//
-// Bead: hk-sah87.
 func sumNumstatLines(numstat string) (int, bool) {
 	total := 0
 	sawRow := false
@@ -2143,44 +925,18 @@ func sumNumstatLines(numstat string) (int, bool) {
 		added, aErr := strconv.Atoi(fields[0])
 		deleted, dErr := strconv.Atoi(fields[1])
 		if aErr != nil || dErr != nil {
-			// Binary file ("-\t-") or unparseable row — skip but count as data.
 			sawRow = true
 			continue
 		}
 		total += added + deleted
 		sawRow = true
 	}
-	// Empty diff (no rows at all) is a valid zero result.
 	if !sawRow {
 		return 0, true
 	}
 	return total, true
 }
 
-// worktreeActivityFingerprint returns a string that changes whenever the
-// implementer makes demonstrable progress in its worktree WITHOUT yet having
-// committed.  It combines three signals so that BOTH tracked-file edits and
-// brand-new untracked files (including content churn of an untracked file, which
-// `git status` alone cannot see) move the fingerprint:
-//
-//   - HEAD — so a commit (the success case) always changes the fingerprint;
-//   - `git status --porcelain=v1` — the SET of working-tree changes (added,
-//     modified, deleted, untracked PATHS); and
-//   - a size+mtime signature over every changed/untracked file's bytes, so that
-//     ongoing edits to a file already present in the porcelain set (e.g. an
-//     untracked draft claude keeps growing) still advance the fingerprint.
-//
-// An implementer that is actively editing files (the false-kill scenario at the
-// 12-minute launch-suppression ceiling) produces a fingerprint that advances
-// from one check to the next; a genuinely-wedged pane (active child but doing
-// nothing, e.g. an idle claude whose heartbeats were drained by a competing
-// tapCh reader under concurrency — the hk-jgxqc wedge) produces a STABLE
-// fingerprint, so the launch-suppression ceiling still fires for it.
-//
-// Returns ("", false) on any git error so callers treat unknown as "no
-// observable progress" (conservative — the ceiling kill is allowed to proceed).
-//
-// Bead: hk-az4fd.
 func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bool) {
 	head, err := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
 	if err != nil {
@@ -2196,12 +952,6 @@ func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bo
 	sb.WriteString(head)
 	sb.WriteByte(0)
 	sb.Write(out)
-	// Stat each changed/untracked path so content churn of files already in the
-	// porcelain set (notably untracked files, whose bytes git does not track)
-	// advances the fingerprint.  porcelain v1 rows are "XY <path>"; the path
-	// begins at byte offset 3.  Renames ("R  old -> new") and quoted paths are
-	// not stat-able as-is — they are skipped (the path-set change in `out`
-	// already captures them).
 	for _, line := range strings.Split(string(out), "\n") {
 		if len(line) < 4 {
 			continue
@@ -2217,24 +967,8 @@ func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bo
 	return sb.String(), true
 }
 
-// reviewerBudgetSentinelName is the basename of the marker file
-// pasteInjectQuitOnReviewFile writes into <wtPath>/.harmonik/ when it force-kills
-// a reviewer for exceeding its (diff-scaled) verdict budget.  Its presence lets
-// the caller distinguish a BUDGET kill (the reviewer was working but ran out of
-// time on a heavy diff) from a true no-verdict (reviewer produced nothing),
-// turning the previously-generic "verdict absent at iteration N" into a
-// self-explaining "reviewer budget exceeded" diagnostic — see the reviewloop
-// dot_cascade's reviewer-node path.
-//
-// Bead: hk-sah87.
 const reviewerBudgetSentinelName = "reviewer-budget-exceeded.json"
 
-// reviewerBudgetSentinel is the JSON shape written to the budget-kill marker
-// file.  It mirrors the fields of core.ImplementerBudgetExceededPayload so an
-// operator (or a future bead that registers a reviewer_budget_exceeded event
-// type and emits it from the caller) has the same diagnostic surface.
-//
-// Bead: hk-sah87.
 type reviewerBudgetSentinel struct {
 	BudgetMS     int64  `json:"budget_ms"`
 	ChangedLines int    `json:"changed_lines"`
@@ -2242,18 +976,10 @@ type reviewerBudgetSentinel struct {
 	Reason       string `json:"reason"`
 }
 
-// reviewerBudgetSentinelPath returns the absolute path of the budget-kill marker
-// for the worktree at wtPath.
 func reviewerBudgetSentinelPath(wtPath string) string {
 	return filepath.Join(wtPath, ".harmonik", reviewerBudgetSentinelName)
 }
 
-// writeReviewerBudgetSentinel best-effort writes the budget-kill marker file so
-// the caller can emit a distinct "reviewer budget exceeded" diagnostic instead
-// of the generic "verdict absent".  Errors are logged and swallowed: the marker
-// is observability, not correctness — the kill still fires regardless.
-//
-// Bead: hk-sah87.
 func writeReviewerBudgetSentinel(wtPath string, budget time.Duration, changedLines int, elapsed time.Duration, reason string) {
 	pl := reviewerBudgetSentinel{
 		BudgetMS:     budget.Milliseconds(),
@@ -2323,9 +1049,6 @@ func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunne
 	out, err := runner.Command(ctx, "cat", path).Output()
 	if err != nil {
 		if tmux.IsSSHConnectionFailure(err) {
-			// An unreachable worker does not prove the marker is absent. Preserve
-			// the workspace remote-reader contract so callers can treat this result
-			// as inconclusive rather than silently misclassifying a budget kill.
 			return nil, fmt.Errorf("%w: cat %s: %w", workspace.ErrRemoteTransport, path, err)
 		}
 		// A non-transport cat failure means the marker is absent, mirroring
@@ -2340,62 +1063,6 @@ func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunne
 	return &pl, nil
 }
 
-// pasteInjectQuitOnReviewFile watches for <wtPath>/.harmonik/review.json to
-// appear (indicating the reviewer has written its verdict), then sends /quit
-// to terminate the reviewer session. Without this, the reviewer claude sits
-// idle at a prompt after writing the verdict, blocking the daemon indefinitely.
-//
-// Mirrors pasteInjectQuitOnCommit for the implementer phase, but watches for
-// a file instead of a git commit.
-//
-// hk-sah87: the verdict-wait deadline is no longer a FLAT reviewFileTimeout.
-// It is now diff-size-scaled — reviewBudgetForDiff(reviewFileTimeout +
-// reviewFilePerKLineBudget × changed-kLOC, capped at reviewFileHardCeiling) —
-// because a heavy/large-diff bead's reviewer needs longer than 10 min just to
-// read the diff before it can write a verdict.  The flat 10-min deadline was
-// /quit+killing such reviewers BEFORE they wrote review.json, false-failing the
-// run as "verdict absent".  A pane-liveness check (mirroring the implementer
-// path) suppresses a kill that would land while the reviewer is still actively
-// working, but the hard ceiling (reviewFileHardCeiling, well below the
-// implementer's 90-min commitHardCeiling) is the firm backstop so a hung
-// reviewer (hk-m5axg: alive 31 min emitting zero events) cannot run forever.
-// On a budget kill a marker file is written (writeReviewerBudgetSentinel) so the
-// caller emits a distinct "reviewer budget exceeded" diagnostic.
-//
-// hk-7rgqs (reviewer SEED-SUBMIT RACE safety net): before the budget logic can
-// help, a one-shot re-seed recovers the common stall where the reviewer brief was
-// typed but never SUBMITTED (the splash swallowed the submit Enter under a
-// concurrent cold-boot).  If no review.json has appeared within reviewerReseedGrace
-// AND the pane still hosts an active claude process (so we are not re-seeding a
-// dead pane), the reviewer kick-off (splash-dismiss + paste-brief + bounded submit
-// Enter) is re-run ONCE via pasteInjectReviewer, then the loop continues.  inj and
-// claudeSessID are the pasteInjecter and claude session id for this reviewer's
-// pane (the same pair pasteInjectOnLaunch used to deliver the brief); when inj is
-// nil (the deterministic test path / a non-pasteInjecter substrate) the re-seed is
-// skipped and only the budget logic applies.
-//
-// Bead: hk-zimkh, hk-sah87, hk-7rgqs.
-// pasteInjectQuitOnReviewFile watches for <wtPath>/.harmonik/review.json to
-// appear (indicating the reviewer has written its verdict), then sends /quit
-// to terminate the reviewer session. Without this, the reviewer claude sits
-// idle at a prompt after writing the verdict, blocking the daemon indefinitely.
-//
-// hk-60t8: two new parameters extend the reviewer liveness logic:
-//   - eventCh: an independent per-run event tap subscriber (nil = no heartbeat
-//     tracking). When a recent agent_heartbeat is observed, the reviewer is
-//     considered "actively reasoning" and the budget is extended (same semantics
-//     as the pane-liveness extension, but keyed on heartbeat rather than OS
-//     process state — more reliable under concurrent dispatch).
-//   - overrideCeiling: when > 0 overrides reviewFileHardCeiling for this node
-//     only (matches the DOT timeout= attribute from the node graph).  This lets
-//     DOT authors author per-node reviewer timeouts for opus/high nodes that
-//     legitimately need more time than the default ceiling.
-//
-// clk is the determinism port for every wait and deadline here (P2 E5 RT19c) —
-// the diff-scaled budget, the heartbeat-extension ceiling, the poll ticker and
-// the kill graces all read the SAME clock, so a FakeClock can drive the
-// 60-minute ceiling branch without real elapsed time. nil is backstopped to
-// substrate.SystemClock{} for struct-literal test callers.
 func pasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	clk substrate.ClockPort,
@@ -2428,15 +1095,11 @@ func pasteInjectQuitOnReviewFile(
 	pollInterval := reviewFilePollInterval
 	killDelay := noChangeKillDelay
 
-	// hk-60t8: resolve the effective hard ceiling.  A per-node overrideCeiling
-	// (from the DOT timeout= attribute) takes precedence over the package default.
 	effectiveCeiling := reviewFileHardCeiling
 	if overrideCeiling > 0 {
 		effectiveCeiling = overrideCeiling
 	}
 
-	// hk-sah87: size the verdict budget by the diff the reviewer must read.
-	// worktreeDiffLineCount returns -1 on any measurement failure → base budget.
 	changedLines := worktreeDiffLineCount(ctx, wtPath)
 	budget := reviewBudgetForDiff(changedLines, reviewFileTimeout, reviewFilePerKLineBudget, effectiveCeiling)
 	fmt.Fprintf(os.Stderr,
@@ -2445,34 +1108,17 @@ func pasteInjectQuitOnReviewFile(
 
 	loopStart := clk.Now()
 	deadline := loopStart.Add(budget)
-	// hk-sah87: optional pane-liveness checker (same interface the implementer
-	// path uses).  When present, a deadline that lands while the reviewer pane
-	// still has an active child process is extended by one base window rather
-	// than killing a reviewer that is genuinely still reading the diff — but the
-	// extension is itself bounded by the absolute hard ceiling below.
 	var livenessChecker paneLivenessChecker
 	if lc, ok := qs.(paneLivenessChecker); ok {
 		livenessChecker = lc
 	}
 	hardDeadline := loopStart.Add(effectiveCeiling)
 
-	// hk-4u1mb: heartbeat-extension ceiling — the maximum total elapsed time the
-	// recentHB / pane-active extension may push the deadline. Bounded at 2×budget
-	// (capped by hardDeadline) so the per-KLine diff budget is not defeated by
-	// continuous heartbeating. Without this cap a reviewer with a tiny diff (small
-	// budget) could heartbeat its way to the flat hard ceiling, making the
-	// diff-scaled budget irrelevant. For large diffs where 2×budget ≥ effectiveCeiling
-	// the hard ceiling is the cap (same behaviour as before the fix).
 	heartbeatExtensionCeiling := loopStart.Add(2 * budget)
 	if heartbeatExtensionCeiling.After(hardDeadline) {
 		heartbeatExtensionCeiling = hardDeadline
 	}
 
-	// hk-92ih3: resolve runner for remote-aware verdict-detection stat.
-	// For remote runs the worktree lives on the worker, so os.Stat(verdictPath)
-	// on box A never succeeds.  When qs carries a non-local runner (e.g.
-	// SSHRunner), verdictRunner is set; statTaskFileVia routes both stat sites
-	// through the runner.  nil → local os.Stat (NFR7 byte-identical).
 	var verdictRunner tmux.CommandRunner
 	if crp, ok := qs.(commandRunnerProvider); ok {
 		if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
@@ -2480,21 +1126,9 @@ func pasteInjectQuitOnReviewFile(
 		}
 	}
 
-	// hk-60t8: track the most-recent agent_heartbeat time.  When a heartbeat
-	// arrived within reviewerHeartbeatActiveGrace the reviewer is considered
-	// actively reasoning; the budget is extended even when pane-liveness is
-	// unavailable (livenessChecker == nil) or the OS-level probe misses the
-	// process.  Initialized to zero (never seen) so the first check on an
-	// unlaunched reviewer never spuriously extends.
 	var lastHeartbeatAt time.Time
 	heartbeatActiveGrace := reviewerHeartbeatActiveGrace
 
-	// hk-7rgqs (reviewer SEED-SUBMIT RACE safety net): fire a one-shot re-seed of
-	// the reviewer brief if no verdict appears within reviewerReseedGrace and the
-	// pane is still active (brief typed but submit Enter swallowed by the splash).
-	// reseedDeadline is the absolute instant the grace elapses; reseeded guards the
-	// once-only semantics.  Disabled when inj is nil (no pasteInjecter to re-seed
-	// through, e.g. the deterministic test path).
 	reseedDeadline := loopStart.Add(reviewerReseedGrace)
 	reseeded := inj == nil
 
@@ -2507,9 +1141,6 @@ func pasteInjectQuitOnReviewFile(
 			return
 
 		case env, ok := <-eventCh:
-			// eventCh is nil-safe: a nil channel blocks forever, so this case is
-			// never selected when eventCh is nil.  Drain agent_heartbeat events
-			// promptly so lastHeartbeatAt stays current between ticker ticks.
 			if !ok {
 				eventCh = nil
 				continue
@@ -2521,9 +1152,6 @@ func pasteInjectQuitOnReviewFile(
 		case <-ticker.C():
 			now := clk.Now()
 
-			// hk-60t8: drain any heartbeats buffered in eventCh since the last
-			// tick so that lastHeartbeatAt reflects all progress that has arrived
-			// between ticks (mirrors the hk-ukx drain in pasteInjectQuitOnCommit).
 			if eventCh != nil {
 			drainReviewerHB:
 				for {
@@ -2542,26 +1170,13 @@ func pasteInjectQuitOnReviewFile(
 				}
 			}
 
-			// hk-7rgqs: one-shot re-seed BEFORE the budget/verdict checks.  When
-			// the grace has elapsed, no verdict file exists yet, and the pane still
-			// hosts an active claude process, re-run the reviewer kick-off once: the
-			// brief was almost certainly typed but never submitted (splash swallowed
-			// the submit Enter).  A pane with NO active process is left to the budget
-			// path (re-seeding a dead pane cannot help).  When liveness is
-			// unobservable (livenessChecker == nil) we still re-seed once on the
-			// grace, since the original submit may simply have been dropped — a
-			// redundant brief at an already-working reviewer is a harmless extra
-			// prompt it ignores.
 			if !reseeded && now.After(reseedDeadline) {
 				if statTaskFileVia(ctx, verdictRunner, verdictPath) == nil {
-					// Verdict already present — no re-seed needed.
 					reseeded = true
 				} else if livenessChecker == nil || livenessChecker.PaneHasActiveProcess(ctx) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-review-file: no verdict after %v re-seed grace and pane active in %s; re-seeding reviewer brief once (hk-7rgqs)\n",
 						reviewerReseedGrace, wtPath)
-					// Extract runner for remote-aware stat probe (hk-hh5e): inj is a
-					// perRunSubstrate which also implements commandRunnerProvider.
 					var reseedRunner tmux.CommandRunner
 					if crp, ok2 := inj.(commandRunnerProvider); ok2 {
 						if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
@@ -2578,22 +1193,8 @@ func pasteInjectQuitOnReviewFile(
 			}
 
 			if now.After(deadline) {
-				// hk-sah87 / hk-60t8 / hk-4u1mb: before killing, check whether the
-				// reviewer is still actively working.  Two independent signals qualify:
-				//   1. Pane liveness: the OS-level probe detects an active child
-				//      process in the tmux pane (hk-sah87).  OS-visible process is
-				//      a strong signal — extends to hardDeadline (unchanged by hk-4u1mb).
-				//   2. Recent heartbeat only (pane NOT active): an agent_heartbeat
-				//      arrived within reviewerHeartbeatActiveGrace (hk-60t8).  This
-				//      is a softer signal — the LLM may be alive but stalled.
-				//      Extends only to heartbeatExtensionCeiling (hk-4u1mb: 2×budget,
-				//      capped at hardDeadline) to prevent an alive-but-not-progressing-
-				//      toward-verdict reviewer from riding heartbeats to the flat hard
-				//      ceiling when the diff is small.
 				recentHB := !lastHeartbeatAt.IsZero() && now.Sub(lastHeartbeatAt) < heartbeatActiveGrace
 				paneActive := livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx)
-				// extCeiling governs this extension step: pane-active uses hardDeadline;
-				// heartbeat-only (softer signal) is bounded at 2×budget.
 				extCeiling := hardDeadline
 				if !paneActive {
 					extCeiling = heartbeatExtensionCeiling
@@ -2623,9 +1224,6 @@ func pasteInjectQuitOnReviewFile(
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: %s after %v waiting for %s (budget=%v, changed_lines=%d); sending /quit\n",
 					reason, clk.Since(loopStart), verdictPath, budget, changedLines)
-				// hk-sah87: write the budget-kill marker so the caller can emit a
-				// distinct "reviewer budget exceeded" diagnostic instead of the
-				// generic "verdict absent".
 				writeReviewerBudgetSentinel(wtPath, budget, changedLines, clk.Since(loopStart), reason)
 				if quitErr := qs.SendQuitToLastPane(ctx); quitErr != nil {
 					fmt.Fprintf(os.Stderr,
@@ -2644,18 +1242,6 @@ func pasteInjectQuitOnReviewFile(
 				return
 			}
 
-			// hk-qts7r (remote-hardening): gate the quit-watchdog on a VALID,
-			// COMPLETE verdict — not mere existence. statTaskFileVia only checks
-			// existence, so on a remote worker it sees review.json the instant
-			// claude's Write tool creates the file (before flush/close) and kills
-			// claude mid-write → the worker's review.json is permanently truncated
-			// → the daemon's later SSH read fails ErrMalformed. Parsing here with
-			// ReadReviewVerdictVia means we only /quit+kill once a fully valid
-			// verdict has landed, so claude is never killed mid-write.
-			// ReadReviewVerdictVia returns (nil, nil) when the file is absent and a
-			// (nil, ErrMalformed) while it is partial — in BOTH cases we do NOT
-			// kill: keep polling so the reviewer can finish, and let the budget
-			// path handle a genuinely-stuck reviewer.
 			if v, verr := workspace.ReadReviewVerdictVia(ctx, verdictRunner, wtPath); verr == nil && v != nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: valid verdict detected at %s; sending /quit\n",
@@ -2664,7 +1250,6 @@ func pasteInjectQuitOnReviewFile(
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-review-file: send /quit failed: %v\n", quitErr)
 				}
-				// Grace period for claude to process /quit before force-kill.
 				select {
 				case <-ctx.Done():
 				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
@@ -2681,31 +1266,10 @@ func pasteInjectQuitOnReviewFile(
 	}
 }
 
-// bufferName constructs the PL-021d buffer name "harmonik-<sessionID>-<purpose>".
-//
-// The sessionID component is the claudeSessionID for the current launch;
-// purpose is a short lowercase slug ("task", "feedback", "review").
-//
-// It delegates to [tmux.BufferName] so the result is valid BY CONSTRUCTION.
-// This was a bare fmt.Sprintf, which is valid only by luck: OSAdapter.LoadBuffer
-// and OSAdapter.PasteBuffer validate against bufferNameRe
-// (^harmonik-[a-z0-9-]+-[a-z0-9-]+$) before tmux is ever invoked, and a session
-// id carrying an uppercase letter, an underscore or a dot is rejected with
-// ErrStructural — so the payload is DROPPED at write time. The failure mode is a
-// wedged dispatch, not a clean error. It was not firing only because ids happen
-// to be minted as lowercase UUIDs today; a "20060102T150405Z"-style id fails on
-// the 'T'. That is precisely how hk-lckbv wedged the daemon and hk-9hvr0 wedged
-// the tmux substrate, and sanitizing at the one construction site makes the
-// character class unreachable instead of re-litigating it per call site.
-//
-// Callers: crewstart.go ("crew-init"), dot_gate.go ("gate"), this file
-// ("task" x2, "review") and perRunSubstrate.inputBufferName ("input").
 func bufferName(sessionID, purpose string) string {
 	return tmux.BufferName(sessionID, purpose)
 }
 
-// statTaskFile checks that path exists and is a non-empty regular file.
-// Returns [tmux.ErrStructural] when the file is absent or empty.
 func statTaskFile(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -2720,17 +1284,6 @@ func statTaskFile(path string) error {
 	return nil
 }
 
-// statTaskFileVia is like statTaskFile but routes the existence check through
-// runner for remote runs (hk-hh5e).  When runner is nil, delegates to
-// statTaskFile (local os.Stat).  When runner is non-nil (e.g. an SSHRunner
-// targeting a remote worker), stat is executed on the worker via
-// runner.Command(ctx, "stat", path).
-//
-// File-content emptiness is NOT re-checked for the remote path: WriteAgentTaskVia
-// validates non-empty content at write time, so existence implies non-empty for
-// runner-managed runs.
-//
-// Bead: hk-hh5e.
 func statTaskFileVia(ctx context.Context, runner tmux.CommandRunner, path string) error {
 	if runner == nil {
 		return statTaskFile(path)

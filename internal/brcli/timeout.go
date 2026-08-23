@@ -29,14 +29,10 @@ const (
 	CommandKindWrite
 )
 
-// defaultReadTimeout is the BI-025c default wall-clock timeout for read commands.
 const defaultReadTimeout = 5 * time.Second
 
-// defaultWriteTimeout is the BI-025c default wall-clock timeout for write commands.
 const defaultWriteTimeout = 10 * time.Second
 
-// sigtermGrace is the HC-018 grace period: after SIGTERM, wait up to this
-// duration before escalating to SIGKILL.
 const sigtermGrace = 5 * time.Second
 
 // TimeoutConfig holds operator-tunable timeout values for br subprocess
@@ -69,9 +65,6 @@ type TimeoutConfig struct {
 	TerminalWriteRetryCap time.Duration
 }
 
-// terminalWriteRetryParams returns the effective retry parameters for
-// terminal-transition writes, applying the BI-025c defaults when the
-// TimeoutConfig override fields are zero.
 func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, maxBackoff time.Duration) {
 	maxRetries = c.TerminalWriteMaxRetries
 	if maxRetries == 0 {
@@ -88,8 +81,6 @@ func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, maxBack
 	return
 }
 
-// effectiveTimeout returns the resolved timeout for the given CommandKind,
-// applying BI-025c defaults when the field is zero.
 func (c TimeoutConfig) effectiveTimeout(kind CommandKind) time.Duration {
 	switch kind {
 	case CommandKindWrite:
@@ -136,8 +127,6 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 	//nolint:gosec,contextcheck // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input. context.Background() is intentional: prevents Go's auto-SIGKILL-on-cancel so the HC-018 manual SIGTERM→SIGKILL grace path (BI-025c) owns termination.
 	cmd := exec.CommandContext(context.Background(), a.brPath, args...)
 
-	// Pin working directory to the project root so `br` discovers the correct
-	// .beads database (same rationale as in Run; hk-c1ln2 fix).
 	if a.projectDir != "" {
 		cmd.Dir = a.projectDir
 	}
@@ -151,19 +140,16 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 		return Result{}, fmt.Errorf("brcli: exec failed: %w", err)
 	}
 
-	// waitCh carries the cmd.Wait() result once the subprocess exits.
 	waitCh := make(chan error, 1)
 	go func() {
 		waitCh <- cmd.Wait()
 	}()
 
-	// Budget timer and outer-ctx cancellation both drive the termination path.
 	budgetTimer := time.NewTimer(budget)
 	defer budgetTimer.Stop()
 
 	select {
 	case waitErr := <-waitCh:
-		// Subprocess exited before the timeout fired.
 		return classifyWaitResult(waitErr, stdoutBuf.Bytes(), stderrCap.Result().Bytes)
 
 	case <-budgetTimer.C:
@@ -176,45 +162,28 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 	}
 }
 
-// terminateAndClassify implements the HC-018 SIGTERM-then-SIGKILL sequence:
-//  1. Send SIGTERM to the subprocess.
-//  2. Wait up to sigtermGrace for the subprocess to exit.
-//  3. Send SIGKILL if still running.
-//  4. Call cmd.Wait() via waitCh to reap per PL-014.
-//
-// The returned error is always baseErr (BrUnavailable-wrapped), regardless of
-// what the subprocess exited with after being signalled.
 func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, baseErr error) (Result, error) {
-	// Step 1: SIGTERM.
 	if cmd.Process != nil {
 		//nolint:errcheck // SIGTERM on already-exited process returns syscall.ESRCH; intentionally discarded per HC-018 grace handling.
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	// Step 2: Wait up to sigtermGrace for the subprocess to exit.
 	graceTimer := time.NewTimer(sigtermGrace)
 	defer graceTimer.Stop()
 
 	select {
 	case <-waitCh:
-		// Exited cleanly after SIGTERM; reap is done (waitCh consumed cmd.Wait()).
 	case <-graceTimer.C:
-		// Step 3: SIGKILL — subprocess did not exit within the grace period.
 		if cmd.Process != nil {
 			//nolint:errcheck // SIGKILL on already-exited process returns syscall.ESRCH; intentionally discarded per HC-018 grace handling.
 			_ = cmd.Process.Signal(os.Kill)
 		}
-		// Step 4: reap per PL-014.
 		<-waitCh
 	}
 
 	return Result{}, baseErr
 }
 
-// classifyWaitResult converts a cmd.Wait() result into a (Result, error) pair
-// using the same semantics as Adapter.Run: non-zero exit is a Result (not an
-// error); exec failure is an error. Result.BrErr is populated via
-// BrErrorFromExitCode per BI-025a for every subprocess outcome.
 func classifyWaitResult(waitErr error, stdout, stderr []byte) (Result, error) {
 	if waitErr == nil {
 		return Result{Stdout: stdout, Stderr: stderr, ExitCode: 0, BrErr: BrOK}, nil

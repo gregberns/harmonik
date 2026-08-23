@@ -78,13 +78,6 @@ type Config struct {
 	// CollectReport selects the package default DefaultDiskFloorMB (2048 MB).
 	DiskFloorMB int64 `yaml:"disk_floor_mb"`
 
-	// --- worker-report Phase 2 (PB3): resource-breach detection knobs. ---
-	//
-	// All optional + defaulted (see the accessor methods below) so a deployment
-	// that omits them — or has no workers.yaml at all — behaves byte-identically
-	// to Phase 1. The poll loop reads these only when at least one worker is
-	// enabled AND BreachDetectionEnabled() is true.
-
 	// BreachDetectionEnabledPtr is the master switch (workers.yaml
 	// breach_detection_enabled). It is a *bool so "absent" (nil) can default to
 	// TRUE while still letting an operator write `breach_detection_enabled: false`
@@ -133,9 +126,6 @@ const (
 	DefaultCPUSource = "load"
 )
 
-// defaultBreachDetectionEnabled is the master-switch default when
-// breach_detection_enabled is absent from workers.yaml: TRUE (Phase 2 is on by
-// default for a configured worker; an operator opts OUT explicitly).
 const defaultBreachDetectionEnabled = true
 
 // BreachDetectionEnabled reports whether resource-breach detection is enabled,

@@ -6,9 +6,6 @@ import (
 	"sync"
 )
 
-// held is what a scope can hold: a [Lease], or a nested [Scope]. The method is
-// unexported, so the set is closed to this package and no caller can add a
-// third kind of thing to a scope.
 type held interface {
 	give(Disposition) Report
 }
@@ -85,15 +82,8 @@ func (s *Scope) Close(d Disposition) Report {
 	return rep
 }
 
-// give implements held, so a scope can be nested in another scope.
 func (s *Scope) give(d Disposition) Report { return s.Close(d) }
 
-// add puts h at the top of the scope's stack.
-//
-// A scope that is already closed keeps nothing: h is given back at once, under
-// the disposition the close used. Taking a resource after the scope that owns
-// it has closed is a caller mistake, and holding it forever in a stack nobody
-// will walk again is the worse answer to it.
 func (s *Scope) add(h held) {
 	s.mu.Lock()
 	if s.closed {
@@ -146,7 +136,6 @@ func (r Report) Err() error {
 	return errors.Join(errs...)
 }
 
-// merge appends one lease's or one child scope's result onto this report.
 func (r *Report) merge(other Report) {
 	r.Released = append(r.Released, other.Released...)
 	r.Kept = append(r.Kept, other.Kept...)

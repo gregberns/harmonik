@@ -1,14 +1,5 @@
 package core
 
-// budgetcategorydefaults_on047.go — ON-047: Category defaults for resource budgets.
-//
-// Implements the foundation-level category defaults table from
-// specs/operator-nfr.md §4.11.ON-047. These defaults make "no policy declared"
-// a safe state: any agentic node without an explicit budget declaration inherits
-// these values as the lowest-precedence layer in the §4.7 config-precedence stack.
-//
-// Refs: hk-sx9r.66
-
 // ON-047 category default constants.
 //
 // Each constant corresponds to one row in the ON-047 five-row defaults table.
@@ -66,9 +57,6 @@ func DefaultCategoryBudgets() []PolicyBudget {
 	}
 }
 
-// defaultTokenBudgetPerRun returns the default per-run token budget per ON-047 row 1.
-//
-// ScopeTarget is empty (wildcard) so the budget applies to any agentic node.
 func defaultTokenBudgetPerRun() PolicyBudget {
 	return PolicyBudget{
 		Name:             "default-token-per-run",
@@ -79,9 +67,6 @@ func defaultTokenBudgetPerRun() PolicyBudget {
 	}
 }
 
-// defaultWallClockBudgetPerRun returns the default per-run wall-clock budget per ON-047 row 2.
-//
-// ScopeTarget is empty (wildcard) so the budget applies to any agentic node.
 func defaultWallClockBudgetPerRun() PolicyBudget {
 	return PolicyBudget{
 		Name:             "default-wall-clock-per-run",
@@ -92,9 +77,6 @@ func defaultWallClockBudgetPerRun() PolicyBudget {
 	}
 }
 
-// defaultIterationsBudgetPerRun returns the default per-run iterations budget per ON-047 row 3.
-//
-// ScopeTarget is empty (wildcard) so the budget applies to any agentic node.
 func defaultIterationsBudgetPerRun() PolicyBudget {
 	return PolicyBudget{
 		Name:             "default-iterations-per-run",
@@ -105,12 +87,6 @@ func defaultIterationsBudgetPerRun() PolicyBudget {
 	}
 }
 
-// defaultWallClockBudgetPerReconciliation returns the default per-reconciliation-workflow
-// wall-clock budget per ON-047 row 4.
-//
-// ScopeTarget is empty (wildcard); the budget is narrowed to a specific run at
-// dispatch time via NewReconciliationWallClockBudget (which stamps the actual
-// reconciliationRunID into ScopeTarget per CP-027).
 func defaultWallClockBudgetPerReconciliation() PolicyBudget {
 	return PolicyBudget{
 		Name:             "default-wall-clock-per-reconciliation",

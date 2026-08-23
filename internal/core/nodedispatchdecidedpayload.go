@@ -67,7 +67,6 @@ func (p NodeDispatchDecidedPayload) Valid() bool {
 	if p.FromNodeID == "" {
 		return false
 	}
-	// Exactly one outcome must hold.
 	outcomes := 0
 	if p.NextNodeID != "" {
 		outcomes++

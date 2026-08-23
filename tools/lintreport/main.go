@@ -38,7 +38,6 @@ import (
 	"strings"
 )
 
-// report is the subset of golangci-lint's JSON output this tool reads.
 type report struct {
 	Issues []struct {
 		FromLinter string `json:"FromLinter"`
@@ -50,7 +49,6 @@ type report struct {
 	} `json:"Issues"`
 }
 
-// key identifies one tolerated pair. It is what the allow list holds.
 type key struct {
 	file   string
 	linter string
@@ -93,7 +91,6 @@ func main() {
 	os.Exit(judge(os.Stdout, findings, allow))
 }
 
-// readFindings groups every issue by its file-and-linter pair.
 func readFindings(path string) (map[key][]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -111,8 +108,6 @@ func readFindings(path string) (map[key][]string, error) {
 	return out, nil
 }
 
-// readAllow loads the allow list. Blank lines and lines starting with # are
-// comments, so the list can carry a note about why a pair is still there.
 func readAllow(path string) (map[key]bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -149,8 +144,6 @@ func writeAllow(path string, findings map[key][]string) error {
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-// judge prints every finding that is not allowed, then what the list tolerates.
-// It returns the process exit code.
 func judge(out *os.File, findings map[key][]string, allow map[key]bool) int {
 	var newPairs []key
 	tolerated := 0
@@ -174,9 +167,6 @@ func judge(out *os.File, findings map[key][]string, allow map[key]bool) int {
 		}
 	}
 
-	// A pair on the list with no findings left means someone cleaned a file and
-	// did not delete its line. That is not a failure, but leaving it makes the
-	// file silently re-regressable, so it is named.
 	var stale []key
 	for k := range allow {
 		if _, still := findings[k]; !still {
@@ -191,7 +181,6 @@ func judge(out *os.File, findings map[key][]string, allow map[key]bool) int {
 		}
 	}
 
-	// WHAT IS BEING IGNORED. Printed on every run, including a clean one.
 	fmt.Fprintf(out, "\nIGNORED — findings the allow list tolerates today\n")
 	fmt.Fprintf(out, "  %d findings across %d file/linter pairs\n", tolerated, len(allow)-len(stale))
 	fmt.Fprintf(out, "  by package:\n")

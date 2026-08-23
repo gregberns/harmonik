@@ -29,24 +29,16 @@ import (
 	"testing"
 )
 
-// conformanceCorpusFixtureRepoRoot returns the absolute path to the repo root
-// by walking up two directories from this file's location.
 func conformanceCorpusFixtureRepoRoot(t *testing.T) string {
 	t.Helper()
-	// __file__ is in internal/scenario/ — repo root is two levels up.
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("conformanceCorpusFixtureRepoRoot: runtime.Caller(0) failed")
 	}
-	// file is the absolute path to this source file.
-	// Walk: internal/scenario/conformancecorpus_test.go → internal/scenario → internal → <root>
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 	return root
 }
 
-// matrixVerdictFile is the schema of the JSON verdict artifact written by
-// scripts/core-loop-matrix.sh (schema_version=1, WS-E/3 hk-g6plo.3).
-// WS-E/4 reads this to determine per-cell PASS/FAIL without parsing human text.
 type matrixVerdictFile struct {
 	SchemaVersion int                  `json:"schema_version"`
 	RunAt         string               `json:"run_at"`
@@ -97,25 +89,21 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 		wantMinAssertions int
 	}{
 		{
-			// hk-ahvq.48.6: first conformance scenario.
 			path:              filepath.Join("scenarios", "smoke", "twin-launch-and-ready.yaml"),
 			wantCadence:       CadenceTagSmoke,
 			wantMinAssertions: 2, // event_present(agent_ready) + event_present(agent_completed) + outcome
 		},
 		{
-			// hk-ahvq.48.7: second conformance scenario.
 			path:              filepath.Join("scenarios", "smoke", "checkpoint-and-merge.yaml"),
 			wantCadence:       CadenceTagSmoke,
 			wantMinAssertions: 3, // checkpoint_written + 2x workspace_merge_status + outcome + workspace_state
 		},
 		{
-			// hk-ahvq.48.8: third conformance scenario.
 			path:              filepath.Join("scenarios", "regression", "twin-failure-classification.yaml"),
 			wantCadence:       CadenceTagRegression,
 			wantMinAssertions: 2, // agent_failed + event_absent(outcome_emitted) + outcome
 		},
 		{
-			// hk-ifu19 (ST4): merge-race same-file regression scenario.
 			path:              filepath.Join("scenarios", "regression", "merge-race-samefile.yaml"),
 			wantCadence:       CadenceTagRegression,
 			wantMinAssertions: 6, // 4 expected_events + 1 expected_workspace + 1 expected_outcome
@@ -132,12 +120,10 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 				t.Fatalf("ParseScenarioFile(%q): %v", tc.path, err)
 			}
 
-			// Cadence tag must match the expected value.
 			if sf.CadenceTag != tc.wantCadence {
 				t.Errorf("CadenceTag = %q, want %q", sf.CadenceTag, tc.wantCadence)
 			}
 
-			// At least wantMinAssertions assertions must be declared.
 			totalAssertions := len(sf.ExpectedEvents)
 			if sf.ExpectedOutcome != nil {
 				totalAssertions++
@@ -147,19 +133,16 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 				t.Errorf("total assertions = %d, want >= %d", totalAssertions, tc.wantMinAssertions)
 			}
 
-			// Every declared AgentOverride must be structurally valid.
 			for role, ao := range sf.AgentOverrides {
 				if !ao.Valid() {
 					t.Errorf("AgentOverride[%q].Valid() = false", role)
 				}
 			}
 
-			// FixtureSetup must be valid.
 			if !sf.FixtureSetup.Valid() {
 				t.Error("FixtureSetup.Valid() = false")
 			}
 
-			// TimeoutSecs must be positive and within the SH-025 range.
 			if sf.TimeoutSecs < 1 || sf.TimeoutSecs > 7200 {
 				t.Errorf("TimeoutSecs = %d, want [1, 7200]", sf.TimeoutSecs)
 			}
@@ -201,17 +184,14 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 
-	// schema_version must be 1.
 	if v.SchemaVersion != 1 {
 		t.Errorf("schema_version = %d, want 1", v.SchemaVersion)
 	}
 
-	// run_at must be non-empty.
 	if v.RunAt == "" {
 		t.Error("run_at is empty")
 	}
 
-	// summary totals must be self-consistent.
 	wantTotal := v.Summary.Green + v.Summary.Red + v.Summary.Pending + v.Summary.Skip
 	if v.Summary.Total != wantTotal {
 		t.Errorf("summary.total = %d, want %d (green=%d + red=%d + pending=%d + skip=%d)",
@@ -219,7 +199,6 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 			v.Summary.Green, v.Summary.Red, v.Summary.Pending, v.Summary.Skip)
 	}
 
-	// every cell must have valid enum values and a unique cell name.
 	validCellVerdicts := map[string]bool{"green": true, "red": true, "pending": true, "skip": true}
 	validGapVerdicts := map[string]bool{"pass": true, "fail": true, "pending": true}
 	seenCells := map[string]bool{}
@@ -251,12 +230,10 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 		}
 	}
 
-	// cell count must match summary total.
 	if len(v.Cells) != v.Summary.Total {
 		t.Errorf("len(cells) = %d, want summary.total = %d", len(v.Cells), v.Summary.Total)
 	}
 
-	// can query a cell by name (the Go equivalent of jq '.cells[] | select(.cell=="codex:local")')
 	cellByName := func(name string) *matrixVerdictCell {
 		for i := range v.Cells {
 			if v.Cells[i].Cell == name {
@@ -266,7 +243,6 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 		return nil
 	}
 
-	// golden has codex:local=green with gap results; verify the jq-style lookup works.
 	c := cellByName("codex:local")
 	if c == nil {
 		t.Error("could not query cell codex:local by name")
@@ -299,7 +275,6 @@ func TestConformanceGate_BlocksOnRedCell(t *testing.T) {
 		t.Fatalf("conformance-gate.sh not found: %v", err)
 	}
 
-	// The golden fixture has summary.red=1 (pi:local cell is red).
 	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-golden.json")
 	//nolint:gosec // G204: gateScript and verdictFile are fixed paths under the repository test fixture.
 	cmd := exec.CommandContext(context.Background(), "bash", gateScript,
@@ -310,7 +285,6 @@ func TestConformanceGate_BlocksOnRedCell(t *testing.T) {
 	if err == nil {
 		t.Fatalf("conformance-gate.sh exited 0 (PASS) on a red-cell verdict; want non-zero (BLOCK)\noutput:\n%s", out)
 	}
-	// Verify the gate emitted a BLOCK verdict line.
 	outStr := string(out)
 	if !containsLine(outStr, "GATE_VERDICT=BLOCK") {
 		t.Errorf("expected GATE_VERDICT=BLOCK in output; got:\n%s", outStr)
@@ -450,9 +424,6 @@ func TestConformanceCorpus_PiTier3ModelLeakGate(t *testing.T) {
 	lib := filepath.Join(root, "scripts", "core-loop-assert.jq")
 	td := filepath.Join(root, "scenarios", "core-loop-proof", "testdata")
 
-	// pi:local cell spec (cells.json), no_leak_models extended per hk-vovyi to
-	// cover the hk-pkugu tier-3-default leak alongside the pre-existing
-	// hk-lfrub node-model-pin leak.
 	const spec = `{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8","claude-sonnet-4-6","sonnet"]}},"gaps":["gap1"]}`
 
 	cases := []struct {
@@ -476,8 +447,6 @@ func TestConformanceCorpus_PiTier3ModelLeakGate(t *testing.T) {
 	}
 }
 
-// conformanceCorpusFixtureGap1Verdict runs streamPath through the core-loop-assert.jq
-// library against spec and returns the gap1 verdict ("pass"|"fail"|"pending").
 func conformanceCorpusFixtureGap1Verdict(t *testing.T, lib, streamPath, spec string) string {
 	t.Helper()
 
@@ -509,8 +478,6 @@ func conformanceCorpusFixtureGap1Verdict(t *testing.T, lib, streamPath, spec str
 	return ""
 }
 
-// conformanceGateFixtureContainsLine returns true when s contains a line equal to want
-// (ignoring leading/trailing whitespace on each line).
 func containsLine(s, want string) bool {
 	for _, line := range splitLines(s) {
 		if trimSpace(line) == want {

@@ -31,7 +31,6 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Create the task worktree (same worktree that nodes execute inside).
 	gitCmd := func(dir string, args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -43,7 +42,6 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 
 	gitCmd(repo, "worktree", "add", "-b", taskBranch, taskPath, sha)
 
-	// Simulate node work: add 2 checkpoint commits in the task worktree.
 	mergeBackFixtureWriteFile(t, taskPath, "nodeA.txt", "node-A work\n")
 	gitCmd(taskPath, "add", "nodeA.txt")
 	gitCmd(taskPath, "commit", "-m", "checkpoint: node A work")
@@ -63,8 +61,6 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 		t.Errorf("WM-018: expected 2 node commits on task branch, got %s", count)
 	}
 
-	// The merge-back node runs INSIDE the same worktree (same canonical path).
-	// Create integration branch from main (sha), merge from the task worktree.
 	integBranch := "harmonik/integration"
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", "integ-"+runID)
 	if err := os.MkdirAll(filepath.Dir(integPath), 0o700); err != nil {
@@ -72,8 +68,6 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 	gitCmd(repo, "worktree", "add", "-b", integBranch, integPath, sha)
 
-	// Perform the squash-merge from the integration worktree (same repo, same lease
-	// group). This mirrors the merge-back node executing inside the existing lease.
 	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = integPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
@@ -114,10 +108,6 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 }
 
-// mergeBackFixtureWriteFile writes content to a file in dir, fataling the test on error.
-// Prefixed mergeBackFixture per the same-package shared-symbol discipline documented
-// in hk-8mwo.68: each bead's new helpers carry a bead-specific prefix to avoid
-// post-merge `redeclared in this block` collisions with sibling implementers.
 func mergeBackFixtureWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {

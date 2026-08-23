@@ -1,11 +1,5 @@
 package daemon
 
-// scheduletick_test.go — unit tests for the work-loop schedule tick (hk-0es).
-//
-// These are plain unit tests (NOT scenario): they construct a schedulePort with
-// a real schedule.Store over a temp dir and lightweight doubles for the crew
-// handler and comms-who query. No daemon, tmux, or br is booted.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// fakeCrewStarter records HandleCrewStart calls.
 type fakeCrewStarter struct {
 	mu     sync.Mutex
 	starts []crewrun.CrewStartRequest
@@ -44,7 +37,6 @@ func (f *fakeCrewStarter) count() int {
 	return len(f.starts)
 }
 
-// onlineSet returns a commsWhoQuerier that always reports the given online names.
 func onlineSet(names ...string) commsWhoQuerier {
 	set := make(map[string]struct{}, len(names))
 	for _, n := range names {
@@ -72,8 +64,6 @@ func newTickPort(t *testing.T) (schedulePort, *schedule.Store, *fakeCrewStarter)
 	return port, store, crew
 }
 
-// pastDailyAt returns an HH:MM string that is already in the past today (UTC) so
-// a freshly-added enabled job is immediately due.
 func pastDailyAt(t *testing.T) string {
 	t.Helper()
 	past := time.Now().UTC().Add(-2 * time.Hour)
@@ -103,7 +93,6 @@ func TestScheduleTick_SpawnCrewFires(t *testing.T) {
 		t.Fatalf("LastFire not recorded after fire")
 	}
 
-	// A second tick in the same window must NOT re-fire (LastFire now covers it).
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("crew re-fired in same window: count = %d, want 1", crew.count())
@@ -130,7 +119,6 @@ func TestScheduleTick_SpawnCrewSkipOnOverlap(t *testing.T) {
 	if crew.count() != 0 {
 		t.Fatalf("crew fired despite overlap skip: count = %d, want 0", crew.count())
 	}
-	// LastFire NOT advanced (the fire was skipped, not serviced).
 	got, _ := store.Get("j2")
 	if got.LastFire != "" {
 		t.Fatalf("LastFire advanced on a skipped fire: %q", got.LastFire)
@@ -178,7 +166,6 @@ func TestScheduleTick_DisabledJobNeverFires(t *testing.T) {
 
 func TestScheduleTick_RunNowFiresAndClears(t *testing.T) {
 	port, store, crew := newTickPort(t)
-	// Future fire time so the job is NOT due on its own, isolating the run-now path.
 	future := time.Now().UTC().Add(6 * time.Hour).Format("15:04")
 	job := schedule.ScheduledJob{
 		ID:       "j5",
@@ -203,7 +190,6 @@ func TestScheduleTick_RunNowFiresAndClears(t *testing.T) {
 		t.Fatalf("ForceNext not cleared after run-now fire")
 	}
 
-	// A subsequent tick must not re-fire (flag cleared, not yet due).
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("run-now re-fired: count = %d, want 1", crew.count())
@@ -233,8 +219,6 @@ func TestScheduleTick_CommandActionRecordsPID(t *testing.T) {
 
 func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
 	port, _, crew := newTickPort(t)
-	// Simulate the CLI writing to the same file via a SECOND store over the same
-	// dir (the daemon's in-memory store has not seen this add).
 	cliStore := schedule.NewStore(port.projectDir)
 	if err := cliStore.Load(); err != nil {
 		t.Fatalf("cliStore Load: %v", err)
@@ -249,7 +233,6 @@ func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
 		t.Fatalf("cliStore Add: %v", err)
 	}
 
-	// The daemon's tick must reload the file (mtime changed) and fire the new job.
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("daemon did not pick up out-of-process add: count = %d, want 1", crew.count())
@@ -263,8 +246,6 @@ func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
 func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 	port, store, crew := newTickPort(t)
 
-	// At fires 1h ago each day; LastFire is 3 days ago → 3 missed instants. A wide
-	// catch-up window so the most-recent missed instant is in-window.
 	at := time.Now().UTC().Add(-1 * time.Hour).Format("15:04")
 	job := schedule.ScheduledJob{
 		ID:            "multi",
@@ -291,14 +272,11 @@ func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LastFire %q not RFC3339: %v", got.LastFire, err)
 	}
-	// LastFire must advance to ~now (the fire instant), NOT remain at an old missed
-	// boundary. doFireAction records nowUTC, so it must lie within the tick window.
 	if lf.Before(before.Add(-time.Second)) || lf.After(after.Add(time.Second)) {
 		t.Fatalf("LastFire = %s did not advance to now (~[%s,%s]); a stale boundary would re-fire next tick",
 			lf.Format(time.RFC3339), before.Format(time.RFC3339), after.Format(time.RFC3339))
 	}
 
-	// A second tick must NOT re-fire — the coalesce is one-shot.
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("multi-day catch-up re-fired on second tick: count = %d, want 1", crew.count())
@@ -312,7 +290,6 @@ func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 	port, store, crew := newTickPort(t)
 
-	// At fires 1h ago; window 30m → the 1h-ago missed instant is outside it.
 	at := time.Now().UTC().Add(-1 * time.Hour).Format("15:04")
 	job := schedule.ScheduledJob{
 		ID:            "skip",
@@ -333,8 +310,6 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 		t.Fatalf("missed-beyond-window fired the crew: count = %d, want 0", crew.count())
 	}
 	got, _ := store.Get("skip")
-	// LastFire advanced to the skipped missed instant (PrevFire ~1h ago), so the
-	// stale miss is not re-evaluated forever.
 	lf, err := time.Parse(time.RFC3339, got.LastFire)
 	if err != nil {
 		t.Fatalf("LastFire %q not RFC3339: %v", got.LastFire, err)
@@ -343,7 +318,6 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 		t.Fatalf("LastFire %s was not advanced past the old miss", lf.Format(time.RFC3339))
 	}
 
-	// Next tick: the skipped instant is now serviced, so nothing is due (no fire).
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 0 {
 		t.Fatalf("re-evaluated the skipped miss on a later tick: count = %d, want 0", crew.count())
@@ -357,7 +331,6 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 	port, store, _ := newTickPort(t)
 
-	// Spawn a real, alive process whose pid we can record as the prior command.
 	sleeper := exec.CommandContext(t.Context(), "sleep", "30")
 	if err := sleeper.Start(); err != nil {
 		t.Fatalf("start sleeper: %v", err)
@@ -368,8 +341,6 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 	})
 	alivePID := sleeper.Process.Pid
 
-	// Build a job that would be due (At 1h ago, LastFire 2 days ago) but whose
-	// prior command pid is still alive → skip-on-overlap.
 	at := time.Now().UTC().Add(-1 * time.Hour).Format("15:04")
 	job := schedule.ScheduledJob{
 		ID:            "cmdskip",
@@ -387,7 +358,6 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 	runScheduleTick(context.Background(), port)
 
 	got, _ := store.Get("cmdskip")
-	// Skipped: LastFire/LastPID unchanged (the fire was not serviced).
 	if got.LastPID != alivePID {
 		t.Fatalf("LastPID changed on a skipped overlap fire: got %d, want %d (alive sleeper)", got.LastPID, alivePID)
 	}
@@ -415,13 +385,11 @@ func TestScheduleTick_IntervalFires(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// First tick: never fired → should fire immediately.
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("interval job did not fire on first tick: count = %d, want 1", crew.count())
 	}
 
-	// Immediate second tick: interval not yet elapsed → no re-fire.
 	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("interval job re-fired before interval elapsed: count = %d, want 1", crew.count())
@@ -433,7 +401,6 @@ func TestScheduleTick_IntervalFires(t *testing.T) {
 func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 	_, store, _ := newTickPort(t)
 
-	// Before: job is absent.
 	if _, ok := store.Get(opsMonitorJobID); ok {
 		t.Fatal("ops-monitor job unexpectedly present before ensure call")
 	}
@@ -454,7 +421,6 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 		t.Errorf("ops-monitor job should be enabled by default")
 	}
 
-	// Second call is a no-op (idempotent).
 	ensureOpsMonitorSchedule(store, projectconfig.OpsmonitorConfig{})
 }
 
@@ -489,7 +455,6 @@ func TestScheduleTick_EnsureOpsMonitor_Override(t *testing.T) {
 func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
 	_, store, _ := newTickPort(t)
 
-	// enabled=true path: job absent before the first call.
 	if _, ok := store.Get(ctxWatchdogJobID); ok {
 		t.Fatal("ctx-watchdog job unexpectedly present before ensure call")
 	}
@@ -510,10 +475,8 @@ func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
 		t.Errorf("ctx-watchdog job should be enabled by default")
 	}
 
-	// Second call is a no-op (idempotent).
 	ensureCtxWatchdogSchedule(store, true)
 
-	// enabled=false path: a fresh store should NOT register the job.
 	_, store2, _ := newTickPort(t)
 	ensureCtxWatchdogSchedule(store2, false)
 	if _, ok := store2.Get(ctxWatchdogJobID); ok {
@@ -573,7 +536,6 @@ func TestScheduleTick_CommsSendActionFires(t *testing.T) {
 		t.Errorf("commsSend topic = %q, want 'liveness'", c.topic)
 	}
 
-	// LastFire must be recorded after a successful comms-send fire.
 	got, _ := store.Get("comms-j1")
 	if got.LastFire == "" {
 		t.Fatalf("LastFire not recorded after comms-send fire")
@@ -613,7 +575,6 @@ func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
 		t.Errorf("verify-services interval = %q, want '1h' (from config, no Go literal)", j2.Schedule.Interval)
 	}
 
-	// Second call is a no-op (idempotent).
 	ensureWatchLivenessSchedule(store, cfg, "")
 	if _, ok := store.Get(watchLivenessPingJobID); !ok {
 		t.Error("idempotent: watch-liveness-ping missing after second call")
@@ -776,14 +737,12 @@ func TestCommsSendArgv_PositionalBodyAndFromDefault(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			args := commsSendArgv(tc.to, tc.from, tc.body, tc.topic, tc.projectDir)
 
-			// Must not contain --body flag (CLI has no such flag).
 			for _, a := range args {
 				if a == "--body" {
 					t.Errorf("argv contains --body flag; body must be positional: %v", args)
 				}
 			}
 
-			// Body must appear as positional arg after "--".
 			ddIdx := -1
 			for i, a := range args {
 				if a == "--" {
@@ -798,7 +757,6 @@ func TestCommsSendArgv_PositionalBodyAndFromDefault(t *testing.T) {
 				t.Errorf("body not at args[ddIdx+1]: args=%v", args)
 			}
 
-			// --from must be present with the correct value.
 			fromVal := ""
 			for i, a := range args {
 				if a == "--from" && i+1 < len(args) {
@@ -809,7 +767,6 @@ func TestCommsSendArgv_PositionalBodyAndFromDefault(t *testing.T) {
 				t.Errorf("--from=%q, want %q; args=%v", fromVal, tc.wantFrom, args)
 			}
 
-			// --to must be present with the correct value.
 			toVal := ""
 			for i, a := range args {
 				if a == "--to" && i+1 < len(args) {
@@ -820,7 +777,6 @@ func TestCommsSendArgv_PositionalBodyAndFromDefault(t *testing.T) {
 				t.Errorf("--to=%q, want %q; args=%v", toVal, tc.to, args)
 			}
 
-			// --topic must be present iff tc.topic != "".
 			hasTopic := false
 			for i, a := range args {
 				if a == "--topic" && i+1 < len(args) {

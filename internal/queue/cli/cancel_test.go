@@ -1,14 +1,5 @@
 package cli_test
 
-// cancel_test.go — unit tests for RunQueueCancel.
-//
-// RunQueueCancel works without a live daemon — it manipulates queue files
-// directly under .harmonik/queues/. Tests therefore do NOT start an echo
-// server; they write queue JSON into the standard per-queue path and verify
-// the correct file is archived (or left alone).
-//
-// Bead ref: hk-4kuvj.
-
 import (
 	"context"
 	"encoding/json"
@@ -22,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue/cli"
 )
 
-// cancelFixtureWriteQueue writes a minimal active queue JSON to the canonical
-// per-queue path (.harmonik/queues/<name>.json) under projectDir and returns
-// the path. The queue is given a synthetic queue_id so tests can verify
-// archive contents.
 func cancelFixtureWriteQueue(t *testing.T, projectDir, name string) string {
 	t.Helper()
 
@@ -50,10 +37,6 @@ func cancelFixtureWriteQueue(t *testing.T, projectDir, name string) string {
 	return queueFile
 }
 
-// ---------------------------------------------------------------------------
-// RunQueueCancel tests
-// ---------------------------------------------------------------------------
-
 // TestRunQueueCancel_NoArg_ArchivesMain verifies that running cancel without a
 // queue-name argument archives the default "main" queue.
 func TestRunQueueCancel_NoArg_ArchivesMain(t *testing.T) {
@@ -70,7 +53,6 @@ func TestRunQueueCancel_NoArg_ArchivesMain(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("RunQueueCancel no-arg: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
-	// Original "main" queue file must be gone (renamed to archive).
 	if _, err := os.Stat(mainPath); !os.IsNotExist(err) {
 		t.Errorf("RunQueueCancel no-arg: main queue file still exists at %q; expected it to be archived", mainPath)
 	}
@@ -117,11 +99,9 @@ func TestRunQueueCancel_NameArg_ArchivesNamedQueue(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("RunQueueCancel named: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
-	// "investigate" queue file must be gone.
 	if _, err := os.Stat(investigatePath); !os.IsNotExist(err) {
 		t.Errorf("RunQueueCancel named: investigate queue file still exists at %q", investigatePath)
 	}
-	// "main" queue file must be untouched.
 	if _, err := os.Stat(mainPath); err != nil {
 		t.Errorf("RunQueueCancel named: main queue file unexpectedly gone: %v", err)
 	}
@@ -139,7 +119,6 @@ func TestRunQueueCancel_AbsentQueue_ExitsZero(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
-	// Do NOT write any queue file.
 
 	var out strings.Builder
 	var errOut strings.Builder
@@ -161,7 +140,6 @@ func TestRunQueueCancel_CompletedQueue_RefusesWithoutForce(t *testing.T) {
 
 	projectDir := queueCliFixtureTempDir(t)
 
-	// Write a completed queue.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -283,7 +261,6 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesByUUID(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	mainPath := cancelFixtureWriteQueue(t, projectDir, "main")
 
-	// Write fwkeeper with a known queue_id.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -309,11 +286,9 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesByUUID(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("RunQueueCancel --queue-id: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
-	// fwkeeper queue file must be archived.
 	if _, err := os.Stat(fwkPath); !os.IsNotExist(err) {
 		t.Errorf("RunQueueCancel --queue-id: fwkeeper queue file still exists at %q", fwkPath)
 	}
-	// main queue file must be untouched.
 	if _, err := os.Stat(mainPath); err != nil {
 		t.Errorf("RunQueueCancel --queue-id: main queue file unexpectedly gone: %v", err)
 	}
@@ -337,8 +312,6 @@ func TestRunQueueCancel_CorruptStub_ArchivesByName(t *testing.T) {
 	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	// Zero-value stub: schema_version is 0 (not 1) so UnmarshalQueue returns
-	// ErrSchemaVersion and Load returns ErrCorrupt.
 	stubContent := `{"queue_id":"","status":"","groups":null,"workers":1}`
 	stubPath := filepath.Join(queuesDir, "chani-q.json")
 	if err := os.WriteFile(stubPath, []byte(stubContent), 0o644); err != nil { //nolint:gosec // G306: test-only
@@ -353,7 +326,6 @@ func TestRunQueueCancel_CorruptStub_ArchivesByName(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("RunQueueCancel corrupt stub: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
-	// Stub file must be gone (archived).
 	if _, err := os.Stat(stubPath); !os.IsNotExist(err) {
 		t.Errorf("RunQueueCancel corrupt stub: stub file still exists at %q", stubPath)
 	}
@@ -388,15 +360,6 @@ func TestRunQueueCancel_QueueIDFlag_NotFound_IsRefused(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Daemon-routed cancel (hk-0mmy4)
-// ---------------------------------------------------------------------------
-//
-// These tests start an echo server on daemon.sock so RunQueueCancel routes
-// through tryDaemonQueueCancel's "queue-cancel" socket op instead of the
-// disk-only fallback used by the tests above (which run with no daemon.sock
-// present at all).
-
 // TestRunQueueCancel_LiveDaemon_RoutesThroughSocket verifies that when a
 // daemon is reachable, RunQueueCancel sends a "queue-cancel" op (not a
 // disk-only archive) and reports the daemon's response — this is the path
@@ -405,10 +368,6 @@ func TestRunQueueCancel_LiveDaemon_RoutesThroughSocket(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
-	// Deliberately do NOT write a queue file: RunQueueCancel's own pre-flight
-	// Load (used for the local "already completed" fast-path check) requires
-	// something loadable, so write a minimal active queue on disk too — the
-	// daemon-side archive is what actually matters for this assertion.
 	cancelFixtureWriteQueue(t, projectDir, "alpha")
 
 	var capturedOp string
@@ -486,8 +445,6 @@ func TestRunQueueCancel_LiveDaemon_SurfacesDaemonError(t *testing.T) {
 	}
 }
 
-// mustJSONMarshal is a tiny helper for building literal JSON string fields in
-// hand-built response maps.
 func mustJSONMarshal(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(v)
@@ -496,20 +453,6 @@ func mustJSONMarshal(t *testing.T, v any) json.RawMessage {
 	}
 	return data
 }
-
-// ---------------------------------------------------------------------------
-// hk-wka5o — a cancel aimed at a queue name that does not exist is refused
-// ---------------------------------------------------------------------------
-//
-// `harmonik queue cancel --queue does-not-exist` printed "no active queue
-// found" and exited 0. The name the caller typed was never echoed, so a caller
-// that branches on the exit code was told the queue it asked to stop had
-// nothing wrong with it, and no queue was cancelled.
-//
-// The three sibling verbs already refuse this: `queue pause` and `queue resume`
-// return queue.UnknownQueueError, and `queue recover` returns a queue_not_found
-// recovery rejection. Cancel is checked here against the SAME error value and
-// the same exit code the pause/resume pair use.
 
 // TestRunQueueCancel_UnknownNamedQueue_IsRefused covers both spellings of a
 // caller-supplied name: the --queue flag and the backward-compatible
@@ -528,7 +471,6 @@ func TestRunQueueCancel_UnknownNamedQueue_IsRefused(t *testing.T) {
 			t.Parallel()
 
 			projectDir := queueCliFixtureTempDir(t)
-			// One queue that DOES exist, so the refusal has a near-miss to name.
 			cancelFixtureWriteQueue(t, projectDir, "main")
 
 			var out strings.Builder
@@ -544,9 +486,6 @@ func TestRunQueueCancel_UnknownNamedQueue_IsRefused(t *testing.T) {
 			if strings.Contains(out.String(), "archived") {
 				t.Errorf("RunQueueCancel %v: stdout claims an archive happened: %q", tc.args, out.String())
 			}
-			// The message body is queue.UnknownQueueError's, byte for byte with
-			// the one `queue pause` prints. Asserted as literal text so a silent
-			// reword of the shared error shows up here.
 			for _, want := range []string{
 				`no queue named "mian"`,
 				"changed nothing and no queue was cancelled",
@@ -618,14 +557,6 @@ func TestRunQueueCancel_RefusalComesFromTheSharedError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// hk-wka5o — a queue_id that matches nothing is refused too
-// ---------------------------------------------------------------------------
-//
-// A uuid is the MOST explicit way a caller can name a target, so it is the last
-// place a silent success belongs. This path used to print "no active queue
-// found (queue_id not found)" and exit 0.
-
 // TestRunQueueCancel_UnknownQueueID_IsRefused pins the refusal and its wording:
 // a uuid is reported as an ID, not as a name.
 func TestRunQueueCancel_UnknownQueueID_IsRefused(t *testing.T) {
@@ -656,8 +587,6 @@ func TestRunQueueCancel_UnknownQueueID_IsRefused(t *testing.T) {
 			t.Errorf("RunQueueCancel --queue-id <no match>: stderr %q does not contain %q", errOut.String(), want)
 		}
 	}
-	// A uuid is not a name, and saying "named" of one misreports what the
-	// caller typed back at them.
 	if strings.Contains(errOut.String(), "no queue named") {
 		t.Errorf("RunQueueCancel --queue-id <no match>: a uuid was reported as a queue NAME:\n%s", errOut.String())
 	}
@@ -671,7 +600,6 @@ func TestRunQueueCancel_QueueIDThatMatches_StillCancels(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	queueFile := cancelFixtureWriteQueue(t, projectDir, "canary")
 
-	// The id cancelFixtureWriteQueue mints for this name.
 	const present = "aaaaaaaa-0000-7000-8000-canary000000"
 
 	var out strings.Builder
@@ -688,19 +616,6 @@ func TestRunQueueCancel_QueueIDThatMatches_StillCancels(t *testing.T) {
 		t.Errorf("RunQueueCancel --queue-id <match>: stdout %q does not mention 'archived'", out.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// An empty queue_id from the daemon has two opposite meanings
-// ---------------------------------------------------------------------------
-//
-// Both of these arrive as ok=true with no queue_id, and the CLI answered both
-// with "no active queue found (queue file absent)" and exit 0. One of them is a
-// cancel that really ran, so that line was the exact opposite of the truth and
-// the journal event for it was skipped.
-//
-// The daemon tells them apart with prior_status. HandleQueueCancel
-// (internal/queue/rpc.go) returns a wholly empty QueueCancelResponse when its
-// own Load found nothing, and sets prior_status whenever it archived something.
 
 // TestRunQueueCancel_LiveDaemon_EmptyQueueIDWithPriorStatus covers the archive
 // the CLI used to deny. The queue file carried no queue_id; the daemon archived
@@ -759,9 +674,6 @@ func TestRunQueueCancel_LiveDaemon_WhollyEmptyResponse(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("RunQueueCancel daemon-found-nothing: exit = %d, want 0; stdout=%q stderr=%q", got, out.String(), errOut.String())
 	}
-	// "daemon-reaped" is the success line's own token. The refusal line below
-	// contains the word "archived" in "nothing was archived", so matching that
-	// word alone would assert nothing.
 	if strings.Contains(out.String(), "daemon-reaped") {
 		t.Errorf("RunQueueCancel daemon-found-nothing: stdout claims an archive that did not happen: %q", out.String())
 	}
@@ -769,20 +681,6 @@ func TestRunQueueCancel_LiveDaemon_WhollyEmptyResponse(t *testing.T) {
 		t.Errorf("RunQueueCancel daemon-found-nothing: stdout %q never names the queue the caller asked about", out.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// An EMPTY selector VALUE (hk-r7y5g)
-// ---------------------------------------------------------------------------
-//
-// A selector the caller gave but left empty — `--queue-id=`, `--queue-id ""`,
-// `--queue=`, `--queue ""`, or an empty positional — used to fall through the
-// `!= ""` guards in RunQueueCancel and take the bare-cancel path, whose default
-// is "main". A caller whose shell variable did not expand archived a queue they
-// never named and was told it succeeded.
-//
-// The load-bearing assertion below is NOT the exit code. It is that main.json
-// still EXISTS afterwards. An exit code is a claim about what happened; the
-// surviving file is what happened.
 
 // TestRunQueueCancel_EmptySelectorValue_IsRefused covers all five spellings of
 // an empty selector value. Each must leave every queue file on disk, refuse
@@ -819,8 +717,6 @@ func TestRunQueueCancel_EmptySelectorValue_IsRefused(t *testing.T) {
 			args := append([]string{"--project", projectDir}, tc.args...)
 			got := cli.RunQueueCancel(context.Background(), args, &out, &errOut)
 
-			// The one that matters: no queue was archived. The caller named no
-			// queue successfully, so no queue may be gone.
 			if _, err := os.Stat(mainPath); err != nil {
 				t.Errorf("RunQueueCancel %v: the default queue was archived by a selector the caller never filled in: %v", tc.args, err)
 			}
@@ -856,7 +752,6 @@ func TestRunQueueCancel_NoSelectorAtAll_StillExitsZero(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
-	// No queue file at all: the absent-main case scripts actually hit.
 
 	var out strings.Builder
 	var errOut strings.Builder
@@ -871,23 +766,6 @@ func TestRunQueueCancel_NoSelectorAtAll_StillExitsZero(t *testing.T) {
 		t.Errorf("RunQueueCancel bare: stderr %q refuses a caller who gave no selector at all", errOut.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// hk-r7y5g — the archive target is the file that was FOUND, not the name that
-// file declares about itself
-// ---------------------------------------------------------------------------
-//
-// --queue-id resolves by enumerating .harmonik/queues/*.json and comparing
-// queue_id. The name used for the archive then came out of the LOADED FILE's
-// `name` field, and nothing validates that field: neither queue.Load, which
-// reads <name>.json literally, nor UnmarshalQueue. An empty `name` is the
-// destructive case, because NormaliseQueueName("") returns "main" — so a
-// cancel aimed by uuid at one queue archived the DEFAULT queue, exited 0, and
-// printed the selected queue's id while doing it.
-//
-// This is the same defect as the empty selector value, one layer further in:
-// the value the caller gave was fine, and an empty field on disk supplied the
-// "main" instead.
 
 // TestRunQueueCancel_QueueIDFlag_ArchivesTheFileItFound covers both spellings
 // of a `name` field that does not describe the file it sits in: absent (which
@@ -934,13 +812,10 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesTheFileItFound(t *testing.T) {
 
 			got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", targetID}, &out, &errOut)
 
-			// The one that matters: the queue the caller never named is still
-			// there. A cancel by uuid may not reach the default queue.
 			if _, err := os.Stat(mainPath); err != nil {
 				t.Errorf("RunQueueCancel --queue-id %s: the default queue was archived by a cancel aimed at %q, whose file declares name %q: %v",
 					targetID, tc.file, tc.declaredName, err)
 			}
-			// And the queue the caller DID name is the one that moved.
 			if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
 				t.Errorf("RunQueueCancel --queue-id %s: %q was selected but its file is still at %q", targetID, tc.file, targetPath)
 			}
@@ -954,9 +829,6 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesTheFileItFound(t *testing.T) {
 			if got != 0 {
 				t.Errorf("RunQueueCancel --queue-id %s: exit = %d, want 0; stdout=%q stderr=%q", targetID, got, out.String(), errOut.String())
 			}
-			// The report has to agree with the disk. Naming the selected
-			// queue's id while archiving main.json is how this defect read as
-			// a success.
 			if !strings.Contains(out.String(), tc.file+".json"+queue.FailedArchiveInfix) {
 				t.Errorf("RunQueueCancel --queue-id %s: stdout %q does not report an archive of %q", targetID, out.String(), tc.file)
 			}

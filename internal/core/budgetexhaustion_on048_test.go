@@ -2,25 +2,6 @@ package core
 
 import "testing"
 
-// budgetexhaustion_on048_test.go — tests for the ON-048 exhaustion protocol
-// (4-step sequence) for the agent runner enforcing path.
-//
-// Covers:
-//   - ExhaustionProtocolStep enum: four values declared in spec order.
-//   - ExhaustionSafeBoundary enum: three values matching ON-048 step (2).
-//   - SafeBoundaryForResource: correct mapping for all three BudgetResource values;
-//     returns ok=false for unknown resources.
-//   - ExhaustionRoutingPolicy / DefaultExhaustionRoutingPolicy: default
-//     PauseOnExhaustion=false per ON-048 step (3).
-//   - ExhaustionProtocolSequence: four steps in spec order; non-empty labels and
-//     descriptions; step (4) is conditional; steps (1)–(3) are unconditional.
-//   - DispatchDeferredReasonBudgetExhaustedCascade: distinct from the existing
-//     machine-ceiling reason.
-//
-// Spec ref: specs/operator-nfr.md §4.11 ON-048.
-
-// ---- ExhaustionProtocolStep enum ----
-
 // TestExhaustionProtocolStep_FourValuesAreDeclared verifies that exactly four
 // ExhaustionProtocolStep constants are declared in spec order.
 func TestExhaustionProtocolStep_FourValuesAreDeclared(t *testing.T) {
@@ -57,8 +38,6 @@ func TestExhaustionProtocolStep_FourValuesAreDeclared(t *testing.T) {
 	}
 }
 
-// ---- ExhaustionSafeBoundary enum ----
-
 // TestExhaustionSafeBoundary_ThreeValuesAreDeclared verifies that exactly three
 // ExhaustionSafeBoundary constants are declared, one per BudgetResource.
 func TestExhaustionSafeBoundary_ThreeValuesAreDeclared(t *testing.T) {
@@ -90,8 +69,6 @@ func TestExhaustionSafeBoundary_ThreeValuesAreDeclared(t *testing.T) {
 		})
 	}
 }
-
-// ---- SafeBoundaryForResource ----
 
 // TestSafeBoundaryForResource_TokensIsPostChunk verifies that token budgets
 // use the post-chunk safe boundary per ON-048 step (2).
@@ -174,8 +151,6 @@ func TestSafeBoundaryForResource_AllKnownResourcesMapToBoundary(t *testing.T) {
 	}
 }
 
-// ---- ExhaustionRoutingPolicy / DefaultExhaustionRoutingPolicy ----
-
 // TestDefaultExhaustionRoutingPolicy_PauseOnExhaustionIsFalse verifies that the
 // spec-mandated default has PauseOnExhaustion=false per ON-048 step (3).
 func TestDefaultExhaustionRoutingPolicy_PauseOnExhaustionIsFalse(t *testing.T) {
@@ -198,8 +173,6 @@ func TestExhaustionRoutingPolicy_CanSetPauseOnExhaustionTrue(t *testing.T) {
 		t.Error("ON-048: ExhaustionRoutingPolicy{PauseOnExhaustion: true}.PauseOnExhaustion = false; field must be settable")
 	}
 }
-
-// ---- ExhaustionProtocolSequence ----
 
 // TestExhaustionProtocolSequence_HasFourSteps verifies that
 // ExhaustionProtocolSequence returns exactly four steps.
@@ -273,7 +246,6 @@ func TestExhaustionProtocolSequence_OnlyStep4IsConditional(t *testing.T) {
 		t.Fatalf("unexpected sequence length %d", len(seq))
 	}
 
-	// Steps are 0-indexed; step (4) = index 3.
 	for i, step := range seq {
 		wantConditional := i == 3
 		if step.IsConditional != wantConditional {
@@ -282,8 +254,6 @@ func TestExhaustionProtocolSequence_OnlyStep4IsConditional(t *testing.T) {
 		}
 	}
 }
-
-// ---- DispatchDeferredReasonBudgetExhaustedCascade ----
 
 // TestDispatchDeferredReasonBudgetExhaustedCascade_ValueIsCorrect verifies the
 // canonical string value for the budget-cascade reason.

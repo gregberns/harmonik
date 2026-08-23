@@ -1,29 +1,5 @@
 package queuewiring_test
 
-// operatorevents_perqueue_pause_test.go — NQ-C1 per-queue pause/resume tests (hk-tigaf.6).
-//
-// Acceptance criteria (per bead spec):
-//   - Named pause halts only the named queue; other queues keep going.
-//   - Named resume restores the paused queue to active.
-//   - Unnamed global pause still drains all queues.
-//   - Named pause does NOT set the global IsPaused flag (br-ready gate unaffected).
-//   - Global IsPaused remains false after a per-queue pause.
-//
-// Coverage:
-//   - TestPerQueuePause_OnlyNamedQueueIsPaused           — named pause drains only the target
-//   - TestPerQueuePause_OtherQueueUnaffected             — non-targeted queue stays active
-//   - TestPerQueuePause_NamedResume_RestoresQueue        — named resume transitions back to active
-//   - TestPerQueuePause_GlobalPauseDrainsAll             — unnamed pause transitions all queues
-//   - TestPerQueuePause_EmitsQueuePausedEventForTarget   — queue_paused{operator_drain} emitted for named queue
-//   - TestPerQueuePause_GlobalResumeRestoresAll          — global resume restores all paused queues
-//
-// The seventh criterion — IsPaused() stays false after a named pause — is
-// asserted by TestPerQueuePause_DoesNotSetGlobalFlag, which stays in
-// internal/daemon/queue_perqueue_pause_globalflag_tigaf6_test.go because it
-// drives the daemon-owned OperatorPauseController (P2 unit E3a).
-//
-// Bead ref: hk-tigaf.6.
-
 import (
 	"context"
 	"encoding/json"
@@ -37,10 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 func perQueueFixtureActiveQueue(t *testing.T, name string) *queue.Queue {
 	t.Helper()
@@ -62,8 +34,6 @@ func perQueueFixtureActiveQueue(t *testing.T, name string) *queue.Queue {
 	}
 }
 
-// perQueueFixtureConsumerWithBus builds a QueueOperatorEventConsumer over a
-// freshly sealed bus.
 func perQueueFixtureConsumerWithBus(t *testing.T, qs *queuewiring.QueueStore) *queuewiring.QueueOperatorEventConsumer {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -126,10 +96,6 @@ func perQueueFixtureResumingEvent(t *testing.T, queueName string) core.Event {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestPerQueuePause_OnlyNamedQueueIsPaused verifies that a named pause event
 // transitions only the named queue to paused-by-drain and leaves other queues
 // unchanged.
@@ -144,7 +110,6 @@ func TestPerQueuePause_OnlyNamedQueueIsPaused(t *testing.T) {
 	qs.SetQueue(investigateQ)
 	qs.SetQueue(mainQ)
 
-	// Named pause targeting "investigate".
 	evt := perQueueFixturePauseEvent(t, "investigate")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
@@ -225,7 +190,6 @@ func TestPerQueuePause_GlobalPauseDrainsAll(t *testing.T) {
 	qs.SetQueue(investigateQ)
 	qs.SetQueue(mainQ)
 
-	// Global pause: no queue name.
 	evt := perQueueFixturePauseEvent(t, "")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus (global): %v", err)
@@ -351,7 +315,6 @@ func TestPerQueuePause_NamedResumeDoesNotRestoreOtherQueues(t *testing.T) {
 		t.Fatalf("handleOperatorResuming (named): %v", err)
 	}
 
-	// investigate should be resumed.
 	investigate := qs.QueueByName("investigate")
 	if investigate == nil {
 		t.Fatal("investigate queue cleared unexpectedly")
@@ -360,7 +323,6 @@ func TestPerQueuePause_NamedResumeDoesNotRestoreOtherQueues(t *testing.T) {
 		t.Errorf("investigate.Status = %q, want active after named resume", investigate.Status)
 	}
 
-	// main should remain paused-by-drain.
 	main := qs.QueueByName("main")
 	if main == nil {
 		t.Fatal("main queue cleared unexpectedly")

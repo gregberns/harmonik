@@ -1,18 +1,5 @@
 package core
 
-// budgetwarning_hka8bg24.go — CP-025: Budget warning threshold fires at 80% by default.
-//
-// Implements the warning-threshold check from specs/control-points.md §4.5.CP-025:
-//
-//	When cumulative accrual crosses the warning_threshold fraction of limit,
-//	the runner MUST emit a budget_warning event per [event-model.md §8.4]
-//	and continue. The threshold check uses live in-handler counters (the
-//	handler tracks accrual against remaining budget in real time per its
-//	own tick cadence). The threshold value is governed by §4.5.CP-022
-//	(default 0.8, operator-overridable per §4.7).
-//
-// Refs: hk-a8bg.24
-
 // CheckBudgetWarningThreshold evaluates whether cumulative accrual has crossed
 // the warning_threshold fraction of the declared limit per control-points.md
 // §4.5.CP-025.

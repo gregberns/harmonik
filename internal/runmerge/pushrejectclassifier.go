@@ -1,15 +1,5 @@
 package runmerge
 
-// pushrejectclassifier.go — the one predicate that decides whether a refused
-// `git push` is worth re-preparing for.
-//
-// It lives in its own file, and it is EXPORTED, because two callers now ask the
-// same question: the daemon merge path in this package, and `harmonik promote`
-// in cmd/harmonik. hk-z0bms: promote carried a byte-identical copy of the
-// defective two-token test this predicate replaced, so a lost race that the
-// merge path recovers from made promote give up. Two hand-maintained copies of
-// a token list is how the first defect survived. There is one copy now.
-
 import "strings"
 
 // IsRetryablePushRejection reports whether a failed `git push` was refused for

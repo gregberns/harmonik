@@ -36,8 +36,6 @@ import (
 // exclusion domain. The critical section did not run.
 var ErrQueueStopped = errors.New("mergeq: queue stopped")
 
-// job is a single submission held on the pending list until the owner
-// goroutine serves it.
 type job struct {
 	// ctx is the submitter's context. Carrying it on the job is deliberate: the
 	// owner goroutine must run the critical section under the SUBMITTER's ctx
@@ -98,9 +96,6 @@ func (q *Queue) Start(ctx context.Context) {
 func (q *Queue) run(ctx context.Context) {
 	defer close(q.done)
 	for {
-		// Stop promptly on cancellation, even with work still pending — pending
-		// submissions never entered the domain and are released with
-		// ErrQueueStopped below.
 		if ctx.Err() != nil {
 			q.stop()
 			return
@@ -120,9 +115,6 @@ func (q *Queue) run(ctx context.Context) {
 	}
 }
 
-// pop removes and returns the lowest-seq pending job, if any. pending is
-// seq-sorted by construction (seq assigned and appended under one mu hold), so
-// the head is always the next intake-sequence job.
 func (q *Queue) pop() (job, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -135,9 +127,6 @@ func (q *Queue) pop() (job, bool) {
 	return j, true
 }
 
-// stop marks the queue stopped and releases every still-pending submission
-// with ErrQueueStopped. After stopped is set (under mu), Submit rejects new
-// intake, so no submission can be appended and then stranded.
 func (q *Queue) stop() {
 	q.mu.Lock()
 	q.stopped = true
@@ -149,15 +138,9 @@ func (q *Queue) stop() {
 	}
 }
 
-// execute runs one critical section under the owner goroutine. It is the only
-// place a critical func is invoked, guaranteeing mutual exclusion.
 func (q *Queue) execute(j job) {
 	waitMS := time.Since(j.enqueued).Milliseconds()
 
-	// ctx-cancel-BEFORE-execution: if the submitter's ctx already ended while
-	// the job waited in the queue, skip the critical entirely and report the
-	// cancellation. Once we pass this gate the critical runs to completion under
-	// its own ctx (a Background-derived ctx for the shutdown-drain submission).
 	if err := j.ctx.Err(); err != nil {
 		q.logger.InfoContext(j.ctx, "mergeq: skipped cancelled submission",
 			"label", j.label, "seq", j.seq, "wait_ms", waitMS, "err", err)
@@ -184,8 +167,6 @@ func (q *Queue) execute(j job) {
 // this submission is served, Submit returns ErrQueueStopped and the critical
 // section does not run.
 func (q *Queue) Submit(ctx context.Context, label string, critical func(context.Context) error) error {
-	// Intake gate: a ctx cancellation here means the submission never entered
-	// the domain, so nothing ran.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -198,9 +179,6 @@ func (q *Queue) Submit(ctx context.Context, label string, critical func(context.
 		enqueued: time.Now(),
 	}
 
-	// Intake: seq assignment and the append happen under one mu hold, so the
-	// seq order IS the pending order — the FIFO position is fixed here,
-	// deterministically, independent of goroutine scheduling.
 	q.mu.Lock()
 	if q.stopped {
 		q.mu.Unlock()
@@ -211,16 +189,10 @@ func (q *Queue) Submit(ctx context.Context, label string, critical func(context.
 	q.pending = append(q.pending, j)
 	q.mu.Unlock()
 
-	// Nudge the owner. Non-blocking: a full buffer means a wake is already
-	// pending and the owner will observe this job on its next pending re-check.
 	select {
 	case q.wake <- struct{}{}:
 	default:
 	}
 
-	// Enqueued: our FIFO position is fixed. Wait for the owner goroutine to
-	// report the outcome — the critical's error, ctx.Err() if we were cancelled
-	// while queued (execute's pre-execution gate), or ErrQueueStopped if the
-	// owner stopped before serving us.
 	return <-j.result
 }

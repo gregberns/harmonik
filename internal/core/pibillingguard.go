@@ -1,25 +1,5 @@
 package core
 
-// pibillingguard.go — event-bus payload for the pi_billing_guard event type
-// (codename:pilot, PI-040/041/042/043, hk-l1bkp).
-//
-// Pi's billing guard is the INVERSE of the codex guard: codex forces a specific
-// billing method and refuses if an API key is present (don't bill the API pool);
-// Pi refuses if the configured provider's key is ABSENT (fail closed without a key).
-//
-// Two steps per launch:
-//  1. Pre-flight assert (PI-040): env var named by api_key_env must be present +
-//     non-empty; absent/empty -> typed error, refuse launch BEFORE agent_ready.
-//  2. On-disk credential check (PI-042): until Pi's no-persist behavior is
-//     confirmed (findings.md §4), check for a persisted auth file mirroring
-//     codex's authIndicatesAPIKeyLogin.
-//
-// Events name the env-var NAME, never its value (PI-040 / ps-argv leak prevention).
-//
-// Spec ref: specs/pi-harness.md §4 (PI-040/PI-041/PI-042/PI-043).
-// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.6.
-// Bead ref: hk-l1bkp.
-
 // PiBillingGuardOutcome is the typed outcome of a Pi billing-guard step.
 //
 // Pi's guard has two outcomes (no "materialized" intermediate: there is nothing

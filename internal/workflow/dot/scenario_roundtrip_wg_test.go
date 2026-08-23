@@ -26,10 +26,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ── (1) All 4 node types parse correctly ─────────────────────────────────────
-
-// dotFixtureAllFourNodeTypes returns a synthetic graph exercising every WG-001
-// node type: agentic, non-agentic, gate, sub-workflow.
 func dotFixtureAllFourNodeTypes() string {
 	return `digraph all_four {
   schema_version="1";
@@ -79,13 +75,11 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 		t.Fatalf("len(Nodes) = %d, want 4", len(g.Nodes))
 	}
 
-	// Build a type→node map.
 	typeMap := make(map[core.NodeType]*Node, 4)
 	for _, n := range g.Nodes {
 		typeMap[n.Type] = n
 	}
 
-	// Agentic.
 	if n, ok := typeMap[core.NodeTypeAgentic]; !ok {
 		t.Error("no agentic node found")
 	} else {
@@ -103,7 +97,6 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 		}
 	}
 
-	// Gate.
 	if n, ok := typeMap[core.NodeTypeGate]; !ok {
 		t.Error("no gate node found")
 	} else {
@@ -118,7 +111,6 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 		}
 	}
 
-	// Sub-workflow.
 	if n, ok := typeMap[core.NodeTypeSubWorkflow]; !ok {
 		t.Error("no sub-workflow node found")
 	} else {
@@ -133,7 +125,6 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 		}
 	}
 
-	// Non-agentic.
 	if n, ok := typeMap[core.NodeTypeNonAgentic]; !ok {
 		t.Error("no non-agentic node found")
 	} else {
@@ -148,7 +139,6 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 		}
 	}
 
-	// Validate: no errors expected.
 	diags := Validate(g)
 	for _, d := range diags {
 		if d.Severity == SeverityError {
@@ -157,13 +147,10 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 	}
 }
 
-// ── (2) Edge cascade ordering preserved ──────────────────────────────────────
-
 // TestScenarioEdgeCascadeOrdering verifies that edges are returned in
 // declaration order, which is load-bearing for the edge-cascade evaluation
 // semantics (unconditional fallback must be last).
 func TestScenarioEdgeCascadeOrdering(t *testing.T) {
-	// Use the canonical specs/examples/review-loop.dot fixture.
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
 		t.Skipf("specs/examples/review-loop.dot not found: %v", err)
@@ -174,13 +161,6 @@ func TestScenarioEdgeCascadeOrdering(t *testing.T) {
 		t.Fatalf("Parse: %v", parseErr)
 	}
 
-	// The canonical file declares 6 edges in this order:
-	//   (1) start -> implementer          (unconditional)
-	//   (2) implementer -> reviewer       (unconditional)
-	//   (3) reviewer -> close             (APPROVE)
-	//   (4) reviewer -> implementer       (REQUEST_CHANGES, traversal_cap=3)
-	//   (5) reviewer -> close-needs-attn  (BLOCK)
-	//   (6) reviewer -> close-needs-attn  (unconditional fallback)
 	if len(g.Edges) != 6 {
 		t.Fatalf("len(Edges) = %d, want 6", len(g.Edges))
 	}
@@ -206,22 +186,18 @@ func TestScenarioEdgeCascadeOrdering(t *testing.T) {
 		}
 	}
 
-	// The last reviewer edge must be the unconditional fallback (no condition).
 	lastReviewerEdge := g.Edges[5]
 	if lastReviewerEdge.Condition != nil {
 		t.Errorf("Edges[5] (unconditional fallback) has non-nil Condition: %q",
 			lastReviewerEdge.ConditionRaw)
 	}
 
-	// Edge 3 (reviewer -> implementer, REQUEST_CHANGES) must carry traversal_cap.
 	rcEdge := g.Edges[3]
 	if traversalCap, ok := rcEdge.UnknownAttrs["traversal_cap"]; !ok || traversalCap != "3" {
 		t.Errorf("Edges[3] traversal_cap = %q (present=%v), want %q",
 			rcEdge.UnknownAttrs["traversal_cap"], ok, "3")
 	}
 }
-
-// ── (3) Reserved-attribute strict policy: schema_version on a node ───────────
 
 // TestScenarioReservedAttrSchemaVersionOnNode verifies WG-031/WG-033:
 // schema_version on a node is a strict parse error.
@@ -271,8 +247,6 @@ func TestScenarioReservedAttrSchemaVersionOnEdge(t *testing.T) {
 	}
 }
 
-// ── (4) Mixed unknown-attribute policy: warning + AST retention (WG-032) ─────
-
 // TestScenarioUnknownAttrWarningAndRetention verifies the D9 / WG-032 policy:
 // unknown permissive attributes emit warnings but are retained in the AST,
 // and the graph still parses successfully (no strict error).
@@ -299,12 +273,10 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 		t.Fatalf("Parse: unexpected error (unknown attrs should not be strict errors): %v", err)
 	}
 
-	// Graph-level unknown attr retained.
 	if got := g.UnknownAttrs["custom_graph_meta"]; got != "experiment-42" {
 		t.Errorf("graph UnknownAttrs[custom_graph_meta] = %q, want %q", got, "experiment-42")
 	}
 
-	// Node-level unknown attrs retained.
 	var workNode *Node
 	for _, n := range g.Nodes {
 		if n.ID == "work" {
@@ -322,7 +294,6 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 		t.Errorf("node work UnknownAttrs[priority] = %q, want %q", got, "P0")
 	}
 
-	// Edge-level unknown attrs retained.
 	if len(g.Edges) == 0 {
 		t.Fatal("no edges parsed")
 	}
@@ -334,27 +305,19 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 		t.Errorf("edge UnknownAttrs[debug_tag] = %q, want %q", got, "test-123")
 	}
 
-	// Warnings emitted for all unknowns.
 	if len(g.Warnings) == 0 {
 		t.Error("expected warnings for unknown permissive attributes, got none")
 	}
-	// Count expected unknown-attr warnings:
-	//   graph: custom_graph_meta (1)
-	//   node work: team, priority (2)
-	//   edge: routing_hint, debug_tag (2)
-	//   total: 5
 	if len(g.Warnings) < 5 {
 		t.Errorf("len(Warnings) = %d, want >= 5 (one per unknown attr)", len(g.Warnings))
 	}
 
-	// All warnings mention WG-031 or WG-032.
 	for i, w := range g.Warnings {
 		if !strings.Contains(w.Message, "WG-031") && !strings.Contains(w.Message, "WG-032") {
 			t.Errorf("Warning[%d] %q does not cite WG-031 or WG-032", i, w.Message)
 		}
 	}
 
-	// Validate passes (unknown attrs are not validation errors).
 	diags := Validate(g)
 	for _, d := range diags {
 		if d.Severity == SeverityError {
@@ -362,8 +325,6 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 		}
 	}
 }
-
-// ── Canonical fixture round-trip with validation ─────────────────────────────
 
 // TestScenarioCanonicalReviewLoopRoundTrip loads specs/examples/review-loop.dot,
 // parses it, runs Validate, and asserts the full pipeline produces no errors.
@@ -380,7 +341,6 @@ func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
 		t.Fatalf("Parse: %v", parseErr)
 	}
 
-	// Basic structural assertions.
 	if g.SchemaVersion != "1" {
 		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1")
 	}
@@ -393,7 +353,6 @@ func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
 	if len(g.TerminalNodeIDs) != 2 {
 		t.Errorf("len(TerminalNodeIDs) = %d, want 2", len(g.TerminalNodeIDs))
 	}
-	// 5 nodes: start, implementer, reviewer, close, close-needs-attention.
 	if len(g.Nodes) != 5 {
 		t.Errorf("len(Nodes) = %d, want 5", len(g.Nodes))
 	}
@@ -401,9 +360,6 @@ func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
 		t.Errorf("len(Edges) = %d, want 6", len(g.Edges))
 	}
 
-	// "role" is now a recognised node attribute (hk-m5lmo) parsed into Node.Role,
-	// not into UnknownAttrs. Verify every node in the canonical fixture has a
-	// non-empty Role, and that no warnings are emitted for it.
 	for _, n := range g.Nodes {
 		if n.Role == "" {
 			t.Errorf("node %q: expected Role to be set (hk-m5lmo), got empty", n.ID)
@@ -413,14 +369,12 @@ func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
 		}
 	}
 
-	// No warnings should mention "role" since it is now a recognised attribute.
 	for _, w := range g.Warnings {
 		if strings.Contains(w.Message, "role") {
 			t.Errorf("unexpected warning mentioning \"role\" (should be a recognised attr now): %s", w.Message)
 		}
 	}
 
-	// Validate the parsed graph — no errors expected from the canonical fixture.
 	diags := Validate(g)
 	for _, d := range diags {
 		if d.Severity == SeverityError {

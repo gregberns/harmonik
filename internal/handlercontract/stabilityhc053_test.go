@@ -1,35 +1,5 @@
 package handlercontract_test
 
-// stabilityhc053_test.go — stability sensor for HC-053 (cross-subsystem
-// surface MUST remain stable across execution-shape evolution).
-//
-// Spec ref: specs/handler-contract.md §4.12.HC-053 and §10.2 (conformance
-// evidence for HC-051–HC-053); bead hk-8i31.63.
-//
-// Helper prefix: stabilityFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// HC-053 names four cross-subsystem surfaces that MUST remain stable:
-//
-//	1. The Handler interface (§6.1).
-//	2. The LaunchSpec record (§6.1).
-//	3. The error taxonomy (§8) — five primary sentinels + two sub-sentinels.
-//	4. The emitted event set (§4.2.HC-007) — progress-stream message types.
-//
-// This file contains one sensor group per surface.  Each sensor pins the
-// current method/field/constant set using reflect and source-level inspection;
-// a failure means the surface was altered.  The fix is either:
-//
-//	(a) Update the expected set here (if the change is intentional and a
-//	    foundation amendment has been filed per §6.3 / AR-020), or
-//	(b) Revert the accidental change.
-//
-// Sensors that enumerate interface methods use reflect.TypeOf((*T)(nil)).Elem()
-// to iterate over the method set without requiring a concrete implementation.
-// Sensors that enumerate LaunchSpec fields use reflect.TypeOf(LaunchSpec{}) and
-// iterate VisibleFields.  Progress-stream type constants are checked via the
-// package-level symbol names exported from progressstream_hc007.go.
-
 import (
 	"errors"
 	"os"
@@ -43,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// stabilityFixtureModuleRoot locates the module root (directory containing
-// go.mod) by walking upward from the test source file.
 func stabilityFixtureModuleRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -68,8 +32,6 @@ func stabilityFixtureModuleRoot(t *testing.T) string {
 	}
 }
 
-// stabilityFixtureHCSpec reads the handler-contract.md spec and returns its
-// contents.  Fails the test if the file cannot be read.
 func stabilityFixtureHCSpec(t *testing.T) string {
 	t.Helper()
 	root := stabilityFixtureModuleRoot(t)
@@ -81,8 +43,6 @@ func stabilityFixtureHCSpec(t *testing.T) string {
 	return string(content)
 }
 
-// stabilityFixtureInterfaceMethods returns a sorted slice of method names for
-// the interface type typ.  Fails the test if typ is not an interface.
 func stabilityFixtureInterfaceMethods(t *testing.T, typ reflect.Type) []string {
 	t.Helper()
 	if typ.Kind() != reflect.Interface {
@@ -96,9 +56,6 @@ func stabilityFixtureInterfaceMethods(t *testing.T, typ reflect.Type) []string {
 	return methods
 }
 
-// stabilityFixtureVisibleFields returns a sorted slice of exported field names
-// for the struct type typ.  Uses reflect.VisibleFields to include embedded
-// fields.  Fails the test if typ is not a struct.
 func stabilityFixtureVisibleFields(t *testing.T, typ reflect.Type) []string {
 	t.Helper()
 	if typ.Kind() != reflect.Struct {
@@ -114,10 +71,6 @@ func stabilityFixtureVisibleFields(t *testing.T, typ reflect.Type) []string {
 	return names
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Surface 1 — Handler interface (§6.1)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_HandlerInterface asserts that the Handler interface exposes
 // exactly the two methods declared in specs/handler-contract.md §6.1.
 //
@@ -127,9 +80,6 @@ func stabilityFixtureVisibleFields(t *testing.T, typ reflect.Type) []string {
 func TestStabilityHC053_HandlerInterface(t *testing.T) {
 	t.Parallel()
 
-	// Canonical method set from specs/handler-contract.md §6.1:
-	//   Launch(ctx, spec) -> (Session, error)
-	//   AgentType() -> String
 	wantMethods := []string{
 		"AgentType",
 		"Launch",
@@ -149,10 +99,6 @@ func TestStabilityHC053_HandlerInterface(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Surface 1 — Session interface (§6.1)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_SessionInterface asserts that the Session interface exposes
 // exactly the six methods declared in specs/handler-contract.md §6.1.
 //
@@ -161,13 +107,6 @@ func TestStabilityHC053_HandlerInterface(t *testing.T) {
 func TestStabilityHC053_SessionInterface(t *testing.T) {
 	t.Parallel()
 
-	// Canonical method set from specs/handler-contract.md §6.1:
-	//   ID() -> SessionID
-	//   SendInput(ctx, input) -> error
-	//   Attach(ctx) -> (io.Reader, error)
-	//   Kill(ctx) -> error
-	//   Wait(ctx) -> (Outcome, error)
-	//   LogLocation() -> String
 	wantMethods := []string{
 		"Attach",
 		"ID",
@@ -191,10 +130,6 @@ func TestStabilityHC053_SessionInterface(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Surface 2 — LaunchSpec record (§6.1)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_LaunchSpecFields asserts that LaunchSpec exposes exactly
 // the exported fields declared in specs/handler-contract.md §6.1 (RECORD
 // LaunchSpec).
@@ -206,17 +141,6 @@ func TestStabilityHC053_SessionInterface(t *testing.T) {
 func TestStabilityHC053_LaunchSpecFields(t *testing.T) {
 	t.Parallel()
 
-	// Canonical exported field set from specs/handler-contract.md §6.1 +
-	// current Go struct (launchspec_hc006.go).  Alphabetical order (sort.Strings).
-	// Required fields: RunID, WorkflowID, NodeID, AgentType, WorkspacePath,
-	//   RequiredSkills, SkillSearchPaths, Timeout, ProvisioningTimeout,
-	//   Budget, FreedomProfileRef, SchemaVersion.
-	// Optional fields: BeadID, SnapshotToken, WorkflowMode, Phase,
-	//   IterationCount, ClaudeSessionID.
-	//
-	// NOTE: The spec §6.1 also declares a ModelPreference optional field; it is
-	// not yet present in the Go struct (pending implementation).  Add
-	// "ModelPreference" to wantFields when that field lands.
 	wantFields := []string{
 		"AgentType",
 		"BeadID",
@@ -252,10 +176,6 @@ func TestStabilityHC053_LaunchSpecFields(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Surface 3 — Error taxonomy (§8)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_ErrorTaxonomySentinelCount asserts that exactly seven
 // sentinel error variables exist as declared in specs/handler-contract.md §6.1
 // and §8: five primary classes and two structural sub-sentinels.
@@ -265,7 +185,6 @@ func TestStabilityHC053_LaunchSpecFields(t *testing.T) {
 func TestStabilityHC053_ErrorTaxonomySentinelCount(t *testing.T) {
 	t.Parallel()
 
-	// Five primary classes declared in §8.
 	primaries := []struct {
 		name string
 		err  error
@@ -277,7 +196,6 @@ func TestStabilityHC053_ErrorTaxonomySentinelCount(t *testing.T) {
 		{"ErrBudget", handlercontract.ErrBudget},
 	}
 
-	// Two structural sub-sentinels declared in §8 (each wraps ErrStructural).
 	subSentinels := []struct {
 		name string
 		err  error
@@ -305,14 +223,12 @@ func TestStabilityHC053_ErrorTaxonomySentinelCount(t *testing.T) {
 		)
 	}
 
-	// Each primary sentinel must be non-nil.
 	for _, p := range primaries {
 		if p.err == nil {
 			t.Errorf("HC-053: primary sentinel %s is nil; want non-nil error variable", p.name)
 		}
 	}
 
-	// Each sub-sentinel must wrap ErrStructural.
 	for _, s := range subSentinels {
 		if s.err == nil {
 			t.Errorf("HC-053: sub-sentinel %s is nil; want non-nil error variable", s.name)
@@ -333,7 +249,6 @@ func TestStabilityHC053_ErrorTaxonomySentinelCount(t *testing.T) {
 func TestStabilityHC053_ErrorTaxonomyClassNames(t *testing.T) {
 	t.Parallel()
 
-	// Canonical class-name strings from specs/handler-contract.md §8.
 	wantClasses := map[error]string{
 		handlercontract.ErrTransient:     "transient",
 		handlercontract.ErrStructural:    "structural",
@@ -354,10 +269,6 @@ func TestStabilityHC053_ErrorTaxonomyClassNames(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Surface 4 — Emitted event set (§4.2.HC-007)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_ProgressMsgTypeSet asserts that exactly the progress-stream
 // message types declared in specs/handler-contract.md §4.2.HC-007 are present
 // as package-level constants.
@@ -368,10 +279,6 @@ func TestStabilityHC053_ErrorTaxonomyClassNames(t *testing.T) {
 func TestStabilityHC053_ProgressMsgTypeSet(t *testing.T) {
 	t.Parallel()
 
-	// Canonical emitted event type strings from §4.2.HC-007 and §6.4.
-	// These are the 12 handler-emitted progress-stream message types that the
-	// watcher translates to bus events, plus launch_initiated (relay-only per
-	// §4.10.HC-045b).  Sorted alphabetically.
 	wantTypes := []string{
 		"agent_completed",
 		"agent_failed",
@@ -388,7 +295,6 @@ func TestStabilityHC053_ProgressMsgTypeSet(t *testing.T) {
 		"skills_provisioned",
 	}
 
-	// Collect the package-level constant values via the exported symbols.
 	gotTypes := []string{
 		handlercontract.ProgressMsgTypeHandlerCapabilities,
 		handlercontract.ProgressMsgTypeAgentReady,
@@ -418,10 +324,6 @@ func TestStabilityHC053_ProgressMsgTypeSet(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Spec-corpus sensor — HC-053 requirement present in spec
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestStabilityHC053_SpecCorpusSensor verifies that the spec text contains the
 // HC-053 requirement identifier and its key stability clause.  A failure here
 // means the spec was edited in a way that silently removed or rewrote the
@@ -431,7 +333,6 @@ func TestStabilityHC053_SpecCorpusSensor(t *testing.T) {
 
 	spec := stabilityFixtureHCSpec(t)
 
-	// The requirement identifier must be present.
 	if !strings.Contains(spec, "HC-053") {
 		t.Error(
 			"HC-053 not found in specs/handler-contract.md; " +
@@ -439,7 +340,6 @@ func TestStabilityHC053_SpecCorpusSensor(t *testing.T) {
 		)
 	}
 
-	// The stability clause must be present (key phrase from the normative text).
 	const stabilityClause = "MUST remain stable across execution-shape evolution"
 	if !strings.Contains(spec, stabilityClause) {
 		t.Errorf(
@@ -449,7 +349,6 @@ func TestStabilityHC053_SpecCorpusSensor(t *testing.T) {
 		)
 	}
 
-	// The conformance-evidence citation must be present (§10.2).
 	const conformanceCitation = "HC-051 — HC-053 (modularity)"
 	if !strings.Contains(spec, conformanceCitation) {
 		t.Errorf(

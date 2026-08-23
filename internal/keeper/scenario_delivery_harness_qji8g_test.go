@@ -1,28 +1,5 @@
 package keeper_test
 
-// scenario_delivery_harness_qji8g_test.go — T9 MANDATORY scenario-test suite
-// (bead hk-keeper-delivery-scenario-tests-qji8g), HARNESS tier. Black-box
-// (package keeper_test) scenarios built on the mature keeper harnesses:
-//   - the offline reactive session fake (cycle_reactive_harness_test.go) for the
-//     late-handoff ABORT (b) and the FORCE-ACT never-idle cut (e);
-//   - the operator-attach Cycler harness (cycle_operator_attached_test.go) for the
-//     mid-wait operator re-check (d) adjunct;
-//   - the foreign-session watcher config (backstop_test.go) for the hard-ceiling
-//     backstop (e).
-//
-// No build tag — these run under `go test ./internal/keeper/`, deterministically.
-//
-// Scenario→function map:
-//	(b) late-handoff after 300s (T5/T6) →
-//	     TestScenario_LateHandoffAborts_NoClear_qji8g          (real-clock harness abort)
-//	     TestScenario_LateHandoff300sFakeClock_Aborts_qji8g    (virtual-time 300s window)
-//	(d) operator-present misread cycler adjunct (T8) →
-//	     TestScenario_OperatorAttachesMidWait_HoldsClear_qji8g
-//	(e) FORCE-ACT still cuts a never-idle session (SK-028 / NG1) →
-//	     TestScenario_ForceAct_NeverIdleStillCut_qji8g
-//	     TestScenario_HardCeilingBackstop_NotWeakened_qji8g
-//	     TestScenario_NoThresholdConstantChanged_qji8g
-
 import (
 	"context"
 	"encoding/json"
@@ -52,8 +29,6 @@ func TestScenario_HandoffObservationWake_ParksWithoutClear(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=false: the request reaches the session, but no marker arrives
-	// during the first observation window.
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 
 	cycler := newReactiveCycler(
@@ -67,7 +42,6 @@ func TestScenario_HandoffObservationWake_ParksWithoutClear(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// SK-INV-001: /clear must NEVER be injected on an unconfirmed handoff.
 	if rs.sawClear() {
 		t.Fatal("/clear was injected without a confirmed handoff")
 	}
@@ -82,9 +56,6 @@ func TestScenario_HandoffObservationWake_ParksWithoutClear(t *testing.T) {
 	if pp.Reason != "handoff_pending" {
 		t.Errorf("cycle_parked.reason = %q; want handoff_pending", pp.Reason)
 	}
-	// The park is a SUSPENSION, not a terminal. It carries the SAME cycle id,
-	// and that is what lets a later handoff resume THIS request instead of
-	// opening a new one.
 	if pp.CycleID != cycleID {
 		t.Errorf("cycle_parked.cycle_id = %q; want %q (a park must keep the request id)", pp.CycleID, cycleID)
 	}
@@ -126,9 +97,6 @@ func TestScenario_LateMarkedHandoff_ResumesOriginalRequest(t *testing.T) {
 		t.Fatalf("cycle_complete count = %d; want 1", len(completed))
 	}
 
-	// ONE request was suspended and then resumed, not two requests. The first
-	// pass parks with the resumable reason, and the completion carries the same
-	// cycle id the park carried.
 	parked := em.EventsOfType(core.EventTypeSessionKeeperCycleParked)
 	if len(parked) != 1 {
 		t.Fatalf("cycle_parked count = %d; want 1 (the first pass must suspend)", len(parked))
@@ -205,8 +173,6 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 			&keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1})
 	}()
 
-	// Wait for the drive loop to arm its detection + deadline tickers, then jump
-	// virtual time past the 300s handoff window so the timeout edge trips.
 	clock.BlockUntil(2)
 	clock.Advance(keeper.DefaultHandoffTimeout + time.Second)
 
@@ -316,8 +282,6 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 	var mu sync.Mutex
 	var managedBinding string
 
-	// writeNonce=true so /clear is reachable (proving the nonce gate is NOT skipped
-	// on the force path); flipOnClear=true so /clear causally rotates S1→S2.
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
 	cfgOverrides := testCycleOverrides{CycleIDs:
 
@@ -349,17 +313,14 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		}}
 	})
 
-	// Tokens well above the default ForceActAbsTokens (240K) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// The never-idle session was cut anyway: the full cycle completed.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); n != 1 {
 		t.Fatalf("want 1 cycle_complete (never-idle session must still be cut on the force path); got %d", n)
 	}
-	// /clear was STILL gated on the nonce (ran only because the handoff confirmed).
 	if !rs.sawClear() {
 		t.Fatal("/clear never injected on the force path — nonce gate may have been skipped")
 	}
@@ -444,11 +405,9 @@ func TestScenario_NoThresholdConstantChanged_qji8g(t *testing.T) {
 			t.Errorf("%s = %d; want %d (threshold constant changed — SK-028 violated)", tc.name, tc.got, tc.want)
 		}
 	}
-	// The first checkpoint trial derives the hard band as 220K.
 	if got := keeper.DefaultActAbsTokens + keeper.DefaultForceActAbsOffset; got != 220_000 {
 		t.Errorf("derived force_act = %d; want 220000", got)
 	}
-	// The 300s handoff window (hk-4xni9 K2) and 10s clear-settle are unchanged.
 	if keeper.DefaultHandoffTimeout != 300*time.Second {
 		t.Errorf("DefaultHandoffTimeout = %v; want 300s", keeper.DefaultHandoffTimeout)
 	}

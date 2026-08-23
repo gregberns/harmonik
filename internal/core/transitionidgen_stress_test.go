@@ -1,18 +1,5 @@
 package core
 
-// Stress tests for TransitionIDGenerator per execution-model.md §4.4 EM-018a.
-//
-// Coverage matrix:
-//
-//	TestTransitionID_IntraProcessMonotonicity  — 100 000-iteration tight-loop; EM-018a
-//	TestTransitionID_SameMillisecondLoad       — same-ms injection at stress volume; EM-018a tiebreaker
-//	TestTransitionID_ConcurrentMonotonicity    — N goroutines × M calls; no duplicates; EM-018a
-//	TestTransitionID_CrossRestart              — generator state-rewind simulating daemon restart; EM-018a
-//	TestTransitionID_ClockRegressionStress     — repeated rollback injections; EM-018a RFC 9562 §6.2 method 1
-//	TestTransitionID_ShapeConformance          — every output is a valid UUIDv7; EM-018a
-//
-// Helper prefix: transitionIDFixture (per implementer-protocol.md helper-prefix discipline, bead hk-b3f.23).
-
 import (
 	"bytes"
 	"fmt"
@@ -24,7 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// transitionIDFixtureLT returns true when a is strictly less than b as big-endian 128-bit unsigned integers.
 func transitionIDFixtureLT(a, b uuid.UUID) bool {
 	for i := 0; i < 16; i++ {
 		if a[i] < b[i] {
@@ -37,9 +23,6 @@ func transitionIDFixtureLT(a, b uuid.UUID) bool {
 	return false // equal
 }
 
-// transitionIDFixtureSortAndDedup sorts ids in-place (lexicographic) and returns the first
-// pair of indices where ids[i] >= ids[i+1] after sorting; (-1, -1) means all strictly
-// increasing. Used by the concurrent test to report collision context.
 func transitionIDFixtureSortAndDedup(ids []TransitionID) (lo, hi int) {
 	sort.Slice(ids, func(i, j int) bool {
 		ui := uuid.UUID(ids[i])
@@ -201,7 +184,6 @@ func TestTransitionID_ConcurrentMonotonicity(t *testing.T) {
 //
 // Spec: execution-model.md §4.4 EM-018a.
 func TestTransitionID_CrossRestart(t *testing.T) {
-	// Phase 1: pre-restart process — generate a few IDs.
 	preRestart := NewTransitionIDGenerator()
 	var hwm TransitionID
 	for i := 0; i < 10; i++ {
@@ -212,16 +194,11 @@ func TestTransitionID_CrossRestart(t *testing.T) {
 		hwm = id
 	}
 
-	// Phase 2: simulate daemon restart.
-	// Build a new generator seeded with the HWM (as a daemon startup would do).
-	// The generator's `last` field is the mechanism: set it to the HWM so that
-	// any fresh UUID that is not strictly greater triggers the increment path.
 	postRestart := &TransitionIDGenerator{
 		last: uuid.UUID(hwm),
 		// Inject a newV7 that returns a value strictly less than the HWM
 		// (simulating NTP regression or VM pause/resume post-restart).
 		newV7: func() (uuid.UUID, error) {
-			// Decrement the HWM by 1 to produce a "regressed" clock value.
 			regressed := uuid.UUID(hwm)
 			for i := 15; i >= 0; i-- {
 				if regressed[i] > 0 {
@@ -255,15 +232,11 @@ func TestTransitionID_CrossRestart(t *testing.T) {
 func TestTransitionID_ClockRegressionStress(t *testing.T) {
 	const n = 10_000
 
-	// Seed the generator with a known starting value.
 	seed, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("EM-018a clock-regression stress: uuid.NewV7() seed: %v", err)
 	}
 
-	// callCount tracks how many times the injected newV7 has been called.
-	// On call k, return seed decremented by k so the clock always appears to
-	// roll back relative to the current last value.
 	var callCount int
 	var mu sync.Mutex
 
@@ -273,8 +246,6 @@ func TestTransitionID_ClockRegressionStress(t *testing.T) {
 			k := callCount
 			callCount++
 			mu.Unlock()
-			// Return seed - (k+1), which is always strictly less than seed,
-			// ensuring the clock regression path fires on every single call.
 			v := seed
 			for sub := k + 1; sub > 0; sub-- {
 				for i := 15; i >= 0; i-- {

@@ -1,15 +1,5 @@
 package daemon
 
-// dashboardtypes.go — types for the DashboardSnapshot (hk-2exz9).
-//
-// DashboardSnapshot is a read-time projection: it joins the live StateSnapshot
-// with captain-curated planning files (dashboard.json, lanes.json), windowed
-// session-data.jsonl throughput, open decisions, and active stall signals.
-// No new persisted store — the durable substrate is the files that already exist.
-//
-// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §2.
-// Bead ref: hk-2exz9.
-
 // DashboardSnapshot is the top-level output of `harmonik dashboard [--json]`.
 type DashboardSnapshot struct {
 	SchemaVersion int              `json:"schema_version"` // always 1
@@ -137,7 +127,6 @@ type DashOutcomeStats struct {
 	CostUSD             *float64 `json:"cost_usd,omitempty"`
 }
 
-// lanesFile is the on-disk shape of .harmonik/context/lanes.json.
 type lanesFile struct {
 	SchemaVersion int        `json:"schema_version"`
 	Updated       string     `json:"updated,omitempty"`

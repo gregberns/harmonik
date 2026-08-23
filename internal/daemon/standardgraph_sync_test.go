@@ -30,11 +30,9 @@ import (
 //	invalid embedded bytes → loadStandardGraph fails   → workloop fails the run
 //	                                                     (NEVER a silent single)
 func TestStandardBeadDotLoadFailureReturnsError(t *testing.T) {
-	// Save the real embedded bytes so we can restore them after the test.
 	orig := standardBeadDotSrc
 	t.Cleanup(func() { standardBeadDotSrc = orig })
 
-	// Corrupt the embedded bytes — any invalid DOT content is sufficient.
 	standardBeadDotSrc = []byte("this is not valid DOT graph syntax #@!")
 
 	_, err := loadStandardGraph(nil)
@@ -55,12 +53,10 @@ func TestStandardBeadDotLoadFailureReturnsError(t *testing.T) {
 // and stays green while the daemon keeps running the stale embedded copy. That exact
 // drift was caught in hk-u830m review; this test makes it impossible to reintroduce.
 func TestStandardBeadDotEmbedValidAndInSync(t *testing.T) {
-	// (1) The embedded graph must parse and validate — it is what DOT-mode dispatch runs.
 	if _, err := loadStandardGraph(nil); err != nil {
 		t.Fatalf("embedded standard-bead.dot failed to parse/validate: %v", err)
 	}
 
-	// (2) Embedded copy must match the canonical spec byte-for-byte.
 	specPath := filepath.Join("..", "..", "specs", "examples", "standard-bead.dot")
 	specBytes, err := os.ReadFile(specPath)
 	if err != nil {

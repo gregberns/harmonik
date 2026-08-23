@@ -48,17 +48,14 @@ const DefaultTwinDirName = "twins"
 // function performs no filesystem checks — existence verification is a
 // launch-time concern per HC-INV-005.
 func ResolveTwinSearchPath(cliOverride, repoRoot string) string {
-	// (i) CLI flag wins.
 	if cliOverride != "" {
 		return cliOverride
 	}
 
-	// (ii) Environment variable override.
 	if envVal := os.Getenv(EnvTwinSearchPath); envVal != "" {
 		return envVal
 	}
 
-	// (iii) In-tree default: <repo-root>/twins/.
 	return filepath.Join(repoRoot, DefaultTwinDirName)
 }
 
@@ -103,21 +100,15 @@ func ResolveLaunchPath(repoRoot, binaryRef string, systemHandler bool) (string, 
 	}
 
 	if systemHandler {
-		// Absolute path already provided by the operator — honour it directly.
 		if filepath.IsAbs(binaryRef) {
 			return binaryRef, nil
 		}
-		// Bare name (no path separator): PATH lookup is permitted for system handlers.
 		if !strings.ContainsRune(binaryRef, '/') {
 			return exec.LookPath(binaryRef)
 		}
-		// Relative path with separators for a system handler: treat the same as
-		// a repo-relative path (operator chose to pin a relative location).
 		return filepath.Join(repoRoot, binaryRef), nil
 	}
 
-	// Non-system handler: PATH lookup is NEVER permitted.
-	// An absolute binaryRef would bypass repo-relative resolution — reject it.
 	if filepath.IsAbs(binaryRef) {
 		return "", ErrLaunchPathMissing
 	}

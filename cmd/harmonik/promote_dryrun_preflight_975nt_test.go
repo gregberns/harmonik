@@ -1,23 +1,5 @@
 package main
 
-// promote_dryrun_preflight_975nt_test.go — `promote --dry-run` must depend on
-// its inputs.
-//
-// The defect (hk-promote-dryrun-validates-nothing-975nt): the dry run printed
-// the same four-line plan for a commit that does not exist, for a branch that
-// does not exist, and for a real promotion. It exited 0 every time. A command
-// that cannot fail cannot answer the question an operator runs it to answer,
-// so the operator learned the inputs were wrong during the real promotion.
-//
-// These tests drive the real entry point against a real git repository with a
-// real bare origin. They cover the three cases that matter together: a commit
-// that does not resolve, a branch that is absent on origin, and a valid
-// promotion that still passes. The last one is not a formality. A fix that
-// refused everything would pass the first two and be worse than the defect.
-//
-// Two more tests hold the boundaries: the dry run writes nothing, and a
-// promotion that policy refuses keeps its own message and its own exit code.
-
 import (
 	"io"
 	"os"
@@ -27,9 +9,6 @@ import (
 	"testing"
 )
 
-// promoteDryRunRepo builds a work repository with one commit on main and a bare
-// origin that holds the same branch. It returns the work directory and the SHA
-// of that commit.
 func promoteDryRunRepo(t *testing.T) (workDir, sha string) {
 	t.Helper()
 
@@ -69,8 +48,6 @@ func promoteDryRunRepo(t *testing.T) (workDir, sha string) {
 	return workDir, git(workDir, "rev-parse", "HEAD")
 }
 
-// capturePromoteIO runs the promote subcommand with os.Stdout and os.Stderr
-// redirected, and returns everything both streams received plus the exit code.
 func capturePromoteIO(t *testing.T, args []string) (output string, exitCode int) {
 	t.Helper()
 
@@ -144,7 +121,6 @@ func TestPromoteDryRun_RefusesInputsThatDoNotExist(t *testing.T) {
 			if !strings.Contains(output, tc.wantText) {
 				t.Errorf("promote --dry-run did not report the missing input.\nwant text: %s\ngot output:\n%s", tc.wantText, output)
 			}
-			// The plan describes work the promotion cannot start. It must not print.
 			if strings.Contains(output, "would push") {
 				t.Errorf("promote --dry-run printed the push plan for an input that does not exist.\noutput:\n%s", output)
 			}
@@ -188,10 +164,6 @@ func TestPromoteDryRun_WritesNothing(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 
-	// Drop the remote-tracking ref the fixture push created. A `git fetch`
-	// puts it back, so its absence at the end is the evidence that the dry run
-	// did not fetch. Without this step a fetch changes no ref and the check
-	// below cannot see it.
 	gitOut("update-ref", "-d", "refs/remotes/origin/main")
 
 	refsBefore := gitOut("show-ref")

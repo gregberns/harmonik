@@ -1,15 +1,5 @@
 package daemon
 
-// stategather.go — live StateSnapshot builder for `harmonik state` (hk-gv04).
-//
-// LiveStateBuilder assembles a StateSnapshot from in-daemon memory sources
-// (RunRegistry, QueueStore, DrainDetector) plus disk reads (crew registry,
-// keeper .ctx/.sid files, sleep markers, tmux probe). Called by the "state"
-// socket RPC handler; the disk-only fallback lives in statedisk.go.
-//
-// Spec ref: specs/system-state.md §4 (SS-001..SS-015, SS-002fold).
-// Bead ref: hk-gv04 (P2-a: harmonik state aggregator command).
-
 import (
 	"context"
 	"encoding/json"
@@ -31,9 +21,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// fallbackWindowSize is used when the keeper gauge reports WindowSize==0.
-// This matches keeper.defaultFallbackWindowSize but lives here independently
-// to avoid importing it (it is package-private in keeper/thresholds.go).
 const fallbackWindowSize int64 = 200_000
 
 // LiveStateBuilder gathers a StateSnapshot from in-daemon memory + disk.
@@ -333,11 +320,6 @@ func (b *LiveStateBuilder) buildCognition(agent, liveSID, declaredSID string, no
 	return cog
 }
 
-// buildCognitionSignals constructs TooBig and ContextStatic signals from the
-// keeper config (SS-012). Fields whose config knob is unset are emitted as null
-// (dark-when-unset per SS-011 / no-hardcoded-keeper-thresholds mandate).
-// tokens is the current gauge token count; gaugeAgeSeconds is already computed.
-// LoopDetected always stays nil (SS-013 DEFERRED in v1.0).
 func (b *LiveStateBuilder) buildCognitionSignals(tokens int64, gaugeAgeSeconds int) CognitionSignals {
 	return CognitionSignals{
 		TooBig:        b.buildTooBigSignal(tokens),
@@ -346,11 +328,6 @@ func (b *LiveStateBuilder) buildCognitionSignals(tokens int64, gaugeAgeSeconds i
 	}
 }
 
-// buildTooBigSignal computes the "context over band" signal (SS-012).
-// Threshold is null when warn_abs_tokens is not configured; Band is the highest
-// band exceeded ("warn"|"act"|"force_act") or "warn" as the reference level
-// when Tripped==false. The ThresholdRef always points at the warn knob because
-// that is the first-to-trip band and the spec example (SS-011) uses it.
 func (b *LiveStateBuilder) buildTooBigSignal(tokens int64) TooBigSignal {
 	warnAbs := b.kconfig.WarnAbsTokens // 0 = not configured
 	actAbs := b.kconfig.ActAbsTokens
@@ -361,7 +338,6 @@ func (b *LiveStateBuilder) buildTooBigSignal(tokens int64) TooBigSignal {
 		Value:        tokens,
 	}
 	if warnAbs <= 0 {
-		// Warn threshold not configured — all dependent fields stay dark (null/zero).
 		return sig
 	}
 
@@ -381,10 +357,6 @@ func (b *LiveStateBuilder) buildTooBigSignal(tokens int64) TooBigSignal {
 	return sig
 }
 
-// buildContextStaticSignal constructs the "token-not-changing" raw-facts signal
-// (SS-012). Reports facts only — never a verdict. StalenessS is null when
-// keeper.staleness is not configured; StuckMinIntervals and Flat stay null
-// because stuck_min_intervals is not yet a KeeperConfig knob (dark-when-unset).
 func (b *LiveStateBuilder) buildContextStaticSignal(gaugeAgeSeconds int) ContextStaticSignal {
 	sig := ContextStaticSignal{
 		GaugeAgeSeconds:          gaugeAgeSeconds,
@@ -409,8 +381,6 @@ func absentCognitionSignals() CognitionSignals {
 	}
 }
 
-// scanSleepMarkerSIDs globs .harmonik/.sleeping.* and returns the lowercased
-// set of session_id values in those files. Best-effort.
 func scanSleepMarkerSIDs(projectDir string) map[string]bool {
 	dir := filepath.Join(projectDir, sleepingMarkerDir)
 	pattern := filepath.Join(dir, onDiskSleepMarkerPrefix+"*")
@@ -438,10 +408,6 @@ func scanSleepMarkerSIDs(projectDir string) map[string]bool {
 	}
 	return sids
 }
-
-// ---------------------------------------------------------------------------
-// RollUpLabel — four-label fold (specs/system-state.md §4.2)
-// ---------------------------------------------------------------------------
 
 // RollUpLabel computes the fleet activity label.
 // Priority: PROCESSING > DRAINING > WAITING > INACTIVE. Spec: SS-003..006.
@@ -505,9 +471,6 @@ func sessionsAlive(sessions []StateSession) bool {
 	return false
 }
 
-// hasLatentWork is HAS_LATENT_WORK per §4.2. Thin shell: the nil guard stays
-// here (a nil FleetFacts is not latent work); the DECISION is the pure
-// policy.HasLatentWork over the projected snapshot (M5 slice 2 sub-slice B2).
 func hasLatentWork(facts *FleetFacts) bool {
 	if facts == nil {
 		return false
@@ -515,7 +478,6 @@ func hasLatentWork(facts *FleetFacts) bool {
 	return policy.HasLatentWork(drainSnapshot(facts))
 }
 
-// readPidFromFile reads the supervisor pidfile.
 func readPidFromFile(projectDir string) (int, error) {
 	pidFile := filepath.Join(projectDir, ".harmonik", "supervisor.pid")
 	data, err := os.ReadFile(pidFile) //nolint:gosec // G304: operator-controlled projectDir
@@ -529,7 +491,6 @@ func readPidFromFile(projectDir string) (int, error) {
 	return pid, nil
 }
 
-// readDirNames returns direct-child names of dir, or nil on error.
 func readDirNames(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

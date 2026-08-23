@@ -1,18 +1,5 @@
 package handler_test
 
-// launchspecdelivery_hc005_test.go — unit test for HC-005 LaunchSpec JSON
-// delivery to subprocess stdin via Handler.Launch (bead hk-keb6o).
-//
-// Helper prefix: keb6oFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-keb6o).
-//
-// Strategy: launch a sh -c child via NewSession directly (bypassing the
-// watcher) that reads its entire stdin and echoes the raw bytes to stdout.
-// The test verifies that the bytes round-trip to an equal LaunchSpec.
-//
-// A second test verifies that when HandlerSpec=nil the legacy path leaves
-// stdin open for manual SendInput calls.
-
 import (
 	"encoding/json"
 	"io"
@@ -29,9 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// keb6oFixtureHandlerSpec returns a valid handlercontract.LaunchSpec with all
-// required fields populated. This is the JSON payload the daemon delivers to
-// the subprocess stdin per HC-005.
 func keb6oFixtureHandlerSpec(t *testing.T) *handlercontract.LaunchSpec {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196f000-0000-7000-8000-000000aaaaaa"))
@@ -66,13 +50,11 @@ func TestSession_CloseStdin_SendInputThenClose(t *testing.T) {
 
 	hs := keb6oFixtureHandlerSpec(t)
 
-	// Encode the expected JSON independently.
 	expectedJSON, err := handlercontract.MarshalLaunchSpec(hs)
 	if err != nil {
 		t.Fatalf("MarshalLaunchSpec: %v", err)
 	}
 
-	// Use NewSession with 'cat' to verify SendInput + CloseStdin round-trip.
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", "cat")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	sess, err := handler.NewSession(t.Context(), cmd)
@@ -87,7 +69,6 @@ func TestSession_CloseStdin_SendInputThenClose(t *testing.T) {
 		t.Fatalf("CloseStdin: %v", err)
 	}
 
-	// Read everything the child echoed to stdout.
 	stdoutBytes, readErr := io.ReadAll(sess.Stdout())
 	if readErr != nil {
 		t.Fatalf("ReadAll stdout: %v", readErr)
@@ -96,13 +77,11 @@ func TestSession_CloseStdin_SendInputThenClose(t *testing.T) {
 		t.Errorf("Session.Wait: %v", err)
 	}
 
-	// The child (cat) echoes stdin to stdout verbatim. SendInput appends '\n'.
 	received := strings.TrimSpace(string(stdoutBytes))
 	if received == "" {
 		t.Fatal("child produced no stdout; CloseStdin may have been called before write")
 	}
 
-	// Round-trip: parse the received bytes and compare key fields.
 	var got handlercontract.LaunchSpec
 	if err := json.Unmarshal([]byte(received), &got); err != nil {
 		t.Fatalf("received stdin is not valid LaunchSpec JSON: %v\nraw: %q", err, received)
@@ -132,8 +111,6 @@ func TestHandler_Launch_HandlerSpecDeliveredViaLaunch(t *testing.T) {
 	dl := handlercontract.NoopWatcherDeadLetter{}
 	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
-	// Capture stdin to a temp file, emit a fixed agent_ready so the watcher
-	// exits cleanly, then exit.
 	tmpDir := t.TempDir()
 	stdinCapture := tmpDir + "/stdin.json"
 	childScript := `cat > "` + stdinCapture + `"; printf '{"type":"agent_ready"}\n'`
@@ -193,18 +170,6 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 	dl := handlercontract.NoopWatcherDeadLetter{}
 	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
-	// Child: read one line from stdin, write it to a temp file for the test to
-	// inspect, then emit a fixed agent_ready NDJSON so the watcher exits cleanly.
-	//
-	// The line is captured to a FILE rather than asserted by reading
-	// sess.Stdout() directly: Handler.Launch always wires sess.Stdout() to
-	// SpawnWatcher, and Session.Stdout() is a single-consumer stream ("Callers
-	// MUST NOT read from Stdout after passing it to SpawnWatcher"). A concurrent
-	// io.ReadAll(sess.Stdout()) in the test races the watcher's NDJSON read-loop
-	// for the same bytes; when the watcher wins, ReadAll returns empty and the
-	// assertion flakes (hk-88c29). Capturing stdin to a file is the same robust
-	// pattern used by TestHandler_Launch_HandlerSpecDeliveredViaLaunch above and
-	// is deterministic under -race.
 	tmpDir := t.TempDir()
 	lineCapture := tmpDir + "/line.txt"
 	childScript := `read line; printf '%s' "$line" > "` + lineCapture + `"; printf '{"type":"agent_ready"}\n'`
@@ -223,8 +188,6 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	// Send a line manually via SendInput; because HandlerSpec is nil, Launch did
-	// NOT close stdin, so the child's `read line` receives it.
 	if err := sess.SendInput(t.Context(), "manual-line"); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
@@ -265,10 +228,6 @@ func TestHandler_Launch_NilHandlerSpec_StdinDevNull_ClosesStdinImmediately(t *te
 	dl := handlercontract.NoopWatcherDeadLetter{}
 	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
-	// Child: `cat` on stdin blocks forever unless it observes EOF. If Launch
-	// failed to close stdin, this test would hang until t.Context() deadline;
-	// with the fix, cat sees EOF immediately and exits, then the child emits
-	// agent_ready.
 	tmpDir := t.TempDir()
 	childScript := `cat > /dev/null; printf '{"type":"agent_ready"}\n'`
 

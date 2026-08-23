@@ -2,15 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// budgetevents_hqwn59.go — event-bus payload types for §8.4 budget lifecycle
-// events covered by this implementer wave (hqwn59b):
-//   - budget_warning    (§8.4.1)
-//   - budget_accrual    (§8.4.2)
-//   - budget_exhausted  (§8.4.3)
-//
-// Spec ref: specs/event-model.md §8.4.
-// Bead refs: hk-hqwn.59.34, hk-hqwn.59.35, hk-hqwn.59.36.
-
 // BudgetWarningPayload is the typed event payload for the budget_warning event
 // (event-model.md §8.4.1).
 //

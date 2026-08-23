@@ -10,27 +10,6 @@ import (
 	"testing"
 )
 
-// version_verify_test.go — the meaning of `harmonik version --binary` is locked
-// down here.
-//
-// WHY THIS FILE EXISTS. Before hk-gate-clean-but-binary-dirty-7gwil this command
-// had no tests at all, while being the single authoritative answer to "which
-// commit is this binary". That bead was filed because the command returned exit
-// 3 for EVERY binary the documented assessor sequence produced, so it could
-// never return 0 and therefore verified nothing.
-//
-// The real fault was in the build harness (scripts/scratch-daemon.sh built after
-// `harmonik init` had rewritten tracked files, so Go stamped vcs.modified=true),
-// and scripts/scratch-daemon-provenance-test.sh is where that end-to-end claim is
-// proved. The tests here guard the OTHER direction: the obvious way to make a
-// failing provenance check "pass" is to stop letting it fail. A check that always
-// returns 0 is the same defect wearing the opposite sign, and it would be
-// invisible in every green gate afterwards.
-//
-// So: vcs.modified=true must keep producing contains-dirty and exit 3, exit 0
-// must stay reachable only from a clean ancestor build, and an unreadable
-// provenance must stay distinguishable from a decided verdict.
-
 // TestContainmentVerdict_DirtyIsNeverShipSafe pins the ancestry x cleanliness
 // table. The dirty-ancestor row is the load-bearing one: it is the row a
 // well-meaning "make the gate pass" change would flip to exit 0.

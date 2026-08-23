@@ -7,21 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// run.go — the PURE per-bead-run Run reactor (RSM-007/008/009, RSM-020..022;
-// runexec-design §4). It is the terminal spine: the launch→gate→merge→close
-// tail exists ONCE here (the four open-coded blocks + duplicated close ladder it
-// replaces collapse onto `finalizeClose` / `finalizeReopen`). Every behavioral
-// divergence among the former blocks survives as an explicit RunConfig parameter
-// (RSM-020); all observable summary/reason strings are preserved as data.
-//
-// States (RSM-007):
-//   Resolving → Provisioning → Dispatching → [Guarding] → Gating → Merging →
-//     Finalizing → Done{closed | reopened}
-// Guarding (RSM-008) is entered ONLY by the single-shot path (post-exit escape +
-// no-commit guards); review-loop / DOT skip it. Every pre-launch failure routes
-// to Finalizing(reopen) so the spine — not scattered returns — owns every
-// reopen/emit pairing (RSM-009). stepRun is TOTAL and pure (RSM-001).
-
 // RunPhase is the Run machine's state (RSM-007).
 type RunPhase string
 
@@ -103,10 +88,6 @@ type RunState struct {
 	Draining bool
 }
 
-// The shutdown-drain terminal strings (RSM-021: background context, no gate, no
-// pre-merge-sync, no outcome emission, direct run-completed emission, and the
-// requeue-recovery reopen reason — preserved as data from the pre-RT9 drain
-// block, workloop.go hk-dnrg / hk-ly0hg Fix-1).
 const (
 	drainCloseSummary     = "shutdown-drain: committed work merged"
 	drainTransientSummary = "close-transient-merged (shutdown-drain)"
@@ -144,7 +125,6 @@ func (m *Run) Run(ctx context.Context, src substrate.EventSource[Event], eff sub
 	return substrate.Run(ctx, src, m.Step, eff)
 }
 
-// stepRun is the total pure transition. Done has no outgoing edges (RSM-003).
 func stepRun(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch s.Phase {
 	case RunResolving:
@@ -166,9 +146,6 @@ func stepRun(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	}
 }
 
-// stepRunResolving: the shell runs prepareRun guards sequentially (RF P2–P4). A
-// guard pass (EvStartRun) provisions the worktree; any guard failure feeds
-// EvProvisionFailed and routes to the reopen spine (RSM-009).
 func stepRunResolving(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
 	case EvStartRun:
@@ -176,15 +153,12 @@ func stepRunResolving(cfg RunConfig, s RunState, ev Event) (RunState, []Action) 
 		s.Mode = ev.Mode
 		return s, []Action{{Kind: ActCreateWorktree}}
 	case EvProvisionFailed:
-		// RSM-032: the interpolated guard/provisioning strings ride the event.
 		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Detail)
 	default:
 		return s, nil
 	}
 }
 
-// stepRunProvisioning: worktree creation resolves to run_started (RF :3742
-// position preserved) or the reopen spine.
 func stepRunProvisioning(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
 	case EvProvisioned:
@@ -197,20 +171,11 @@ func stepRunProvisioning(cfg RunConfig, s RunState, ev Event) (RunState, []Actio
 	}
 }
 
-// stepRunDispatching: the workflow-mode fork drives one or more Dispatch
-// instances shell-side; the Run machine consumes their terminal as a mode
-// outcome (review-loop/DOT) or a single-mode dispatch terminal → Guarding.
 func stepRunDispatching(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
 	case EvModeOutcome:
 		return stepRunModeOutcome(cfg, s, ev)
 	case EvAgentCompleted, EvCleanExit:
-		// Single-mode dispatch terminals → the escape + no-commit guards run in
-		// Guarding, mutually exclusive with the merge section (RSM-008). The path
-		// label + event-carried close summary are latched here (RSM-033): the
-		// downstream merge/close strings are parameterized by which terminal fired.
-		// A payload-less event (legacy/RT6 feed) latches nothing, keeping the
-		// config-fallback strings — the single-mode shell always sends the payload.
 		if ev.Detail != "" {
 			if ev.Kind == EvAgentCompleted {
 				s.PathLabel = "agent_completed"
@@ -223,13 +188,6 @@ func stepRunDispatching(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		s.Phase = RunGuarding
 		return s, []Action{{Kind: ActCheckEscape}}
 	case EvShutdownDrain:
-		// RSM-021: the shutdown-drain terminal edge — background context, no gate,
-		// direct submit. The submit effector (runloop.drainMergeHook) synchronizes
-		// the run branch before it merges, which RSM-021 requires, and reports a
-		// sync failure as a fatal merge result. An empty WorktreeAheadSHA means no
-		// commit landed (or the HEAD probe failed): reopen for re-dispatch with
-		// the requeue-recovery reason and NO run terminal (QM-002a reverts the
-		// item to pending at next startup; hk-ly0hg Fix-1).
 		if ev.WorktreeAheadSHA == "" {
 			return drainReopen(s)
 		}
@@ -241,15 +199,9 @@ func stepRunDispatching(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 	}
 }
 
-// stepRunModeOutcome routes a review-loop / DOT sub-driver return (RF §3 table).
 func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.ModeOutcome {
 	case ModeSuccess:
-		// RT9 (RSM-020/033): a mode success latches its path label (the
-		// merge-window failure strings are label-parameterized: "review-loop" /
-		// "dot") and its event-carried close-success terminal summary (the
-		// sub-driver's dynamic summary). Payload-less events (RT6 feeds) latch
-		// nothing — the config-fallback strings are unchanged.
 		if ev.PathLabel != "" {
 			s.PathLabel = ev.PathLabel
 		}
@@ -259,12 +211,6 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		s.Phase = RunGating
 		return s, []Action{{Kind: ActRunGate}}
 	case ModeSubsumed, ModeNoChange:
-		// RSM-035: a subsumed close with the emit-approved flag carries its close
-		// summary on the event and latches a path label so a BrUnavailable close
-		// reproduces the transient string — "noChange-subsumed" for the
-		// single-mode path, event-overridden for DOT ("dot noChange-subsumed",
-		// RT9). Without the flag (DOT subsumed / no-change legacy feed) the RT6
-		// no-outcome close is unchanged.
 		if ev.ModeOutcome == ModeSubsumed && ev.EmitOutcome {
 			label := ev.PathLabel
 			if label == "" {
@@ -276,11 +222,6 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		}
 		return finalizeClose(cfg, s, cfg.NoMergeCloseSummary, cfg.BrUnavailableSummary, false)
 	case ModeBudget:
-		// Budget policy (shell-computed): close-needs-attention vs reopen — the
-		// CHOICE is the machine's (runexec-design §7 note 4). The needs-attention
-		// ladder (RT9, parity with the pre-RT9 hk-c1ah6 block): rejected outcome
-		// → close(needsAttention) → run_failed with the exhausted summary. It
-		// deliberately does NOT ride the approved close ladder.
 		if ev.NeedsAttention {
 			s.Phase = RunFinalizing
 			s.FinalizeMode = FinalizeClose
@@ -293,13 +234,10 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		}
 		return finalizeReopen(cfg, s, nil, "", "")
 	default: // ModeFailure
-		// RSM-031/032: the shell-classified failure strings ride the event.
 		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Detail)
 	}
 }
 
-// stepRunGuarding: the single-shot post-exit guard (RSM-008). A guard failure
-// routes to the reopen spine; a pass proceeds to Gating.
 func stepRunGuarding(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
 	case EvNoCommitGuardReopen:
@@ -312,17 +250,12 @@ func stepRunGuarding(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	}
 }
 
-// stepRunGating: the scenario/DOT gate result.
 func stepRunGating(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
 	case EvGatePassed:
 		s.Phase = RunMerging
 		return s, []Action{{Kind: ActPrepareMerge}}
 	case EvGateFailed:
-		// RSM-034: an event-classified gate failure pairs an
-		// outcome_emitted=rejected prefix with the reopen (the shell resolves the
-		// classified reason into the emission payload). Empty-reason behavior is
-		// the RT6 config fallback, unchanged.
 		if ev.Reason != "" {
 			prefix := []Action{{Kind: ActEmit, Type: core.EventTypeOutcomeEmitted, Detail: "rejected"}}
 			return finalizeReopen(cfg, s, prefix, ev.Reason, ev.Reason)
@@ -333,15 +266,10 @@ func stepRunGating(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	}
 }
 
-// stepRunMerging: the merge critical-section result, with the FIFO merge-retry
-// budget (RSM-019) and the DOT already-approved-on-main carve-out (RF :4138).
 func stepRunMerging(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	if ev.Kind != EvMergeResult {
 		return s, nil
 	}
-	// Drain batch (RSM-021): merged → the drain close ladder (no outcome
-	// emission, the drain summaries); any failure → the requeue-recovery reopen
-	// with NO run terminal (parity with the pre-RT9 hk-dnrg drain block).
 	if s.Draining {
 		switch ev.Merge {
 		case MergeSuccess, MergeNoChange:
@@ -369,16 +297,8 @@ func stepRunMerging(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	}
 }
 
-// mergeExhaustedOrFatal handles an exhausted-retryable or fatal merge: the DOT
-// already-approved-on-main carve-out closes (RF :4138–:4151); otherwise the run
-// emits a rejected outcome, reopens, and fails (RSM-019).
 func mergeExhaustedOrFatal(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	if ev.AlreadyApprovedOnMain {
-		// RT9 parity fix: the pre-RT9 DOT carve-out falls through to the SAME
-		// approved close ladder as a successful merge (workloop.go pre-RT9
-		// :4206–:4217 skips only the reopen; outcome_emitted=approved is still
-		// emitted). cfg.EmitOutcome — not a hardcoded false — preserves that
-		// stream (RSM-020: all observable strings preserved).
 		return finalizeClose(cfg, s, cfg.CloseSummary, mergeCloseTransient(cfg, s), cfg.EmitOutcome)
 	}
 	prefix := []Action{{Kind: ActEmit, Type: core.EventTypeOutcomeEmitted, Detail: "rejected"}}
@@ -386,11 +306,6 @@ func mergeExhaustedOrFatal(cfg RunConfig, s RunState, ev Event) (RunState, []Act
 	return finalizeReopen(cfg, s, prefix, reason, summary)
 }
 
-// mergeFailureStrings composes the label-parameterized single-mode merge-window
-// failure strings (RSM-033; design-note rows 5–8) — pure string composition of
-// preserved templates (RSM-020). Without a latched path label (review-loop/DOT,
-// not yet re-driven) it returns empty strings so finalizeReopen keeps the RT6
-// config fallback.
 func mergeFailureStrings(s RunState, ev Event) (reason, summary string) {
 	if s.PathLabel == "" {
 		return "", ""
@@ -403,17 +318,10 @@ func mergeFailureStrings(s RunState, ev Event) (reason, summary string) {
 		"merge-failed (" + s.PathLabel + "): " + ev.MergeReason
 }
 
-// stepRunFinalizing: the close ladder's second half — the LedgerPort close
-// return (RSM-020). BrUnavailable preserves the success-transient string
-// (RF §6). Reopen never rests here (finalizeReopen goes straight to Done).
 func stepRunFinalizing(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	if ev.Kind != EvCloseResult {
 		return s, nil
 	}
-	// Needs-attention close ladder (RT9, hk-c1ah6): the run terminal is ALWAYS
-	// run_failed with the exhausted summary; a transient BrUnavailable leaves the
-	// bead in_progress for BI-031 recovery (no reopen, hk-hypbi); a hard close
-	// error reopens with the exhausted summary before the terminal.
 	if s.AttentionClose {
 		switch ev.Close {
 		case CloseClosed, CloseBrUnavailable:
@@ -429,8 +337,6 @@ func stepRunFinalizing(cfg RunConfig, s RunState, ev Event) (RunState, []Action)
 			}
 		}
 	}
-	// Event/latch-first summaries (RSM-032/033); empty falls back to the RT6
-	// config strings so the legacy feeds are byte-unchanged.
 	switch ev.Close {
 	case CloseClosed:
 		if s.PathCloseSummary != "" {
@@ -450,11 +356,6 @@ func stepRunFinalizing(cfg RunConfig, s RunState, ev Event) (RunState, []Action)
 	}
 }
 
-// finalizeClose enters the close ladder: emit the approved outcome (when the
-// mode emits one) then request the bead close, resting in Finalizing until the
-// EvCloseResult lands. This is the ONE close-ladder tail (RSM-020). transient
-// is the exact BrUnavailable close-transient string for this ladder (latched
-// into state; RSM-020 string preservation).
 func finalizeClose(_ RunConfig, s RunState, summary, transient string, emitOutcome bool) (RunState, []Action) {
 	s.Phase = RunFinalizing
 	s.FinalizeMode = FinalizeClose
@@ -467,10 +368,6 @@ func finalizeClose(_ RunConfig, s RunState, summary, transient string, emitOutco
 	return s, actions
 }
 
-// mergeCloseTransient resolves the BrUnavailable transient string for a
-// merge-window close: the mode-level config override when set (review-loop
-// "…(review-loop APPROVE)", DOT "…(dot success)"), else the single-mode
-// path-label composition, else the RT6 config fallback.
 func mergeCloseTransient(cfg RunConfig, s RunState) string {
 	if s.SingleShotLabel && s.PathLabel != "" {
 		return "close-transient-merged (" + s.PathLabel + ")"
@@ -478,9 +375,6 @@ func mergeCloseTransient(cfg RunConfig, s RunState) string {
 	return cfg.BrUnavailableSummary
 }
 
-// drainReopen is the shutdown-drain reopen edge (RSM-021): reopen with the
-// requeue-recovery reason and NO run terminal — the bead re-enters the ready
-// queue at next startup; a run_failed here would falsely record the outcome.
 func drainReopen(s RunState) (RunState, []Action) {
 	s.Phase = RunDone
 	s.FinalizeMode = FinalizeReopen
@@ -490,8 +384,6 @@ func drainReopen(s RunState) (RunState, []Action) {
 	return s, []Action{{Kind: ActReopenBead, Reason: drainRequeueReason}}
 }
 
-// doneClosed lands the closed terminal with the run-completed emission (once,
-// RSM-020/022).
 func doneClosed(s RunState, summary string, success bool) (RunState, []Action) {
 	s.Phase = RunDone
 	s.FinalizeMode = FinalizeClose
@@ -500,14 +392,6 @@ func doneClosed(s RunState, summary string, success bool) (RunState, []Action) {
 	return s, []Action{{Kind: ActEmitRunTerminal, Success: success, Summary: summary}}
 }
 
-// finalizeReopen is the immediate reopen spine (RSM-009/022): the transition
-// into it owns the reopen + failed-terminal pairing, then lands Done{reopened}
-// in the same Step. Terminal reopens use a background context shell-side so a
-// mid-merge-cancelled reopen does not silently no-op (RSM-022). `prefix` carries
-// any path-specific emission (escaped-worktree, rejected outcome) that precedes
-// the reopen. `reason`/`summary` are the per-call event-sourced strings
-// (RSM-032); empty falls back to cfg.ReopenReason for BOTH, preserving the RT6
-// review-loop/DOT behavior.
 func finalizeReopen(cfg RunConfig, s RunState, prefix []Action, reason, summary string) (RunState, []Action) {
 	if reason == "" {
 		reason = cfg.ReopenReason

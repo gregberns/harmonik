@@ -2,16 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// cpevents_hqwn59.go — event-bus payload types for §8.2.9-§8.2.12 control-point
-// registration and evaluation lifecycle events:
-//   - control_points_registered            (§8.2.9)
-//   - control_points_registration_started  (§8.2.10)
-//   - verdict_envelope_mismatch            (§8.2.11)
-//   - policy_expression_exceeded_cost      (§8.2.12)
-//
-// Spec ref: specs/event-model.md §8.2.9-§8.2.12.
-// Bead refs: hk-hqwn.59.20, hk-hqwn.59.79, hk-hqwn.59.80, hk-hqwn.59.81.
-
 // ControlPointsRegisteredPayload is the typed event payload for the
 // control_points_registered event (event-model.md §8.2.9).
 //
@@ -322,7 +312,6 @@ func (p PolicyExpressionExceededCostPayload) Valid() bool {
 	if !p.IODeterminism.Valid() {
 		return false
 	}
-	// CP-034b consistency invariant: ast_steps => deterministic; wall_clock => best-effort.
 	switch p.BoundFired {
 	case PolicyCostBoundASTSteps:
 		if p.IODeterminism != PolicyEvalIODeterminismDeterministic {

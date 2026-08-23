@@ -1,16 +1,5 @@
 package daemon
 
-// commshandler_nbrmf.go — CommsSendHandler interface and implementation for the
-// comms-send socket op (agent-comms spec §2.1 C2, bead hk-nbrmf T4).
-//
-// The handler validates a comms-send request, emits an agent_message event via
-// the event bus, and returns the minted event_id in the SocketResponse. The bus
-// guarantees fsync-before-return for F-class events (agent_message is F-class per
-// busimpl.go:fsyncBoundaryEventTypes), satisfying the "no silent drops" goal (G2).
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1 C2.
-// Bead ref: hk-nbrmf.
-
 import (
 	"context"
 	"encoding/json"
@@ -20,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// commsSendBodySizeCap is the soft body size limit for comms-send (agent-comms
-// spec §1.1). Requests exceeding this limit are rejected; no event is emitted.
 const commsSendBodySizeCap = 8 * 1024 // 8 KiB
 
 // CommsSendHandler is the interface the daemon registers to process comms-send
@@ -66,17 +53,6 @@ type CommsSendResult struct {
 	EventID string `json:"event_id"`
 }
 
-// commsSendHandlerImpl is the concrete CommsSendHandler (and CommsPresenceHandler,
-// CommsRecvHandler) backed by a CommsMessageEmitter and an optional
-// CommsPresenceEmitter. All three interfaces are implemented on this single struct
-// so the daemon can pass one handler value to RunSocketListenerFull and the socket
-// op switch can type-assert to the appropriate sub-interface per op.
-//
-// pollCursorStore/liveCursorStore and eventsJSONLPath are set post-construction
-// via SetRecvDeps (commsrecvhandler_nnwaa.go) and enable the comms-recv op
-// (hk-nnwaa T8). The two stores are deliberately DISTINCT (hk-8xspi, B1): a
-// plain `comms recv --agent` poll and a `--follow`/`--wait` live session each
-// own an independent durable cursor so one never starves the other.
 type commsSendHandlerImpl struct {
 	emitter     eventbus.CommsMessageEmitter
 	presEmitter eventbus.CommsPresenceEmitter // nil when bus does not support presence
@@ -116,10 +92,6 @@ func NewCommsSendHandler(bus eventbus.EventBus) CommsSendHandler {
 	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
 		h.presEmitter = pe
 	}
-	// Wire the typed emitter for the hitl-decisions emit ops (K2). The real
-	// *busImpl satisfies eventbus.TypedEmitter via EmitTyped; test stubs that
-	// only implement CommsMessageEmitter leave decisionEmitter nil, so the
-	// decisions-* ops return an error response. Bead ref: hk-xz9.
 	if te, ok := bus.(eventbus.TypedEmitter); ok {
 		h.decisionEmitter = te
 	}
@@ -143,7 +115,6 @@ func (h *commsSendHandlerImpl) HandleCommsSend(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-send: decode request payload: %w", err)
 	}
 
-	// Validate required fields (agent-comms spec §1.1).
 	if req.From == "" {
 		return nil, fmt.Errorf("comms-send: from is required")
 	}
@@ -173,9 +144,6 @@ func (h *commsSendHandlerImpl) HandleCommsSend(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-send: emit agent_message: %w", err)
 	}
 
-	// Refresh presence for the sender so active agents stay visible in "comms who"
-	// without requiring explicit join/refresh beats (hk-6vwi3 fix #2).
-	// Thread session_id so the projection can detect two-captains conflicts (hk-z0f02).
 	h.emitRefreshBeat(ctx, req.From, req.SessionID)
 
 	result := CommsSendResult{EventID: eventID.String()}

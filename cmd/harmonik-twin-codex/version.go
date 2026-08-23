@@ -25,26 +25,8 @@ import (
 	"io"
 )
 
-// commitHash is stamped at build time via:
-//
-//	-ldflags "-X main.commitHash=$(git rev-parse HEAD)"
-//
-// It is the zero string when the binary is built without the stamp (plain
-// `go build` or `go test`). The daemon's VerifyCommitHash gate (hk-8i31.50)
-// treats an absent stamp as a hash mismatch per HC-043.
-//
-// Cite: specs/handler-contract.md §4.10.HC-043.
 var commitHash string
 
-// versionLine returns the human-readable version string for this binary.
-//
-// Output format (when stamp is present):
-//
-//	harmonik-twin-codex commit=<sha>
-//
-// Output format (when stamp is absent — unstamped build):
-//
-//	harmonik-twin-codex commit=(unstamped)
 func versionLine() string {
 	stamp := commitHash
 	if stamp == "" {
@@ -53,7 +35,6 @@ func versionLine() string {
 	return fmt.Sprintf("harmonik-twin-codex commit=%s", stamp)
 }
 
-// writeVersion writes the version line followed by a newline to w.
 func writeVersion(w io.Writer) error {
 	_, err := fmt.Fprintln(w, versionLine())
 	return err

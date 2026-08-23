@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// verdictexecution_rc025_test.go — tests for VerdictExecutionPlan and PlanForVerdict (RC-025).
-//
-// Covers the mechanical action dispatch layer:
-//   - VerdictActionKind enum validity and completeness.
-//   - VerdictExecutionPlan.Valid() for fully-populated and defective plans.
-//   - PlanForVerdict returns a valid plan for all seven verdicts.
-//   - Per-verdict idempotency and action-kind invariants per schemas.md §6.2.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-025;
-// specs/reconciliation/schemas.md §6.2 Verdict-execution table.
-
-// mustPlan returns the execution plan for v, failing the test if PlanForVerdict
-// reports an error. Every verdict exercised by these tests is valid, so the
-// error is always nil; the helper keeps the assertion real without repeating the
-// error check at each call site.
 func mustPlan(t *testing.T, v Verdict) VerdictExecutionPlan {
 	t.Helper()
 	plan, err := PlanForVerdict(v)
@@ -28,8 +13,6 @@ func mustPlan(t *testing.T, v Verdict) VerdictExecutionPlan {
 	}
 	return plan
 }
-
-// ---- VerdictActionKind ----
 
 // TestVerdictActionKind_SixValuesAreDeclared verifies that exactly six
 // VerdictActionKind constants are declared and each is valid.
@@ -94,10 +77,6 @@ func TestVerdictActionKind_UnknownIsInvalid(t *testing.T) {
 	}
 }
 
-// ---- VerdictExecutionPlan.Valid() ----
-
-// verdictExecutionPlanFixture returns a fully-populated VerdictExecutionPlan with
-// all required fields set. Tests mutate individual fields to probe Valid().
 func verdictExecutionPlanFixture() VerdictExecutionPlan {
 	return VerdictExecutionPlan{
 		Verdict:              VerdictResumeHere,
@@ -175,8 +154,6 @@ func TestVerdictExecutionPlanValid_EmptyIdempotencyMechanism(t *testing.T) {
 		t.Error("Valid() = true with empty IdempotencyMechanism, want false")
 	}
 }
-
-// ---- PlanForVerdict — coverage for all seven verdicts ----
 
 // TestPlanForVerdict_AllVerdictsProduce_Valid verifies that PlanForVerdict returns
 // a valid VerdictExecutionPlan for each of the seven declared Verdict constants.
@@ -423,7 +400,6 @@ func TestPlanForVerdict_SevenVerdictsMappedToSixActionKinds(t *testing.T) {
 		VerdictEscalateToHuman,
 	}
 
-	// Collect distinct action kinds.
 	kindSet := make(map[VerdictActionKind][]Verdict)
 	for _, v := range verdicts {
 		plan := mustPlan(t, v)
@@ -437,14 +413,12 @@ func TestPlanForVerdict_SevenVerdictsMappedToSixActionKinds(t *testing.T) {
 			len(kindSet), wantDistinctKinds)
 	}
 
-	// Exactly resume-here and resume-with-context share dispatch-current-node.
 	dispatch := kindSet[VerdictActionKindDispatchCurrentNode]
 	if len(dispatch) != 2 {
 		t.Errorf("VerdictActionKindDispatchCurrentNode covers %d verdicts, want 2 "+
 			"(resume-here, resume-with-context); got: %v", len(dispatch), dispatch)
 	}
 
-	// All other action kinds cover exactly one verdict.
 	for kind, vv := range kindSet {
 		if kind == VerdictActionKindDispatchCurrentNode {
 			continue

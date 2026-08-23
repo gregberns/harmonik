@@ -1,19 +1,5 @@
 package daemon_test
 
-// handlerpause_9hwbw_test.go — unit tests for HandlerPauseController (hk-9hwbw).
-//
-// Acceptance criteria per bead spec:
-//   - pause records freeze-list correctly
-//   - resume clears freeze-list
-//   - concurrent Pause calls serialize (only one wins, the rest are no-ops)
-//   - IsPaused / IsHandlerPaused reflect state correctly
-//   - ResolvedAgentType returns a valid agent type
-//   - Status snapshot matches state
-//   - ErrHandlerNotPaused returned on Resume of a live handler
-//   - paused_epoch increments monotonically across pause→resume cycles
-//
-// Bead ref: hk-9hwbw.
-
 import (
 	"context"
 	"errors"
@@ -26,7 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// makePauseCause constructs a minimal valid HandlerPauseCause for tests.
 func makePauseCause(runID, beadID string) core.HandlerPauseCause {
 	return core.HandlerPauseCause{
 		FailureClass: core.FailureClassTransient,
@@ -37,22 +22,14 @@ func makePauseCause(runID, beadID string) core.HandlerPauseCause {
 	}
 }
 
-// newTestController returns a HandlerPauseController backed by a real in-memory
-// event bus.  The bus is not sealed, so Emit calls succeed without needing a
-// JSONL writer.
 func newTestController(t *testing.T) *daemon.HandlerPauseController {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
-	// Seal the bus so Emit works (sealed → live-delivery mode).
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("bus.Seal: %v", err)
 	}
 	return daemon.NewHandlerPauseController(bus, nil)
 }
-
-// ---------------------------------------------------------------------------
-// Basic pause / resume cycle
-// ---------------------------------------------------------------------------
 
 func TestHandlerPauseController_PauseThenResume(t *testing.T) {
 	t.Parallel()
@@ -61,7 +38,6 @@ func TestHandlerPauseController_PauseThenResume(t *testing.T) {
 	ctrl := newTestController(t)
 	at := core.AgentTypeClaudeCode
 
-	// Initially live.
 	if ctrl.IsPaused(at) {
 		t.Fatal("expected handler to be live before first Pause")
 	}
@@ -76,12 +52,10 @@ func TestHandlerPauseController_PauseThenResume(t *testing.T) {
 		t.Fatalf("Pause: %v", err)
 	}
 
-	// Now paused.
 	if !ctrl.IsPaused(at) {
 		t.Fatal("expected handler to be paused after Pause")
 	}
 
-	// Status snapshot should reflect the freeze-list.
 	snaps := ctrl.Status(at)
 	if len(snaps) != 1 {
 		t.Fatalf("Status returned %d snapshots, want 1", len(snaps))
@@ -97,12 +71,10 @@ func TestHandlerPauseController_PauseThenResume(t *testing.T) {
 		t.Errorf("PausedEpoch = %d, want 1", snap.PausedEpoch)
 	}
 
-	// Resume.
 	if err := ctrl.Resume(ctx, at, core.HandlerResumedByOperator); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
-	// Back to live.
 	if ctrl.IsPaused(at) {
 		t.Fatal("expected handler to be live after Resume")
 	}
@@ -118,15 +90,10 @@ func TestHandlerPauseController_PauseThenResume(t *testing.T) {
 	if len(snap.InFlightAtPause) != 0 {
 		t.Errorf("InFlightAtPause should be empty after Resume, got %d entries", len(snap.InFlightAtPause))
 	}
-	// Epoch is preserved across resume (monotonic).
 	if snap.PausedEpoch != 1 {
 		t.Errorf("PausedEpoch after resume = %d, want 1 (epoch is monotonic, not reset)", snap.PausedEpoch)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Freeze-list correctness
-// ---------------------------------------------------------------------------
 
 func TestHandlerPauseController_FreezeListRecordedCorrectly(t *testing.T) {
 	t.Parallel()
@@ -153,17 +120,12 @@ func TestHandlerPauseController_FreezeListRecordedCorrectly(t *testing.T) {
 	if len(fl) != 3 {
 		t.Fatalf("want 3 freeze-list entries, got %d", len(fl))
 	}
-	// Verify defensive copy: mutating the original slice does not affect the stored freeze-list.
 	inFlight[0].RunID = "MUTATED"
 	fl2 := ctrl.Status(at)[0].InFlightAtPause
 	if fl2[0].RunID == "MUTATED" {
 		t.Error("freeze-list was not defensively copied: mutation of caller slice affected stored list")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// paused_epoch increments across pause→resume cycles
-// ---------------------------------------------------------------------------
 
 func TestHandlerPauseController_PausedEpochMonotonic(t *testing.T) {
 	t.Parallel()
@@ -184,17 +146,12 @@ func TestHandlerPauseController_PausedEpochMonotonic(t *testing.T) {
 		if err := ctrl.Resume(ctx, at, core.HandlerResumedByOperator); err != nil {
 			t.Fatalf("cycle %d Resume: %v", cycle, err)
 		}
-		// Epoch is monotonic: stays at 'cycle' after resume, not reset.
 		snap = ctrl.Status(at)[0]
 		if snap.PausedEpoch != cycle {
 			t.Errorf("cycle %d: PausedEpoch after resume = %d, want %d", cycle, snap.PausedEpoch, cycle)
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Concurrent Pause calls serialize (only one wins)
-// ---------------------------------------------------------------------------
 
 func TestHandlerPauseController_ConcurrentPauseSerializes(t *testing.T) {
 	t.Parallel()
@@ -225,7 +182,6 @@ func TestHandlerPauseController_ConcurrentPauseSerializes(t *testing.T) {
 		t.Errorf("concurrent Pause returned error: %v", err)
 	}
 
-	// Exactly one pause should have been recorded.
 	snaps := ctrl.Status(at)
 	if len(snaps) != 1 {
 		t.Fatalf("want 1 snapshot, got %d", len(snaps))
@@ -233,15 +189,10 @@ func TestHandlerPauseController_ConcurrentPauseSerializes(t *testing.T) {
 	if !snaps[0].Paused {
 		t.Error("expected handler to be paused after concurrent Pause calls")
 	}
-	// Only one epoch increment should have occurred.
 	if snaps[0].PausedEpoch != 1 {
 		t.Errorf("PausedEpoch = %d, want 1 (only first Pause should take effect)", snaps[0].PausedEpoch)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Resume of a live handler → ErrHandlerNotPaused
-// ---------------------------------------------------------------------------
 
 func TestHandlerPauseController_ResumeLiveHandler(t *testing.T) {
 	t.Parallel()
@@ -263,10 +214,6 @@ func TestHandlerPauseController_ResumeLiveHandler(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HandlerPauseChecker interface (queue.HandlerPauseChecker)
-// ---------------------------------------------------------------------------
-
 func TestHandlerPauseController_HandlerPauseCheckerInterface(t *testing.T) {
 	t.Parallel()
 
@@ -274,7 +221,6 @@ func TestHandlerPauseController_HandlerPauseCheckerInterface(t *testing.T) {
 	ctrl := newTestController(t)
 	at := core.AgentTypeClaudeCode
 
-	// Before pause: IsHandlerPaused returns false.
 	paused, err := ctrl.IsHandlerPaused(ctx, at)
 	if err != nil {
 		t.Fatalf("IsHandlerPaused (live): %v", err)
@@ -283,7 +229,6 @@ func TestHandlerPauseController_HandlerPauseCheckerInterface(t *testing.T) {
 		t.Error("IsHandlerPaused should be false before Pause")
 	}
 
-	// ResolvedAgentType should return a valid agent type.
 	resolved, err := ctrl.ResolvedAgentType(ctx, core.BeadID("hk-test01"))
 	if err != nil {
 		t.Fatalf("ResolvedAgentType: %v", err)
@@ -292,7 +237,6 @@ func TestHandlerPauseController_HandlerPauseCheckerInterface(t *testing.T) {
 		t.Errorf("ResolvedAgentType returned invalid AgentType %q", resolved)
 	}
 
-	// Pause then verify IsHandlerPaused.
 	cause := makePauseCause("run-chk", "hk-chk01")
 	if err := ctrl.Pause(ctx, at, cause, nil); err != nil {
 		t.Fatalf("Pause: %v", err)
@@ -307,17 +251,12 @@ func TestHandlerPauseController_HandlerPauseCheckerInterface(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Status with empty agent type returns all known handler types
-// ---------------------------------------------------------------------------
-
 func TestHandlerPauseController_StatusAllHandlers(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	ctrl := newTestController(t)
 
-	// Pause two different agent types.
 	for _, at := range []core.AgentType{core.AgentTypeClaudeCode, core.AgentTypePi} {
 		cause := makePauseCause("run-multi", string(at))
 		if err := ctrl.Pause(ctx, at, cause, nil); err != nil {
@@ -325,7 +264,6 @@ func TestHandlerPauseController_StatusAllHandlers(t *testing.T) {
 		}
 	}
 
-	// Status("") should return both.
 	snaps := ctrl.Status("")
 	if len(snaps) != 2 {
 		t.Errorf("Status(\"\") returned %d snapshots, want 2", len(snaps))
@@ -336,10 +274,6 @@ func TestHandlerPauseController_StatusAllHandlers(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// HP-035 — concurrent readers + writer: no deadlock, consistent state
-// ---------------------------------------------------------------------------
 
 // TestHandlerPauseController_ConcurrentReadersWhileWriting verifies HP-035:
 // multiple goroutines calling IsPaused simultaneously while another goroutine
@@ -357,10 +291,8 @@ func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
 	const readers = 16
 	const cycles = 50
 
-	// writerDone signals readers to stop.
 	writerDone := make(chan struct{})
 
-	// Launch readers — each calls IsPaused + PausedEpochFor in a tight loop.
 	var readerWg sync.WaitGroup
 	for range readers {
 		readerWg.Add(1)
@@ -371,7 +303,6 @@ func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
 				case <-writerDone:
 					return
 				default:
-					// Both read paths must work concurrently without deadlock.
 					_ = ctrl.IsPaused(at)
 					_, _ = ctrl.PausedEpochFor(at)
 				}
@@ -379,7 +310,6 @@ func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
 		}()
 	}
 
-	// Writer cycles through Pause / Resume.
 	for i := range cycles {
 		cause := makePauseCause("run-rw", "hk-rw01")
 		if err := ctrl.Pause(ctx, at, cause, nil); err != nil {
@@ -395,11 +325,9 @@ func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
 	close(writerDone)
 	readerWg.Wait()
 
-	// After all cycles, handler must be live.
 	if ctrl.IsPaused(at) {
 		t.Error("expected handler to be live after all Pause/Resume cycles")
 	}
-	// Epoch should equal the number of cycles (one increment per Pause).
 	snaps := ctrl.Status(at)
 	if len(snaps) != 1 {
 		t.Fatalf("want 1 snapshot, got %d", len(snaps))
@@ -408,10 +336,6 @@ func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
 		t.Errorf("PausedEpoch = %d, want %d", snaps[0].PausedEpoch, cycles)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// InFlightBeadRecordFromRunHandle helper
-// ---------------------------------------------------------------------------
 
 func TestInFlightBeadRecordFromRunHandle(t *testing.T) {
 	t.Parallel()

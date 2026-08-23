@@ -1,10 +1,5 @@
 package keeper_test
 
-// watcher_1m_warn_hklbo9w_test.go — regression tests for hk-lbo9w:
-// belowWarnThreshold used an abs-token gate without a pct guard, so on
-// 1M-context (Opus) sessions warn fired at ~20% (tokens≈200k) instead of
-// the configured warn_pct=80%. Refs: hk-lbo9w.
-
 import (
 	"context"
 	"testing"
@@ -31,8 +26,6 @@ func TestWatcher_LargeWindow_NoWarnBelowWarnPct(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "1m-no-warn-agent"
 
-	// pct=20, tokens=200001, windowSize=1M — just above the abs gate, but well
-	// below WarnPct=80. The watcher must NOT emit session_keeper_warn.
 	writeCtxFileTokens(t, projectDir, agent, 20.0, 200_001, 1_000_000, "sess-1m-no-warn")
 
 	cfg := keeper.WatcherConfig{
@@ -65,7 +58,6 @@ func TestWatcher_LargeWindow_WarnFiresAtWarnPct(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "1m-at-warn-agent"
 
-	// pct=80, tokens=800000, windowSize=1M — at WarnPct. Warn MUST fire.
 	writeCtxFileTokens(t, projectDir, agent, 80.0, 800_000, 1_000_000, "sess-1m-at-warn")
 
 	cfg := keeper.WatcherConfig{

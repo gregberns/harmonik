@@ -10,13 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// probeFailRunner is a test CommandRunner that fails commands by name.
-// It maps each probe's command name to a controlled exit code.
-//
-//	tmux_version:   name == "tmux"
-//	claude_version: name == "claude"
-//	git_rev_parse:  name == "git"
-//	api_key_absent: name == "sh"
 type probeFailRunner struct {
 	// failName is the command binary name to fail. "" means all succeed.
 	failName string
@@ -29,10 +22,6 @@ func (r probeFailRunner) Command(ctx context.Context, name string, args ...strin
 	return exec.CommandContext(ctx, "sh", "-c", "exit 0")
 }
 
-// repoPathFailRunner is a test CommandRunner that fails the git_rev_parse probe
-// only when it targets a specific RepoPath (passed as `git -C <repoPath> ...`).
-// All other commands succeed. This lets a test fail exactly one worker in a
-// multi-worker RunHealthCheck run.
 type repoPathFailRunner struct {
 	failRepoPath string
 }
@@ -48,7 +37,6 @@ func (r repoPathFailRunner) Command(ctx context.Context, name string, args ...st
 	return exec.CommandContext(ctx, "sh", "-c", "exit 0")
 }
 
-// workerCfg returns a Config with one enabled worker.
 func workerCfg() workers.Config {
 	return workers.Config{
 		Version: 1,
@@ -66,8 +54,6 @@ func workerCfg() workers.Config {
 	}
 }
 
-// captureEmit returns an EmitFunc that appends (eventType, payload) pairs to a
-// slice so tests can inspect emitted events.
 func captureEmit(events *[]struct {
 	Type    core.EventType
 	Payload []byte
@@ -100,12 +86,10 @@ func TestRunHealthCheck_ClaudeVersionFails(t *testing.T) {
 		t.Fatalf("RunHealthCheck returned unexpected error: %v", err)
 	}
 
-	// Worker must be disabled in the registry.
 	if w := reg.SelectWorker(); w != nil {
 		t.Fatalf("SelectWorker: expected nil for unhealthy worker, got %+v", *w)
 	}
 
-	// Config entry must be retained (not deleted).
 	if len(cfg.Workers) != 1 {
 		t.Fatalf("cfg.Workers: expected 1 entry retained, got %d", len(cfg.Workers))
 	}
@@ -113,7 +97,6 @@ func TestRunHealthCheck_ClaudeVersionFails(t *testing.T) {
 		t.Fatalf("cfg.Workers[0].Name: expected %q, got %q", "test-worker", cfg.Workers[0].Name)
 	}
 
-	// A worker_unhealthy event must have been emitted.
 	if len(captured) != 1 {
 		t.Fatalf("expected 1 event emitted, got %d", len(captured))
 	}
@@ -142,7 +125,6 @@ func TestRunHealthCheck_ClaudeVersionFails(t *testing.T) {
 func TestRunHealthCheck_APIKeyPresent(t *testing.T) {
 	cfg := workerCfg()
 	reg := workers.NewRegistry(cfg)
-	// "sh" is the command used by the api_key_absent probe.
 	runner := probeFailRunner{failName: "sh"}
 
 	var captured []struct {
@@ -155,17 +137,14 @@ func TestRunHealthCheck_APIKeyPresent(t *testing.T) {
 		t.Fatalf("RunHealthCheck returned unexpected error: %v", err)
 	}
 
-	// Worker must be disabled.
 	if w := reg.SelectWorker(); w != nil {
 		t.Fatalf("SelectWorker: expected nil when API key present, got %+v", *w)
 	}
 
-	// Config entry must be retained.
 	if len(cfg.Workers) != 1 {
 		t.Fatalf("cfg.Workers: expected 1 entry retained, got %d", len(cfg.Workers))
 	}
 
-	// A worker_unhealthy event must have been emitted naming api_key_absent.
 	if len(captured) != 1 {
 		t.Fatalf("expected 1 event emitted, got %d", len(captured))
 	}
@@ -209,12 +188,10 @@ func TestRunHealthCheck_Rerunnable(t *testing.T) {
 		}
 	}
 
-	// Still unhealthy after two calls.
 	if w := reg.SelectWorker(); w != nil {
 		t.Fatalf("after 2 calls: expected nil for unhealthy worker, got %+v", *w)
 	}
 
-	// Config entry retained.
 	if len(cfg.Workers) != 1 {
 		t.Fatalf("cfg.Workers: expected 1 entry retained, got %d", len(cfg.Workers))
 	}
@@ -226,12 +203,6 @@ func TestRunHealthCheck_Rerunnable(t *testing.T) {
 // health targets each worker by name (SetEnabledByName) rather than blindly
 // flipping the single Registry worker for every configured worker.
 func TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker(t *testing.T) {
-	// The Registry consumes the PRIMARY (index 0) worker. Drive a run where the
-	// primary passes every probe and the SECONDARY fails its git_rev_parse probe.
-	// Under the old SetEnabled(false) behavior the secondary's failure would
-	// disable the single Registry worker (the primary). With SetEnabledByName the
-	// failure targets "secondary" — a no-op for the Registry — so the primary
-	// stays selectable.
 	cfg := workers.Config{
 		Version: 1,
 		Workers: []workers.Worker{
@@ -240,7 +211,6 @@ func TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker(t *testing.
 		},
 	}
 	reg := workers.NewRegistry(cfg)
-	// Fail only the git probe run against the secondary's RepoPath.
 	runner := repoPathFailRunner{failRepoPath: "/secondary-repo"}
 
 	var captured []struct {
@@ -253,7 +223,6 @@ func TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker(t *testing.
 		t.Fatalf("RunHealthCheck returned error: %v", err)
 	}
 
-	// Only the secondary must be reported unhealthy.
 	if len(captured) != 1 {
 		t.Fatalf("expected 1 unhealthy event (secondary), got %d", len(captured))
 	}
@@ -265,8 +234,6 @@ func TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker(t *testing.
 		t.Fatalf("unhealthy worker: got %q, want %q", payload.WorkerName, "secondary")
 	}
 
-	// The Registry (primary) must remain selectable — the secondary's failure
-	// must not have flipped it.
 	if w := reg.SelectWorker(); w == nil {
 		t.Fatal("primary: a failing non-registry worker must not disable the registry worker")
 	} else {
@@ -288,7 +255,6 @@ func TestRunHealthCheck_DisabledWorkerSkipped(t *testing.T) {
 		},
 	}
 	reg := workers.NewRegistry(cfg)
-	// fail all commands — but since the worker is disabled, RunHealthCheck must not probe it.
 	runner := probeFailRunner{failName: "tmux"}
 
 	var captured []struct {
@@ -301,7 +267,6 @@ func TestRunHealthCheck_DisabledWorkerSkipped(t *testing.T) {
 		t.Fatalf("RunHealthCheck returned error: %v", err)
 	}
 
-	// No events must be emitted for a skipped (Enabled=false) worker.
 	if len(captured) != 0 {
 		t.Fatalf("expected 0 events for skipped worker, got %d", len(captured))
 	}

@@ -13,7 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
-// writePidfile writes pid to path.
 func writePidfile(t *testing.T, path string, pid int) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
@@ -28,7 +27,6 @@ func TestSupervisorWatchdog_NoAlarmWhenAlive(t *testing.T) {
 	pidfile := filepath.Join(tmpDir, "supervisor.pid")
 	markerPath := filepath.Join(tmpDir, "revived")
 
-	// Write our own PID — guaranteed alive.
 	writePidfile(t, pidfile, os.Getpid())
 
 	alarmFired := false
@@ -46,9 +44,6 @@ func TestSupervisorWatchdog_NoAlarmWhenAlive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 
-	// Assert WHY Run returned: a spec missing SocketPath/Command makes Run bail
-	// immediately with a config error, and the assertions below would then pass
-	// without the watchdog loop ever having run.
 	if runErr := sw.Run(ctx); !errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("sw.Run: want context.DeadlineExceeded, got %v", runErr)
 	}
@@ -68,8 +63,6 @@ func TestSupervisorWatchdog_AlarmsWhenDead(t *testing.T) {
 	pidfile := filepath.Join(tmpDir, "supervisor.pid")
 	markerPath := filepath.Join(tmpDir, "revived")
 
-	// Write a PID that is guaranteed dead: PID 1 is not ours; use a known-dead
-	// PID from a short-lived child.
 	cmd := mustStartAndWait(t)
 	deadPID := cmd
 	writePidfile(t, pidfile, deadPID)
@@ -89,8 +82,6 @@ func TestSupervisorWatchdog_AlarmsWhenDead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Run must stop because the revival cap was reached, NOT because ctx expired
-	// (that would mean the cap never engaged) and not on a config error.
 	runErr := sw.Run(ctx)
 	if runErr == nil || errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("sw.Run: want revival-cap error, got %v", runErr)
@@ -128,9 +119,6 @@ func TestSupervisorWatchdog_AlarmsWhenNoPidfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	// Assert WHY Run returned: a spec missing SocketPath/Command makes Run bail
-	// immediately with a config error, and the assertions below would then pass
-	// without the watchdog loop ever having run.
 	if runErr := sw.Run(ctx); !errors.Is(runErr, context.DeadlineExceeded) {
 		t.Fatalf("sw.Run: want context.DeadlineExceeded, got %v", runErr)
 	}
@@ -164,7 +152,6 @@ func TestSupervisorWatchdog_StopsOnContextCancel(t *testing.T) {
 
 	select {
 	case <-done:
-		// OK — watchdog exited promptly
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return within 2s after context cancellation")
 	}
@@ -213,39 +200,27 @@ func TestSupervisorWatchdog_ReviveCounterResets(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 
-	// The fixture goroutine below calls t.Errorf on its I/O failure paths, so it
-	// must not outlive the test: a t.Errorf after the test function returns
-	// panics with "Log in goroutine after test has completed" and takes the whole
-	// package test binary down. cancel() first (the goroutine parks on
-	// <-ctx.Done()), then join.
 	fixtureDone := make(chan struct{})
 	defer func() {
 		cancel()
 		<-fixtureDone
 	}()
 
-	// Goroutine: cycles the pidfile (absent → live → absent → live → absent → live)
-	// each cycle: let the watchdog see the absence and call revive, then bring it
-	// back by writing a live PID so pollUntilAlive resets the counter.
 	go func() {
 		defer close(fixtureDone)
 
 		for range 3 {
-			// Let watchdog detect absent pidfile and call revive().
 			time.Sleep(60 * time.Millisecond)
-			// Write our own PID so pollUntilAlive succeeds.
 			if wErr := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); wErr != nil {
 				t.Errorf("fixture: write live pidfile: %v", wErr)
 				return
 			}
 			time.Sleep(100 * time.Millisecond)
-			// Remove pidfile to trigger the next revive cycle.
 			if rmErr := os.Remove(pidfile); rmErr != nil {
 				t.Errorf("fixture: remove pidfile: %v", rmErr)
 				return
 			}
 		}
-		// Final recovery: write live PID and hold until ctx expires.
 		time.Sleep(60 * time.Millisecond)
 		if wErr := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); wErr != nil {
 			t.Errorf("fixture: write final live pidfile: %v", wErr)
@@ -257,7 +232,6 @@ func TestSupervisorWatchdog_ReviveCounterResets(t *testing.T) {
 	sw := supervise.NewSupervisorWatchdog(spec, silentLogger())
 	runErr := sw.Run(ctx)
 
-	// Read ctx.Err() here, BEFORE the deferred cancel() makes it non-nil.
 	if runErr != nil && ctx.Err() == nil {
 		t.Errorf("Run returned early (cap hit?): %v — counter may not be resetting", runErr)
 	}
@@ -277,8 +251,6 @@ func TestSupervisorWatchdog_ReviveCounterResets(t *testing.T) {
 	}
 }
 
-// mustStartAndWait starts a short-lived child and waits for it to exit,
-// returning its PID which is now guaranteed dead.
 func mustStartAndWait(t *testing.T) int {
 	t.Helper()
 	cmd := &os.ProcessState{}

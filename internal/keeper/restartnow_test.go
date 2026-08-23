@@ -13,12 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// restartnow_test.go — tests for the DEAD-SIMPLE restart-now / ping path
-// (hk-5da7). Replaces cycle_restart_now_test.go, which tested the removed
-// marker → RunOnDemand state machine.
-
-// recordingInjector captures every (target,text) injection in order so a test
-// can assert the exact ack→/clear→agent-brief sequence.
 type recordingInjector struct {
 	mu    sync.Mutex
 	calls [][2]string
@@ -42,8 +36,6 @@ func (r *recordingInjector) texts() []string {
 	return out
 }
 
-// writeSid writes a primary (UUIDv4) .sid + a matching .ctx so ReadCtxFile
-// returns a verified session id.
 func writeSidAndCtx(t *testing.T, dir, agent, sid string) {
 	t.Helper()
 	kdir := filepath.Join(dir, ".harmonik", "keeper")
@@ -127,8 +119,6 @@ func TestRestartNow_EmitsNonceAuditEvent(t *testing.T) {
 
 	rec := &recordingInjector{}
 	em := &RecordingEmitter{}
-	// A cycle-shaped nonce that matches no live cycle here — carry-for-audit MUST
-	// still run clean and record it verbatim.
 	const nonce = "cyc-1700000000-1"
 	err := RestartNow(context.Background(), RestartNowConfig{
 		ProjectDir:  dir,
@@ -142,7 +132,6 @@ func TestRestartNow_EmitsNonceAuditEvent(t *testing.T) {
 		t.Fatalf("RestartNow with a non-matching nonce must NOT be rejected (carry-for-audit); got: %v", err)
 	}
 
-	// Ordering unchanged: ack + /clear + agent brief, in that order.
 	got := rec.texts()
 	if len(got) != 3 {
 		t.Fatalf("want the unchanged 3-line ack+/clear+brief sequence; got %v", got)
@@ -151,7 +140,6 @@ func TestRestartNow_EmitsNonceAuditEvent(t *testing.T) {
 		t.Fatalf("verify/ACK/clear ordering changed; got %v", got)
 	}
 
-	// Exactly one durable audit event carrying the supplied nonce + identity.
 	evs := em.EventsOfType(core.EventTypeSessionKeeperRestartNow)
 	if len(evs) != 1 {
 		t.Fatalf("want exactly 1 session_keeper_restart_now event; got %d", len(evs))
@@ -213,7 +201,6 @@ func TestRestartNow_NoTmuxTarget_FailsLoudly(t *testing.T) {
 func TestRestartNow_UnverifiedSID_Refuses(t *testing.T) {
 	dir := t.TempDir()
 	agent := "captain"
-	// UUIDv7-shaped (rejected by IsPrimarySID) — daemon-spawned, not interactive.
 	writeSidAndCtx(t, dir, agent, "01890000-0000-7000-8000-000000000000")
 	writeFreshHandoff(t, dir, agent, time.Time{})
 	rec := &recordingInjector{}
@@ -232,7 +219,6 @@ func TestRestartNow_MissingHandoff_Refuses(t *testing.T) {
 	dir := t.TempDir()
 	agent := "captain"
 	writeSidAndCtx(t, dir, agent, goodSID)
-	// no handoff written
 	rec := &recordingInjector{}
 	err := RestartNow(context.Background(), RestartNowConfig{
 		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0", Inject: rec.inject,
@@ -250,7 +236,6 @@ func TestRestartNow_StaleHandoff_Refuses(t *testing.T) {
 	agent := "captain"
 	writeSidAndCtx(t, dir, agent, goodSID)
 	requested := time.Now()
-	// handoff mtime BEFORE the request → stale.
 	writeFreshHandoff(t, dir, agent, requested.Add(-time.Hour))
 	rec := &recordingInjector{}
 	err := RestartNow(context.Background(), RestartNowConfig{
@@ -313,8 +298,6 @@ func TestRestartNow_CrewAgent_AccCorpus1_B4(t *testing.T) {
 	requested := time.Now()
 	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
 
-	// Simulate the crew-session target that ResolveTmuxTarget now returns after
-	// the B4 fix: "harmonik-<hash>-crew-admiral:agent".
 	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + windowAgent
 
 	rec := &recordingInjector{}
@@ -355,7 +338,6 @@ func TestRestartNow_CrewAgent_ResolveThenRun_B4(t *testing.T) {
 
 	crewSession := HarmonikCrewSessionName(dir, agent)
 
-	// Stub: only the crew-prefixed session is live.
 	sessionExistsFn := func(name string) bool { return name == crewSession }
 	target := ResolveTmuxTarget(dir, agent, "", sessionExistsFn)
 	if target == "" {

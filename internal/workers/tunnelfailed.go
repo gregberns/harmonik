@@ -1,18 +1,5 @@
 package workers
 
-// tunnelfailed.go — worker_tunnel_failed event payload and emission helper
-// (remote-substrate gap #7, bead 3 — tunnel readiness gate).
-//
-// Emitted when the per-run `ssh -N -R` reverse tunnel's worker-side socket
-// fails to become live within the bounded readiness window after the tunnel
-// process is started and BEFORE the implementer agent is launched. The hook
-// relay retries only on daemon_not_ready, not on a dial failure, so launching
-// the agent before the forward is live would produce a silent
-// bridge_dial_failed → agent_ready_timeout. On this event the run is NOT
-// launched and the bead is reopened for re-dispatch.
-//
-// Bead ref: hk-rs-tunnel-readiness-cc1w.
-
 import (
 	"context"
 	"encoding/json"

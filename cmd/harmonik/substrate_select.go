@@ -19,102 +19,19 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// substrateSelectEnv is the composition-root substrate-selection axis
-// (AIS-015): tmux hosting by default; the structured Codex app-server driver
-// (internal/codexdriver) by explicit opt-in only. Selection is by which value
-// is WIRED into daemon.Config.Substrate here at the root — never a runtime
-// test-branch inside a driver (RS-017), and the driver itself is blind to this
-// axis (twin-blindness: L2/L3 doubles substitute at the wire).
-//
-// Value "codexdriver" selects the structured driver. Anything else (including
-// unset) keeps the tmux substrate — the safe pre-bake default.
 const substrateSelectEnv = "HARMONIK_SUBSTRATE"
 
-// tmuxSubstrateSelected reports whether the AIS-015 axis leaves the tmux
-// substrate wired (the safe default — anything other than an explicit
-// "codexdriver" opt-in). It is the single predicate for that axis: selectSubstrate
-// uses it to choose the substrate, and the composition root uses it to decide
-// whether missing tmux hosting is fatal (tmux substrate: every spawn would fail)
-// or merely degrading (Codex driver: it owns child stdio and never runs tmux).
 func tmuxSubstrateSelected() bool {
 	return os.Getenv(substrateSelectEnv) != "codexdriver"
 }
 
-// Live-capture selection (AIS-013/AIS-014, m2-4-capture-tee design §2). Capture
-// is OPT-IN and OFF by default: it engages only when HARMONIK_CAPTURE_DIR names
-// a workspace root under which the corpus lands at
-// ${dir}/.harmonik/sessions/${session_id}/ (WM §4.7). It applies only to the
-// structured Codex driver — the tmux/Claude path has no raw child stdio to tee
-// (design §0, AIS-011). AIS-INV-002: capture is NEVER load-bearing, so an open
-// failure degrades to uncaptured and never blocks substrate selection.
 const (
 	captureDirEnv  = "HARMONIK_CAPTURE_DIR"
 	captureKeepEnv = "HARMONIK_CAPTURE_KEEP"    // retention keep-N (optional; int)
 	captureAgeEnv  = "HARMONIK_CAPTURE_MAX_AGE" // age-prune bound (optional; Go duration)
 )
 
-// selectSubstrate applies the AIS-015 selection axis: it returns tmuxSub
-// unless HARMONIK_SUBSTRATE=codexdriver explicitly opts in to the structured
-// Codex driver. codexBinary is the codex executable (--codex-binary flag /
-// default) used when a LaunchSpec supplies no argv.
-//
-// The spawn seam stays remote-capable (AIS-016): the driver takes the same
-// CommandRunner shape as the tmux path. For the Codex path the injected runner
-// is a per-run worker-routing runner (M4-C3): a healthy selected worker routes
-// the codex process to that worker over SSHRunner. Zero/disabled workers no
-// longer fall through to a byte-identical LOCAL run as NFR7 originally
-// specified — see requireIsolationBoundary below, which now makes that case a
-// refusal. See codexWorkerRoutingRunner.
-//
-// The second return value is a worker-registry observer the daemon MUST invoke
-// once at work-loop startup with the SAME live registry the tmux dispatch path
-// reads (daemon.Config.WorkerRegistryObserver). It late-binds that registry
-// into the Codex runner so selection is per-run and shares the tmux path's
-// health/live-disable state — WITHOUT the driver ever learning about workers
-// (RS-017 twin-blindness: selection lives at the composition root, not the
-// driver). It is nil for the tmux path (nothing to bind).
-// reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
-// runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
-//
-// hk-5vapm: this used to return a third value, requireIsolationBoundary, meant
-// as the signal a daemon-side fail-closed guard would key off to refuse a codex
-// run with no ssh worker bound. IT IS GONE, and two things about it are worth
-// recording because the comments that described it outlived the design.
-//
-// First, hk-tckw3.1 Step 1 dropped the fence deliberately (plan section 3a). D4
-// scrapped ssh-per-node, so nothing can supply the boundary the fence demanded
-// — leaving it armed would not sandbox codex, it would only stop codex running
-// at all. D3 then put local codex on danger-full-access, the same host posture
-// claude already ran under, so this path is no more permissive than the default
-// it was singled out from. Both production callers had already been discarding
-// the value; it was always false and unparam flagged it.
-//
-// Second, and this is the part that was NOT true in the source: the daemon half
-// never existed. Comments here and in internal/codexdriver referred to a
-// workloop codexRequireIsolationBoundary that "REFUSES to launch" — no such
-// symbol is in the tree, and the only occurrences were those comments describing
-// it. The fence was only ever half-built: codexWorkerRoutingRunner.requireBoundary
-// still has live refusal logic below. Anyone auditing codex isolation would have
-// read those comments and believed an enforcement existed. They are corrected
-// rather than carried forward.
-//
-// Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
-// different mechanism entirely, so removing this dead signal forecloses nothing.
-//
-// OPERATOR DECISION (2026-07-23): the fence is REMOVED. `requireBoundary: false`
-// below restores hk-tckw3.1 Step 3a — the operator-directed, reviewer-approved
-// drop that lets local codex-first runs launch. Local commit 7273e95dc ("make
-// SH-033 deterministic and drop exec.Command from the CLI") had silently re-armed
-// it (`true`) hours later, citing neither hk-tckw3.1 nor hk-5h759; that was an
-// unauthorized reversal of a locked decision, not a fix. The fence isolates
-// nothing (there is no daemon-side counterpart; codex containment comes from the
-// srt sandbox, hk-scaj0), it only stops codex launching, and D4 scrapped the
-// ssh-per-node worker that was the only thing able to satisfy it. Restored to
-// `false` per the operator's standing "Codex must work" decision.
 func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
-	// tmuxSubstrateSelected() rather than an inline env comparison so the
-	// substrate choice and the boot-time tmux-hosting fatality share ONE
-	// predicate — they must never disagree about which substrate is running.
 	if tmuxSubstrateSelected() {
 		return tmuxSub, nil, tmuxSub
 	}
@@ -123,24 +40,6 @@ func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler
 	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, tmuxSub
 }
 
-// codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
-// makes the Codex driver's spawn seam worker-selectable PER-RUN. It satisfies
-// codexdriver.CommandRunner structurally and is injected as Options.Runner.
-//
-// Mechanism — late-binding hook (NOT boot-time construction): the Codex
-// substrate is built ONCE at daemon boot (selectSubstrate), whereas the tmux
-// path picks SSHRunner{Host} PER-RUN from the live worker registry
-// (workloop.go SelectWorker + SSHRunner{Host}). A construction-time runner pick
-// would freeze the Codex substrate to a single host for the daemon's whole
-// lifetime and could never react to live worker enable/disable (FR12) or the
-// boot health probe. So the routing decision is deferred to Command() time,
-// exactly like the tmux path re-selects every run. The registry pointer is
-// late-bound (setRegistry) by the daemon AFTER it builds the live registry, so
-// Codex reads the SAME registry the tmux path reads — no second registry, no
-// duplicated health check.
-//
-// RS-017: the driver stays BLIND — it only ever calls Runner.Command(); all
-// worker logic lives here at the wire/root, never inside internal/codexdriver.
 type codexWorkerRoutingRunner struct {
 	// reg is the live worker registry, late-bound by the daemon. nil until
 	// bound, and stays nil when no worker is configured. That used to mean
@@ -169,31 +68,13 @@ type codexWorkerRoutingRunner struct {
 	requireBoundary bool
 }
 
-// refusedIsolationBoundaryArgv0 is a deliberately non-existent binary whose PATH
-// NAME is the diagnostic. When a codex crew requires an isolation boundary but
-// none is bound, codexWorkerRoutingRunner.Command returns a Command pointing at
-// it: exec.Start fails fast and codexdriver.SpawnWindow surfaces the refusal
-// (with this path in the error) instead of running codex unsandboxed locally.
 const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-danger-full-access-requires-enabled-ssh-isolation-boundary-hk5h759"
 
-// codexHeadlessSandbox / codexHeadlessApprovalPolicy are the operator-bound
-// (hk-5h759) codex thread posture for headless crew orchestration: run codex
-// non-interactively with full workspace access so its writes and commits land.
-// This posture is safe ONLY inside the isolation boundary enforced by the
-// fail-closed guard (requireBoundary above). NOTE (hk-5vapm): there is no
-// daemon-side counterpart -- earlier comments here named a workloop
-// codexRequireIsolationBoundary that does not exist anywhere in the tree. Whether
-// the runner-level guard should be armed at all is an OPEN OPERATOR DECISION; see
-// the note on selectSubstrate.
 const (
 	codexHeadlessSandbox        = "danger-full-access"
 	codexHeadlessApprovalPolicy = "never"
 )
 
-// setRegistry late-binds the live worker registry. Wired to
-// daemon.Config.WorkerRegistryObserver so the daemon hands over the SAME
-// *workers.Registry its tmux dispatch path uses. A nil registry (no worker
-// configured, NFR7) leaves the router on the LOCAL path.
 func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
 	r.reg.Store(reg)
 }
@@ -217,9 +98,6 @@ func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
 func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	if reg := r.reg.Load(); reg != nil {
 		if w := reg.WorkerSnapshot(); w != nil && w.Enabled && w.Transport == "ssh" {
-			// Mirror the tmux path's per-run SSHRunner opts (workloop.go
-			// hk-zexsj): a dedicated, non-multiplexed connection per command
-			// avoids the ControlMaster truncation family.
 			return ltmux.SSHRunner{
 				Host: w.Host,
 				Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
@@ -227,12 +105,6 @@ func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, arg
 		}
 	}
 	if r.requireBoundary {
-		// FAIL CLOSED (hk-5h759): a codex crew requires an isolation boundary but
-		// none is ssh-routable here (no registry / no worker / disabled / non-ssh
-		// transport). Refuse rather than fall through to LocalRunner, which would
-		// run codex danger-full-access UNSANDBOXED on the daemon host. Return a
-		// Command whose argv0 does not exist: exec.Start fails immediately and the
-		// refusal (with the diagnostic path) propagates up through SpawnWindow.
 		return exec.CommandContext(ctx, refusedIsolationBoundaryArgv0)
 	}
 	return ltmux.LocalRunner{}.Command(ctx, name, args...)
@@ -272,15 +144,6 @@ func (r *codexWorkerRoutingRunner) CommandInDir(ctx context.Context, dir, name s
 	return cmd
 }
 
-// codexSubstrateOptions builds the structured-driver Options and, when live
-// capture is opted in (HARMONIK_CAPTURE_DIR), wires the sessioncapture corpus
-// writers into Options.InCapture/OutCapture — the M2-4 production tee (AIS-013).
-// Without this wiring the tee is INERT (the writers stay nil and apptap tees to
-// nothing). It returns the *sessioncapture.Session so a caller MAY Close it;
-// nil session means capture is disabled or could not be established.
-//
-// AIS-INV-002 (capture never aborts the run): a capture-open failure is logged
-// once and swallowed — the driver is returned uncaptured, never an error.
 func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner) (codexdriver.Options, *sessioncapture.Session) {
 	if codexBinary == "" {
 		codexBinary = "codex"
@@ -333,19 +196,6 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 	return opts, sess
 }
 
-// codexWorktreeWritableRoots is the composition-root hook wired into
-// codexdriver.Options.WritableRoots (hk-daegv). Given the session's worktree cwd
-// it returns the absolute paths codex stamps as the thread's
-// `runtimeWorkspaceRoots` (the workspace-write writable roots).
-//
-// It ALWAYS includes the worktree cwd itself (runtimeWorkspaceRoots REPLACES the
-// thread's roots — dropping the cwd would make the worktree unwritable) and, when
-// the cwd matches harmonik's linked-worktree layout, the repo's git COMMON dir
-// (<repo>/.git). The git common dir holds objects/refs and worktrees/<id>/ and
-// lives OUTSIDE the worktree writable root, so without it codex's OWN `git commit`
-// fails EPERM under 0.142.0's effective workspace-write seatbelt (see WritableRoots
-// doc). An empty cwd, or a cwd not under the worktree root, adds no git dir and
-// leaves the behavior unchanged (degrades gracefully).
 func codexWorktreeWritableRoots(worktreeCwd string) []string {
 	if worktreeCwd == "" {
 		return nil
@@ -357,15 +207,6 @@ func codexWorktreeWritableRoots(worktreeCwd string) []string {
 	return roots
 }
 
-// codexGitCommonDir derives the git COMMON dir (<repo>/.git) of a harmonik linked
-// worktree from its path (hk-daegv). A worktree lives at
-// <repo>/<worktreeRoot>/<name> (worktreeRoot default ".harmonik/worktrees"); its
-// common dir is <repo>/.git. Returns "" when the path does not match that layout
-// (e.g. an overridden worktree root, or a non-worktree cwd) — the caller then adds
-// no git dir.
-//
-// Uses plain "/" string ops, NOT filepath: the cwd may be a REMOTE (ssh worker)
-// POSIX path, so the derivation must not depend on the local OS path separator.
 func codexGitCommonDir(worktreeCwd string) string {
 	marker := "/" + workspace.DefaultWorktreeRoot + "/" // "/.harmonik/worktrees/"
 	idx := strings.LastIndex(worktreeCwd, marker)
@@ -375,8 +216,6 @@ func codexGitCommonDir(worktreeCwd string) string {
 	return worktreeCwd[:idx] + "/.git"
 }
 
-// openCaptureSession opens a live-capture corpus session when opted in, else
-// returns nil. Off by default; failures degrade to uncaptured (AIS-INV-002).
 func openCaptureSession() *sessioncapture.Session {
 	dir := os.Getenv(captureDirEnv)
 	if dir == "" {
@@ -396,7 +235,6 @@ func openCaptureSession() *sessioncapture.Session {
 	}
 	sess, err := sessioncapture.Open(context.Background(), cfg)
 	if err != nil {
-		// AIS-INV-002: never load-bearing — log once, proceed uncaptured.
 		log.Printf("harmonik: live session capture disabled (open failed): %v", err)
 		return nil
 	}

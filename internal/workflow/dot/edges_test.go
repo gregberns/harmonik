@@ -17,18 +17,13 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 func ptrStr(s string) *string { return &s }
 
 func ptrFC(fc core.FailureClass) *core.FailureClass { return &fc }
 
-// makeOutcome builds a minimal valid Outcome with Status=SUCCESS and no extras.
 func makeOutcome() core.Outcome {
 	return core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 }
-
-// ── nil condition (unconditional edge) ───────────────────────────────────────
 
 func TestEvalCondition_NilIsAlwaysTrue(t *testing.T) {
 	ok, err := EvalCondition(nil, makeOutcome(), nil)
@@ -36,8 +31,6 @@ func TestEvalCondition_NilIsAlwaysTrue(t *testing.T) {
 		t.Fatalf("nil condition: want (true, nil), got (%v, %v)", ok, err)
 	}
 }
-
-// ── outcome.status ───────────────────────────────────────────────────────────
 
 func TestEvalCondition_OutcomeStatus_Match(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.status", Op: "==", RHS: "SUCCESS"}}}
@@ -63,8 +56,6 @@ func TestEvalCondition_OutcomeStatus_NotEqual(t *testing.T) {
 	}
 }
 
-// ── outcome.preferred_label ──────────────────────────────────────────────────
-
 func TestEvalCondition_PreferredLabel_Match(t *testing.T) {
 	o := makeOutcome()
 	o.PreferredLabel = ptrStr("APPROVE")
@@ -84,8 +75,6 @@ func TestEvalCondition_PreferredLabel_Nil_NoMatch(t *testing.T) {
 	}
 }
 
-// ── outcome.failure_class ────────────────────────────────────────────────────
-
 func TestEvalCondition_FailureClass_Match(t *testing.T) {
 	o := core.Outcome{Status: core.OutcomeStatusFail, Kind: core.OutcomeKindDefault, FailureClass: ptrFC(core.FailureClassTransient)}
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.failure_class", Op: "==", RHS: "transient"}}}
@@ -104,8 +93,6 @@ func TestEvalCondition_FailureClass_Nil_NoMatch(t *testing.T) {
 	}
 }
 
-// ── outcome.kind ─────────────────────────────────────────────────────────────
-
 func TestEvalCondition_OutcomeKind_Match(t *testing.T) {
 	o := makeOutcome()
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.kind", Op: "==", RHS: "default"}}}
@@ -114,8 +101,6 @@ func TestEvalCondition_OutcomeKind_Match(t *testing.T) {
 		t.Fatalf("want (true, nil), got (%v, %v)", ok, err)
 	}
 }
-
-// ── context.<key> ────────────────────────────────────────────────────────────
 
 func TestEvalCondition_ContextKey_Match(t *testing.T) {
 	ctx := map[string]string{"pr_url": "https://example.com/1"}
@@ -133,8 +118,6 @@ func TestEvalCondition_ContextKey_Missing_NoMatch(t *testing.T) {
 		t.Fatalf("missing context key: want (false, nil), got (%v, %v)", ok, err)
 	}
 }
-
-// ── &&-conjunction ───────────────────────────────────────────────────────────
 
 func TestEvalCondition_Conjunction_BothTrue(t *testing.T) {
 	o := core.Outcome{Status: core.OutcomeStatusFail, Kind: core.OutcomeKindDefault, FailureClass: ptrFC(core.FailureClassTransient)}
@@ -160,8 +143,6 @@ func TestEvalCondition_Conjunction_OneFalse(t *testing.T) {
 	}
 }
 
-// ── out-of-whitelist LHS → ErrDeterministic ──────────────────────────────────
-
 func TestEvalCondition_OutOfWhitelistLHS_ErrDeterministic(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.notes", Op: "==", RHS: "anything"}}}
 	ok, err := EvalCondition(cond, makeOutcome(), nil)
@@ -180,8 +161,6 @@ func TestEvalCondition_ContextEmptyKey_ErrDeterministic(t *testing.T) {
 		t.Fatalf("empty context key: want ErrDeterministic, got %v", err)
 	}
 }
-
-// ── determinism: equal inputs → equal outputs ────────────────────────────────
 
 func TestEvalCondition_Determinism(t *testing.T) {
 	o := makeOutcome()

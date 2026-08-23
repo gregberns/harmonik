@@ -7,31 +7,12 @@ import (
 	"testing"
 )
 
-// lostPushRaceOutput is the VERBATIM combined output of a `git push` that lost
-// git's compare-and-swap on the target ref: two clones pushed the same branch
-// concurrently against a bare remote whose pre-receive hook slept, and this is
-// what the loser was told. Captured from git 2.x. It is the exact case
-// hk-lhdqo was filed for.
-//
-// The reason the old classifier missed it is visible in the text: the token is
-// "[remote rejected]", which does not contain "[rejected]" — there is a
-// "remote " between the bracket and the word.
 const lostPushRaceOutput = `remote: error: cannot lock ref 'refs/heads/main': is at 11198a81bd5c9a4f70cd39718da1807e97f5a82c but expected ade9d761fa0df4e7dc92598d6bcbe8a106c66c03        
 To /tmp/remote.git
  ! [remote rejected] main -> main (failed to update ref)
 error: failed to push some refs to '/tmp/remote.git'
 `
 
-// staleRefLockOutput is a DIFFERENT failure that produces overlapping wording:
-// a leftover refs/heads/main.lock on the remote, which a re-fetch does NOT
-// clear. It is classified retryable because it carries the same two tokens, and
-// that is a deliberate accepted cost rather than an oversight — the retry
-// budget is 3, and the run then fails with git's real output. The alternative
-// is a predicate that tries to tell a lost race from a stale lock by wording,
-// which is more likely to misclassify the case that matters.
-//
-// It is here so that a later reader does not "fix" the overlap without knowing
-// it was priced.
 const staleRefLockOutput = `remote: error: cannot lock ref 'refs/heads/main': Unable to create '/tmp/remote.git/./refs/heads/main.lock': File exists.        
 remote: 
 remote: Another git process seems to be running in this repository, e.g.        

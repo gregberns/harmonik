@@ -1,42 +1,5 @@
 package codex
 
-// codexjsonlparser.go — codex `exec --json` JSONL event parser (codex-harness C2/T8, hk-m57va).
-//
-// `codex exec --json` is a one-shot run-to-exit invocation that streams a
-// newline-delimited JSON (JSONL) event log to stdout. Unlike claude, codex has
-// no TUI/paste/`/quit` path: it self-terminates on turn completion. So the
-// codex run-state has no minted session ID — the thread identifier is CAPTURED
-// from the first `thread.started` event and recorded so the next turn can be
-// launched with `codex exec resume <thread_id>` (BuildLaunchSpec resume
-// path, hk-rgxwd C2/T7).
-//
-// This file owns two units, both standalone (T12 / hk-xhawy wires them into the
-// dispatch cascade):
-//
-//  1. parseCodexJSONLEvent — decodes a single JSONL line into a codexEvent.
-//  2. codexRunArtifacts + captureCodexThreadID — the run-state holder for the
-//     captured thread_id and the helper that updates it from a parsed event
-//     stream (first thread.started wins; subsequent ones are ignored).
-//
-// Event-shape reference (codex exec --json, observed): each line is a JSON
-// object with a top-level "type" discriminator. The events this parser models:
-//
-//   {"type":"thread.started","thread_id":"th_abc123"}
-//   {"type":"turn.started","turn_id":"tr_1"}
-//   {"type":"turn.completed","turn_id":"tr_1","usage":{...}}
-//   {"type":"turn.failed","turn_id":"tr_1","error":{"message":"..."}}
-//
-// The parser is intentionally permissive about unknown event types and unknown
-// fields: codex emits many item.* / token-count events the harness does not act
-// on, so an unrecognised "type" yields a codexEvent with Kind ==
-// EventKindOther rather than an error. A genuinely malformed line (not a
-// JSON object) is the only parse error.
-//
-// Spec refs:
-//   - .kerf/works/codex-harness/05-specs/C2-codex-adapter-spec.md (adapter shape)
-//   - specs/harness-contract.md §2 N3 (SessionIDCaptured policy)
-// Bead: hk-m57va [C2/T8]
-
 import (
 	"bytes"
 	"encoding/json"
@@ -45,10 +8,6 @@ import (
 	"sync"
 )
 
-// codexEventKind classifies a parsed codex JSONL event into the small set of
-// kinds the harness acts on. Every codex event whose "type" the harness does
-// not model maps to EventKindOther; the raw type string is preserved in
-// codexEvent.RawType for diagnostics.
 type codexEventKind int
 
 const (
@@ -93,11 +52,6 @@ func (k codexEventKind) String() string {
 	}
 }
 
-// codexEvent is the parsed form of a single codex JSONL line.
-//
-// Only the fields relevant to a given Kind are populated; the rest are zero. The
-// RawType field always carries the original "type" discriminator so callers can
-// log or branch on event types the harness does not yet model.
 type codexEvent struct {
 	// Kind is the classified event kind. EventKindOther for unmodelled types.
 	Kind codexEventKind
@@ -124,20 +78,11 @@ type codexEvent struct {
 	Usage codexTokenUsage
 }
 
-// codexTokenUsage holds the token counts reported on a turn.completed event.
-// Both fields are zero when the event carries no usage object.
 type codexTokenUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
-// codexJSONLLine is the on-the-wire shape of a codex exec --json line. It is a
-// superset decode target: every field the parser reads is optional, so a line
-// missing any of them decodes cleanly (json leaves absent fields zero).
-//
-// codex nests the thread id directly on the thread.started line and the turn id
-// on turn.* lines. The error object on turn.failed carries a "message" string.
-// The usage object on turn.completed carries input_tokens and output_tokens.
 type codexJSONLLine struct {
 	Type     string           `json:"type"`
 	ThreadID string           `json:"thread_id"`
@@ -148,16 +93,6 @@ type codexJSONLLine struct {
 	} `json:"error"`
 }
 
-// parseCodexJSONLEvent decodes one codex JSONL line into a codexEvent.
-//
-// It returns an error only when line is not a JSON object (a genuinely malformed
-// line). An unrecognised "type" discriminator is NOT an error: it yields a
-// codexEvent with Kind == EventKindOther and RawType set to the original
-// value, so the caller can skip events the harness does not model without
-// aborting the stream.
-//
-// Leading/trailing whitespace is tolerated. A blank line (after trimming) is
-// treated as malformed: callers should skip blank lines before calling this.
 func parseCodexJSONLEvent(line []byte) (codexEvent, error) {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
@@ -199,18 +134,6 @@ func parseCodexJSONLEvent(line []byte) (codexEvent, error) {
 	return ev, nil
 }
 
-// codexRunArtifacts is the codex analog of claudeRunArtifacts: it holds the
-// per-run state the workloop records from a codex turn so the next turn can be
-// dispatched.
-//
-// Where claudeRunArtifacts.claudeSessionID is MINTED before launch, codex's
-// thread identifier is CAPTURED from the first thread.started event in the
-// JSONL stream (SessionIDCaptured policy, specs/harness-contract.md §2 N3). The
-// caller stores capturedThreadID and passes it as priorThreadID on the next
-// `codex exec resume <thread_id>` launch.
-//
-// T12 (hk-xhawy) threads this struct through the dispatch cascade; in T8 it is a
-// standalone unit populated by captureCodexThreadID.
 type codexRunArtifacts struct {
 	// capturedThreadID is the codex thread identifier captured from the first
 	// thread.started event of this run's JSONL stream. Empty until that event is
@@ -241,29 +164,6 @@ type codexRunArtifacts struct {
 	outputTokens int
 }
 
-// codexThreadIDInterceptor wraps an io.Reader (codex JSONL stdout) and fires a
-// callback exactly once when it captures a non-empty thread_id from the first
-// thread.started event in the stream. All bytes are passed through to callers
-// unchanged so the SpawnWatcher can process them normally.
-//
-// The interceptor continues scanning all lines even after the thread_id callback
-// fires, so later events (turn.completed with usage, turn.failed) are also
-// captured in arts. Call TokenUsage() after the stream is exhausted to read the
-// token counts from turn.completed.
-//
-// This is the codex analog of SessionIDInterceptor (sessioncontext_chb023.go) for
-// the claude harness. It is line-buffered: bytes accumulate until a '\n' boundary
-// is found, then the complete JSONL line is parsed by parseCodexJSONLEvent +
-// captureCodexThreadID. The thread_id callback fires at most once (first wins).
-//
-// Usage:
-//
-//	cb := func(threadID string) { sessionIDCh <- threadID }
-//	implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-//	    return newCodexThreadIDInterceptor(r, cb)
-//	}
-//
-// Bead: hk-mzgh (G2 — codex thread_id capture into resume path).
 type codexThreadIDInterceptor struct {
 	mu          sync.Mutex
 	inner       io.Reader
@@ -273,8 +173,6 @@ type codexThreadIDInterceptor struct {
 	cb          func(string)
 }
 
-// newCodexThreadIDInterceptor wraps inner and fires cb with the captured
-// thread_id on the first thread.started JSONL event.
 func newCodexThreadIDInterceptor(inner io.Reader, cb func(string)) *codexThreadIDInterceptor {
 	return &codexThreadIDInterceptor{inner: inner, cb: cb}
 }
@@ -292,11 +190,6 @@ func (c *codexThreadIDInterceptor) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// checkBuffer scans c.buf for complete JSONL lines, folds each into c.arts via
-// captureCodexThreadID, and fires the thread_id callback exactly once on the
-// first line that yields a non-empty capturedThreadID. Scanning continues for
-// all subsequent lines so turn.completed usage is captured even though it
-// arrives after thread.started. Called with c.mu held.
 func (c *codexThreadIDInterceptor) checkBuffer() {
 	for {
 		b := c.buf.Bytes()
@@ -334,22 +227,9 @@ func (c *codexThreadIDInterceptor) TokenUsage() (inputTokens, outputTokens int) 
 	return c.arts.inputTokens, c.arts.outputTokens
 }
 
-// captureCodexThreadID folds a parsed codexEvent into the run artifacts.
-//
-// The first thread.started event populates capturedThreadID; subsequent
-// thread.started events are ignored (first wins) so a resumed turn that re-emits
-// thread.started does not clobber the original thread id. turn.completed and
-// turn.failed set the corresponding flags.
-//
-// It used to return "did this event mutate arts", documented as a
-// thread-id-capture boundary signal for callers. No caller ever used it —
-// codexThreadIDInterceptor.checkBuffer derives the boundary from
-// arts.capturedThreadID directly — so the signal is gone rather than left as a
-// claim nothing honours.
 func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) {
 	switch ev.Kind {
 	case EventKindThreadStarted:
-		// First thread.started wins; ignore later ones (and empty ids).
 		if arts.capturedThreadID == "" && ev.ThreadID != "" {
 			arts.capturedThreadID = ev.ThreadID
 		}
@@ -365,6 +245,5 @@ func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) {
 			arts.turnFailureMessage = ev.ErrorMessage
 		}
 	default:
-		// turn.started and unrecognised kinds carry no run artifacts.
 	}
 }

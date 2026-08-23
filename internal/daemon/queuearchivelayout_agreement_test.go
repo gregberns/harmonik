@@ -1,15 +1,5 @@
 package daemon
 
-// queuearchivelayout_agreement_test.go — the three readers of the failed-queue
-// archive layout must agree with the writer.
-//
-// Why this file exists: the layout used to be spelled by hand in four places.
-// The boot sweep's spelling was wrong for its whole life and nothing caught it,
-// because its own test built a fixture that matched the sweep's broken pattern
-// instead of calling the real writer. Every fixture here is produced by
-// [queue.ArchiveFailedQueue], the function the daemon actually uses, so a
-// reader that drifts from the writer fails here.
-
 import (
 	"context"
 	"os"
@@ -23,21 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// writeRealFailedArchive creates a live queue file for queueName and then
-// archives it through the REAL archive writer. It returns the archive path the
-// writer chose. Nothing here hand-builds an archive name.
-//
-// WHY THE MOD-TIME IS PLANTED AND NOT LEFT TO THE FILESYSTEM. `at` reaches the
-// writer only as a FILENAME: ArchiveFailedQueue formats it into the archive
-// suffix and then moves the file with os.Rename, which carries the live file's
-// real mod-time across untouched. The observer reads age as
-// ObserveQueueArchivesConfig.Now minus the mod-time, and it SORTS the archives
-// by mod-time, so a fixture that sets `at` in May 2026 and leaves the mod-time
-// at today gets negative ages and an order it never chose — the filename says
-// one thing and the disk says another. os.Chtimes makes the two agree, and the
-// value is read back because the filesystem, not the caller, decides what
-// actually landed. Refs: hk-3ty39. Same idiom as archiveViaRealWriter in
-// internal/lifecycle/queuearchiveobserver_test.go.
 func writeRealFailedArchive(t *testing.T, projectDir, queueName string, at time.Time) string {
 	t.Helper()
 
@@ -64,7 +39,6 @@ func writeRealFailedArchive(t *testing.T, projectDir, queueName string, at time.
 	return archivePath
 }
 
-// mustModTime returns the mod-time the filesystem holds for path.
 func mustModTime(t *testing.T, path string) time.Time {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -92,14 +66,12 @@ func TestFailedArchiveLayout_AllThreeReadersFindWhatTheWriterWrote(t *testing.T)
 	}
 	sort.Strings(want)
 
-	// Reader 1 — the daemon-down disk snapshot.
 	gotDisk, err := diskFailedArchives(projectDir)
 	if err != nil {
 		t.Fatalf("diskFailedArchives: %v", err)
 	}
 	assertSamePaths(t, "diskFailedArchives", gotDisk, want)
 
-	// Reader 2 — the drain detector's defense #3.
 	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), projectDir)
 	gotDrain, err := d.failedArchives()
 	if err != nil {
@@ -107,7 +79,6 @@ func TestFailedArchiveLayout_AllThreeReadersFindWhatTheWriterWrote(t *testing.T)
 	}
 	assertSamePaths(t, "DrainDetector.failedArchives", gotDrain, want)
 
-	// Reader 3 — the boot-time observer.
 	report, err := lifecycle.ObserveQueueArchives(projectDir, lifecycle.ObserveQueueArchivesConfig{
 		Now:    at.Add(time.Hour),
 		Getenv: func(string) string { return "" },
@@ -224,12 +195,6 @@ func TestOrphanSweepResult_ReportsArchivesAndDeletesNone(t *testing.T) {
 		}
 	}
 
-	// THE TWO ORDERED FIELDS. The report promises archives oldest first and
-	// over-retention candidates oldest first. Both are ordered by mod-time, and
-	// until the fixture planted mod-times it did not control that axis at all:
-	// `at` only named the file, so the real order was whatever order the test
-	// happened to create the files in, and it agreed with the intended order by
-	// luck. These assertions turn the promise into something that can fail.
 	gotOrder := make([]string, 0, len(report.Archives))
 	for _, a := range report.Archives {
 		gotOrder = append(gotOrder, a.Path)
@@ -237,9 +202,6 @@ func TestOrphanSweepResult_ReportsArchivesAndDeletesNone(t *testing.T) {
 	assertSameOrder(t, "ObserveQueueArchives (oldest first)", gotOrder, written)
 	assertSameOrder(t, "OverRetentionPaths (oldest first)", report.OverRetentionPaths, written[:2])
 
-	// THE AGES. Measured from the injected clock against the planted mod-time,
-	// so each one is an exact figure rather than a sign that happens to work
-	// out. Every age here used to be about MINUS 85 days and nothing looked.
 	for i, a := range report.Archives {
 		want := at.Add(time.Hour).Sub(at.Add(time.Duration(i) * time.Minute))
 		if a.Age != want {
@@ -260,9 +222,6 @@ func TestOrphanSweepResult_ReportsArchivesAndDeletesNone(t *testing.T) {
 	}
 }
 
-// assertSameOrder compares two path lists in order. assertSamePaths sorts both
-// sides before comparing, which is right for a set-equality claim and useless
-// for an ordering one.
 func assertSameOrder(t *testing.T, who string, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {

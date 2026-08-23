@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// permissionSchemaFixture returns a fully-populated PermissionSchema with all
-// fields set to non-zero values, suitable for structural tests (hk-a8bg.79).
 func permissionSchemaFixture(t *testing.T) PermissionSchema {
 	t.Helper()
 

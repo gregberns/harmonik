@@ -116,15 +116,11 @@ func TestSubWorkflowRefRoundTrip(t *testing.T) {
 func TestSubWorkflowRefNilPointerEncoding(t *testing.T) {
 	t.Parallel()
 
-	// A nil pointer is the correct Go representation for "sub_workflow_ref: None"
-	// per the bead brief and godoc. The value type SubWorkflowRef must never
-	// be empty; absence is always a nil pointer.
 	var subworkflowFixtureAbsent *SubWorkflowRef
 	if subworkflowFixtureAbsent != nil {
 		t.Error("zero value of *SubWorkflowRef must be nil")
 	}
 
-	// A present ref must be non-nil and valid.
 	ref := SubWorkflowRef("reconciliation-v1")
 	subworkflowFixturePresent := &ref
 	if !subworkflowFixturePresent.Valid() {

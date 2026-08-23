@@ -1,24 +1,5 @@
 package crewrun
 
-// idlereap_test.go — the regression pins for the DISABLED SD-3 idle-crew sweep.
-//
-// StartWatcher has a deliberately empty body: automatic crew idle-reaping was
-// turned off by operator directive (2026-07-18) after it tore down worker and
-// gate crews ~5 minutes into standby. An empty body is the easiest thing in the
-// codebase to "helpfully" restore, so it needs tests that fail when it is.
-//
-// Both tests here drive the REAL StartWatcher and assert on OBSERVABLE
-// BEHAVIOUR — no crew is stopped, and the crew registry is never even read.
-// Neither inspects the body, so a re-enable that hand-rolls its own pump instead
-// of restoring loop() fails them just the same. What they cannot see is a caller
-// that bypasses StartWatcher entirely; StartWatcher is the only production entry
-// point (bootworkloop.go), and a second one is the change to be suspicious of.
-//
-// Their earlier incarnation lived in idlereap_hks2eac_test.go and was swept up
-// by the Phase 1 ticket-named-test-file deletion (ec66da798) — the doc comment
-// on StartWatcher went on claiming they existed for months while the empty body
-// was in fact unpinned.
-
 import (
 	"context"
 	"encoding/json"
@@ -30,14 +11,8 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// reapObservationWindow is how long a test watches for evidence that the sweep
-// woke up. It is a large multiple of the millisecond-scale GraceAfter and
-// ScanInterval the tests configure, so an enabled sweep has dozens of ticks in
-// which to act. The tests only ever pay it in full when they PASS: any sign of
-// life fails them immediately via the signal channel.
 const reapObservationWindow = 250 * time.Millisecond
 
-// fakeCrewQueues is a test double for crewQueueLookup keyed by queue name.
 type fakeCrewQueues struct {
 	mu   sync.Mutex
 	byNm map[string]*queue.Queue
@@ -59,9 +34,6 @@ func (f *fakeCrewQueues) set(name string, status queue.QueueStatus) {
 	f.byNm[name] = &queue.Queue{Name: name, Status: status}
 }
 
-// recordingCrewStopper is a test double for crewStopper. It records every crew
-// it was asked to tear down and signals the first such call, so a re-enabled
-// sweep is caught the moment it acts rather than at the end of a fixed sleep.
 type recordingCrewStopper struct {
 	mu      sync.Mutex
 	stopped []string
@@ -104,8 +76,6 @@ func TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps(t *testing.T) {
 	t.Parallel()
 
 	queues := newFakeCrewQueues()
-	// Drained and completed — under an ENABLED sweep this is precisely the
-	// reap-eligible state once GraceAfter elapses.
 	queues.set("paul", queue.QueueStatusCompleted)
 	stopper := newRecordingCrewStopper()
 

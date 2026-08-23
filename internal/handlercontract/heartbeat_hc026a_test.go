@@ -1,20 +1,11 @@
 package handlercontract_test
 
-// heartbeat_hc026a_test.go — HC-026a heartbeat phase + message tests.
-//
-// Spec: specs/handler-contract.md §4.6.HC-026a.
-// Bead: hk-8i31.32.
-
 import (
 	"encoding/json"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase constant values
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC026a_PhaseConstants_StringValues verifies that all 6 required
 // HeartbeatPhase constants have the normative wire-format string values.
@@ -40,10 +31,6 @@ func TestHC026a_PhaseConstants_StringValues(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IsRequiredPhase
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC026a_IsRequiredPhase_TrueForAllRequired verifies that IsRequiredPhase
 // returns true for each of the 6 required phase values.
@@ -88,10 +75,6 @@ func TestHC026a_IsRequiredPhase_FalseForUnknown(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RequiredHeartbeatPhaseCount
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHC026a_RequiredHeartbeatPhaseCount_Is6 verifies that
 // RequiredHeartbeatPhaseCount equals 6 as declared in HC-026a.
 //
@@ -104,10 +87,6 @@ func TestHC026a_RequiredHeartbeatPhaseCount_Is6(t *testing.T) {
 		t.Errorf("RequiredHeartbeatPhaseCount = %d, want %d", handlercontract.RequiredHeartbeatPhaseCount, want)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HeartbeatMsg JSON shape
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC026a_HeartbeatMsg_JSONFieldNames verifies that HeartbeatMsg marshals
 // to the correct JSON field names: "type", "session_id", "phase".

@@ -25,10 +25,6 @@ import (
 // TODO(hk-872.28): Full BrError integration will absorb this sentinel.
 var ErrBrListFailed = errors.New("brcli: br list failed")
 
-// brListItem is the per-element JSON shape returned by
-// `br list --status in_progress --json`. It is similar to but NOT identical to
-// the brShowItem shape: dependency_count and dependent_count are present
-// instead of full edge details.
 type brListItem struct {
 	ID              string   `json:"id"`
 	Title           string   `json:"title"`
@@ -40,8 +36,6 @@ type brListItem struct {
 	DependentCount  int      `json:"dependent_count"`
 }
 
-// brListEnvelope is the JSON response shape for
-// `br list --status in_progress --json` on exit 0.
 type brListEnvelope struct {
 	Issues []brListItem `json:"issues"`
 }
@@ -80,24 +74,17 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 		)
 	}
 
-	// Success path: parse {issues: [...]} envelope.
-	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var envelope brListEnvelope
 	if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr != nil {
 		return nil, fmt.Errorf("brcli.ListInFlightBeads: malformed br list output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
-	// Return empty slice (not nil) when the issues array is empty, so callers
-	// can distinguish "no in-flight beads" from "not queried".
 	if len(envelope.Issues) == 0 {
 		return []core.BeadRecord{}, nil
 	}
 
 	records := make([]core.BeadRecord, 0, len(envelope.Issues))
 	for _, item := range envelope.Issues {
-		// issue_type is required for a valid BeadRecord.
-		// Per BI-025b: missing required field is a schema-level invariant violation;
-		// classify as BrSchemaMismatch (mirrors ShowBead lines 124–129).
 		if item.IssueType == "" {
 			return nil, fmt.Errorf(
 				"brcli.ListInFlightBeads: malformed br list output: missing issue_type field for bead %q: %w",
@@ -106,9 +93,6 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 			)
 		}
 
-		// title is required for a valid BeadRecord.
-		// Per BI-025b: missing required field is a schema-level invariant violation;
-		// classify as BrSchemaMismatch (mirrors ShowBead pattern).
 		if item.Title == "" {
 			return nil, fmt.Errorf(
 				"brcli.ListInFlightBeads: malformed br list output: missing title field for bead %q: %w",
@@ -117,16 +101,11 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 			)
 		}
 
-		// Parse CoarseStatus — UnmarshalText rejects unknown values per its contract.
 		var status core.CoarseStatus
 		if unmarshalErr := status.UnmarshalText([]byte(item.Status)); unmarshalErr != nil {
 			return nil, fmt.Errorf("brcli.ListInFlightBeads: bead %q: %w", item.ID, unmarshalErr)
 		}
 
-		// Edges are NOT available from br list (only dependency_count /
-		// dependent_count). Set to nil — callers needing full edges MUST call
-		// ShowBead or ListDependencies for each bead.
-		// Labels are surfaced per BI-013 / BI-009a workflow-mode label exposure.
 		record := core.BeadRecord{
 			BeadID:        core.BeadID(item.ID),
 			Title:         item.Title,

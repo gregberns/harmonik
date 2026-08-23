@@ -15,13 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// adapter_claudecode_test.go — tests for ClaudeCodeAdapter (hk-prug5).
-//
-// Helper prefix: claudeCodeFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-
-// claudeCodeFixtureMakeEvent builds a minimal valid EventEnvelope with the
-// given event type and payload bytes.
 func claudeCodeFixtureMakeEvent(t *testing.T, eventType string, payload json.RawMessage) handlercontract.EventEnvelope {
 	t.Helper()
 	if payload == nil {
@@ -37,8 +30,6 @@ func claudeCodeFixtureMakeEvent(t *testing.T, eventType string, payload json.Raw
 	}
 }
 
-// claudeCodeFixtureRetryPayload builds an agent_rate_limited payload with the
-// given retry_after_seconds value.  Pass nil to omit the field.
 func claudeCodeFixtureRetryPayload(t *testing.T, retryAfterSeconds *int) json.RawMessage {
 	t.Helper()
 	type rateLimitedMsg struct {
@@ -51,12 +42,7 @@ func claudeCodeFixtureRetryPayload(t *testing.T, retryAfterSeconds *int) json.Ra
 	return raw
 }
 
-// ptr is a generic helper that returns a pointer to a value.
 func ptr[T any](v T) *T { return &v }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Interface satisfaction (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeCodeAdapter_ImplementsAdapterInterface verifies that
 // ClaudeCodeAdapter satisfies handlercontract.Adapter at compile time.
@@ -67,10 +53,6 @@ func TestClaudeCodeAdapter_ImplementsAdapterInterface(t *testing.T) {
 		t.Fatal("NewClaudeCodeAdapter returned a nil Adapter")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DetectReady
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeCodeAdapter_DetectReady_TrueForAgentReady verifies that
 // DetectReady returns true for an agent_ready event per HC-041.
@@ -117,10 +99,6 @@ func TestClaudeCodeAdapter_DetectReady_FalseForNonAgentReady(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DetectRateLimit
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeCodeAdapter_DetectRateLimit_TrueForAgentRateLimited verifies
 // (limited=true) for an agent_rate_limited event.
@@ -205,11 +183,6 @@ func TestClaudeCodeAdapter_DetectRateLimit_FalseForNonRateLimited(t *testing.T) 
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CleanExitSequence
-// ─────────────────────────────────────────────────────────────────────────────
-
-// stubSession is a minimal handlercontract.Session stub that records SendInput calls.
 type stubSession struct {
 	inputs  []string
 	sendErr error
@@ -261,10 +234,6 @@ func TestClaudeCodeAdapter_CleanExitSequence_PropagatesSendError(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RotateAccount
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestClaudeCodeAdapter_RotateAccount_ReturnsErrSingleAccountOnly verifies
 // that RotateAccount returns the ErrSingleAccountOnly sentinel and that it
 // wraps ErrDeterministic per spec (§4.3.HC-013a).
@@ -283,10 +252,6 @@ func TestClaudeCodeAdapter_RotateAccount_ReturnsErrSingleAccountOnly(t *testing.
 		t.Errorf("RotateAccount error %v does not wrap ErrDeterministic (HC-013a requires deterministic sentinel)", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Register helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeCodeAdapter_Register_AddsToRegistry verifies that Register adds
 // a ClaudeCodeAdapter under handlercontract.AgentTypeClaudeCode in a fresh registry.

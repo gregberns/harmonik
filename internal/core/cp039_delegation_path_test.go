@@ -1,50 +1,10 @@
 package core
 
-// cp039_delegation_path_test.go — Conformance tests for CP-039
-//
-// specs/control-points.md §4.8.CP-039:
-//
-//	A cognition-tagged evaluator (Gate per §4.2, Hook per §4.3) MUST name its
-//	delegation path explicitly on the ControlPoint record: the invoked role
-//	(from [architecture.md §4.8]), the model class (e.g., "reviewer-tier-1"),
-//	the input shape (a declared input schema), and the response schema (a
-//	declared output schema). A reviewer verifies the path at registration;
-//	unnamed paths fail registration.
-//
-// These tests verify:
-//  1. A cognition-tagged Gate with a fully-populated DelegationPath registers
-//     without error (positive path).
-//  2. A cognition-tagged Hook with a fully-populated DelegationPath registers
-//     without error (positive path).
-//  3. A cognition-tagged Gate with a nil DelegationPath fails registration with
-//     ErrInvalidControlPoint ("unnamed path fails registration").
-//  4. A cognition-tagged Hook with a nil DelegationPath fails registration with
-//     ErrInvalidControlPoint.
-//  5. A cognition-tagged Gate where any one of the five DelegationPath fields is
-//     empty (partial path) fails registration — each field is individually tested.
-//  6. A cognition-tagged Hook where any one of the five DelegationPath fields is
-//     empty fails registration — each field is individually tested.
-//  7. After successful registration, all five DelegationPath fields are readable
-//     from the registry entry, confirming that the "reviewer can verify the path"
-//     at registration time (§4.8.CP-039: "a reviewer verifies the path at
-//     registration").
-//
-// Refs: hk-a8bg.40
-
 import (
 	"errors"
 	"testing"
 )
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-// cp039CognitionAxes is the AxisTags appropriate for a cognition-tagged
-// evaluator per CP-039:
-//
-//	llm-freedom=bounded; io-determinism=best-effort; replay-safety=safe;
-//	idempotency=idempotent
 var cp039CognitionAxes = AxisTags{
 	LLMFreedom:    LLMFreedomBounded,
 	IODeterminism: IODeterminismBestEffort,
@@ -52,12 +12,6 @@ var cp039CognitionAxes = AxisTags{
 	Idempotency:   AxisIdempotencyIdempotent,
 }
 
-// cp039FullDelegationPath returns a fully-populated DelegationPath covering
-// all five fields declared in specs/control-points.md §6.1.5:
-//
-//	role, model_class, input_schema_ref, response_schema_ref, prompt_template_ref
-//
-// All fields are non-empty; DelegationPath.Valid() returns true for this value.
 func cp039FullDelegationPath() DelegationPath {
 	return DelegationPath{
 		Role:              "reviewer",
@@ -68,11 +22,6 @@ func cp039FullDelegationPath() DelegationPath {
 	}
 }
 
-// cp039CognitionGate builds a cognition-tagged Gate ControlPoint with the
-// supplied DelegationPath pointer.
-//
-// Pass a non-nil DelegationPath with all five fields populated for the positive
-// path. Pass nil or a partial DelegationPath to exercise the rejection path.
 func cp039CognitionGate(t *testing.T, name string, dp *DelegationPath) ControlPoint {
 	t.Helper()
 	approver := "ops-lead"
@@ -96,11 +45,6 @@ func cp039CognitionGate(t *testing.T, name string, dp *DelegationPath) ControlPo
 	}
 }
 
-// cp039CognitionHook builds a cognition-tagged Hook ControlPoint with the
-// supplied DelegationPath pointer.
-//
-// Pass a non-nil DelegationPath with all five fields populated for the positive
-// path. Pass nil or a partial DelegationPath to exercise the rejection path.
 func cp039CognitionHook(t *testing.T, name string, dp *DelegationPath) ControlPoint {
 	t.Helper()
 	return ControlPoint{
@@ -124,10 +68,6 @@ func cp039CognitionHook(t *testing.T, name string, dp *DelegationPath) ControlPo
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Positive path: cognition-tagged Gate and Hook with full DelegationPath register
-// ---------------------------------------------------------------------------
-
 // TestCP039_CognitionGate_FullPath_Registers verifies that a cognition-tagged
 // Gate with a fully-populated DelegationPath registers without error.
 //
@@ -149,7 +89,6 @@ func TestCP039_CognitionGate_FullPath_Registers(t *testing.T) {
 		t.Fatalf("Register cognition Gate with full DelegationPath: unexpected error: %v", err)
 	}
 
-	// Registered ControlPoint is retrievable.
 	got, ok := reg.LookupByName("review-quality-gate")
 	if !ok {
 		t.Fatal("LookupByName after registration: not found")
@@ -194,10 +133,6 @@ func TestCP039_CognitionHook_FullPath_Registers(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Rejection path: nil DelegationPath fails registration
-// ---------------------------------------------------------------------------
-
 // TestCP039_CognitionGate_NilPath_FailsRegistration verifies that a
 // cognition-tagged Gate with a nil DelegationPath fails registration with
 // ErrInvalidControlPoint.
@@ -206,8 +141,6 @@ func TestCP039_CognitionHook_FullPath_Registers(t *testing.T) {
 func TestCP039_CognitionGate_NilPath_FailsRegistration(t *testing.T) {
 	t.Parallel()
 
-	// nil DelegationPath → Evaluator.Valid() = false → cp.Valid() = false →
-	// Register returns ErrInvalidControlPoint.
 	cp := cp039CognitionGate(t, "unnamed-cognition-gate", nil)
 
 	reg := NewMapRegistry()
@@ -219,7 +152,6 @@ func TestCP039_CognitionGate_NilPath_FailsRegistration(t *testing.T) {
 		t.Errorf("Register cognition Gate with nil DelegationPath: got %v, want ErrInvalidControlPoint", err)
 	}
 
-	// Registry must remain empty; the bad registration must not persist.
 	if len(reg.All()) != 0 {
 		t.Errorf("registry has %d entries after rejection, want 0", len(reg.All()))
 	}
@@ -248,10 +180,6 @@ func TestCP039_CognitionHook_NilPath_FailsRegistration(t *testing.T) {
 		t.Errorf("registry has %d entries after rejection, want 0", len(reg.All()))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Rejection path: partial DelegationPath (each field missing) fails registration
-// ---------------------------------------------------------------------------
 
 // TestCP039_CognitionGate_PartialPath_FailsRegistration verifies that a
 // cognition-tagged Gate where any single DelegationPath field is empty fails
@@ -418,10 +346,6 @@ func TestCP039_CognitionHook_PartialPath_FailsRegistration(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Reviewer verification: all five path fields are readable after registration
-// ---------------------------------------------------------------------------
-
 // TestCP039_DelegationPath_FieldsReadable_AfterRegistration verifies that
 // after a cognition-tagged ControlPoint is registered, all five DelegationPath
 // fields are readable from the registry entry.
@@ -463,14 +387,12 @@ func TestCP039_DelegationPath_FieldsReadable_AfterRegistration(t *testing.T) {
 				t.Fatal("LookupByName after registration: not found")
 			}
 
-			// The DelegationPath must be non-nil on the retrieved entry.
 			if got.Evaluator.DelegationPath == nil {
 				t.Fatal("retrieved Evaluator.DelegationPath is nil, want non-nil")
 			}
 
 			gotDP := *got.Evaluator.DelegationPath
 
-			// Verify each field round-tripped through the registry.
 			if gotDP.Role != dp.Role {
 				t.Errorf("DelegationPath.Role = %q, want %q", gotDP.Role, dp.Role)
 			}

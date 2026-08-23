@@ -1,30 +1,5 @@
 package daemon
 
-// schedulefailedfire_test.go — a scheduled fire that FAILS must still be
-// recorded (hk-pbdti).
-//
-// # The claim these tests defend
-//
-// LastFire is the only thing that makes a due job stop being due. doFireAction
-// used to return before store.MarkFired on every failure path — one return per
-// action-kind case plus the default — so a job whose action failed recorded
-// nothing, stayed due, and was re-fired by the work loop every
-// workloopPollInterval (2s) with no backoff and no cap. It was measured at 50
-// attempts in 50 ticks, and it reached every action kind, not just comms-send.
-//
-// The tests below drive the tick many times over a job that cannot succeed and
-// require the schedule to advance anyway. The action error must still come back
-// out of doFireAction: for a comms-send action that stderr line is the only sign
-// an operator gets that the message reached nobody, so recording the fire and
-// reporting the failure are asserted separately and cannot be traded for each
-// other.
-//
-// # Helper prefix
-//
-// Helpers use the prefix "failedFire" per implementer-protocol.md
-// §Helper-prefix discipline. The port/store/crew builder is newTickPort from
-// scheduletick_test.go.
-
 import (
 	"context"
 	"errors"
@@ -38,28 +13,15 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
-// failedFireTicks is the number of work-loop passes each table row drives. The
-// pre-fix behaviour produced one fire attempt per pass; the fixed behaviour
-// produces exactly one for the whole run, because the first attempt records
-// LastFire and the daily boundary it just serviced is then in the past.
 const failedFireTicks = 20
 
-// errFailedFireAction is the failure a table row's injected double returns. A
-// sentinel (not a bare fmt.Errorf) so the errors.Join test can assert with
-// errors.Is that the ACTION's error survived being joined with the recording
-// error.
 var errFailedFireAction = errors.New("failed-fire test: the action failed")
 
-// failedFireDueDaily returns a daily schedule whose instant is already past, so
-// a freshly-added job is due on the first tick and — once LastFire is written —
-// not due again for the rest of the test.
 func failedFireDueDaily(t *testing.T) schedule.Schedule {
 	t.Helper()
 	return schedule.Schedule{Kind: schedule.ScheduleKindDaily, At: pastDailyAt(t), TZ: "UTC"}
 }
 
-// failedFireCountingSend returns a commsSendFunc that always fails, plus a
-// counter of the calls it received.
 func failedFireCountingSend() (send commsSendFunc, attempts func() int) {
 	var mu sync.Mutex
 	n := 0
@@ -160,9 +122,6 @@ func TestScheduleTickRecordsAFireThatFailedForEveryActionKind(t *testing.T) {
 				t.Fatalf("LastFire is empty after %d ticks over a failing fire: the job is still due, "+
 					"so the work loop re-fires it every poll interval forever", failedFireTicks)
 			}
-			// A failed fire records no pid. For the skip overlap policy that is the
-			// right record: overlapBlocks treats only LastPID > 0 as a prior run
-			// that may still be alive.
 			if got.LastPID != 0 {
 				t.Errorf("LastPID = %d after a failed fire, want 0", got.LastPID)
 			}
@@ -248,8 +207,6 @@ func TestDoFireActionReturnsTheActionErrorAfterRecordingTheFire(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.wantIn) {
 				t.Errorf("error %q does not carry %q", err.Error(), tc.wantIn)
 			}
-			// The fire was recorded all the same — reporting and recording are not
-			// alternatives.
 			if got, _ := store.Get("reports-failure"); got.LastFire == "" {
 				t.Errorf("LastFire empty: the fire was reported but not recorded")
 			}
@@ -275,9 +232,6 @@ func TestDoFireActionJoinsTheActionErrorWhenTheRecordAlsoFails(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	// The store persists to <projectDir>/.harmonik/schedules.json through a temp
-	// file in that directory. A readable but non-writable directory is what makes
-	// the record — and only the record — fail.
 	stateDir := filepath.Join(port.projectDir, ".harmonik")
 	if err := os.Chmod(stateDir, 0o500); err != nil { //nolint:gosec // the test needs a readable, non-writable directory
 		t.Fatalf("chmod state dir: %v", err)

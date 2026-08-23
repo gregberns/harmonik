@@ -1,11 +1,5 @@
 package daemon
 
-// export_extpkg_claude_codex_pi_test.go — thin re-exports of the already-extracted
-// claude / codex / pi harness packages (RT19.15a split of export_test.go). These
-// are RETAINED shims for STAYING daemon_test files that assert daemon-composition
-// claims across harnesses. package daemon test file; see export_test.go header for
-// the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 

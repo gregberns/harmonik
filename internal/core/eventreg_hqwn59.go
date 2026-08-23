@@ -50,25 +50,6 @@ func init() {
 	registerBeadLedgerEvents()
 }
 
-// registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
-// plus the two §4.12 merge-to-main adjacents (bead_closed and working_tree_refresh_failed)
-// that share the run-lifecycle emission sequence per execution-model.md §4.12 EM-052/EM-054.
-//
-// Durability classes per §8.1 table:
-//   - run_started (§8.1.1):                    F (fsync-boundary per beads-integration.md §4.3 BI-009)
-//   - run_completed (§8.1.2):                  F (terminal-state fsync per BI-010)
-//   - run_failed (§8.1.3):                     F (terminal-state fsync per BI-010)
-//   - state_entered (§8.1.4):                  O (ordinary — observability stream)
-//   - state_exited (§8.1.5):                   O (ordinary — observability stream)
-//   - transition_event (§8.1.6):               F (fsync-boundary per checkpoint write)
-//   - checkpoint_written (§8.1.7):             F (fsync-boundary per checkpoint write)
-//   - outcome_emitted (§8.1.8):                O (ordinary — handler-to-daemon pipe)
-//   - sub_workflow_entered (§8.1.9):           O (ordinary — observability stream)
-//   - sub_workflow_exited (§8.1.10):           O (ordinary — observability stream)
-//   - node_dispatch_requested (§8.1.11):       O (ordinary — observability stream)
-//   - bead_closed (EM-052 §4.12.6):            F (fsync-boundary — bead closure terminal-state landmark)
-//   - epic_completed (§8.13 hk-w6y70):         O (ordinary — observational; at-most-once per epic)
-//   - working_tree_refresh_failed (EM-054):    O (ordinary — informational; merge already durable)
 func registerRunLifecycle() {
 	mustRegisterAtVersion(EventTypeRunStarted, func() EventPayload { return &RunStartedPayload{} }, 2)
 	mustRegister(EventTypeRunCompleted, func() EventPayload { return &RunCompletedPayload{} })
@@ -81,51 +62,17 @@ func registerRunLifecycle() {
 	mustRegister(EventTypeSubWorkflowEntered, func() EventPayload { return &SubWorkflowEnteredPayload{} })
 	mustRegister(EventTypeSubWorkflowExited, func() EventPayload { return &SubWorkflowExitedPayload{} })
 	mustRegister(EventTypeNodeDispatchRequested, func() EventPayload { return &NodeDispatchRequestedPayload{} })
-	// node_dispatch_decided: emitted by the DOT-mode cascade engine after EM-041
-	// edge selection resolves the next node (or determines terminal state / failure).
-	// Durability class: O. Bead ref: hk-bf85t (T-IMPL-008).
 	mustRegister(EventTypeNodeDispatchDecided, func() EventPayload { return &NodeDispatchDecidedPayload{} })
 	mustRegister(EventTypeBeadClosed, func() EventPayload { return &BeadClosedPayload{} })
-	// epic_completed (hk-w6y70): emitted at most once per parent epic after the
-	// last child closes. Durability class: O (ordinary — observational).
 	mustRegister(EventTypeEpicCompleted, func() EventPayload { return &EpicCompletedPayload{} })
 	mustRegister(EventTypeWorkingTreeRefreshFailed, func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
-	// working_tree_local_edits_overwritten (hk-7qmpp): emitted when the EM-054
-	// post-merge refresh overwrites an uncommitted local edit on a path the
-	// merged commit itself changed. Names the paths and the recovery patch so
-	// the overwrite is never silent. Durability class: O.
 	mustRegister(EventTypeWorkingTreeLocalEditsOverwritten, func() EventPayload {
 		return &WorkingTreeLocalEditsOverwrittenPayload{}
 	})
-	// implementer_phase_complete (hk-cd8yu): emitted immediately after the
-	// implementer session ends (normal exit, noChange-timeout kill, or context
-	// cancellation) and before any reviewer phase begins. Closes the diagnostic
-	// gap between run_started and reviewer_launched. Durability class: F.
 	mustRegister(EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} })
-	// merge_build_failed (hk-o68j3): emitted when go build+vet fails on the
-	// freshly fast-forwarded merged tree inside lockedMergeRunBranchToMain,
-	// before the push. update-ref is rolled back; caller reopens the bead.
-	// Durability class: F.
 	mustRegister(EventTypeMergeBuildFailed, func() EventPayload { return &MergeBuildFailedPayload{} })
 }
 
-// registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.
-//
-// Durability classes per §8.2 table:
-//   - hook_fired (§8.2.1):                           O (ordinary — observability)
-//   - hook_failed (§8.2.2):                          O (ordinary — observability)
-//   - hook_verdict_persisted (§8.2.3):               O (ordinary — observability)
-//   - gate_allowed (§8.2.4):                         O (ordinary — observability)
-//   - gate_denied (§8.2.5):                          O (ordinary — observability)
-//   - gate_escalated (§8.2.6):                       O (ordinary — observability)
-//   - guard_reordered (§8.2.7):                      O (ordinary — observability)
-//   - guard_failed (§8.2.8):                         O (ordinary — observability)
-//   - control_points_registered (§8.2.9):            O (ordinary — observability)
-//   - control_points_registration_started (§8.2.10): O (ordinary — observability)
-//   - verdict_envelope_mismatch (§8.2.11):           O (ordinary — reconciliation input)
-//   - policy_expression_exceeded_cost (§8.2.12):     F (fsync-boundary per CP-034b durability-pair)
-//   - gate_definition_drift (§8.2.13):               F (fsync-boundary — Cat 6 escalation landmark)
-//   - gate_redefined_under_cat_6 (§8.2.14):          F (fsync-boundary — re-evaluation lifecycle boundary)
 func registerControlPoints() {
 	mustRegister(EventTypeHookFired, func() EventPayload { return &HookFiredPayload{} })
 	mustRegister(EventTypeHookFailed, func() EventPayload { return &HookFailedPayload{} })
@@ -139,35 +86,10 @@ func registerControlPoints() {
 	mustRegister(EventTypeControlPointsRegistrationStarted, func() EventPayload { return &ControlPointsRegistrationStartedPayload{} })
 	mustRegister(EventTypeVerdictEnvelopeMismatch, func() EventPayload { return &VerdictEnvelopeMismatchPayload{} })
 	mustRegister(EventTypePolicyExpressionExceededCost, func() EventPayload { return &PolicyExpressionExceededCostPayload{} })
-	// gate_definition_drift (§8.2.13, hk-u3q6o): F-class; emitted when a
-	// mechanism-tagged Gate's envelope inputs drift at replay time (CP-038a).
 	mustRegister(EventTypeGateDefinitionDrift, func() EventPayload { return &GateDefinitionDriftPayload{} })
-	// gate_redefined_under_cat_6 (§8.2.14, hk-u3q6o): F-class; emitted when
-	// Cat 6 authorizes Gate re-evaluation under a drifted definition (CP-038a).
 	mustRegister(EventTypeGateRedefinedUnderCat6, func() EventPayload { return &GateRedefinedUnderCat6Payload{} })
 }
 
-// registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors,
-// plus the agent-comms typed events (agent-comms spec §1, hk-djqc9).
-//
-// Durability classes per §8.3 table:
-//   - agent_ready (§8.3.1):                 O (ordinary — handler lifecycle observability)
-//   - agent_started (§8.3.2):               O (ordinary — handler lifecycle audit and observability)
-//   - agent_output_chunk (§8.3.3):          L (lossy-tail-ok — per-chunk statistical aggregate)
-//   - agent_completed (§8.3.4):             O (ordinary — handler lifecycle observability)
-//   - agent_failed (§8.3.5):                O (ordinary — handler lifecycle observability)
-//   - agent_rate_limit_status (§8.3.6):     O (ordinary — rate-limit lifecycle observability)
-//   - session_log_location (§8.3.7):        O (ordinary — session-log-pipeline audit)
-//   - skills_provisioned (§8.3.8):          O (ordinary — skill-injection audit and observability)
-//   - handler_capabilities (§8.3.9):        O (ordinary — version-negotiation observability)
-//   - agent_warning_silent_hang (§8.3.10):  O (ordinary — silent-hang detection)
-//   - agent_resumed_after_warning (§8.3.11): O (ordinary — hang recovery observability)
-//   - agent_soft_terminating (§8.3.12):     O (ordinary — termination lifecycle audit)
-//   - agent_hard_terminating (§8.3.13):     O (ordinary — termination lifecycle audit)
-//   - agent_heartbeat (HC-026a):            O (ordinary — silent-hang timer reset)
-//   - launch_initiated:                     O (ordinary — pre-exec lifecycle observability)
-//   - agent_message (agent-comms §1.1):     F (fsync-boundary — durable directed/broadcast messaging; no silent drops G2)
-//   - agent_presence (agent-comms §1.2):    O (ordinary — presence beat; TTL projection handles crash gaps)
 func registerAgentEvents() {
 	mustRegister(EventTypeAgentStarted, func() EventPayload { return &AgentStartedPayload{} })
 	mustRegister(EventTypeAgentReady, func() EventPayload { return &AgentReadyPayload{} })
@@ -184,103 +106,32 @@ func registerAgentEvents() {
 	mustRegister(EventTypeAgentSoftTerminating, func() EventPayload { return &AgentSoftTerminatingPayload{} })
 	mustRegister(EventTypeAgentHardTerminating, func() EventPayload { return &AgentHardTerminatingPayload{} })
 	mustRegister(EventTypeLaunchInitiated, func() EventPayload { return &LaunchInitiatedPayload{} })
-	// agent_ready_timeout (hk-5cox8): emitted by the daemon workloop when HC-056
-	// fires — no agent_ready arrived within the timeout window. Durability class: O.
 	mustRegister(EventTypeAgentReadyTimeout, func() EventPayload { return &AgentReadyTimeoutPayload{} })
-	// post_agent_ready_hang (hk-a2okh): emitted when an implementer becomes ready
-	// but makes no observable progress within the hang-detection timeout. Durability class: O.
 	mustRegister(EventTypePostAgentReadyHang, func() EventPayload { return &PostAgentReadyHangPayload{} })
-	// lifecycle_transition (§8.3.14, hk-xrygh): emitted by the watcher and
-	// workloop on every LifecycleState machine transition per HC-064..HC-067.
-	// Durability class: O.
 	mustRegister(EventTypeLifecycleTransition, func() EventPayload { return &LifecycleTransitionPayload{} })
-	// pasteinject_failed (hk-fra5l): emitted by the daemon when paste-inject
-	// cannot deliver the kick-off message to the tmux pane. Durability class: O.
 	mustRegister(EventTypePasteInjectFailed, func() EventPayload { return &PasteInjectFailedPayload{} })
-	// launch_stall_detected (hk-fra5l): emitted by the stale watcher when
-	// run_started fires but launch_initiated is absent for >30 s. Durability class: O.
 	mustRegister(EventTypeLaunchStallDetected, func() EventPayload { return &LaunchStallDetectedPayload{} })
-	// agent_ready_stall_detected (hk-1s1or): emitted by the stale watcher when
-	// launch_initiated fires but agent_ready is absent for >agentReadyStallThreshold
-	// (a few minutes) — the launch_initiated → agent_ready blind spot. Durability class: O.
 	mustRegister(EventTypeAgentReadyStallDetected, func() EventPayload { return &AgentReadyStallDetectedPayload{} })
-	// spawn_cap_blocked (hk-4l7zs): emitted by the daemon when SpawnWindow cannot
-	// acquire a spawn-semaphore slot within the bounded acquire timeout — the
-	// observable signature of a slot leak. Durability class: O.
 	mustRegister(EventTypeSpawnCapBlocked, func() EventPayload { return &SpawnCapBlockedPayload{} })
-	// implementer_budget_exceeded (hk-9vp51): emitted by pasteInjectQuitOnCommit
-	// when an implementer session is force-killed for exhausting its commit
-	// budget (hard ceiling reached, or progress went stale). Durability class: O.
 	mustRegister(EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} })
-	// implementer_no_work_suspected (hk-368i4): emitted when a process-exit
-	// implementer produced no commit and a clean worktree AND ran for less than
-	// the no-work duration floor — the independent detector for the silent
-	// implementer failure hk-jcrzn exposed. Durability class: O.
 	mustRegister(EventTypeImplementerNoWorkSuspected, func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} })
-	// reviewer_budget_exceeded (hk-da3rr): emitted by the builtin review-loop
-	// and the DOT reviewer-node path when pasteInjectQuitOnReviewFile
-	// force-kills a reviewer session that exhausted its diff-scaled verdict
-	// budget. Durability class: O.
 	mustRegister(EventTypeReviewerBudgetExceeded, func() EventPayload { return &ReviewerBudgetExceededPayload{} })
-	// tmux_new_window_timeout (hk-r1rup): emitted by the daemon when
-	// tmuxSubstrate.SpawnWindow's underlying `tmux new-window` shell call hangs
-	// past the bounded new-window timeout — the observable signature of a hung
-	// tmux invocation (the no-spawn wedge). Durability class: O.
 	mustRegister(EventTypeTmuxNewWindowTimeout, func() EventPayload { return &TmuxNewWindowTimeoutPayload{} })
-	// codex_billing_guard (hk-tu48u, C3/T11): emitted by the codex launch path's
-	// positive billing guard at each observable step (materialize
-	// forced_login_method=chatgpt, pre-flight assert allowed, pre-flight assert
-	// denied = fail-closed). Durability class: O.
 	mustRegister(EventTypeCodexBillingGuard, func() EventPayload { return &CodexBillingGuardPayload{} })
-	// pi_billing_guard (hk-l1bkp, PI-040/042/043): emitted by the Pi launch
-	// path's fail-closed billing guard (inverted from codex: Pi refuses if the
-	// configured provider key is ABSENT). PI-042 on-disk credential check also
-	// fires each launch. Durability class: O.
 	mustRegister(EventTypePiBillingGuard, func() EventPayload { return &PiBillingGuardPayload{} })
-	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
-	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister(EventTypeAgentMessage, func() EventPayload { return &AgentMessagePayload{} })
-	// agent_presence (hk-djqc9, agent-comms spec §1.2): join/refresh/leave presence
-	// beat. Durability class: O (ordinary — TTL projection reconciles crash gaps).
 	mustRegister(EventTypeAgentPresence, func() EventPayload { return &AgentPresencePayload{} })
-	// harness_selected (hk-lr5t): emitted by resolveHarness at dispatch time to
-	// record which harness (agent_type) was chosen and which tier resolved it.
-	// Closes the observability gap where silent claude-code fallback was invisible.
-	// Durability class: O.
 	mustRegister(EventTypeHarnessSelected, func() EventPayload { return &HarnessSelectedPayload{} })
-	// model_selected (hk-eval-prog-model-on-log-bh2o7): emitted by routedLaunchSpecBuilder
-	// and pinnedHarnessLaunchSpecBuilder after harness selection, recording the effective
-	// model string keyed on run_id. Enables trustworthy cross-model run records without
-	// config snapshots. Durability class: O.
 	mustRegister(EventTypeModelSelected, func() EventPayload { return &ModelSelectedPayload{} })
-	// provider_selected (hk-8ziid.2): emitted by the claim-time Pi profile
-	// resolver alongside RunHandle.SetResolvedProvider, recording the resolved
-	// Pi provider string keyed on run_id. Enables per-provider slot-accounting
-	// audit without reading the run handle directly. Durability class: O.
 	mustRegister(EventTypeProviderSelected, func() EventPayload { return &ProviderSelectedPayload{} })
 }
 
-// registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.
-//
-// Durability classes per §8.4 table:
-//   - budget_warning (§8.4.1):    O (ordinary — budget observability)
-//   - budget_accrual (§8.4.2):    L (lossy-tail-ok — per-chunk accrual)
-//   - budget_exhausted (§8.4.3):  O (ordinary — budget lifecycle)
 func registerBudgetEvents() {
 	mustRegister(EventTypeBudgetWarning, func() EventPayload { return &BudgetWarningPayload{} })
 	mustRegister(EventTypeBudgetAccrual, func() EventPayload { return &BudgetAccrualPayload{} })
 	mustRegister(EventTypeBudgetExhausted, func() EventPayload { return &BudgetExhaustedEventPayload{} })
 }
 
-// registerWorkspaceEvents registers all §8.5 workspace-lifecycle event payload constructors.
-//
-// Durability classes per §8.5 table:
-//   - workspace_created (§8.5.1):         O (ordinary — workspace lifecycle observability)
-//   - workspace_leased (§8.5.2):          O (ordinary — workspace lifecycle observability)
-//   - workspace_merge_status (§8.5.3):    F (fsync-boundary — merge authority per workspace-model.md §4.5)
-//   - workspace_discarded (§8.5.4):       O (ordinary — workspace lifecycle observability)
-//   - workspace_interrupted (§8.5.5):     O (ordinary — reconciliation and audit input)
-//   - merge_conflict_escalation (§8.5.6): O (ordinary — operator-observability and audit)
 func registerWorkspaceEvents() {
 	mustRegister(EventTypeWorkspaceCreated, func() EventPayload { return &WorkspaceCreatedPayload{} })
 	mustRegister(EventTypeWorkspaceLeased, func() EventPayload { return &WorkspaceLeasedPayload{} })
@@ -290,24 +141,6 @@ func registerWorkspaceEvents() {
 	mustRegister(EventTypeMergeConflictEscalation, func() EventPayload { return &MergeConflictEscalationPayload{} })
 }
 
-// registerReconciliationEvents registers all §8.6 reconciliation-lifecycle event payload constructors.
-//
-// Durability classes per §8.6 table (all class O — ordinary):
-//   - reconciliation_started (§8.6.1)
-//   - reconciliation_completed (hk-mptxw)
-//   - reconciliation_category_assigned (§8.6.2)
-//   - reconciliation_verdict_emitted (§8.6.3)
-//   - reconciliation_verdict_executed (§8.6.4)     — uses VerdictExecutedPayload
-//   - reconciliation_verdict_malformed (§8.6.5)    — uses MalformedVerdictPayload
-//   - reconciliation_budget_exhausted (§8.6.6)     — uses BudgetExhaustedPayload
-//   - reconciliation_verdict_stale (§8.6.7)        — uses StaleVerdictPayload
-//   - store_divergence_detected (§8.6.8)
-//   - operator_escalation_required (§8.6.9)
-//   - divergence_inconclusive (§8.6.10)
-//   - reconciliation_dispatch_deduplicated (§8.6.11)
-//   - reconciliation_detector_panic (§8.6.12)
-//   - reconciliation_verdict_execution_retry (§8.6.13)
-//   - bead_terminal_transition_recovered (§8.6.14) — deferred per OQ-BI-008; type reserved
 func registerReconciliationEvents() {
 	mustRegister(EventTypeReconciliationStarted, func() EventPayload { return &ReconciliationStartedPayload{} })
 	mustRegister(EventTypeReconciliationCompleted, func() EventPayload { return &ReconciliationCompletedPayload{} })
@@ -327,29 +160,6 @@ func registerReconciliationEvents() {
 	mustRegister(EventTypeReconciliationMismatchObserved, func() EventPayload { return &ReconciliationMismatchObservedPayload{} })
 }
 
-// registerDaemonLifecycleEvents registers all §8.7 operator-control and daemon
-// lifecycle event payload constructors.
-//
-// Durability classes per §8.7 table:
-//   - daemon_started (§8.7.1):                    F (fsync-boundary, startup landmark)
-//   - daemon_ready (§8.7.2):                      F (fsync-boundary, RTO measurement endpoint)
-//   - daemon_shutdown (§8.7.3):                   F (fsync-boundary, SIGTERM landmark for ON-033)
-//   - daemon_startup_failed (§8.7.4):             F (fsync-boundary, operator-observability)
-//   - daemon_degraded (§8.7.5):                   O (ordinary, operator-observability)
-//   - operator_pause_status (§8.7.6):             O (ordinary, paired-phase lifecycle)
-//   - operator_resuming (§8.7.7):                 O (ordinary)
-//   - operator_stopped (§8.7.8):                  O (ordinary)
-//   - operator_upgrading (§8.7.9):                O (ordinary)
-//   - operator_upgrade_completed (§8.7.10):       F (fsync-boundary, version-boundary landmark)
-//   - operator_upgrade_rejected (§8.7.11):        O (ordinary, operator-observability)
-//   - operator_command_rejected (§8.7.12):        O (ordinary, operator-observability)
-//   - dispatch_deferred (§8.7.13):                O (ordinary)
-//   - daemon_orphan_sweep_completed (§8.7.14):    O (ordinary)
-//   - infrastructure_unavailable (§8.7.15):       O (ordinary, operator-observability)
-//   - operator_command_failed (§8.7.16):          O (ordinary, ON-013a panic-barrier emission)
-//   - operator_escalation_cleared (§8.7.17):      O (ordinary, ON-emission-owned companion to §8.6.9)
-//   - daemon_config (§8.7.18):                    O (ordinary, resolved-config audit)
-//   - disk_low (§8.7.19, hk-sxlb):               O (ordinary, disk-watermark self-healing signal)
 func registerDaemonLifecycleEvents() {
 	mustRegister(EventTypeDaemonStarted, func() EventPayload { return &DaemonStartedPayload{} })
 	mustRegister(EventTypeDaemonReady, func() EventPayload { return &DaemonReadyPayload{} })
@@ -369,55 +179,21 @@ func registerDaemonLifecycleEvents() {
 	mustRegister(EventTypeOperatorCommandFailed, func() EventPayload { return &OperatorCommandFailedPayload{} })
 	mustRegister(EventTypeOperatorEscalationCleared, func() EventPayload { return &OperatorEscalationClearedPayload{} })
 	mustRegister(EventTypeDaemonConfig, func() EventPayload { return &DaemonConfigPayload{} })
-	// disk_low (§8.7.19, hk-sxlb): emitted when available disk falls below the
-	// configured watermark; daemon pauses dispatch and attempts go clean -cache.
 	mustRegister(EventTypeDiskLow, func() EventPayload { return &DiskLowPayload{} })
-	// supervisor_revival (§8.7.20, hk-rnkuy): emitted at daemon startup when the
-	// prior daemon session ended without a daemon_shutdown event — i.e., the daemon
-	// was killed by SIGKILL, OOM, or panic. Fills the logmine gap that previously
-	// required stderr correlation to detect unexplained daemon deaths. Durability: O.
 	mustRegister(EventTypeSupervisorRevival, func() EventPayload { return &SupervisorRevivalPayload{} })
-	// dashboard_stale / dashboard_refreshed (§8.7.21-22, hk-xg6rw): forcing gate
-	// — while dashboard.json is stale past dashboard.max_staleness, the daemon
-	// staffs no new work on captain-curated queues. Durability: O.
 	mustRegister(EventTypeDashboardStale, func() EventPayload { return &DashboardStalePayload{} })
 	mustRegister(EventTypeDashboardRefreshed, func() EventPayload { return &DashboardRefreshedPayload{} })
 }
 
-// registerBusEvents registers all §8.8 observability and bus-internal event
-// payload constructors.
-//
-// Durability classes per §8.8 table:
-//   - metric (§8.8.1):               L (lossy-tail-ok, §8.9(g) escape-hatch exception)
-//   - consumer_failed (§8.8.2):      O (ordinary, bus-internal; hk-hqwn.59.75)
-//   - dead_letter_enqueued (§8.8.3): O (ordinary, bus-internal)
-//   - bus_overflow (§8.8.4):         O (ordinary; promoted to F via direct-JSONL-append
-//     fallback when reservation slot is exhausted per EV-011a)
-//   - redaction_failed (§8.8.5):     O (ordinary, bus-internal; ON-022 fail-closed redactor)
 func registerBusEvents() {
 	mustRegister(EventTypeMetric, func() EventPayload { return &MetricPayload{} })
 	mustRegister(EventTypeConsumerFailed, func() EventPayload { return &ConsumerFailedPayload{} })
 	mustRegister(EventTypeDeadLetterEnqueued, func() EventPayload { return &DeadLetterEnqueuedPayload{} })
 	mustRegister(EventTypeBusOverflow, func() EventPayload { return &BusOverflowPayload{} })
 	mustRegister(EventTypeRedactionFailed, func() EventPayload { return &RedactionFailedPayload{} })
-	// bead_claim_skipped (BI-013c): emitted by the pre-claim status re-read guard
-	// when the bead's status is not open between dispatcher selection and claim write.
-	// Durability class: O.
 	mustRegister(EventTypeBeadClaimSkipped, func() EventPayload { return &BeadClaimSkippedPayload{} })
 }
 
-// registerReviewLoopEvents registers all §8.1a review-loop cycle and §8.8.6
-// event payload constructors (hk-7om2q.4).
-//
-// Durability classes per §8.1a and §8.8.6 tables:
-//   - implementer_resumed        (§8.1a.1): O (ordinary — orchestrator-core lifecycle)
-//   - reviewer_launched          (§8.1a.2): O (ordinary — orchestrator-core lifecycle)
-//   - reviewer_verdict           (§8.1a.3): F (fsync-boundary — verdict gates terminal routing)
-//   - iteration_cap_hit          (§8.1a.4): O (ordinary — deliberately downgraded; see §8.1a Note)
-//   - no_progress_detected       (§8.1a.5): O (ordinary — improvement-loop early-exit signal)
-//   - review_loop_cycle_complete (§8.1a.6): F (fsync-boundary — terminal routing landmark)
-//   - bead_label_conflict        (§8.8.6):  O (ordinary — claim-path observational evidence)
-//   - review_bypassed            (hk-81n9r): O (ordinary — audit event when workflow:single gates single mode)
 func registerReviewLoopEvents() {
 	mustRegister(EventTypeImplementerResumed, func() EventPayload { return &ImplementerResumedPayload{} })
 	mustRegister(EventTypeReviewerLaunched, func() EventPayload { return &ReviewerLaunchedPayload{} })
@@ -426,28 +202,10 @@ func registerReviewLoopEvents() {
 	mustRegister(EventTypeNoProgressDetected, func() EventPayload { return &NoProgressDetectedPayload{} })
 	mustRegister(EventTypeReviewLoopCycleComplete, func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
 	mustRegister(EventTypeBeadLabelConflict, func() EventPayload { return &BeadLabelConflictPayload{} })
-	// review_bypassed (hk-81n9r): emitted when a bead's workflow:single label
-	// resolves at tier-1, gating single-mode dispatch behind an observable audit event.
-	// Durability class: O.
 	mustRegister(EventTypeReviewBypassed, func() EventPayload { return &ReviewBypassedPayload{} })
-	// review_fixup_stalled (hk-m1wqp): emitted when a REQUEST_CHANGES fix-up run
-	// advances HEAD by zero commits; carries the reviewer flags from the prior
-	// REQUEST_CHANGES verdict so triage sees the specific flag the implementer
-	// failed to address. Durability class: O.
 	mustRegister(EventTypeReviewFixupStalled, func() EventPayload { return &ReviewFixupStalledPayload{} })
 }
 
-// registerQueueEvents registers all §8.10 queue lifecycle event payload
-// constructors (extqueue v0.1, hk-yslws).
-//
-// Durability classes per §8.10 table:
-//   - queue_submitted                    (§8.10.1): F (fsync-boundary — loss orphans the execution plan per EV-016)
-//   - queue_group_started                (§8.10.2): O (ordinary — reconstructible from predecessor queue_group_completed + queue.json)
-//   - queue_group_completed              (§8.10.3): F (fsync-boundary — group-boundary advance landmark per EV-016)
-//   - queue_paused                       (§8.10.4): F (fsync-boundary — hard execution stop landmark per EV-016)
-//   - queue_appended                     (§8.10.5): O (ordinary — reconstructible from queue.json mutation history)
-//   - queue_item_deferred_for_ledger_dep (§8.10.6): O (ordinary — reconstructible from ledger state + queue.json)
-//   - queue_item_reconciled              (§8.10.7): F (fsync-boundary — correction MUST be durable before re-dispatch per §8.10.7)
 func registerQueueEvents() {
 	mustRegister(EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} })
 	mustRegister(EventTypeQueueGroupStarted, func() EventPayload { return &QueueGroupStartedPayload{} })
@@ -456,51 +214,23 @@ func registerQueueEvents() {
 	mustRegister(EventTypeQueueAppended, func() EventPayload { return &QueueAppendedPayload{} })
 	mustRegister(EventTypeQueueItemDeferredForLedgerDep, func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
 	mustRegister(EventTypeQueueItemReconciled, func() EventPayload { return &QueueItemReconciledPayload{} })
-	// cross_queue_collision (§9.8a QM-067a): emitted by the dispatch reservation
-	// when a sibling queue already holds the same bead. Durability class: O.
 	mustRegister(EventTypeCrossQueueCollision, func() EventPayload { return &CrossQueueCollisionPayload{} })
 }
 
-// registerHandlerPauseEvents registers all §8.11 handler-pause lifecycle event
-// payload constructors (handler-pause work, hk-ifqnj).
-//
-// Durability classes per §8.11 table:
-//   - handler_paused                    (§8.11.1): F (fsync-boundary — pause-state landmark for restart recovery)
-//   - handler_resumed                   (§8.11.2): F (fsync-boundary — resume action durable before dispatcher proceeds)
-//   - queue_item_held_for_handler_pause (§8.11.3): O (ordinary — reconstructible from handler-state.json + queue.json)
 func registerHandlerPauseEvents() {
 	mustRegister(EventTypeHandlerPaused, func() EventPayload { return &HandlerPausedPayload{} })
 	mustRegister(EventTypeHandlerResumed, func() EventPayload { return &HandlerResumedPayload{} })
 	mustRegister(EventTypeQueueItemHeldForHandlerPause, func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} })
 }
 
-// registerGateDispatchEvents registers the §8.2a gate-node dispatch event
-// payload constructors (hk-jtxnr, T-IMPL-010).
-//
-// Durability classes per §8.2a:
-//   - gate_decision_recorded: O (ordinary — observability and audit)
 func registerGateDispatchEvents() {
 	mustRegister(EventTypeGateDecisionRecorded, func() EventPayload { return &GateDecisionRecordedPayload{} })
 }
 
-// registerWorkflowLoaderEvents registers the workflow-loader event payload
-// constructors (hk-zqr6f, CP-057 skills_ref resolution).
 func registerWorkflowLoaderEvents() {
 	mustRegister(EventTypeSkillsResolved, func() EventPayload { return &SkillsResolvedPayload{} })
 }
 
-// registerKeeperEvents registers §8.16 session-keeper event payload constructors
-// (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70, hk-kct9t, hk-aalsm).
-//
-// Durability classes per §8.16:
-//   - session_keeper_warn                (§8.16.1): O (ordinary — observability)
-//   - session_keeper_no_gauge            (§8.16.2): O (ordinary — configuration-gap signal)
-//   - session_keeper_handoff_started     (§8.16.3): O (ordinary — observability)
-//   - session_keeper_cycle_complete      (§8.16.4): O (ordinary — observability)
-//   - session_keeper_cycle_aborted       (§8.16.5): O (ordinary — operator attention)
-//   - session_keeper_clear_unconfirmed   (§8.16.6): O (ordinary — observability)
-//   - session_keeper_cycle_recovered     (§8.16.7): O (ordinary — observability)
-//   - session_keeper_precompact_blocked  (§8.16.8): O (ordinary — observability)
 func registerKeeperEvents() {
 	mustRegister(EventTypeSessionKeeperWarn, func() EventPayload { return &SessionKeeperWarnPayload{} })
 	mustRegister(EventTypeSessionKeeperNoGauge, func() EventPayload { return &SessionKeeperNoGaugePayload{} })
@@ -510,44 +240,20 @@ func registerKeeperEvents() {
 	mustRegister(EventTypeSessionKeeperCycleParked, func() EventPayload { return &SessionKeeperCycleParkedPayload{} })
 	mustRegister(EventTypeSessionKeeperClearUnconfirmed, func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
 	mustRegister(EventTypeSessionKeeperCycleRecovered, func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
-	// hk-aalsm: PreCompact backstop hook.
 	mustRegister(EventTypeSessionKeeperPrecompactBlocked, func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
-	// hk-3w2: supervised respawn path.
 	mustRegister(EventTypeSessionKeeperRespawnAttempted, func() EventPayload { return &SessionKeeperRespawnAttemptedPayload{} })
-	// hk-6qf: operator-attached guard (warn-only suppression).
 	mustRegister(EventTypeSessionKeeperOperatorAttached, func() EventPayload { return &SessionKeeperOperatorAttachedPayload{} })
-	// hk-wjzf, ON-059: captain-initiated restart-now gate/freshness suppression.
 	mustRegister(EventTypeSessionKeeperRestartNowBlocked, func() EventPayload { return &SessionKeeperRestartNowBlockedPayload{} })
-	// SK-030: successful agent-run restart-now, nonce carried for audit.
 	mustRegister(EventTypeSessionKeeperRestartNow, func() EventPayload { return &SessionKeeperRestartNowPayload{} })
-	// hk-34ac: blind-keeper alarm (continuous foreign_session > 5 min).
 	mustRegister(EventTypeSessionKeeperBlind, func() EventPayload { return &SessionKeeperBlindPayload{} })
-	// hk-34ac: SID-independent hard-ceiling failsafe (tokens >= 280K).
 	mustRegister(EventTypeSessionKeeperHardCeiling, func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
-	// hk-ee81: idle crew below idle-restart floor (advisory to captain).
 	mustRegister(EventTypeSessionKeeperIdleCrew, func() EventPayload { return &SessionKeeperIdleCrewPayload{} })
-	// hk-4pnv: keeper refused to start because threshold config / flags failed the
-	// fail-loud precedence resolver (bad value or band inversion).
 	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
-	// hk-qgfme: crew keeper watcher dead post-spawn — flock not acquired within flock_acquire_grace.
 	mustRegister(EventTypeSessionKeeperWatcherDead, func() EventPayload { return &SessionKeeperWatcherDeadPayload{} })
-	// hk-wqdc: live-pane recovery attempt after a cleared pane is detected.
 	mustRegister(EventTypeSessionKeeperLivePaneRecover, func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
-	// hk-wqdc: ack timeout when keeper sent a clear but received no confirmation.
 	mustRegister(EventTypeSessionKeeperAckTimeout, func() EventPayload { return &SessionKeeperAckTimeoutPayload{} })
 }
 
-// registerKeeperInteriorEvents registers §8.20 session-keeper interior cycle
-// event constructors (codename:session-restart-substrate). All schema v1, class O.
-//
-// Kept SEPARATE from registerKeeperEvents (the §8.16 watcher/lifecycle family)
-// to keep the §8.16 vs §8.20 split legible.
-//
-// Durability classes per §8.20:
-//   - session_keeper_handoff_written (§8.20.1): O (ordinary — observability)
-//   - session_keeper_model_done      (§8.20.2): O (ordinary — observability)
-//   - session_keeper_clear_sent      (§8.20.3): O (ordinary — observability)
-//   - session_keeper_new_session_up  (§8.20.4): O (ordinary — observability)
 func registerKeeperInteriorEvents() {
 	mustRegister(EventTypeSessionKeeperHandoffWritten, func() EventPayload { return &SessionKeeperHandoffWrittenPayload{} })
 	mustRegister(EventTypeSessionKeeperModelDone, func() EventPayload { return &SessionKeeperModelDonePayload{} })
@@ -555,88 +261,28 @@ func registerKeeperInteriorEvents() {
 	mustRegister(EventTypeSessionKeeperNewSessionUp, func() EventPayload { return &SessionKeeperNewSessionUpPayload{} })
 }
 
-// registerAgentInputEvents registers §8.21 agent-input acceptance event
-// constructors (codename:agent-input-substrate, M2-1 T3). Both schema v1, class O.
-//
-// Kept SEPARATE from the §8.16/§8.20 keeper families: these are the M2 structured
-// input driver's submission-sub-lifecycle signals, emitted by daemon-core, not by
-// the keeper. Per EV-050 the two are registered + compat-tabled but CARVED OUT of
-// allEventTypeCohort and the EV-027 count guard (see eventtype_coverage_gjyks_test.go),
-// following the §8.16/§8.20 precedent.
-//
-// Durability classes per §8.21:
-//   - agent_input_acked (§8.21.1): O (ordinary — observational; the ack IS the boundary)
-//   - agent_input_stale (§8.21.2): O (ordinary — observational; the timeout terminal)
 func registerAgentInputEvents() {
 	mustRegister("agent_input_acked", func() EventPayload { return &AgentInputAckedPayload{} })
 	mustRegister("agent_input_stale", func() EventPayload { return &AgentInputStalePayload{} })
 }
 
-// registerAlarmEvents registers §8.17 alarm / self-check event payload
-// constructors (hk-tnmjy).
-//
-// Durability classes per §8.17:
-//   - review_gate_anomaly (§8.17.1): O (ordinary — observability alarm; reconstructible
-//     from bead_closed + reviewer_verdict sequence in the JSONL log)
 func registerAlarmEvents() {
 	mustRegister(EventTypeReviewGateAnomaly, func() EventPayload { return &ReviewGateAnomalyPayload{} })
 
-	// §8.19 Stall-sentinel Layer A detection (hk-l087e).
-	// Durability class: O (ordinary — reconstructible from a fresh Snapshot).
 	mustRegister(EventTypeStallDetected, func() EventPayload { return &StallDetectedPayload{} })
 }
 
-// registerHITLDecisionEvents registers the §8.14 hitl-decisions event payload
-// constructors (codename:hitl-decisions, hk-33p, component K1).
-//
-// These are the agent→human decision dual of agent-comms. All three are F-class
-// (fsync-boundary — added to eventbus.fsyncBoundaryEventTypes per SPEC §6 N1):
-// a lost decision_resolved would leave the blocked agent waiting forever
-// (Risk R1, load-bearing).
-//
-// Durability classes per hitl-decisions SPEC §1 / §6 N1:
-//   - decision_needed (§1.1):    F (fsync-boundary — durable decision-request landmark)
-//   - decision_resolved (§1.2):  F (fsync-boundary — a lost answer never wakes the agent)
-//   - decision_withdrawn (§1.3): F (fsync-boundary — a lost withdrawal leaves a stale open decision)
-//
-// Distinct from the §8.12 decision_required / decision_acknowledged
-// daemon-escalation family.
 func registerHITLDecisionEvents() {
 	mustRegister(EventTypeDecisionNeeded, func() EventPayload { return &DecisionNeededPayload{} })
 	mustRegister(EventTypeDecisionResolved, func() EventPayload { return &DecisionResolvedPayload{} })
 	mustRegister(EventTypeDecisionWithdrawn, func() EventPayload { return &DecisionWithdrawnPayload{} })
 }
 
-// registerDecisionRequiredEvents registers the §8.12 decision-required
-// lifecycle event payload constructors (event-model.md §8.12, v0.6.0, hk-u3q6o).
-//
-// These are the daemon-core dispatch-blocking escalation pair. Both are F-class
-// (fsync-boundary):
-//   - decision_required (§8.12.1): F — loss silently leaves a double-failed
-//     bead eligible for re-dispatch (EV-042/EV-043).
-//   - decision_acknowledged (§8.12.2): F — loss breaks JSONL observability for
-//     the ACK (ack-state file remains authoritative per EV-043a).
-//
-// DISTINCT from the §8.14 hitl-decisions family (registerHITLDecisionEvents).
 func registerDecisionRequiredEvents() {
 	mustRegister(EventTypeDecisionRequired, func() EventPayload { return &DecisionRequiredPayload{} })
 	mustRegister(EventTypeDecisionAcknowledged, func() EventPayload { return &DecisionAcknowledgedPayload{} })
 }
 
-// registerBeadLedgerEvents registers the §8.15 bead-ledger merge lifecycle
-// event payload constructors (event-model.md §8.15, v0.6.4, hk-u3q6o).
-//
-// Durability classes per §8.15 table:
-//   - bead_sync_failed (§8.15.1):          F (fsync-boundary — loss silences Cat-BL2
-//     routing obligation per BL-MRG-004)
-//   - bead_ledger_recovered (§8.BL2):       O (ordinary — Cat-BL2 retry succeeded;
-//     ledger back in sync per reconciliation/spec.md §8.BL2)
-//   - bead_ledger_corrupt (§8.BL2):         O (ordinary — Cat-BL2 retry failed;
-//     triggers Cat 6b operator escalation per reconciliation/spec.md §8.BL2)
-//   - bead_ledger_conflict_audit (§8.15.2): O (ordinary — conflict log is authoritative;
-//     investigator can re-emit on recovery per BL-MRG-003)
-//   - orphaned_child_bead (§8.15.3):        O (ordinary — informational; bead closed
-//     or escalated immediately after emission per reconciliation/spec.md §8.BL1)
 func registerBeadLedgerEvents() {
 	mustRegister(EventTypeBeadSyncFailed, func() EventPayload { return &BeadSyncFailedPayload{} })
 	mustRegister(EventTypeBeadLedgerRecovered, func() EventPayload { return &BeadLedgerRecoveredPayload{} })
@@ -645,15 +291,6 @@ func registerBeadLedgerEvents() {
 	mustRegister(EventTypeOrphanedChildBead, func() EventPayload { return &OrphanedChildBeadPayload{} })
 }
 
-// mustRegister calls RegisterEventType and panics on error.
-//
-// init() functions that call mustRegister run before the first event is emitted
-// (EV-034); a registration error is a programming error (duplicate type name or
-// nil constructor) that MUST be caught at startup, not silently ignored. Panic
-// is acceptable here because init() runs before any request is served.
-//
-// This helper is intentionally unexported and limited to init() callers; it
-// MUST NOT be called after startup completes.
 func mustRegister(typeName EventType, ctor func() EventPayload) {
 	if err := RegisterEventType(typeName, ctor); err != nil {
 		panic("core: mustRegister: " + string(typeName) + ": " + err.Error())

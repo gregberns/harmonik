@@ -1,30 +1,11 @@
 package workers
 
-// breach.go — worker resource-breach detection (worker-report Phase 2, PB1 + PB2).
-//
-// PB1 is the typed event payload + its registration: ResourceBreachPayload and
-// the resource_breach event, mirroring the WR1 idiom in telemetry.go (typed
-// payload + JSON tags + Durability doc + core.RegisterEventType in init()).
-//
-// PB2 is the pure state machine: breachDetector, a deterministic per-(worker ×
-// signal) hysteresis state machine with NO wall-clock dependency. Every step
-// takes an injected `now time.Time` so tests are exact. It turns a stream of
-// WorkerReportPayload samples into 0+ resource_breach events (kind "breach" /
-// "clear"). It does NO I/O and runs NO commands — PB3 wires it into the daemon
-// poll loop (and feeds real config + InFlight); this file is pure logic.
-//
-// Bead refs: hk-necs (PB1), hk-462t (PB2).
-
 import (
 	"encoding/json"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
-
-// ---------------------------------------------------------------------------
-// PB1 — the event payload + registration.
-// ---------------------------------------------------------------------------
 
 // ResourceBreachPayload is the typed event payload for the resource_breach event
 // (worker-report Phase 2, PB1).
@@ -72,7 +53,6 @@ type ResourceBreachPayload struct {
 	FiredAt string `json:"fired_at"`
 }
 
-// Kind / Signal string constants — the values that land in ResourceBreachPayload.
 const (
 	breachKindBreach = "breach"
 	breachKindClear  = "clear"
@@ -95,10 +75,6 @@ func init() {
 		panic("workers: init: register resource_breach compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
 	}
 }
-
-// ---------------------------------------------------------------------------
-// PB2 — config + defaults.
-// ---------------------------------------------------------------------------
 
 // Default dwell windows. A signal must stay over its enter threshold for
 // DefaultBreachDwell before a breach fires, and under its exit threshold for
@@ -142,8 +118,6 @@ type BreachConfig struct {
 	SwapExit  float64
 }
 
-// withDefaults returns a copy of c with any zero-valued field replaced by its
-// package default. A negative dwell is also treated as "use default".
 func (c BreachConfig) withDefaults() BreachConfig {
 	if c.BreachDwell <= 0 {
 		c.BreachDwell = DefaultBreachDwell
@@ -172,16 +146,6 @@ func (c BreachConfig) withDefaults() BreachConfig {
 	return c
 }
 
-// ---------------------------------------------------------------------------
-// PB2 — the per-signal state machine.
-// ---------------------------------------------------------------------------
-
-// breachState is the 4-state hysteresis machine state for one signal.
-//
-//	OK       → no pressure; the resting state.
-//	ARMING   → over the enter threshold, waiting out breach_dwell before firing.
-//	BREACHED → a breach has fired; staying here through the hysteresis band.
-//	CLEARING → under the exit threshold, waiting out clear_dwell before clearing.
 type breachState int
 
 const (
@@ -191,14 +155,6 @@ const (
 	stateClearing
 )
 
-// signalSpec describes how to read and threshold one signal from a sample.
-//
-// over reports whether `value` is on the breach side of `threshold`. For cpu and
-// swap "breach side" is value > threshold (higher = worse); for memory it is
-// value < threshold (lower free fraction = worse). enter/exit hold the two
-// hysteresis thresholds. valid reports whether the sample can produce a usable
-// value (guards NCPU<=0 / MemTotalMB<=0) — an invalid sample is treated as
-// "signal not over enter and not under exit", i.e. it never fires or clears.
 type signalSpec struct {
 	name  string
 	value func(rep WorkerReportPayload) (float64, bool) // (value, valid)
@@ -207,15 +163,9 @@ type signalSpec struct {
 	over  func(value, threshold float64) bool
 }
 
-// higherIsWorse / lowerIsWorse are the two comparison directions. Note the
-// boundary is ASYMMETRIC by design: value==enter does NOT arm (strict >/<), while
-// value==exit DOES recover (because underExit = !over(value, exit), so equality
-// counts as under). This biases toward recovery, avoiding a stuck breach when a
-// value settles exactly on the exit threshold.
 func higherIsWorse(value, threshold float64) bool { return value > threshold }
 func lowerIsWorse(value, threshold float64) bool  { return value < threshold }
 
-// signalMachine is the per-signal state + dwell bookkeeping.
 type signalMachine struct {
 	spec  signalSpec
 	state breachState
@@ -230,12 +180,6 @@ type signalMachine struct {
 	clearingSince time.Time
 }
 
-// breachDetector is the pure, deterministic breach state machine for ONE worker.
-// It holds one signalMachine per signal (cpu / memory / swap). It has no
-// wall-clock dependency: Observe and Reset both take an injected `now`.
-//
-// Concurrency: not safe for concurrent use — PB3 owns it from a single poll
-// goroutine per worker.
 type breachDetector struct {
 	workerName string
 	cfg        BreachConfig
@@ -303,15 +247,8 @@ func (d *breachDetector) Observe(rep WorkerReportPayload, now time.Time) []Resou
 	return out
 }
 
-// step advances one signal machine by one sample. It returns (event, true) when
-// this sample causes a breach or clear transition to fire, (zero, false)
-// otherwise.
 func (d *breachDetector) step(m *signalMachine, rep WorkerReportPayload, now time.Time) (ResourceBreachPayload, bool) {
 	value, valid := m.spec.value(rep)
-	// An invalid sample (guard tripped) is treated as neither over-enter nor
-	// under-exit: it cannot fire a breach and cannot complete a clear. It simply
-	// interrupts any in-progress ARMING/CLEARING dwell, falling back to a resting
-	// read of the current state.
 	overEnter := valid && m.spec.over(value, m.spec.enter)
 	underExit := valid && !m.spec.over(value, m.spec.exit)
 
@@ -321,18 +258,14 @@ func (d *breachDetector) step(m *signalMachine, rep WorkerReportPayload, now tim
 			m.state = stateArming
 			m.armingSince = now
 		}
-		// under-enter while OK: stay OK.
 
 	case stateArming:
 		if !overEnter {
-			// Dropped back under the enter threshold before the dwell matured:
-			// disarm silently, no event.
 			m.state = stateOK
 			m.armingSince = time.Time{}
 			break
 		}
 		if now.Sub(m.armingSince) >= d.cfg.BreachDwell {
-			// Sustained over enter for >= breach_dwell → fire ONE breach.
 			m.state = stateBreached
 			m.breachStart = m.armingSince
 			m.armingSince = time.Time{}
@@ -346,27 +279,20 @@ func (d *breachDetector) step(m *signalMachine, rep WorkerReportPayload, now tim
 				FiredAt:    now.UTC().Format(time.RFC3339),
 			}, true
 		}
-		// Still over enter but dwell not yet matured: stay ARMING.
 
 	case stateBreached:
 		if underExit {
-			// First sample under the exit threshold begins the clear dwell.
 			m.state = stateClearing
 			m.clearingSince = now
 		}
-		// In the hysteresis band [exit, enter] (or still over enter): stay
-		// BREACHED, no re-fire.
 
 	case stateClearing:
 		if !underExit {
-			// Popped back over the exit threshold before the clear dwell matured:
-			// back to BREACHED silently, no event.
 			m.state = stateBreached
 			m.clearingSince = time.Time{}
 			break
 		}
 		if now.Sub(m.clearingSince) >= d.cfg.ClearDwell {
-			// Sustained under exit for >= clear_dwell → fire ONE clear.
 			ev := ResourceBreachPayload{
 				WorkerName:         d.workerName,
 				Kind:               breachKindClear,
@@ -382,7 +308,6 @@ func (d *breachDetector) step(m *signalMachine, rep WorkerReportPayload, now tim
 			m.breachStart = time.Time{}
 			return ev, true
 		}
-		// Still under exit but clear dwell not yet matured: stay CLEARING.
 	}
 
 	return ResourceBreachPayload{}, false
@@ -421,9 +346,6 @@ func (d *breachDetector) Reset(now time.Time) []ResourceBreachPayload {
 	return out
 }
 
-// marshalResourceBreach is a small helper used by PB3 and the round-trip test to
-// serialize a payload. Kept here so the JSON contract is exercised in this
-// package's tests.
 func marshalResourceBreach(p ResourceBreachPayload) ([]byte, error) {
 	return json.Marshal(p)
 }

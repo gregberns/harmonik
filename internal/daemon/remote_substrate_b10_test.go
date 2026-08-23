@@ -1,28 +1,5 @@
 package daemon
 
-// remote_substrate_b10_test.go — unit tests for rs B10: dispatch via
-// SSH-backed substrate + run metadata (hk-rs-b10-wiring-12cl).
-//
-// Gate-runnable: no real tmux, SSH, or git required.  All observable behaviour
-// is exercised through package-internal functions and the exported
-// core.RunStartedPayload record.
-//
-// Test matrix (acceptance criteria from bead):
-//   TestRSB10_ZeroWorkers_LocalSubstrate:
-//     zero workers → perRunSubstrate runner is nil (LocalRunner fallback).
-//   TestRSB10_OneHealthyWorker_SSHSubstrate:
-//     one healthy worker → perRunSubstrate runner is SSHRunner{Host}.
-//   TestRSB10_APIKeyInEnv_Refused:
-//     ANTHROPIC_API_KEY in spawn env → hasAPIKeyInEnv returns true (D2 guard).
-//   TestRSB10_APIKeyAbsent_NotRefused:
-//     env without ANTHROPIC_API_KEY → hasAPIKeyInEnv returns false.
-//   TestRSB10_RunStartedPayload_WorkerFields_Remote:
-//     core.RunStartedPayload carries worker_name + worker_os for remote runs.
-//   TestRSB10_RunStartedPayload_WorkerFields_Local:
-//     core.RunStartedPayload carries explicit null worker fields for local runs.
-//
-// Bead: hk-rs-b10-wiring-12cl.
-
 import (
 	"testing"
 
@@ -30,18 +7,12 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// newPerRunSubstrate runner wiring (tests 1 and 2)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRSB10_ZeroWorkers_LocalSubstrate verifies that newPerRunSubstrate with
 // a nil runner stores nil (commandRunner() falls back to LocalRunner{} per B9).
 func TestRSB10_ZeroWorkers_LocalSubstrate(t *testing.T) {
 	t.Parallel()
 
-	// Build a perRunSubstrate with nil runner (local run — no worker selected).
 	prs := newPerRunSubstrate(nil, "claude", nil)
-	// nil sub → newPerRunSubstrate returns nil; the local path is taken.
 	if prs != nil {
 		t.Errorf("RSB10: newPerRunSubstrate(nil substrate) = non-nil, want nil (local fallback)")
 	}
@@ -56,16 +27,12 @@ func TestRSB10_OneHealthyWorker_SSHSubstrate(t *testing.T) {
 	host := "worker@remote.internal"
 	sshRunner := tmux.SSHRunner{Host: host}
 
-	// Use a minimal *tmuxSubstrate as the inner substrate so newPerRunSubstrate
-	// returns a non-nil perRunSubstrate (the function returns nil when sub is
-	// not a *tmuxSubstrate).
 	ts := &tmuxSubstrate{sessionName: "test-session"}
 	prs := newPerRunSubstrate(ts, "claude", sshRunner)
 	if prs == nil {
 		t.Fatal("RSB10: newPerRunSubstrate(*tmuxSubstrate, sshRunner) = nil, want non-nil")
 	}
 
-	// commandRunner() must return the injected SSHRunner, not LocalRunner{}.
 	got := prs.commandRunner()
 	gotSSH, ok := got.(tmux.SSHRunner)
 	if !ok {
@@ -75,10 +42,6 @@ func TestRSB10_OneHealthyWorker_SSHSubstrate(t *testing.T) {
 		t.Errorf("RSB10: commandRunner().Host = %q, want %q", gotSSH.Host, host)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// hasAPIKeyInEnv (D2 fail-closed check — test 3 and 4)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB10_APIKeyInEnv_Refused verifies that hasAPIKeyInEnv returns true when
 // ANTHROPIC_API_KEY appears in the env slice (KEY= form and bare KEY form).
@@ -123,10 +86,6 @@ func TestRSB10_APIKeyAbsent_NotRefused(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RunStartedPayload worker fields (FR13 — tests 5 and 6)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB10_RunStartedPayload_WorkerFields_Remote verifies that
 // RunStartedPayload carries WorkerName and WorkerOS for remote runs.

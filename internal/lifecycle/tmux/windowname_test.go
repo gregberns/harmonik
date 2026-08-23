@@ -9,11 +9,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// windowNameFixtureHash6 is the first 6 hex chars of the fixture project hash,
-// used to construct expected sentinel-prefixed names.
 const windowNameFixtureHash6 = "a1b2c3"
 
-// windowNameFixtureHash returns a valid 12-char hex ProjectHash for tests.
 func windowNameFixtureHash(t *testing.T) core.ProjectHash {
 	t.Helper()
 	var h core.ProjectHash
@@ -23,13 +20,10 @@ func windowNameFixtureHash(t *testing.T) core.ProjectHash {
 	return h
 }
 
-// windowNameFixtureBeadID returns a core.BeadID from a raw string for tests.
 func windowNameFixtureBeadID(raw string) core.BeadID {
 	return core.BeadID(raw)
 }
 
-// windowNameFixtureTruncSuffix computes the expected truncation suffix for a
-// given bead ID string: "~" + lowercase-hex(SHA-256(beadID))[:8].
 func windowNameFixtureTruncSuffix(beadID string) string {
 	sum := sha256.Sum256([]byte(beadID))
 	return "~" + fmt.Sprintf("%x", sum[:4])
@@ -41,12 +35,8 @@ func TestWindowName(t *testing.T) {
 	sentinel := "hk-" + hash6 + "-"
 
 	shortID := "hk-abc123"
-	// Long bead_id: 65 bytes, which forces truncation for single/owns
-	// (no sentinel, no suffix → total 65 > 64).
 	longID := strings.Repeat("x", 65)
 
-	// Expected truncated bead part depends on the fixed parts around it:
-	// budget = 64 - len(sentinel) - len(suffix) - len("~") - 8.
 	truncBase := func(sentinelLen, suffixLen int) string {
 		budget := windowNameMaxBytes - sentinelLen - suffixLen - 1 - hashSuffixLen
 		return longID[:budget] + windowNameFixtureTruncSuffix(longID)
@@ -60,7 +50,6 @@ func TestWindowName(t *testing.T) {
 		ownsSession bool
 		want        string
 	}{
-		// ── single-mode, ownsSession=true ──────────────────────────────────────
 		{
 			name:        "single/owns",
 			beadID:      shortID,
@@ -271,7 +260,6 @@ func TestWindowName_TruncationDeterminism(t *testing.T) {
 // is NOT truncated (the threshold is strictly > 64).
 func TestWindowName_NoTruncationAt64(t *testing.T) {
 	hash := windowNameFixtureHash(t)
-	// Construct a bead_id such that len(bead_id) = 64 for single/owns.
 	id := windowNameFixtureBeadID(strings.Repeat("b", 64))
 	got := WindowName(id, PhaseSingle, 1, hash, true)
 	if len(got) != 64 {

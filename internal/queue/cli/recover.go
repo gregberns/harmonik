@@ -1,24 +1,5 @@
 package cli
 
-// recover.go — `harmonik queue recover <name>`.
-//
-// The verb is deliberately separate from `harmonik queue resume`. Resume
-// releases a drain pause and touches only the queue status. Recover re-arms
-// every failed item, resets attempt counts, clears failure reasons, and reopens
-// the affected groups. One command that did both, chosen by the queue's current
-// status, would silently rewrite item state when the operator asked only to
-// un-pause.
-//
-// Two lanes built this verb at the same time and reached the same shape. This
-// file is the union of the two. The flag surface and the re-armed listing come
-// from the socket-registered path. The result-and-receipt contract comes from
-// the receipt-bound recovery transaction: the daemon answers only after the
-// recovery receipt is durable, so an answer with no receipt is not a success
-// and this command refuses to print one as if it were.
-//
-// Spec ref: specs/queue-model.md §8.3b QM-052b and QM-058a;
-// specs/process-lifecycle.md PL-032.
-
 import (
 	"context"
 	"encoding/json"
@@ -44,10 +25,6 @@ import (
 func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	diag := newPrinter(errOut)
 	var queueName string
-	// GIVEN is not the same question as NON-EMPTY. `--queue=` and
-	// `--queue ""` both leave queueName == "", which the resolution below
-	// cannot tell apart from a caller who never typed the flag unless the
-	// parse records that they did.
 	queueNameGiven := false
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
@@ -66,17 +43,6 @@ func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Write
 		return exitTransportError
 	}
 
-	// An empty selector VALUE is refused here, before the request is built.
-	//
-	// Recover is the destructive verb of this family: it re-arms every failed
-	// item, resets attempt counts, clears failure reasons and reopens groups.
-	// An empty queue name did not reach an error — `HandleQueueRecover` reads
-	// "" as `queue.QueueNameMain`, so `harmonik queue recover "$q"` with $q
-	// unset rewrote item state on a queue the caller never named, printed
-	// "recovered: main", and exited 0 (hk-wki4e).
-	//
-	// A BARE `harmonik queue recover` is a different act — it supplies no
-	// selector at all — and keeps the usage error below.
 	switch {
 	case queueNameGiven && queueName == "":
 		diag.println("harmonik queue recover: --queue was given an empty value; pass a queue name or drop the flag. Nothing was recovered.")
@@ -121,17 +87,6 @@ func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Write
 	return handleResponse(resp, out, outputJSON, renderQueueRecoverText)
 }
 
-// renderQueueRecoverText prints the recovery result, its durable receipt, and
-// the re-armed bead IDs.
-//
-// The receipt is required, not decorative. The daemon answers only after the
-// recovery receipt is durable, so a payload that reports `accepted` or `no-op`
-// with no receipt describes a recovery that cannot be proved to have happened.
-// This function refuses that payload rather than print a success line for it.
-//
-// An empty re-armed list is printed as such rather than omitted: "recovered,
-// nothing re-armed" is a different answer from "recovered 3 items", and the
-// operator needs to tell them apart.
 func renderQueueRecoverText(result json.RawMessage, out io.Writer) int {
 	var response struct {
 		Queue        string          `json:"queue"`

@@ -1,15 +1,5 @@
 package main
 
-// comms_log_test.go — contract for `harmonik comms log`, the read-only operator
-// view. It scans .harmonik/events/events.jsonl directly, so it needs a temp dir
-// and no daemon at all.
-//
-// Two things are load-bearing here. First, --json emits the FULL event envelope
-// per line (event_id, type, payload), not a flattened payload —
-// scripts/crew-boot-digest.sh parses these lines. Second, --to must match the
-// broadcast sentinel "*" as well as the named recipient: drop that clause and
-// every broadcast quietly vanishes from every operator's log.
-
 import (
 	"encoding/json"
 	"strings"
@@ -17,14 +7,12 @@ import (
 	"time"
 )
 
-// captureCommsLog runs the log subcommand and returns its stdout and exit code.
 func captureCommsLog(t *testing.T, args []string) (stdout string, exitCode int) {
 	t.Helper()
 	stdout, _ = captureStd(t, func() { exitCode = runCommsLogSubcommand(args) })
 	return stdout, exitCode
 }
 
-// nonEmptyLines splits output into its non-blank lines.
 func nonEmptyLines(out string) []string {
 	var lines []string
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -34,10 +22,6 @@ func nonEmptyLines(out string) []string {
 	}
 	return lines
 }
-
-// ---------------------------------------------------------------------------
-// --json emits the full event envelope
-// ---------------------------------------------------------------------------
 
 // TestCommsLogJSON_EmitsFullEventEnvelopePerLine verifies that each --json line
 // is the whole event envelope. A flattened payload would drop event_id and
@@ -69,7 +53,6 @@ func TestCommsLogJSON_EmitsFullEventEnvelopePerLine(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			t.Fatalf("comms log --json line %d is not JSON: %v — %q", i, err, line)
 		}
-		// The envelope keys. A flattened payload has none of these.
 		if got := commsStringField(ev, "event_id"); got != wantIDs[i] {
 			t.Errorf("comms log --json line %d: event_id = %q, want %q — a flattened payload loses the only durable handle on a message", i, got, wantIDs[i])
 		}
@@ -80,7 +63,6 @@ func TestCommsLogJSON_EmitsFullEventEnvelopePerLine(t *testing.T) {
 		if !ok {
 			t.Fatalf("comms log --json line %d: payload is missing or not an object; got keys %v", i, mapKeys(ev))
 		}
-		// The addressing fields live INSIDE payload, not at the top level.
 		if _, present := ev["from"]; present {
 			t.Errorf("comms log --json line %d: %q must live inside payload, not at the envelope top level", i, "from")
 		}
@@ -89,10 +71,6 @@ func TestCommsLogJSON_EmitsFullEventEnvelopePerLine(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Filters and the two --since forms
-// ---------------------------------------------------------------------------
 
 // TestCommsLog_FiltersAndSinceForms covers the addressing filters and both
 // --since spellings in one table. The --to case is the one that matters most:
@@ -103,8 +81,6 @@ func TestCommsLog_FiltersAndSinceForms(t *testing.T) {
 	directed := commsMessageLine(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "to bob")
 	broadcast := commsMessageLine(t, "01965b00-0000-7000-8000-000000000002", ts, "alice", "*", "", "all hands")
 	other := commsMessageLine(t, "01965b00-0000-7000-8000-000000000003", ts, "charlie", "dave", "work", "to dave")
-	// A non-agent_message event. The human renderer never prints an event type,
-	// so its absence can only be detected by counting lines.
 	notAMessage := commsEventLine(t, "01965b00-0000-7000-8000-000000000004", ts, "run_started", map[string]any{})
 
 	dir := commsWriteEvents(t, directed, broadcast, other, notAMessage)
@@ -162,9 +138,6 @@ func TestCommsLog_FiltersAndSinceForms(t *testing.T) {
 					t.Errorf("comms log %v: %q must be filtered out; got: %q", tc.args, unwanted, out)
 				}
 			}
-			// Exactly one line per matched message, and no line for anything
-			// else. Counting is the only way to catch a non-agent_message event
-			// leaking through, because the human line never names the type.
 			if got := len(nonEmptyLines(out)); got != len(tc.want) {
 				t.Errorf("comms log %v: got %d output lines, want exactly %d (one per matched message); got: %q", tc.args, got, len(tc.want), out)
 			}

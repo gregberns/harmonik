@@ -1,35 +1,5 @@
 package core
 
-// agentinputevents.go — event-bus payload types for §8.21 agent-input
-// acceptance events (codename:agent-input-substrate, M2):
-//   - agent_input_acked (§8.21.1) — the positive input-acceptance boundary
-//   - agent_input_stale (§8.21.2) — the InputAckTimeout terminal (never-acked)
-//
-// These are the two cross-bus signals of the M2 structured input driver's
-// submission sub-lifecycle. When an input submission's acceptance is positively
-// observed, the driver emits agent_input_acked at the input-acceptance boundary
-// — the event's existence IS the positive ack (there is no acceptance "class").
-// If the InputAckTimeout window elapses with no positive acceptance, the driver
-// emits agent_input_stale instead. Both are durability class O (observational;
-// a lost ack does not gate the run — acceptance state is re-derivable by the
-// driver on the next submission / from the retained input journal), emitter
-// daemon-core (the input driver in the daemon input path), consumed by the M3
-// runexec run-reactor, the internal/replay invariant harness (EV-048), audit,
-// and observability.
-//
-// Registered (mustRegister) in registerAgentInputEvents (eventreg_hqwn59.go) with
-// a mandatory pertypecompat row each; schema v1, N-1 readable per
-// operator-nfr.md §4.5. Per EV-050 the two are CARVED OUT of the cross-bus
-// taxonomy cohort (allEventTypeCohort) and the EV-027 count guard, following the
-// §8.16/§8.20 keeper precedent. They are also outside the HC-INV-007
-// sole-publisher scope (that invariant governs the §8.3 handler-lifecycle
-// progress-stream types published by the session watcher; the input driver is a
-// distinct daemon-core emitter).
-//
-// Spec ref: event-model.md §8.21, §6.3; agent-input.md §4 AIS-004 owns emission
-// timing/ordering; handler-contract.md §4 HC-070 owns the driver→run seam.
-// Bead ref: codename:agent-input-substrate (M2-1 T3).
-
 // AgentInputAckedPayload is the typed event payload for agent_input_acked
 // (event-model.md §8.21.1).
 //

@@ -1,24 +1,11 @@
 package core
 
-// cpevents_hqwn59_prop_test.go — property tests for the Valid() methods
-// declared in cpevents_hqwn59.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// Approach: rapid generator builds a valid payload, flips exactly one required
-// field to its zero/invalid value, asserts Valid()==false; all-valid -> true.
-//
-// Refs: hk-qgzso (property-test coverage uplift for hk-j3hrn core uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ============================================================
-// ControlPointsRegisteredPayload
-// ============================================================
 
 func TestProp_ControlPointsRegisteredPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -56,10 +43,6 @@ func TestProp_ControlPointsRegisteredPayload_EmptyStartedAtRejected(t *testing.T
 	})
 }
 
-// ============================================================
-// ControlPointsRegistrationStartedPayload
-// ============================================================
-
 func TestProp_ControlPointsRegistrationStartedPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := ControlPointsRegistrationStartedPayload{
@@ -95,10 +78,6 @@ func TestProp_ControlPointsRegistrationStartedPayload_EmptyStartedAtRejected(t *
 		}
 	})
 }
-
-// ============================================================
-// VerdictEnvelopeMismatchPayload
-// ============================================================
 
 func TestProp_VerdictEnvelopeMismatchPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -224,10 +203,6 @@ func TestProp_VerdictEnvelopeMismatchPayload_EmptyDetectedAtRejected(t *testing.
 	})
 }
 
-// ============================================================
-// PolicyCostBound
-// ============================================================
-
 func TestProp_PolicyCostBound_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
 	for _, v := range allPolicyCostBounds {
@@ -252,10 +227,6 @@ func TestProp_PolicyCostBound_KnownConstantsAccepted(t *testing.T) {
 		}
 	})
 }
-
-// ============================================================
-// PolicyEvalIODeterminism
-// ============================================================
 
 func TestProp_PolicyEvalIODeterminism_UnknownValueRejected(t *testing.T) {
 	known := make(map[string]bool)
@@ -282,13 +253,8 @@ func TestProp_PolicyEvalIODeterminism_KnownConstantsAccepted(t *testing.T) {
 	})
 }
 
-// ============================================================
-// PolicyExpressionExceededCostPayload
-// ============================================================
-
 func TestProp_PolicyExpressionExceededCostPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// ast_steps requires deterministic; wall_clock requires best-effort.
 		bound := rapid.SampledFrom(allPolicyCostBounds).Draw(rt, "bound")
 		var det PolicyEvalIODeterminism
 		switch bound {
@@ -363,7 +329,6 @@ func TestProp_PolicyExpressionExceededCostPayload_InvalidBoundFiredRejected(t *t
 
 func TestProp_PolicyExpressionExceededCostPayload_InconsistentBoundIODeterminismRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Flip the pairing: ast_steps+best-effort and wall_clock+deterministic are both invalid.
 		type pair struct {
 			b PolicyCostBound
 			d PolicyEvalIODeterminism

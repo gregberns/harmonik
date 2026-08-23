@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// roleFixtureDoc renders a minimal policy YAML carrying only a roles: section.
-// ValidateRoles and ValidateRequiredRoleDefaultSkills inspect roles only; the
-// other six required sections are CP-035's concern (ValidateSections), so they
-// are deliberately absent here.
-// Helper prefix: roleFixture.
 func roleFixtureDoc(t *testing.T, rolesYAML string) PolicyDocument {
 	t.Helper()
 	src := "roles:\n" + rolesYAML
@@ -22,17 +17,10 @@ func roleFixtureDoc(t *testing.T, rolesYAML string) PolicyDocument {
 	return doc
 }
 
-// roleFixtureEntry renders one roles[] entry with the given name, status, and
-// default_skills list. A nil skills slice still emits the permission_schema
-// block (an empty list), which is what CP-030 shells look like.
-// Helper prefix: roleFixture.
 func roleFixtureEntry(name, status string, skills []string) string {
 	return roleFixtureShell(name, status, nil, nil, skills)
 }
 
-// roleFixtureShell renders one roles[] entry with all three CP-030 shell fields
-// spelled out, so a test can populate exactly the field under examination.
-// Helper prefix: roleFixture.
 func roleFixtureShell(name, status string, tools, paths, skills []string) string {
 	return fmt.Sprintf(
 		"  - name: %s\n    status: %s\n    permission_schema:\n"+

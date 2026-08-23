@@ -12,13 +12,11 @@ import (
 func TestRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 
-	// First read on an absent file returns ErrNotFound.
 	_, err := goalstate.Read(dir)
 	if !errors.Is(err, goalstate.ErrNotFound) {
 		t.Fatalf("want ErrNotFound; got %v", err)
 	}
 
-	// Write a populated GoalState.
 	gs := &goalstate.GoalState{
 		Objectives:         []string{"ship flywheel V6"},
 		Antigoals:          []string{"break the build"},
@@ -29,13 +27,11 @@ func TestRoundtrip(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	// Verify the file exists at the expected path.
 	want := filepath.Join(dir, ".harmonik", "intent", "goal-state.json")
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("goal-state.json not created at %s: %v", want, err)
 	}
 
-	// Round-trip: Read back and verify fields.
 	got, err := goalstate.Read(dir)
 	if err != nil {
 		t.Fatalf("Read: %v", err)

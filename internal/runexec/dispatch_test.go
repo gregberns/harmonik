@@ -7,11 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// dispatch_test.go — L0 per-transition + property tests for the Dispatch machine
-// (RSM-004/005/006, RSM-INV-002). All tests are pure (no LLM, no clock, no I/O):
-// they run zero-token by construction — the reactor mints no ids and reads no
-// time source, so every assertion is a deterministic function of the fed events.
-
 func at(sec int) time.Time { return time.Unix(int64(sec), 0).UTC() }
 
 func stdDispatchCfg() DispatchConfig {
@@ -43,7 +38,6 @@ func eqKinds(a, b []ActionKind) bool {
 	return true
 }
 
-// drive a session down its happy path to Working.
 func toWorking(t *testing.T, cfg DispatchConfig) *Dispatch {
 	t.Helper()
 	m := NewDispatch(cfg)
@@ -122,8 +116,6 @@ func TestDispatch_SkipReadyHandshake(t *testing.T) {
 }
 
 func TestDispatch_ReadyTimeoutSR9Edge(t *testing.T) {
-	// RSM-005 / RSM-INV-002: the agent_ready timer edge is an outgoing action
-	// set (kill + reap + agent_ready_timeout emit), never a silent wait.
 	m := NewDispatch(stdDispatchCfg())
 	m.Step(Event{Kind: EvStartDispatch, Session: "s1", At: at(1)})
 	m.Step(Event{Kind: EvLaunched, Session: "s1", At: at(2)})
@@ -143,7 +135,6 @@ func TestDispatch_ReadyTimeoutSR9Edge(t *testing.T) {
 	if m.State().Phase != DispatchReadyTimeout {
 		t.Fatalf("phase %s", m.State().Phase)
 	}
-	// Kill-reap fires → Failed(agent_ready_timeout).
 	m.Step(Event{Kind: EvTimerFired, Timer: TimerReadyKillReap, At: at(46)})
 	if m.State().Phase != DispatchFailed || m.State().Reason != "agent_ready_timeout" {
 		t.Fatalf("post-reap: phase=%s reason=%s", m.State().Phase, m.State().Reason)
@@ -151,8 +142,6 @@ func TestDispatch_ReadyTimeoutSR9Edge(t *testing.T) {
 }
 
 func TestDispatch_LaunchTimeoutNotSilent(t *testing.T) {
-	// RSM-INV-002: a hung launch (no EvLaunched/EvLaunchFailed) whose agent_ready
-	// deadline expires in Launching must ride the SR9 edge, not wait silently.
 	m := NewDispatch(stdDispatchCfg())
 	m.Step(Event{Kind: EvStartDispatch, Session: "s1", At: at(1)})
 	got := m.Step(Event{Kind: EvTimerFired, Timer: TimerAgentReady, At: at(40)})
@@ -174,7 +163,6 @@ func TestDispatch_LaunchTimeoutNotSilent(t *testing.T) {
 }
 
 func TestDispatch_HeartbeatNotProgress(t *testing.T) {
-	// RSM-006: a bare daemon heartbeat MUST NOT advance progress; a commit does.
 	m := toWorking(t, stdDispatchCfg())
 	before := m.State().LastProgressAt
 	m.Step(Event{Kind: EvHeartbeat, At: at(100)})
@@ -191,13 +179,11 @@ func TestDispatch_HeartbeatNotProgress(t *testing.T) {
 }
 
 func TestDispatch_BriefRetryThenFailClosed(t *testing.T) {
-	// RSM-INV-001: input rejection retries within budget then fails closed.
 	cfg := stdDispatchCfg() // caps brief attempts at two
 	m := NewDispatch(cfg)
 	m.Step(Event{Kind: EvStartDispatch, Session: "s1", At: at(1)})
 	m.Step(Event{Kind: EvLaunched, Session: "s1", At: at(2)})
 	m.Step(Event{Kind: EvAgentReady, Session: "s1", InputID: "i1", At: at(3)})
-	// First rejection → retry (attempt 1 < 2).
 	got := kinds(m.Step(Event{Kind: EvInputRejected, InputID: "i1", At: at(4)}))
 	if !eqKinds(got, []ActionKind{ActDeliverInput, ActArmTimer}) {
 		t.Fatalf("retry: %v", got)
@@ -205,7 +191,6 @@ func TestDispatch_BriefRetryThenFailClosed(t *testing.T) {
 	if m.State().Phase != DispatchBriefing {
 		t.Fatalf("phase %s", m.State().Phase)
 	}
-	// Second rejection → fail closed (attempt 2 == max).
 	got = kinds(m.Step(Event{Kind: EvTimerFired, Timer: TimerInputAck, At: at(20)}))
 	if !eqKinds(got, []ActionKind{ActCancelTimer}) {
 		t.Fatalf("failclosed: %v", got)
@@ -216,7 +201,6 @@ func TestDispatch_BriefRetryThenFailClosed(t *testing.T) {
 }
 
 func TestDispatch_DuplicateAckDropped(t *testing.T) {
-	// RSM-027: a duplicate ack for an already-correlated submission is dropped.
 	m := toWorking(t, stdDispatchCfg()) // acked i1
 	got := m.Step(Event{Kind: EvInputAck, InputID: "i1", At: at(50)})
 	if len(got) != 0 || m.State().Phase != DispatchWorking {
@@ -275,18 +259,12 @@ func TestDispatch_WorkingStallKills(t *testing.T) {
 	}
 }
 
-// ─── Property tests (pure, zero-token) ──────────────────────────────────────
-
-// allDispatchPhases enumerates every phase for the exhaustive properties.
 var allDispatchPhases = []DispatchPhase{
 	DispatchIdle, DispatchLaunching, DispatchAwaitingReady, DispatchBriefing,
 	DispatchWorking, DispatchReadyTimeout, DispatchCompleted, DispatchExited,
 	DispatchStalled, DispatchFailed, DispatchAborted,
 }
 
-// allDeclaredEventKinds enumerates the complete shared vocabulary in vocab.go.
-// Both machines must remain total over the shared union, including events owned
-// by the other machine (RSM-003).
 var allDeclaredEventKinds = []EventKind{
 	EvStartDispatch, EvLaunched, EvLaunchFailed, EvAgentReady, EvInputAck,
 	EvInputRejected, EvHeartbeat, EvCommitObserved, EvOutcomeReceived,
@@ -374,7 +352,6 @@ func TestDispatch_RunEventsAreExplicitNoOps(t *testing.T) {
 // (state, timer-fired) pair that is armed in that state produces an outgoing
 // action OR a real state change; no armed timer edge is a silent no-op.
 func TestDispatch_TimerFiredNeverSilent(t *testing.T) {
-	// The armed-timer map: which timer is live in which non-terminal phase.
 	armed := map[DispatchPhase]TimerKind{
 		DispatchLaunching:     TimerAgentReady, // armed at Idle→Launching, live through Launching
 		DispatchAwaitingReady: TimerAgentReady,

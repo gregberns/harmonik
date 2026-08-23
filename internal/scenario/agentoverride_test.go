@@ -6,15 +6,11 @@ import (
 	"testing"
 )
 
-// agentOverrideFixtureBasic returns a minimally valid AgentOverride with only
-// Binary set.
 func agentOverrideFixtureBasic(t *testing.T) AgentOverride {
 	t.Helper()
 	return AgentOverride{Binary: "my-twin"}
 }
 
-// agentOverrideFixtureWithArgs returns a valid AgentOverride with both fields
-// populated.
 func agentOverrideFixtureWithArgs(t *testing.T) AgentOverride {
 	t.Helper()
 	return AgentOverride{
@@ -115,16 +111,9 @@ func TestAgentOverrideJSONRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAgentOverrideYAMLRoundTrip is omitted: gopkg.in/yaml.v3 is not a
-// declared dependency in go.mod (only github.com/google/uuid v1.6.0 is
-// present). JSON round-trip above covers the serialisation contract.
-// Gap: yaml.v3 round-trip should be added when the dependency is introduced.
-
 func TestAgentOverrideOmitEmptyArgs(t *testing.T) {
 	t.Parallel()
 
-	// When Args is nil, the marshaled JSON MUST NOT contain the "args" key
-	// (omitempty contract on the struct tag).
 	a := AgentOverride{Binary: "twin-bin"}
 	data, err := json.Marshal(a)
 	if err != nil {
@@ -147,20 +136,8 @@ func TestAgentOverrideOmitEmptyArgs(t *testing.T) {
 func TestAgentOverrideAppendSemantics(t *testing.T) {
 	t.Parallel()
 
-	// The spec (§6.1) declares Args merge semantics: APPENDED to the
-	// production composition root's default args (no replacement).
-	//
-	// AgentOverride does not expose a Merge method; the production-side
-	// caller is expected to use:
-	//
-	//   merged := append(productionDefaults, override.Args...)
-	//
-	// This test documents and validates that formula.
-
 	productionDefaults := []string{"--config", "/etc/harmonik.yaml"}
 
-	// mergeArgs is the production-side merge formula documented by this test:
-	// override Args are APPENDED (not replacing) the production defaults.
 	mergeArgs := func(defaults []string, override AgentOverride) []string {
 		result := make([]string, len(defaults), len(defaults)+len(override.Args))
 		copy(result, defaults)
@@ -168,7 +145,6 @@ func TestAgentOverrideAppendSemantics(t *testing.T) {
 		return result
 	}
 
-	// Case 1: non-nil args appended.
 	override := agentOverrideFixtureWithArgs(t)
 	merged := mergeArgs(productionDefaults, override)
 	want := []string{"--config", "/etc/harmonik.yaml", "--dry-run", "--verbose"}
@@ -176,14 +152,12 @@ func TestAgentOverrideAppendSemantics(t *testing.T) {
 		t.Errorf("append merge mismatch:\n  got:  %v\n  want: %v", merged, want)
 	}
 
-	// Case 2: nil args — merge produces exactly productionDefaults.
 	nilOverride := agentOverrideFixtureBasic(t) // Args is nil
 	mergedNil := mergeArgs(productionDefaults, nilOverride)
 	if !reflect.DeepEqual(mergedNil, productionDefaults) {
 		t.Errorf("nil-args merge should equal productionDefaults:\n  got:  %v\n  want: %v", mergedNil, productionDefaults)
 	}
 
-	// Case 3: empty args — semantically equivalent to nil at merge time.
 	emptyOverride := AgentOverride{Binary: "twin", Args: []string{}}
 	mergedEmpty := mergeArgs(productionDefaults, emptyOverride)
 	if !reflect.DeepEqual(mergedEmpty, productionDefaults) {

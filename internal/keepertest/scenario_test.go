@@ -156,9 +156,6 @@ func TestScenarioOperatorTurnDuringHandoffParksAndCanRetry(t *testing.T) {
 	go func() { firstDone <- cycler.MaybeRun(context.Background(), s.Ports().Gauge) }()
 	waitForScenarioEffect(t, s.Ports(), 4)
 
-	// The slash-command transcript artifact is not a real user turn. The real
-	// operator turn arrives outside its two-second exclusion window while the
-	// handoff file already carries this cycle's nonce.
 	s.Ports().HandoffText = "# current handoff\n<!-- KEEPER:cyc-collision -->\n"
 	s.OperatorSays(s.Clock().Now().Add(3 * time.Second))
 	s.Clock().Advance(3 * time.Second)
@@ -174,8 +171,6 @@ func TestScenarioOperatorTurnDuringHandoffParksAndCanRetry(t *testing.T) {
 		}
 	}
 
-	// A parked cycle does not arm anti-loop suppression. Once the real turn is
-	// outside the lookback, the same session can enter a fresh cycle.
 	s.Clock().Advance(6 * time.Minute)
 	s.Ports().NextCycleID = "cyc-retry"
 	beforeRetry := len(s.Ports().EffectsSnapshot())
@@ -232,15 +227,10 @@ func TestScenarioSuccessfulCycleRecordsOrderedEffects(t *testing.T) {
 	s.Clock().Advance(policy.PollInterval)
 	waitForScenarioEffectContaining(t, s.Ports(), "inject:/clear")
 
-	// At the settle deadline the old high gauge causes the defensive second
-	// clear. The next poll then observes the new session and completes.
 	s.Ports().Gauge = &keeper.CtxFile{Pct: 90, SessionID: "11111111-1111-4111-8111-111111111111"}
 	s.Clock().Advance(policy.ClearSettle)
 	waitForScenarioEffectCount(t, s.Ports(), "inject:/clear", 2)
 	s.Ports().Gauge = &keeper.CtxFile{Pct: 2, SessionID: "22222222-2222-4222-8222-222222222222"}
-	// The second clear effect is recorded before the shell finishes arming the
-	// next fake ticker generation. Let that goroutine reach its select before
-	// advancing virtual time again.
 	time.Sleep(time.Millisecond)
 	var cycleErr error
 	completed := false
@@ -316,8 +306,6 @@ func TestScenarioHandoffTimeoutSuspendsWithoutClearing(t *testing.T) {
 	if journal == nil || journal.Phase != "pending" || journal.Reason != "handoff_pending" {
 		t.Fatalf("journal = %+v, want pending handoff_pending", journal)
 	}
-	// The suspension is only useful if the request survives it: crash recovery
-	// restores the request from this journal by cycle id.
 	if journal.CycleID != "cyc-timeout" {
 		t.Fatalf("journal cycle id = %q, want the original request id cyc-timeout", journal.CycleID)
 	}

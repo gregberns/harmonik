@@ -14,8 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// writeTestJSONL writes a JSONL file with usage records at specified token counts
-// and timestamps relative to now.
 func writeTestJSONL(t *testing.T, dir string, records []struct {
 	age    time.Duration // how far in the past; 0 = now
 	input  int64
@@ -76,7 +74,6 @@ func TestTranscriptTokensUsed_SumsWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// want = (100+50+200) + (300+100+400) = 350 + 800 = 1150 (cache_read excluded)
 	want := int64(1150)
 	if got != want {
 		t.Errorf("transcriptTokensUsed = %d, want %d", got, want)
@@ -85,7 +82,6 @@ func TestTranscriptTokensUsed_SumsWindow(t *testing.T) {
 
 func TestTranscriptTokensUsed_MissingDir(t *testing.T) {
 	home := t.TempDir()
-	// ~/.claude/projects does not exist
 	got, err := transcriptTokensUsed(filepath.Join(home, ".claude", "projects"), time.Now().Add(-5*time.Hour))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -103,7 +99,6 @@ func TestBandwidthTuner_tick_FullHeadroom(t *testing.T) {
 
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
-	// No usage → full headroom → effectiveMax should be 4.
 	tuner.tick()
 	if got := ctrl.Get(); got != 4 {
 		t.Errorf("expected ceiling=4 at full headroom, got %d", got)
@@ -117,7 +112,6 @@ func TestBandwidthTuner_tick_HalfUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Use exactly half the ceiling.
 	writeTestJSONL(t, projDir, []struct {
 		age    time.Duration
 		input  int64
@@ -130,7 +124,6 @@ func TestBandwidthTuner_tick_HalfUsed(t *testing.T) {
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	tuner.tick()
-	// headroom = 500k/1M → ratio=0.5 → round(4*0.5) = 2
 	if got := ctrl.Get(); got != 2 {
 		t.Errorf("expected ceiling=2 at half headroom, got %d", got)
 	}
@@ -143,7 +136,6 @@ func TestBandwidthTuner_tick_CeilingExhausted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Consume more than the ceiling.
 	writeTestJSONL(t, projDir, []struct {
 		age    time.Duration
 		input  int64
@@ -156,14 +148,11 @@ func TestBandwidthTuner_tick_CeilingExhausted(t *testing.T) {
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	tuner.tick()
-	// headroom ≤ 0 → clamp to 1
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("expected ceiling=1 when exhausted, got %d", got)
 	}
 }
 
-// backstopActivePayload builds a serialised AgentRateLimitStatusPayload with
-// status=active for use in backstop unit tests.
 func backstopActivePayload(t *testing.T, retryAfterSec *int) json.RawMessage {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001"))
@@ -186,7 +175,6 @@ func backstopActivePayload(t *testing.T, retryAfterSec *int) json.RawMessage {
 func TestBandwidthTunerBackstop_NilTuner(t *testing.T) {
 	t.Parallel()
 	b := &bandwidthTunerBackstop{}
-	// Should not panic; returns nil even with a well-formed status=active payload.
 	retry := 60
 	evt := core.Event{Payload: backstopActivePayload(t, &retry)}
 	if err := b.handle(context.Background(), evt); err != nil {
@@ -215,11 +203,9 @@ func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	// NotifyRateLimit should have snapped concurrency to 1.
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("concurrency after backstop notify = %d, want 1", got)
 	}
-	// tick should not raise the ceiling during backoff.
 	tuner.tick()
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("concurrency still expected 1 during backoff, got %d", got)
@@ -253,7 +239,6 @@ func TestBandwidthTunerBackstop_ClearedIgnored(t *testing.T) {
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	// Concurrency must NOT have been snapped to 1 — cleared events are ignored.
 	if got := ctrl.Get(); got != 4 {
 		t.Errorf("concurrency after cleared event = %d, want 4 (unchanged)", got)
 	}
@@ -274,12 +259,10 @@ func TestBandwidthTunerBackstop_ZeroRetryAfter(t *testing.T) {
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
 
-	// No retry_after_seconds field — passes nil.
 	evt := core.Event{Payload: backstopActivePayload(t, nil)}
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	// NotifyRateLimit uses conservative default → should still snap to 1.
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("concurrency after backstop notify (no retry hint) = %d, want 1", got)
 	}
@@ -301,7 +284,6 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build and seal a real event bus.
 	bus := eventbus.NewBusImpl()
 
 	b := &bandwidthTunerBackstop{}
@@ -312,16 +294,13 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// Construct the tuner and arm the backstop AFTER sealing (matching daemon init order).
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	b.SetTuner(tuner)
 
-	// Build a hook store with the bus wired in.
 	store := newHookSessionStore()
 	store.SetEmitter(bus)
 
-	// Simulate a StopFailure{rate_limit} arriving on the socket.
 	runID := uuid.New()
 	retry := 90
 	relayPayload, _ := json.Marshal(map[string]int{"retry_after_seconds": retry})
@@ -337,7 +316,6 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 		t.Fatalf("dispatchHookRelayEnvelope: want ok, got %q (%s)", ack.Status, ack.Reason)
 	}
 
-	// Allow the asynchronous bus worker pool to deliver the event.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if ctrl.Get() == 1 {
@@ -363,7 +341,6 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
-	// Register a Pi run in the registry.
 	piRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000010"))
 	reg := NewRunRegistry()
 	handle := &RunHandle{}
@@ -374,7 +351,6 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	b.SetTuner(tuner)
 	b.SetRunRegistry(reg)
 
-	// Build a status=active payload for the Pi run.
 	retry := 60
 	pl := core.AgentRateLimitStatusPayload{
 		RunID:             piRunID,
@@ -389,7 +365,6 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	// Concurrency MUST NOT have been snapped — Pi events are isolated (PI-073).
 	if got := ctrl.Get(); got != 4 {
 		t.Errorf("concurrency after Pi rate-limit event = %d, want 4 (Pi event must not reach global tuner)", got)
 	}
@@ -408,7 +383,6 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	ctrl := NewConcurrencyController(4)
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
-	// Register a Claude (non-Pi) run.
 	claudeRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000011"))
 	reg := NewRunRegistry()
 	handle := &RunHandle{}
@@ -433,7 +407,6 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	// Concurrency MUST be snapped to 1 for a non-Pi run.
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("concurrency after Claude rate-limit event = %d, want 1", got)
 	}
@@ -453,7 +426,6 @@ func TestBandwidthTuner_NotifyRateLimit_SnapsToOne(t *testing.T) {
 		t.Errorf("expected ceiling=1 after rate limit, got %d", got)
 	}
 
-	// tick should NOT raise ceiling during backoff
 	tuner.tick()
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("expected ceiling still 1 during backoff, got %d", got)

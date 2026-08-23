@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// brErrorFixtureAll returns all declared BrError constants in definition order.
-// Used by exhaustive-coverage tests.
 func brErrorFixtureAll() []BrError {
 	return []BrError{
 		BrOK,
@@ -19,8 +17,6 @@ func brErrorFixtureAll() []BrError {
 	}
 }
 
-// brErrorFixtureExitCodeTable returns the complete §6.1a exit-code mapping
-// (illustrative codes only; BrUnavailable has no numeric code).
 func brErrorFixtureExitCodeTable() []struct {
 	code     int
 	expected BrError
@@ -163,8 +159,6 @@ func TestBrErrorFromExitCode_unknown(t *testing.T) {
 // NOT produced by BrErrorFromExitCode: timeout and exec-error paths MUST
 // classify directly as BrUnavailable without invoking this function.
 func TestBrErrorFromExitCode_noUnavailableFromCode(t *testing.T) {
-	// There is no numeric exit code in §6.1a that maps to BrUnavailable.
-	// Scan all spec-listed codes and arbitrary unknown codes to confirm.
 	allCodes := []int{0, 1, 2, 3, 4, 5, 127, 255}
 	for _, code := range allCodes {
 		got := BrErrorFromExitCode(code)
@@ -186,7 +180,6 @@ func TestBrErrorFromExit_stderrRefinement(t *testing.T) {
 		stderr string
 		want   BrError
 	}{
-		// Exit 1: the refined code.
 		{"exit1-empty-stderr", 1, "", BrNotFound},                                    // BI-025d empty-stderr rule → table
 		{"exit1-whitespace-only", 1, "   \n\t ", BrNotFound},                         // effectively empty → table
 		{"exit1-genuine-not-found", 1, "Error: Issue not found: hk-abc", BrNotFound}, // real missing bead-id

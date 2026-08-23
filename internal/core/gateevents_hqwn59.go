@@ -2,22 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// gateevents_hqwn59.go — event-bus payload types for §8.2.4-§8.2.6 gate-lifecycle
-// events: gate_allowed, gate_denied, gate_escalated.
-//
-// These are DISTINCT from GatePayload (specs/control-points.md §6.1.1), which
-// is the configuration payload embedded in a ControlPoint. The types in this
-// file are the event-bus wire payloads emitted on the cross-subsystem bus when
-// a gate evaluation produces a verdict.
-//
-// Per event-model.md §8.9(h) note: gate verdicts are terminal-distinct outcomes,
-// NOT sequential phases of the same lifecycle, and MUST remain as three separate
-// event types (gate_allowed, gate_denied, gate_escalated). This is the correct
-// model per control-points §6.5.
-//
-// Spec ref: specs/event-model.md §8.2.4, §8.2.5, §8.2.6.
-// Bead refs: hk-hqwn.59.15, hk-hqwn.59.16, hk-hqwn.59.17.
-
 // GateAllowedPayload is the typed event payload for the gate_allowed event
 // (event-model.md §8.2.4).
 //

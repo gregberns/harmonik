@@ -1,21 +1,5 @@
 package queue_test
 
-// rpc_spawncap_message_qm3zv_test.go — a refused `queue set-concurrency` must
-// name the ceiling and the value in force IN THE MESSAGE.
-//
-// WHY THE MESSAGE AND NOT THE DETAIL. The daemon copies an RPCError onto the
-// socket as SocketResponse{Error: Message, ErrorCode: Code} and drops Detail,
-// and the CLI prints "error: <Message> (code <n>)". The numbers were computed
-// correctly and put in Detail, so they existed everywhere except where the
-// operator reads. The whole refusal reached the terminal as:
-//
-//	error: spawn_cap_exceeded (code -32099)
-//
-// An operator who hit the cap with one extra digit learned nothing from that
-// and had to guess against a live daemon.
-//
-// Bead ref: hk-qm3zv.
-
 import (
 	"context"
 	"encoding/json"
@@ -27,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// refusalMessage returns the refusal text, and fails the test when the request
-// was accepted or when the message lost its typed reason code.
 func refusalMessage(t *testing.T, rpcErr *queue.RPCError, acceptedMsg string) string {
 	t.Helper()
 	if rpcErr == nil {
@@ -41,9 +23,6 @@ func refusalMessage(t *testing.T, rpcErr *queue.RPCError, acceptedMsg string) st
 	return rpcErr.Message
 }
 
-// assertMessageNames fails when the refusal message leaves out a number the
-// operator needs to pick the next value. The match is on a whole number, so a
-// 4 hiding inside a 64 does not count as naming the 4.
 func assertMessageNames(t *testing.T, msg, label string, n int) {
 	t.Helper()
 	whole := regexp.MustCompile(`\b` + strconv.Itoa(n) + `\b`)
@@ -75,7 +54,6 @@ func TestSpawnCapRefusalMessageNamesTheNumbers_FixedCapSubstrate(t *testing.T) {
 		func(n int) (int, error) { old := concurrency; concurrency = n; return old, nil },
 	)
 	adapter.SetSpawnCapFunc(func() int { return 12 })
-	// No SetSpawnCapSetFunc and no bounds — this substrate cannot resize.
 
 	params, err := json.Marshal(map[string]any{"n": 8})
 	if err != nil {

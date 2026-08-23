@@ -1,16 +1,5 @@
 package codexwire_test
 
-// T2 gate: every captured real message must round-trip (parse→re-serialize→
-// semantic-equal), ZERO unmodeled fields (Extra must be empty on all frames),
-// ZERO unknown methods (no FrameKindRaw).
-//
-// The corpus (23 frames, raw-session-01.jsonl) is the normative test input.
-// This test is the operator checkpoint for the T2 phase.
-//
-// Response frames (FrameKindServerResponse) carry the id but not the method;
-// they are correlated to their originating request via requestsByID so the
-// result type can be resolved and Extra-checked.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -25,7 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/codexwire"
 )
 
-// corpusPath resolves the testdata corpus relative to the package source.
 func corpusPath() string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "codex-app-server", "corpus", "raw-session-01.jsonl")
@@ -51,7 +39,6 @@ func TestCorpusRoundTrip(t *testing.T) {
 		}
 	})
 
-	// Track client requests by id so we can resolve response results.
 	requestsByID := map[string]string{} // id (raw JSON) → method
 
 	sc := bufio.NewScanner(f)
@@ -70,14 +57,12 @@ func TestCorpusRoundTrip(t *testing.T) {
 			continue
 		}
 
-		// Gate 1: ZERO unknown methods.
 		if frame.Kind == codexwire.FrameKindRaw {
 			t.Errorf("line %d: unknown method (FrameKindRaw) — method %q must be added to registry\n  line: %s",
 				lineNum, frame.Method, line)
 			continue
 		}
 
-		// For response frames, resolve the result type using the tracked request id.
 		if frame.Kind == codexwire.FrameKindServerResponse {
 			id := string(frame.ID)
 			if method, ok := requestsByID[id]; ok {
@@ -91,18 +76,15 @@ func TestCorpusRoundTrip(t *testing.T) {
 			}
 		}
 
-		// Track client requests for response correlation.
 		if frame.Kind == codexwire.FrameKindClientRequest {
 			requestsByID[string(frame.ID)] = frame.Method
 		}
 
-		// Gate 2: ZERO unmodeled fields.
 		if extras := collectExtras(t, &frame); len(extras) > 0 {
 			t.Errorf("line %d: unmodeled fields found (Extra must be empty):\n%s\n  line: %s",
 				lineNum, formatExtras(extras), line)
 		}
 
-		// Gate 3: Round-trip semantic equality.
 		got, err := codexwire.Marshal(frame)
 		if err != nil {
 			t.Errorf("line %d: Marshal error: %v\n  line: %s", lineNum, err, line)
@@ -205,7 +187,6 @@ func TestServerRequestClassification(t *testing.T) {
 			if frame.Kind != tc.want {
 				t.Fatalf("classification = %d, want %d (line dropped or misfiled)", frame.Kind, tc.want)
 			}
-			// A server request must round-trip verbatim (it is answered by id).
 			out, err := codexwire.Marshal(frame)
 			if err != nil {
 				t.Fatalf("Marshal returned error: %v", err)
@@ -224,7 +205,6 @@ func TestServerRequestClassification(t *testing.T) {
 // (sandbox, approvalPolicy, cwd, …) round-trips verbatim through Extra — so a
 // reconnect can carry the full resume posture without the codec enumerating it.
 func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
-	// Registered + client-originated.
 	found := false
 	for _, m := range codexwire.RegisteredMethods() {
 		if m == "thread/resume" {
@@ -280,10 +260,6 @@ func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
 	}
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-// assertSemanticEqual compares original and remarshal as parsed JSON maps.
-// Returns a descriptive error on mismatch, nil on equal.
 func assertSemanticEqual(t *testing.T, original, remarshal []byte) error {
 	t.Helper()
 	var orig, got any
@@ -299,14 +275,11 @@ func assertSemanticEqual(t *testing.T, original, remarshal []byte) error {
 	return nil
 }
 
-// extraReport records an unmodeled field path and its raw JSON value.
 type extraReport struct {
 	path  string
 	value json.RawMessage
 }
 
-// collectExtras walks a Frame and its typed payload to collect any non-empty
-// Extra maps, returning a report of all unmodeled fields found.
 func collectExtras(t *testing.T, f *codexwire.Frame) []extraReport {
 	t.Helper()
 	var out []extraReport
@@ -323,14 +296,11 @@ func collectExtras(t *testing.T, f *codexwire.Frame) []extraReport {
 			out = append(out, walkExtras("result", f.Result)...)
 		}
 	case codexwire.FrameKindRaw:
-		// Raw frames do not have a typed payload to inspect.
 	}
 
 	return out
 }
 
-// walkExtras uses reflection to find Extra fields (map[string]json.RawMessage)
-// on structs reachable from v, returning their contents as extraReports.
 func walkExtras(prefix string, v any) []extraReport {
 	if v == nil {
 		return nil
@@ -353,7 +323,6 @@ func walkExtras(prefix string, v any) []extraReport {
 		fv := rv.Field(i)
 
 		if f.Name == "Extra" {
-			// Check if this Extra map is non-empty.
 			if !fv.IsNil() {
 				iter := fv.MapRange()
 				for iter.Next() {
@@ -372,7 +341,6 @@ func walkExtras(prefix string, v any) []extraReport {
 			continue
 		}
 
-		// Recurse into struct fields (dereference pointers).
 		child := fv
 		if child.Kind() == reflect.Ptr {
 			if child.IsNil() {

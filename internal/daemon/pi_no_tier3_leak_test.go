@@ -1,23 +1,5 @@
 package daemon_test
 
-// pi_no_tier3_leak_test.go — Scenario 2 of the pi-provider-switch C5
-// two-provider e2e harness corpus (hk-m6uu2.6, C5-wiring): a pi-resolved bead
-// with NO profile:/model: label does NOT seal a claude tier-3 `sonnet`
-// default, AND the per-node DOT model= pin is dropped for the pi family so
-// the provider tuple survives cascade re-launch unclobbered (locked C3-Q5
-// decision).
-//
-// This extends hk_pkugu_pi_launch_e2e_test.go (the tier-3-leak regression) by
-// driving resolvePiProfile (C3) in the loop — proving the profile resolver
-// itself yields the zero tuple for a no-label bead, not merely that
-// ResolveModelPreference does — and by adding the DOT-cascade variant.
-//
-// Helper prefix: hkppsNoLeak (per implementer-protocol.md §Helper-prefix
-// discipline).
-//
-// Bead: hk-m6uu2.6 (pi-provider-switch C5-wiring). Guards C3 requirement 2
-// (harness gate / no claude tier-3 leak into the pi tuple).
-
 import (
 	"context"
 	"os"
@@ -33,8 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// hkppsNoLeakArgFlagValue returns the token following the first occurrence of
-// flag in args, or "" if flag is absent or has no following token.
 func hkppsNoLeakArgFlagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
@@ -44,7 +24,6 @@ func hkppsNoLeakArgFlagValue(args []string, flag string) string {
 	return ""
 }
 
-// hkppsNoLeakArgsContain reports whether any arg equals want.
 func hkppsNoLeakArgsContain(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {
@@ -54,8 +33,6 @@ func hkppsNoLeakArgsContain(args []string, want string) bool {
 	return false
 }
 
-// hkppsNoLeakKeyFile writes a dummy provider key to a temp file so the PI-040
-// billing guard passes hermetically without a live key.
 func hkppsNoLeakKeyFile(t *testing.T) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "pi.key")
@@ -65,8 +42,6 @@ func hkppsNoLeakKeyFile(t *testing.T) string {
 	return f
 }
 
-// hkppsNoLeakRunCtx builds an ExportedClaudeRunCtx for a single-mode
-// initial-turn dispatch carrying the claim-time-resolved model.
 func hkppsNoLeakRunCtx(t *testing.T, ws, model string) daemon.ExportedClaudeRunCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
@@ -92,8 +67,6 @@ func hkppsNoLeakRunCtx(t *testing.T, ws, model string) daemon.ExportedClaudeRunC
 // an absent profile: label) before the real routed launch path, mirroring the
 // claim-time sequence at workloop.go:3077-3116.
 func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
-	// Not t.Parallel: t.Setenv makes the PI-042 on-disk credential check
-	// hermetic by pointing HOME at a fresh temp dir.
 	t.Setenv("HOME", t.TempDir())
 
 	ctx := context.Background()
@@ -118,7 +91,6 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
 	}
 
-	// ── The production claim-time seam (workloop.go), verbatim ─────────────
 	agentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypePi,
 	)
@@ -132,8 +104,6 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		t.Fatalf("pi run sealed model = %q; want empty (no pi tier-3 default → config fallback)", sealedModel)
 	}
 
-	// C3 profile resolution in the loop: a no-label bead MUST resolve the zero
-	// tuple (no profile: label present).
 	resolvedProfile, profErr := daemon.ExportedResolvePiProfile(ctx, bead.Labels, agentType, piCfg, bus, string(bead.BeadID))
 	if profErr != nil {
 		t.Fatalf("resolvePiProfile: unexpected error: %v", profErr)
@@ -142,7 +112,6 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		t.Fatalf("resolvePiProfile: got non-zero profile %+v for a no-label bead; want zero tuple", resolvedProfile)
 	}
 
-	// ── The real routed launch path ─────────────────────────────────────────
 	build := daemon.ExportedRoutedLaunchSpecBuilder(
 		reg, bead,
 		core.AgentType(""), core.AgentType(""), core.AgentTypePi,
@@ -154,7 +123,6 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		t.Fatalf("routed launch spec build (pi): %v", err)
 	}
 
-	// argv: --model ornith (the harness-global config), never the claude default.
 	if got := hkppsNoLeakArgFlagValue(spec.Args, "--model"); got != wantModel {
 		t.Errorf("pi argv --model = %q; want %q\nargv=%v", got, wantModel, spec.Args)
 	}
@@ -164,7 +132,6 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		}
 	}
 
-	// ── Adversarial counterfactual: prove the assertions above are not vacuous ─
 	leakedModel, _ := daemon.ExportedResolveModelPreference(
 		ctx, bead.Labels, core.AgentTypeClaudeCode, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
@@ -212,9 +179,6 @@ func TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered(t *testing.T) {
 		claudePin    = "claude-sonnet-4-6" // every node's DOT model= attribute
 	)
 
-	// The harness registry is built ONCE per run from the resolved profile
-	// tuple (as workloop.go does at claim time before entering the DOT
-	// cascade); every node re-launch shares this SAME registry.
 	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   wantProvider,
 		Model:      wantModel,
@@ -228,7 +192,6 @@ func TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered(t *testing.T) {
 		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
 	}
 
-	// run-level resolvedModel for a pi run is empty (hk-pkugu).
 	const runResolvedModel = ""
 
 	build := daemon.ExportedRoutedLaunchSpecBuilder(
@@ -238,9 +201,6 @@ func TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered(t *testing.T) {
 	)
 
 	for nodeIdx, nodeID := range []string{"node-1", "node-2"} {
-		// The per-node model= pin is claude-scoped: for a pi effective harness
-		// it must be DROPPED (nodeModel stays the run-level resolvedModel,
-		// empty here), never leaking claudePin into rc.model.
 		nodeModel := daemon.ExportedNodeModelForHarness(runResolvedModel, claudePin, core.AgentTypePi)
 		if nodeModel != "" {
 			t.Fatalf("node %s: DOT model= pin leaked into nodeModel = %q; want empty (run-level resolvedModel)", nodeID, nodeModel)

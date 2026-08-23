@@ -2,8 +2,6 @@ package core
 
 import "testing"
 
-// policyExpressionFixture returns a valid non-empty PolicyExpression for use
-// in structural tests (hk-a8bg.92).
 func policyExpressionFixture(t *testing.T) PolicyExpression {
 	t.Helper()
 	return PolicyExpression(`event.payload.status == "ready"`)

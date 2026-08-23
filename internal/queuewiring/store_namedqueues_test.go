@@ -1,17 +1,5 @@
 package queuewiring_test
 
-// queuestore_namedqueues_hktigaf2_test.go — name-keyed QueueStore tests (hk-tigaf.2).
-//
-// Covers:
-//   - QueueByName / SetQueueByName / ClearQueueByName
-//   - AllQueues snapshot
-//   - SetQueue stores at q.Name (normalised)
-//   - QueueByName("main") mirrors Queue() for backward compat
-//   - Multiple concurrent names are independent
-//
-// Spec ref: specs/queue-model.md §9.1 QM-060 (single-writer).
-// Bead ref: hk-tigaf.2.
-
 import (
 	"reflect"
 	"sync"
@@ -22,7 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// namedQueueFixture builds a minimal *queue.Queue with the given name.
 func namedQueueFixture(t *testing.T, name string) *queue.Queue {
 	t.Helper()
 	return &queue.Queue{

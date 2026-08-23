@@ -1,16 +1,5 @@
 package main
 
-// release_coverage_test.go — behavior tests for the pure-logic slices of
-// `harmonik release`: the verb dispatcher, the shared parseReleaseFlags parser,
-// the ledger renderer, the yank/rollback/certify validation exit codes, and the
-// orDash/short formatting helpers. All paths here operate on a temp ledger file
-// or fail before any git/gh shell-out. The GitHub-promotion path in
-// runReleaseCertify (promoteGitHubRelease) is env/PATH-dependent and NOT driven
-// here — see the report for the skipped-with-reason list.
-//
-// captureStateStdout is the shared stdout-capture helper from
-// state_cmd_coverage_test.go (same package).
-
 import (
 	"reflect"
 	"strings"

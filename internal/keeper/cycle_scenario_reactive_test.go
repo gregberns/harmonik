@@ -1,13 +1,5 @@
 package keeper_test
 
-// cycle_scenario_reactive_test.go — scenario tests built on the reactive harness
-// (cycle_reactive_harness_test.go). Unlike the call-count fakes in cycle_test.go,
-// these drive the cycle through a session fake that MUTATES gauge + handoff state
-// in response to the injected command, so the clear->session-id-flip is CAUSED by
-// /clear rather than faked on a fixed gauge call-count.
-//
-// Fast offline unit tests — NO build tag.
-
 import (
 	"context"
 	"encoding/json"
@@ -18,13 +10,7 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// reactiveSIDs returns the seed (S1) and post-clear (S2) session ids used by the
-// reactive scenarios. S2 MUST be a UUIDv4 (version nibble at index 14 == '4')
-// so the cycle's waitForNewSessionID accepts it — it rejects UUIDv7 ids written
-// by daemon-spawned implementers (Refs: hk-lap). S1 is a distinct UUIDv4.
 func reactiveSIDs() (s1, s2 string) {
-	// Index: 0123456789012345678901234567890123456
-	//        xxxxxxxx-xxxx-Vxxx-Sxxx-xxxxxxxxxxxx   V = version nibble (idx 14)
 	s1 = "11111111-1111-4111-8111-111111111111" // UUIDv4
 	s2 = "22222222-2222-4222-8222-222222222222" // UUIDv4, distinct from S1
 	return s1, s2
@@ -56,7 +42,6 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=true (handoff confirms), flipOnClear=true (/clear rotates SID).
 	rs := newReactiveSession(s1, s2, true, true)
 
 	cycler := newReactiveCycler(
@@ -65,13 +50,11 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 		300*time.Millisecond, // clearSettle
 	)
 
-	// Seed CtxFile is the live gauge (S1, over the act threshold).
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) Journal phase progression.
 	want := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
 	got := jc.snapshot()
 	if len(got) != len(want) {
@@ -83,12 +66,10 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 		}
 	}
 
-	// (b) handoff_started emitted exactly once.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
 		t.Errorf("want 1 handoff_started; got %d", n)
 	}
 
-	// (c) cycle_complete with prev==S1 AND new==S2.
 	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(completeEvts) != 1 {
 		t.Fatalf("want 1 cycle_complete; got %d", len(completeEvts))
@@ -104,36 +85,23 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 		t.Errorf("cycle_complete.new_session_id = %q; want %q (S2 — must be CAUSED by /clear)", cp.NewSessionID, s2)
 	}
 
-	// (d) .managed binding updated to S2.
 	if managedBinding != s2 {
 		t.Errorf("managed-session port binding = %q; want %q (S2)", managedBinding, s2)
 	}
 
-	// (e) The happy path takes no off-path exit: nothing parks the cycle.
-	// A park here would mean the handoff-timeout or operator-turn edge fired
-	// on a run whose nonce landed on the first poll.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
 		t.Errorf("want 0 cycle_parked on the happy path; got %d", n)
 	}
 
-	// (f) CAUSALITY — the SID flip must be CAUSED by /clear, not temporal.
-	// (f1) /clear was actually injected.
 	if !rs.sawClear() {
 		t.Fatal("/clear was never injected — cannot have caused the SID flip")
 	}
-	// (f2) The exact command whose reaction rotated the SID must be "/clear".
-	// This is the load-bearing causality witness: the SID changes INSIDE the
-	// inject() that processes "/clear", so any other cause (e.g. a temporal flip
-	// on /session-handoff) would be caught here.
 	if cause := rs.flipCause(); cause != "/clear" {
 		t.Errorf("SID flip was caused by %q; want exactly \"/clear\" (flip must be CAUSED by /clear, not temporal)", cause)
 	}
-	// (f3) The harness never observed a non-seed SID in the gauge before /clear.
 	if rs.sidViolatedCausality() {
 		t.Error("a new SID appeared in the gauge BEFORE /clear was injected — flip was not caused by /clear")
 	}
-	// (f4) Injection ordering: handoff before /clear before agent brief (T8/I1),
-	// and the live gauge ended on S2.
 	inj := rs.snapshotInjected()
 	handoffIdx, clearIdx, briefIdx := -1, -1, -1
 	for i, txt := range inj {
@@ -183,9 +151,6 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=false: handoff is injected but the nonce is never written ->
-	// the poll cannot confirm -> abort. flipOnClear=true would only matter if
-	// /clear were reached, which it must not be.
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 
 	cycler := newReactiveCycler(
@@ -199,7 +164,6 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// (a) Journal must end in "aborted" with reason "handoff_timeout".
 	phases := jc.snapshot()
 	if len(phases) == 0 {
 		t.Fatal("no journal phases recorded")
@@ -213,8 +177,6 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 		t.Errorf("journal reason = %q; want \"handoff_timeout\"", lj.Reason)
 	}
 
-	// (b) THE SAFETY INVARIANT: /clear must NEVER be injected on an unconfirmed
-	// handoff.
 	for i, txt := range rs.snapshotInjected() {
 		if txt == "/clear" {
 			t.Errorf("inject[%d] == %q: /clear must NEVER be issued before nonce confirmation", i, txt)
@@ -224,7 +186,6 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 		t.Error("harness recorded a /clear injection on the abort path — safety violation")
 	}
 
-	// (c) cycle_aborted emitted with reason handoff_timeout; cycle_complete NOT.
 	abortedEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
 	if len(abortedEvts) != 1 {
 		t.Fatalf("want 1 cycle_aborted; got %d", len(abortedEvts))
@@ -240,8 +201,6 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 		t.Errorf("want 0 cycle_complete on abort; got %d", n)
 	}
 
-	// (d) The gauge SID was never rotated (flip is gated behind /clear, which
-	// never ran).
 	if rs.liveSID() != s1 {
 		t.Errorf("gauge SID = %q after abort; want %q (S1 — never rotated)", rs.liveSID(), s1)
 	}
@@ -273,8 +232,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=false → nonce poll times out; writeHandoffNoNonce=true → a fresh
-	// handoff body IS written (no nonce line); flipOnClear=true → /clear rotates SID.
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 	rs.writeHandoffNoNonce = true
 
@@ -291,12 +248,10 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 
 	inj := rs.snapshotInjected()
 
-	// (a) /clear IS injected.
 	if !rs.sawClear() {
 		t.Fatalf("/clear was NOT injected on the recovery path; injected=%v", inj)
 	}
 
-	// (b) briefRestartCmd (`--wake keeper-restart`) IS injected, after /clear.
 	clearIdx, briefIdx := -1, -1
 	for i, txt := range inj {
 		switch {
@@ -313,8 +268,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 		t.Errorf("injection order wrong: clear=%d brief=%d; want clear<brief (%v)", clearIdx, briefIdx, inj)
 	}
 
-	// (c) NOT a bail-out. A fresh handoff body without a nonce is enough to
-	// proceed, so the nonce timeout must not park the cycle either.
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
 		t.Errorf("want 0 cycle_parked on the recovery path; got %d", n)
 	}
@@ -329,7 +282,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 	if cp.PrevSessionID != s1 || cp.NewSessionID != s2 {
 		t.Errorf("cycle_complete prev=%q new=%q; want prev=%q new=%q", cp.PrevSessionID, cp.NewSessionID, s1, s2)
 	}
-	// A distinct cycle_recovered event marks this as a nonce-less recovery.
 	recEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
 	if len(recEvts) != 1 {
 		t.Fatalf("want 1 cycle_recovered on the recovery path; got %d", len(recEvts))
@@ -341,7 +293,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 	if rp.PhaseAtCrash != "handoff_timeout" {
 		t.Errorf("cycle_recovered.phase_at_crash = %q; want \"handoff_timeout\"", rp.PhaseAtCrash)
 	}
-	// Journal ends "complete" with the recovery reason (not "aborted").
 	phases := jc.snapshot()
 	if last := phases[len(phases)-1]; last != "complete" {
 		t.Errorf("last journal phase = %q; want \"complete\" (full=%v)", last, phases)
@@ -352,7 +303,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 		t.Errorf("journal reason = %q; want \"handoff_timeout_recovered\"", lj.Reason)
 	}
 
-	// (d) SID flip to S2, caused by /clear; final .managed binding == S2.
 	if cause := rs.flipCause(); cause != "/clear" {
 		t.Errorf("SID flip caused by %q; want \"/clear\"", cause)
 	}

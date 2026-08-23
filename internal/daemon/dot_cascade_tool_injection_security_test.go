@@ -1,18 +1,5 @@
 package daemon
 
-// dot_cascade_tool_injection_security_test.go — end-to-end command-injection
-// repro for the tool-node shell sink (WG-045). These tests drive the REAL load
-// path (workflow.LoadDotWorkflowWithParams) so the shell-quoting that closes the
-// hole is exercised, then dispatch the loaded node through dispatchDotToolNode and
-// assert that a sentinel side-effect file is NOT created.
-//
-// Pre-fix: the param value `x; touch <sentinel> #` was spliced raw into
-// tool_command and the `; touch` fired. Post-fix: the value is one shell-quoted
-// word and only the literal echo runs.
-//
-// Covers both sinks: LOCAL (/bin/sh -c, runner == nil) and REMOTE
-// (/bin/sh -lc via a RecordingRunner that execs locally to simulate the worker).
-
 import (
 	"context"
 	"os"
@@ -26,9 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// loadInjectionToolNode writes a single-node shell-tool .dot whose tool_command is
-// `echo __SID__`, loads it with the supplied SID value through the production
-// loader, and returns the (now shell-quoted) tool node.
 func loadInjectionToolNode(t *testing.T, sid string) *dot.Node {
 	t.Helper()
 	src := `digraph inj {
@@ -94,8 +78,6 @@ func TestDispatchDotToolNode_RemoteInjection_NoExec(t *testing.T) {
 	if _, statErr := os.Stat(sentinel); statErr == nil {
 		t.Fatalf("INJECTION: sentinel %s was created — remote command injection NOT neutralized", sentinel)
 	}
-	// The recorded worker script must carry the value only inside the single-quoted
-	// span, never as an unquoted command separator.
 	if len(rr.Calls) == 0 {
 		t.Fatal("no Command call recorded")
 	}

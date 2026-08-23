@@ -1,17 +1,5 @@
 package main
 
-// tmuxhosting_test.go — unit tests for resolveTmuxHosting / reportNoTmuxHosting
-// / tmuxSubstrateSelected.
-//
-// These are hermetic: the tmux binary is stubbed through tmux.RecordingRunner,
-// so they assert the boot CONTRACT (which tmux verbs run, what the resolved
-// hosting is, whether a missing tmux is fatal) rather than the behaviour of a
-// real tmux server. The end-to-end "daemon actually boots without $TMUX" proof
-// lives in main_test.go.
-//
-// Helper prefix: tmuxHostingFixture (per implementer-protocol.md §Helper-prefix
-// discipline).
-
 import (
 	"bytes"
 	"context"
@@ -22,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// tmuxHostingFixtureRunner returns a RecordingRunner that stubs the tmux binary:
-// `tmux -V` prints a supported version, and every other verb succeeds silently.
-// When failVerb is non-empty, the tmux subcommand of that name exits non-zero.
 func tmuxHostingFixtureRunner(failVerb string) *tmux.RecordingRunner {
 	rr := &tmux.RecordingRunner{}
 	rr.CmdFunc = func(ctx context.Context, _ string, args ...string) *exec.Cmd {
@@ -43,8 +28,6 @@ func tmuxHostingFixtureRunner(failVerb string) *tmux.RecordingRunner {
 	return rr
 }
 
-// tmuxHostingFixtureCalledVerbs returns the tmux subcommand of every recorded
-// call, in call order.
 func tmuxHostingFixtureCalledVerbs(rr *tmux.RecordingRunner) []string {
 	var verbs []string
 	for _, c := range rr.Calls {
@@ -173,9 +156,6 @@ func TestReportNoTmuxHosting_CodexDriverDegradesLoudly(t *testing.T) {
 	if code != 0 {
 		t.Errorf("reportNoTmuxHosting on the codexdriver path returned %d; want 0 — dispatch works without tmux there", code)
 	}
-	// "NO SUPERVISOR" is the highest-value line in the banner: without tmux there
-	// is no flywheel session, so `harmonik supervise start` cannot run and the
-	// daemon has no auto-revive. Pin it explicitly so it cannot silently regress.
 	for _, want := range []string{
 		"WARNING",
 		"DEGRADED",

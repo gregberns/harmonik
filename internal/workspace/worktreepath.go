@@ -88,8 +88,6 @@ func (cfg WorktreeRootConfig) WithCreateMutex(mu *sync.Mutex) WorktreeRootConfig
 	return cfg
 }
 
-// commandRunner returns the effective CommandRunner: the caller-supplied runner
-// when set, otherwise tmux.LocalRunner{}.
 func (cfg WorktreeRootConfig) commandRunner() tmux.CommandRunner {
 	if cfg.runner != nil {
 		return cfg.runner

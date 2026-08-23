@@ -6,19 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// select_skip_fallback_test.go — the head-of-line fallback (hk-nown4).
-//
-// The defect these tests pin: the selector offered Eligible[0] and nothing else.
-// When the caller refused that one item — because a sibling queue had claimed
-// the bead, or because the bead waits for a greenlight — the queue spent every
-// tick on the item it would go on refusing, while its ready items sat behind it.
-// The refusal lasted five minutes, so it read as "the queue was slow".
-//
-// Break the fallback and these go red. Change firstOfferable back to a bare
-// return of 0 and TestSelectStepsOverRefusedHead fails on the bead ID; drop the
-// SkipBeads test out of the candidate scan and TestSelectHandsSlotToSibling
-// fails because the wrong queue is selected.
-
 // TestSelectStepsOverRefusedHead proves the queue dispatches the item BEHIND a
 // refused head on the same call, not after the refusal expires.
 func TestSelectStepsOverRefusedHead(t *testing.T) {
@@ -49,8 +36,6 @@ func TestSelectStepsOverRefusedHead(t *testing.T) {
 		t.Fatalf("selected bead %q; want %q — the selector stopped at the refused head",
 			sel.Item.BeadID, "beta-own-01")
 	}
-	// The absolute index must follow the pick, not the head: the daemon stamps
-	// the dispatch at this index and an off-by-one strands the wrong item.
 	if sel.Item.ItemIdx != 1 {
 		t.Fatalf("Selection.Item.ItemIdx = %d; want 1", sel.Item.ItemIdx)
 	}
@@ -153,8 +138,6 @@ func TestSelectHandsSlotToSibling(t *testing.T) {
 				},
 			},
 			{
-				// Every eligible item is refused: this queue can contribute
-				// nothing and must not block alpha.
 				Name:      "beta",
 				QueueID:   "qid-beta",
 				Active:    true,
@@ -168,8 +151,6 @@ func TestSelectHandsSlotToSibling(t *testing.T) {
 		SkipBeads: map[string]bool{"dup-01": true},
 	}
 
-	// Try every cursor offset: the fully-refused queue must never be selected,
-	// whichever name the round-robin starts on.
 	for cursor := 0; cursor < 4; cursor++ {
 		fleet.RRCursor = cursor
 		sel, ok := SelectNextQueue(fleet)

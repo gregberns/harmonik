@@ -2,27 +2,6 @@
 
 package keeper_test
 
-// cycle_twin_gauge_liveness_integration_test.go — bead hk-baf4.
-//
-// Exercises the twin's two gauge-liveness test-harness flags through the REAL
-// scripts/keeper-statusline.sh → <project>/.harmonik/keeper/<agent>.ctx pipeline
-// in a real tmux pane. These flags exist in ONE place (the twin binary +
-// twTwinSpec/twStartTwin, both single-definition) so the downstream
-// keeper-redesign beads (gauge-liveness, live-pane, force-restart) reuse them
-// without each re-adding the same harness knob (helper-redeclare collision).
-//
-//   - --emit-na: every statusLine carries a non-numeric used_percentage ("NA"),
-//     so the real script's numeric guard SKIPS the .ctx write — the gauge file
-//     never appears even though the session is alive and ticking.
-//   - --suppress-statusline-after <dur>: statusLine emits stop after <dur>, so
-//     the .ctx goes STALE while the session stays alive (the idle hook keeps
-//     firing). This is the input the gauge-liveness / force-restart paths need.
-//
-// NO production behavior change: both flags are test-only knobs on the twin.
-//
-// Helper prefix: tw (twin); shares the safety/teardown discipline documented in
-// cycle_twin_e2e_integration_test.go (uniquely-named throwaway sessions only).
-
 import (
 	"fmt"
 	"math/rand/v2"
@@ -34,16 +13,10 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// twIdlePath returns the absolute path to the twin's .idle marker, touched by
-// the real stop hook on every emit while the session is alive.
 func twIdlePath(project, agent string) string {
 	return filepath.Join(project, ".harmonik", "keeper", agent+".idle")
 }
 
-// twWaitForIdle polls for the .idle marker and returns its modTime once present,
-// failing after timeout. The marker appearing proves the twin BOOTED and its
-// emitter ticked at least once — i.e. the twin accepted its flags (a binary that
-// rejected an unknown flag exits before ever firing the idle hook).
 func twWaitForIdle(t *testing.T, project, agent string, timeout time.Duration) time.Time {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -86,15 +59,10 @@ func TestIntegration_TwinEmitNA_SkipsCtxWrite(t *testing.T) {
 		emitNA:      true,
 	})
 
-	// The twin is alive and ticking: the idle hook fired (flags accepted).
 	_ = twWaitForIdle(t, project, agent, 5*time.Second)
 
-	// Give several emit intervals' worth of NA statusLines a chance to (not)
-	// write the gauge file.
 	time.Sleep(1 * time.Second)
 
-	// The .ctx must NOT exist: every emit was NA, so the script's numeric guard
-	// skipped the write on every tick.
 	if _, _, err := keeper.ReadCtxFile(project, agent); !os.IsNotExist(err) {
 		cf, _, _ := keeper.ReadCtxFile(project, agent)
 		t.Fatalf("tw: --emit-na wrote a .ctx (err=%v, file=%+v); the NA statusLine must skip the write", err, cf)
@@ -132,17 +100,12 @@ func TestIntegration_TwinSuppressStatusline_GoesStale(t *testing.T) {
 		suppressAfter: 1 * time.Second,
 	})
 
-	// Before suppression: the .ctx is written normally. Wait for it to appear.
 	if cf := twWaitForCtxTokens(t, project, agent, 50_000, 5*time.Second); cf == nil {
 		t.Fatal("tw: .ctx never appeared before the suppression deadline")
 	}
 
-	// Wait well past the suppression deadline + several emit intervals so the
-	// last pre-suppression write has definitely landed and emits have stopped.
 	time.Sleep(1*time.Second + 6*emitEvery)
 
-	// Sample 1 (post-suppression): record the frozen .ctx modTime and the live
-	// .idle modTime.
 	_, ctxMod1, err := keeper.ReadCtxFile(project, agent)
 	if err != nil {
 		t.Fatalf("tw: read .ctx (sample 1): %v", err)
@@ -152,12 +115,8 @@ func TestIntegration_TwinSuppressStatusline_GoesStale(t *testing.T) {
 		t.Fatalf("tw: stat .idle (sample 1): %v", err)
 	}
 
-	// Let several more emit ticks elapse.
 	time.Sleep(6 * emitEvery)
 
-	// Sample 2: the .ctx must be FROZEN (statusLine suppressed) while the .idle
-	// must have ADVANCED (idle hook still firing → session alive, only the
-	// statusLine emit is suppressed).
 	_, ctxMod2, err := keeper.ReadCtxFile(project, agent)
 	if err != nil {
 		t.Fatalf("tw: read .ctx (sample 2): %v", err)

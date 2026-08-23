@@ -1,23 +1,5 @@
 package daemon
 
-// handlerpause_autoresume_0otqs.go — auto-resume on timed backoff (hk-0otqs).
-//
-// This file adds the Schedule(agentType, after) primitive to HandlerPauseController,
-// fulfilling the deferred auto-resume surface from specs/handler-pause.md §1.2.
-//
-// Design:
-//   - Schedule registers a timed auto-resume for a paused handler type.
-//   - Before resuming, the controller calls Adapter.Diagnose; if Healthy=false
-//     (or the adapter is absent), the resume is skipped.
-//   - Hysteresis: if the handler gets re-paused quickly after an auto-resume
-//     (within autoResumeFlapWindow), the flap counter in handlerEntry increments.
-//     Subsequent Schedule calls apply exponential backoff against the caller-
-//     supplied `after` duration, capped at AutoResumeConfig.MaxBackoff.
-//   - Operator can disable auto-resume per handler type via SetAutoResumeConfig.
-//
-// Spec ref: specs/handler-pause.md §1.2 (deferred auto-resume item).
-// Bead ref: hk-0otqs.
-
 import (
 	"context"
 	"log/slog"
@@ -27,12 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/policy"
 )
 
-// autoResumeFlapWindow is the duration after an auto-resume during which a
-// re-pause is classified as a flap.  If Pause is called within this window
-// after an auto-resume, the flap counter is incremented.
-//
-// 5 minutes is a conservative default: a handler that got paused again within
-// 5 minutes of an auto-resume has not recovered.
 const autoResumeFlapWindow = 5 * time.Minute
 
 // AutoResumeConfig configures auto-resume behaviour for a single handler type.
@@ -53,10 +29,6 @@ type AutoResumeConfig struct {
 	// applies.
 	MaxBackoff time.Duration
 }
-
-// ---------------------------------------------------------------------------
-// Schedule — register a timed auto-resume attempt
-// ---------------------------------------------------------------------------
 
 // Schedule registers an auto-resume attempt for agentType after the given
 // duration.  When the timer fires the controller:
@@ -100,15 +72,12 @@ func (c *HandlerPauseController) Schedule(ctx context.Context, agentType core.Ag
 
 	entry := c.getOrCreate(agentType)
 	if entry.status != pauseStatusPaused {
-		// Handler is not paused; nothing to schedule.
 		c.mu.Unlock()
 		return
 	}
 
-	// Apply exponential backoff for flapping handlers.
 	effective := c.backoffDurationLocked(after, entry.autoResumeAttempts, cfg)
 
-	// Cancel any existing pending auto-resume for this agent type.
 	if entry.scheduledResumeCancel != nil {
 		entry.scheduledResumeCancel()
 		entry.scheduledResumeCancel = nil
@@ -126,18 +95,10 @@ func (c *HandlerPauseController) Schedule(ctx context.Context, agentType core.Ag
 		case <-time.After(effective):
 			c.doAutoResume(resumeCtx, agentType, pausedEpoch)
 		case <-resumeCtx.Done():
-			// Cancelled: a new pause, a superseding Schedule, or operator Resume
-			// has cleared this timer.
 		}
 	}()
 }
 
-// backoffDurationLocked computes the effective backoff duration given the base
-// `after`, the number of consecutive flap attempts, and the config.  It is a
-// thin adapter over the pure policy.BackoffDuration reducer (effective =
-// after * 2^attempts, capped at the effective MaxBackoff).
-//
-// MUST be called while mu is held (reads attempts from entry, which is mutable).
 func (c *HandlerPauseController) backoffDurationLocked(after time.Duration, attempts int, cfg AutoResumeConfig) time.Duration {
 	return policy.BackoffDuration(policy.AutoResumeParams{
 		Base:       after,
@@ -146,22 +107,7 @@ func (c *HandlerPauseController) backoffDurationLocked(after time.Duration, atte
 	})
 }
 
-// ---------------------------------------------------------------------------
-// doAutoResume — the timed-backoff resume logic
-// ---------------------------------------------------------------------------
-
-// doAutoResume is the goroutine body invoked after the Schedule timer fires.
-//
-// Steps:
-//  1. Re-acquire the lock; confirm agentType is still paused with the same
-//     epoch (guard against a superseding manual resume or a newer pause).
-//  2. Release the lock; call Adapter.Diagnose.
-//  3. If Diagnose returns Healthy=false, abandon the attempt.
-//  4. Re-acquire lock; confirm epoch is still valid (Diagnose can block).
-//  5. Record lastAutoResumedAt and clear scheduledResumeCancel.
-//  6. Call Resume(ctx, agentType, HandlerResumedByAutoBackoff).
 func (c *HandlerPauseController) doAutoResume(ctx context.Context, agentType core.AgentType, pausedEpoch int) {
-	// Step 1: epoch guard under read lock.
 	c.mu.RLock()
 	entry, exists := c.handlers[agentType]
 	if !exists || entry.status != pauseStatusPaused || entry.pausedEpoch != pausedEpoch {
@@ -170,13 +116,10 @@ func (c *HandlerPauseController) doAutoResume(ctx context.Context, agentType cor
 	}
 	c.mu.RUnlock()
 
-	// Step 2: call Diagnose (may block on I/O; do not hold mu).
 	if report, ok := c.runDiagnose(ctx); ok && !report.Healthy {
-		// Step 3: adapter says condition is not cleared; abandon.
 		return
 	}
 
-	// Step 4: re-confirm epoch under write lock before mutating state.
 	c.mu.Lock()
 	entry, exists = c.handlers[agentType]
 	if !exists || entry.status != pauseStatusPaused || entry.pausedEpoch != pausedEpoch {
@@ -184,15 +127,11 @@ func (c *HandlerPauseController) doAutoResume(ctx context.Context, agentType cor
 		return // superseded between Diagnose and lock re-acquisition
 	}
 
-	// Step 5: record auto-resume time (for flap detection in next Pause call)
-	// and clear the cancel func so Resume's cleanup doesn't double-call it.
 	entry.lastAutoResumedAt = time.Now()
 	entry.scheduledResumeCancel = nil // the goroutine IS the cancel target; clear it
 
 	c.mu.Unlock()
 
-	// Step 6: call Resume.  Resume acquires mu internally, so we must not hold
-	// it here.  HandlerResumedByAutoBackoff is the initiator discriminator.
 	if resumeErr := c.Resume(ctx, agentType, core.HandlerResumedByAutoBackoff); resumeErr != nil {
 		slog.WarnContext(ctx, "daemon: auto-resume of paused handler failed", "err", resumeErr, "agent_type", string(agentType))
 	}

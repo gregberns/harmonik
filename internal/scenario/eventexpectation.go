@@ -68,7 +68,6 @@ type EventExpectation struct {
 func (e EventExpectation) Valid() bool {
 	switch e.Kind {
 	case EventExpectationKindPresent, EventExpectationKindAbsent:
-		// valid kind — continue
 	default:
 		return false
 	}

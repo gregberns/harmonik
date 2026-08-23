@@ -6,45 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ---- hk-63oh.7: Crashed reconciliation-workflow branch classification (RC-003b) ----
-// ---- hk-63oh.18: Detector emits reconciliation_category_assigned (RC-013) ----
-// ---- hk-63oh.25: Investigator playbook per category (RC-016) ----
-//
-// This file contains fixture-level / spec-text harness tests that prove three
-// related reconciliation contracts:
-//
-//   (RC-003b) A crashed reconciliation-workflow branch MUST be classified as
-//             Cat 5 (clean re-dispatch), discriminated by
-//             Harmonik-Workflow-Class: reconciliation trailer.
-//
-//   (RC-013)  After classifying a run, the detector MUST emit
-//             reconciliation_category_assigned BEFORE dispatching any
-//             reconciliation workflow or auto-resolver. Consumers MUST tolerate
-//             duplicate emissions; dedup key = (target_run_id, category,
-//             snapshot_token.git_head_hash).
-//
-//   (RC-016)  The investigator-playbook obligation: each investigator-required
-//             category (Cat 2, Cat 3, Cat 6a) MUST have a playbook declared
-//             in the S01-shipped YAML policy. The shape contract is that exactly
-//             three categories require investigators, and the set is named and
-//             stable.
-//
-// Judgment call: RC-003b's full "was verdict commit emitted?" discrimination
-// and RC-013's emission-before-dispatch ordering require live daemon plumbing not
-// yet built. Tests are structured as specification anchors binding the type-level
-// shape contracts (WorkflowClass, ReconciliationCategoryAssignedPayload, dedup
-// key definition) that the daemon implementation will enforce. Full integration
-// tests belong in a future integration harness once the daemon detector loop ships.
-//
-// Helper prefix: rc7rc13Fixture (beads hk-63oh.7, hk-63oh.18, hk-63oh.25).
-//
-// Spec refs:
-//   - specs/reconciliation/spec.md §4.1 RC-003b
-//   - specs/reconciliation/spec.md §4.3 RC-013
-//   - specs/reconciliation/spec.md §4.4 RC-016
-
-// ---- RC-003b: Crashed reconciliation-workflow branch → Cat 5 ----
-
 // TestRC003b_WorkflowClassDiscriminatorIsReconciliation verifies that the
 // Harmonik-Workflow-Class discriminator used by RC-003b to identify a
 // reconciliation-workflow task branch is the "reconciliation" WorkflowClass
@@ -59,8 +20,6 @@ import (
 func TestRC003b_WorkflowClassDiscriminatorIsReconciliation(t *testing.T) {
 	t.Parallel()
 
-	// WorkflowClassReconciliation is the Go constant that maps to the trailer
-	// value "reconciliation" — the discriminator RC-003b relies on.
 	discriminator := WorkflowClassReconciliation
 	if string(discriminator) != "reconciliation" {
 		t.Errorf("RC-003b: WorkflowClassReconciliation string = %q, want %q",
@@ -88,16 +47,12 @@ func TestRC003b_WorkflowClassDiscriminatorIsReconciliation(t *testing.T) {
 func TestRC003b_CrashedReconciliationWorkflowClassifiesAsCat5(t *testing.T) {
 	t.Parallel()
 
-	// The discriminator is the WorkflowClass trailer value.
-	// A reconciliation task branch carries WorkflowClassReconciliation.
-	// An ordinary task branch carries nil WorkflowClass.
 	reconciliationClass := WorkflowClassReconciliation
 	if string(reconciliationClass) != "reconciliation" {
 		t.Fatalf("RC-003b: discriminator constant mismatch — got %q, want %q",
 			string(reconciliationClass), "reconciliation")
 	}
 
-	// The resulting category for a crashed reconciliation-workflow branch is Cat 5.
 	expectedCat := ReconciliationCategoryCat5
 	if !expectedCat.Valid() {
 		t.Fatal("RC-003b: ReconciliationCategoryCat5.Valid() = false; category must be valid")
@@ -106,7 +61,6 @@ func TestRC003b_CrashedReconciliationWorkflowClassifiesAsCat5(t *testing.T) {
 		t.Errorf("RC-003b: Cat 5 string = %q, want %q", string(expectedCat), "cat-5")
 	}
 
-	// Cat 6a is the competing classification that RC-003b explicitly overrides.
 	cat6a := ReconciliationCategoryCat6a
 	if string(cat6a) == string(expectedCat) {
 		t.Error("RC-003b: Cat 5 and Cat 6a are the same; they must be distinct categories")
@@ -128,13 +82,10 @@ func TestRC003b_CrashedReconciliationWorkflowClassifiesAsCat5(t *testing.T) {
 func TestRC003b_ReconciliationWorkflowExcludedFromCat6a(t *testing.T) {
 	t.Parallel()
 
-	// Cat 5 and Cat 6a must be distinct enum values so the tiebreak is meaningful.
 	if ReconciliationCategoryCat5 == ReconciliationCategoryCat6a {
 		t.Fatal("RC-003b: Cat 5 and Cat 6a must be distinct — tiebreak requires two different categories")
 	}
 
-	// The workflow-class tag is the discriminator; its valid value "reconciliation"
-	// MUST be accepted by the WorkflowClass type.
 	wc := WorkflowClassReconciliation
 	if !wc.Valid() {
 		t.Errorf("RC-003b: WorkflowClassReconciliation.Valid() = false; " +
@@ -142,8 +93,6 @@ func TestRC003b_ReconciliationWorkflowExcludedFromCat6a(t *testing.T) {
 			"reconciliation-workflow branches from ordinary task branches")
 	}
 }
-
-// ---- RC-013: Detector emits reconciliation_category_assigned ----
 
 // TestRC013_CategoryAssignedPayloadCarriesRequiredFields verifies that a
 // ReconciliationCategoryAssignedPayload constructed with the three fields
@@ -200,9 +149,6 @@ func TestRC013_CategoryAssignedPayloadCarriesRequiredFields(t *testing.T) {
 func TestRC013_EmissionPrecedesDispatch_ShapeContract(t *testing.T) {
 	t.Parallel()
 
-	// A payload with nil ReconciliationRunID is invalid per §8.6.2.
-	// This guards the ordering: an emission with an invalid payload is not
-	// a valid emission, so the dispatcher cannot proceed.
 	invalidPayload := ReconciliationCategoryAssignedPayload{
 		ReconciliationRunID: RunID(uuid.Nil),
 		Category:            ReconciliationCategoryCat2,
@@ -213,7 +159,6 @@ func TestRC013_EmissionPrecedesDispatch_ShapeContract(t *testing.T) {
 			"a dispatcher must not be able to proceed from an invalid emission")
 	}
 
-	// A fully-formed payload is valid and can drive dispatch.
 	reconRunID := RunID(uuid.MustParse("018f1e2a-0000-7001-8000-000000006503"))
 	targetRunID := RunID(uuid.MustParse("018f1e2a-0000-7002-8000-000000006504"))
 	validPayload := ReconciliationCategoryAssignedPayload{
@@ -254,18 +199,12 @@ func TestRC013_DedupKeyComponents(t *testing.T) {
 		t.Fatal("RC-013: dedup-key fixture payload must be valid")
 	}
 
-	// Dedup key components per RC-013:
-	// 1. target_run_id — must be non-nil and non-zero.
 	if payload.TargetRunID == nil || uuid.UUID(*payload.TargetRunID) == uuid.Nil {
 		t.Error("RC-013: dedup key component 1 (target_run_id) is nil or zero")
 	}
-	// 2. category — must be a valid ReconciliationCategory.
 	if !payload.Category.Valid() {
 		t.Error("RC-013: dedup key component 2 (category) is invalid")
 	}
-	// 3. snapshot_token.git_head_hash is supplied via evidence_ref in the
-	// payload per §8.6.2 (the detection evidence always includes the snapshot's
-	// git_head_hash). The post_crash_window flag is present for context.
 	if payload.EvidenceRef == "" {
 		t.Error("RC-013: dedup key component 3 (evidence_ref carrying git_head_hash) is empty")
 	}
@@ -314,8 +253,6 @@ func TestRC013_AllCategoriesProduceValidPayload(t *testing.T) {
 	}
 }
 
-// ---- RC-016: Investigator playbook per category ----
-
 // TestRC016_InvestigatorRequiredCategoriesAreExactlyThree verifies the
 // RC-016 invariant: exactly three categories require an investigator
 // (Cat 2, Cat 3, Cat 6a), and only those three.
@@ -327,7 +264,6 @@ func TestRC013_AllCategoriesProduceValidPayload(t *testing.T) {
 func TestRC016_InvestigatorRequiredCategoriesAreExactlyThree(t *testing.T) {
 	t.Parallel()
 
-	// Per §8.12 + RC-016: exactly three categories require investigator dispatch.
 	wantInvestigatorCats := []ReconciliationCategory{
 		ReconciliationCategoryCat2,
 		ReconciliationCategoryCat3,
@@ -339,14 +275,12 @@ func TestRC016_InvestigatorRequiredCategoriesAreExactlyThree(t *testing.T) {
 			len(wantInvestigatorCats))
 	}
 
-	// Verify each is valid.
 	for _, cat := range wantInvestigatorCats {
 		if !cat.Valid() {
 			t.Errorf("RC-016: investigator category %q is not a valid ReconciliationCategory", cat)
 		}
 	}
 
-	// Cross-check: the three investigator categories are distinct from the eight auto-resolver ones.
 	autoResolverCats := []ReconciliationCategory{
 		ReconciliationCategoryCat0,
 		ReconciliationCategoryCat1,
@@ -382,14 +316,12 @@ func TestRC016_InvestigatorRequiredCategoriesAreExactlyThree(t *testing.T) {
 func TestRC016_PlaybookObligationOnlyForInvestigatorCats(t *testing.T) {
 	t.Parallel()
 
-	// Investigator-required: MUST have playbook (RC-016 obligation).
 	investigatorCats := []ReconciliationCategory{
 		ReconciliationCategoryCat2,
 		ReconciliationCategoryCat3,
 		ReconciliationCategoryCat6a,
 	}
 
-	// Auto-resolver: MUST NOT require a playbook (RC-008 enforces deterministic impl).
 	nonInvestigatorCats := []ReconciliationCategory{
 		ReconciliationCategoryCat0,
 		ReconciliationCategoryCat1,
@@ -401,14 +333,12 @@ func TestRC016_PlaybookObligationOnlyForInvestigatorCats(t *testing.T) {
 		ReconciliationCategoryCat6b,
 	}
 
-	// Both sets must collectively account for all 11 categories.
 	total := len(investigatorCats) + len(nonInvestigatorCats)
 	if total != 11 {
 		t.Errorf("RC-016: investigator (%d) + non-investigator (%d) = %d, want 11 (all categories)",
 			len(investigatorCats), len(nonInvestigatorCats), total)
 	}
 
-	// Verify all are valid constants.
 	for _, cat := range investigatorCats {
 		if !cat.Valid() {
 			t.Errorf("RC-016: investigator cat %q is invalid", cat)
@@ -434,7 +364,6 @@ func TestRC016_PlaybookObligationOnlyForInvestigatorCats(t *testing.T) {
 func TestRC016_Cat2PlaybookTypicalVerdicts(t *testing.T) {
 	t.Parallel()
 
-	// Cat 2 typical verdicts per §8.12.
 	cat2Verdicts := []Verdict{
 		VerdictResumeWithContext,
 		VerdictResetToCheckpoint,
@@ -459,7 +388,6 @@ func TestRC016_Cat2PlaybookTypicalVerdicts(t *testing.T) {
 func TestRC016_Cat3PlaybookTypicalVerdicts(t *testing.T) {
 	t.Parallel()
 
-	// Cat 3 typical verdicts per §8.12.
 	cat3Verdicts := []Verdict{
 		VerdictAcceptCloseWithNote,
 		VerdictReopenBead,

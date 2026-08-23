@@ -68,7 +68,6 @@ func RunAttach(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	// Never reached on success.
 	return 0
 }
 

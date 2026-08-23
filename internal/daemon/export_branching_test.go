@@ -1,9 +1,5 @@
 package daemon
 
-// export_branching_test.go — test-seam exports for internal/daemon branching.go
-// (RT19.12 split of export_test.go). package daemon test file; see export_test.go
-// header for the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 )

@@ -1,30 +1,5 @@
 package lifecycle_test
 
-// harmonikdirmode_test.go — cross-package proof that every .harmonik/ state
-// directory is created with the SAME mode, core.HarmonikDirMode.
-//
-// Why this test exists: os.MkdirAll does not chmod a directory that already
-// exists — it returns nil and leaves the mode alone (TestMkdirAllDoesNotChmod
-// below pins that behaviour). The .harmonik/ tree is created lazily from many
-// packages AND from cmd/harmonik, so if any two creators disagree on the mode
-// the result depends on which one ran first. A per-package mode constant would
-// re-introduce exactly that, silently. Two guards:
-//
-//  1. TestStateDirCreatorsUseHarmonikDirMode drives the real exported creators
-//     against a fresh project dir and asserts the mode they produce.
-//  2. TestNoLiteralDirModeInHarmonikPathFiles scans the source of every
-//     non-excluded package that builds a ".harmonik" path and fails on any
-//     os.MkdirAll with a hand-written mode literal. Exemption is PER SITE — a
-//     //dirmode:allow <reason> comment on the call's own line — so a file is
-//     never wholly excused by one legitimate literal. excludedDirs and
-//     dirModeAllowlist below are the inventory of what is still divergent, each
-//     entry saying whether it is blocked or merely deferred, and to which bead.
-//
-// This file lives in internal/lifecycle because that package documents the
-// per-project .harmonik/ file surface (daemonpaths.go, PL-004). It is an
-// external test package (lifecycle_test) so it can import the other creators
-// without an import cycle.
-
 import (
 	"context"
 	"fmt"
@@ -55,12 +30,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// withFixedUmask pins the process umask to 022 for the duration of a test so
-// the asserted mode is exact regardless of the developer's or CI runner's
-// ambient umask. 0o750 has no group-write and no other-write bit, so umask 022
-// masks nothing out of it — the created mode is the requested mode.
-//
-// MUST NOT be used from a t.Parallel() test: the umask is process-global.
 func withFixedUmask(t *testing.T) {
 	t.Helper()
 	prev := syscall.Umask(0o022)
@@ -237,9 +206,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 			},
 		},
 		{
-			// Unblocked by the hk-8dtiv depguard change: internal/schedule may
-			// now import internal/core, so its lazy .harmonik/ creation uses the
-			// shared constant instead of a private 0o755.
 			name:   "schedule.Store.Add",
 			relDir: ".harmonik",
 			create: func(t *testing.T, pd string) {
@@ -255,8 +221,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 			},
 		},
 		{
-			// Same unblocking for internal/sessioncapture, which creates
-			// .harmonik/sessions/<id>/ on Open.
 			name:   "sessioncapture.Open",
 			relDir: ".harmonik/sessions/sid-1",
 			create: func(t *testing.T, pd string) {
@@ -274,11 +238,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 			},
 		},
 		{
-			// hk-b5ljs: internal/daemon left excludedDirs. The source scan below
-			// now covers the package, and this drives one of its real creators so
-			// the mode is proved on disk, not merely inferred from source text.
-			// CursorStore.Advance creates .harmonik/comms/cursors AND the sibling
-			// .harmonik/comms/cursors.locks in one call.
 			name:   "daemon.CursorStore.Advance",
 			relDir: ".harmonik/comms/cursors",
 			create: func(t *testing.T, pd string) {
@@ -297,9 +256,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 			},
 		},
 		{
-			// hk-b5ljs: internal/workspace left excludedDirs. This creator shares
-			// .harmonik/sessions/ with sessioncapture.Open above, so a private mode
-			// here would have re-opened the first-creator-wins split inside one tree.
 			name:   "workspace.CreateSessionLogDir",
 			relDir: ".harmonik/sessions/sid-1",
 			create: func(t *testing.T, pd string) {
@@ -310,9 +266,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 			},
 		},
 		{
-			// Second internal/workspace creator, covering the .harmonik ROOT rather
-			// than a leaf — the same directory internal/daemon's acquirePidfile
-			// creates on boot.
 			name:   "workspace.WriteReviewVerdictAtomic",
 			relDir: ".harmonik",
 			create: func(t *testing.T, pd string) {
@@ -356,10 +309,6 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 func TestMkdirAllDoesNotChmodExisting(t *testing.T) {
 	withFixedUmask(t)
 
-	// legacyMode is what an install created before core.HarmonikDirMode existed
-	// already has on disk: the current mode plus the world r-x bits that the old
-	// 0o755 carried. Derived rather than written as a literal so this test does
-	// not need a gosec G301 suppression to state its own premise.
 	legacyMode := core.HarmonikDirMode | 0o005
 
 	dir := filepath.Join(t.TempDir(), "a", "b")
@@ -378,39 +327,8 @@ func TestMkdirAllDoesNotChmodExisting(t *testing.T) {
 	}
 }
 
-// siteAllowMarker is the PER-SITE exemption: an os.MkdirAll line that
-// legitimately creates something other than a .harmonik state directory carries
-//
-//	//dirmode:allow <reason>
-//
-// on the same line. Site-granular is the point. The first cut of this guard was
-// FILE-granular, and that silently voided it: cmd/harmonik/sync_assets_cmd.go
-// was filed as "not a .harmonik state dir" while its writeFileEnsureDir was in
-// fact creating .harmonik/context/ at 0o755 — the exact ordering bug
-// core.HarmonikDirMode exists to remove, live inside a single `harmonik
-// sync-assets --apply` run (internal/dashboard and the assets.lock write both
-// create that tree at the constant). File granularity also left init_cmd.go,
-// keeper_enable_doctor_cmd.go and harness.go WHOLLY exempt even though each has
-// converted sites, so a regression in any of them was invisible.
 const siteAllowMarker = "//dirmode:allow"
 
-// dirModeAllowlist is the FILE-granular legacy escape hatch, kept only for trees
-// outside cmd/harmonik/ that the site-marker conversion has not reached. Each
-// entry exempts the WHOLE file, so it is strictly weaker than a site marker —
-// prefer the marker; TestSiteMarkersPreferredOverFileAllowlist forbids new
-// file-granular entries under cmd/harmonik/. Three kinds appear here:
-//
-//   - "tighter on purpose": the directory holds credentials or capability
-//     tokens and is created 0o700. Never widen one of these to the constant.
-//   - "not a .harmonik state dir": the file mentions ".harmonik" somewhere but
-//     the call creates something else (a scenario fixture root, an
-//     operator-supplied path).
-//   - "STILL DIVERGENT": a real .harmonik creator not yet converted, naming the
-//     bead that will convert it. A debt marker, not a decision — it exists to be
-//     deleted, and the list should never grow one on purpose.
-//
-// Files listed here have NO converted sites, so whole-file exemption costs no
-// coverage today. Packages excluded wholesale (see excludedDirs) are NOT listed.
 var dirModeAllowlist = map[string]string{
 	"internal/run/registry.go":              "tighter on purpose: .harmonik/runs/ is 0o700 (run handles)",
 	"internal/sentinel/trip_ev043b.go":      "tighter on purpose: .harmonik/decision_acks/ is 0o700 (ack tokens)",
@@ -421,61 +339,21 @@ var dirModeAllowlist = map[string]string{
 	"internal/scenario/resultemit.go":       "not a .harmonik state dir: scenario-result JSON output dir",
 	"cmd/harmonik-twin-session/main.go":     "not a .harmonik state dir: operator-supplied HANDOFF path (single site)",
 
-	// STILL DIVERGENT (hk-b5ljs follow-up): the single os.MkdirAll in
-	// pasteinject.go creates <worktree>/.harmonik/ for the reviewer-budget
-	// sentinel and belongs at core.HarmonikDirMode like the rest of
-	// internal/daemon. The file was HELD by a concurrent in-flight change when
-	// internal/daemon left excludedDirs, so converting it here would have
-	// clobbered that lane. One site, no converted sites in the file, so the
-	// whole-file entry costs no coverage — delete it with the one-word fix.
 	"internal/daemon/pasteinject.go": "STILL DIVERGENT (hk-b5ljs follow-up): reviewer-budget sentinel dir at 0o755; file held by a concurrent lane",
-
-	// hk-8dtiv used to park internal/schedule/store.go and
-	// internal/sessioncapture/sessioncapture.go here as STILL DIVERGENT: the
-	// depguard component matrix fenced both packages off from internal/core, so
-	// neither could name the constant. The matrix now allows the core edge and
-	// both packages use core.HarmonikDirMode, so the entries are gone and both
-	// files are covered by the scan below AND by a driven case above.
 }
 
-// excludedDirs are source trees this scan does not walk.
-//
-// hk-b5ljs removed the two production entries that used to live here,
-// internal/daemon/ and internal/workspace/. Both are now walked like every other
-// tree: their .harmonik state-dir creators use core.HarmonikDirMode, and the
-// handful of sites that legitimately create something else (the .beads/ br-history
-// archive, srt's /tmp/claude scratch dir, the .claude/ settings parent, the two
-// 0o700 credential dirs) carry per-site //dirmode:allow markers. Deleting
-// internal/daemon/ was the load-bearing half: daemon.go creates the .harmonik/
-// ROOT, so before that the root's mode depended on whether the daemon or the CLI
-// got there first.
-//
-// internal/testhelpers/ stays, and the reason is concrete rather than a
-// deferral: its only two os.MkdirAll sites (testhelpers.NewEnv and the crash
-// harness) already create at 0o700 — TIGHTER than the constant — so no
-// literal there can widen a real install's .harmonik/, and the trees they build
-// are throwaway fixtures under t.TempDir(), not a user's state tree.
 var excludedDirs = []string{
-	// Test infrastructure, not production state.
 	"internal/testhelpers/",
 }
 
-// mkdirAllCall locates the start of an os.MkdirAll call.
 var mkdirAllCall = regexp.MustCompile(`os\.MkdirAll\(`)
 
-// mkdirAllModeArg returns the MODE argument of the os.MkdirAll call that starts
-// at the "os.MkdirAll(" match ending at openIdx (the index just past the "(").
-// It walks to the matching close paren tracking nesting and string/rune
-// literals, then takes the text after the last TOP-LEVEL comma — so a nested
-// filepath.Join(a, b) in the path argument does not confuse it. Returns
-// ("", false) when the call does not close on the text given.
 func mkdirAllModeArg(text string, openIdx int) (string, bool) {
 	depth := 1
 	lastComma := -1
 	for i := openIdx; i < len(text); i++ {
 		switch c := text[i]; c {
 		case '"', '\'', '`':
-			// Skip the literal wholesale; its contents are not syntax.
 			j := i + 1
 			for j < len(text) {
 				if text[j] == '\\' && c != '`' {
@@ -506,9 +384,6 @@ func mkdirAllModeArg(text string, openIdx int) (string, bool) {
 				lastComma = i
 			}
 		case '\n':
-			// Every os.MkdirAll call in this repo is single-line, and the
-			// site marker is a same-line comment. A wrapped call would make
-			// the marker ambiguous, so refuse rather than guess.
 			return "", false
 		}
 	}
@@ -571,7 +446,6 @@ func TestNoLiteralDirModeInHarmonikPathFiles(t *testing.T) {
 				if mode == "core.HarmonikDirMode" {
 					continue
 				}
-				// Per-site exemption: the marker must be on the same line.
 				lineEnd := strings.IndexByte(text[loc[0]:], '\n')
 				if lineEnd < 0 {
 					lineEnd = len(text) - loc[0]
@@ -612,8 +486,6 @@ func TestSiteMarkersPreferredOverFileAllowlist(t *testing.T) {
 	}
 }
 
-// repoRootFromTestFile resolves the repository root from this package's
-// location on disk (internal/lifecycle -> ../..).
 func repoRootFromTestFile(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()

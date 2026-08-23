@@ -16,22 +16,8 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// briefRestartCmdBase is the bare boot command injected after /clear to
-// re-orient the agent via the agent-manifest. Identity re-pins from soul.md
-// (I1, SPEC §4). Prefer briefRestartCmd, which pins --agent/--project.
 const briefRestartCmdBase = "harmonik agent brief --wake keeper-restart"
 
-// briefRestartCmd renders the post-/clear boot command with the agent identity
-// and project root PINNED on the command line.
-//
-// The bare form (briefRestartCmdBase) resolved the agent from $HARMONIK_AGENT
-// and the project from the pane process's CWD. Both are ambient: a pane that
-// lost the env var (or whose shell had cd'd elsewhere) silently briefed the
-// wrong agent — or looked for HANDOFF-<agent>.md under the wrong root and
-// printed "(no handoff on record)" with no error at all. Passing both
-// explicitly makes the reboot self-describing; `harmonik agent brief` only
-// errors when --agent MISMATCHES $HARMONIK_AGENT (cmd/harmonik/agent.go), so
-// supplying both is safe. Refs: hk-4tjyj.
 func briefRestartCmd(agentName, projectDir string) string {
 	cmd := briefRestartCmdBase
 	if agentName != "" {
@@ -43,29 +29,18 @@ func briefRestartCmd(agentName, projectDir string) string {
 	return cmd
 }
 
-// shellQuoteIfNeeded returns s safe to paste into a live shell.
-//
-// This string is PASTED INTO A TERMINAL PANE AND EXECUTED, so the rule is an
-// ALLOWLIST, never a denylist: only characters that are inert in every shell
-// context stay bare; anything else — `$`, backtick, `\`, `;`, `&`, `|`, glob
-// metacharacters, newlines, non-ASCII — puts the whole value in single quotes.
-// A denylist here is a command-injection surface: one unenumerated
-// metacharacter in a project path is enough.
 func shellQuoteIfNeeded(s string) string {
 	if s == "" {
 		return "''"
 	}
 	for i := 0; i < len(s); i++ {
 		if !shellSafeByte(s[i]) {
-			// Single quotes suppress ALL expansion; the only character that
-			// cannot appear inside them is `'` itself, closed-escaped-reopened.
 			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 		}
 	}
 	return s
 }
 
-// shellSafeByte reports whether b is inert unquoted in every shell context.
 func shellSafeByte(b byte) bool {
 	switch {
 	case b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z', b >= '0' && b <= '9':
@@ -240,8 +215,6 @@ type CyclerConfig struct {
 }
 
 func (c *CyclerConfig) applyDefaults() {
-	// Threshold defaults are sourced from thresholds.go (the single source of
-	// truth shared with WatcherConfig.applyDefaults). Refs: hk-bpkv.
 	if c.ActAbsTokens <= 0 {
 		c.ActAbsTokens = defaultActAbsTokens
 	}
@@ -260,11 +233,6 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.WarnPct <= 0 {
 		c.WarnPct = defaultWarnPct
 	}
-	// ForceAct thresholds are derived from their corresponding act thresholds so
-	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
-	// context is above the act gate but below the force-clear gate (hk-6el).
-	// Offset is +25k per the TA1 band-retune (hk-8hr1): the resulting default
-	// force_act=240k (act 215k + 25k) is the final operator-decided value.
 	if c.ForceActAbsTokens <= 0 {
 		c.ForceActAbsTokens = c.ActAbsTokens + defaultForceActAbsOffset
 	}
@@ -315,24 +283,14 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 }
 
-// actThreshold returns the effective absolute-token cycle threshold for the
-// given windowSize. It returns min(ActAbsTokens, int64(ActPctCeil * windowSize))
-// when windowSize > 0, ensuring the gate fires early enough on both 200k and 1M
-// windows. When windowSize == 0 (old .ctx without window data) returns ActAbsTokens
-// so callers can still apply it as a hard cap if they have a token count.
 func (c *CyclerConfig) actThreshold(windowSize int64) int64 {
 	return minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, windowSize)
 }
 
-// warnThreshold returns the effective absolute-token warn/re-arm threshold for
-// the given windowSize, using the same min(abs, pct*window) formula as actThreshold.
 func (c *CyclerConfig) warnThreshold(windowSize int64) int64 {
 	return minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, windowSize)
 }
 
-// belowActThreshold reports whether cf is below the cycle-trigger threshold.
-// Uses absolute tokens when both Tokens and WindowSize are available; otherwise
-// falls back to Pct vs ActPct (backwards compat for old .ctx files).
 func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
 		return cf.Tokens < c.actThreshold(cf.WindowSize)
@@ -340,10 +298,6 @@ func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
 	return cf.Pct < c.ActPct
 }
 
-// belowWarnThreshold reports whether cf is below the warn/re-arm threshold.
-// Uses absolute tokens when available, otherwise falls back to Pct vs WarnPct.
-// pct<WarnPct is a NECESSARY condition — see WatcherConfig.belowWarnThreshold
-// (watcher.go) for the rationale. Byte-identical logic. Refs: hk-lbo9w.
 func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
 		return cf.Pct < c.WarnPct || cf.Tokens < c.warnThreshold(cf.WindowSize)
@@ -351,15 +305,10 @@ func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 	return cf.Pct < c.WarnPct
 }
 
-// forceActThreshold returns the effective absolute-token forced-clear threshold
-// using the same min(abs, pct*window) formula as actThreshold.
 func (c *CyclerConfig) forceActThreshold(windowSize int64) int64 {
 	return minAbsOrPctCeil(c.ForceActAbsTokens, c.ForceActPctCeil, windowSize)
 }
 
-// aboveForceThreshold reports whether cf is at or above the hard forced-clear
-// threshold. Uses absolute tokens when available; falls back to ForceActPct.
-// Refs: hk-0uu.
 func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
 		return cf.Tokens >= c.forceActThreshold(cf.WindowSize)
@@ -367,9 +316,6 @@ func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
 	return cf.Pct >= c.ForceActPct
 }
 
-// newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
-// The ID includes a startup-time timestamp prefix so IDs issued by different
-// process instances never collide, addressing DEFECT-2 (stale on-disk nonce).
 func newCycleIDGen(clock substrate.ClockPort) func() string {
 	prefix := clock.Now().UTC().Format("20060102T150405")
 	var seq uint64
@@ -392,8 +338,6 @@ func defaultReadHandoff(path string) (string, error) {
 	return string(data), nil
 }
 
-// defaultHandoffModTime reports the handoff file's mtime and existence via
-// os.Stat. A missing/unreadable file returns (zero, false). Refs: hk-fi78d.
 func defaultHandoffModTime(path string) (time.Time, bool) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -402,10 +346,6 @@ func defaultHandoffModTime(path string) (time.Time, bool) {
 	return fi.ModTime(), true
 }
 
-// defaultIdleMarkerModTime reports the Stop-hook .idle marker's mtime and
-// existence via os.Stat — the production primary model-done source (SK-014).
-// A missing/unreadable marker returns (zero, false): the shell then falls to
-// the transcript backstop and, ultimately, the model_done_timeout fail-open.
 func defaultIdleMarkerModTime(projectDir, agent string) (time.Time, bool) {
 	fi, err := os.Stat(idleMarkerPath(projectDir, agent))
 	if err != nil {
@@ -414,21 +354,6 @@ func defaultIdleMarkerModTime(projectDir, agent string) (time.Time, bool) {
 	return fi.ModTime(), true
 }
 
-// defaultScrubHandoffNonces is the production TruncateHandoffFn: it removes the
-// keeper's own `<!-- KEEPER:... -->` marker(s) from the handoff file and
-// PRESERVES every other byte.
-//
-// The name TruncateHandoffFn/ActTruncateHandoff is historical. The original
-// implementation genuinely truncated the file to zero bytes, which destroyed the
-// crew's ENTIRE handoff — prose, decisions, next steps — on essentially every
-// cycle after the first, because every completed cycle leaves its own nonce
-// behind and that nonce reads as "stale" on the next cycle. The only thing the
-// stale-nonce clear ever needed to remove is the ~40-character marker itself, so
-// it cannot pre-satisfy the nonce poll (DEFECT-2 / hk-vpnp). Refs: hk-4tjyj.
-//
-// A missing file is a no-op, not an error. A file whose content is unchanged by
-// the scrub is left alone entirely, so its mtime stays put (the hk-fi78d
-// freshness sampler reads that mtime).
 func defaultScrubHandoffNonces(path string) error {
 	//nolint:gosec // G304: path derived from operator-controlled projectDir + agentName
 	data, err := os.ReadFile(path)
@@ -449,26 +374,6 @@ func defaultScrubHandoffNonces(path string) error {
 	return writeFileAtomic(path, []byte(scrubbed), mode)
 }
 
-// stripNonceMarkers removes every well-formed keeper nonce marker from content,
-// leaving all other bytes byte-for-byte intact. A marker that occupies its own
-// line takes that line's newline with it (so no blank line is left behind); a
-// marker embedded in a line of prose is excised in place.
-//
-// Marker scanning follows the convention of isOnlyNonce — nonceMarkerPrefix
-// opens a marker and "-->" closes it — with one CRITICAL added bound: the closer
-// is only ever searched for on the marker's OWN LINE. nonceMarker() never emits
-// a newline, so a "-->" on a later line is by definition not this prefix's
-// closer. Without that bound an unclosed `<!-- KEEPER:` anywhere in the handoff
-// would swallow everything from itself through the next well-formed marker's
-// closer — deleting the crew's prose, the exact bug class this function exists
-// to fix. A crew writing a handoff ABOUT the keeper protocol produces a bare
-// prefix in prose very easily.
-//
-// A MALFORMED marker (a prefix with no closer on its own line) is therefore left
-// byte-for-byte untouched and scanning CONTINUES past it, so a genuine stale
-// marker later in the file is still removed. An unclosed prefix can never
-// contain a complete current-cycle marker, so leaving it cannot pre-satisfy the
-// poll. Refs: hk-4tjyj.
 func stripNonceMarkers(content string) string {
 	out := content
 	from := 0
@@ -478,21 +383,16 @@ func stripNonceMarkers(content string) string {
 			return out
 		}
 		i := from + rel
-		// Bound the closer search to the marker's own line (see doc comment).
 		lineEnd := len(out)
 		if nl := strings.IndexByte(out[i:], '\n'); nl >= 0 {
 			lineEnd = i + nl
 		}
 		end := strings.Index(out[i:lineEnd], "-->")
 		if end < 0 {
-			// Malformed: not one of ours. Delete NOTHING; resume scanning just
-			// past this prefix so later well-formed markers are still scrubbed.
 			from = i + len(nonceMarkerPrefix)
 			continue
 		}
 		start, stop := i, i+end+len("-->")
-		// Whole-line marker: swallow the line's leading whitespace and its
-		// trailing newline too.
 		lineStart := strings.LastIndexByte(out[:i], '\n') + 1
 		if strings.TrimSpace(out[lineStart:i]) == "" {
 			j := stop
@@ -510,8 +410,6 @@ func stripNonceMarkers(content string) string {
 	}
 }
 
-// writeFileAtomic writes data to path via a same-directory temp file + fsync +
-// rename, mirroring WriteManagedSessionID's durability discipline (keeper.go).
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
@@ -553,7 +451,6 @@ func writeJournalFile(path string, j *CycleJournal) error {
 	if err != nil {
 		return fmt.Errorf("keeper: marshal journal: %w", err)
 	}
-	// Ensure the parent directory exists (keeper dir may not exist yet in tests).
 	if mkErr := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("keeper: create journal dir: %w", mkErr)
 	}
@@ -576,22 +473,11 @@ func defaultReadJournal(path string) (*CycleJournal, error) {
 	return &j, nil
 }
 
-// nonceMarker returns the HTML-comment nonce embedded in the handoff file
-// to confirm that the agent wrote the handoff for this specific cycle.
 func nonceMarker(cycleID string) string {
 	return fmt.Sprintf("<!-- KEEPER:%s -->", cycleID)
 }
 
-// nonceMarkerPrefix is the stable prefix shared by every keeper nonce marker.
-// Its presence (with a value other than the current nonce) signals a leftover
-// nonce from a prior cycle that must be cleared before polling. Refs: hk-vpnp.
 const nonceMarkerPrefix = "<!-- KEEPER:"
-
-// NOTE (T7): the stale-nonce PREDICATE is now the pure
-// handoffContentHasStaleNonce (step.go), evaluated by the reactor over the
-// handoff content the shell samples onto the firing entry event. The reading
-// stayed shell-side and fire-aligned so ReadHandoff call counts match the
-// pre-rebuild code exactly (hk-vpnp / Bug 3b semantics unchanged).
 
 // CycleIDFromNonceMarker extracts the cycle_id from the FIRST keeper nonce
 // marker (<!-- KEEPER:<cycle_id> -->) in content, if present. It is the inverse
@@ -613,7 +499,6 @@ func CycleIDFromNonceMarker(content string) (string, bool) {
 	tail := content[i+len(nonceMarkerPrefix):]
 	end := strings.Index(tail, "-->")
 	if end < 0 {
-		// Malformed marker (no close) — no recoverable cycle_id.
 		return "", false
 	}
 	id := strings.TrimSpace(tail[:end])
@@ -623,8 +508,6 @@ func CycleIDFromNonceMarker(content string) (string, bool) {
 	return id, true
 }
 
-// isOnlyNonce reports whether every keeper nonce marker in content equals
-// currentNonce (i.e. there is no foreign/stale nonce present).
 func isOnlyNonce(content, currentNonce string) bool {
 	rest := content
 	for {
@@ -632,11 +515,9 @@ func isOnlyNonce(content, currentNonce string) bool {
 		if i < 0 {
 			return true
 		}
-		// Extract the full marker up to the closing "-->".
 		tail := rest[i:]
 		end := strings.Index(tail, "-->")
 		if end < 0 {
-			// Malformed marker; treat as stale to be safe.
 			return false
 		}
 		marker := tail[:end+len("-->")]
@@ -702,8 +583,6 @@ func (c *Cycler) InCycle() bool { return c.machine.InCycle() }
 // (SK-030 / SK-031). Refs: T7.
 func (c *Cycler) MintCycleID() string { return c.cycleIDs.Next() }
 
-// journalFilePath returns the path to the cycle journal file for the agent:
-// <projectDir>/.harmonik/keeper/<agent>.cycle.
 func journalFilePath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".cycle")
 }
@@ -728,9 +607,6 @@ func journalFilePath(projectDir, agent string) string {
 // the event with the Clock, and — when the ladder passes — drives the cycle
 // SYNCHRONOUSLY to its terminal (the InCycle freeze, SK-017).
 func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
-	// A CF-less tick carries no gauge/session identity: the reactor's gate ladder
-	// (stepIdleGaugeTick) dereferences ev.CF unconditionally, so a nil cf would
-	// crash the keeper. Skip gracefully — mirrors RunForIdle's nil guard.
 	if cf == nil {
 		return nil
 	}
@@ -746,9 +622,6 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	})
 }
 
-// resumePendingHandoff keeps one request identity alive after the synchronous
-// handoff observation window returns control to the watcher. A late marker is
-// never scrubbed as stale by a newly minted cycle.
 func (c *Cycler) resumePendingHandoff(ctx context.Context, sid string) (bool, error) {
 	st := c.machine.State()
 	if st.LastTerminal != "pending" || st.CycleID == "" {
@@ -777,28 +650,12 @@ func (c *Cycler) resumePendingHandoff(ctx context.Context, sid string) (bool, er
 	return true, c.drive(ctx)
 }
 
-// resolvedTranscriptDir returns the effective transcript directory: the
-// configured TranscriptDir when set, otherwise derived from ProjectDir.
-// Refs: hk-74iyd.
 func (c *CyclerConfig) resolvedTranscriptDir() string {
 	if c.TranscriptDir != "" {
 		return c.TranscriptDir
 	}
 	return transcriptDirFor(c.ProjectDir)
 }
-
-// NOTE (T7): the hk-fi78d freshness recovery is now split between the
-// shell's handoff-timeout sample (Cycler.sampleHandoffFreshness, shell.go —
-// the reads, verbatim semantics incl. the injection-time anchor and the
-// load-bearing non-empty-content check) and the pure TimerFired(handoff_
-// timeout) recovered edge (step.go).
-
-// NOTE (T7): runCycle and completeCycleTail are DISSOLVED into the pure Step
-// reactor (step.go: stepStartCycle → stepAbort / stepEnterClearing /
-// stepClearUnconfirmed / stepBriefing) plus the shell drive loop (shell.go).
-// The SAFETY invariant is structural now: /clear is reachable ONLY through
-// AwaitModelDone, which is reachable only via the nonce-confirmed or the
-// freshness-recovered edge — the abort path never clears (SK-INV-001).
 
 // RecoverFromCrash checks for an in-progress cycle journal on boot and takes
 // corrective action based on the last recorded phase.
@@ -816,9 +673,6 @@ func (c *CyclerConfig) resolvedTranscriptDir() string {
 // recovery path injects the brief command directly without a nonce poll, so a
 // stale nonce cannot trigger unintended behaviour.
 func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
-	// Fail-closed: only act on a managed agent. Boot-time entry point (the
-	// reactor's CrashJournal event): the gate input comes from the same
-	// per-entry GateSnapshot burst as the tick entry points.
 	if !c.snapshot("").Managed {
 		return nil
 	}
@@ -831,9 +685,6 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 		return fmt.Errorf("keeper: read recovery journal: %w", err)
 	}
 
-	// One-shot fast-forward/close-out per the crash-recovery matrix
-	// (stepIdleCrashJournal, step.go): no drive loop — the machine never
-	// leaves Idle on this event.
 	return c.feed(ctx, Event{Kind: EvCrashJournal, At: c.cfg.Clock.Now(), Journal: j})
 }
 
@@ -873,11 +724,6 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		sessionID = cf.SessionID
 	}
 
-	// Per-entry gate-input read-burst (T6): sampled fresh at THIS entry point —
-	// not shared with a MaybeRun that may have run a full blocking cycle on the
-	// same tick — so gate values match the old live reads. The gate subset,
-	// the per-gate precompact_blocked emissions, and the always-clear-marker
-	// contract live in the pure reactor (stepIdlePrecompact, step.go).
 	snap := c.snapshot(sessionID)
 
 	return c.runEntry(ctx, Event{
@@ -911,11 +757,6 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 
-	// Per-entry gate-input read-burst (T6) — see RunForPrecompact for why each
-	// entry point samples its own snapshot. The idle gate ladder (incl. the
-	// hk-4i0s stamp-then-unwind cooldown discipline and the hk-qshh8
-	// once-per-SID idle_crew notification) lives in the pure reactor
-	// (stepIdleRestartTick, step.go).
 	snap := c.snapshot(cf.SessionID)
 
 	return c.runEntry(ctx, Event{
@@ -925,12 +766,3 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 		Gates: snap,
 	})
 }
-
-// NOTE (T7): the emit* helpers, the Gate-7 operator-attached throttle, and
-// the two blocking poll loops (pollForNonce, waitForNewSessionID /
-// waitForNewSessionIDWithBackstop) are DISSOLVED: emissions are pure Emit
-// actions built in step.go (emitOperatorAttached stays a deliberate NO-OP —
-// logmine TA3/F55 — represented by Gate 7 emitting NOTHING while still
-// advancing the hk-2yvx sample throttle in CycleState); the poll loops are
-// the shell drive loop's detection ticks + armed-timer deadlines (shell.go,
-// SK-010).

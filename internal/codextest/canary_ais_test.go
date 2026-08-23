@@ -1,20 +1,5 @@
 package codextest_test
 
-// Drift canary for the INPUT-driver harness (T9; harness-acceptance-design
-// §"Corpus provenance"). Two guards:
-//
-//  1. Corpus provenance: every captured reactor-scenario corpus file
-//     (testdata/codex-app-server/reactor-scenarios/*.jsonl — the source material
-//     the input harness rides alongside) is non-empty, every line is valid JSON,
-//     and every line carries a non-empty input-event `type`. (The captured WIRE
-//     corpus's ZERO-FrameKindRaw guard is owned by TestCodexDriftCanary over
-//     raw-session-01.jsonl; these scenario fixtures are typed reactor events, not
-//     wire frames.) If the recorded fixtures drift, this fires before replay.
-//
-//  2. Synthesizer integrity: every declared input stratum synthesizes a
-//     non-empty schedule that re-encodes to valid JSON lines, each decodable to a
-//     known codexinput event type.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -28,8 +13,6 @@ import (
 	"github.com/gregberns/harmonik/internal/codexinput"
 )
 
-// aisReactorScenariosDir resolves testdata/codex-app-server/reactor-scenarios
-// relative to this source file (the codex l1 runtime.Caller idiom).
 func aisReactorScenariosDir(t *testing.T) string {
 	t.Helper()
 	_, self, _, ok := runtime.Caller(0)

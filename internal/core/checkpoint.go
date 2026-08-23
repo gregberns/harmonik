@@ -135,9 +135,6 @@ func (c Checkpoint) Valid() bool {
 	if c.SchemaVersion == 0 {
 		return false
 	}
-	// EM-018: TransitionRecordPath MUST be the canonical run-scoped path.
-	// The run_id and transition_id path components MUST match this record's
-	// RunID and TransitionID fields; a mismatch indicates a construction error.
 	want := TransitionRecordPath(c.RunID, c.TransitionID)
 	return c.TransitionRecordPath == want
 }

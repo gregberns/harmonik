@@ -29,15 +29,6 @@ import (
 	"fmt"
 )
 
-// ---------------------------------------------------------------------------
-// Internal wire-form type — matches event-model.md §6.2 on-disk JSON shape.
-// Not exported; fixtures are vended as []byte (raw JSONL) so callers decode
-// them through the production reader under test.
-// ---------------------------------------------------------------------------
-
-// jsonlEventWire is the on-disk JSON envelope shape (snake_case keys per §6.2).
-// It mirrors the Event RECORD in event-model.md §6.1. Optional fields use
-// pointer types so they serialise as JSON null when absent (rather than zero).
 type jsonlEventWire struct {
 	EventID           string          `json:"event_id"`
 	SchemaVersion     int             `json:"schema_version"`
@@ -51,16 +42,12 @@ type jsonlEventWire struct {
 	Payload           json.RawMessage `json:"payload"`
 }
 
-// jsonlTraceWire is the on-disk JSON shape for the TraceContext optional field
-// (event-model.md §6.1 RECORD TraceContext).
 type jsonlTraceWire struct {
 	TraceID       *string `json:"trace_id,omitempty"`
 	ParentEventID *string `json:"parent_event_id,omitempty"`
 	RootEventID   *string `json:"root_event_id,omitempty"`
 }
 
-// Fixed deterministic UUIDv7 values. Millisecond component derived from
-// 2026-04-24T14:22:11.000Z = Unix-ms 1745505731000 = 0x0196_E3D1_3AF8.
 const (
 	jsonlFixtureEventID1  = "0196e3d1-3af8-7000-8000-000000000001"
 	jsonlFixtureEventID2  = "0196e3d1-3af8-7000-8000-000000000002"
@@ -73,9 +60,6 @@ const (
 	jsonlFixtureTimestamp = "2026-04-24T14:22:11.000Z"
 )
 
-// mustMarshalLine serialises v to a single JSON object followed by "\n".
-// Panics if json.Marshal fails — guards programmer error (bad constant struct),
-// not runtime input.
 func mustMarshalLine(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -84,9 +68,6 @@ func mustMarshalLine(v any) []byte {
 	return append(b, '\n')
 }
 
-// minimalEnvelopeWire returns the minimal-valid envelope wire struct:
-// only the required fields from §6.1 are populated; all optional pointer
-// fields (run_id, state_id, timestamp_mono_nsec, trace_context) are nil.
 func minimalEnvelopeWire(eventID string) jsonlEventWire {
 	return jsonlEventWire{
 		EventID:         eventID,
@@ -98,8 +79,6 @@ func minimalEnvelopeWire(eventID string) jsonlEventWire {
 	}
 }
 
-// fullEnvelopeWire returns a maximally-populated envelope wire struct:
-// all optional fields are set.
 func fullEnvelopeWire(eventID string) jsonlEventWire {
 	mono := int64(918273645)
 	runID := jsonlFixtureRunID
@@ -125,11 +104,6 @@ func fullEnvelopeWire(eventID string) jsonlEventWire {
 		Payload: json.RawMessage(`{"run_id":"` + jsonlFixtureRunID + `","state_id":"` + jsonlFixtureStateID + `","transition_id":"` + jsonlFixtureEventID3 + `","commit_hash":"abc1234","bead_id":null}`),
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Exported fixture constructors — named with the jsonlFixture prefix per
-// hk-hqwn.60 helper-prefix discipline.
-// ---------------------------------------------------------------------------
 
 // JSONLFixtureMinimalEnvelope returns a JSONL byte slice containing one
 // well-formed event with only required envelope fields set. Covers the
@@ -206,19 +180,12 @@ type DurabilityClassLine struct {
 // Spec: event-model.md §4.4 EV-016, §8 (Dur column).
 func JSONLFixtureDurabilityClasses() []DurabilityClassLine {
 	fsyncLine := minimalEnvelopeWire(jsonlFixtureEventID1)
-	// run_started is Dur=F (§8.1.1).
 	fsyncLine.Type = "run_started"
 
 	ordinaryLine := minimalEnvelopeWire(jsonlFixtureEventID2)
-	// state_entered is Dur=O (§8.1.4).
 	ordinaryLine.Type = "state_entered"
 	ordinaryLine.Payload = json.RawMessage(`{"run_id":"` + jsonlFixtureRunID + `","state_id":"` + jsonlFixtureStateID + `","node_id":"node-001","entered_at":"` + jsonlFixtureTimestamp + `"}`)
 
-	// lossy-tail-ok: "metric" (§8.8.1) is the canonical L class but is not
-	// fully registered. We use a test-only type string here; the
-	// DurabilityClass label is the test metadata — no production reader is
-	// exercised against this type name in this fixture. Tests that need a real
-	// registered lossy event should register "metric" locally before decoding.
 	lossyLine := minimalEnvelopeWire(jsonlFixtureEventID3)
 	lossyLine.Type = "metric"
 	lossyLine.Payload = json.RawMessage(`{"name":"test.counter","value":1}`)
@@ -277,7 +244,6 @@ type TornTailFixture struct {
 func JSONLFixtureTornTail() []TornTailFixture {
 	validLine := mustMarshalLine(minimalEnvelopeWire(jsonlFixtureEventID1))
 
-	// Variant 1: valid JSON, no trailing newline.
 	missingNLObj, err := json.Marshal(minimalEnvelopeWire(jsonlFixtureEventID2))
 	if err != nil {
 		panic(fmt.Sprintf("jsonlFixture: TornTailMissingNewline: json.Marshal: %v", err))
@@ -286,14 +252,11 @@ func JSONLFixtureTornTail() []TornTailFixture {
 	missingNL = append(missingNL, validLine...)
 	missingNL = append(missingNL, missingNLObj...) // intentionally no '\n'
 
-	// Variant 2: bad JSON (truncated mid-object).
 	var badJSON []byte
 	badJSON = append(badJSON, validLine...)
 	badJSON = append(badJSON, []byte(`{"event_id":"0196e3d1-3af8-7000-8000-000000000002","schema_ver`)...) // truncated
 
-	// Variant 3: valid JSON but missing required field "event_id" (envelope schema failure).
 	badEnvObj, err := json.Marshal(map[string]any{
-		// event_id deliberately absent — required per EV-001.
 		"schema_version":   1,
 		"type":             "run_started",
 		"timestamp_wall":   jsonlFixtureTimestamp,
@@ -450,12 +413,10 @@ func JSONLFixtureConcurrentTail() ConcurrentTailFixture {
 	line0 := mustMarshalLine(minimalEnvelopeWire(jsonlFixtureEventID1))
 	line1 := mustMarshalLine(fullEnvelopeWire(jsonlFixtureEventID2))
 
-	// Partial write: JSON object exists but no trailing newline.
 	partial, err := json.Marshal(minimalEnvelopeWire(jsonlFixtureEventID3))
 	if err != nil {
 		panic(fmt.Sprintf("jsonlFixture: ConcurrentTail: json.Marshal: %v", err))
 	}
-	// Simulate mid-write by truncating after 40 bytes (well inside the object).
 	if len(partial) > 40 {
 		partial = partial[:40]
 	}

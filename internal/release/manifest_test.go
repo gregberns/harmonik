@@ -7,8 +7,6 @@ import (
 	"github.com/gregberns/harmonik/internal/release"
 )
 
-// manifestFixtureVersionRegex is the MAJOR.MINOR.PATCH shape a release manifest
-// entry must take.
 var manifestFixtureVersionRegex = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)$`)
 
 // TestBeadsVersionMatchesVersionRegex verifies that BeadsVersion is a valid

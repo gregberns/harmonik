@@ -60,7 +60,6 @@ func RunTmuxStart(
 		env = os.Environ()
 	}
 
-	// Step i — refuse if already inside tmux ($TMUX set).
 	if tmuxEnv := tmuxEnvLookup(env, "TMUX"); tmuxEnv != "" {
 		if _, err := fmt.Fprintf(stdout, "hk tmux-start: already inside a tmux session (%s); nothing to do.\n", tmuxEnv); err != nil {
 			return 24
@@ -68,10 +67,8 @@ func RunTmuxStart(
 		return 0
 	}
 
-	// Step ii — compute or validate session name.
 	var computedName string
 	if sessionName != "" {
-		// Override supplied: when projectDir is also known, validate prefix.
 		if projectDir != "" {
 			hash := tmuxStartHashDir(projectDir)
 			prefix := "harmonik-" + hash + "-"
@@ -86,7 +83,6 @@ func RunTmuxStart(
 		}
 		computedName = sessionName
 	} else {
-		// Default: harmonik-<project_hash>-default per PL-006a.
 		if projectDir == "" {
 			if _, err := fmt.Fprintln(stderr, "hk tmux-start: project directory is required when --session-name is not provided"); err != nil {
 				return 24
@@ -97,12 +93,6 @@ func RunTmuxStart(
 		computedName = "harmonik-" + hash + "-default"
 	}
 
-	// Resolve the tmux binary ONCE from the passed env's PATH so the probe,
-	// session-ensure, and attach steps all invoke the SAME binary. Without this
-	// pin, ProbeTmux/EnsureSession would re-resolve the bare "tmux" name via the
-	// process PATH (exec.LookPath), which can differ from env's PATH and select a
-	// different binary than the final attach exec (which uses this absolute path).
-	// A missing binary is a probe-class failure → exit 22.
 	tmuxBin, err := tmuxStartLookupBin(env)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err); writeErr != nil {
@@ -111,7 +101,6 @@ func RunTmuxStart(
 		return 22
 	}
 
-	// Probe tmux before creating a session (exit code 22 on failure).
 	ctx := context.Background()
 	adapter := OSAdapter{}.WithRunner(tmuxBinRunner{bin: tmuxBin})
 	if err := adapter.ProbeTmux(ctx); err != nil {
@@ -121,7 +110,6 @@ func RunTmuxStart(
 		return 22
 	}
 
-	// Step iii — ensure the session exists.
 	if err := adapter.EnsureSession(ctx, computedName, projectDir); err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: failed to ensure tmux session %q: %v\n", computedName, err); writeErr != nil {
 			return 24
@@ -129,18 +117,14 @@ func RunTmuxStart(
 		return 24
 	}
 
-	// Step iv — exec-replace with `tmux attach-session -t <name>`.
-
 	argv := []string{"tmux", "attach-session", "-t", computedName}
 	if execErr := execFn(tmuxBin, argv, env); execErr != nil {
-		// execFn returns only when exec fails; on success the process is replaced.
 		if !errors.Is(execErr, errTmuxStartExecSkipped) {
 			if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: exec tmux attach-session: %v\n", execErr); writeErr != nil {
 				return 24
 			}
 			return 24
 		}
-		// errTmuxStartExecSkipped is the test-stub signal — treat as success.
 	}
 	return 0
 }
@@ -154,8 +138,6 @@ func SyscallExec(argv0 string, argv, envv []string) error {
 	return syscall.Exec(argv0, argv, envv)
 }
 
-// errTmuxStartExecSkipped is returned by the test-stub ExecFunc to signal that
-// the exec step was intentionally skipped (so the test process is not replaced).
 var errTmuxStartExecSkipped = errors.New("exec skipped (test stub)")
 
 // SkipExecRecorder returns a test-stub ExecFunc that records the exec call
@@ -173,10 +155,6 @@ func SkipExecRecorder(out *[]string) ExecFunc {
 		return errTmuxStartExecSkipped
 	}
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Package-private helpers (tmuxStart prefix per bead hk-gql20.10)
-// ──────────────────────────────────────────────────────────────────────────────
 
 // DefaultSessionName returns the canonical per-project daemon tmux session name
 // for projectDir: "harmonik-<project_hash>-default" (PL-006a). This is the same
@@ -263,22 +241,11 @@ func FlywheelSessionName(projectDir string) string {
 func ResolveDaemonSpawnSession(projectDir, liveSession string) (session string, needEnsure bool) {
 	live := strings.TrimSpace(liveSession)
 	if live == "" || live == SupervisorSessionName(projectDir) || live == FlywheelSessionName(projectDir) {
-		// Forced fallback: the ambient session is unusable as a spawn target
-		// (empty, old supervisor session, or new flywheel shim session).
-		// Use the deterministic daemon-owned session and require the caller to
-		// ensure it exists (and keep it alive for the daemon's lifetime).
 		return DefaultSessionName(projectDir), true
 	}
-	// The live session exists right now (we are running in it) and is not a
-	// system session — use it verbatim. No EnsureSession needed.
 	return live, false
 }
 
-// tmuxStartHashDir returns the 12-char hex project hash for dir by resolving
-// symlinks and computing SHA-256, replicating the formula of
-// lifecycle.ComputeProjectHash (same spec: PL-006a). The formula is reproduced
-// inline to avoid an import cycle: the parent lifecycle package imports the tmux
-// package for orphan-sweep purposes; importing lifecycle here would be circular.
 func tmuxStartHashDir(dir string) string {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -288,8 +255,6 @@ func tmuxStartHashDir(dir string) string {
 	return fmt.Sprintf("%x", sum[:6]) // 6 bytes → 12 lowercase hex chars
 }
 
-// tmuxEnvLookup returns the value of the named variable from the env slice.
-// Returns "" when the variable is not present.
 func tmuxEnvLookup(env []string, name string) string {
 	prefix := name + "="
 	for _, kv := range env {
@@ -300,13 +265,6 @@ func tmuxEnvLookup(env []string, name string) string {
 	return ""
 }
 
-// tmuxBinRunner is a CommandRunner that rewrites the leading "tmux" command
-// name to a pre-resolved absolute binary path. RunTmuxStart pins the OSAdapter
-// to one so its probe and session-ensure steps invoke the SAME tmux binary that
-// the final attach exec uses (resolved once from the passed env's PATH via
-// tmuxStartLookupBin) — instead of re-resolving the bare "tmux" name through the
-// process PATH, which can select a different binary. Non-"tmux" names pass
-// through unchanged.
 type tmuxBinRunner struct {
 	bin string
 }
@@ -319,8 +277,6 @@ func (r tmuxBinRunner) Command(ctx context.Context, name string, args ...string)
 	return exec.CommandContext(ctx, name, args...)
 }
 
-// tmuxStartLookupBin resolves the path to the tmux binary by scanning the PATH
-// entries from env. Returns an error when tmux is not found.
 func tmuxStartLookupBin(env []string) (string, error) {
 	pathEnv := tmuxEnvLookup(env, "PATH")
 	for _, dir := range filepath.SplitList(pathEnv) {

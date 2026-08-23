@@ -1,31 +1,5 @@
 package runexectest_test
 
-// fault_matrix_test.go — the RT11 substrate.Twin fault matrix (RSM-030;
-// liveness-parity-design §6 items (2); RSM-INV-001/002).
-//
-// Dimensions: the 6 corpus strata's synthesized schedules × 4 substrate fault
-// modes (drop_after / stall / truncate / dup) × every 1-based EventN position
-// of the schedule, plus one clean (FaultNone) cell per stratum. Every cell
-// must reach the Run terminal — Done{closed} or Done{reopened} with exactly
-// one ActEmitRunTerminal — within the bounded VIRTUAL window; a reopened
-// terminal must carry a non-empty reopen reason. Silence fails the cell
-// (pumpToTerminal converts "in flight with nothing armed" into a failure; the
-// step guard converts a livelock into a failure; go test -timeout is the
-// outermost backstop). Required pass rate: 100% — invariants, not statistics.
-//
-// ENTRY-FORECLOSED CELLS (keeper T12 precedent): FaultStall@1 withholds the
-// entire dispatch stream — start_dispatch never arrives, no session exists,
-// no reactor deadline was ever armed. Those cells assert the no-entry shape
-// (zero delivered, dispatch Idle, zero terminals) instead; the liveness half
-// is still proven (a hang would trip the harness guards).
-//
-// HEADLINE: TestRunexecFaultMatrix_StallAfterResume — the resumed relaunch
-// stream stalls after the resume input_ack (the session is Working, no
-// reactor timer is armed). The shell-side frozen commit watchdog (M3-D3)
-// feeds heartbeat_stale, the Dispatch machine lands Stalled, and the Run
-// machine terminates on the fail-closed reopen spine — a terminal, never
-// silence, within the virtual bound.
-
 import (
 	"fmt"
 	"testing"
@@ -35,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// matrixModes enumerates the four injected fault modes.
 var matrixModes = []struct {
 	name string
 	mode substrate.FaultMode
@@ -46,21 +19,14 @@ var matrixModes = []struct {
 	{"dup", substrate.FaultDup},
 }
 
-// virtualBound is the never-silence window: schedule span + ready timeout +
-// kill-reap + the input-ack retry budget + the shell watchdog ceiling + slack.
-// Every non-foreclosed cell must terminate within it (virtual time).
 const virtualBound = harnessStaleAfter + harnessReadyTimeout + harnessReadyKillReap +
 	3*harnessInputAck + 5*time.Minute
 
-// matrixStart anchors the shared virtual timeline.
 var matrixStart = time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 
-// assertCellTerminal is the uniform per-cell assertion shape.
 func assertCellTerminal(t *testing.T, res driveResult) {
 	t.Helper()
 	if res.EntryForclose {
-		// The documented no-entry shape: nothing delivered, no session, no
-		// terminal to demand.
 		if res.Delivered != 0 || res.RunTerminals != 0 || res.Reopens != 0 {
 			t.Fatalf("entry-foreclosed cell has activity: %+v", res)
 		}
@@ -127,7 +93,6 @@ func TestRunexecFaultMatrix_StallAfterResume(t *testing.T) {
 	t.Parallel()
 	sum := summaryForStratum(t, "review-loop-resume")
 	sched := replay.SynthesizeSchedule(sum)
-	// Locate the input_ack step; stall on the NEXT event.
 	ackIdx := -1
 	for i, st := range sched.Steps {
 		if st.Kind == "input_ack" {

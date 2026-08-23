@@ -31,8 +31,6 @@ import (
 	"fmt"
 )
 
-// ─── Frame discrimination ────────────────────────────────────────────────────
-
 // FrameKind classifies a parsed line.
 type FrameKind int
 
@@ -75,8 +73,6 @@ type Frame struct {
 	Raw []byte
 }
 
-// ─── Method registry ─────────────────────────────────────────────────────────
-
 // Direction distinguishes who originates a method.
 type Direction int
 
@@ -92,13 +88,7 @@ type methodEntry struct {
 	MakeResult func() any // non-nil only for client requests
 }
 
-// methodRegistry is the single source of truth for every method string that
-// appears in corpus-covered traffic. One entry per method.
-//
-// To add a new method: add an entry here, then add the Params/Result types
-// below. Unknown methods are handled gracefully (FrameKindRaw).
 var methodRegistry = map[string]methodEntry{
-	// ── Client requests ──────────────────────────────────────────────────────
 	"initialize": {
 		Dir:        DirClient,
 		MakeParams: func() any { return &InitializeParams{} },
@@ -175,10 +165,6 @@ var methodRegistry = map[string]methodEntry{
 	},
 }
 
-// ─── Parse ───────────────────────────────────────────────────────────────────
-
-// rawLine is the superset decode target for one JSON-RPC 2.0 line.
-// Every field is optional at the envelope level; absent fields are zero.
 type rawLine struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"` // raw so a string, number, or null id round-trips verbatim
@@ -228,11 +214,6 @@ func Parse(line []byte) (Frame, error) {
 		return parseNotification(f, line, hasParams)
 
 	case hasID && !hasMethod:
-		// Server response. The result stays in f.RawResult (an explicit
-		// "result": null round-trips as the "null" bytes; an absent result as
-		// empty). Typed parsing is deferred to ResolveResponseResult, which the
-		// caller invokes once it correlates the response id to the originating
-		// request method.
 		f.Kind = FrameKindServerResponse
 
 	default:
@@ -245,10 +226,7 @@ func Parse(line []byte) (Frame, error) {
 	return f, nil
 }
 
-// parseRequest classifies an id-and-method frame by its registered direction.
 func parseRequest(f Frame, hasParams bool) (Frame, error) {
-	// Unknown request methods originate from the server and must be answered,
-	// never dropped as raw frames (RU-07).
 	if entry, ok := methodRegistry[f.Method]; ok && entry.Dir == DirClient {
 		f.Kind = FrameKindClientRequest
 	} else {
@@ -260,12 +238,10 @@ func parseRequest(f Frame, hasParams bool) (Frame, error) {
 	return f, nil
 }
 
-// rawPresent reports whether a raw envelope field contains a non-null value.
 func rawPresent(raw json.RawMessage) bool {
 	return len(raw) > 0 && string(raw) != "null"
 }
 
-// parseNotification classifies a method-only frame and decodes known params.
 func parseNotification(f Frame, line []byte, hasParams bool) (Frame, error) {
 	entry, ok := methodRegistry[f.Method]
 	if !ok {
@@ -284,7 +260,6 @@ func parseNotification(f Frame, line []byte, hasParams bool) (Frame, error) {
 	return f, nil
 }
 
-// parseParams populates f.Params from f.RawParams using the method registry.
 func parseParams(f *Frame, hasParams bool) error {
 	entry, ok := methodRegistry[f.Method]
 	if !ok || entry.MakeParams == nil || !hasParams {
@@ -317,8 +292,6 @@ func ResolveResponseResult(f *Frame, requestMethod string) error {
 	return nil
 }
 
-// ─── Marshal ─────────────────────────────────────────────────────────────────
-
 // Marshal re-serializes a Frame back to JSON-RPC 2.0 wire format.
 //
 // The output is semantically equal to the original line: all envelope fields
@@ -327,8 +300,6 @@ func ResolveResponseResult(f *Frame, requestMethod string) error {
 func Marshal(f Frame) ([]byte, error) {
 	switch f.Kind {
 	case FrameKindClientRequest, FrameKindServerRequest:
-		// Both are JSON-RPC requests (jsonrpc? + id + method + params); the same
-		// envelope serializer round-trips either direction.
 		return marshalClientRequest(f)
 	case FrameKindClientNotification:
 		return marshalClientNotification(f)
@@ -432,9 +403,6 @@ func marshalServerNotification(f Frame) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// idRawOrNull returns the verbatim JSON-RPC id bytes, or the JSON literal null
-// when the id is absent. The id is emitted as raw so a string or numeric id
-// round-trips byte-for-byte.
 func idRawOrNull(id json.RawMessage) json.RawMessage {
 	if len(id) == 0 {
 		return json.RawMessage("null")
@@ -442,8 +410,6 @@ func idRawOrNull(id json.RawMessage) json.RawMessage {
 	return id
 }
 
-// marshalPayload serializes a typed params struct back to JSON, merging Extra.
-// Falls back to raw when typed is nil.
 func marshalPayload(typed any, raw json.RawMessage) (json.RawMessage, error) {
 	if typed == nil {
 		return raw, nil
@@ -451,23 +417,6 @@ func marshalPayload(typed any, raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(typed)
 }
 
-// ─── Extra field helpers ──────────────────────────────────────────────────────
-
-// parseExtra reads data (a JSON object) into target (via the standard
-// json.Unmarshal using an alias), then captures any keys not in known into
-// extra. Call this from each struct's UnmarshalJSON.
-//
-// Usage pattern:
-//
-//	func (p *FooParams) UnmarshalJSON(data []byte) error {
-//	    type alias FooParams
-//	    if err := json.Unmarshal(data, (*alias)(p)); err != nil {
-//	        return err
-//	    }
-//	    var err error
-//	    p.Extra, err = parseExtra(data, fooParamsKnown, p.Extra)
-//	    return err
-//	}
 func parseExtra(
 	data []byte,
 	known map[string]bool,
@@ -488,8 +437,6 @@ func parseExtra(
 	return extra, nil
 }
 
-// mergeExtra merges extra fields into a marshaled JSON object byte slice.
-// Returns base unchanged when extra is empty.
 func mergeExtra(base []byte, extra map[string]json.RawMessage) ([]byte, error) {
 	if len(extra) == 0 {
 		return base, nil
@@ -509,8 +456,6 @@ func mergeExtra(base []byte, extra map[string]json.RawMessage) ([]byte, error) {
 func ExtraCount(extra map[string]json.RawMessage) int {
 	return len(extra)
 }
-
-// ─── Client request / notification params ─────────────────────────────────────
 
 // InitializeParams describes client→server "initialize" request params.
 //
@@ -710,8 +655,6 @@ func (i InputItem) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, i.Extra)
 }
 
-// ─── Client request results ──────────────────────────────────────────────────
-
 // InitializeResult describes server→client "initialize" response result.
 //
 // Corpus evidence: {"userAgent":"...","codexHome":"...","platformFamily":"...","platformOs":"..."}
@@ -839,8 +782,6 @@ func (r TurnStartResult) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, r.Extra)
 }
 
-// ─── Shared model types ──────────────────────────────────────────────────────
-
 // Turn is the codex turn object appearing in multiple notifications.
 //
 // Corpus evidence: id, items (empty array), itemsView, status, error (null),
@@ -917,8 +858,6 @@ func (s ThreadStatus) MarshalJSON() ([]byte, error) {
 	}
 	return mergeExtra(b, s.Extra)
 }
-
-// ─── Server notification params ──────────────────────────────────────────────
 
 // ConfigWarningParams describes server→client "configWarning" notification params.
 //
@@ -1215,7 +1154,6 @@ type RawItem struct {
 // original object bytes verbatim in Raw. RawItem models no fields of its own,
 // so nothing is dropped and there is no Extra map to populate.
 func (r *RawItem) UnmarshalJSON(data []byte) error {
-	// Extract the type discriminator.
 	var disc struct {
 		Type string `json:"type"`
 	}
@@ -1496,12 +1434,10 @@ func RegisteredMethods() []string {
 	for m := range methodRegistry {
 		methods = append(methods, m)
 	}
-	// Stable sort for deterministic output.
 	sortStrings(methods)
 	return methods
 }
 
-// sortStrings sorts ss in-place (insertion sort; small slice, no import needed).
 func sortStrings(ss []string) {
 	for i := 1; i < len(ss); i++ {
 		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {

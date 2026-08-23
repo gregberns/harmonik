@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// b3f77State returns a valid State for use in Transition test fixtures.
 func b3f77State(t *testing.T) State {
 	t.Helper()
 	return State{
@@ -22,20 +21,16 @@ func b3f77State(t *testing.T) State {
 	}
 }
 
-// b3f77Confidence returns a *float64 for use in Transition test fixtures.
 func b3f77Confidence(v float64) *float64 {
 	return &v
 }
 
-// b3f77StateID returns a *StateID for use in rollback Transition test fixtures.
 func b3f77StateID(t *testing.T) *StateID {
 	t.Helper()
 	id := StateID(uuid.Must(uuid.NewV7()))
 	return &id
 }
 
-// b3f77ValidTransition returns a fully-populated forward Transition with all
-// required fields set to valid values.
 func b3f77ValidTransition(t *testing.T) Transition {
 	t.Helper()
 	return Transition{
@@ -242,8 +237,6 @@ func TestTransitionValid_EmptyCandidateActions(t *testing.T) {
 		t.Error("Valid() = false with nil CandidateActions, want true")
 	}
 }
-
-// --- EM-044 rollback_to_state_id constraint tests ---
 
 // TestTransitionValid_ArchitecturalRollbackRequiresStateID verifies that
 // architectural-rollback MUST set RollbackToStateID (EM-044).

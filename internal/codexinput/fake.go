@@ -2,11 +2,6 @@ package codexinput
 
 import "github.com/gregberns/harmonik/internal/substrate"
 
-// FakeEffector and SyntheticSource are the codexinput instantiations of the
-// generic substrate test doubles. They are type ALIASES (=), not defined types,
-// so composite literals and reflect.DeepEqual over []codexinput.Action at call
-// sites keep compiling (RS-021; substrate-design §2.2).
-
 // FakeEffector records every Action it receives; safe for concurrent use.
 type FakeEffector = substrate.FakeEffector[Action]
 

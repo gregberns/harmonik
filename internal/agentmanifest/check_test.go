@@ -9,7 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/agentmanifest"
 )
 
-// makeSkillDir creates a skill directory (bare name) under agentsDir/_skills/.
 func makeSkillDir(t *testing.T, agentsDir, skillName string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(agentsDir, "_skills", skillName), 0o700); err != nil {
@@ -17,7 +16,6 @@ func makeSkillDir(t *testing.T, agentsDir, skillName string) {
 	}
 }
 
-// makeParentTypeFolder creates a minimal parent type folder with just a soul.md.
 func makeParentTypeFolder(t *testing.T, agentsDir string) {
 	t.Helper()
 	const typeName = "captain"
@@ -28,7 +26,6 @@ func makeParentTypeFolder(t *testing.T, agentsDir string) {
 	writeFile(t, filepath.Join(dir, "soul.md"), "**I am** "+typeName+".\n")
 }
 
-// makePathBearingRef creates a file at repoRoot/<path>.
 func makePathBearingRef(t *testing.T, repoRoot, ref string) {
 	t.Helper()
 	full := filepath.Join(repoRoot, ref)
@@ -38,14 +35,11 @@ func makePathBearingRef(t *testing.T, repoRoot, ref string) {
 	writeFile(t, full, "content\n")
 }
 
-// --- TestCheck_WellFormed ---
-
 func TestCheck_WellFormed_NoContext(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// Parent type "captain" must have a soul.md.
 	makeParentTypeFolder(t, agentsDir)
 
 	m := `
@@ -126,7 +120,6 @@ func TestCheck_WellFormed_OperatorTerminal(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// "operator" is the reserved terminal — no folder needed.
 	m := `
 type: mytype
 harness: claude
@@ -141,8 +134,6 @@ identity:
 		t.Errorf("expected no defects for operator terminal, got %d: %v", len(defects), defects)
 	}
 }
-
-// --- TestCheck_LoadFailures ---
 
 func TestCheck_LoadError_MissingManifest(t *testing.T) {
 	t.Parallel()
@@ -163,7 +154,6 @@ func TestCheck_LoadError_MissingSoulFile(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// Write manifest + operating.md, omit soul.md.
 	dir := filepath.Join(agentsDir, "mytype")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -184,14 +174,11 @@ identity:
 	}
 }
 
-// --- TestCheck_ParentIntent ---
-
 func TestCheck_ParentIntent_DanglingType(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// "captain" type folder does NOT exist.
 	m := `
 type: mytype
 harness: claude
@@ -222,7 +209,6 @@ func TestCheck_ParentIntent_ParentFolderExistsButNoSoul(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// Create parent type folder WITHOUT soul.md.
 	if err := os.MkdirAll(filepath.Join(agentsDir, "captain"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -252,8 +238,6 @@ identity:
 	}
 }
 
-// --- TestCheck_ContextRef ---
-
 func TestCheck_ContextRef_UnknownBareRef(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
@@ -261,7 +245,6 @@ func TestCheck_ContextRef_UnknownBareRef(t *testing.T) {
 
 	makeParentTypeFolder(t, agentsDir)
 
-	// context ref "nonexistent-skill" is not in _skills/ or type folder.
 	m := `
 type: mytype
 harness: claude
@@ -296,7 +279,6 @@ func TestCheck_ContextRef_PathBearingMissing(t *testing.T) {
 
 	makeParentTypeFolder(t, agentsDir)
 
-	// path-bearing ref that doesn't exist under repoRoot.
 	m := `
 type: mytype
 harness: claude
@@ -329,7 +311,6 @@ func TestCheck_ContextRef_MultipleDefectsCollected(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	// Both a bad ref and a dangling parent — all defects collected.
 	m := `
 type: mytype
 harness: claude
@@ -343,7 +324,6 @@ context:
 	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
-	// At minimum: 1 parent_intent + 2 context refs = 3 defects.
 	if len(defects) < 3 {
 		t.Errorf("expected >= 3 defects, got %d: %v", len(defects), defects)
 	}
@@ -356,7 +336,6 @@ func TestCheck_ContextRef_BareRefInTypeFolder(t *testing.T) {
 
 	makeParentTypeFolder(t, agentsDir)
 
-	// skill lives in the type's OWN folder (not _skills/).
 	typeDir := filepath.Join(agentsDir, "mytype")
 	if err := os.MkdirAll(filepath.Join(typeDir, "my-private-skill"), 0o700); err != nil {
 		t.Fatal(err)

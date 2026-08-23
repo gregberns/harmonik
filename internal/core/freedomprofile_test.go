@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// freedomProfileFixture returns a fully-populated FreedomProfile with all
-// fields set to valid non-zero values, suitable for structural tests (hk-a8bg.80).
 func freedomProfileFixture(t *testing.T) FreedomProfile {
 	t.Helper()
 

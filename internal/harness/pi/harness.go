@@ -1,36 +1,5 @@
 package pi
 
-// harness.go — Harness: handlercontract.Harness impl for Pi (codename:pilot, PI-010/011/012/013/014).
-//
-// Pi's shape is a ProcessExit + SessionIDCaptured harness, mirroring codex
-// (specs/harness-contract.md §2 N2/N3):
-//
-//   - Completion = CompletionProcessExit. `pi --mode json` is a one-shot
-//     run-to-exit invocation: it streams NDJSON and nominally self-terminates
-//     on turn completion. The shared loop bypasses pasteInjectQuitOnCommit and
-//     relies on sess.Wait + the absolute commitHardCeiling. PI-014 adds the
-//     agent_end watcher as an event-driven Kill because Pi's process exit is
-//     unreliable (#4303/#161/#4942); the 90m ceiling is backstop only.
-//
-//   - SessionIDPolicy = SessionIDCaptured. Pi emits, as the FIRST NDJSON line,
-//     `{"type":"session","version":3,"id":"<uuid>","cwd":"..."}`. The session
-//     id is captured via piSessionIDInterceptor (ndjsonparser.go) wired into
-//     the shared loop's implIsSessionIDCaptured block (PI-012a: forced-exec
-//     substrate). On the resume turn the captured id is passed as --session
-//     <id> in the argv (BuildLaunchSpec, launchspec.go).
-//
-// Because Pi delivers its task via argv, Seed and Retask are no-ops. Teardown
-// is load-bearing (PI-014): the agent_end watcher in piSessionIDInterceptor
-// calls Teardown→Kill on the terminal NDJSON event so a hung Pi does not burn
-// the full 90-minute ceiling. The real retask mechanism is the resume argv: on
-// iteration ≥2 the next turn's RunCtx carries PriorSessionID (the captured
-// session id) and BuildLaunchSpec emits `pi --mode json --session <id> ...`.
-//
-// Spec: specs/pi-harness.md §1 (PI-010/011/012/013/014).
-// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.1/§3.3/§3.4.
-// See also: internal/harness/codex/harness.go (structural template), launchspec.go, ndjsonparser.go.
-// Beads: hk-4rmj1 (PI-010/012/013); hk-mkcwg (PI-014).
-
 import (
 	"context"
 	"io"
@@ -100,7 +69,6 @@ func NewHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile, baseURL, api s
 	}
 }
 
-// Compile-time assertion: *Harness satisfies handlercontract.Harness.
 var _ handlercontract.Harness = (*Harness)(nil)
 
 // Provider returns the configured Pi provider (harnesses.pi.provider).

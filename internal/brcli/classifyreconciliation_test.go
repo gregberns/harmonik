@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// routeBrErrFixtureTable returns the exhaustive §8 routing table for use by
-// BrErrReconciliationCategory tests.  Each entry states the BrError sentinel,
-// a human-readable label, and the expected reconciliation category code.
 func routeBrErrFixtureTable() []struct {
 	brErr BrError
 	label string
@@ -63,7 +60,6 @@ func TestBrErrReconciliationCategory_wrappedErrors(t *testing.T) {
 
 			wrapped := fmt.Errorf("adapter: br invocation failed: %w", tc.brErr)
 
-			// Verify the sentinel is reachable via errors.Is (pre-condition).
 			if !errors.Is(wrapped, tc.brErr) {
 				t.Fatalf(
 					"errors.Is(wrapped, %s) = false; wrapping did not preserve sentinel",
@@ -154,7 +150,6 @@ func TestBrErrReconciliationCategory_unknownNonBrError(t *testing.T) {
 func TestBrErrReconciliationCategory_routingTableCoverage(t *testing.T) {
 	t.Parallel()
 
-	// All BrError values from the canonical fixture (includes BrOK).
 	all := brErrorFixtureAll()
 
 	for _, e := range all {
@@ -164,7 +159,6 @@ func TestBrErrReconciliationCategory_routingTableCoverage(t *testing.T) {
 			got := BrErrReconciliationCategory(e)
 
 			if e == BrOK {
-				// BrOK → success path; no reconciliation category.
 				if got != "" {
 					t.Errorf(
 						"BrErrReconciliationCategory(BrOK) = %q; want empty string",
@@ -174,7 +168,6 @@ func TestBrErrReconciliationCategory_routingTableCoverage(t *testing.T) {
 				return
 			}
 
-			// All six error sentinels must map to a non-empty category.
 			if got == "" {
 				t.Errorf(
 					"BrErrReconciliationCategory(%q) = empty string; want a non-empty category code",

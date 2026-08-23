@@ -1,25 +1,5 @@
 package scenario_test
 
-// two_reviewer_consensus_test.go — scenario tests for specs/examples/two-reviewer-consensus.dot.
-//
-// Five named scenarios:
-//   1. approve-on-first-pass         → spine runs once; consolidate(APPROVE) → close (terminal, success)
-//   2. one-REQUEST_CHANGES-then-approve → 1× loop-back; second pass APPROVE → close
-//   3. BLOCK-on-first                → consolidate(BLOCK) → close-needs-attention (terminal)
-//   4. cap-hit-fallback              → 3× REQUEST_CHANGES → cap-hit failure (cap=3)
-//   5. unrecognized-label-fallback   → unknown label → unconditional fallback → close-needs-attention
-//
-// Spec refs:
-//   - docs/sdlc-workflow-corpus.md §4 (two-reviewer-consensus topology)
-//   - docs/sdlc-workflow-corpus.md §Marquee brief discipline (reviewer-commit channel)
-//   - specs/workflow-graph.md  WG-010 (5-step cascade)
-//   - specs/workflow-graph.md  WG-011 (unconditional-edge fallback invariant)
-//   - specs/workflow-graph.md  WG-028 (cycle bounding / traversal_cap)
-//   - specs/execution-model.md EM-015e (no-progress / cap-hit vocabulary)
-//   - specs/execution-model.md EM-043  (traversal-cap enforcement)
-//
-// Helper prefix: trc (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"os"
 	"path/filepath"
@@ -32,8 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func trcDotPath(t *testing.T) string {
 	t.Helper()
@@ -67,11 +45,6 @@ func trcOutcome(label string) core.Outcome {
 	return o
 }
 
-// trcWalkSpine walks the unconditional spine of the two-reviewer-consensus graph:
-//
-//	start → implement → reviewer_a → reviewer_b
-//
-// returning after reviewer_b so the caller can exercise the consolidate branch.
 func trcWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.CycleCounter) {
 	t.Helper()
 
@@ -96,8 +69,6 @@ func trcWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.Cy
 	}
 }
 
-// ── Scenario 1: approve-on-first-pass ────────────────────────────────────────
-
 // TestTRC_ApproveOnFirstPass exercises the happy path:
 // start → implement → reviewer_a → reviewer_b → consolidate(APPROVE) → close (terminal).
 func TestTRC_ApproveOnFirstPass(t *testing.T) {
@@ -112,20 +83,16 @@ func TestTRC_ApproveOnFirstPass(t *testing.T) {
 
 	trcWalkSpine(t, graph, run, cycles)
 
-	// consolidate(APPROVE) → close
 	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("consolidate→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 2: one REQUEST_CHANGES then approve ──────────────────────────────
 
 // TestTRC_OneRequestChangesThenApprove exercises the bounded loop:
 // spine → consolidate(RC) → implement → spine → consolidate(APPROVE) → close.
@@ -139,21 +106,17 @@ func TestTRC_OneRequestChangesThenApprove(t *testing.T) {
 	run := trcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// First pass through the spine.
 	trcWalkSpine(t, graph, run, cycles)
 
-	// Increment the cycle counter for the consolidate→implement back-edge.
 	if _, err := cycles.Increment(run.RunID, "consolidate", "implement", nil); err != nil {
 		t.Fatalf("pre-fill cycle counter consolidate\u2192implement: %v", err)
 	}
 
-	// consolidate(REQUEST_CHANGES) → implement
 	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("consolidate→implement (RC): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// Second pass through the spine.
 	dec = workflow.DecideNextNode(graph, "implement", trcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer_a" {
 		t.Fatalf("implement→reviewer_a (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
@@ -167,20 +130,16 @@ func TestTRC_OneRequestChangesThenApprove(t *testing.T) {
 		t.Fatalf("reviewer_b→consolidate (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// consolidate(APPROVE) → close
 	dec = workflow.DecideNextNode(graph, "consolidate", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("consolidate→close (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 3: BLOCK on first ───────────────────────────────────────────────
 
 // TestTRC_BlockOnFirst exercises:
 // spine → consolidate(BLOCK) → close-needs-attention (terminal).
@@ -196,21 +155,17 @@ func TestTRC_BlockOnFirst(t *testing.T) {
 
 	trcWalkSpine(t, graph, run, cycles)
 
-	// consolidate(BLOCK) → close-needs-attention
 	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("consolidate→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 4: cap-hit fallback ─────────────────────────────────────────────
 
 // TestTRC_CapHitFallback exercises WG-028/EM-043: when the consolidate→implement
 // back-edge's traversal_cap (3) is exhausted, the conditional edge is suppressed
@@ -227,8 +182,6 @@ func TestTRC_CapHitFallback(t *testing.T) {
 
 	trcWalkSpine(t, graph, run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of consolidate→implement
-	// (the cap declared in the DOT is 3).
 	traversalCap := 3
 	for i := 0; i < traversalCap; i++ {
 		if _, err := cycles.Increment(run.RunID, "consolidate", "implement", &traversalCap); err != nil {
@@ -236,8 +189,6 @@ func TestTRC_CapHitFallback(t *testing.T) {
 		}
 	}
 
-	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;
-	// the cascade reports a cap-hit failure.
 	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
@@ -249,8 +200,6 @@ func TestTRC_CapHitFallback(t *testing.T) {
 		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
-
-// ── Scenario 5: unrecognized label → unconditional fallback ──────────────────
 
 // TestTRC_UnrecognizedLabelFallback exercises the WG-011 unconditional fallback:
 // when the consolidate node emits a label that matches no conditional edge, the
@@ -267,7 +216,6 @@ func TestTRC_UnrecognizedLabelFallback(t *testing.T) {
 
 	trcWalkSpine(t, graph, run, cycles)
 
-	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
 	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
@@ -278,7 +226,6 @@ func TestTRC_UnrecognizedLabelFallback(t *testing.T) {
 			dec.NextNodeID, "close-needs-attention")
 	}
 
-	// close-needs-attention is terminal.
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)

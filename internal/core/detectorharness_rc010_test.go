@@ -7,8 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ---- RC-010: Detectors operate on runs, not beads ----
-
 // TestRC010_RunIDAndBeadIDAreDistinctTypes verifies that RunID and BeadID are
 // distinct typed identifiers, establishing the type-level enforcement of
 // RC-010's run-scoped detector contract.
@@ -28,8 +26,6 @@ func TestRC010_RunIDAndBeadIDAreDistinctTypes(t *testing.T) {
 	runID := RunID(uuid.MustParse("018f1e2a-0000-7000-8000-000000007401"))
 	beadID := BeadID("hk-63oh")
 
-	// RunID is a UUID-based identifier; BeadID is a string-based identifier.
-	// These are different types: the detector MUST use RunID for filtering.
 	if runID.String() == "" {
 		t.Error("RC-010: RunID.String() is empty; run-scoped detector cannot produce empty run ID")
 	}
@@ -37,9 +33,6 @@ func TestRC010_RunIDAndBeadIDAreDistinctTypes(t *testing.T) {
 		t.Error("RC-010: BeadID is empty; test fixture error")
 	}
 
-	// The two IDs are structurally different types; a detector that uses
-	// BeadID instead of RunID would misclassify beads with multiple runs.
-	// Type-level enforcement is the first line of defense.
 	if runID.String() == string(beadID) {
 		t.Error("RC-010: RunID.String() equals BeadID string; coincidental equality breaks test isolation")
 	}
@@ -63,22 +56,14 @@ func TestRC010_MultipleRunsForSameBead(t *testing.T) {
 	run1 := RunID(uuid.MustParse("018f1e2a-0000-7000-8000-000000007402"))
 	run2 := RunID(uuid.MustParse("018f1e2a-0000-7000-8000-000000007403"))
 
-	// The same BeadID is associated with two distinct RunIDs.
-	// A detector filtering by BeadID would conflate these two runs.
-	// A detector filtering by RunID (RC-010) classifies them independently.
-
 	if uuid.UUID(run1) == uuid.UUID(run2) {
 		t.Fatal("RC-010: test run IDs must be distinct; fixture error")
 	}
 
-	// Both runs reference the same bead.
 	if string(beadID) != "hk-63oh" {
 		t.Errorf("RC-010: BeadID fixture mismatch: got %q, want %q", string(beadID), "hk-63oh")
 	}
 
-	// The two runs are independently classifiable by their RunIDs.
-	// An orphaned branch from run1 (whose bead was re-claimed with run2) MUST
-	// classify as Cat 5 for run1, NOT propagate run1's classification to run2.
 	run1Cat := ReconciliationCategoryCat5 // orphaned prior run → Cat 5
 	run2Cat := ReconciliationCategoryCat2 // current run mid-investigation
 	if run1Cat == run2Cat {
@@ -100,7 +85,6 @@ func TestRC010_MultipleRunsForSameBead(t *testing.T) {
 func TestRC010_OrphanedPriorRunClassifiesAsCat5(t *testing.T) {
 	t.Parallel()
 
-	// Cat 5 is the correct classification for orphaned prior runs.
 	cat5 := ReconciliationCategoryCat5
 
 	if !cat5.Valid() {
@@ -109,13 +93,7 @@ func TestRC010_OrphanedPriorRunClassifiesAsCat5(t *testing.T) {
 	if string(cat5) != "cat-5" {
 		t.Errorf("RC-010: Cat 5 string = %q, want %q", string(cat5), "cat-5")
 	}
-
-	// The spec text: "An orphaned task branch from a prior run whose bead has
-	// since been re-claimed MUST classify as Cat 5 for the old run."
-	// This test documents the boundary: the classifier checks RunID, not BeadID.
 }
-
-// ---- RC-014: JSONL divergence-evidence scope ----
 
 // TestRC014_PermittedJSONLUsesAreDocumented verifies that the four permitted
 // JSONL read uses per RC-014 can be expressed as distinct enum-like constants,
@@ -136,7 +114,6 @@ func TestRC010_OrphanedPriorRunClassifiesAsCat5(t *testing.T) {
 func TestRC014_PermittedJSONLUsesAreDocumented(t *testing.T) {
 	t.Parallel()
 
-	// The four permitted uses per RC-014; these are documentation anchors.
 	permittedUses := []string{
 		"checkpoint-commit-missing-from-git",    // → Cat 6b
 		"jsonl-corrupt-past-byte-offset",        // → Cat 6b
@@ -147,7 +124,6 @@ func TestRC014_PermittedJSONLUsesAreDocumented(t *testing.T) {
 		t.Errorf("RC-014: expected 4 permitted JSONL uses per spec, got %d", len(permittedUses))
 	}
 
-	// The three forbidden uses per RC-014.
 	forbiddenUses := []string{
 		"source-of-run-id-state-id-transition-id",
 		"decide-which-bead-is-in-flight",
@@ -172,7 +148,6 @@ func TestRC014_PermittedJSONLUsesAreDocumented(t *testing.T) {
 func TestRC014_Cat6bOnMidFileCorruption(t *testing.T) {
 	t.Parallel()
 
-	// The Cat 6b category is the correct classification for JSONL corruption.
 	cat6b := ReconciliationCategoryCat6b
 
 	if !cat6b.Valid() {
@@ -194,27 +169,14 @@ func TestRC014_Cat6bOnMidFileCorruption(t *testing.T) {
 func TestRC014_RunIDIsNotDerivedFromJSONL(t *testing.T) {
 	t.Parallel()
 
-	// RunID is a UUID v7 type (per event-model.md §4.1). It is carried in
-	// git checkpoint trailers (Harmonik-Run-ID), not in JSONL payloads.
-	// A detector that reads RunID from JSONL would violate RC-014.
-
-	// Generate a RunID as would be done from a git checkpoint trailer.
-	// The git trailer carries the UUID as a hex string; the daemon parses it
-	// into RunID. This is the ONLY permitted source per EM-031.
 	runID := RunID(uuid.MustParse("018f1e2a-0000-7000-8000-000000007404"))
 
 	if runID.String() == "" {
 		t.Error("RC-014: RunID from git checkpoint trailer must be non-empty")
 	}
 
-	// A JSONL-sourced run_id would be read from a JSON payload field and
-	// unmarshaled into a UUID — which is the same operation. The constraint
-	// is disciplinary (which code path may call which), not representational.
-	// This test documents the authority: git wins (EM-031, RC-014).
 	_ = runID // Authority: git checkpoint trailers, NOT JSONL.
 }
-
-// ---- RC-019a: Evidence corroboration ----
 
 // TestRC019a_DivergenceCorroborationIsClosedEnum verifies that the
 // DivergenceCorroboration type has exactly two valid values ("git-corroborated"
@@ -239,8 +201,6 @@ func TestRC019a_DivergenceCorroborationIsClosedEnum(t *testing.T) {
 		}
 	}
 
-	// Inconclusive is NOT a valid corroboration value for store_divergence_detected.
-	// Inconclusive observations MUST emit divergence_inconclusive instead.
 	invalid := []DivergenceCorroboration{
 		"inconclusive",
 		"git_corroborated", // underscore instead of hyphen
@@ -336,13 +296,10 @@ func TestRC019a_InconclusiveObservationMustNotBeCorroboration(t *testing.T) {
 			"inconclusive observations MUST emit divergence_inconclusive per EV-023a")
 	}
 
-	// Verify MarshalText also rejects it.
 	if _, err := inconclusive.MarshalText(); err == nil {
 		t.Error("RC-019a: MarshalText accepted 'inconclusive'; must reject non-declared values")
 	}
 }
-
-// ---- RC-020a: Detector cadence ----
 
 // TestRC020a_DetectorCadenceHasThreeDispatchPoints verifies that RC-020a
 // declares exactly three detector dispatch points: startup, on-demand, and
@@ -355,7 +312,6 @@ func TestRC019a_InconclusiveObservationMustNotBeCorroboration(t *testing.T) {
 func TestRC020a_DetectorCadenceHasThreeDispatchPoints(t *testing.T) {
 	t.Parallel()
 
-	// The three dispatch points per RC-020a.
 	dispatchPoints := []string{
 		"daemon-startup",   // (a) Full scan before daemon reaches ready.
 		"on-demand",        // (b) harmonik reconcile [--run <run_id>].
@@ -397,16 +353,11 @@ func TestRC020a_ScheduledCadenceDefaultIsHourly(t *testing.T) {
 func TestRC020a_IdempotentDetectorSameSnapshotSameCategory(t *testing.T) {
 	t.Parallel()
 
-	// Two identical snapshot tokens must yield the same category.
-	// The snapshot token is (git_head_hash, beads_audit_entry_id, captured_at_timestamp).
-	// Idempotency: same inputs → same output, always.
-
 	cat := ReconciliationCategoryCat1
 	if !cat.Valid() {
 		t.Fatal("RC-020a: Cat 1 not valid; enum error")
 	}
 
-	// Simulate two calls to the same detector with the same snapshot.
 	firstCall := cat
 	secondCall := cat // deterministic: same input → same output
 
@@ -446,7 +397,6 @@ func TestRC020a_ScheduledTriggerConstantIsValid(t *testing.T) {
 		})
 	}
 
-	// Ensure the scheduled trigger carries the canonical string value.
 	const wantScheduledStr = "scheduled-hourly"
 	if got := string(ReconciliationTriggerScheduled); got != wantScheduledStr {
 		t.Errorf("ReconciliationTriggerScheduled = %q, want %q", got, wantScheduledStr)
@@ -488,8 +438,6 @@ func TestRC020a_ScheduledTriggerPayloadRoundTrips(t *testing.T) {
 	}
 }
 
-// ---- RC-020b: Detector panic recovery ----
-
 // TestRC020b_PanicRecoveryFallsThroughToNextDetector verifies that a
 // panicking detector does NOT halt the priority-order evaluation; the
 // priority-order falls through to the next detector.
@@ -506,10 +454,6 @@ func TestRC020a_ScheduledTriggerPayloadRoundTrips(t *testing.T) {
 func TestRC020b_PanicRecoveryFallsThroughToNextDetector(t *testing.T) {
 	t.Parallel()
 
-	// Simulate the priority-order evaluation with a per-detector recover() barrier.
-	// The panicDetector simulates a detector that panics; the fallbackDetector
-	// simulates the next detector in the priority order that succeeds.
-
 	panicDetector := func() (cat ReconciliationCategory, panicked bool) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -519,18 +463,15 @@ func TestRC020b_PanicRecoveryFallsThroughToNextDetector(t *testing.T) {
 		panic("rc020b: simulated detector panic") //nolint:gocritic // intentional panic for recovery test
 	}
 
-	// The safe fallback detector (next in priority order).
 	fallbackDetector := func() ReconciliationCategory {
 		return ReconciliationCategoryCat5
 	}
 
-	// Execute the priority-order with the recover() barrier.
 	_, didPanic := panicDetector()
 	if !didPanic {
 		t.Fatal("RC-020b: panicDetector did not panic; test fixture error")
 	}
 
-	// After the panicking detector is recovered, the next detector fires.
 	result := fallbackDetector()
 	if result != ReconciliationCategoryCat5 {
 		t.Errorf("RC-020b: fallback detector returned %q, want %q",
@@ -546,9 +487,6 @@ func TestRC020b_PanicRecoveryFallsThroughToNextDetector(t *testing.T) {
 func TestRC020b_PanicSuspendedDetectorResultsInFallThrough(t *testing.T) {
 	t.Parallel()
 
-	// The order: cat-0 (panics) → cat-6b (succeeds).
-	// After cat-0 panics, the barrier catches it and cat-6b is evaluated.
-
 	type detectorResult struct {
 		cat     ReconciliationCategory
 		paniced bool
@@ -562,13 +500,10 @@ func TestRC020b_PanicSuspendedDetectorResultsInFallThrough(t *testing.T) {
 			if ok {
 				return cat
 			}
-			// ok = false means the detector panicked (barrier caught it).
-			// Fall through to next detector.
 		}
 		return ReconciliationCategoryCat5 // default: clean restart
 	}
 
-	// First detector panics.
 	panicDetector := func() (ReconciliationCategory, bool) {
 		var caught bool
 		var result ReconciliationCategory
@@ -586,7 +521,6 @@ func TestRC020b_PanicSuspendedDetectorResultsInFallThrough(t *testing.T) {
 		return ReconciliationCategoryCat0, true
 	}
 
-	// Second detector succeeds.
 	cat6bDetector := func() (ReconciliationCategory, bool) {
 		return ReconciliationCategoryCat6b, true
 	}
@@ -600,8 +534,6 @@ func TestRC020b_PanicSuspendedDetectorResultsInFallThrough(t *testing.T) {
 		t.Errorf("RC-020b: fall-through after panic: got %q, want cat-6b", result)
 	}
 }
-
-// ---- RC-INV-004: Evidence-corroboration guarantee ----
 
 // TestRCINV004_StoreDivergenceDetectedMustHaveCorroboration verifies the
 // RC-INV-004 audit invariant: every store_divergence_detected event in the
@@ -617,9 +549,6 @@ func TestRC020b_PanicSuspendedDetectorResultsInFallThrough(t *testing.T) {
 func TestRCINV004_StoreDivergenceDetectedMustHaveCorroboration(t *testing.T) {
 	t.Parallel()
 
-	// Simulate an audit of a corpus of seeded divergence events.
-	// The audit checks: every corroboration value is git-corroborated or beads-corroborated.
-
 	rc74CorroborationAudit := func(events []DivergenceCorroboration) []DivergenceCorroboration {
 		var violations []DivergenceCorroboration
 		for _, c := range events {
@@ -630,7 +559,6 @@ func TestRCINV004_StoreDivergenceDetectedMustHaveCorroboration(t *testing.T) {
 		return violations
 	}
 
-	// All corroborated events: audit passes.
 	corroboratedEvents := []DivergenceCorroboration{
 		DivergenceCorroborationGitCorroborated,
 		DivergenceCorroborationBeadsCorroborated,
@@ -662,8 +590,6 @@ func TestRCINV004_InconclusiveObservationFailsAudit(t *testing.T) {
 		return count
 	}
 
-	// Mixed corpus: two corroborated, one inconclusive.
-	// The audit MUST flag the inconclusive entry.
 	mixedEvents := []DivergenceCorroboration{
 		DivergenceCorroborationGitCorroborated,
 		DivergenceCorroboration("inconclusive"), // VIOLATION

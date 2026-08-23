@@ -1,45 +1,5 @@
 package daemon_test
 
-// moderesolve_single_override_dot_default_hkgwy_test.go — pinning tests for
-// the interaction between the v1.0 daemon default (WorkflowModeDot per PL-004a)
-// and an explicit per-bead workflow:single label.
-//
-// # What this pins
-//
-// EM-012a declares four resolution tiers. At v1.0:
-//
-//   - Tier 3 (daemon default): WorkflowModeDot — the v1.0 production default
-//     per PL-004a; "absence of the field defaults the cached value to `dot`".
-//   - Tier 4 (built-in fallback): also `dot` (hk-30vlb).
-//
-// A bead with an explicit workflow:single label MUST still resolve to `single`
-// via tier-1, overriding both the tier-3 daemon default and tier-4 fallback.
-// Additionally, the daemon MUST emit the review_bypassed audit event (hk-81n9r)
-// whenever workflow:single resolves at tier-1 — the event fires regardless of
-// what the daemon default would have been.
-//
-// The existing tier-1 tests in moderesolve_test.go cover the other daemon-default
-// values (including a stale, retired review-loop default). This file covers the
-// v1.0 production scenario where the daemon default is WorkflowModeDot.
-//
-// # Tests
-//
-//  1. TestResolveWorkflow_SingleLabelOverridesDotDefault — tier-1 resolves to
-//     `single` even when the daemon default is `dot`.
-//  2. TestResolveWorkflow_SingleLabelEmitsReviewBypassed — the review_bypassed
-//     event is emitted with a valid payload when workflow:single fires.
-//  3. TestResolveWorkflow_DotDefaultPreservesNonSingleLabels — non-single
-//     workflow labels (review-loop, dot) still resolve correctly when the daemon
-//     default is `dot`.
-//
-// # Spec refs
-//   - specs/execution-model.md §4.3 EM-012a (four-tier mode-resolution)
-//   - specs/process-lifecycle.md §4 PL-004a (daemon default = dot)
-//   - hk-81n9r (review_bypassed audit event on workflow:single tier-1 resolve)
-//
-// Bead: hk-gwy.
-// Helper prefix: singleOverrideDot (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"encoding/json"
 	"testing"
@@ -48,11 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers (singleOverrideDot prefix per bead helper-prefix discipline)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// singleOverrideDotBead builds a minimal BeadRecord for hk-gwy fixtures.
 func singleOverrideDotBead(t *testing.T, labels []string) core.BeadRecord {
 	t.Helper()
 	return core.BeadRecord{
@@ -64,10 +19,6 @@ func singleOverrideDotBead(t *testing.T, labels []string) core.BeadRecord {
 		AuditTrailRef: "hk-gwy-fixture",
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestResolveWorkflow_SingleLabelOverridesDotDefault verifies that a bead
 // carrying the explicit label workflow:single resolves to WorkflowModeSingle at
@@ -100,7 +51,6 @@ func TestResolveWorkflow_SingleLabelOverridesDotDefault(t *testing.T) {
 
 			bus := &modeResolveFixtureBus{}
 			bead := singleOverrideDotBead(t, tc.beadLabels)
-			// v1.0 production daemon default per PL-004a.
 			daemonDefault := core.WorkflowModeDot
 
 			got := daemon.ExportedResolveWorkflowMode(t.Context(), bead, daemonDefault, bus)
@@ -145,7 +95,6 @@ func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 				t.Fatalf("review_bypassed setup: resolved to %q, want %q", got, core.WorkflowModeSingle)
 			}
 
-			// Locate the review_bypassed event.
 			events := modeResolveFixtureBusEvents(t, bus)
 			var bypassedPayload *core.ReviewBypassedPayload
 			for _, e := range events {
@@ -166,7 +115,6 @@ func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 				return
 			}
 
-			// Validate payload shape per ReviewBypassedPayload.Valid().
 			if !bypassedPayload.Valid() {
 				t.Errorf("review_bypassed payload.Valid() = false; payload = %+v", bypassedPayload)
 			}
@@ -177,7 +125,6 @@ func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 				t.Errorf("review_bypassed label = %q; want %q", bypassedPayload.Label, "workflow:single")
 			}
 
-			// Confirm no bead_label_conflict fired (single label, valid mode — no conflict).
 			for _, e := range events {
 				if e.EventType == core.EventTypeBeadLabelConflict {
 					t.Error("unexpected bead_label_conflict emitted for a clean workflow:single label")
@@ -201,11 +148,6 @@ func TestResolveWorkflow_DotDefaultPreservesNonSingleLabels(t *testing.T) {
 		wantConflict bool
 	}{
 		{
-			// This case used to assert workflow:review-loop overrode the dot
-			// default at tier-1. Since the retirement (EM-015d) the label names
-			// an unknown mode: tier 1 is treated as absent and bead_label_conflict
-			// is emitted, so a stale bead label degrades to dot instead of
-			// wedging the queue (BI-009a).
 			name:         "retired workflow:review-loop label degrades to the dot daemon default",
 			labels:       []string{"workflow:review-loop"},
 			wantMode:     core.WorkflowModeDot,
@@ -239,7 +181,6 @@ func TestResolveWorkflow_DotDefaultPreservesNonSingleLabels(t *testing.T) {
 					tc.labels, got, tc.wantMode)
 			}
 
-			// review_bypassed must NOT fire for non-single labels.
 			gotConflict := false
 			for _, e := range modeResolveFixtureBusEvents(t, bus) {
 				if e.EventType == core.EventTypeReviewBypassed {

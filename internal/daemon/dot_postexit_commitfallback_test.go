@@ -1,23 +1,5 @@
 package daemon_test
 
-// dot_postexit_commitfallback_test.go — the process-exit commit fallback must
-// use the harness that actually ran, on the graph path as well as the single
-// one, and the no-work detector must keep covering every process-exit harness
-// while it does.
-//
-// The graph node used to call the codex wrapper for EVERY process-exit harness.
-// A Pi node's daemon-side commit therefore said `feat(codex)`, and the two
-// wrappers are otherwise identical, so that reads as cosmetic. It is not, and
-// the reason is the second test below: the graph got Pi no-work coverage BECAUSE
-// it always called the codex function. Fix the wrapper the obvious way — add a
-// Pi leg with the detector inside the codex one — and Pi no-work detection
-// disappears in silence.
-//
-// So the pair is deliberate. One test states the new behaviour; the other holds
-// the coverage that behaviour is easy to trade away.
-//
-// Bead: hk-3ywqv (the detector), STEP-7 §2 "the commit-fallback claim".
-
 import (
 	"os/exec"
 	"strings"
@@ -28,13 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// dotFixtureProcessExitOpts builds a DOT-mode run on a process-exit harness. The
-// launch-spec port stamps the resolved agent type, which is what the commit
-// fallback branches on, and the harness registry is what tells the run this
-// harness completes by process exit.
-//
-// It is the graph twin of singleFixtureProcessExitOpts; the ONLY difference is
-// the workflow mode.
 func dotFixtureProcessExitOpts(t *testing.T, agent core.AgentType, script string) dotFixtureOpts {
 	t.Helper()
 
@@ -60,18 +35,12 @@ func dotFixtureProcessExitOpts(t *testing.T, agent core.AgentType, script string
 	}
 }
 
-// dotFixtureEditNoCommitHandler writes a /bin/sh implementer that EDITS a file
-// and never commits it. That is the one input that makes the commit fallback
-// create a commit of its own, which is where the wrapper's message prefix
-// becomes observable.
 func dotFixtureEditNoCommitHandler(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	return dotFixtureHandlerScript(t, "dot-fixture-edit-no-commit.sh",
 		"set -e\necho \"uncommitted work for "+string(bead)+" $$\" > fixture-work.txt\nexit 0\n")
 }
 
-// fixtureCommitSubjects returns every commit subject reachable in the fixture
-// project's repository, run branch included.
 func fixtureCommitSubjects(t *testing.T, projectDir string) []string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "-C", projectDir, "log", "--all", "--format=%s")

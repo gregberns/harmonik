@@ -33,7 +33,6 @@ func TestAcquireReconciliationLock_SuccessAndRelease(t *testing.T) {
 		t.Errorf("LockPath() = %q; want path containing .harmonik/reconciliation-locks/", lock.LockPath())
 	}
 
-	// Release and verify idempotent second call.
 	if err := lock.Release(); err != nil {
 		t.Errorf("Release: unexpected error: %v", err)
 	}
@@ -41,11 +40,6 @@ func TestAcquireReconciliationLock_SuccessAndRelease(t *testing.T) {
 		t.Errorf("Release (second call): unexpected error: %v (want idempotent nil)", err)
 	}
 
-	// After release, a new acquire for the same run ID must succeed. Retry
-	// briefly: a concurrent exec.Command fork(2) elsewhere in this parallel
-	// test binary can transiently keep the just-released flock alive via an
-	// inherited fd copy until that child's exec(2) closes it — see
-	// plFixtureEventuallyNoErr.
 	var lock2 *ReconciliationLock
 	err = plFixtureEventuallyNoErr(t, func() error {
 		var acquireErr error
@@ -85,7 +79,6 @@ func TestAcquireReconciliationLock_ErrLockHeld(t *testing.T) {
 		}
 	}()
 
-	// Second acquire must return ErrReconciliationLockHeld.
 	_, err = AcquireReconciliationLock(projectDir, targetRunID)
 	if !errors.Is(err, ErrReconciliationLockHeld) {
 		t.Errorf("second AcquireReconciliationLock: got %v, want ErrReconciliationLockHeld", err)
@@ -158,8 +151,6 @@ func TestAcquireReconciliationLock_MetadataWritten(t *testing.T) {
 		t.Errorf("lock file does not contain creator_pid= line; content: %q", content)
 	}
 }
-
-// ---- RC-002b: WriteVerdictExecuted tests ----
 
 // TestWriteVerdictExecuted_AppendsTrailerAndSyncs verifies that
 // WriteVerdictExecuted appends "Harmonik-Verdict-Executed: true" to the lock
@@ -242,7 +233,6 @@ func TestWriteVerdictExecuted_LockFileContentReadableAfterRelease(t *testing.T) 
 	projectDir := plFixtureTempProjectDir(t)
 	const targetRunID = "run-e2e-content-check"
 
-	// Simulate verdict-executor: acquire → write verdict-executed → release.
 	lock, err := AcquireReconciliationLock(projectDir, targetRunID)
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock: %v", err)
@@ -255,7 +245,6 @@ func TestWriteVerdictExecuted_LockFileContentReadableAfterRelease(t *testing.T) 
 		t.Fatalf("Release: %v", err)
 	}
 
-	// Lock file must still exist on disk after Release.
 	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
 		t.Fatal("lock file absent after Release; WriteVerdictExecuted must leave the file on disk")
 	}

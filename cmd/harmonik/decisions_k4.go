@@ -1,44 +1,5 @@
 package main
 
-// decisions_k4.go — the OPERATOR-side `harmonik decisions` verbs (hitl-decisions
-// component K4, bead hk-kba):
-//
-//   - list   → decisions-list daemon op: render the cross-agent "what-needs-me"
-//              queue — every open decision as
-//              `question · options · blocked_agent · context_link · decision_id`
-//              (SPEC §2, S2). --json emits machine-readable output.
-//   - show   → list filtered to one decision_id (client-side filter; SPEC §2).
-//   - answer → decisions-answer daemon op: validate the decision is OPEN and the
-//              option is one of its options (N7), emit decision_resolved; no-op
-//              on an unknown/already-terminal id (N3 first-writer-wins).
-//
-// Orphaned-pending flag (N9, read-pure — NO EMIT). An open decision whose
-// blocked_agent is OFFLINE (past the ~10-min presence.StaleCutoff, NOT merely
-// Stale) is flagged "orphaned-pending" in the list/show output — DISPLAY ONLY.
-// Why here and not in the daemon op: agent presence is computable ONLY in this
-// (cmd/harmonik, package main) layer — ComputePresenceRegistry / GetPresenceState
-// / the presence.StaleCutoff (10m) live in internal/presence and there is no daemon-side
-// presence projection. The daemon decisions-list op therefore returns the raw
-// open set, and this CLI computes the Offline → orphaned-pending flag from the
-// SAME events.jsonl, read-pure (no socket write, no event). That keeps the list
-// op a pure projection (S6) and satisfies N9's read-side half (flag only; the
-// keeper tick in K5 does the actual decision_withdrawn(orphaned) emission, and
-// K5 reuses this SAME presence source — see the note at the bottom of this file).
-//
-// EXACT Offline determination used for orphaned-pending:
-//   ComputePresenceRegistry(eventsPath) → PresenceRecord per agent;
-//   GetPresenceState(rec) == PresenceStateOffline  ⟺  the blocked_agent emitted
-//   an explicit leave beat OR its effective_last_seen is ≥ presence.StaleCutoff
-//   (10 * time.Minute). A Stale agent (120s ≤ age < 10m) is NOT flagged — it is
-//   presumed still-blocked (SPEC §5 / N9). An agent with NO presence record at
-//   all (never seen) is treated as NOT-offline for flagging purposes: absence of
-//   a record means we have no evidence the agent is gone, and flagging on bare
-//   absence would over-flag freshly-raised decisions; the keeper tick (K5) is the
-//   single source of truth for actual reaping and applies its own predicate.
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §2, §3, §5, §6 (N3,N6,N7,N9).
-// Bead ref: hk-kba (component K4).
-
 import (
 	"encoding/json"
 	"fmt"
@@ -50,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// decisionListItem mirrors the daemon's DecisionsListItem (the package boundary
-// forbids importing internal/daemon, so we decode into a local shape).
 type decisionListItem struct {
 	DecisionID     string   `json:"decision_id"`
 	Question       string   `json:"question"`
@@ -63,40 +22,24 @@ type decisionListItem struct {
 	Urgency        string   `json:"urgency,omitempty"`
 }
 
-// decisionListResult mirrors the daemon's DecisionsListResult.
 type decisionListResult struct {
 	Decisions []decisionListItem `json:"decisions"`
 }
 
-// decisionAnswerResult mirrors the daemon's DecisionsAnswerResult.
 type decisionAnswerResult struct {
 	EventID string `json:"event_id,omitempty"`
 	NoOp    bool   `json:"noop,omitempty"`
 }
 
-// decisionListRow is one rendered row: a decision plus its computed
-// orphaned-pending flag (display-only, N9 read-pure).
 type decisionListRow struct {
 	decisionListItem
 	OrphanedPending bool `json:"orphaned_pending"`
 }
 
-// -----------------------------------------------------------------------------
-// list / show
-// -----------------------------------------------------------------------------
-
-// runDecisionsListSubcommand implements `harmonik decisions list`.
-// subArgs is os.Args[3:].
 func runDecisionsListSubcommand(subArgs []string) int {
 	return runDecisionsListOrShow(subArgs, "", "list")
 }
 
-// runMailboxSubcommand implements `harmonik mailbox [--json]` — a thin alias
-// of `decisions list --topic operator-mailbox` (bead hk-pltjs, pending
-// operator sign-off per the hitl-decisions spec-change rule). It does NOT
-// invent a second bus: it reuses the durable/ordered/fsync'd/ack'd/async-answer
-// hitl-decisions lifecycle, scoped to the operator-mailbox topic convention.
-// subArgs is os.Args[2:].
 func runMailboxSubcommand(subArgs []string) int {
 	jsonFlag := false
 	socketFlag := ""
@@ -152,8 +95,6 @@ EXIT CODES
 `)
 }
 
-// runDecisionsShowSubcommand implements `harmonik decisions show <decision_id>`
-// = `list` filtered to one decision_id (client-side filter). subArgs is os.Args[3:].
 func runDecisionsShowSubcommand(subArgs []string) int {
 	jsonFlag := false
 	socketFlag := ""
@@ -193,8 +134,6 @@ func runDecisionsShowSubcommand(subArgs []string) int {
 	return runDecisionsListOrShowParsed(positional[0], "", jsonFlag, socketFlag, projectFlag, "show")
 }
 
-// runDecisionsListOrShow parses the list-verb flags then renders. filterID is the
-// optional single-decision filter ("" = all). verb is "list" or "show".
 func runDecisionsListOrShow(subArgs []string, filterID, verb string) int {
 	jsonFlag := false
 	socketFlag := ""
@@ -235,19 +174,12 @@ func runDecisionsListOrShow(subArgs []string, filterID, verb string) int {
 	return runDecisionsListOrShowParsed(filterID, topicFlag, jsonFlag, socketFlag, projectFlag, verb)
 }
 
-// runDecisionsListOrShowParsed dials decisions-list, computes the orphaned-pending
-// flag client-side from agent presence, and renders (text or JSON). topicFilter,
-// when non-empty, narrows to decisions raised with that exact topic (e.g.
-// core.DecisionTopicOperatorMailbox for `harmonik mailbox` — bead hk-pltjs,
-// pending operator sign-off).
 func runDecisionsListOrShowParsed(filterID, topicFilter string, jsonFlag bool, socketFlag, projectFlag, verb string) int {
 	absProject, sockPath, rc := decisionsResolvePaths(projectFlag, socketFlag, verb)
 	if rc != 0 {
 		return rc
 	}
 
-	// The daemon list op returns the raw open set; pass the filter id through so
-	// `show` narrows server-side too (the CLI also filters, so either is fine).
 	listPayload := map[string]any{}
 	if filterID != "" {
 		listPayload["decision_id"] = filterID
@@ -267,7 +199,6 @@ func runDecisionsListOrShowParsed(filterID, topicFilter string, jsonFlag bool, s
 		return 1
 	}
 
-	// Client-side filter (belt-and-suspenders if the daemon returns all).
 	items := result.Decisions
 	if filterID != "" {
 		filtered := items[:0:0]
@@ -292,13 +223,9 @@ func runDecisionsListOrShowParsed(filterID, topicFilter string, jsonFlag bool, s
 		items = filtered
 	}
 
-	// Compute orphaned-pending (N9, read-pure): flag any open decision whose
-	// blocked_agent is OFFLINE per the SAME events.jsonl presence projection.
-	// NO socket write, NO event — display only.
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 	rows := flagOrphanedPending(items, eventsPath)
 
-	// Deterministic order (by decision_id) for stable output + testability.
 	sort.Slice(rows, func(i, j int) bool { return rows[i].DecisionID < rows[j].DecisionID })
 
 	if jsonFlag {
@@ -315,11 +242,6 @@ func runDecisionsListOrShowParsed(filterID, topicFilter string, jsonFlag bool, s
 	return 0
 }
 
-// flagOrphanedPending returns the items as rows, flagging each whose blocked_agent
-// is OFFLINE (GetPresenceState == PresenceStateOffline) per the presence registry
-// over eventsPath. This is the N9 read-pure flag: presence is computed from the
-// durable log, NO event is emitted. A blocked_agent that is empty, has no presence
-// record, or is Online/Stale is NOT flagged (only a confirmed Offline is).
 func flagOrphanedPending(items []decisionListItem, eventsPath string) []decisionListRow {
 	registry := ComputePresenceRegistry(eventsPath)
 	rows := make([]decisionListRow, 0, len(items))
@@ -335,7 +257,6 @@ func flagOrphanedPending(items []decisionListItem, eventsPath string) []decision
 	return rows
 }
 
-// renderDecisionRows prints the what-needs-me queue in human-readable form.
 func renderDecisionRows(rows []decisionListRow) {
 	if len(rows) == 0 {
 		fmt.Println("No open decisions.")
@@ -370,13 +291,6 @@ func renderDecisionRows(rows []decisionListRow) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// answer
-// -----------------------------------------------------------------------------
-
-// runDecisionsAnswerSubcommand implements
-// `harmonik decisions answer <decision_id> <option> [--value <text>] [--resolver <name>]`.
-// subArgs is os.Args[3:].
 func runDecisionsAnswerSubcommand(subArgs []string) int {
 	valueFlag := ""
 	resolverFlag := ""
@@ -425,8 +339,6 @@ func runDecisionsAnswerSubcommand(subArgs []string) int {
 	decisionID := positional[0]
 	chosenOption := positional[1]
 
-	// Default resolver to "operator" when unspecified (this is the human-answerer
-	// surface; SPEC §9 single-human-answerer).
 	resolver := resolverFlag
 	if resolver == "" {
 		resolver = "operator"
@@ -457,8 +369,6 @@ func runDecisionsAnswerSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// N3 first-writer-wins: an unknown/already-terminal decision_id is a no-op —
-	// no error (exit 0), a clear note to the operator.
 	if result.NoOp {
 		fmt.Printf("no-op: decision %s is unknown or already answered (no change)\n", decisionID)
 		return 0
@@ -466,10 +376,6 @@ func runDecisionsAnswerSubcommand(subArgs []string) int {
 	fmt.Println(result.EventID)
 	return 0
 }
-
-// -----------------------------------------------------------------------------
-// usage
-// -----------------------------------------------------------------------------
 
 func decisionsListUsage() {
 	fmt.Print(`harmonik decisions list — the cross-agent "what-needs-me" queue

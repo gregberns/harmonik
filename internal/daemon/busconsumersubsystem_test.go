@@ -1,28 +1,5 @@
 package daemon
 
-// busconsumersubsystem_test.go — subsystem partitioning of the pre-Seal bus
-// consumers the daemon wires in wireSpendAndQueueConsumers and
-// wireWatchersAndObservers.
-//
-// Both states are driven through the REAL config edge: a .harmonik/config.yaml
-// written to disk and read by projectconfig.LoadProjectConfig. Nothing here
-// hand-builds a SubsystemsConfig, because the thing under test is the whole path
-// from operator YAML to construction seam.
-//
-// "Off" is asserted as ABSENT FROM THE BUS, not as a boolean. A bus consumer has
-// no goroutine of its own — it runs on the bus worker pool when an event it
-// matches arrives — so the runtime fact that separates present from absent is
-// whether a subscription carrying its ConsumerID is registered. Reading
-// eventbus.BusSubscribedConsumerIDs is that fact, read out of the live bus
-// rather than inferred from a flag. A constructed-but-inert consumer still holds
-// a subscription and would fail these tests.
-//
-// The DEFAULT half of each pair is what keeps the disabled half from being
-// vacuous: it asserts the same ConsumerID IS on the bus with no subsystems:
-// block, so an absence caused by a typo in the prefix cannot pass as a partition.
-//
-// Helper prefix: buspart.
-
 import (
 	"context"
 	"encoding/json"
@@ -39,9 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// buspartCase describes one gated bus consumer: the operator-facing switch, the
-// ConsumerID prefix its subscriptions carry, and the partition line the daemon
-// must print when it is switched off.
 type buspartCase struct {
 	name    string
 	subsys  projectconfig.SubsystemName
@@ -49,19 +23,6 @@ type buspartCase struct {
 	logWant string
 }
 
-// buspartCases is the set of pre-Seal bus consumers this file gates.
-//
-// PerQueueSpendMeter and QueueOperatorEventConsumer are deliberately NOT here:
-// both hold queue state, so switching either off changes queue behaviour and
-// each needs its own decision. StaleWatcher and QuiesceArbiter are not here
-// either: both are reached from inside the retired work-loop injection path and
-// startBackgroundLoops, which the composition-root step rewrites, so gating them
-// is that step's work rather than this one's.
-//
-// SubscribeHub IS here, and it is the one entry that leaves a nil bootState
-// field behind. Both of its consumer sites sit in bootsocket.go inside the
-// socket-listener subtree, so its guards are in that file and touch none of the
-// composition-root assembly functions.
 var buspartCases = []buspartCase{
 	{
 		name:    "HandlerPausePolicyGoroutine",
@@ -95,13 +56,6 @@ var buspartCases = []buspartCase{
 	},
 }
 
-// buspartBootState builds a bootState carrying a REAL event bus, with its
-// ProjectCfg loaded from yamlContent through the production config loader.
-//
-// BrPath is set because the Cat-BL2 handler is wired only when ProjectDir and
-// BrPath are both non-empty. Without it that consumer would be absent in BOTH
-// states and its disabled test would prove nothing. JSONLLogPath is left empty
-// so no event log is opened — the bus is still real, it just writes nowhere.
 func buspartBootState(t *testing.T, yamlContent string) (*bootState, *sockpartSyncBuffer) {
 	t.Helper()
 	pc, root := subpartLoadConfig(t, yamlContent)
@@ -118,9 +72,6 @@ func buspartBootState(t *testing.T, yamlContent string) (*bootState, *sockpartSy
 	return bs, logBuf
 }
 
-// buspartWire runs both pre-Seal wiring phases, which is where every consumer in
-// buspartCases is constructed and subscribed. The bus is left unsealed. These
-// tests read the subscription list. They do not emit.
 func buspartWire(t *testing.T, bs *bootState) {
 	t.Helper()
 	if err := bs.wireSpendAndQueueConsumers(); err != nil {
@@ -131,10 +82,6 @@ func buspartWire(t *testing.T, bs *bootState) {
 	}
 }
 
-// buspartSubscribed reports whether the bus carries a subscription whose
-// ConsumerID starts with prefix. A consumer that registers several
-// subscriptions shares one prefix, so this answers "is this consumer on the
-// bus" rather than "how many patterns did it register".
 func buspartSubscribed(t *testing.T, bs *bootState, prefix string) bool {
 	t.Helper()
 	ids := eventbus.BusSubscribedConsumerIDs(bs.bus)
@@ -190,8 +137,6 @@ func TestSubsystemPartition_BusConsumers_DisabledIsAbsentFromBus(t *testing.T) {
 				t.Errorf("the daemon did not report the partition; a silent partition is indistinguishable from a config that did not take effect. want %q, log = %q",
 					tc.logWant, logBuf.String())
 			}
-			// Every OTHER gated consumer must stay on the bus: one switch
-			// partitions one subsystem.
 			for _, other := range buspartCases {
 				if other.subsys == tc.subsys {
 					continue
@@ -205,10 +150,6 @@ func TestSubsystemPartition_BusConsumers_DisabledIsAbsentFromBus(t *testing.T) {
 	}
 }
 
-// --- all of them at once, through a real daemon boot -------------------------
-
-// buspartAllDisabledYAML switches off every bus consumer this file gates, as an
-// operator would write it in one block.
 const buspartAllDisabledYAML = sockpartBaseConfigYAML + `
 subsystems:
   handler_pause_policy:
@@ -243,52 +184,14 @@ func TestSubsystemPartition_BusConsumers_DisabledDaemonStillReachesWorkLoop(t *t
 	}
 }
 
-// --- the socket seam SubscribeHub leaves behind -------------------------------
-
-// SubscribeHub is the one gated consumer here that a socket handler holds, so
-// off leaves a nil *SubscribeHub on bootState. A nil POINTER placed in the
-// SocketHandlers.Subscribe INTERFACE field is not a nil interface, so the
-// daemon's own `if sub == nil` guard would not fire and the subscribe op would
-// dereference a nil receiver instead.
-//
-// These two tests read the difference off a live socket rather than off the
-// field, because the field being nil is not the fact that matters. What these
-// tests measure is what the DAEMON writes on the wire: a refusal envelope when
-// the hub is absent, and a stream when it is present.
-//
-// They deliberately do NOT measure what an operator sees, because that is worse
-// and it is not this package's to fix. Only two of the six clients of this op
-// check the response envelope. Plain `harmonik subscribe` prints the refusal and
-// exits 0, and `decisions wait` returns empty and exits 0. Filed as hk-1dwk2
-// (P1), against cmd/harmonik.
-
-// buspartSubscribeOpConfigYAML enables the socket listener (the subscribe op
-// needs it) and switches off only the hub.
 const buspartSubscribeOpConfigYAML = sockpartBaseConfigYAML + `
 subsystems:
   subscribe_hub:
     enabled: false
 `
 
-// buspartSubscribeReplayAll is a `subscribe` request that asks for every event
-// already in events.jsonl. The all-zero UUID sorts below every UUIDv7, so
-// ScanAfter replays the whole file.
-//
-// This is what makes the served case DETERMINISTIC, and the test is flaky
-// without it. A bare `{"op":"subscribe"}` waits for a live event or for the
-// idle heartbeat, and the heartbeat clamps to a floor of 10 s, so a short
-// deadline was really measuring incidental daemon chatter. Replay is encoded
-// synchronously before HandleSubscribe enters its live select, and
-// emitStartupEvents fsyncs daemon_started before the socket binds, so at least
-// one line is always waiting.
 const buspartSubscribeReplayAll = `{"op":"subscribe","since_event_id":"00000000-0000-0000-0000-000000000000"}`
 
-// buspartDialSocket connects to the daemon socket, retrying until the deadline.
-//
-// It retries because bind(2) and listen(2) are two syscalls: the socket inode
-// exists between them, and a connect(2) in that window fails with
-// ECONNREFUSED. Waiting for the file to appear and then dialing once loses that
-// race on a loaded machine.
 func buspartDialSocket(t *testing.T, projectDir string, timeout time.Duration) net.Conn {
 	t.Helper()
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
@@ -306,14 +209,6 @@ func buspartDialSocket(t *testing.T, projectDir string, timeout time.Duration) n
 	return nil
 }
 
-// buspartProbeSubscribeOp boots a daemon, sends one `subscribe` request, and
-// reports the FIRST JSON object the daemon writes back.
-//
-// The return is the raw object rather than a decoded SocketResponse, and that
-// matters. A streamed event line decodes into SocketResponse with every field
-// at its zero value, so a decode that succeeds proves nothing about which of
-// the two paths ran. The discriminator is the SHAPE. A refusal carries an
-// `error` field. A stream line does not.
 func buspartProbeSubscribeOp(t *testing.T, yamlContent string) (first map[string]json.RawMessage, gotAny bool) {
 	t.Helper()
 	projectDir, jsonlPath := sockpartProjectDir(t, yamlContent)
@@ -352,8 +247,6 @@ func buspartProbeSubscribeOp(t *testing.T, yamlContent string) (first map[string
 	return raw, true
 }
 
-// buspartRefusalText returns the `error` text carried by a socket refusal, and
-// false when the object is not a refusal at all.
 func buspartRefusalText(obj map[string]json.RawMessage) (string, bool) {
 	rawErr, ok := obj["error"]
 	if !ok {

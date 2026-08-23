@@ -10,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Fault injection (re-exported from substrate) ─────────────────────────────
-
 // FaultMode is re-exported (a type alias) from the generic substrate replay
 // engine, mirroring codexdigitaltwin, so keeper fault tests read naturally.
 type FaultMode = substrate.FaultMode
@@ -29,8 +27,6 @@ const (
 	FaultTruncate  = substrate.FaultTruncate
 	FaultDup       = substrate.FaultDup
 )
-
-// ─── Synthetic fault-event kinds ──────────────────────────────────────────────
 
 // The keeper reactor's input vocabulary (keeper.EventKind) has no native
 // transport-error or connection-lost kind — the pre-rebuild keeper read files
@@ -52,14 +48,6 @@ const (
 	EvTwinDisconnected keeper.EventKind = "twin_disconnected"
 )
 
-// ─── keeperCodec ──────────────────────────────────────────────────────────────
-
-// keeperCodec implements substrate.ReplayCodec[keeper.Event]: it deserializes
-// synthesized stimulus lines (EncodeStimulus output — one JSON keeper.Event
-// per line) back into keeper input events, and supplies the two synthetic
-// fault events the substrate fault injector needs (D2/D3). It is stateless:
-// keeper events carry no sequence number (dedup is reactor-side, keyed on
-// cycle_id), so no codec-internal seq is required.
 type keeperCodec struct{}
 
 // DecodeLine decodes one synthesized stimulus line.
@@ -92,8 +80,6 @@ func (c *keeperCodec) ErrorEvent(msg string) keeper.Event {
 func (c *keeperCodec) DisconnectEvent() keeper.Event {
 	return keeper.Event{Kind: EvTwinDisconnected}
 }
-
-// ─── Twin ─────────────────────────────────────────────────────────────────────
 
 // Twin replays a synthesized keeper stimulus stream (NDJSON of keeper.Event)
 // as a substrate.EventSource[keeper.Event], optionally injecting transport

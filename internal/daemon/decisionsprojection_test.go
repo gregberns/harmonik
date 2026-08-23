@@ -1,24 +1,5 @@
 package daemon
 
-// decisionsprojection_test.go — unit tests for decisionsProjection (hitl-decisions
-// component K3, bead hk-qed).
-//
-// Coverage (per 07-tasks.md K3 acceptance criteria):
-//   - A synthetic events.jsonl with N decision_needed, some resolved/withdrawn
-//     for a subset, and a DUPLICATE event_id → projection returns EXACTLY the
-//     expected open set (resolved/withdrawn removed; key on decision_id;
-//     dedupe honored).
-//   - PURITY: runs against a log file with no daemon (no socket dial); a missing
-//     file yields an empty map.
-//   - Field-fidelity: the Decision value carries the rendered fields verbatim
-//     from the decision_needed payload.
-//
-// These helpers use the prefix "dproj" (decisions-projection) per the
-// helper-prefix discipline so they do not collide with other daemon-package
-// test helpers.
-//
-// Bead ref: hk-qed (K3).
-
 import (
 	"encoding/json"
 	"fmt"
@@ -29,9 +10,6 @@ import (
 	"testing"
 )
 
-// dprojEvent builds one EV-001 JSONL envelope line for the given event_id,
-// type, and decoded payload object. The payload is marshalled into the
-// envelope's "payload" raw-JSON field exactly as the daemon writes it.
 func dprojEvent(eventID, evType string, payload any) string {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -52,8 +30,6 @@ func dprojEvent(eventID, evType string, payload any) string {
 	return string(line)
 }
 
-// dprojNeeded builds a decision_needed event line. The event_id IS the
-// decision_id (SPEC §1).
 func dprojNeeded(eventID, question string, options []string, blockedAgent, contextLink string) string {
 	return dprojEvent(eventID, "decision_needed", map[string]any{
 		"question":      question,
@@ -63,8 +39,6 @@ func dprojNeeded(eventID, question string, options []string, blockedAgent, conte
 	})
 }
 
-// dprojResolved builds a decision_resolved event line keyed (via payload) on
-// decisionID. Its own event_id is distinct from decisionID (SPEC C7).
 func dprojResolved(eventID, decisionID, chosenOption string) string {
 	return dprojEvent(eventID, "decision_resolved", map[string]any{
 		"decision_id":   decisionID,
@@ -73,8 +47,6 @@ func dprojResolved(eventID, decisionID, chosenOption string) string {
 	})
 }
 
-// dprojWithdrawn builds a decision_withdrawn event line keyed (via payload) on
-// decisionID.
 func dprojWithdrawn(eventID, decisionID, reason, by string) string {
 	return dprojEvent(eventID, "decision_withdrawn", map[string]any{
 		"decision_id": decisionID,
@@ -83,8 +55,6 @@ func dprojWithdrawn(eventID, decisionID, reason, by string) string {
 	})
 }
 
-// dprojBuildEventsFile writes a temp project events.jsonl containing the given
-// lines and returns the events.jsonl path.
 func dprojBuildEventsFile(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -106,8 +76,6 @@ func dprojBuildEventsFile(t *testing.T, lines []string) string {
 	return path
 }
 
-// dprojOpenKeys returns the sorted decision_id keys of the open set, for stable
-// set comparison.
 func dprojOpenKeys(open map[string]Decision) []string {
 	keys := make([]string, 0, len(open))
 	for k := range open {
@@ -117,9 +85,6 @@ func dprojOpenKeys(open map[string]Decision) []string {
 	return keys
 }
 
-// Canonical UUIDv7-shaped event_ids (lexicographic == chronological for the
-// scan). The suffix encodes role: 1xxx = decision_needed (the decision_id),
-// 2xxx = a resolved terminal, 3xxx = a withdrawn terminal.
 const (
 	dprojD1 = "01965b00-0000-7000-8000-0000000010a1" // needed → stays open
 	dprojD2 = "01965b00-0000-7000-8000-0000000010a2" // needed → resolved
@@ -158,8 +123,6 @@ func TestDecisionsProjection_OpenSet(t *testing.T) {
 		t.Fatalf("open set keys = %v, want %v", gotKeys, wantKeys)
 	}
 
-	// D1 field fidelity — rendered fields copied verbatim from the payload, and
-	// the duplicate did not corrupt or double-apply.
 	d1, ok := open[dprojD1]
 	if !ok {
 		t.Fatal("D1 missing from open set")
@@ -180,7 +143,6 @@ func TestDecisionsProjection_OpenSet(t *testing.T) {
 		t.Errorf("D1.ContextLink = %q, want %q", d1.ContextLink, "hk-aaa")
 	}
 
-	// Negative assertions: resolved/withdrawn dropped out entirely.
 	if _, present := open[dprojD2]; present {
 		t.Errorf("D2 (resolved) must NOT be in the open set")
 	}

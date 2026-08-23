@@ -10,24 +10,19 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// typesFixtureTimestamp returns a deterministic UTC timestamp for use in
-// JSON round-trip fixtures (millisecond precision, no monotonic component).
 func typesFixtureTimestamp() time.Time {
 	return time.Date(2026, 5, 14, 18, 22, 11, 482_000_000, time.UTC)
 }
 
-// typesFixtureTimestampPtr returns a pointer to typesFixtureTimestamp().
 func typesFixtureTimestampPtr() *time.Time {
 	t := typesFixtureTimestamp()
 	return &t
 }
 
-// typesFixtureQueueID returns a canonical UUIDv7 string for test fixtures.
 func typesFixtureQueueID() string {
 	return "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001"
 }
 
-// typesFixtureRunID returns a canonical run ID string for test fixtures.
 func typesFixtureRunID() *string {
 	s := "0190b3c4-9001-7000-8000-000000000001"
 	return &s
@@ -38,7 +33,6 @@ func typesFixtureRecoveryReceiptID() *string {
 	return &s
 }
 
-// typesFixtureQueue builds a minimal valid Queue for round-trip tests.
 func typesFixtureQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion:           1,
@@ -276,10 +270,6 @@ func TestItemNilOptionalFieldsOmitted(t *testing.T) {
 		t.Fatalf("json.Unmarshal into map: %v", err)
 	}
 
-	// run_id and appended_at should be present but null (the spec example shows
-	// explicit null for these fields, so we allow null; omitempty is NOT used on
-	// these fields per the spec §2.9 informative example which shows null values).
-	// Verify the fields are present in the JSON map (as JSON null).
 	for _, key := range []string{"run_id", "appended_at"} {
 		v, ok := m[key]
 		if !ok {

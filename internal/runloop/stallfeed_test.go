@@ -1,15 +1,5 @@
 package runloop
 
-// stallfeed_test.go — the feed between the daemon's stall detector and one run's
-// dispatch machine.
-//
-// The detector runs on the daemon's scan goroutine and serves every run at once,
-// so the two things that matter here are that a post reaches the right run and
-// that no post can hold the scan up. A blocked scan is a detector that stops
-// detecting for the whole fleet, which is the failure this feed exists inside.
-//
-// Helper prefix: stallFeed.
-
 import (
 	"sync"
 	"testing"
@@ -49,9 +39,6 @@ func TestStallFeed_PostNeverBlocks(t *testing.T) {
 	_, release := f.Register("run-a")
 	defer release()
 
-	// One post past the buffer, and one to a run that has no feed at all. Both
-	// must return rather than park the caller: this call is on the scan
-	// goroutine that serves every other run.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -94,7 +81,5 @@ func TestStallFeed_AReleasedFeedEndsItsReader(t *testing.T) {
 		t.Errorf("a released feed left its reader parked for ever, so the run's stall watch never ends")
 	}
 
-	// A second release is what a defensive caller does, and it must not panic on
-	// a channel that is already closed.
 	release()
 }

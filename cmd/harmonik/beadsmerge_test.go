@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// beadsMergeFixture writes a JSONL file containing the given rows and returns the path.
 func beadsMergeFixture(t *testing.T, rows []map[string]any) string {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "issues*.jsonl")
@@ -28,7 +27,6 @@ func beadsMergeFixture(t *testing.T, rows []map[string]any) string {
 	return f.Name()
 }
 
-// beadsMergeReadJSONL reads back the JSONL at path and returns rows as loose maps.
 func beadsMergeReadJSONL(t *testing.T, path string) []map[string]json.RawMessage {
 	t.Helper()
 	//nolint:gosec // G304: test helper path
@@ -67,7 +65,6 @@ func splitLines(s string) []string {
 	return lines
 }
 
-// beadsMergeExtractID extracts the "id" string from a raw map.
 func beadsMergeExtractID(t *testing.T, m map[string]json.RawMessage) string {
 	t.Helper()
 	raw, ok := m["id"]
@@ -81,7 +78,6 @@ func beadsMergeExtractID(t *testing.T, m map[string]json.RawMessage) string {
 	return s
 }
 
-// beadsMergeExtractStringField extracts a string field from a raw map.
 func beadsMergeExtractStringField(t *testing.T, m map[string]json.RawMessage, key string) string {
 	t.Helper()
 	raw, ok := m[key]
@@ -95,7 +91,6 @@ func beadsMergeExtractStringField(t *testing.T, m map[string]json.RawMessage, ke
 	return s
 }
 
-// beadsMergeExtractLabels extracts the "labels" string array from a raw map.
 func beadsMergeExtractLabels(t *testing.T, m map[string]json.RawMessage) []string {
 	t.Helper()
 	raw, ok := m["labels"]
@@ -109,13 +104,11 @@ func beadsMergeExtractLabels(t *testing.T, m map[string]json.RawMessage) []strin
 	return labels
 }
 
-// timeStr formats a time as RFC3339Nano for use in test fixtures.
 func timeStr(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
 func TestBeadsMerge_NoOp(t *testing.T) {
-	// Ancestor == Current == Other: output should equal input (no changes).
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	row := map[string]any{
 		"id":         "hk-aaa",
@@ -145,7 +138,6 @@ func TestBeadsMerge_NoOp(t *testing.T) {
 }
 
 func TestBeadsMerge_LWW_OtherWins(t *testing.T) {
-	// Other has a newer updated_at: it should win.
 	base := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := base.Add(time.Hour)
 
@@ -173,7 +165,6 @@ func TestBeadsMerge_LWW_OtherWins(t *testing.T) {
 }
 
 func TestBeadsMerge_LWW_CurrentWins(t *testing.T) {
-	// Current has a newer updated_at: it should win.
 	base := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	newer := base.Add(time.Hour)
 
@@ -201,7 +192,6 @@ func TestBeadsMerge_LWW_CurrentWins(t *testing.T) {
 }
 
 func TestBeadsMerge_UnionNewBeads(t *testing.T) {
-	// Each side adds a bead not present in the other: both should appear.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	sharedRow := map[string]any{"id": "hk-shared", "title": "shared", "updated_at": timeStr(ts)}
 	currentOnly := map[string]any{"id": "hk-current-only", "title": "from current", "updated_at": timeStr(ts)}
@@ -233,7 +223,6 @@ func TestBeadsMerge_UnionNewBeads(t *testing.T) {
 }
 
 func TestBeadsMerge_LabelUnion(t *testing.T) {
-	// Current adds label "a"; other adds label "b"; result should have both.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	ancestorRow := map[string]any{"id": "hk-labels", "title": "label test", "updated_at": timeStr(ts), "labels": []string{}}
 	currentRow := map[string]any{"id": "hk-labels", "title": "label test", "updated_at": timeStr(ts), "labels": []string{"label-a"}}
@@ -266,7 +255,6 @@ func TestBeadsMerge_LabelUnion(t *testing.T) {
 }
 
 func TestBeadsMerge_SameTimestampConflictLogged(t *testing.T) {
-	// Same updated_at, different status: conflict logged in spec-required format.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	ancestorRow := map[string]any{"id": "hk-conflict", "status": "open", "updated_at": timeStr(ts)}
 	currentRow := map[string]any{"id": "hk-conflict", "status": "closed", "updated_at": timeStr(ts)}
@@ -282,13 +270,11 @@ func TestBeadsMerge_SameTimestampConflictLogged(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d", result)
 	}
 
-	// Merge should still succeed (current wins as tiebreaker).
 	rows := beadsMergeReadJSONL(t, currentPath)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
 
-	// Conflict log must exist and contain the spec-required format (BL-MRG-003).
 	logPath := filepath.Join(workingDir, "merge-conflicts.log")
 	//nolint:gosec // G304: test path
 	data, err := os.ReadFile(logPath)
@@ -311,7 +297,6 @@ func TestBeadsMerge_SameTimestampConflictLogged(t *testing.T) {
 }
 
 func TestBeadsMerge_EmptyAncestor(t *testing.T) {
-	// Ancestor is empty (first merge on a new repo): both current and other beads should appear.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	currentRow := map[string]any{"id": "hk-from-current", "title": "from current", "updated_at": timeStr(ts)}
 	otherRow := map[string]any{"id": "hk-from-other", "title": "from other", "updated_at": timeStr(ts)}
@@ -332,7 +317,6 @@ func TestBeadsMerge_EmptyAncestor(t *testing.T) {
 }
 
 func TestBeadsMerge_OutputSortedByID(t *testing.T) {
-	// Output rows should be sorted by bead ID (deterministic).
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	rows := []map[string]any{
 		{"id": "hk-zzz", "title": "z bead", "updated_at": timeStr(ts)},
@@ -366,7 +350,6 @@ func TestBeadsMerge_OutputSortedByID(t *testing.T) {
 }
 
 func TestBeadsMerge_MissingArguments(t *testing.T) {
-	// Fewer than 4 arguments should return exit code 1.
 	result := runBeadsMergeSubcommand([]string{"only-one"})
 	if result != 1 {
 		t.Errorf("expected exit 1 for missing arguments, got %d", result)
@@ -374,7 +357,6 @@ func TestBeadsMerge_MissingArguments(t *testing.T) {
 }
 
 func TestBeadsMerge_HelpFlag(t *testing.T) {
-	// --help should return exit 0.
 	result := runBeadsMergeSubcommand([]string{"--help"})
 	if result != 0 {
 		t.Errorf("expected exit 0 for --help, got %d", result)

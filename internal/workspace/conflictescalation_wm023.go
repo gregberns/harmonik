@@ -1,39 +1,5 @@
 package workspace
 
-// conflictescalation_wm023.go — WM-023 escalation execution path.
-//
-// Implements the deterministic (mechanism-tagged) escalation path for
-// unresolvable merge conflicts per workspace-model.md §4.6.WM-023:
-//
-//   - ErrEscalationNotInConflictResolving — state-guard: workspace MUST be in
-//     conflict-resolving before escalation can proceed.
-//   - BuildConflictEscalationPayload — constructs the core.MergeConflictEscalationPayload
-//     required by [event-model.md §8.5.6] from workspace state and conflict inputs.
-//
-// Caller discipline per WM-023 ordering contract:
-//  1. Call BuildConflictEscalationPayload to obtain the typed payload.
-//  2. Emit merge_conflict_escalation on the event bus (emitter owns the bus call).
-//  3. Call Transition(ws, core.WorkspaceStateDiscarded) to advance lifecycle state.
-//
-// The ordering of steps 2 and 3 is the caller's responsibility; this package
-// provides the primitive, not the sequencing. The "single-entry" invariant
-// (conflict-resolving is entered at most once per merge-pending cycle) is enforced
-// by the state guard in BuildConflictEscalationPayload: escalation can only execute
-// from conflict-resolving, so the workspace MUST have already entered that state
-// once (at initial conflict detection) before any escalation call is valid.
-//
-// Spec refs:
-//   - specs/workspace-model.md §4.6 WM-023 — escalation trigger conditions and
-//     ordering contract (event BEFORE state transition per §7.1 table row).
-//   - specs/workspace-model.md §7.1 — conflict-resolving → discarded transition.
-//   - specs/event-model.md §8.5.6 — merge_conflict_escalation payload schema
-//     (EV-owned; payload type: core.MergeConflictEscalationPayload).
-//   - specs/workspace-model.md §4.6 WM-022a — all-mechanical escalation (null ref
-//     routes here without a re-dispatch attempt).
-//   - specs/workspace-model.md §4.6 WM-024 — cap-exhausted routing to this path.
-//
-// Bead ref: hk-8mwo.35.
-
 import (
 	"errors"
 	"fmt"
@@ -93,10 +59,6 @@ func BuildConflictEscalationPayload(
 		)
 	}
 
-	// Single-entry guard per WM-023: escalation can only execute from
-	// conflict-resolving. This enforces that the workspace already entered
-	// conflict-resolving at initial conflict detection and is now exhausting
-	// the resolution path.
 	if ws.State != core.WorkspaceStateConflictResolving {
 		return core.MergeConflictEscalationPayload{}, fmt.Errorf(
 			"%w: current state is %q",
@@ -116,9 +78,6 @@ func BuildConflictEscalationPayload(
 		)
 	}
 
-	// workspace_id UUID = run_id UUID per WM-004 derivation rule. The string
-	// workspace_id "ws-<run_id>" carries the same UUID value as run_id; the
-	// payload field uses the UUID type directly.
 	payload := core.MergeConflictEscalationPayload{
 		WorkspaceID:   core.WorkspaceID(ws.RunID),
 		RunID:         ws.RunID,

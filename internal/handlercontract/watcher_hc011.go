@@ -17,13 +17,6 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
-// watcher — per-bead helper prefix for test helpers in watcher_hc011_test.go
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.12).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — Narrow emitter interface for the event bus
-// ─────────────────────────────────────────────────────────────────────────────
-
 // EventEmitter is the single-method interface the watcher requires from the
 // in-process event bus.  It matches the Emit method of eventbus.EventBus
 // (specs/event-model.md §6.1 INTERFACE EventBus) exactly, so any
@@ -96,10 +89,6 @@ type WatcherDeadLetterSink interface {
 	Append(eventType core.EventType, payload []byte, reason string) error
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — Watcher publish-buffer size
-// ─────────────────────────────────────────────────────────────────────────────
-
 // WatcherPublishBufSize is the default capacity of the watcher-to-event-bus
 // publish channel per specs/handler-contract.md §4.3.HC-011a.
 //
@@ -107,10 +96,6 @@ type WatcherDeadLetterSink interface {
 // 8 events)".  On buffer-full the watcher MUST route to the dead-letter per
 // HC-027 rather than block indefinitely.
 const WatcherPublishBufSize = 8
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011a — Sub-reason string constants for watcher self-defect events
-// ─────────────────────────────────────────────────────────────────────────────
 
 // WatcherPanicSubReason is the sub_reason value the watcher MUST use when a
 // panic inside the watcher goroutine is converted to an agent_failed event per
@@ -128,10 +113,6 @@ const WatcherPanicSubReason = "watcher_panic"
 // Error class: ErrStructural.
 // Spec: specs/handler-contract.md §4.3.HC-011a.
 const WatcherWedgedSubReason = "watcher_wedged"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — SpawnWatcherConfig and Watcher
-// ─────────────────────────────────────────────────────────────────────────────
 
 // SpawnWatcherConfig is the per-session configuration supplied to SpawnWatcher.
 //
@@ -457,16 +438,9 @@ func SpawnWatcher(ctx context.Context, cfg SpawnWatcherConfig) *Watcher {
 	return w
 }
 
-// runLoop is the watcher goroutine body.
-//
-// It installs a recover() barrier per HC-011a, runs the NDJSON read-loop, and
-// closes w.done when it exits.
 func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize int) {
 	defer close(w.done)
 
-	// HC-011a: install recover() barrier.  A panic inside the watcher MUST be
-	// converted to agent_failed with class ErrStructural, sub-reason watcher_panic,
-	// and MUST NOT bring down the daemon.
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -475,8 +449,6 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 		panicErr := fmt.Errorf("handlercontract: watcher panic: %v: %w", r, ErrStructural)
 		w.setTermErr(panicErr)
 
-		// Emit agent_failed{structural, watcher_panic} to the bus; route to
-		// dead-letter if the emit fails.
 		eventType, payload := buildWatcherFailedPayload(w.sessionID, w.runID, WatcherPanicSubReason, panicErr)
 		w.publishOrDeadLetter(ctx, eventType, payload, cfg.Publisher, cfg.DeadLetter)
 	}()
@@ -484,34 +456,15 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 	w.readLoop(ctx, cfg, bufSize)
 }
 
-// readLoop is the inner NDJSON read-loop called from runLoop.
-//
-// It reads NDJSON lines from cfg.ProgressStream, updates lastReadEventAt on
-// each successful read, translates each line into a core.Event, and publishes
-// it to the bus via the publish channel.
-//
-// Framing violations (line-too-long, partial-message, malformed JSON) are
-// classified per HC-007a/HC-007b and result in agent_failed publication.
 func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
-	// WS3-Claude-A wire-tap seam: when cfg.WireTap is set, read through a
-	// TeeReader so every consumed byte is copied verbatim to the tap BEFORE
-	// decode (lossless raw capture). When nil, read cfg.ProgressStream directly
-	// — byte-identical to the pre-tap watcher, no timing change.
 	src := cfg.ProgressStream
 	if cfg.WireTap != nil {
 		src = io.TeeReader(cfg.ProgressStream, cfg.WireTap)
 	}
-	// HC-011a: lastReadEventAt MUST advance on every successful io.Reader.Read
-	// return, not once per decoded line/Scan — a Scan can span many Reads (or a
-	// Read many lines), and wedge detection keys off the raw Read cadence. The
-	// stamp reader wraps the (post-tap) source so it observes the same bytes the
-	// scanner consumes.
 	scanner := bufio.NewScanner(&readStampReader{inner: src, w: w})
-	// HC-007a: enforce the 1 MiB max line-length cap at the scanner layer.
 	scanner.Buffer(make([]byte, NDJSONMaxLineLenBytes+1), NDJSONMaxLineLenBytes+1)
 
 	for {
-		// Check context cancellation before each scan iteration.
 		select {
 		case <-ctx.Done():
 			cancelErr := fmt.Errorf("handlercontract: watcher context cancelled: %w", ErrCanceled)
@@ -525,7 +478,6 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		if !gotLine {
 			scanErr := scanner.Err()
 			if scanErr != nil {
-				// Distinguish line-too-long (ErrTooLong) from other I/O errors.
 				if isLineTooLong(scanErr) {
 					termErr := fmt.Errorf("handlercontract: ndjson line too long: %w", ErrProtocolMismatch)
 					w.setTermErr(termErr)
@@ -533,17 +485,6 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 					return
 				}
-				// hk-9ngiv: version-negotiation failure surfaces through the
-				// scanner as an error wrapping ErrProtocolMismatch (the
-				// SessionIDInterceptor's sticky negoErr — handler advertised no
-				// mutually supported version, or never emitted handler_capabilities
-				// within the caps timeout). Preserve the sentinel (%w for scanErr,
-				// NOT %v) so the orchestrator's retry policy can distinguish a
-				// protocol mismatch — which MUST NOT retry-spin the same pinned
-				// binary — from a transient framing error (§8.7, HC-021). Mirrors
-				// the isLineTooLong branch above; both wrap ErrProtocolMismatch, but
-				// this is the general case (sub_reason protocol_mismatch) vs the
-				// line-cap subcase (sub_reason ndjson_line_too_long).
 				if errors.Is(scanErr, ErrProtocolMismatch) {
 					termErr := fmt.Errorf("handlercontract: progress stream protocol mismatch: %w", scanErr)
 					w.setTermErr(termErr)
@@ -551,31 +492,25 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 					return
 				}
-				// Other I/O errors: structural framing failure.
 				termErr := fmt.Errorf("handlercontract: progress stream read error: %w: %w", scanErr, ErrStructural)
 				w.setTermErr(termErr)
 				et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, PartialMessageSubReason, termErr)
 				w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 				return
 			}
-			// EOF with no error: progress stream closed cleanly.
-			// Session-end cleanup: watcher exits cleanly; callers observe Err() == nil.
 			w.setTermErr(nil)
 			return
 		}
 
 		line := scanner.Bytes()
 		if len(line) == 0 {
-			// Blank line: skip (NDJSON allows blank separators between objects).
 			continue
 		}
 
-		// Decode the type-discriminator field to route to the correct publish path.
 		var typeOnly struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(line, &typeOnly); err != nil {
-			// HC-007b: malformed JSON on a live socket → close session, emit agent_failed.
 			termErr := fmt.Errorf("handlercontract: malformed NDJSON line: %w: %w", err, ErrStructural)
 			w.setTermErr(termErr)
 			et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, MalformedProgressMessageSubReason, termErr)
@@ -583,19 +518,10 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			return
 		}
 
-		// Unknown message types MUST be ignored per HC-007 additive-evolution rule:
-		// the watcher dispatches on the type field; unknown values are dropped
-		// silently (not treated as errors) to allow future protocol extensions
-		// to be deployed before all consumers are updated.
 		if typeOnly.Type == "" || !isKnownProgressMsgType(typeOnly.Type) {
 			continue
 		}
 
-		// HC-061: sub-workflow boundary handlers MUST NOT emit an Outcome.
-		// If cfg.NodeType == NodeTypeSubWorkflow and the handler emits
-		// outcome_emitted, the watcher MUST reject it as ErrStructural with
-		// sub-reason SubworkflowBoundaryEmitSubReason.
-		// Cite: specs/handler-contract.md §4.2a HC-061.
 		if typeOnly.Type == ProgressMsgTypeOutcomeEmitted && cfg.NodeType == core.NodeTypeSubWorkflow {
 			termErr := fmt.Errorf("handlercontract: handler emitted Outcome on sub-workflow boundary node (HC-061 violation): %w", ErrStructural)
 			w.setTermErr(termErr)
@@ -604,10 +530,6 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			return
 		}
 
-		// Emit the progress-stream message to the bus.
-		// The bus (EventBus.Emit) stamps event_id, source_subsystem, and envelope
-		// timestamps at enqueue time per EV-002b; the watcher supplies only the
-		// type and the raw NDJSON line as payload.
 		if typeOnly.Type == ProgressMsgTypeHandlerCapabilities {
 			var wire HandlerCapabilitiesMsg
 			if err := json.Unmarshal(line, &wire); err != nil {
@@ -634,27 +556,16 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		}
 		w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
 
-		// CP-024: every agent_output_chunk MUST co-emit a budget_accrual event
-		// within the same handler tick (specs/control-points.md §4.5.CP-024).
 		if typeOnly.Type == ProgressMsgTypeAgentOutputChunk {
 			w.emitBudgetAccrualForChunk(ctx, line, cfg.Publisher, cfg.DeadLetter)
 		}
 
-		// HC-064..HC-067: drive the per-session lifecycle FSM based on the
-		// observed progress-stream event type. The Machine is optional; when nil
-		// (backward-compatible callers that predate HC-064) this block is a no-op.
 		if cfg.Machine != nil {
 			w.driveLifecycleFSM(ctx, cfg.Machine, typeOnly.Type, cfg.Publisher, cfg.DeadLetter)
 		}
 	}
 }
 
-// publishOrDeadLetter attempts to emit (eventType, payload) to pub.  If Emit
-// returns a non-nil error the raw event is routed to the dead-letter sink per
-// HC-027.  ctx is the watcher's enclosing context; it is passed through to
-// Emit so the bus can honour cancellation on the critical path.
-//
-// The watcher MUST NOT drop events silently.
 func (w *Watcher) publishOrDeadLetter(
 	ctx context.Context,
 	eventType core.EventType,
@@ -667,15 +578,6 @@ func (w *Watcher) publishOrDeadLetter(
 	}
 }
 
-// appendDeadLetter routes (eventType, payload, reason) to the dead-letter sink
-// and records the outcome. It is the ONLY place the watcher calls
-// WatcherDeadLetterSink.Append.
-//
-// An Append failure is unrecoverable — the event is lost — but it is never
-// dropped silently (hk-0eqik). Each failure bumps the DeadLetterFailures
-// counter, replaces LastDeadLetterFailure, and is handed to the caller-supplied
-// OnDeadLetterFailure hook when one was configured. The hook runs inline on the
-// watcher goroutine, which is why the contract requires it to be non-blocking.
 func (w *Watcher) appendDeadLetter(dl WatcherDeadLetterSink, eventType core.EventType, payload []byte, reason string) {
 	err := dl.Append(eventType, payload, reason)
 	if err == nil {
@@ -688,35 +590,11 @@ func (w *Watcher) appendDeadLetter(dl WatcherDeadLetterSink, eventType core.Even
 	}
 }
 
-// setTermErr stores err as the watcher's terminal error.  Stores only on the
-// first call (once per goroutine lifetime — always called before done is closed).
 func (w *Watcher) setTermErr(err error) {
-	// Store a pointer-to-err.  We always store (the goroutine calls this exactly
-	// once before returning), so no CAS is required here.
 	w.termErr.Store(&err)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal event-building helpers (unexported; tested via SpawnWatcher)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// emitBudgetAccrualForChunk synthesizes and emits a budget_accrual event for an
-// agent_output_chunk progress-stream message per CP-024.
-//
-// The payload is derived from the chunk fields: run_id and session_id are
-// decoded from chunkLine; chunk_index and bytes_emitted provide correlation and
-// cost_units respectively. cost_basis is always core.CostBasisOutputBytes
-// (no token-count is available at the chunk boundary).
-//
-// Decoding is best-effort: if chunkLine is missing required fields the
-// budget_accrual is emitted with whatever fields could be decoded (zero RunID,
-// empty SessionID, zero CostUnits). The MUST-emit requirement of CP-024 takes
-// precedence over payload completeness.
-//
-// Spec: specs/control-points.md §4.5.CP-024; specs/event-model.md §8.4.2.
 func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byte, pub EventEmitter, dl WatcherDeadLetterSink) {
-	// Decode only the fields needed to construct the budget_accrual payload.
-	// Use core types directly so RunID.UnmarshalText handles UUID parsing.
 	var msg struct {
 		RunID        core.RunID     `json:"run_id"`
 		SessionID    core.SessionID `json:"session_id"`
@@ -739,7 +617,6 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 
 	payload, err := json.Marshal(p)
 	if err != nil {
-		// Static struct; marshal failure is a defect. Route to dead-letter.
 		w.appendDeadLetter(dl, core.EventTypeBudgetAccrual, nil, fmt.Sprintf("budget_accrual marshal: %v", err))
 		return
 	}
@@ -747,24 +624,6 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 	w.publishOrDeadLetter(ctx, core.EventTypeBudgetAccrual, payload, pub, dl)
 }
 
-// driveLifecycleFSM maps a progress-stream message type to a LifecycleState
-// transition and emits a lifecycle_transition event (HC-064..HC-067, §8.3.14).
-//
-// Mapping (HC-065 table):
-//   - agent_ready       → StateReady     (ReasonInitComplete)
-//   - agent_started     → StateExecuting  (ReasonCommandStarted)
-//   - agent_completed   → StateReady     (ReasonCommandComplete)
-//   - agent_failed      → StateFailed    (ReasonError)
-//   - agent_heartbeat   → RecordActivity only (no state change per HC-026a)
-//   - all other types   → no-op
-//
-// Note: agent_warning_silent_hang is NOT a progress-stream message; it is
-// synthesized by the daemon's watchdog layer. The Ready→Failed(silent_hang)
-// transition is driven by the workloop/watchdog, not by this function.
-//
-// Invalid transitions (e.g. duplicate agent_ready) are silently ignored:
-// the watcher MUST NOT panic on invalid-transition errors because the Machine
-// may already be in a terminal state.
 func (w *Watcher) driveLifecycleFSM(
 	ctx context.Context,
 	m *hclifecycle.Machine,
@@ -784,17 +643,9 @@ func (w *Watcher) driveLifecycleFSM(
 	case ProgressMsgTypeAgentFailed:
 		w.emitMachineTransition(ctx, m, hclifecycle.StateFailed, hclifecycle.ReasonError, "agent_failed", "agent process failed", pub, dl)
 	default:
-		// Rate-limit, output-chunk, and other non-lifecycle types: no FSM effect.
 	}
 }
 
-// emitMachineTransition performs a lifecycle Machine transition and emits a
-// lifecycle_transition event to the bus. Invalid transitions are silently
-// ignored (the machine may already be in a terminal state; see HC-067).
-//
-// It is a method on *Watcher (rather than a free function) so that its
-// dead-letter routing goes through w.appendDeadLetter and therefore records
-// sink failures like every other dead-letter path (hk-0eqik).
 func (w *Watcher) emitMachineTransition(
 	ctx context.Context,
 	m *hclifecycle.Machine,
@@ -806,11 +657,8 @@ func (w *Watcher) emitMachineTransition(
 ) {
 	from := m.Current()
 	if err := m.Transition(to, reason, errCode, errMsg); err != nil {
-		// Invalid transition (e.g. already terminal, duplicate event): silent no-op.
-		// The machine enforces the HC-065 table; the caller should not panic here.
 		return
 	}
-	// Build and emit lifecycle_transition event payload (§8.3.14).
 	p := core.LifecycleTransitionPayload{
 		SessionID:      core.SessionID(m.SessionID()),
 		FromState:      from.String(),
@@ -825,9 +673,6 @@ func (w *Watcher) emitMachineTransition(
 		w.appendDeadLetter(dl, core.EventTypeLifecycleTransition, nil, fmt.Sprintf("lifecycle_transition marshal: %v", err))
 		return
 	}
-	// Use EmitWithRunID so the envelope carries run_id for JSONL correlation
-	// (EM-013). The Machine holds the run_id as a string; parse it to core.RunID.
-	// Fall back to plain Emit when the run_id is not a valid UUID (e.g. stubs).
 	if parsedUUID, parseErr := uuid.Parse(m.RunID()); parseErr == nil {
 		if emitErr := pub.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload); emitErr != nil {
 			w.appendDeadLetter(dl, core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
@@ -839,42 +684,7 @@ func (w *Watcher) emitMachineTransition(
 	}
 }
 
-// buildWatcherFailedPayload constructs the (eventType, payload) pair for a
-// watcher-synthesized agent_failed event (panic, line-too-long, malformed,
-// etc.).
-//
-// sub is one of the WatcherPanicSubReason, NDJSONLineTooLongSubReason, etc.
-// constants.  cause is the wrapped error; its Class() string populates the
-// error_category field of the payload.
-//
-// The caller passes the returned values directly to EventEmitter.Emit or
-// WatcherDeadLetterSink.Append; envelope stamping (event_id, timestamps,
-// source_subsystem) is the bus's responsibility per EV-002b.
-//
-// session_id and run_id are included in the payload so watcher self-defect
-// terminals are attributable: without them the reconciler cannot correlate the
-// synthesized agent_failed back to the failed session/run and cannot
-// auto-recover it. runID may be empty (no Machine supplied); the "unknown"
-// placeholder runID from the session layer is passed through as-is.
 func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (eventType core.EventType, encoded []byte) {
-	// The error is discarded deliberately, and this is the one place in this
-	// file where that is defensible. encoding/json cannot fail on a
-	// map[string]string: no unsupported kinds, no cycles, no custom
-	// MarshalJSON. Every alternative is worse than the suppression:
-	//   - a fallback that hand-builds JSON would interpolate sub, runID,
-	//     sessionID and Class(cause) — all string PARAMETERS, not constants —
-	//     into a body with no escaping;
-	//   - a fallback carrying only constants would drop session_id, run_id and
-	//     error_category, the fields this function's doc comment calls
-	//     load-bearing and the last of which core.AgentFailedPayload.Valid
-	//     rejects the payload for missing.
-	// So the branch would be unreachable code that emits a payload the consumer
-	// would reject. Suppress the impossible error instead.
-	//
-	// Note this line is NOT on the dead-letter path hk-0eqik cleared: it builds
-	// the watcher's self-defect agent_failed body. That bead's "no //nolint"
-	// constraint covered the six dead-letter findings, all of which are fixed
-	// by real error handling in Watcher.appendDeadLetter.
 	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck,errchkjson // map[string]string marshal cannot fail; see comment above
 		"type":           ProgressMsgTypeAgentFailed,
 		"session_id":     string(sessionID),
@@ -885,8 +695,6 @@ func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, caus
 	return core.EventType(ProgressMsgTypeAgentFailed), payload
 }
 
-// readStampReader wraps the progress stream and stamps w.lastReadEventAt on
-// every Read that returns data or a nil error (HC-011a per-Read liveness).
 type readStampReader struct {
 	inner io.Reader
 	w     *Watcher
@@ -900,17 +708,10 @@ func (r *readStampReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// isLineTooLong reports whether err from bufio.Scanner.Err() signals that
-// the scanner's internal buffer was overflowed — i.e., a line exceeded the
-// NDJSONMaxLineLenBytes cap per HC-007a.
 func isLineTooLong(err error) bool {
 	return errors.Is(err, bufio.ErrTooLong)
 }
 
-// knownProgressMsgTypes is the complete set of required progress-stream message
-// types per specs/handler-contract.md §4.2.HC-007.  The watcher only publishes
-// events whose type is in this set; unknown types are ignored (dropped silently)
-// per the additive-evolution rule.
 var knownProgressMsgTypes = map[ProgressMsgType]struct{}{
 	ProgressMsgTypeHandlerCapabilities:   {},
 	ProgressMsgTypeAgentReady:            {},
@@ -940,8 +741,6 @@ func KnownProgressMsgTypes() []string {
 	return out
 }
 
-// isKnownProgressMsgType reports whether msgType is one of the 12 required
-// progress-stream message types declared in HC-007.
 func isKnownProgressMsgType(msgType ProgressMsgType) bool {
 	_, ok := knownProgressMsgTypes[msgType]
 	return ok

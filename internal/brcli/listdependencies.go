@@ -24,10 +24,6 @@ import (
 // TODO(hk-872.28): Full BrError integration will absorb this sentinel.
 var ErrBrDepListFailed = errors.New("brcli: br dep list failed")
 
-// brDepListItem is the per-element JSON shape returned by
-// `br dep list <id> --direction both --format json`.
-// The top-level response is a flat JSON array; each element has this structure.
-// Fields title, status, and priority are parsed but not mapped to DependencyEdge.
 type brDepListItem struct {
 	IssueID     string `json:"issue_id"`
 	DependsOnID string `json:"depends_on_id"`
@@ -37,8 +33,6 @@ type brDepListItem struct {
 	Priority    int    `json:"priority"`
 }
 
-// brDepListErrorEnvelope is the JSON shape returned on non-zero exit by br dep list.
-// It matches the same error envelope shape used by br show (handled by show.go).
 type brDepListErrorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`
@@ -67,18 +61,13 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 	}
 
 	if result.ExitCode != 0 {
-		// Attempt to parse as an error envelope to detect ISSUE_NOT_FOUND.
-		// ErrBeadNotFound is reused from show.go — not redeclared here.
 		var envelope brDepListErrorEnvelope
 		if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr == nil && envelope.Error.Code == "ISSUE_NOT_FOUND" {
 			return nil, ErrBeadNotFound
 		}
 
-		// Determine a human-readable error detail for the wrapped error.
 		errDetail := envelope.Error.Message
 		if errDetail == "" {
-			// Fall back to truncated stdout if envelope parse failed or message
-			// was empty.
 			truncated := result.Stdout
 			if len(truncated) > 200 {
 				truncated = truncated[:200]
@@ -94,8 +83,6 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 		)
 	}
 
-	// Success path: parse the flat JSON array.
-	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var items []brDepListItem
 	if jsonErr := json.Unmarshal(result.Stdout, &items); jsonErr != nil {
 		return nil, fmt.Errorf("brcli.ListDependencies: malformed br dep list output: %w; %w", jsonErr, BrSchemaMismatch)
@@ -105,7 +92,6 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 	for _, item := range items {
 		var kind core.EdgeKind
 		if kindErr := kind.UnmarshalText([]byte(item.Type)); kindErr != nil {
-			// Only fails when item.Type is empty — a structural br output bug.
 			return nil, fmt.Errorf("brcli.ListDependencies: edge %q→%q: %w", item.IssueID, item.DependsOnID, kindErr)
 		}
 		edge := core.DependencyEdge{
@@ -114,12 +100,6 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 			EdgeKind:   kind,
 		}
 		if !edge.Valid() {
-			// Read-surface tolerance (edgekind.go BI-007 / hk-872.55): Beads may
-			// expose dep-types not yet in harmonik's write-surface enum (e.g.
-			// "related"). Skip them rather than erroring so that QM-025 blocking
-			// checks are not disrupted by unrelated edge kinds. Fixes: multi-bead
-			// submit returning internal_error (-32099) when any bead has a "related"
-			// dep (hk-hpqat regression).
 			continue
 		}
 		edges = append(edges, edge)

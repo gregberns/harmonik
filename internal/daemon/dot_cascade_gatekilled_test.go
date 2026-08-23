@@ -1,37 +1,5 @@
 package daemon
 
-// dot_cascade_gatekilled_test.go — a commit gate that was KILLED said nothing
-// about the code, so it must not be reported as a test failure
-// (hk-killed-gate-read-as-red-0hi5z).
-//
-// Measured live 2026-08-11 by lane bravo: `make full` ran about 19 minutes of a
-// 3600s node budget, passed build, lint and the subprocess tier, reached the
-// scenario tier and was SIGTERM'd mid-flight:
-//
-//	make[1]: *** [test-scenario] Terminated: 15
-//	make:     *** [full] Terminated: 15
-//
-// Nothing failed. The gate never reached a verdict. dispatchDotToolNode had no
-// case for a signal kill, so it fell to the deterministic default, drove the
-// commit_gate→implement back-edge, and resumed the implementer with "the
-// build/test gate did not pass. Fix the failure and re-commit". There was no
-// failure to fix.
-//
-// A killed gate is canceled: handler-contract.md HC-063 already names that class
-// for a gate a signal stopped, and standard-bead.dot conditions its commit_gate
-// out-edges on SUCCESS, deterministic and transient only. canceled matches none
-// of them, so the unconditional fallback carries the run to
-// close-needs-attention. The run stops and says why, rather than retrying into a
-// kill nobody has identified.
-//
-// Two detection paths, because neither alone covers both cases:
-//   - process state: the LOCAL gate is a direct child, so a signal that reaches
-//     it shows up in syscall.WaitStatus. This is exact.
-//   - output signature: a signal that reaches only a DESCENDANT leaves the top
-//     process exiting normally (make reports its recipe's death and exits 2),
-//     and the REMOTE path sees ssh's exit status, not the gate's. The make
-//     "Terminated: N" line is the only evidence in both of those cases.
-
 import (
 	"context"
 	"fmt"
@@ -106,7 +74,6 @@ func TestGateSignalKillOutputLine(t *testing.T) {
 	t.Parallel()
 
 	killed := []string{
-		// The exact shape the live run produced.
 		"ok  	internal/daemon	25.5s\nmake[1]: *** [test-scenario] Terminated: 15\nmake: *** [full] Terminated: 15\n",
 		"make: *** [full] Killed: 9\n",
 		"make: *** [Makefile:41: test-scenario] Terminated\n",
@@ -118,7 +85,6 @@ func TestGateSignalKillOutputLine(t *testing.T) {
 	}
 
 	ranAndFailed := []string{
-		// A genuine test failure. MUST stay off this detector.
 		"--- FAIL: TestThing (0.02s)\n    thing_test.go:41: want 3, got 4\nFAIL\nmake[1]: *** [test] Error 1\n",
 		"internal/daemon/x.go:12:2: undefined: Foo\nmake: *** [gate-static] Error 2\n",
 		// A test whose own output talks about signals, with no make recipe line.
@@ -129,9 +95,6 @@ func TestGateSignalKillOutputLine(t *testing.T) {
 	}
 	for _, out := range ranAndFailed {
 		if line, ok := gateSignalKillOutputLine([]byte(out)); ok {
-			// gateEvidenceQuote, not a raw %s: `out` here carries "] Error 127",
-			// and a FAILING run of this test puts it in the log the NEXT gate's
-			// classifier reads.
 			t.Error(gateEvidenceQuote(fmt.Sprintf("a gate that RAN and found a fault reads as killed (matched %q):\n%s", line, out)))
 		}
 	}
@@ -150,7 +113,6 @@ func TestGateBackEdgeMessage_NeverAssertsAnUnobservedFailure(t *testing.T) {
 		t.Errorf("a gate that RAN and found a fault must still tell the implementer to fix it; got:\n%s", det)
 	}
 
-	// Every class other than deterministic means the gate reached no verdict.
 	for _, class := range []core.FailureClass{
 		core.FailureClassTransient,
 		core.FailureClassCanceled,

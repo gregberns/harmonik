@@ -1,20 +1,5 @@
 package codex_test
 
-// codexthreadid_mzgh_test.go — unit tests for codex thread_id capture and
-// resume launchspec construction (hk-mzgh, G2 fix).
-//
-// Coverage:
-//
-//  1. codexThreadIDInterceptor (via ExportedNewCodexThreadIDInterceptor):
-//     - fires callback once on first thread.started event in the JSONL stream.
-//     - passes all bytes through unchanged.
-//     - ignores subsequent thread.started events (first wins).
-//     - does not fire when no thread.started is present.
-//
-//  2. buildCodexLaunchSpec resume argv (via ExportedBuildCodexLaunchSpec):
-//     - resume command includes the thread_id in "exec resume <id>" position.
-//     - resume command does NOT include "-C" (codex exec resume rejects -C).
-
 import (
 	"bytes"
 	"io"
@@ -23,10 +8,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codexThreadIDInterceptor tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestCodexThreadIDInterceptor_FiresOnThreadStarted_mzgh verifies that the
 // interceptor fires the callback exactly once with the captured thread_id.
@@ -173,10 +154,6 @@ func TestCodexThreadIDInterceptor_TokenUsage_NoUsage_mzgh(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildCodexLaunchSpec resume argv tests (hk-mzgh — -C removal)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildCodexLaunchSpec_ResumeHasThreadID_mzgh asserts that the resume argv
 // encodes the captured thread_id in the "exec resume <id>" position.
 func TestBuildCodexLaunchSpec_ResumeHasThreadID_mzgh(t *testing.T) {
@@ -195,7 +172,6 @@ func TestBuildCodexLaunchSpec_ResumeHasThreadID_mzgh(t *testing.T) {
 		t.Fatalf("ExportedBuildCodexLaunchSpec: %v", err)
 	}
 
-	// argv must contain the sequence: exec resume <thread_id>
 	codexMzghAssertArgSeq(t, spec.Args, "exec", "resume", threadID)
 }
 
@@ -257,12 +233,6 @@ func TestBuildCodexLaunchSpec_InitialHasCFlag_mzgh(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// codexMzghAssertArgSeq asserts that seq appears as a contiguous subsequence
-// within args (in order). Suffix _mzgh avoids same-package helper collisions.
 func codexMzghAssertArgSeq(t *testing.T, args []string, seq ...string) {
 	t.Helper()
 	for start := 0; start+len(seq) <= len(args); start++ {

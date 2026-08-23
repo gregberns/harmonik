@@ -50,13 +50,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ---------------------------------------------------------------------------
-// Fixture helpers — gitReconFixture prefix
-// ---------------------------------------------------------------------------
-
-// gitReconFixtureRepoRoot resolves the absolute path of the repo root (the
-// directory containing go.mod) by walking upward from runtime.Caller. Uses
-// the same approach as noTxSubsystemFixtureRepoRoot (EM-INV-004 sensor).
 func gitReconFixtureRepoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -77,9 +70,6 @@ func gitReconFixtureRepoRoot(t *testing.T) string {
 	}
 }
 
-// gitReconFixtureCollectGoSources walks root and returns all non-test .go
-// files. Test files (_test.go suffix) are excluded because EM-INV-001
-// constrains the authoring surface (production code), not test infrastructure.
 func gitReconFixtureCollectGoSources(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -103,21 +93,7 @@ func gitReconFixtureCollectGoSources(t *testing.T, root string) []string {
 	return files
 }
 
-// gitReconFixtureForbiddenPatterns enumerates source-code substrings whose
-// presence in a non-test Go file constitutes an EM-INV-001 violation.
-//
-// Each pattern matches a function or type name that would walk JSONL as a
-// state-reconstruction source. The list is narrowly scoped to avoid false
-// positives against:
-//   - ReadJSONLForDivergenceEvidence — the permitted observational JSONL reader
-//     (divergence-evidence reads are permitted per EM-031 §4.7; they MUST NOT be
-//     used for state reconstruction, but the function name alone is not forbidden)
-//   - "JSONL" alone — appears legitimately in observational replay comments
-//
-// Only patterns that name a JSONL-for-state primitive at the authoring surface
-// are included: walk/scan/reconstruct/replay combined with JSONL.
 var gitReconFixtureForbiddenPatterns = []string{
-	// Functions that walk JSONL to reconstruct run state.
 	"ReconstructFromJSONL",
 	"reconstructFromJSONL",
 	"ReconstructStateFromJSONL",
@@ -131,7 +107,6 @@ var gitReconFixtureForbiddenPatterns = []string{
 	"JSONLReplay",
 	"jsonlReplay",
 
-	// Type names that would expose a JSONL-state-reconstruction API.
 	"JSONLStateReader",
 	"jsonlStateReader",
 	"JSONLRunReconstructor",
@@ -139,44 +114,25 @@ var gitReconFixtureForbiddenPatterns = []string{
 	"JSONLStateReconstructor",
 	"jsonlStateReconstructor",
 
-	// CLI or handler strings that would register a JSONL-replay-for-state command.
 	`"jsonl-replay-state"`,
 	`"jsonl-state-reconstruct"`,
 	`"replay-state-from-jsonl"`,
 	`"reconstruct-from-jsonl"`,
 }
 
-// gitReconFixtureScannedRoots is the set of source-tree subdirectories that
-// constitute the EM-INV-001 authoring surface. The four subsystems named in
-// EM-INV-001 (reconciliation, operator-nfr, process-lifecycle, scenario-harness)
-// all live under internal/; the CLI binary surface is in cmd/.
 var gitReconFixtureScannedRoots = []string{
 	"internal",
 	"cmd",
 }
 
-// gitReconFixtureRunID returns a deterministic UUIDv7-shaped run ID for
-// EM-INV-001 restart scenario tests. Counter space starts at 600 to avoid
-// collision with durableFixtureRunID (1–99), nonTxFixtureRunID (100–199),
-// corruptCheckpointFixtureRunID (200–299), replayFixtureRunID (300+),
-// and activeRunDiscoveryFixtureRunID (400–499).
 func gitReconFixtureRunID(n int) string {
 	return durableFixtureRunID(600 + n)
 }
 
-// gitReconFixtureBeadID returns a stable bead ID string for EM-INV-001 tests.
 func gitReconFixtureBeadID(n int) string {
 	return fmt.Sprintf("hk-eminv001.%d", n)
 }
 
-// gitReconFixtureJSONLEventLog writes a JSONL event log to the given directory
-// with decoyRunCount fake run_started events. This file is written to disk but
-// MUST NOT be consulted by DiscoverActiveRuns. If the restart path walks this
-// JSONL instead of using git+Beads, the run count in the discovery result will
-// match decoyRunCount rather than the true git+Beads count.
-//
-// The file exists solely to act as a decoy: a correct EM-INV-001 implementation
-// ignores it; a buggy implementation would produce a wrong ActiveRunSet length.
 func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) {
 	t.Helper()
 
@@ -187,9 +143,6 @@ func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) {
 	jsonlPath := filepath.Join(dir, "events.jsonl")
 	var sb strings.Builder
 	for i := range decoyRunCount {
-		// Write a decoy run_started event. Each line is valid JSON. If the
-		// restart path reads this file, it would observe decoyRunCount runs
-		// rather than the true git+Beads count.
 		fmt.Fprintf(&sb,
 			"{\"event_type\":\"run_started\",\"run_id\":\"decoy-run-%04d\",\"schema_version\":1}\n",
 			i+1,
@@ -200,9 +153,6 @@ func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) {
 	}
 }
 
-// gitReconFixtureSpecContent reads specs/execution-model.md, locates the
-// EM-INV-001 anchor, and returns the paragraph that contains it. Fails the
-// test if the file is unreadable or the anchor is missing.
 func gitReconFixtureSpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -210,7 +160,6 @@ func gitReconFixtureSpecContent(t *testing.T) string {
 	if !ok {
 		t.Fatal("gitReconFixtureSpecContent: runtime.Caller failed")
 	}
-	// Walk up: internal/lifecycle/<file> → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "execution-model.md")
 
@@ -227,17 +176,12 @@ func gitReconFixtureSpecContent(t *testing.T) string {
 		t.Fatalf("spec %s does not contain %q; EM-INV-001 may have been removed or renamed", specPath, anchor)
 	}
 
-	// Return the paragraph from the anchor to the next section boundary.
 	paragraph := content[idx:]
 	if end := strings.Index(paragraph, "\n####"); end > 0 {
 		paragraph = paragraph[:end]
 	}
 	return paragraph
 }
-
-// ---------------------------------------------------------------------------
-// Sensor 1: Spec-text invariant checks
-// ---------------------------------------------------------------------------
 
 // TestEMINV001_SpecContainsGitIsStateReconstructionSource verifies that the
 // EM-INV-001 section of specs/execution-model.md encodes the git-is-authority
@@ -300,10 +244,6 @@ func TestEMINV001_SpecContainsGitIsStateReconstructionSource(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Sensor 2: Corpus-scan authoring-surface check
-// ---------------------------------------------------------------------------
-
 // TestEMINV001_NoSubsystemWalksJSONLForStateReconstruction is the corpus-scan
 // sensor for EM-INV-001.
 //
@@ -329,7 +269,6 @@ func TestEMINV001_NoSubsystemWalksJSONLForStateReconstruction(t *testing.T) {
 	for _, rel := range gitReconFixtureScannedRoots {
 		root := filepath.Join(repoRoot, rel)
 		if _, err := os.Stat(root); os.IsNotExist(err) {
-			// Root may not exist yet (e.g., cmd/ before any binary is added).
 			continue
 		}
 		sourceFiles = append(sourceFiles, gitReconFixtureCollectGoSources(t, root)...)
@@ -394,10 +333,6 @@ func TestEMINV001_SensorCoverage(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Sensor 3: Restart scenario — JSONL decoy test
-// ---------------------------------------------------------------------------
-
 // TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL is the
 // primary restart scenario sensor for EM-INV-001.
 //
@@ -424,39 +359,24 @@ func TestEMINV001_SensorCoverage(t *testing.T) {
 func TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL(t *testing.T) {
 	t.Parallel()
 
-	// --- Setup: N git-based runs + M Beads-only runs + D decoy JSONL events ---
-
-	// N = 2 task branches with checkpoint commits.
 	const gitRunCount = 2
-	// M = 1 Beads-only non-terminal bead (no task branch yet — discovered from Beads only).
 	const beadsOnlyCount = 1
-	// D = 7 decoy JSONL events. If JSONL were walked, the result would be 7.
-	// Correct git+Beads union must be 3 (gitRunCount + beadsOnlyCount = 3).
 	const jsonlDecoyCount = 7
 
-	// Create an isolated git repository to act as the crashed-daemon's workspace.
 	repoDir := t.TempDir()
 	durableFixtureInitRepo(t, repoDir)
 
-	// Land N checkpoint commits (simulates N in-flight runs at crash time).
 	gitRunIDs := make([]string, 0, gitRunCount)
 	for i := range gitRunCount {
 		runID := gitReconFixtureRunID(10 + i)
 		gitRunIDs = append(gitRunIDs, runID)
 		durableFixtureCreateTaskBranch(t, repoDir, runID)
-		// A single checkpoint commit per run is sufficient to establish the
-		// git state that DiscoverActiveRuns will scan via the branch reader.
 		durableFixtureCommitCheckpoint(t, repoDir, runID, fmt.Sprintf("node-%d", i+1))
 	}
 
-	// Write the JSONL decoy. This file is present on disk and would be visible
-	// to any JSONL-walking state-reconstruction code. DiscoverActiveRuns MUST
-	// ignore it. Its content produces a different run count than git+Beads.
 	harmonikDir := filepath.Join(repoDir, ".harmonik")
 	gitReconFixtureJSONLEventLog(t, harmonikDir, jsonlDecoyCount)
 
-	// Build the fake BeadsQuerier: M non-terminal beads, none matching the git
-	// run IDs (so each produces a distinct ActiveRunSet entry — Beads-only).
 	querier := &activeRunDiscoveryFixtureFakeQuerier{
 		statusMap: make(map[string][]core.BeadRecord),
 	}
@@ -467,9 +387,6 @@ func TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL(t *testing.T)
 		)
 	}
 
-	// Build the fake BranchTipReader from the real git repo (uses the actual
-	// task branches we just created). The reader returns the branches whose
-	// tips carry Harmonik-Run-ID trailers — the git half of the union.
 	tips := make([]BranchTip, 0, len(gitRunIDs))
 	for _, runID := range gitRunIDs {
 		tips = append(tips, BranchTip{
@@ -480,16 +397,11 @@ func TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL(t *testing.T)
 	}
 	reader := activeRunDiscoveryFixtureReaderWithTips(tips...)
 
-	// --- Restart: call DiscoverActiveRuns (the daemon startup path) ---
-
 	set, err := DiscoverActiveRuns(context.Background(), querier, reader)
 	if err != nil {
 		t.Fatalf("DiscoverActiveRuns (restart path): unexpected error: %v", err)
 	}
 
-	// --- Assertion: result must reflect git+Beads, not JSONL decoy ---
-
-	// Expected: git runs (N=2) ∪ Beads-only runs (M=1) = 3 entries.
 	wantLen := gitRunCount + beadsOnlyCount
 	if set.Len() != wantLen {
 		t.Errorf(
@@ -531,11 +443,6 @@ func TestEMINV001_RestartScenario_JSONLLossDoesNotAffectDiscovery(t *testing.T) 
 		})
 	}
 
-	// Deliberately do NOT write any JSONL event log. The .harmonik directory
-	// exists (created by durableFixtureInitRepo) but contains no events.jsonl.
-	// If DiscoverActiveRuns requires JSONL to discover runs, this test will
-	// produce zero entries — a clear EM-INV-001 violation.
-
 	reader := activeRunDiscoveryFixtureReaderWithTips(tips...)
 	querier := activeRunDiscoveryFixtureEmptyQuerier()
 
@@ -563,12 +470,9 @@ func TestEMINV001_RestartScenario_JSONLLossDoesNotAffectDiscovery(t *testing.T) 
 func TestEMINV001_RestartScenario_EmptyGitAndBeadsIsValidState(t *testing.T) {
 	t.Parallel()
 
-	// No task branches, no Beads records. The JSONL decoy has entries —
-	// a JSONL-walking implementation would return a non-empty set.
 	repoDir := t.TempDir()
 	durableFixtureInitRepo(t, repoDir)
 
-	// Write a JSONL decoy: if walked, it would produce 5 "runs".
 	harmonikDir := filepath.Join(repoDir, ".harmonik")
 	gitReconFixtureJSONLEventLog(t, harmonikDir, 5)
 

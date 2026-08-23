@@ -1,16 +1,5 @@
 package keeper_test
 
-// Regression test for the T7 poll-quantized-timeout defect: the drive loop
-// (shell.go) detected an armed timer's expiry only ON a detection-poll tick,
-// so a scheduler-delayed tick stretched a forced-clear cycle's wall time past
-// ForceRetryInterval and defeated Gate 6's suppression (a 3rd cycle_aborted
-// in TestCycler_ForcedClear_RetryAfterInterval under full-package parallel
-// load; T6's context.WithTimeout was punctual). The fix arms a dedicated
-// deadline wake at the nearest armed deadline. This test forces the failure
-// deterministically: the 5ms detection ticker's first tick is withheld until
-// past ForceRetryInterval, so ONLY the punctual deadline wake can fire the
-// 30ms handoff timeout on time and keep Gate 6 intact.
-
 import (
 	"context"
 	"sync"
@@ -22,10 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// delayedTickClock wraps SystemClock, except that a NewTicker whose interval
-// equals delayInterval has its first tick withheld for firstDelay (simulating
-// a scheduler-starved detection ticker under parallel-test contention).
-// Tickers at any other interval — including the deadline wake — are real.
 type delayedTickClock struct {
 	substrate.SystemClock
 	delayInterval time.Duration
@@ -90,11 +75,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 	}
 
-	// Margins are deliberately wide so THIS test stays robust under the same
-	// full-package parallel contention it guards against: post-fix, call-1
-	// aborts at ~30ms via the deadline wake, leaving ~120ms of tolerated
-	// scheduler jitter before ForceRetryInterval; pre-fix, the withheld tick
-	// quantizes the timeout to ~200ms, decisively past ForceRetryInterval.
 	const (
 		forceRetryInterval = 150 * time.Millisecond
 		pollInterval       = 5 * time.Millisecond
@@ -124,8 +104,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
-	// Call 1: fires (above force) and must abort on the PUNCTUAL 30ms handoff
-	// timeout — the deadline wake, not the starved 65ms detection tick.
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
 	start := time.Now()
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -137,8 +115,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		t.Fatalf("want 1 cycle_aborted after first call; got %d", abortedAfter1)
 	}
 
-	// Call 2 (immediately): Gate 6 must still suppress. Pre-fix, the starved
-	// tick quantized the timeout past ForceRetryInterval and this fired.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun #2 (immediate): %v", err)
 	}
@@ -183,11 +159,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce present immediately
 
-	// ReadGaugeFn is polled ONLY in the Clearing phase (pollClearing). The gauge
-	// never returns a new session_id, so the cycle stays in Clearing until the
-	// backstop is consulted at the settle-window end — EXCEPT a large safety-valve
-	// cap forces the new SID, so a regressed (spinning) build terminates instead
-	// of spinning for the whole settle window.
 	const spinCap = 100_000
 	var gaugeMu sync.Mutex
 	var gaugeCalls int
@@ -229,9 +200,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// The cycle must have reached the Clearing backstop-exhaustion outcome — proof
-	// that the Clearing phase (and thus the elapsed-backstop deadline-wake path)
-	// was actually exercised, not short-circuited.
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperClearUnconfirmed)); got != 1 {
 		t.Fatalf("clear_unconfirmed events = %d; want 1 (cycle should reach the backstop)", got)
 	}
@@ -240,11 +208,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 	calls := gaugeCalls
 	gaugeMu.Unlock()
 
-	// A one-shot deadline wake polls the gauge a bounded handful of times per
-	// settle window (PollInterval cadence: ~60ms/10ms ≈ 6 polls). A regressed
-	// 1ns-ticker spin polls it hundreds-to-thousands of times in the same window.
-	// 100 separates the two by orders of magnitude — this is a presence-of-spin
-	// check, not a fragile wall-clock-margin assertion.
 	if calls >= 100 {
 		t.Errorf("ReadGauge called %d times during one Clearing settle window; a one-shot deadline wake keeps this well under 100 — a count this high is the hk-n8yha 1ns-ticker hot-spin", calls)
 	}

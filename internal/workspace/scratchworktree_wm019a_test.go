@@ -44,16 +44,13 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 		}
 	}
 
-	// Create the integration branch at sha (the integration tip).
 	integBranch := "harmonik/integration"
 	gitRun(repo, "branch", integBranch, sha)
 
 	taskBranch := "run/" + runID
 
-	// Mint a merge_id (UUIDv7-shaped; filesystem-safe per WM-002 regex).
 	mergeID := "0196b200-0000-7000-8000-000000000001"
 
-	// (i) Create scratch merge-worktree at <repo>/.harmonik/worktrees/merge-<merge_id>/.
 	scratchPath := filepath.Join(repo, ".harmonik", "worktrees", "merge-"+mergeID)
 	if err := os.MkdirAll(filepath.Dir(scratchPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll scratch parent: %v", err)
@@ -61,7 +58,6 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	scratchBranch := "merge-" + mergeID
 	gitRun(repo, "worktree", "add", "-b", scratchBranch, scratchPath, sha)
 
-	// Assert scratch path was created.
 	if _, err := os.Stat(scratchPath); os.IsNotExist(err) {
 		t.Fatalf("WM-019a: scratch worktree directory %q does not exist after worktree add", scratchPath)
 	}
@@ -77,20 +73,17 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 			scratchPath, listBefore)
 	}
 
-	// Assert scratch worktree has NO lease-lock file (not leased per WM-019a).
 	leaseLockPath := filepath.Join(scratchPath, ".harmonik", "lease.lock")
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 		t.Errorf("WM-019a: scratch worktree MUST NOT have lease-lock at %q", leaseLockPath)
 	}
 
-	// (ii) Execute squash-merge inside scratch worktree.
 	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = scratchPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-019a: git merge --squash in scratch: %v\n%s", err, out)
 	}
 
-	// (iv) Commit with trailers per WM-019.
 	commitMsg := "squash: scratch merge\n\nHarmonik-Run-ID: " + runID
 	daemonName := "Harmonik Daemon"
 	daemonEmail := "no-reply@harmonik.local"
@@ -116,11 +109,9 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	scratchTip := strings.TrimSpace(string(scratchTipOut))
 	gitRun(repo, "update-ref", "refs/heads/"+integBranch, scratchTip)
 
-	// (vi) Remove scratch worktree and prune.
 	gitRun(repo, "worktree", "remove", "--force", scratchPath)
 	gitRun(repo, "worktree", "prune")
 
-	// Assert scratch directory no longer exists on disk.
 	if _, err := os.Stat(scratchPath); !os.IsNotExist(err) {
 		t.Errorf("WM-019a: scratch worktree directory %q still exists after removal", scratchPath)
 	}
@@ -136,7 +127,6 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 			scratchPath, listAfter)
 	}
 
-	// (vii) Delete the transient merge-<merge_id> branch.
 	gitRun(repo, "branch", "-D", scratchBranch)
 
 	// Assert scratch branch is gone.

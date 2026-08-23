@@ -45,8 +45,6 @@ func (l *Lock) Release() error {
 // path-traversal sequences that could escape the keeper directory.
 var ErrInvalidAgent = errors.New("keeper: agent name must not contain '/' or '..'")
 
-// validateAgent rejects names that could escape the keeper directory via path
-// traversal. Operator-controlled but still worth enforcing defensively.
 func validateAgent(agent string) error {
 	if strings.Contains(agent, "/") || strings.Contains(agent, "..") {
 		return ErrInvalidAgent
@@ -87,7 +85,6 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 		return nil, fmt.Errorf("keeper: flock %q: %w", lockPath, err)
 	}
 
-	// Truncate then write our PID after acquiring the lock.
 	if err := fd.Truncate(0); err != nil {
 		if closeErr := fd.Close(); closeErr != nil {
 			slog.WarnContext(context.Background(), "keeper: AcquireLock: close lockfile fd after truncate failure", "err", closeErr, "path", lockPath)
@@ -138,15 +135,12 @@ func LiveKeeperPresent(projectDir, agent string) bool {
 			slog.WarnContext(context.Background(), "keeper: LiveKeeperPresent: close probe fd", "err", closeErr, "path", lockPath)
 		}
 	}()
-	// Non-blocking SHARED lock: succeeds iff no exclusive lock is held. A live
-	// keeper holds LOCK_EX, so the shared attempt fails with EAGAIN/EWOULDBLOCK.
 	if flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); flockErr != nil {
 		if errors.Is(flockErr, syscall.EAGAIN) || errors.Is(flockErr, syscall.EWOULDBLOCK) {
 			return true // exclusive lock held → live keeper present
 		}
 		return false // unexpected flock error → don't claim presence
 	}
-	// We got the shared lock → no exclusive holder. Release and report absent.
 	_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // probe cleanup
 	return false
 }
@@ -223,9 +217,6 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	if content != "" {
 		content += "\n"
 	}
-	// os.CreateTemp gives each concurrent writer a unique temp path so no two
-	// concurrent writes can publish each other's partial content. The retired
-	// keeper rebind surface was removed with hk-3391. Refs: hk-b5e2.
 	tmp, err := os.CreateTemp(keeperDir, agent+".managed.*.tmp")
 	if err != nil {
 		return fmt.Errorf("keeper: create managed session_id tmp: %w", err)
@@ -237,7 +228,6 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
 	}
-	// fsync before rename to close the power-loss partial-write window.
 	if err := tmp.Sync(); err != nil {
 		err = errors.Join(err, tmp.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup

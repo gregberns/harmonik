@@ -1,24 +1,5 @@
 package hooksystem_test
 
-// dispatcher_cp017_test.go — requirement-traceable tests for CP-017
-// "Hook evaluator MAY be cognition-tagged".
-//
-// Spec ref: specs/control-points.md §4.3.CP-017, §4.8 CP-039–CP-042, §7.2.
-// Bead ref: hk-a8bg.16
-//
-// Coverage:
-//
-//	CP-017.1: Cognition hook fires hook_fired when evaluator returns success.
-//	CP-017.2: Cognition hook emits hook_failed when evaluator returns failure verdict.
-//	CP-017.3: Cognition hook fails deterministically without run-scoped event.
-//	CP-017.4: Cognition hook fails deterministically without wired evaluator.
-//	CP-017.5: Replay with matching hash consumes persisted verdict (no re-dispatch).
-//	CP-017.6: Replay with mismatched hash emits verdict_envelope_mismatch + hook_failed.
-//	CP-017.7: WithCognition panics when any arg is nil.
-//
-// All test-local identifiers use the cp017 prefix per implementer-protocol.md
-// helper-prefix discipline.
-
 import (
 	"context"
 	"crypto/sha256"
@@ -35,11 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// ---------------------------------------------------------------------------
-// Stub implementations
-// ---------------------------------------------------------------------------
-
-// cp017StubCognitionEval is a stub CognitionHookEvaluator.
 type cp017StubCognitionEval struct {
 	returnVerdict core.HookVerdictRecord
 	returnErr     error
@@ -51,7 +27,6 @@ func (e *cp017StubCognitionEval) EvaluateCognitionHook(_ context.Context, _ core
 	return e.returnVerdict, e.returnErr
 }
 
-// cp017StubVerdictWriter is a stub VerdictFileWriter that records writes.
 type cp017StubVerdictWriter struct {
 	writtenPath string
 	returnSHA   string
@@ -66,7 +41,6 @@ func (w *cp017StubVerdictWriter) WriteAndCommit(_ context.Context, relPath strin
 	return w.returnSHA, nil
 }
 
-// cp017StubVerdictReader is a stub VerdictReader.
 type cp017StubVerdictReader struct {
 	found   bool
 	verdict core.HookVerdictRecord
@@ -80,16 +54,11 @@ func (r *cp017StubVerdictReader) LookupVerdict(_ context.Context, _ core.RunID, 
 	return r.verdict, r.found, nil
 }
 
-// Compile-time interface satisfaction checks.
 var (
 	_ hooksystem.CognitionHookEvaluator = (*cp017StubCognitionEval)(nil)
 	_ hooksystem.VerdictFileWriter      = (*cp017StubVerdictWriter)(nil)
 	_ hooksystem.VerdictReader          = (*cp017StubVerdictReader)(nil)
 )
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 func cp017RunID() core.RunID {
 	return core.RunID(uuid.MustParse("019e7342-0000-7000-a000-000000000017"))
@@ -129,10 +98,6 @@ func cp017MakeCognitionHookCP() core.ControlPoint {
 	}
 }
 
-// cp017ComputeEnvelopeHash mirrors the production logic in
-// computeHookEnvelopeHash (unexported). Used to build persisted verdicts with
-// the correct hash for replay tests. Any drift from the production function
-// surfaces as hash-mismatch failures in CP-017.5.
 func cp017ComputeEnvelopeHash(t *testing.T, cp core.ControlPoint, evPayload json.RawMessage) string {
 	t.Helper()
 	type hookInputEnvelope struct {
@@ -155,9 +120,6 @@ func cp017ComputeEnvelopeHash(t *testing.T, cp core.ControlPoint, evPayload json
 	return fmt.Sprintf("%x", sum)
 }
 
-// cp017BuildBusWithCollector builds a bus + event-type collector, applies
-// extra subscriptions, and seals. Reuses cp012FixtureEventCollector from
-// dispatcher_cp012_test.go (same test package).
 func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollector, extraSubs ...func(eventbus.EventBus) error) eventbus.EventBus {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
@@ -184,7 +146,6 @@ func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 	return bus
 }
 
-// cp017EmitRunEvent emits an event scoped to a runID.
 func cp017EmitRunEvent(t *testing.T, bus eventbus.EventBus, runID core.RunID) {
 	t.Helper()
 	const eventType = "agent_started"
@@ -194,7 +155,6 @@ func cp017EmitRunEvent(t *testing.T, bus eventbus.EventBus, runID core.RunID) {
 	}
 }
 
-// cp017MakeSuccessVerdict builds a non-failing HookVerdictRecord stub.
 func cp017MakeSuccessVerdict(hookName string) core.HookVerdictRecord {
 	return core.HookVerdictRecord{
 		HookName:     hookName,
@@ -209,10 +169,6 @@ func cp017MakeSuccessVerdict(hookName string) core.HookVerdictRecord {
 		ProducedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-017.1: Cognition hook fires hook_fired on success
-// ---------------------------------------------------------------------------
 
 // TestCP017_CognitionHookFiresOnSuccess verifies that a cognition-tagged Hook
 // dispatches to the evaluator and emits hook_fired when the evaluator returns
@@ -253,10 +209,6 @@ func TestCP017_CognitionHookFiresOnSuccess(t *testing.T) {
 		t.Errorf("CP-017.1: evaluator called %d times, want 1", eval.callCount)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-017.2: Cognition hook emits hook_failed on failure verdict
-// ---------------------------------------------------------------------------
 
 // TestCP017_CognitionHookEmitsHookFailedOnFailureVerdict verifies that when
 // the cognition evaluator returns a verdict with Failed=true, the dispatcher
@@ -316,10 +268,6 @@ func TestCP017_CognitionHookEmitsHookFailedOnFailureVerdict(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-017.3: Cognition hook requires run-scoped event
-// ---------------------------------------------------------------------------
-
 // TestCP017_CognitionHookRequiresRunScopedEvent verifies that a cognition hook
 // emits hook_failed when the triggering event has no RunID (unscoped events
 // are forbidden for cognition hooks per OQ-CP-004 default per
@@ -343,7 +291,6 @@ func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 	})
 	_ = disp
 
-	// Emit without a RunID (plain Emit, not EmitWithRunID).
 	payload := cp012FixtureMarshal(t, map[string]any{})
 	if err := bus.Emit(context.Background(), "agent_started", payload); err != nil {
 		t.Fatalf("Emit: %v", err)
@@ -365,10 +312,6 @@ func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-017.4: Cognition hook without wired evaluator emits hook_failed
-// ---------------------------------------------------------------------------
-
 // TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed verifies that a
 // cognition hook emits hook_failed when the Dispatcher has no cognition
 // components wired (WithCognition not called).
@@ -382,7 +325,6 @@ func TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed(t *testing.T) {
 	var disp *hooksystem.Dispatcher
 	bus := cp017BuildBusWithCollector(t, collector, func(b eventbus.EventBus) error {
 		disp = hooksystem.NewDispatcher(reg, b)
-		// WithCognition NOT called — cognition not wired.
 		return disp.Subscribe()
 	})
 	_ = disp
@@ -402,10 +344,6 @@ func TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-017.5: Replay with matching hash consumes persisted verdict
-// ---------------------------------------------------------------------------
-
 // TestCP017_ReplayMatchingHashConsumesPersistedVerdict verifies that when a
 // persisted verdict exists with a matching envelope hash, the dispatcher
 // returns the persisted verdict without re-invoking the cognition evaluator
@@ -416,8 +354,6 @@ func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
-	// Compute the envelope hash that the dispatcher will compute for the event
-	// we're about to emit, so we can pre-seed the reader with the correct hash.
 	runID := cp017RunID()
 	evPayload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	correctHash := cp017ComputeEnvelopeHash(t, cp, evPayload)
@@ -453,12 +389,10 @@ func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 	}
 	cp012FixtureWaitDrain(t, bus)
 
-	// Evaluator MUST NOT be called on replay with matching hash (CP-INV-003).
 	if eval.callCount != 0 {
 		t.Errorf("CP-017.5: evaluator called %d times on replay with matching hash, want 0 (CP-INV-003)", eval.callCount)
 	}
 
-	// hook_fired MUST be emitted from the replayed verdict.
 	events := collector.all()
 	found := false
 	for _, et := range events {
@@ -470,10 +404,6 @@ func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 		t.Errorf("CP-017.5: hook_fired not emitted on replay with matching hash; events: %v", events)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-017.6: Replay with mismatched hash emits verdict_envelope_mismatch
-// ---------------------------------------------------------------------------
 
 // TestCP017_ReplayMismatchedHashEmitsVerdictEnvelopeMismatch verifies that
 // when a persisted verdict exists but the envelope hash does not match, the
@@ -542,10 +472,6 @@ func TestCP017_ReplayMismatchedHashEmitsVerdictEnvelopeMismatch(t *testing.T) {
 		t.Errorf("CP-017.6: evaluator called %d times on hash mismatch, want 0 (CP-041)", eval.callCount)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-017.7: WithCognition panics on nil arg
-// ---------------------------------------------------------------------------
 
 // TestCP017_WithCognitionPanicsOnNilArg verifies that Dispatcher.WithCognition
 // panics when any argument is nil, surfacing misconfiguration at construction

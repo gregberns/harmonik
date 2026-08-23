@@ -1,20 +1,5 @@
 package daemon
 
-// socketdispatch.go — the daemon-side adapter holder for the pure socketrouter
-// dispatch table (giant-retirement, plans/2026-07-16-giant-retirement).
-//
-// socketDispatch bundles the injected handler interfaces and exposes one small
-// named method per op, each returning a socketrouter.Result (the neutral,
-// wire-vocabulary-free outcome). buildSocketRouter registers all 29 routable ops
-// (every op except subscribe, which stays a daemon pre-branch alongside
-// hook-relay). resultToResponse maps a socketrouter.Result back to the wire
-// SocketResponse — the single real byte-drift surface, pinned by T5.
-//
-// The adapters lift each op's switch-case body verbatim and re-decode
-// SocketRequest from raw locally when they need scalar fields (byte-identical to
-// the pre-carve reEncoded bytes). Effectful concerns (net.Conn writers, uuid
-// validation, the hook-relay/subscribe pre-branches) stay in socket.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// socketDispatch holds the injected op handlers. SubscribeHandler and
-// HookRelayHandler are deliberately absent — both are daemon pre-branches handled
-// before Dispatch (scope-F4/Q2).
 type socketDispatch struct {
 	h             RequestHandler
 	qh            QueueHandler
@@ -42,19 +24,12 @@ type socketDispatch struct {
 	sessionStarth SessionStartAcknowledgementHandler
 }
 
-// decodeReq re-decodes SocketRequest from the re-encoded raw bytes. Byte-identical
-// to the pre-carve path (same reEncoded bytes, same json.RawMessage extraction,
-// same nil on an absent key). The unmarshal error is intentionally ignored: the
-// pre-switch decodeSocketRequest already validated these bytes decode into a
-// SocketRequest, so a second decode of the same bytes cannot newly fail.
 func decodeReq(raw json.RawMessage) SocketRequest {
 	var req SocketRequest
 	_ = json.Unmarshal(raw, &req) //nolint:errcheck // bytes already validated pre-Dispatch
 	return req
 }
 
-// resultToResponse maps a socketrouter.Result to the wire SocketResponse.
-// It is the inverse of resultFromResponse and the one new byte-drift surface.
 func resultToResponse(res socketrouter.Result, op string) SocketResponse {
 	if res.Unknown {
 		return SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: unknown op %q", op)}
@@ -67,8 +42,6 @@ func resultToResponse(res socketrouter.Result, op string) SocketResponse {
 	}
 }
 
-// resultFromResponse lifts a daemon-built SocketResponse (from handleQueueOp) into
-// a neutral socketrouter.Result. Round-trips byte-identically via resultToResponse.
 func resultFromResponse(resp SocketResponse) socketrouter.Result {
 	return socketrouter.Result{
 		OK:        resp.Ok,
@@ -77,8 +50,6 @@ func resultFromResponse(resp SocketResponse) socketrouter.Result {
 		ErrorCode: resp.ErrorCode,
 	}
 }
-
-// --- RequestHandler ops ------------------------------------------------------
 
 func (d *socketDispatch) emitOutcome(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	req := decodeReq(raw)
@@ -113,8 +84,6 @@ func (d *socketDispatch) sessionStartAcknowledgement(ctx context.Context, raw js
 	}
 	return socketrouter.Result{OK: true, Payload: result}
 }
-
-// --- QueueHandler ops --------------------------------------------------------
 
 func (d *socketDispatch) queueSubmit(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	return resultFromResponse(handleQueueOp(ctx, d.qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
@@ -163,8 +132,6 @@ func (d *socketDispatch) workerSetEnabled(ctx context.Context, raw json.RawMessa
 		return h.HandleWorkerSetEnabled(ctx, raw)
 	}))
 }
-
-// --- CommsSendHandler + type-asserted comms/decisions ops --------------------
 
 func (d *socketDispatch) commsSend(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.ch == nil {
@@ -256,8 +223,6 @@ func (d *socketDispatch) decisionsAnswer(ctx context.Context, raw json.RawMessag
 	return socketrouter.Result{OK: true, Payload: result}
 }
 
-// --- OperatorControlHandler ops (no-result success) --------------------------
-
 func (d *socketDispatch) operatorPause(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.oh == nil {
 		return socketrouter.Result{OK: false, Err: "daemon: OperatorControlHandler not registered"}
@@ -280,18 +245,6 @@ func (d *socketDispatch) operatorResume(ctx context.Context, raw json.RawMessage
 	return socketrouter.Result{OK: true}
 }
 
-// --- Operator verdict-override ops (RC-027) ----------------------------------
-//
-// confirm_verdict / veto_verdict ride the OperatorControlHandler value (d.oh)
-// via interface type-assertion — the same late-addition idiom as decisions-* on
-// d.ch — so no new socketDispatch field is needed. A reconciliation run whose
-// YAML policy sets confirm_required: true parks in the VerdictConfirmationRegistry;
-// these ops deliver the operator's confirm/veto decision to that parked run.
-// error_code 16 (operator-control-invalid-state) is returned when no run is
-// parked for the given run_id — the CLI exits 16.
-//
-// Spec ref: specs/reconciliation/spec.md §4.5 RC-027; specs/operator-nfr.md §4.3 ON-014.
-
 func (d *socketDispatch) confirmVerdict(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	return d.verdictOverride(ctx, raw, core.VerdictOverrideDecisionConfirm, "confirm_verdict")
 }
@@ -300,10 +253,6 @@ func (d *socketDispatch) vetoVerdict(ctx context.Context, raw json.RawMessage) s
 	return d.verdictOverride(ctx, raw, core.VerdictOverrideDecisionVeto, "veto_verdict")
 }
 
-// verdictOverride is the shared body for confirmVerdict / vetoVerdict: decode
-// the raw request, build a core.OperatorVerdictOverrideRequest, validate it, and
-// route to the OperatorControlHandler's HandleVerdictOverride (type-asserted to
-// VerdictOverrideHandler). promote_to is only meaningful for veto.
 func (d *socketDispatch) verdictOverride(ctx context.Context, raw json.RawMessage, decision core.VerdictOverrideDecision, op string) socketrouter.Result {
 	voh, ok := d.oh.(VerdictOverrideHandler)
 	if !ok || voh == nil {
@@ -324,8 +273,6 @@ func (d *socketDispatch) verdictOverride(ctx context.Context, raw json.RawMessag
 	}
 	return socketrouter.Result{OK: true}
 }
-
-// --- crewrun.CrewHandler ops -------------------------------------------------
 
 func (d *socketDispatch) crewStart(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.crewh == nil {
@@ -350,8 +297,6 @@ func (d *socketDispatch) crewStop(ctx context.Context, raw json.RawMessage) sock
 	}
 	return socketrouter.Result{OK: true, Payload: result}
 }
-
-// --- QuiesceOverrideHandler ops (no-result success) --------------------------
 
 func (d *socketDispatch) daemonSleep(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.sleepWakeh == nil {
@@ -392,8 +337,6 @@ func (d *socketDispatch) daemonWake(ctx context.Context, raw json.RawMessage) so
 	return socketrouter.Result{OK: true}
 }
 
-// --- StateHandler / DashboardHandler ops -------------------------------------
-
 func (d *socketDispatch) state(ctx context.Context, _ json.RawMessage) socketrouter.Result {
 	if d.stateh == nil {
 		return socketrouter.Result{OK: false, Err: "daemon: StateHandler not registered"}
@@ -416,8 +359,6 @@ func (d *socketDispatch) dashboard(ctx context.Context, _ json.RawMessage) socke
 	return socketrouter.Result{OK: true, Payload: result}
 }
 
-// buildSocketRouter registers all 29 routable ops (every op except subscribe,
-// which is a daemon pre-branch alongside hook-relay). cyclop(buildSocketRouter)=1.
 func buildSocketRouter(d *socketDispatch) *socketrouter.Router {
 	r := socketrouter.New()
 	r.Register("emit-outcome", d.emitOutcome)

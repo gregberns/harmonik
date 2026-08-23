@@ -1,22 +1,5 @@
 package daemon
 
-// harnessregistry.go — daemon-side HarnessRegistry wiring + registry-routed
-// launchSpecBuilder (codex-harness C1/T3 hk-hj9ld; C5/T12 hk-xhawy).
-//
-// This file closes the first of the two declared harness seam points
-// (harness.go §"the two declared seam points"): the launchSpecBuilder lookup is
-// routed through resolveHarness (the four-tier precedence walk, harnessresolve.go)
-// and HarnessRegistry.ForAgent (the per-agent-type route table).
-//
-// T12 wires the codex path: the codex harness is now registered alongside the claude harness,
-// and routedLaunchSpecBuilder produces a handler.LaunchSpec + shared.LaunchArtifacts for
-// the codex harness (previously it failed closed). The claude path retains its
-// byte-identical delegation to claude.BuildLaunchSpec.
-//
-// Spec: specs/harness-contract.md §2 N5.
-// See also: handlercontract/harnessregistry.go (the registry type),
-// harness/claude/harness.go, harness/codex/harness.go, harnessresolve.go.
-
 import (
 	"context"
 	"encoding/json"
@@ -37,20 +20,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// newHarnessRegistry builds the daemon's HarnessRegistry with the claude,
-// codex, and pi harnesses registered.
-//
-// piCfg carries the resolved harnesses.pi block from .harmonik/config.yaml
-// (loaded by daemon.Start and stored in Config.ProjectCfg.Harnesses.Pi).
-// Its provider, model, and api_key_env fields are threaded into pi.NewHarness so
-// that a bead labelled harness:pi can launch without hitting the
-// "apiKeyEnv must be non-empty" gate in pi.BuildLaunchSpec.  Pass a zero
-// PiHarnessConfig when Pi config is absent; pi.BuildLaunchSpec will then surface
-// a descriptive error naming the missing yaml keys and 'harmonik pi config --example'.
-//
-// Returns a non-nil error only if Register fails (a duplicate or sealed-registry
-// defect), which is impossible for these three distinct registrations but surfaced
-// so callers fail-closed if this grows.
 func newHarnessRegistry(piCfg projectconfig.PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()
 	if err := reg.Register(core.AgentTypeClaudeCode, claude.NewHarness()); err != nil {
@@ -74,14 +43,6 @@ func newHarnessRegistry(piCfg projectconfig.PiHarnessConfig) (*handlercontract.H
 	return reg, nil
 }
 
-// effectiveModel returns the model string that will actually be used for a
-// launch given the resolved harness h and the run context rc.
-//
-//   - Claude / Codex: rc.model (Claude = DOT node model= attr or run-level
-//     default; Codex = empty, not harmonik-controlled).
-//   - Pi: rc.model when non-empty (per-run override), else h.(*pi.Harness).Model()
-//     (harnesses.pi.model config fallback) — same override-with-fallback pattern
-//     as pi.Harness.LaunchSpec and the claude harness.
 func effectiveModel(h handlercontract.Harness, rc shared.LaunchCtx) string {
 	if piH, ok := h.(*pi.Harness); ok {
 		if rc.Model != "" {
@@ -92,9 +53,6 @@ func effectiveModel(h handlercontract.Harness, rc shared.LaunchCtx) string {
 	return rc.Model
 }
 
-// emitModelSelected emits a model_selected event (hk-eval-prog-model-on-log-bh2o7)
-// recording the effective model keyed on run_id. Best-effort: emit errors are
-// silently discarded (the launch result is already determined before this call).
 func emitModelSelected(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,
@@ -116,30 +74,6 @@ func emitModelSelected(
 	}
 }
 
-// routedLaunchSpecBuilder returns a launchSpecBuilder (the legacy aggregate hook
-// shape: func(ctx, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error))
-// that routes through resolveHarness + reg.ForAgent before building the spec.
-//
-// Precedence/selection: resolveHarness walks bead>queue>node>global and falls
-// back to core.AgentTypeClaudeCode. The resolved agent_type is looked up in reg;
-// an unregistered type returns a well-defined error (the routed builder fails the
-// run rather than silently launching claude for an unknown type).
-//
-// Claude path: delegates to claude.BuildLaunchSpec directly so the returned
-// LaunchSpec and shared.LaunchArtifacts are byte-identical to the pre-T3 call.
-// Harness.LaunchSpec returns only a SpawnSpec, so routing the claude build
-// through it would drop the artifacts the workloop/review-loop consume.
-//
-// Codex path (T12): writes agent-task.md, calls codex.Harness.LaunchSpec for the
-// SpawnSpec, and assembles shared.LaunchArtifacts with a tracking session ID and
-// pre-exec bus messages. The claudeSessionID field is a harmonic-internal tracking
-// ID (not used for codex resume; resume uses the captured thread_id via
-// RunCtx.PriorSessionID / shared.LaunchCtx.PriorClaudeSessID).
-//
-// The bead argument carries the labels resolveHarness reads for the tier-1
-// harness:<agent-type> override. Production passes the dispatch-time BeadRecord;
-// callers with no bead (legacy/test) may pass a zero BeadRecord, which resolves to
-// the claude default.
 func routedLaunchSpecBuilder(
 	reg *handlercontract.HarnessRegistry,
 	bead core.BeadRecord,
@@ -159,23 +93,14 @@ func routedLaunchSpecBuilder(
 
 		emitModelSelected(ctx, bus, core.RunID(rc.RunID), effectiveModel(h, rc), agentType)
 
-		// Claude path: delegate to claude.BuildLaunchSpec directly so the returned
-		// LaunchSpec AND shared.LaunchArtifacts are byte-identical to the pre-T3 call.
-		// claude.BuildLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
 		if _, ok := h.(*claude.Harness); ok {
 			return claude.BuildLaunchSpec(ctx, rc)
 		}
 
-		// Codex path (T12): write agent-task.md, call harness.LaunchSpec for the
-		// SpawnSpec, then build shared.LaunchArtifacts with a tracking session ID.
 		return buildCodexRoutedLaunchSpec(ctx, rc, h, agentType)
 	}
 }
 
-// pinnedHarnessLaunchSpecBuilder is like routedLaunchSpecBuilder but bypasses
-// resolveHarness entirely: the caller has already determined agentType (e.g. via
-// a DOT node-level harness/reviewer_harness pin) and it MUST NOT be overridden by
-// a coarse bead label. Emits harness_selected at tier 3. (hk-2jxqg)
 func pinnedHarnessLaunchSpecBuilder(
 	reg *handlercontract.HarnessRegistry,
 	bead core.BeadRecord,
@@ -197,22 +122,12 @@ func pinnedHarnessLaunchSpecBuilder(
 	}
 }
 
-// buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + shared.LaunchArtifacts
-// for non-claude harnesses (currently only the codex harness).
-//
-// Steps:
-//  1. Write agent-task.md (codex reads it via the seed-prompt argv).
-//  2. Convert shared.LaunchCtx → handlercontract.RunCtx; call h.LaunchSpec.
-//  3. Mint tracking session ID + handler session ID.
-//  4. Render pre-exec bus messages (CHB-018 subset).
-//  5. Return LaunchSpec + shared.LaunchArtifacts{ResolvedAgentType: agentType}.
 func buildCodexRoutedLaunchSpec(
 	ctx context.Context,
 	rc shared.LaunchCtx,
 	h handlercontract.Harness,
 	agentType core.AgentType,
 ) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
-	// Step 1: write agent-task.md.
 	taskBody := rc.NodePrompt
 	if taskBody == "" {
 		taskBody = rc.BeadDescription
@@ -252,7 +167,6 @@ func buildCodexRoutedLaunchSpec(
 			"daemon: buildCodexRoutedLaunchSpec: WriteAgentTaskVia: %w", err)
 	}
 
-	// Step 2: convert to RunCtx and call harness.LaunchSpec.
 	hrc := handlercontract.RunCtx{
 		RunID:               core.RunID(rc.RunID),
 		BeadID:              rc.BeadID,
@@ -289,7 +203,6 @@ func buildCodexRoutedLaunchSpec(
 			"daemon: buildCodexRoutedLaunchSpec: harness.LaunchSpec: %w", err)
 	}
 
-	// Step 3: mint tracking session ID and handler session ID.
 	handlerSessUID, err := uuid.NewV7()
 	if err != nil {
 		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
@@ -304,29 +217,6 @@ func buildCodexRoutedLaunchSpec(
 	}
 	trackingSessionID := trackingUID.String()
 
-	// Step 4: render pre-exec bus messages (CHB-018 subset).
-	//
-	// agentType and sessionLogPath are REPORTED, not assumed. This function serves
-	// every non-claude harness, and it used to hand PreExecMessages a hard-coded
-	// claude agent type and an empty log path, so every pi and codex run announced
-	// session_log_location{agent_type:"claude-code", log_path:""} — a payload
-	// core.SessionLogLocationPayload.Valid() rejects
-	// (hk-sll-claude-leak-z8fs0, hk-sll-empty-logpath-7dxdw).
-	//
-	// The log path is the canonical per-session log directory of
-	// workspace-model.md §4.7 WM-025, which is exactly what the payload field
-	// documents. Creating it is the workspace manager's job (WM-025) and would be
-	// wrong here: for a REMOTE run the worktree lives on the worker, not on this
-	// host, so a local MkdirAll would build the directory in the wrong place.
-	//
-	// pi is an exception: it is a SessionIDCaptured harness (hk-ium95), so its
-	// real session id does not exist yet when this pre-exec message is built —
-	// handlerSessionID is a daemon-minted id pi never learns about, and pi never
-	// writes to workspace.SessionLogDirPath(handlerSessionID). pi writes under
-	// its own PI_CODING_AGENT_DIR instead (<workspace>/.harmonik/pi-agent/, set
-	// up by pi.BuildLaunchSpec and captured to pi-stdout.log by the daemon's
-	// process runner). Naming the directory pi actually writes to keeps the
-	// event true instead of advertising a path nothing ever creates.
 	nodeID := "bead/" + rc.BeadID
 	runIDStr := core.RunID(rc.RunID).String()
 	sessionLogPath := workspace.SessionLogDirPath(rc.WorkspacePath, handlerSessionID)
@@ -351,7 +241,6 @@ func buildCodexRoutedLaunchSpec(
 		preExecMsgs[i] = json.RawMessage(b)
 	}
 
-	// Step 5: assemble handler.LaunchSpec and shared.LaunchArtifacts.
 	spec := handler.LaunchSpec{
 		Binary:       spawnSpec.Binary,
 		Args:         spawnSpec.Args,

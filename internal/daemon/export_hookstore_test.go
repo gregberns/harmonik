@@ -1,9 +1,5 @@
 package daemon
 
-// export_hookstore_test.go — test-seam exports for internal/daemon
-// hookrelay_chb025.go (RT19.13 split of export_test.go). package daemon test
-// file; see export_test.go header for the seam rationale. Bead: hk-ecrxy.
-
 import (
 	"context"
 	"encoding/json"

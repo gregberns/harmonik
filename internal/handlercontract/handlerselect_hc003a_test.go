@@ -9,50 +9,11 @@ import (
 	"testing"
 )
 
-// handlerselect_hc003a_test.go — sensor asserting HC-003a (workflow-mode is
-// dispatch-level, not a handler-selector). Handler selection MUST be
-// mode-agnostic: the harness resolver MUST NOT inspect workflow_mode, and
-// adapter implementations MUST NOT branch on workflow_mode.
-//
-// Spec refs: specs/handler-contract.md §4.1.HC-003a and §6.1;
-// bead hk-c6idw.
-//
-// Helper prefix: hc003aFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-//
-// # Invariants enforced
-//
-//  1. HC-003a spec section exists — the requirement is normatively declared
-//     in specs/handler-contract.md.
-//
-//  2. Harness resolver is mode-agnostic — internal/daemon/harnessresolve.go
-//     MUST NOT reference WorkflowMode in any non-comment line. Handler
-//     selection inputs are bead labels, queue default, node default, and
-//     global default; workflow_mode is not an input.
-//
-//  3. Adapter implementations are mode-agnostic — the adapter files
-//     (adapter_claudecode.go, adapter_codex.go, and any future adapters
-//     matching adapter_*.go under internal/handler/) MUST NOT branch on
-//     WorkflowMode. The adapter surface (§4.3.HC-013) MUST NOT expand to
-//     accommodate workflow-mode dispatch per HC-003a.
-//
-// # Failure modes
-//
-//   - HC-003a heading missing: HC-003a section not declared in the spec.
-//   - harnessresolve.go references WorkflowMode: the harness resolver has
-//     started using workflow_mode for handler selection, violating HC-003a.
-//   - adapter file references WorkflowMode: an adapter has branched on
-//     workflow_mode, expanding the adapter surface for mode dispatch.
-
-// hc003aFixtureHandlerContractPath returns the absolute path to
-// specs/handler-contract.md from the repo root derived via go.mod walk.
 func hc003aFixtureHandlerContractPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(hc003aFixtureRepoRoot(t), "specs", "handler-contract.md")
 }
 
-// hc003aFixtureRepoRoot resolves the absolute repo root by walking upward
-// from the test package directory until go.mod is found.
 func hc003aFixtureRepoRoot(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()
@@ -72,7 +33,6 @@ func hc003aFixtureRepoRoot(t *testing.T) string {
 	}
 }
 
-// hc003aFixtureLoadLines opens path and returns all lines.
 func hc003aFixtureLoadLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path derived from go.mod walk + known relative paths; not user input.
@@ -96,11 +56,8 @@ func hc003aFixtureLoadLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// hc003aFixtureHC003aHeading matches the HC-003a level-4 requirement heading.
 var hc003aFixtureHC003aHeading = regexp.MustCompile(`^#### HC-003a`)
 
-// hc003aFixtureModeAgnosticClause matches the "mode-agnostic" prose fragment
-// that must appear in the HC-003a spec section.
 var hc003aFixtureModeAgnosticClause = regexp.MustCompile(`mode-agnostic`)
 
 // TestHC003a_SpecSectionExists verifies that handler-contract.md declares the
@@ -120,7 +77,6 @@ func TestHC003a_SpecSectionExists(t *testing.T) {
 			continue
 		}
 		foundHeading = true
-		// Scan the body window for the observational clause.
 		end := min(i+1+windowLines, len(lines))
 		for _, bodyLine := range lines[i+1 : end] {
 			if hc003aFixtureModeAgnosticClause.MatchString(bodyLine) {
@@ -141,20 +97,13 @@ func TestHC003a_SpecSectionExists(t *testing.T) {
 	}
 }
 
-// hc003aFixtureHarnessResolvePath returns the absolute path to
-// internal/daemon/harnessresolve.go.
 func hc003aFixtureHarnessResolvePath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(hc003aFixtureRepoRoot(t), "internal", "daemon", "harnessresolve.go")
 }
 
-// hc003aFixtureGoCommentRE matches Go comment lines (//-style).
 var hc003aFixtureGoCommentRE = regexp.MustCompile(`^\s*//`)
 
-// hc003aFixtureWorkflowModeRE matches any occurrence of the WorkflowMode
-// identifier or the HARMONIK_WORKFLOW_MODE env-var string — both constitute
-// handler-selection awareness of workflow_mode that is forbidden in the
-// harness resolver.
 var hc003aFixtureWorkflowModeRE = regexp.MustCompile(`WorkflowMode|workflow_mode|HARMONIK_WORKFLOW_MODE`)
 
 // TestHC003a_HarnessResolverIsModeAgnostic verifies that harnessresolve.go
@@ -174,7 +123,6 @@ func TestHC003a_HarnessResolverIsModeAgnostic(t *testing.T) {
 	lines := hc003aFixtureLoadLines(t, resolverPath)
 
 	for i, line := range lines {
-		// Skip pure comment lines.
 		if hc003aFixtureGoCommentRE.MatchString(line) {
 			continue
 		}
@@ -190,9 +138,6 @@ func TestHC003a_HarnessResolverIsModeAgnostic(t *testing.T) {
 	}
 }
 
-// hc003aFixtureAdapterFiles returns the set of non-test Go source files whose
-// names match adapter_*.go under internal/handler/. These are the adapter
-// implementation files that MUST NOT branch on WorkflowMode.
 func hc003aFixtureAdapterFiles(t *testing.T) []string {
 	t.Helper()
 	handlerDir := filepath.Join(hc003aFixtureRepoRoot(t), "internal", "handler")
@@ -236,7 +181,6 @@ func TestHC003a_AdaptersAreModeAgnostic(t *testing.T) {
 			lines := hc003aFixtureLoadLines(t, adapterPath)
 
 			for i, line := range lines {
-				// Skip pure comment lines.
 				if hc003aFixtureGoCommentRE.MatchString(line) {
 					continue
 				}

@@ -1,69 +1,5 @@
 package daemon
 
-// workloop_runplan.go — the run plan: every decision beadRunOne makes BEFORE it
-// takes a resource.
-//
-// A run plan answers ten questions about one dispatched bead: which workflow
-// mode and workflow file, which harness, which model and effort, which Pi
-// provider profile, which repository the work happens in, which branches the
-// merge gate protects, which commit the worktree is cut from, which branch the
-// run lands on, and which branch the merge targets. All ten are settled before
-// the run holds a worktree, a tunnel port, an agent process, or an ssh session
-// on a worker.
-//
-// WHY THE SEAM IS HERE. Five decisions can REFUSE the bead: an unknown Pi
-// profile, a target repo outside the safelist, a start_from ref that does not
-// resolve, a lands_on branch the operator protects, and a daemon hook socket
-// path too long for a remote run's tunnel to reach. Before the plan existed the
-// first four sat inline in a 1700-line function, above the acquisitions but
-// with nothing to keep them there. One of them drifted below a worker-slot
-// reservation once already and leaked the slot on every refusal until the
-// remote path wedged (hk-3hozm). The fifth was BELOW three acquisitions and was
-// moved up here. With the decisions in one function that returns a value, a
-// refusal cannot move below an acquisition without moving the whole plan.
-//
-// THE PLAN IS NOT PURE, AND DOES NOT CLAIM TO BE. It stats and reads
-// <repo>/.harmonik/branching.yaml. It forks up to two `git rev-parse`
-// subprocesses. Its parent-commit answer is time-varying, because
-// refs/heads/<branch> moves as sibling runs merge. It reads HARMONIK_CLAUDE_MODEL
-// and HARMONIK_CLAUDE_EFFORT from the process environment at call time, which is
-// the documented hot-reload path (hk-c5oxy). It emits bead_label_conflict,
-// review_bypassed and provider_selected as the tier walks find conflicts. The
-// property this file defends is DECIDED BEFORE ANY RESOURCE IS ACQUIRED, not
-// purity, and the two are not the same thing.
-//
-// THE RUN-LEVEL (harness, model, effort) TUPLE IS NOT THE LAST WORD. A DOT run
-// recomputes an effective harness per node and re-derives the node's model from
-// it (dot_cascade_core.go, and nodeModelForHarness in dot_cascade_helpers.go).
-// The plan carries the RUN-level answer. Do not treat it as the node-level
-// answer and do not fold the per-node correction into it — that reopens the
-// model-leak defect on the node axis (hk-pkugu).
-//
-// THE PLAN DOES NOT PLACE THE RUN. It carries placement INTENT — LocalOnly and
-// WorkerTarget, straight off the dispatched queue item — but it never selects
-// and never reserves a worker. workers.SelectWorker and SelectWorkerByName
-// decide and reserve inside one mutex-held critical section on purpose. Asking
-// the plan to pick a worker would split that section and re-open the race it
-// closes.
-//
-// KNOWN INCONSISTENCY, RECORDED NOT FIXED. The plan refusals reopen the bead
-// and emit NO run_failed. The socket-path one emits worker_tunnel_failed, and
-// the other four emit nothing at all. Refusals further down the run path ride
-// the Run bridge and DO emit run_failed. That split is real and is not defended
-// by any spec rule. It is left alone here on purpose: unifying it would ADD
-// events to the stream that operator tooling does not expect today.
-//
-// Spec refs: specs/execution-model.md §4.3 EM-012a (workflow mode / ref),
-//
-//	EM-012b (model / effort). specs/workspace-model.md §4.2 WM-005b
-//	covers start_from and lands_on. specs/beads-integration.md §4.3
-//	BI-009b covers the ## Branching parse contract.
-//
-// Bead refs: hk-3hozm (slot leak the seam makes unrepresentable), hk-ncwb3
-// (lands_on protection), hk-xfuc (cross-repo safelist), hk-m6uu2 (Pi profile),
-// hk-pkugu (harness-matched model default), hk-mtm0w (lands_on rebase base),
-// hk-lgykq (per-bead merge target).
-
 import (
 	"context"
 	"fmt"
@@ -81,20 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// runPlanRequest names everything the resolver reads.
-//
-// Env supplies the immutable per-run values (RSM-010) — the bead record, the
-// daemon and queue defaults, and the per-item overrides. Emit is the run's
-// event emitter, which the tier walks use to report label conflicts. Handles is
-// present for ONE reason: a Pi run stamps its resolved provider onto the run
-// handle at the same point it emits provider_selected, and both must keep their
-// position in the sequence.
-//
-// PreSelectedWorker is the worker the OUTER dispatch loop already reserved for
-// this run, or nil. The plan reads it, and reads nothing else about placement.
-// It does not select and does not reserve. It is here so that the one check
-// which only matters for a remote run can refuse before the run takes a tunnel
-// port or touches the worker over ssh.
 type runPlanRequest struct {
 	Env               runloop.RunEnv
 	Emit              handlercontract.EventEmitter
@@ -102,41 +24,22 @@ type runPlanRequest struct {
 	PreSelectedWorker *workers.Worker
 }
 
-// runPlanVerdict tells beadRunOne whether the bead may proceed, and when it may
-// not, which decision refused it.
 type runPlanVerdict string
 
 const (
-	// runPlanReady — all ten decisions resolved. The run may acquire resources.
 	runPlanReady runPlanVerdict = "ready"
 
-	// runPlanRefusedPiProfile — the bead names a Pi profile that is absent from
-	// harnesses.pi.profiles. Launching would ask a provider for a model it does
-	// not serve.
 	runPlanRefusedPiProfile runPlanVerdict = "refused_pi_profile"
 
-	// runPlanRefusedCrossRepoUnsafe — the bead declares a target_repo that is
-	// not in the daemon's allowed_repos safelist.
 	runPlanRefusedCrossRepoUnsafe runPlanVerdict = "refused_cross_repo_unsafe"
 
-	// runPlanRefusedStartFrom — the bead's branching config is malformed, or its
-	// start_from names a ref that does not resolve in the active repository.
 	runPlanRefusedStartFrom runPlanVerdict = "refused_start_from"
 
-	// runPlanRefusedLandsOnProtected — the resolved lands_on is a branch the
-	// operator declared off-limits for direct pushes.
 	runPlanRefusedLandsOnProtected runPlanVerdict = "refused_lands_on_protected"
 
-	// runPlanRefusedSocketPath — the daemon's hook socket path is too long for
-	// the platform to bind or connect, so the reverse tunnel this remote run
-	// needs could never carry a hook. Remote runs only.
 	runPlanRefusedSocketPath runPlanVerdict = "refused_socket_path"
 )
 
-// runPlanRefusal carries exactly what the daemon must say when it refuses a
-// bead. The strings are the refusal's whole report: one stderr line and one
-// ReopenBead reason. They are data, not a template, so that the report cannot
-// drift when the refusal moves.
 type runPlanRefusal struct {
 	// LogLine is the complete stderr line, newline included.
 	LogLine string
@@ -155,8 +58,6 @@ type runPlanRefusal struct {
 	TunnelFailure *runPlanTunnelFailure
 }
 
-// runPlanTunnelFailure is the worker_tunnel_failed payload a refusal owes an
-// operator: which run, which bead, which worker, which socket path, and why.
 type runPlanTunnelFailure struct {
 	RunID      string
 	BeadID     string
@@ -166,10 +67,6 @@ type runPlanTunnelFailure struct {
 	Detail     string
 }
 
-// runPlan is the answer to all ten questions plus the verdict.
-//
-// Every field is fixed for the run's lifetime EXCEPT as noted on AgentType,
-// Model and Effort: a DOT run corrects those per node.
 type runPlan struct {
 	Verdict runPlanVerdict
 
@@ -235,8 +132,6 @@ type runPlan struct {
 	WorkerTarget string
 }
 
-// resolvedWorkflow is one complete graph decision before the daemon creates a
-// run. Raw queue values stay beside the resolved value for audit and migration.
 type resolvedWorkflow struct {
 	Graph           *dot.Graph
 	Descriptor      core.WorkflowDescriptor
@@ -252,15 +147,9 @@ func (w resolvedWorkflow) Valid() bool {
 	if w.Graph == nil || !w.Descriptor.Valid() || w.Mode != core.WorkflowModeDot || !w.ReviewPolicy.Valid() || !w.SelectionSource.Valid() {
 		return false
 	}
-	// The descriptor/policy/source rule belongs to core.RunStartedPayload, which
-	// is what this resolution is emitted as. Ask core rather than restate it —
-	// this function used to carry a second copy that could drift out of step.
 	return core.ValidPolicyBinding(w.Descriptor, w.ReviewPolicy, w.SelectionSource)
 }
 
-// resolveWorkflow returns the parsed graph and every durable selection fact.
-// It is the one resolver boundary for new runs. It retains raw queue fields so
-// migration audit can distinguish persisted legacy input from resolved output.
 func resolveWorkflow(ctx context.Context, env runloop.RunEnv, emit handlercontract.EventEmitter) (resolvedWorkflow, error) {
 	input := env.ItemWorkflow
 	mode := resolveWorkflowModeWithAudit(ctx, env.BeadRecord, env.WorkflowModeDefault, emit, false)
@@ -276,8 +165,6 @@ func resolveWorkflow(ctx context.Context, env runloop.RunEnv, emit handlercontra
 		return resolveNoReviewWorkflow(input, core.WorkflowSelectionLegacySingleLabel)
 	}
 
-	// A stale daemon default may still name single. It is not one of the two
-	// audited compatibility inputs, so it cannot select no_review.
 	workflowMode := core.WorkflowModeDot
 	workflowRef := resolveWorkflowRef(env.BeadRecord, input.Ref)
 	graph, source, err := loadResolvedWorkflowGraph(env.ProjectDir, workflowRef, env.ItemTemplateParams)
@@ -361,9 +248,6 @@ func graphDescriptor(graph *dot.Graph) core.WorkflowDescriptor {
 	}
 }
 
-// rejectGraphAuthoredReviewPolicy enforces WG-056 at the resolver boundary.
-// The permissive DOT parser retains unknown attributes, so this check runs
-// after parameter substitution and graph validation for every selected graph.
 func rejectGraphAuthoredReviewPolicy(graph *dot.Graph) error {
 	if _, found := graph.UnknownAttrs["review_policy"]; found {
 		return fmt.Errorf("workflow graph declares reserved review_policy attribute")
@@ -381,17 +265,6 @@ func rejectGraphAuthoredReviewPolicy(graph *dot.Graph) error {
 	return nil
 }
 
-// resolveRunPlan walks the ten decisions in dependency order and returns the
-// plan.
-//
-// Order is load-bearing twice over. The harness must resolve before the model,
-// or the model default leaks across harnesses (hk-pkugu). The active repo must
-// resolve before the branching config, because the branching config is read out
-// of the active repo.
-//
-// It acquires nothing. It never launches, never claims a bead, never selects a
-// worker, and never creates a worktree. On refusal the caller performs the
-// report — see refuseRunPlan.
 func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 	env := req.Env
 	bead := env.BeadRecord
@@ -403,9 +276,6 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 		WorkerTarget: env.ItemWorkerTarget,
 	}
 
-	// ── 1–2. Workflow graph (EM-012a) ───────────────────────────────────────
-	//
-	// Resolve and validate one graph before any run resource exists.
 	resolved, workflowErr := resolveWorkflow(ctx, env, emit)
 	if workflowErr != nil {
 		plan.Verdict = runPlanRefusedStartFrom
@@ -420,8 +290,6 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 	plan.WorkflowRef = resolved.WorkflowRef
 	plan.WorkflowMode = resolved.Mode
 
-	// Decisions 3 to 5 answer WHAT runs the bead, decisions 6 to 10 answer
-	// WHERE. Each returns false when it refuses, having filled plan.Refusal.
 	if !resolveRunPlanHarness(ctx, req, &plan) {
 		return plan
 	}
@@ -432,26 +300,12 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 	return plan
 }
 
-// resolveRunPlanHarness answers what runs the bead: the harness, the model and
-// effort, and the Pi provider profile. It fills plan and reports false when the
-// bead is refused.
-//
-// The order inside is load-bearing: the harness resolves first so the compiled
-// model default belongs to the harness that will actually run (hk-pkugu), and
-// the profile resolves after the harness so a claude- or codex-resolved bead
-// yields the zero tuple.
 func resolveRunPlanHarness(ctx context.Context, req runPlanRequest, plan *runPlan) bool {
 	env := req.Env
 	bead := env.BeadRecord
 	beadID := bead.BeadID
 	emit := req.Emit
 
-	// ── 3. Harness agent type ──────────────────────────────────────────────
-	//
-	// Resolved QUIETLY — no events. The launch path resolves the same tuple
-	// again and emits harness_selected there. Emitting here would double it.
-	// It must run before the model walk so the model default belongs to the
-	// harness that will actually run (hk-pkugu).
 	plan.AgentType = resolveHarnessAgentTypeQuiet(
 		bead,
 		env.QueueDefaultHarness,
@@ -459,11 +313,6 @@ func resolveRunPlanHarness(ctx context.Context, req runPlanRequest, plan *runPla
 		env.DefaultHarness,
 	)
 
-	// ── 4. Model and effort (EM-012b) ──────────────────────────────────────
-	//
-	// Four tiers plus a tier-2.5 env-var read. That read happens HERE, at plan
-	// time, not at daemon start: an operator exports HARMONIK_CLAUDE_MODEL and
-	// the next dispatch picks it up without a daemon restart (hk-c5oxy).
 	plan.Model, plan.Effort = ResolveModelPreference(
 		ctx,
 		bead.Labels,
@@ -473,10 +322,6 @@ func resolveRunPlanHarness(ctx context.Context, req runPlanRequest, plan *runPla
 		string(beadID),
 	)
 
-	// ── 5. Pi provider profile ─────────────────────────────────────────────
-	//
-	// Runs strictly after the harness, so a claude- or codex-resolved bead
-	// yields the zero tuple. An unknown profile reference is fail-loud.
 	profile, profErr := resolvePiProfile(
 		ctx, bead.Labels, plan.AgentType,
 		env.ProjectCfg.Harnesses.Pi, emit, string(beadID),
@@ -492,18 +337,10 @@ func resolveRunPlanHarness(ctx context.Context, req runPlanRequest, plan *runPla
 	}
 	plan.PiProfile = profile
 
-	// Locked precedence (C3-spec.md §2): the wire-format triple and the
-	// credentials arrive together from the profile and are never split. A
-	// model: label overrides ONLY the model field, and only when there is
-	// exactly one of them.
 	if profile != (projectconfig.PiProfileConfig{}) && !hasSingleModelLabel(bead.Labels) {
 		plan.Model = profile.Model
 	}
 
-	// Carry the resolved Pi provider identity onto the run handle and report it
-	// (hk-8ziid.2). Pi runs only: a matched profile's provider wins, else the
-	// harness-global default. A non-Pi run leaves the handle unset, which is how
-	// a reader tells "not yet resolved" from "resolved to the empty default".
 	if plan.AgentType == core.AgentTypePi {
 		provider := profile.Provider
 		if profile == (projectconfig.PiProfileConfig{}) {
@@ -517,40 +354,16 @@ func resolveRunPlanHarness(ctx context.Context, req runPlanRequest, plan *runPla
 	return true
 }
 
-// resolveRunPlanPlace answers where the bead runs: the active repository, the
-// protect-branch list the merge gate enforces, the parent commit, the branch it
-// lands on, and the branch the merge targets. It fills plan and reports false
-// when the bead is refused.
-//
-// The active repo must resolve first: the branching config is read out of it.
 func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan) bool {
 	env := req.Env
 	bead := env.BeadRecord
 	beadID := bead.BeadID
 
-	// ── The bead body is parsed ONCE, here ─────────────────────────────────
-	//
-	// Decision 6 needs target_repo out of the ## Branching section to pick the
-	// active repo, and decisions 8 and 9 need the rest of that same section
-	// resolved against the repo decision 6 picks. One parse feeds both.
-	//
-	// A malformed section is treated as absent per BI-009b and warned once. The
-	// pre-plan run path parsed this body three times and warned twice for the
-	// same malformed section. One parse and one warning report the same fact.
 	beadBranchCfg, parseErr := parseBranchingSection(bead.Description)
 	if parseErr != nil {
 		warnBeadBodyParseError(ctx, parseErr)
 	}
 
-	// ── 6. Active repo (hk-xfuc) ───────────────────────────────────────────
-	//
-	// The active repo is where the worktree lives, commits happen, and merges
-	// push from. A local bead uses the project dir. A cross-repo bead declares
-	// target_repo and must pass the allowed_repos safelist first, or an
-	// arbitrary path reaches the git commands below.
-	//
-	// The project dir stays the harmonik project root for everything that is
-	// not git: the daemon socket, queue files, the beads adapter, workflow.dot.
 	plan.ActiveRepo = env.ProjectDir
 	if beadBranchCfg.TargetRepo != "" && beadBranchCfg.TargetRepo != env.ProjectDir {
 		if !isInAllowedRepos(beadBranchCfg.TargetRepo, env.AllowedRepos) {
@@ -571,40 +384,11 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 		)
 	}
 
-	// ── 7. Effective protect-branches ──────────────────────────────────────
-	//
-	// The daemon's protect list guards harmonik's own branches. On a cross-repo
-	// run it says nothing about the target repo, so pass nil rather than refuse
-	// a legitimate branch there that happens to share a name with a protected
-	// harmonik branch.
 	plan.MergeProtectBranches = env.ProtectBranches
 	if plan.ActiveRepo != env.ProjectDir {
 		plan.MergeProtectBranches = nil
 	}
 
-	// ── 8 and 9. Branching, resolved in ONE pass ───────────────────────────
-	//
-	// This settles start_from, lands_on, the landing strategy and the parent
-	// commit together. The pre-plan run path resolved the same three tiers
-	// TWICE — once inside the parent-commit call, which threw lands_on away, and
-	// again purely to get lands_on back. Both calls read the same
-	// mtime-cached .harmonik/branching.yaml, so a write between them made the
-	// two answers disagree.
-	//
-	// FAILURE SEMANTICS. The two old calls failed differently, and the
-	// difference is preserved rather than averaged:
-	//
-	//   - The first call failing was FATAL: reopen the bead and return. That is
-	//     this refusal, with the same reason text.
-	//   - The second call failing was NON-FATAL: lands_on stayed empty and the
-	//     whole protect check was skipped.
-	//
-	// The second call was reachable ONLY when the first had already succeeded,
-	// which means only inside the disagreement window. One call has no window,
-	// so the non-fatal branch has no way to arise. The one behaviour this
-	// changes is that a bead landing on a protected branch can no longer slip
-	// past the protect check by racing a config write — it is now always
-	// checked. That is the safe direction of the two.
 	branch, branchErr := resolveBranchPlan(ctx, plan.ActiveRepo, string(beadID), beadBranchCfg, env.TargetBranch, parentBeadIDFromRecord(bead))
 	if branchErr != nil {
 		plan.Verdict = runPlanRefusedStartFrom
@@ -619,9 +403,6 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 	plan.ParentSHA = branch.ParentSHA
 	plan.BaseBranch = branch.Config.LandsOn
 
-	// Protection gate (hk-ncwb3): a bead may NARROW its landing target but must
-	// never widen it to a branch the operator protects. Cross-repo runs skip the
-	// check for the same reason decision 7 nils the list.
 	if plan.ActiveRepo == env.ProjectDir {
 		for _, protected := range env.ProtectBranches {
 			if plan.BaseBranch == protected {
@@ -637,13 +418,6 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 		}
 	}
 
-	// ── 10. Merge target (hk-lgykq) ────────────────────────────────────────
-	//
-	// The run branch must land on the branch it was rebased onto, not the
-	// daemon-wide default. lands_on already carries the three-tier answer and
-	// equals the daemon target when the bead declares no override. The fallback
-	// stands as a guard: the merge must never be aimed at an empty ref, because
-	// the merge fail-closes on one.
 	plan.MergeTarget = plan.BaseBranch
 	if plan.MergeTarget == "" {
 		plan.MergeTarget = env.TargetBranch
@@ -661,29 +435,6 @@ func parentBeadIDFromRecord(bead core.BeadRecord) string {
 	return ""
 }
 
-// resolveRunPlanHookSocket refuses a remote run whose daemon hook socket path is
-// too long for the platform to bind or connect.
-//
-// The check is a length comparison against a platform constant and depends only
-// on the project dir, so it can be answered here. It used to run much later, in
-// the tunnel setup, AFTER the run had already reserved a worker slot, allocated
-// a tunnel port, and made an ssh round trip to create a directory on the
-// worker. All three were taken for a run that could never work.
-//
-// It stays remote-only, and it stays LAST among the refusals, so that a bead
-// which would also fail an earlier decision still reports that earlier reason.
-//
-// The gate is a pre-selected worker rather than "this run is remote", because
-// remote is not yet decided for a run whose worker the fallback path will pick.
-// The tunnel setup keeps its own copy of the check for that path. The two never
-// both refuse: a pre-selected run that fails here returns before the tunnel
-// setup runs at all.
-//
-// ssh never validates this forward destination when the tunnel starts, only
-// when a connection needs forwarding, so a too-long path lets the tunnel come
-// up and the readiness probe pass, then swallows every hook connection in
-// silence. The run surfaces it much later as an unexplained agent-ready
-// timeout. Fail loud instead (hk-ta6dg).
 func resolveRunPlanHookSocket(req runPlanRequest, plan *runPlan) {
 	if req.PreSelectedWorker == nil {
 		return
@@ -699,19 +450,6 @@ func resolveRunPlanHookSocket(req runPlanRequest, plan *runPlan) {
 	plan.Refusal = tunnelRefusal(env.RunID, beadID, *req.PreSelectedWorker, "socket-path", sockPath, lenErr)
 }
 
-// tunnelRefusal builds the refusal a fatal reverse-tunnel problem owes an
-// operator: one stderr line that names the stage, one worker_tunnel_failed
-// report, and one reopen reason.
-//
-// Four gates reach it. This file's socket-path decision is one. The other three
-// are in the remote block of beadRunOne — port allocation, the socket-path check
-// for a run whose worker the fallback selection picked, and the readiness gate.
-// Those three used to carry a second copy of the whole report, closure and all,
-// and the two copies drifted in the stage wording. One builder plus refuseRunPlan
-// is what lets a fifth gate be added without inventing a fifth spelling.
-//
-// stage is the short name of the step that failed, and it is the only part of
-// the line that varies.
 func tunnelRefusal(runID core.RunID, beadID core.BeadID, worker workers.Worker, stage, sockPath string, cause error) runPlanRefusal {
 	return runPlanRefusal{
 		LogLine: fmt.Sprintf(
@@ -730,21 +468,6 @@ func tunnelRefusal(runID core.RunID, beadID core.BeadID, worker workers.Worker, 
 	}
 }
 
-// refuseRunPlan reports one refusal and reopens the bead. It is the ONE
-// reporter for a refused run: the plan's five decisions and the remote block's
-// three tunnel gates all report through this call.
-//
-// The report is the stderr line the refusal built, then the refusal's own event
-// when it has one, then a best-effort ReopenBead with the refusal's reason. That
-// order is the order the daemon used before the plan, and it lives here so it
-// is stated once for every refusal.
-//
-// The reopen is best-effort by design: when it fails the bead stays in_progress
-// and an operator reopens it by hand, which is preferable to the daemon
-// spinning on a bead it has already refused (hk-s20z).
-//
-// No run_failed is emitted. See this file's header: that omission is the
-// pre-plan behaviour, preserved on purpose.
 func refuseRunPlan(ctx context.Context, env runloop.RunEnv, handles runloop.SharedHandles, emit handlercontract.EventEmitter, refusal runPlanRefusal) {
 	fmt.Fprint(os.Stderr, refusal.LogLine)
 	if tf := refusal.TunnelFailure; tf != nil {

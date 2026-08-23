@@ -1,133 +1,5 @@
 package lifecycle
 
-// orphansweepbeads.go — PL-006 sixth-bullet orphan sweep of stale `in_progress`
-// bead markers. Extends the PL-006 orphan-sweep enumeration with the BI-010d
-// reset op that transitions a stale in_progress bead back to open when no live
-// run, no pending close/reopen intent, and no merge-commit-on-target-branch
-// claim its terminal-transition handling.
-//
-// Naming note: the bead that delivered Cat 3c auto-resolution (hk-lgtq2) was
-// filed under the title "Cat 3a / Cat 3c reconciler" for historical reasons
-// (the original filing used "Cat 3a" to refer to the subsumed-bead pattern).
-// The canonical pattern name in specs/reconciliation/spec.md §8.6 is Cat 3c
-// ("inverse premature-close" — bead still in_progress despite implementation
-// having merged). Cat 3a in the spec refers to pending close/reopen intents
-// (exclusion (b) in this file). All code in this file uses the canonical Cat 3c
-// label.
-//
-// Bead ref: hk-iuaed.4 (imrest-impl-sweep).
-// Spec refs:
-//   - specs/process-lifecycle.md §4.5 PL-006 sixth bullet ("Stale `in_progress`
-//     bead markers") and the four exclusion conditions (a)–(c) plus the default
-//     reset path.
-//   - specs/beads-integration.md §4.4 BI-010d (ResetBead op).
-//   - specs/beads-integration.md §4.10 BI-030 (intent-log discipline).
-//   - specs/beads-integration.md §4.8a BI-024a (`br` existence check) —
-//     drives the sequencing decision documented below.
-//
-// # Sequencing decision (PL-006 sixth bullet vs PL-005 step ordering)
-//
-// The bead `br show` and `br update` invocations issued by this sweep are
-// BI-write-surface operations: they depend on the BI-024a existence check
-// (PL-005 step 4 Cat 0 pre-check) having succeeded, otherwise we could start
-// writing intent files for `br` calls that can never run and leave the
-// intent-log discipline holding entries nothing will ever retire. The other
-// PL-006 bullets (tmux sessions, worktree locks, subprocess sweeps, stale
-// intent enumeration, stale recon-locks) do NOT touch the BI write surface —
-// they operate on the filesystem and the process table directly.
-//
-// The bead brief (hk-iuaed.4) explicitly delegates this sequencing question to
-// the implementation task. The chosen ordering is:
-//
-//	step 3 — PL-006 filesystem+process orphan sweep (existing 5 bullets)
-//	step 4 — PL-005 Cat 0 pre-check (includes the BI-024a `br` existence check)
-//	step 4.5 — PL-006 sixth bullet: stale-in_progress bead reset (this sweep)
-//	step 5+ — git walk, Beads ready query, in-memory model rebuild, etc.
-//
-// In other words: the bead-reset sweep is fired AFTER the rest of PL-006 has
-// quiesced the project's filesystem and process tree AND AFTER the BI-024a
-// check has confirmed the `br` binary runs at all. It confirms nothing about
-// which version `br` reports; no code asserts a version relationship. This
-// matches the spec text in PL-006 sixth bullet, which references the in-memory
-// model rebuilt at PL-005 step 7 in exclusion (a) — the bead-reset enumeration
-// CANNOT precede the existence check.
-//
-// The in-memory model rebuild (PL-005 step 7) is not yet wired as a
-// distinct phase; exclusion (a) reduces to the OR clause in the spec text —
-// "a `claim` intent file is still present and the BI adapter's BI-031 recovery
-// will re-drive it" — which is observable directly via the intent-log
-// directory listing.
-//
-// The single `daemon_orphan_sweep_completed` event (event-model.md §8.7.14)
-// covers both the filesystem+process sweep AND this bead-reset sweep:
-// `bead_in_progress_reset` is an additive payload field on the same event,
-// emitted once after the bead-reset sweep completes. This matches the spec's
-// "On completion, the daemon MUST emit `daemon_orphan_sweep_completed` ... with
-// counts of ... and `bead_in_progress_reset`" wording.
-//
-// # Exclusion logic
-//
-// For each bead returned by `br list --status in_progress --json` that is
-// owned by this project (per the provenance match described below):
-//
-//	(a) Live run reattached. If the in-memory model rebuilt at PL-005 step 7
-//	    re-attaches a live in-flight run to this bead, the bead is NOT reset.
-//	    The in-memory model is not yet wired, so exclusion (a) reduces
-//	    to the OR clause: a `claim` intent file at
-//	    `.harmonik/beads-intents/<key>.json` references this bead AND the BI
-//	    adapter's BI-031 recovery will re-drive it.
-//
-//	(b) Pending close/reopen intent. A `close` or `reopen` intent file at
-//	    `.harmonik/beads-intents/<key>.json` references this bead. Cat 3a
-//	    handles it — the orphan sweep MUST NOT preempt the Cat 3a detector.
-//
-//	(c) Merged commit present. A merge commit on the target branch bears
-//	    `Harmonik-Bead-ID: <bead_id>` (Cat 3c condition). The Cat 3c
-//	    auto-resolver owns the close — the orphan sweep MUST NOT reset
-//	    preemptively.
-//
-// If none of the exclusions apply, the daemon MUST issue a `reset` write via
-// the §4.8 BI adapter (BI-010d op). The reset write is intent-logged
-// identically to claim/close/reopen writes per BI-030.
-//
-// # Provenance match
-//
-// PL-006 sixth bullet specifies provenance match via the audit-trail `actor`
-// field carrying this project's `project_hash` per PL-006a, OR — if the
-// `actor` field is unsuitable — via cross-referencing `claim` op entries in
-// the daemon's own intent-log at `.harmonik/beads-intents/*.json`.
-//
-// The audit-trail actor field is not reliably populated with the
-// project hash (Beads v0.1.x records the user's git config `user.name`); the
-// implementation therefore uses the intent-log cross-reference as the default
-// provenance signal. A bead with NO intent file of ANY op type in the local
-// intent-log and no positive [ProvenanceChecker] verdict is NOT owned by this
-// project's daemon and MUST NOT be touched. This is consistent with PL-006a's
-// project-scoped-provenance discipline.
-//
-// hk-sc3o4 fix: the initial implementation used only the `claim` intent as the
-// provenance signal. Dogfood #2 showed stale_intents_observed=4 but
-// bead_in_progress_reset=0: hk-a0htu's claim intent had been cleared by BI-031
-// recovery, but a close intent (from a timed-out close attempt) or reset
-// intent (from a prior sweep that crashed mid-write) was still on disk. The fix
-// broadens the provenance signal to any op type — any intent file in the
-// project's .harmonik/beads-intents/ directory establishes ownership.
-//
-// The [ProvenanceChecker] seam lets a future Beads release whose audit-log
-// actor field carries the project_hash plug in a deterministic owner check
-// independent of the intent-log presence (the fallback). When a
-// ProvenanceChecker is wired and returns true, the reset path becomes
-// reachable for beads where all intent files were already cleared. See
-// hk-iuaed.4 follow-up.
-//
-// # Idempotency
-//
-// The reset write carries the idempotency key
-// `<project_hash>:<bead_id>:reset:<daemon_start_ns>` per BI-010d. Two restarts
-// of the same daemon produce distinct keys, so a surviving intent file from
-// one restart cannot be misclassified as ambiguous by the BI-031 crash-recovery
-// scan of the next restart.
-
 import (
 	"bufio"
 	"context"
@@ -265,27 +137,16 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 	if branch == "" {
 		branch = "main"
 	}
-	// Emit one line per commit: "<hash>\x00<trailer values NUL-joined>".
-	// valueonly=true yields only the trailer value (not the "key: " prefix), so
-	// a bead id appearing in the commit BODY prose produces no field here — only
-	// an actual Harmonik-Bead-ID trailer does. separator=%x00 collapses repeated
-	// trailers onto one NUL-separated field.
 	const format = "%H%x00%(trailers:key=Harmonik-Bead-ID,valueonly=true,separator=%x00)"
 	//nolint:gosec // G204: branch is validated (defaulted); format is a constant.
 	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log",
 		"--format="+format, branch)
 	out, err := cmd.Output()
 	if err != nil {
-		// git log exits non-zero when the branch doesn't exist; treat as "no
-		// merge commit" rather than propagating the error.
 		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
-	// RU-12x: a commit line is "<hash>\x00<NUL-joined trailer values>"; many/large
-	// Harmonik-Bead-ID trailers can exceed bufio's default 64KB token limit, which
-	// would abort the scan mid-history and silently drop later commits. Raise the
-	// buffer to match the git-output scanning cap used elsewhere (daemon/reconciliation.go).
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -296,34 +157,23 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 		if !ok {
 			continue
 		}
-		// Exact value equality against any of the NUL-joined trailer values.
 		if !trailerHasExactValue(trailerField, string(beadID)) {
 			continue
 		}
 		touchesNonDocs, diffErr := s.commitTouchesNonDocs(ctx, hash)
 		if diffErr != nil {
-			// Conservative: a diff-read failure is treated as no evidence.
 			return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
 		}
 		if touchesNonDocs {
-			// Trailer + real diff matched. Before reporting the change present,
-			// confirm it has not been reverted/superseded — a bare historical
-			// trailer match is NOT sufficient to auto-close (H3).
 			stillPresent, presentErr := s.changeStillPresent(ctx, hash, branch)
 			if presentErr != nil {
-				// A failed ancestry probe is not evidence that the change is gone.
-				// Keep the scanner's documented conservative outer result.
 				return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
 			}
 			if !stillPresent {
-				// This trailer-bearing commit was reverted; keep scanning in case
-				// another commit re-landed the same bead's work.
 				continue
 			}
 			return true, nil
 		}
-		// Trailer matched but diff is docs-only — keep scanning; another commit
-		// may carry the same trailer with real implementation changes.
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
@@ -331,8 +181,6 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 	return false, nil
 }
 
-// trailerHasExactValue reports whether beadID exactly equals any of the
-// NUL-separated trailer values in field.
 func trailerHasExactValue(field, beadID string) bool {
 	if field == "" {
 		return false
@@ -345,14 +193,6 @@ func trailerHasExactValue(field, beadID string) bool {
 	return false
 }
 
-// commitTouchesNonDocs reports whether the diff of commit hash touches at least
-// one file that is not a docs artifact (see isDocsPath).
-//
-// diff-tree runs with -r but intentionally WITHOUT -m: a true two-parent merge
-// commit yields an empty diff and therefore reports false. That is the
-// conservative direction — harmonik's promote model carries the Harmonik-Bead-ID
-// trailer on the diff-bearing squash/single commit, not the merge node, so a
-// missed merge only leaves the bead open (never a spurious close).
 func (s GitMergeCommitScanner) commitTouchesNonDocs(ctx context.Context, hash string) (bool, error) {
 	//nolint:gosec // G204: hash is a %H value read from git output, not user input.
 	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir,
@@ -374,9 +214,6 @@ func (s GitMergeCommitScanner) commitTouchesNonDocs(ctx context.Context, hash st
 	return false, scanner.Err()
 }
 
-// isDocsPath reports whether path is a docs-only artifact that, on its own, does
-// NOT constitute merged implementation evidence: Markdown files (`*.md`), any
-// file under a `docs/` directory, and the captain-lanes tracker.
 func isDocsPath(path string) bool {
 	if strings.HasSuffix(path, ".md") {
 		return true
@@ -390,15 +227,7 @@ func isDocsPath(path string) bool {
 	return false
 }
 
-// changeStillPresent reports whether the trailer-bearing commit hash is still
-// present on branch — an ancestor of the branch tip and not reverted by a later
-// commit. A bare historical trailer match is NOT sufficient to auto-close a bead
-// (H3): the commit may have been reverted/superseded, leaving the work absent
-// from the current tree.
 func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, branch string) (bool, error) {
-	// (1) Confirm the commit is still an ancestor of the branch tip. An amended/
-	// rebased/force-pushed branch could have dropped it; --is-ancestor exits 0
-	// iff hash is reachable from the tip.
 	stillAncestor, err := gitprobe.IsAncestor(ctx, s.ProjectDir, hash, branch)
 	if err != nil {
 		return false, err
@@ -414,7 +243,6 @@ func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, bra
 	revOut, revErr := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log",
 		"--grep", "This reverts commit "+hash, "--format=%H", hash+".."+branch).Output()
 	if revErr == nil && strings.TrimSpace(string(revOut)) != "" {
-		// A later revert of the trailer-bearing commit exists → change superseded.
 		return false, nil
 	}
 
@@ -509,7 +337,6 @@ func ScanIntentLog(intentLogDir string, logger *log.Logger) (provenance IntentPr
 			continue
 		}
 		if strings.Contains(name, ".tmp-") {
-			// BI-030 temp-file pattern (mid-rename); skip.
 			continue
 		}
 		entry, readEntryErr := core.ReadIntentLogEntry(filepath.Join(intentLogDir, name))
@@ -517,7 +344,6 @@ func ScanIntentLog(intentLogDir string, logger *log.Logger) (provenance IntentPr
 			orphanLog(logger, "ScanIntentLog: skipping malformed %q: %v", name, readEntryErr)
 			continue
 		}
-		// Every successfully-parsed entry establishes provenance regardless of op.
 		provenance[entry.BeadID] = struct{}{}
 		switch entry.Op {
 		case core.TerminalOpClaim:
@@ -525,11 +351,7 @@ func ScanIntentLog(intentLogDir string, logger *log.Logger) (provenance IntentPr
 		case core.TerminalOpClose, core.TerminalOpReopen:
 			mutations[entry.BeadID] = struct{}{}
 		case core.TerminalOpReset:
-			// Stale reset intent — not a live-run signal (a) nor a Cat 3a
-			// hand-off (b); provenance only.
 		default:
-			// Unknown op (future schema extension): conservative — treat as a
-			// mutation so we DO NOT preempt whatever it represents.
 			mutations[entry.BeadID] = struct{}{}
 		}
 	}
@@ -688,16 +510,6 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 	var lastResetErr error
 	var lastCat3cErr error
 	for _, bead := range beads {
-		// Provenance check (PL-006a OR clause): the bead is owned by this
-		// project iff any of the following holds:
-		//   (i)  cfg.Provenance.Owns(...) reports true, OR
-		//   (ii) ANY intent file (claim, close, reopen, or reset) references it
-		//        in the local intent log (hk-sc3o4 broadened provenance signal), OR
-		//   (iii) the bead appears in QueueOwned — it was submitted to THIS
-		//         project's daemon via queue-submit (hk-2ty0g SIGKILL-recovery fix).
-		//
-		// Signal (iii) closes the gap where the intent log has been fully drained
-		// after SIGKILL recovery but the bead is still in_progress in the ledger.
 		owned := false
 		if cfg.Provenance != nil {
 			provOwned, provErr := cfg.Provenance.Owns(ctx, bead.BeadID)
@@ -722,22 +534,6 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			continue
 		}
 
-		// (a) Live run will be reattached. Two signals can fire exclusion (a):
-		//
-		//   (a-intent) A claim intent file is present in the local intent log.
-		//              BI-031 recovery WILL re-drive the run, so resetting now
-		//              would race with the re-drive.
-		//
-		//   (a-queue)  The bead appears in QueueDispatched — queue.json still
-		//              records an active dispatch for this bead. The queue
-		//              considers the run live; the sweep MUST NOT preempt it.
-		//              This covers SIGKILL recovery where the claim intent was
-		//              drained by BI-031 recovery on a previous restart but
-		//              queue.json was not yet updated (hk-2ty0g).
-		//
-		// When NEITHER signal fires and provenance is established, the reset
-		// path proceeds. This is the imrest scenario the PL-006 sixth bullet
-		// targets.
 		if _, hasClaim := claims[bead.BeadID]; hasClaim {
 			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has live claim intent; exclusion (a) — skip reset", bead.BeadID)
 			continue
@@ -747,20 +543,17 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			continue
 		}
 
-		// (b) Pending close/reopen intent — Cat 3a handles it.
 		if _, hasMutation := mutations[bead.BeadID]; hasMutation {
 			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has pending close/reopen intent; exclusion (b) — skip reset", bead.BeadID)
 			continue
 		}
 
-		// (c) Merged commit on target branch — Cat 3c handles it.
 		if cfg.MergeScanner != nil {
 			merged, mergeErr := cfg.MergeScanner.HasMergeCommitForBead(ctx, bead.BeadID)
 			if mergeErr != nil {
 				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s merge-commit scan error (proceeding to reset): %v", bead.BeadID, mergeErr)
 			} else if merged {
 				if cfg.Cat3cCloser != nil {
-					// Cat 3c auto-resolution (hk-lgtq2): close the subsumed bead.
 					orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s subsumed — Harmonik-Bead-ID merge commit detected; Cat 3c auto-close", bead.BeadID)
 					if closeErr := cfg.Cat3cCloser.SweepCloseBead(ctx, cfg.BrTimeoutCfg, bead.BeadID); closeErr != nil {
 						orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s Cat 3c close failed: %v", bead.BeadID, closeErr)
@@ -775,7 +568,6 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			}
 		}
 
-		// No exclusion fires — issue the BI-010d reset write.
 		orphanLog(cfg.Logger, "SweepStaleInProgressBeads: resetting bead %s (in_progress → open) per PL-006 sixth bullet", bead.BeadID)
 		if resetErr := cfg.Resetter.ResetBead(
 			ctx,

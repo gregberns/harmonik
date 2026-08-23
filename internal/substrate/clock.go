@@ -23,8 +23,6 @@ type Ticker interface {
 	Stop()
 }
 
-// ─── SystemClock ─────────────────────────────────────────────────────────────
-
 // SystemClock is the real ClockPort implementation; it delegates to package
 // time.
 type SystemClock struct{}
@@ -54,8 +52,6 @@ type systemTicker struct{ t *time.Ticker }
 
 func (s *systemTicker) C() <-chan time.Time { return s.t.C }
 func (s *systemTicker) Stop()               { s.t.Stop() }
-
-// ─── After ───────────────────────────────────────────────────────────────────
 
 // After is the ClockPort-backed analogue of time.After for use in a select:
 // it returns a channel that receives once, after d has elapsed on clk. Like

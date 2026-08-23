@@ -1,24 +1,5 @@
 package codexreactor_test
 
-// reactor_test.go — T3 gate tests for the codex-app-server reactor.
-//
-// Gate (T3 acceptance criteria):
-//   - A growing scenario JSONL library (happy, tool-call-mid-turn, error,
-//     cancel, reconnect-resume, token-pressure, out-of-order/dup) each
-//     asserts the reactor's action sequence.
-//   - Invariant I1 (one-turn-in-flight backpressure) is exercised directly.
-//   - Invariant I2 (dedup-by-seq) is exercised by out-of-order-dup scenario.
-//
-// Scenario file format (testdata/codex-app-server/reactor-scenarios/*.jsonl):
-// Each non-blank line is a JSON object with:
-//
-//	{"in": <Event>, "out": [<Action>, ...]}
-//
-// The test driver feeds "in" to Reactor.Step and asserts the returned actions
-// match "out" (in order). An empty "out" array means no actions are expected.
-//
-// Bead: hk-5co9a [codex-app-server T3]
-
 import (
 	"bufio"
 	"context"
@@ -34,22 +15,16 @@ import (
 	"github.com/gregberns/harmonik/internal/codexreactor"
 )
 
-// ─── Scenario test driver ────────────────────────────────────────────────────
-
-// scenarioStep is one line in a scenario JSONL file.
 type scenarioStep struct {
 	In  codexreactor.Event    `json:"in"`
 	Out []codexreactor.Action `json:"out"`
 }
 
-// scenariosDir returns the path to the reactor-scenarios testdata directory.
 func scenariosDir() string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "codex-app-server", "reactor-scenarios")
 }
 
-// runScenario opens a JSONL scenario file, drives a fresh Reactor step-by-step,
-// and asserts the action sequence at each step.
 func runScenario(t *testing.T, name string) {
 	t.Helper()
 	path := filepath.Join(scenariosDir(), name+".jsonl")
@@ -81,7 +56,6 @@ func runScenario(t *testing.T, name string) {
 
 		got := r.Step(step.In)
 
-		// Normalise nil vs empty slice for comparison.
 		want := step.Out
 		if len(want) == 0 {
 			want = nil
@@ -116,8 +90,6 @@ func formatActions(actions []codexreactor.Action) string {
 	return string(b)
 }
 
-// ─── Scenario tests ──────────────────────────────────────────────────────────
-
 func TestReactor_Scenario_Happy(t *testing.T) {
 	runScenario(t, "happy")
 }
@@ -146,14 +118,11 @@ func TestReactor_Scenario_OutOfOrderDup(t *testing.T) {
 	runScenario(t, "out-of-order-dup")
 }
 
-// ─── Invariant unit tests ────────────────────────────────────────────────────
-
 // TestReactor_Invariant_Backpressure verifies I1: a TurnCompleted while no
 // turn is in-flight is a no-op (stale event).
 func TestReactor_Invariant_Backpressure(t *testing.T) {
 	r := codexreactor.New()
 
-	// TurnCompleted with no turn in-flight → no action, no panic.
 	got := r.Step(codexreactor.Event{
 		Seq:      1,
 		Type:     codexreactor.EventTypeTurnCompleted,
@@ -165,7 +134,6 @@ func TestReactor_Invariant_Backpressure(t *testing.T) {
 		t.Errorf("stale TurnCompleted should produce no actions; got %s", formatActions(got))
 	}
 
-	// Now start a turn, complete it, then receive a second spurious completion.
 	r.Step(codexreactor.Event{Seq: 2, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u2"})
 	r.Step(codexreactor.Event{Seq: 3, Type: codexreactor.EventTypeTurnCompleted, ThreadID: "t1", TurnID: "u2", Status: "completed"})
 
@@ -174,7 +142,6 @@ func TestReactor_Invariant_Backpressure(t *testing.T) {
 		t.Errorf("spurious second TurnCompleted should be no-op; got %s", formatActions(spurious))
 	}
 
-	// InFlight must be false after all of this.
 	if r.State().InFlight {
 		t.Error("InFlight should be false after completed turn")
 	}
@@ -185,13 +152,11 @@ func TestReactor_Invariant_Backpressure(t *testing.T) {
 func TestReactor_Invariant_DedupBySeq(t *testing.T) {
 	r := codexreactor.New()
 
-	// First event at seq=3 sets LastSeq=3.
 	r.Step(codexreactor.Event{Seq: 3, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u1"})
 	if r.State().LastSeq != 3 {
 		t.Fatalf("LastSeq should be 3, got %d", r.State().LastSeq)
 	}
 
-	// seq=2 is below LastSeq=3 → dropped (no action, state unchanged).
 	got := r.Step(codexreactor.Event{
 		Seq:   2,
 		Type:  codexreactor.EventTypeMessageDelta,
@@ -201,7 +166,6 @@ func TestReactor_Invariant_DedupBySeq(t *testing.T) {
 		t.Errorf("out-of-order event (seq=2 < lastSeq=3) should be dropped; got %s", formatActions(got))
 	}
 
-	// seq=3 exact duplicate → dropped.
 	got = r.Step(codexreactor.Event{
 		Seq:   3,
 		Type:  codexreactor.EventTypeMessageDelta,
@@ -211,7 +175,6 @@ func TestReactor_Invariant_DedupBySeq(t *testing.T) {
 		t.Errorf("duplicate event (seq=3 == lastSeq=3) should be dropped; got %s", formatActions(got))
 	}
 
-	// seq=4 advances → processed.
 	got = r.Step(codexreactor.Event{
 		Seq:      4,
 		Type:     codexreactor.EventTypeMessageDelta,
@@ -227,12 +190,10 @@ func TestReactor_Invariant_DedupBySeq(t *testing.T) {
 		t.Errorf("LastSeq should be 4, got %d", r.State().LastSeq)
 	}
 
-	// seq=0 bypasses dedup even though lastSeq=4.
 	got = r.Step(codexreactor.Event{Seq: 0, Type: codexreactor.EventTypeConnected})
 	if len(got) != 0 {
 		t.Errorf("Connected (seq=0) should produce no action; got %s", formatActions(got))
 	}
-	// Connected resets LastSeq to 0.
 	if r.State().LastSeq != 0 {
 		t.Errorf("Connected should reset LastSeq to 0; got %d", r.State().LastSeq)
 	}
@@ -257,7 +218,6 @@ func TestReactor_MidTurnSupersede(t *testing.T) {
 		t.Errorf("after supersede want TurnID=u2 InFlight=true; got TurnID=%q InFlight=%v", s.TurnID, s.InFlight)
 	}
 
-	// A TurnStarted repeating the SAME in-flight turn id is not a supersede.
 	got = r.Step(codexreactor.Event{Seq: 3, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u2"})
 	if len(got) != 0 {
 		t.Errorf("re-announcing the in-flight turn should emit no terminal; got %s", formatActions(got))
@@ -319,18 +279,13 @@ func TestReactor_Run_ContextCancel(t *testing.T) {
 	eff := &codexreactor.FakeEffector{}
 	r := codexreactor.New()
 
-	// Run with a cancelled context. SyntheticSource returns an empty channel when
-	// ctx is already done, so Run returns nil immediately.
 	if err := r.Run(ctx, src, eff); err != nil {
 		t.Fatalf("Run with cancelled ctx: %v", err)
 	}
-	// No actions should have been produced.
 	if got := eff.Actions(); len(got) != 0 {
 		t.Errorf("expected no actions with cancelled ctx; got %s", formatActions(got))
 	}
 }
-
-// ─── FakeEffector unit tests ─────────────────────────────────────────────────
 
 // TestFakeEffector_RecordAndReset verifies that FakeEffector records and resets correctly.
 func TestFakeEffector_RecordAndReset(t *testing.T) {
@@ -361,8 +316,6 @@ func TestFakeEffector_RecordAndReset(t *testing.T) {
 	}
 }
 
-// ─── SyntheticSource unit tests ──────────────────────────────────────────────
-
 // TestSyntheticSource_DeliverAll verifies all events are delivered in order.
 func TestSyntheticSource_DeliverAll(t *testing.T) {
 	events := []codexreactor.Event{
@@ -382,7 +335,4 @@ func TestSyntheticSource_DeliverAll(t *testing.T) {
 	}
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// ensure formatActions is used (suppress unused-variable lint in non-table tests).
 var _ = fmt.Sprintf

@@ -1,20 +1,5 @@
 package tunnel
 
-// portreserved_test.go — PortReserved answers about the set AllocatePort and
-// ReleasePort actually use.
-//
-// The reader exists for tests in OTHER packages: internal/daemon drives a whole
-// remote run and asks whether the run gave its tunnel port back. Every one of
-// those tests reads its verdict through this function, so a reader wired to the
-// wrong map, or one that simply answered false, would turn all of them green
-// while defending nothing. That failure is invisible from internal/daemon,
-// because from there a leaked port and a reader that cannot see reservations
-// look the same. It is visible from here, where the set is in reach.
-//
-// So this file pins the reader against the two operations that own the set,
-// including the case a plain "false after release" assertion would miss: the
-// reader must say TRUE while the reservation stands.
-
 import "testing"
 
 // TestPortReserved_TracksTheSetAllocateAndReleaseWrite asserts the reader
@@ -25,7 +10,6 @@ import "testing"
 // would pass a test that only checked the end state, and would then report every
 // leaked port in every other package as correctly given back.
 func TestPortReserved_TracksTheSetAllocateAndReleaseWrite(t *testing.T) {
-	// Not parallel: reads and writes the package-global reservedTunnelPorts set.
 	port, err := AllocatePort()
 	if err != nil {
 		t.Fatalf("AllocatePort: %v", err)
@@ -57,11 +41,6 @@ func TestPortReserved_TracksTheSetAllocateAndReleaseWrite(t *testing.T) {
 // the port a caller asks about is often one it chose rather than one the
 // allocator handed it.
 func TestPortReserved_SaysNothingAboutAPortNobodyTook(t *testing.T) {
-	// Not parallel: reads the package-global reservedTunnelPorts set.
-	//
-	// Port 0 is never handed out — allocatePort reads a bound listener's address,
-	// which the kernel has already resolved to a real port — so no concurrent
-	// reservation can make this flap.
 	if PortReserved(0) {
 		t.Error("PortReserved(0) = true, but the allocator never hands out port 0")
 	}

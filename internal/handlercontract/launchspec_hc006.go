@@ -201,29 +201,24 @@ func (s LaunchSpec) Valid() error {
 	if s.FreedomProfileRef == "" {
 		return fmt.Errorf("handlercontract: LaunchSpec.FreedomProfileRef must be non-empty")
 	}
-	// Co-presence rule: Phase and IterationCount must either both be present
-	// or both be absent per specs/handler-contract.md §6.1 HC-006.
 	if (s.Phase == nil) != (s.IterationCount == nil) {
 		return fmt.Errorf(
 			"handlercontract: LaunchSpec.Phase and IterationCount must both be present or both absent; got phase=%v iteration_count=%v",
 			s.Phase, s.IterationCount,
 		)
 	}
-	// Phase value must be a declared ReviewLoopPhase constant when present.
 	if s.Phase != nil && !s.Phase.Valid() {
 		return fmt.Errorf(
 			"handlercontract: LaunchSpec.Phase %q is not a valid ReviewLoopPhase",
 			*s.Phase,
 		)
 	}
-	// IterationCount must be positive when present.
 	if s.IterationCount != nil && *s.IterationCount <= 0 {
 		return fmt.Errorf(
 			"handlercontract: LaunchSpec.IterationCount must be positive when present, got %d",
 			*s.IterationCount,
 		)
 	}
-	// ClaudeSessionID must be present iff Phase = implementer-resume.
 	if s.ClaudeSessionID != nil {
 		if s.Phase == nil || *s.Phase != ReviewLoopPhaseImplementerResume {
 			return fmt.Errorf(

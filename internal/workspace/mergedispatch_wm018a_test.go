@@ -35,7 +35,6 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 
 		runID := "0196b100-0000-7000-8000-00000018a001"
 
-		// Non-agentic: orchestrator commits with daemon identity for BOTH author and committer.
 		daemonName := "Harmonik Daemon"
 		daemonEmail := "no-reply@harmonik.local"
 
@@ -87,8 +86,6 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 
 		runID := "0196b100-0000-7000-8000-00000018a002"
 
-		// Agentic: author = LaunchSpec identity of the merge-node's implementer.
-		// Per WM-019: author = implementer_handler_ref.identifier string.
 		agentName := "Claude Agent"
 		agentEmail := "agent@harmonik.local"
 		daemonName := "Harmonik Daemon"
@@ -107,10 +104,8 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		commitCmd.Env = append(os.Environ(),
-			// Author = agentic handler identity (LaunchSpec identity).
 			"GIT_AUTHOR_NAME="+agentName,
 			"GIT_AUTHOR_EMAIL="+agentEmail,
-			// Committer = daemon identity (both agentic and non-agentic).
 			"GIT_COMMITTER_NAME="+daemonName,
 			"GIT_COMMITTER_EMAIL="+daemonEmail,
 		)
@@ -135,9 +130,6 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 	})
 }
 
-// mergeBackFixtureSetupTaskBranch creates a tempRepo, adds a task worktree for the
-// given runID, and writes one commit per subject string. Returns (repo, initialSHA).
-// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
 func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (repo, initialSHA string) {
 	t.Helper()
 
@@ -173,9 +165,6 @@ func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []stri
 	return repo, sha
 }
 
-// mergeBackFixtureMakeIntegWorktree creates a integration-branch worktree at a
-// unique sub-path within the repo's .harmonik/worktrees directory.
-// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
 func mergeBackFixtureMakeIntegWorktree(t *testing.T, repo, sha, suffix string) string {
 	t.Helper()
 

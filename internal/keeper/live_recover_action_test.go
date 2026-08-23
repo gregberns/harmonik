@@ -1,11 +1,5 @@
 package keeper_test
 
-// live_recover_action_test.go — unit tests for NewLiveRecoverViaRespawn, the
-// gated ForceRestart action wired into WatcherConfig.LiveRecoverFn (hk-75mr).
-// The action runs the operator's --respawn-cmd, but REFUSES (no restart) unless
-// the bound .sid identity is a valid UUIDv4 — defense-in-depth at the moment of
-// firing the most destructive keeper action.
-
 import (
 	"context"
 	"errors"
@@ -62,7 +56,6 @@ func TestNewLiveRecoverViaRespawn_RefusesOnInvalidSid(t *testing.T) {
 				writeSidFile(t, dir, agent, sid)
 			}
 			sentinel := filepath.Join(dir, "ran")
-			// Command would touch the sentinel IF it ran — it must not.
 			fn := keeper.NewLiveRecoverViaRespawn(dir, "touch "+sentinel)
 			err := fn(context.Background(), agent)
 			if !errors.Is(err, keeper.ErrLiveRecoverIdentityUntrusted) {

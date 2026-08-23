@@ -1,30 +1,5 @@
 package sentinel
 
-// layera_hkl087e.go — Layer A per-run stall detectors for the stall-sentinel.
-//
-// Thin decision logic over the Snapshot produced by ComputeSnapshot (hk-mxxsl).
-// Three signatures are checked for each non-terminal active run:
-//
-//   - heartbeat_gap  — no agent_heartbeat/agent_message for > RunSilenceStall.
-//     Class-2 (silent hang) signature.
-//   - review_stall   — reviewer_verdict fired but no run_completed/run_failed
-//     within ReviewFinalizeStall of the verdict. Class-3 (review-loop wedge).
-//   - run_age        — run active for > RunMaxAge with no terminal event. Backstop
-//     for novel hangs neither of the above catches.
-//
-// Each hit produces a StallHit. Callers are responsible for de-duplication
-// across repeated scans (e.g., by tracking already-emitted (run_id, signature)
-// pairs).
-//
-// No LLM. No side effects. Config-driven with fail-loud on missing required keys
-// (mirror the keeper/watch resolve pattern).
-//
-// Spec: .kerf/works/stall-sentinel/SPEC.md §2 (Layer A),
-//
-//	02-analysis.md §Layer A, DESIGN.md §2.
-//
-// Bead: hk-l087e.
-
 import (
 	"fmt"
 	"time"
@@ -79,7 +54,6 @@ func (e *ErrLayerAConfigInvalid) Error() string {
 	)
 }
 
-// validateLayerAConfig returns the first ErrLayerAConfigInvalid encountered, or nil.
 func validateLayerAConfig(cfg LayerAConfig) error {
 	if cfg.RunSilenceStall <= 0 {
 		return &ErrLayerAConfigInvalid{Field: "RunSilenceStall"}
@@ -158,7 +132,6 @@ func DetectLayerA(snap Snapshot, cfg LayerAConfig) ([]StallHit, error) {
 			continue
 		}
 
-		// 1. heartbeat_gap — silence since last agent_heartbeat/agent_message.
 		if rs.LastEventAge > cfg.RunSilenceStall {
 			hits = append(hits, StallHit{
 				RunID:     rs.RunID,
@@ -169,7 +142,6 @@ func DetectLayerA(snap Snapshot, cfg LayerAConfig) ([]StallHit, error) {
 			})
 		}
 
-		// 2. review_stall — verdict fired, finalization never arrived.
 		if rs.Phase == RunPhaseVerdictFired && !rs.VerdictAt.IsZero() {
 			sinceVerdict := snap.Now.Sub(rs.VerdictAt)
 			if sinceVerdict > cfg.ReviewFinalizeStall {
@@ -183,7 +155,6 @@ func DetectLayerA(snap Snapshot, cfg LayerAConfig) ([]StallHit, error) {
 			}
 		}
 
-		// 3. run_age — absolute backstop regardless of phase.
 		sinceStart := snap.Now.Sub(rs.StartedAt)
 		if sinceStart > cfg.RunMaxAge {
 			hits = append(hits, StallHit{

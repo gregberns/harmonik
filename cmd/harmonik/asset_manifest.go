@@ -1,25 +1,5 @@
 package main
 
-// asset_manifest.go — build-time/runtime MANIFEST of every embedded instruction
-// asset (embed path → sha256 + sync CLASS), plus the shared TYPES the upcoming
-// reconcile engine (hk-gh1m) and `sync-assets` command (hk-i7i3) consume.
-//
-// This is the FOUNDATION layer of the asset-sync design
-// (plans/2026-06-20-doc-instruction-audit/10-asset-sync.md). It deliberately does
-// NOT implement the per-project lock file, the 3-way reconcile diff, or the
-// command — only the manifest + class model. The reconcile engine reads
-// BuildManifest() (embed-side hashes) and compares against the on-disk lock.
-//
-// Asset source: the //go:embed assets FS declared in init_skill_assets.go
-// (var initSkillAssets). Layout recap:
-//
-//	assets/skills/<name>/...            — product-owned fleet skills      → Managed
-//	assets/templates/AGENTS.template.md — marker-delimited router         → ManagedRegion
-//	assets/context/*.tmpl               — project-owned scaffold bodies    → ContentOwned
-//	assets/scaffolds/*.md               — create-once stub files          → Scaffold
-//
-// Bead ref: hk-532v (asset-manifest).
-
 import (
 	"crypto/sha256"
 	"encoding/hex"
@@ -34,9 +14,6 @@ import (
 // (reconcile engine, lock reader) can detect and migrate older formats.
 const ManifestFormatVersion = 1
 
-// assetEmbedRoot is the directory the assets are embedded under (see the
-// //go:embed assets directive in init_skill_assets.go). Embed paths are always
-// rooted here, e.g. "assets/skills/keeper/SKILL.md".
 const assetEmbedRoot = "assets"
 
 // AssetClass identifies how an embedded instruction asset is reconciled into a
@@ -83,8 +60,6 @@ const (
 // embed root; classification is purely structural so it stays in lockstep with
 // the asset layout documented in init_skill_assets.go.
 func Classify(path string) AssetClass {
-	// Normalize: strip the embed root prefix so both "assets/skills/..." and a
-	// pre-stripped "skills/..." classify identically.
 	rel := strings.TrimPrefix(path, assetEmbedRoot+"/")
 
 	switch {

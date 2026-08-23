@@ -1,27 +1,5 @@
 package daemon
 
-// mergeq_domain_rsminv005_test.go — RSM-INV-005 / RSM-017 mechanical DoD for the
-// merge exclusion domain, plus the RSM-021 shutdown-drain (bgCtx) proof.
-//
-// The merge split (RSM-012..016) runs the rebase, the go build/vet gate, and the
-// gofumpt/gci auto-fix in a speculative prepare phase OUTSIDE the exclusion
-// domain, and only the FF re-validation → update-ref (Phase A) and the
-// working-tree reset (Phase C) INSIDE it (via mergeq.Queue.Submit). Per the F4
-// relocation (RSM-019 / M4-C5), the network `git push origin <target>` runs
-// OUTSIDE the domain (Phase B). RSM-017 / RSM-INV-005 require that no build-class
-// command (go build/vet, gofumpt, gci, git rebase) runs inside the domain, that
-// no `git push` runs inside it, and that the inside-domain command inventory is
-// the enumerated allowlist. These tests prove all three against the real
-// daemon-side prepare/commit closures — the daemon layer of the harness
-// scaffolding RT2 stood up in internal/mergeq (mergeq_test.go §RSM-INV-005).
-//
-// Mechanism: a PATH shim for `git` and `go` logs every invocation's subcommand
-// to a file; the injected mergeSubmit brackets the critical section with
-// ENTER/EXIT markers in the SAME file. Commands recorded between the markers are
-// the inside-domain inventory.
-//
-// Design: 04-design/merge-queue-design.md §2, §4, §5.
-
 import (
 	"context"
 	"os"
@@ -38,8 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// rsmInvBuildClass are the commands that MUST NOT run inside the exclusion
-// domain (merge-queue-design §5) — the critical-section-creep change detector.
 var rsmInvBuildClass = map[string]bool{
 	"go build":   true,
 	"go vet":     true,
@@ -48,10 +24,6 @@ var rsmInvBuildClass = map[string]bool{
 	"git rebase": true,
 }
 
-// rsmInvCommitAllowlist is the exact command inventory the commit phase may run
-// INSIDE the exclusion domain (merge-queue-design §5). Note: `git push` is NOT in
-// this set — the F4 relocation (RSM-019 / M4-C5) moved the push OUTSIDE the
-// domain (Phase B), so a `git push` recorded inside the markers is a regression.
 var rsmInvCommitAllowlist = map[string]bool{
 	"git rev-parse":  true,
 	"git merge-base": true,
@@ -63,7 +35,6 @@ var rsmInvCommitAllowlist = map[string]bool{
 	"br sync":        true,
 }
 
-// rsmInvGit runs a git command in dir, failing the test on error.
 func rsmInvGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -73,7 +44,6 @@ func rsmInvGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// rsmInvWriteFile writes content to path, failing the test on error.
 func rsmInvWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	//nolint:gosec // G306: test fixture file.
@@ -82,7 +52,6 @@ func rsmInvWriteFile(t *testing.T, path, content string) {
 	}
 }
 
-// rsmInvAppend appends line (plus a newline) to path, failing the test on error.
 func rsmInvAppend(t *testing.T, path, line string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // G304: test path.
@@ -100,7 +69,6 @@ func rsmInvAppend(t *testing.T, path, line string) {
 	}
 }
 
-// rsmInvWriteShim writes an executable PATH shim at dir/name whose body is body.
 func rsmInvWriteShim(t *testing.T, dir, name, body string) {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -110,9 +78,6 @@ func rsmInvWriteShim(t *testing.T, dir, name, body string) {
 	}
 }
 
-// rsmInvReadDomainInventory parses the shim log and returns the commands recorded
-// while inside the ENTER/EXIT "commit-merge" markers (insideCmds) and those
-// recorded outside it (outsideCmds).
 func rsmInvReadDomainInventory(t *testing.T, logPath string) (insideCmds, outsideCmds []string) {
 	t.Helper()
 	data, err := os.ReadFile(logPath) //nolint:gosec // G304: test-controlled path.
@@ -128,7 +93,6 @@ func rsmInvReadDomainInventory(t *testing.T, logPath string) (insideCmds, outsid
 		case line == "EXIT commit-merge":
 			inside = false
 		case strings.HasPrefix(line, "ENTER "), strings.HasPrefix(line, "EXIT "):
-			// other domain members (escape-check, base-sync-create) — ignore.
 		case line == "":
 		default:
 			if inside {
@@ -141,11 +105,6 @@ func rsmInvReadDomainInventory(t *testing.T, logPath string) (insideCmds, outsid
 	return insideCmds, outsideCmds
 }
 
-// rsmInvSetupRepo builds a project git repo with a bare origin and a run-branch
-// one commit ahead of main (fast-forwardable). It returns the projectDir and the
-// RunID whose run-branch is ready to merge. A go.mod is present so the prepare
-// build gate actually invokes the `go` shim (a positive control that build-class
-// work runs — just OUTSIDE the domain).
 func rsmInvSetupRepo(t *testing.T) (projectDir string, runID core.RunID) {
 	t.Helper()
 	projectDir = t.TempDir()
@@ -160,18 +119,14 @@ func rsmInvSetupRepo(t *testing.T) (projectDir string, runID core.RunID) {
 	rsmInvGit(t, projectDir, "add", ".")
 	rsmInvGit(t, projectDir, "commit", "-m", "init")
 
-	// Bare origin + initial push so the commit-phase `git push origin main` works.
 	originDir := t.TempDir()
 	rsmInvGit(t, originDir, "init", "--bare", "--initial-branch=main")
 	rsmInvGit(t, projectDir, "remote", "add", "origin", originDir)
 	rsmInvGit(t, projectDir, "push", "origin", "main")
 
-	// A run-branch one commit ahead of main on a distinct file.
 	runID = core.RunID(uuid.MustParse("0190a000-0000-7000-8000-0000000a0001"))
 	runBranch := workspace.TaskBranchName(runID.String())
 	rsmInvGit(t, projectDir, "branch", runBranch, "main")
-	// Commit onto the run-branch via a temporary worktree so the project checkout
-	// stays on main (mirrors production).
 	tmpWt := filepath.Join(t.TempDir(), "runwt")
 	rsmInvGit(t, projectDir, "worktree", "add", tmpWt, runBranch)
 	rsmInvWriteFile(t, filepath.Join(tmpWt, "work.txt"), "agent work\n")
@@ -181,10 +136,6 @@ func rsmInvSetupRepo(t *testing.T) (projectDir string, runID core.RunID) {
 	return projectDir, runID
 }
 
-// rsmInvInstallShims prepends a PATH shim dir with logging `git` and `go`
-// wrappers and returns the log path. The git shim forwards to the real git so
-// the merge actually runs; the go shim logs and exits 0 so the build gate passes
-// without a real toolchain build.
 func rsmInvInstallShims(t *testing.T) string {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
@@ -211,8 +162,6 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 	logPath := rsmInvInstallShims(t)
 	projectDir, runID := rsmInvSetupRepo(t)
 
-	// Recording submit: bracket the critical section with markers in the SAME log
-	// the shims write to, then run the critical inline (single-owner semantics).
 	recSubmit := func(ctx context.Context, label string, critical func(context.Context) error) error {
 		rsmInvAppend(t, logPath, "ENTER "+label)
 		cerr := critical(ctx)
@@ -231,8 +180,6 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		t.Fatal("no commands recorded inside the exclusion domain — harness did not observe the commit phase")
 	}
 
-	// (1) No build-class command AND no `git push` inside the domain; inside ⊆
-	// commit allowlist (which no longer contains `git push` — F4 relocation).
 	for _, cmd := range inside {
 		if rsmInvBuildClass[cmd] {
 			t.Errorf("RSM-017 violation: build-class command %q ran INSIDE the exclusion domain", cmd)
@@ -245,7 +192,6 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		}
 	}
 
-	// (2) Positive control: build-class work actually ran — just outside.
 	outsideSet := map[string]bool{}
 	for _, c := range outside {
 		outsideSet[c] = true
@@ -257,11 +203,9 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		t.Errorf("expected the prepare build gate to run `go build`/`go vet` OUTSIDE the domain; outside=%v", outside)
 	}
 
-	// (3) The push actually happened — OUTSIDE the domain (Phase B, F4 relocation).
 	if !outsideSet["git push"] {
 		t.Errorf("expected `git push` OUTSIDE the domain (Phase B); outside=%v", outside)
 	}
-	// The ref-advance (update-ref) stays INSIDE the domain (Phase A).
 	updateRefInside := false
 	for _, c := range inside {
 		if c == "git update-ref" {
@@ -288,8 +232,6 @@ func TestMergeQDomain_ShutdownDrain_BgCtxSubmission(t *testing.T) {
 	q.Start(qctx)
 	t.Cleanup(qcancel)
 
-	// bgCtx mirrors the shutdown-drain submission context (outlives the per-run
-	// ctx). The queue owner is alive, so the critical section drains.
 	bgCtx := context.Background()
 	out := runmerge.RunBranchToTarget(bgCtx, q.Submit, projectDir, runID, &noopEmitter{},
 		core.BeadID("hk-drain"), "", "main", nil, "")

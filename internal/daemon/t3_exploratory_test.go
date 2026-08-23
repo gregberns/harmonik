@@ -1,19 +1,5 @@
 package daemon_test
 
-// t3_exploratory_test.go — Tester T3 daemon lifecycle boundary cases.
-//
-// Tests:
-//   T3-01: Double invocation with same project dir — second must fail with ErrPidfileLocked.
-//   T3-02: SIGINT mid-run — in-flight bead ReopenBead'd; worktree left behind (known gap hk-fgdgz).
-//   T3-03: SIGTERM mid-run — same questions as T3-02.
-//   T3-04: Stale pidfile (process dead) — second daemon should acquire lock.
-//   T3-05: Stale worktree on disk — orphan sweep cleans stale lease-lock files.
-//
-// Helper prefix: t3Fixture (per implementer-protocol §Helper-prefix discipline).
-//
-// These tests are NOT parallel: several send SIGINT to the test process, which
-// interferes with signal.NotifyContext in parallel tests.
-
 import (
 	"bufio"
 	"context"
@@ -34,15 +20,8 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared fixture helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t3FixtureProjectDir creates a minimal project dir with .harmonik/events/,
-// .harmonik/beads-intents/ sub-dirs. Returns (projectDir, jsonlPath).
 func t3FixtureProjectDir(t *testing.T) (string, string) {
 	t.Helper()
-	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
 	raw := t.TempDir()
 	projectDir, resolveErr := filepath.EvalSymlinks(raw)
 	if resolveErr != nil {
@@ -60,7 +39,6 @@ func t3FixtureProjectDir(t *testing.T) (string, string) {
 	return projectDir, filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 }
 
-// t3FixtureGitRepo initialises a minimal git repo with one commit.
 func t3FixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -82,7 +60,6 @@ func t3FixtureGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "Initial commit")
 }
 
-// t3FixtureBrPath locates `br` or skips the test.
 func t3FixtureBrPath(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("br")
@@ -92,7 +69,6 @@ func t3FixtureBrPath(t *testing.T) string {
 	return p
 }
 
-// t3FixtureBrWrapper writes a wrapper script that prepends --db <dbPath> to all br args.
 func t3FixtureBrWrapper(t *testing.T, realBrPath, dbPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -105,8 +81,6 @@ func t3FixtureBrWrapper(t *testing.T, realBrPath, dbPath string) string {
 	return p
 }
 
-// t3FixtureSlowHandlerScript writes a /bin/sh script that sleeps 30 s then exits 0.
-// Used for signal tests where we need the handler to be in-flight when the signal arrives.
 func t3FixtureSlowHandlerScript(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -118,7 +92,6 @@ func t3FixtureSlowHandlerScript(t *testing.T) string {
 	return p
 }
 
-// t3FixtureFastHandlerScript writes a /bin/sh script that exits 0 immediately.
 func t3FixtureFastHandlerScript(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -130,7 +103,6 @@ func t3FixtureFastHandlerScript(t *testing.T) string {
 	return p
 }
 
-// t3FixtureInitBr initialises a beads workspace in projectDir and returns a ready bead ID.
 func t3FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "t3")
@@ -150,7 +122,6 @@ func t3FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapper string) str
 	return id
 }
 
-// t3FixtureMarkBeadReady marks a bead as ready via `br update`.
 func t3FixtureMarkBeadReady(t *testing.T, brWrapper, beadID string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), brWrapper, "update", beadID, "--status", "ready")
@@ -159,7 +130,6 @@ func t3FixtureMarkBeadReady(t *testing.T, brWrapper, beadID string) {
 	}
 }
 
-// t3FixtureBeadStatus returns the current status string for a bead.
 func t3FixtureBeadStatus(t *testing.T, brWrapper, beadID string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
@@ -176,7 +146,6 @@ func t3FixtureBeadStatus(t *testing.T, brWrapper, beadID string) string {
 	return "unknown"
 }
 
-// t3FixtureReadJSONLLines returns all non-empty lines from a JSONL file.
 func t3FixtureReadJSONLLines(t *testing.T, path string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -195,15 +164,10 @@ func t3FixtureReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// t3FixturePidfileExists returns true if the daemon pidfile exists under projectDir.
 func t3FixturePidfileExists(projectDir string) bool {
 	_, err := os.Stat(filepath.Join(projectDir, ".harmonik", "daemon.pid"))
 	return err == nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-01: Double invocation — second must fail with ErrPidfileLocked
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT3_DoubleInvocation verifies that a second daemon.Start on the same
 // project directory fails immediately with an error wrapping ErrPidfileLocked
@@ -217,9 +181,6 @@ func TestT3_DoubleInvocation(t *testing.T) {
 	brWrapper := t3FixtureBrWrapper(t, realBr, dbPath)
 	slowHandler := t3FixtureSlowHandlerScript(t)
 
-	// Create bead with status "open" — brcli.Ready() returns open beads.
-	// Do NOT call t3FixtureMarkBeadReady; that transitions to "ready" status
-	// which removes the bead from br ready output (wrong).
 	beadID := t3FixtureInitBr(t, realBr, projectDir, brWrapper)
 	t.Logf("T3-01: seeded bead %s", beadID)
 
@@ -231,22 +192,17 @@ func TestT3_DoubleInvocation(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// Start daemon 1 in background — it will pick up the bead and block on slow handler.
-	// ctx cancellation is the stop mechanism (hk-i4mtq: converted from syscall.Kill self-signal).
 	d1Ctx, d1Cancel := context.WithCancel(context.Background())
 	defer d1Cancel()
 	d1Done := make(chan error, 1)
 	go func() { d1Done <- daemon.Start(d1Ctx, cfg) }()
 
-	// Give daemon 1 time to acquire the pidfile and claim the bead.
 	time.Sleep(500 * time.Millisecond)
 
-	// Confirm pidfile exists.
 	if !t3FixturePidfileExists(projectDir) {
 		t.Error("T3-01: pidfile not created by daemon 1 after 500ms")
 	}
 
-	// Attempt daemon 2 — must fail with ErrPidfileLocked.
 	d2Err := daemon.Start(context.Background(), cfg)
 	t.Logf("T3-01: daemon 2 error: %v", d2Err)
 
@@ -258,9 +214,6 @@ func TestT3_DoubleInvocation(t *testing.T) {
 		t.Logf("T3-01: PASS — second daemon correctly rejected with ErrPidfileLocked")
 	}
 
-	// Stop daemon 1 via context cancellation (replaces syscall.Kill self-signal per hk-i4mtq).
-	// Testing ctx cancellation IS testing the same code path as SIGINT: the production caller
-	// (cmd/harmonik/main.go) translates SIGINT → ctx.Done via signal.NotifyContext.
 	d1Cancel()
 	select {
 	case err := <-d1Done:
@@ -269,10 +222,6 @@ func TestT3_DoubleInvocation(t *testing.T) {
 		t.Errorf("T3-01: daemon 1 did not stop within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-02: SIGINT mid-run
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT3_SIGINTMidRun starts a daemon with a slow handler (30 s sleep), waits
 // until the bead is in-flight (claimed), then sends SIGINT and verifies:
@@ -289,7 +238,6 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 	brWrapper := t3FixtureBrWrapper(t, realBr, dbPath)
 	slowHandler := t3FixtureSlowHandlerScript(t)
 
-	// Create bead with status "open" — brcli.Ready() returns open beads.
 	beadID := t3FixtureInitBr(t, realBr, projectDir, brWrapper)
 	t.Logf("T3-02: seeded bead %s", beadID)
 
@@ -301,16 +249,11 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq). Testing ctx
-	// cancellation IS testing the SIGINT code path: production main.go translates
-	// SIGINT → ctx.Done via signal.NotifyContext.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- daemon.Start(ctx, cfg) }()
 
-	// Wait for bead to be claimed (status transitions from "open" to "in_progress").
-	// Work loop poll interval is 2s; allow 15s to claim.
 	deadline := time.Now().Add(15 * time.Second)
 	claimed := false
 	for time.Now().Before(deadline) {
@@ -326,20 +269,14 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		t.Logf("T3-02: bead not claimed within 15s (bead status: %s); cancelling anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
 	}
 
-	// Give the work loop time to create the worktree and launch the handler
-	// AFTER ClaimBead (which set in_progress). The work loop does:
-	// ClaimBead → resolveHEAD → CreateWorktree → Emit run_started → Launch.
-	// A short wait ensures the slow handler is actually running.
 	if claimed {
 		time.Sleep(2 * time.Second)
 	}
 
-	// Record worktree state before cancellation.
 	wtGlob := filepath.Join(projectDir, ".harmonik", "worktrees", "*")
 	beforeWTs, _ := filepath.Glob(wtGlob)
 	t.Logf("T3-02: worktrees before cancel: %v", beforeWTs)
 
-	// Cancel context to stop the daemon (replaces SIGINT self-signal per hk-i4mtq).
 	t.Log("T3-02: cancelling context")
 	cancel()
 
@@ -354,10 +291,6 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		t.Errorf("T3-02: daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
-	// Check bead status after shutdown.
-	// Expected: bead should return to "open" (ReopenBead called due to non-zero exit).
-	// FINDING if: bead is left in "in_progress" (ReopenBead calls `br reopen` which
-	// only works on closed→open; it cannot transition in_progress→open).
 	beadStatusAfter := t3FixtureBeadStatus(t, brWrapper, beadID)
 	t.Logf("T3-02: bead %s status after cancel+shutdown: %q", beadID, beadStatusAfter)
 	switch beadStatusAfter {
@@ -375,7 +308,6 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		t.Logf("T3-02: NOTE — bead in unexpected status %q after cancel", beadStatusAfter)
 	}
 
-	// Record worktree state after shutdown — expected: worktree left behind (known gap hk-fgdgz).
 	afterWTs, _ := filepath.Glob(wtGlob)
 	t.Logf("T3-02: worktrees after cancel: %v", afterWTs)
 	if len(afterWTs) > 0 {
@@ -384,14 +316,9 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		t.Log("T3-02: NOTE — no worktree found after cancel; check workspace.WorktreePath for correct glob pattern")
 	}
 
-	// Check JSONL for run events.
 	lines := t3FixtureReadJSONLLines(t, jsonlPath)
 	t.Logf("T3-02: JSONL line count = %d", len(lines))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-03: SIGTERM mid-run
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT3_SIGTERMMidRun is the same scenario as T3-02 but simulates a SIGTERM-driven
 // shutdown. With ctx-based stop (hk-i4mtq), both T3-02 and T3-03 cancel the context;
@@ -407,7 +334,6 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 	brWrapper := t3FixtureBrWrapper(t, realBr, dbPath)
 	slowHandler := t3FixtureSlowHandlerScript(t)
 
-	// Create bead with status "open" — brcli.Ready() returns open beads.
 	beadID := t3FixtureInitBr(t, realBr, projectDir, brWrapper)
 	t.Logf("T3-03: seeded bead %s", beadID)
 
@@ -419,13 +345,11 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq).
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- daemon.Start(ctx, cfg) }()
 
-	// Wait for bead to be claimed (status → in_progress).
 	deadline := time.Now().Add(15 * time.Second)
 	claimed := false
 	for time.Now().Before(deadline) {
@@ -441,7 +365,6 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		t.Logf("T3-03: bead not claimed within 15s (bead status: %s); cancelling anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
 	}
 
-	// Give the work loop time to create the worktree and launch the slow handler.
 	if claimed {
 		time.Sleep(2 * time.Second)
 	}
@@ -450,7 +373,6 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 	beforeWTs, _ := filepath.Glob(wtGlob)
 	t.Logf("T3-03: worktrees before cancel: %v", beforeWTs)
 
-	// Cancel context (replaces SIGTERM self-signal per hk-i4mtq).
 	t.Log("T3-03: cancelling context")
 	cancel()
 
@@ -491,10 +413,6 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 	t.Logf("T3-03: JSONL line count = %d", len(lines))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-04: Stale pidfile (PID no longer exists) — second daemon must acquire
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestT3_StalePidfile verifies that after a daemon crashes (process terminates
 // without releasing the pidfile), a new daemon invocation detects the stale
 // pidfile via ProbePidfileLock, removes it, and acquires the lock successfully.
@@ -507,8 +425,6 @@ func TestT3_StalePidfile(t *testing.T) {
 	projectDir, jsonlPath := t3FixtureProjectDir(t)
 	t3FixtureGitRepo(t, projectDir)
 
-	// Write a stale pidfile manually: dead PID, dead PGID, stale instance ID.
-	// We use PID 99999999 which is far above any real macOS or Linux PID limit.
 	const stalePID = 99999999
 	const stalePGID = 99999998
 	pidfilePath := filepath.Join(projectDir, ".harmonik", "daemon.pid")
@@ -518,11 +434,9 @@ func TestT3_StalePidfile(t *testing.T) {
 	}
 	t.Logf("T3-04: wrote stale pidfile with pid=%d pgid=%d", stalePID, stalePGID)
 
-	// Verify the pidfile is there and not flock-held (no live process holding it).
 	status, probedPID, probeErr := lifecycle.ProbePidfileLock(projectDir)
 	t.Logf("T3-04: ProbePidfileLock → status=%d pid=%d err=%v", status, probedPID, probeErr)
 
-	// Now call daemon.Start with no BrPath so it acquires pidfile and returns immediately.
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
@@ -548,10 +462,6 @@ func TestT3_StalePidfile(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-05: Stale worktree on disk — orphan sweep should clean lease-lock files
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestT3_StaleWorktreeOrphanSweep verifies that when a stale worktree lease-lock
 // file is present (left by a crashed daemon), the next daemon startup's orphan
 // sweep removes it and emits daemon_orphan_sweep_completed with locks_cleared > 0.
@@ -559,8 +469,6 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 	projectDir, jsonlPath := t3FixtureProjectDir(t)
 	t3FixtureGitRepo(t, projectDir)
 
-	// Seed a stale lease-lock file by creating a worktree directory and
-	// its corresponding lease-lock file as if a previous daemon crashed mid-run.
 	staleRunID := "t3-stale-run-0000000000000000000000000000"
 	wtPath := workspace.WorktreePath(projectDir, staleRunID, workspace.NoWorktreeRootOverride())
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -568,8 +476,6 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		t.Fatalf("T3-05: mkdir stale worktree: %v", err)
 	}
 
-	// Write a stale lease-lock file to the expected location.
-	// workspace.SweepStaleLeaseLocks looks for .harmonik/worktrees/<runID>/.lease-lock
 	lockPath := filepath.Join(wtPath, ".lease-lock")
 	if err := os.WriteFile(lockPath, []byte("stale-lock\n"), 0o600); err != nil {
 		t.Fatalf("T3-05: write stale lease-lock: %v", err)
@@ -600,7 +506,6 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		cancel() // emergency stop; replaces syscall.Kill self-signal per hk-i4mtq
 	}
 
-	// Check JSONL for daemon_orphan_sweep_completed with locks_cleared > 0.
 	lines := t3FixtureReadJSONLLines(t, jsonlPath)
 	t.Logf("T3-05: JSONL lines: %d", len(lines))
 
@@ -609,7 +514,6 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		if strings.Contains(line, "daemon_orphan_sweep_completed") || strings.Contains(line, "orphan_sweep_completed") {
 			foundSweep = true
 			t.Logf("T3-05: sweep event: %s", line)
-			// Parse for locks_cleared.
 			var ev map[string]interface{}
 			if json.Unmarshal([]byte(line), &ev) == nil {
 				if payload, ok := ev["payload"]; ok {
@@ -632,23 +536,16 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		t.Log("T3-05: FINDING — no daemon_orphan_sweep_completed event found in JSONL; event may not be emitted or type mismatch")
 	}
 
-	// Verify the lease-lock file was cleaned up.
 	if _, err := os.Stat(lockPath); errors.Is(err, os.ErrNotExist) {
 		t.Log("T3-05: PASS — stale lease-lock file removed by orphan sweep")
 	} else {
 		t.Log("T3-05: FINDING — stale lease-lock file still present after startup orphan sweep")
 	}
 
-	// Verify pidfile was released.
 	if t3FixturePidfileExists(projectDir) {
 		t.Log("T3-05: pidfile still on disk (kernel will release flock on process exit)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// T3-06: Signal behavior — daemon stops but in-flight bead is NOT ReopenBead'd
-// (context cancellation happens before wait loop completes)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestT3_SignalBeforeHandlerLaunch verifies the edge case where SIGINT arrives
 // between ClaimBead and handler Launch. The work loop should detect ctx.Done()
@@ -662,7 +559,6 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 
 	const beadID = core.BeadID("t3-claim-signal-test")
 
-	// Stub ledger: Ready returns one bead; ClaimBead records call; ReopenBead records call.
 	ledger := &t3StubLedger{
 		readyIDs: []core.BeadID{beadID},
 	}
@@ -671,8 +567,6 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel the context immediately after ClaimBead is called (simulated by
-	// a short delay — the stub blocks ClaimBead momentarily then the test cancels).
 	go func() {
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
@@ -711,11 +605,6 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stub types for T3-06
-// ─────────────────────────────────────────────────────────────────────────────
-
-// t3StubLedger is a minimal beadLedger implementation for T3 stub-based tests.
 type t3StubLedger struct {
 	readyIDs []core.BeadID
 	mu       sync.Mutex
@@ -760,7 +649,6 @@ func (s *t3StubLedger) claimCount() int  { s.mu.Lock(); defer s.mu.Unlock(); ret
 func (s *t3StubLedger) reopenCount() int { s.mu.Lock(); defer s.mu.Unlock(); return s.reopens }
 func (s *t3StubLedger) closeCount() int  { s.mu.Lock(); defer s.mu.Unlock(); return s.closes }
 
-// t3StubBus is a no-op EventEmitter.
 type t3StubBus struct{}
 
 func (*t3StubBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }

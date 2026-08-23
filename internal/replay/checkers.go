@@ -6,17 +6,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// This file holds the five session-restart invariant Checkers. Each is keyed on
-// the composite (agent_name, cycle_id) via CycleState. Semantics are taken
-// verbatim from events-design §4.5 — the harness reports, it does not invent
-// invariant meaning.
-//
-// Version-awareness (events-design §7.5): pre-change corpora (recordings with no
-// §8.20 interior events) legitimately lack model_done/new_session_up. SR4 is
-// naturally gated — it only fires on clear_sent, itself a §8.20 event, so it is
-// never evaluated against a pre-change cycle. SR6 gates explicitly on
-// hasInteriorEvents so a historical cycle_complete is not falsely flagged.
-
 // DefaultCheckers returns the full SR3/SR4/SR6/SR7/SR9 checker set in a stable
 // order. SR7 and SR9 carry state, so a fresh set must be built per Replay run.
 func DefaultCheckers() []Checker {
@@ -172,9 +161,6 @@ func (c *SR7Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []
 		c.open[s.AgentName] = s.CycleID
 		return nil
 	}
-	// Every other subscribed type returns the agent to Idle. isTerminal is the
-	// single owner of the terminal set (replay.go), so SR7 does not carry a
-	// second copy of it that can drift.
 	if isTerminal(ev.Type) || ev.Type == core.EventTypeSessionKeeperCycleParked {
 		if c.open[s.AgentName] == s.CycleID {
 			delete(c.open, s.AgentName)
@@ -262,8 +248,6 @@ func (SR9Checker) Finalize(states []*CycleState) []Violation {
 					s.AgentName, s.CycleID),
 			})
 		case parked:
-			// Parked before authority: a suspension or a declined restart, not
-			// a breach. SK-INV-005 scopes liveness to authorized restarts.
 		default:
 			out = append(out, Violation{
 				EventID: s.LastEventID,
@@ -277,8 +261,6 @@ func (SR9Checker) Finalize(states []*CycleState) []Violation {
 	return out
 }
 
-// Compile-time assertions that the stateful/finalizing checkers satisfy the
-// interfaces Replay relies on.
 var (
 	_ Checker   = SR3Checker{}
 	_ Checker   = SR4Checker{}

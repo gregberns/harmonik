@@ -1,36 +1,5 @@
 package scenario
 
-// queue_setqueue_wiring_test.go — integration tests for the HandlerAdapter
-// SetQueue wiring gaps (hk-4ukkq, hk-lzs8r, hk-peucr) and the
-// evaluateGroupAdvanceWithOutcome Persist + CompleteAndUnlink paths (hk-xsutm).
-//
-// These tests exercise the four gaps fixed in this bead cluster:
-//
-//   1. hk-4ukkq: HandlerAdapter.HandleQueueSubmit now calls qs.SetQueue after
-//      persist so the running workloop sees the queue without restart.
-//   2. hk-lzs8r: HandlerAdapter.HandleQueueAppend now persists and calls
-//      qs.SetQueue so appended items reach the workloop.
-//   3. hk-peucr: HandlerAdapter emits queue_submitted / queue_appended events
-//      after persist.
-//   4. hk-xsutm: CompleteAndUnlink + ClearQueue when all groups reach
-//      complete-success.
-//
-// Item 4 used to claim the queue.Persist call in evaluateGroupAdvanceWithOutcome
-// as well. That was wrong: this file does not import internal/daemon and cannot
-// reach that function. The pin for that persist is
-// TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance in internal/daemon —
-// do not delete it as redundant. Item 4's CompleteAndUnlink claim is unverified.
-//
-// Helper prefix: queueSetQueueWiring (this file).
-//
-// Spec refs:
-//   - specs/queue-model.md §8.1 QM-050 (submit sequence)
-//   - specs/queue-model.md §7     (append path)
-//   - specs/queue-model.md §3.3 QM-003 (unlink on completion)
-//   - specs/queue-model.md §8.4 QM-053 (CompleteAndUnlink)
-//   - specs/queue-model.md §9.1 QM-060 (single-writer)
-//   - specs/queue-model.md §9.6 QM-064 (no-mutation-during-validation)
-
 import (
 	"context"
 	"encoding/json"
@@ -43,12 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// ---------------------------------------------------------------------------
-// queueSetQueueWiring fixture helpers
-// ---------------------------------------------------------------------------
-
-// queueSetQueueWiringProjectDir creates a temporary project root with a
-// .harmonik/ subdirectory. Registered for t.Cleanup.
 func queueSetQueueWiringProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -60,14 +23,10 @@ func queueSetQueueWiringProjectDir(t *testing.T) string {
 	return dir
 }
 
-// queueSetQueueWiringQueueJSON returns the expected path to queue.json.
 func queueSetQueueWiringQueueJSON(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
-// queueSetQueueWiringFakeLedger is a minimal queue.BeadLedger stub.
-// LookupStatus returns BeadStatusOpen for all IDs so QM-020 does not reject
-// them. BlocksEdge always returns false (no dependency edges).
 type queueSetQueueWiringFakeLedger struct{}
 
 func (f *queueSetQueueWiringFakeLedger) LookupStatus(_ context.Context, _ core.BeadID) (queue.BeadStatus, error) {
@@ -78,8 +37,6 @@ func (f *queueSetQueueWiringFakeLedger) BlocksEdge(_ context.Context, _, _ core.
 	return false, nil
 }
 
-// queueSetQueueWiringQueueSetter is a minimal QueueSetter stub that records
-// the last queue passed to SetQueue.
 type queueSetQueueWiringQueueSetter struct {
 	lastQueue *queue.Queue
 }
@@ -94,8 +51,6 @@ func (s *queueSetQueueWiringQueueSetter) ClearQueueByName(name string) {
 	}
 }
 
-// queueSetQueueWiringEventCollector is a minimal EventEmitter stub that records
-// all emitted event types.
 type queueSetQueueWiringEventCollector struct {
 	types []string
 }
@@ -105,8 +60,6 @@ func (e *queueSetQueueWiringEventCollector) Emit(_ context.Context, eventType co
 	return nil
 }
 
-// queueSetQueueWiringSubmitRequest builds a minimal QueueSubmitRequest with
-// one wave group and one item.
 func queueSetQueueWiringSubmitRequest(beadID core.BeadID) queue.QueueSubmitRequest {
 	return queue.QueueSubmitRequest{
 		SchemaVersion: 1,
@@ -118,10 +71,6 @@ func queueSetQueueWiringSubmitRequest(beadID core.BeadID) queue.QueueSubmitReque
 		},
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestQueueSetQueueWiring_SubmitUpdatesQueueStore
-// ---------------------------------------------------------------------------
 
 // TestQueueSetQueueWiring_SubmitUpdatesQueueStore verifies that
 // HandlerAdapter.HandleQueueSubmit calls QueueSetter.SetQueue after persist
@@ -153,7 +102,6 @@ func TestQueueSetQueueWiring_SubmitUpdatesQueueStore(t *testing.T) {
 		t.Fatal("HandleQueueSubmit: nil response")
 	}
 
-	// QueueSetter.SetQueue must have been called (hk-4ukkq).
 	if qs.lastQueue == nil {
 		t.Fatal("QueueSetter.SetQueue not called after HandleQueueSubmit")
 	}
@@ -164,12 +112,10 @@ func TestQueueSetQueueWiring_SubmitUpdatesQueueStore(t *testing.T) {
 		t.Fatalf("SetQueue queue.Groups len = %d; want 1", len(qs.lastQueue.Groups))
 	}
 
-	// queue.json must be present on disk after submit.
 	if _, statErr := os.Stat(queueSetQueueWiringQueueJSON(projectDir)); statErr != nil {
 		t.Errorf("queue.json absent after submit: %v", statErr)
 	}
 
-	// queue_submitted event must have been emitted (hk-peucr).
 	foundSubmitted := false
 	for _, et := range bus.types {
 		if et == "queue_submitted" {
@@ -180,10 +126,6 @@ func TestQueueSetQueueWiring_SubmitUpdatesQueueStore(t *testing.T) {
 		t.Errorf("queue_submitted event not emitted; got: %v", bus.types)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestQueueSetQueueWiring_SubmitThenDrainAndUnlink
-// ---------------------------------------------------------------------------
 
 // TestQueueSetQueueWiring_SubmitThenDrainAndUnlink exercises the full path:
 // submit via HandlerAdapter (which calls SetQueue) → simulate workloop drain →
@@ -215,14 +157,11 @@ func TestQueueSetQueueWiring_SubmitThenDrainAndUnlink(t *testing.T) {
 		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
 	}
 
-	// The workloop would call qs.SetQueue via the adapter; verify the adapter did.
 	q := qs.lastQueue
 	if q == nil {
 		t.Fatal("SetQueue not called after submit; workloop would not see the queue")
 	}
 
-	// Simulate QM-050 steps 5-8: workloop activates group 0 after submit.
-	// AdvanceGroup transitions pending → active.
 	activateStatus, _, actErr := queue.AdvanceGroup(
 		context.Background(),
 		&q.Groups[0],
@@ -235,7 +174,6 @@ func TestQueueSetQueueWiring_SubmitThenDrainAndUnlink(t *testing.T) {
 	}
 	q.Groups[0].Status = activateStatus
 
-	// Simulate workloop drain: dispatch + complete the item.
 	q.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	newGroupStatus, _, advErr := queue.AdvanceGroup(
 		context.Background(),
@@ -252,22 +190,16 @@ func TestQueueSetQueueWiring_SubmitThenDrainAndUnlink(t *testing.T) {
 	}
 	q.Groups[0].Status = newGroupStatus
 
-	// CompleteAndUnlink removes queue.json (QM-003 / QM-053).
 	if err := queue.CompleteAndUnlink(context.Background(), projectDir, q); err != nil {
 		t.Fatalf("CompleteAndUnlink: %v", err)
 	}
 
-	// queue.json must be absent (QM-003).
 	if _, statErr := os.Stat(queueSetQueueWiringQueueJSON(projectDir)); statErr == nil {
 		t.Error("queue.json still present after CompleteAndUnlink; want absent")
 	} else if !os.IsNotExist(statErr) {
 		t.Errorf("queue.json stat error (not IsNotExist): %v", statErr)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestQueueSetQueueWiring_AppendUpdatesQueueStore
-// ---------------------------------------------------------------------------
 
 // TestQueueSetQueueWiring_AppendUpdatesQueueStore verifies that
 // HandlerAdapter.HandleQueueAppend persists and calls QueueSetter.SetQueue
@@ -284,8 +216,6 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 
 	adapter := queue.NewHandlerAdapter(ledger, projectDir, qs, bus)
 
-	// Step 1: submit a stream group (QM-040: append is stream-only) with one item
-	// to establish the active queue.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups: []queue.Group{
@@ -308,16 +238,13 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 		t.Fatalf("decode QueueSubmitResponse: %v", err)
 	}
 
-	// Verify submit set the queue in memory.
 	if qs.lastQueue == nil {
 		t.Fatal("SetQueue not called after submit")
 	}
 	initialItemCount := len(qs.lastQueue.Groups[0].Items)
 
-	// Reset bus events so we can cleanly check append events.
 	bus.types = nil
 
-	// Step 2: append a second item to group 0.
 	appendReq := queue.QueueAppendRequest{
 		QueueID:    submitResp.QueueID,
 		GroupIndex: 0,
@@ -332,8 +259,6 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 		t.Fatalf("HandleQueueAppend: unexpected RPCError: %v", rpcErr)
 	}
 
-	// QueueSetter.SetQueue must have been called again with the mutated queue
-	// (hk-lzs8r).
 	if qs.lastQueue == nil {
 		t.Fatal("SetQueue not called after HandleQueueAppend")
 	}
@@ -343,7 +268,6 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 			afterItemCount, initialItemCount+1)
 	}
 
-	// queue.json on disk must reflect the appended item (hk-lzs8r).
 	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Load after append: %v", loadErr)
@@ -356,7 +280,6 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 			len(loaded.Groups[0].Items), initialItemCount+1)
 	}
 
-	// queue_appended event must have been emitted (hk-peucr).
 	foundAppended := false
 	for _, et := range bus.types {
 		if et == "queue_appended" {
@@ -368,10 +291,6 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestQueueSetQueueWiring_NilQueueSetter_NoopSafe
-// ---------------------------------------------------------------------------
-
 // TestQueueSetQueueWiring_NilQueueSetter_NoopSafe verifies that a nil qs and
 // nil bus do not cause a nil-pointer panic (backward-compat for callers that
 // do not supply a QueueStore or bus).
@@ -381,7 +300,6 @@ func TestQueueSetQueueWiring_NilQueueSetter_NoopSafe(t *testing.T) {
 	projectDir := queueSetQueueWiringProjectDir(t)
 	ledger := &queueSetQueueWiringFakeLedger{}
 
-	// nil qs and nil bus — no panic.
 	adapter := queue.NewHandlerAdapter(ledger, projectDir, nil, nil)
 
 	req := queueSetQueueWiringSubmitRequest("hk-sqw-noop-item0")

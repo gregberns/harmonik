@@ -1,26 +1,5 @@
 package queue
 
-// resume.go — recovery transitions for a queue parked at paused-by-failure.
-//
-// §8.3 (QM-052) parks a queue at `paused-by-failure` when an active group
-// reaches `complete-with-failures`; §A.3 reserves the `queue-resume` recovery
-// verb (manual `paused-by-failure → active` after the operator addresses the
-// failed beads) for v0.2. This file implements the pure state-mutation half of
-// that verb so the daemon's operator-resume handler and the `harmonik queue
-// retry` CLI can drive recovery without a daemon restart + fresh submit.
-//
-// The two entry points are intentionally narrow and side-effect-free (no I/O,
-// no events): the caller persists (QM-001) and emits afterwards, mirroring the
-// persist-before-emit discipline (QM-063) used by AdvanceGroup and
-// ReevaluateDeferred.
-//
-//   - ResumeFromFailure — clear the paused-by-failure flag (status → active)
-//     and re-arm every failed item so the dispatcher picks them up again.
-//   - RearmFailedItems  — re-arm failed items in a single group without touching
-//     queue-level status (the retry primitive).
-//
-// Bead ref: hk-fkpb7. Spec ref: specs/queue-model.md §8.3 QM-052, §A.3.
-
 import "github.com/gregberns/harmonik/internal/core"
 
 // ResumeFromFailure clears a queue's paused-by-failure parking and re-arms its
@@ -57,10 +36,6 @@ func ResumeFromFailure(q *Queue) (rearmed []core.BeadID, ok bool) {
 
 	for gi := range q.Groups {
 		rearmed = append(rearmed, RearmFailedItems(&q.Groups[gi])...)
-		// A group that reached complete-with-failures must re-open so the
-		// state machine re-evaluates it (QM-032 makes terminal group states
-		// absorbing, so it cannot self-resurrect). Groups that were still
-		// pending/active when the queue parked are left as-is.
 		if q.Groups[gi].Status == GroupStatusCompleteWithFailures {
 			if err := ReactivateFailedGroup(&q.Groups[gi]); err != nil {
 				return nil, false

@@ -5,20 +5,13 @@ import (
 	"testing"
 )
 
-// queueFixtureQueueID returns a non-empty queue_id string for queue event tests.
 func queueFixtureQueueID() string {
 	return "019605a0-1111-7000-8000-000000000001"
 }
 
-// queueFixtureTimestamp returns a non-empty RFC 3339 timestamp string for queue
-// event tests.
 func queueFixtureTimestamp() string {
 	return "2026-05-15T00:00:00.000Z"
 }
-
-// ---------------------------------------------------------------------------
-// QueueSubmittedPayload
-// ---------------------------------------------------------------------------
 
 func TestQueueSubmittedPayloadValid(t *testing.T) {
 	t.Parallel()
@@ -115,10 +108,6 @@ func TestQueueSubmittedPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QueueGroupStartedPayload
-// ---------------------------------------------------------------------------
-
 func TestQueueGroupStartedPayloadValid(t *testing.T) {
 	t.Parallel()
 
@@ -203,10 +192,6 @@ func TestQueueGroupStartedPayloadRoundTrip(t *testing.T) {
 		t.Errorf("GroupKind: got %q, want %q", decoded.GroupKind, original.GroupKind)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QueueGroupCompletedPayload
-// ---------------------------------------------------------------------------
 
 func TestQueueGroupCompletedPayloadValid(t *testing.T) {
 	t.Parallel()
@@ -323,10 +308,6 @@ func TestQueueGroupCompletedPayloadCompletionReceiptID(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QueuePausedPayload
-// ---------------------------------------------------------------------------
-
 func TestQueuePausedPayloadValid(t *testing.T) {
 	t.Parallel()
 
@@ -411,10 +392,6 @@ func TestQueuePausedPayloadRoundTrip(t *testing.T) {
 		t.Errorf("Reason: got %q, want %q", decoded.Reason, original.Reason)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QueueAppendedPayload
-// ---------------------------------------------------------------------------
 
 func TestQueueAppendedPayloadValid(t *testing.T) {
 	t.Parallel()
@@ -505,10 +482,6 @@ func TestQueueAppendedPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QueueItemDeferredForLedgerDepPayload
-// ---------------------------------------------------------------------------
-
 func TestQueueItemDeferredForLedgerDepPayloadValid(t *testing.T) {
 	t.Parallel()
 
@@ -591,10 +564,6 @@ func TestQueueItemDeferredForLedgerDepPayloadRoundTrip(t *testing.T) {
 		t.Errorf("BlockerBeadID: got %q, want %q", decoded.BlockerBeadID, original.BlockerBeadID)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// QueueItemReconciledPayload
-// ---------------------------------------------------------------------------
 
 func TestQueueItemReconciledPayloadValid(t *testing.T) {
 	t.Parallel()
@@ -679,10 +648,6 @@ func TestQueueItemReconciledPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CrossQueueCollisionPayload
-// ---------------------------------------------------------------------------
-
 func TestCrossQueueCollisionPayloadValid(t *testing.T) {
 	t.Parallel()
 
@@ -724,16 +689,11 @@ func TestCrossQueueCollisionPayloadValid(t *testing.T) {
 			valid: false,
 		},
 		{
-			// The rejection that stops a useless report. A collision is between
-			// TWO queues; a payload naming one queue twice sends an operator
-			// looking for a second queue that does not exist.
 			name:  "same queue on both sides rejected",
 			p:     CrossQueueCollisionPayload{BeadID: "hk-item1", LosingQueue: "alpha", WinningQueue: "alpha", Disposition: CrossQueueCollisionRefused, DetectedAt: ts},
 			valid: false,
 		},
 		{
-			// The disposition is the field that tells an operator whether to act,
-			// so an unrecognised value must not travel as if it were meaningful.
 			name:  "out-of-range disposition rejected",
 			p:     CrossQueueCollisionPayload{BeadID: "hk-item1", LosingQueue: "beta", WinningQueue: "alpha", Disposition: "parked", DetectedAt: ts},
 			valid: false,
@@ -790,11 +750,6 @@ func TestCrossQueueCollisionPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Cohort registration assertions — every queue event must be registered
-// with the correct constructor shape (EV-032 / EV-034 / hk-yslws).
-// ---------------------------------------------------------------------------
-
 // TestQueueEventsCohortRegistered asserts that the 8 §8.10 event type names
 // that HAVE a Go payload produce the correct concrete payload pointer type from
 // their constructors, and that a JSON round-trip through a local (isolated)
@@ -834,7 +789,6 @@ func TestCrossQueueCollisionPayloadRoundTrip(t *testing.T) {
 func TestQueueEventsCohortRegistered(t *testing.T) {
 	t.Parallel()
 
-	// Table: event type name → constructor (mirrors registerQueueEvents).
 	cohort := []struct {
 		typeName   string
 		durability string
@@ -850,8 +804,6 @@ func TestQueueEventsCohortRegistered(t *testing.T) {
 		{"cross_queue_collision", "O", func() EventPayload { return &CrossQueueCollisionPayload{} }},
 	}
 
-	// Build a local registry snapshot populated with only the queue cohort.
-	// This avoids races with eventRegistryReset() in TestRegistry subtests.
 	localCtors := make(map[string]func() EventPayload, len(cohort))
 	for _, entry := range cohort {
 		localCtors[entry.typeName] = entry.mkPayload
@@ -861,13 +813,11 @@ func TestQueueEventsCohortRegistered(t *testing.T) {
 		t.Run(entry.typeName, func(t *testing.T) {
 			t.Parallel()
 
-			// 1. Constructor shape: must return a non-nil pointer.
 			got := entry.mkPayload()
 			if got == nil {
 				t.Fatalf("constructor for %q returned nil", entry.typeName)
 			}
 
-			// 2. JSON round-trip via local registry (avoids global registry races).
 			raw, err := json.Marshal(got)
 			if err != nil {
 				t.Fatalf("Marshal zero payload for %q: %v", entry.typeName, err)

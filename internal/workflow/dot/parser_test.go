@@ -26,10 +26,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// ── fixtures ──────────────────────────────────────────────────────────────────
-
-// dotFixtureMinimal returns the minimal three-node illustrative graph from
-// specs/workflow-graph.md §15.1.
 func dotFixtureMinimal() string {
 	return `digraph minimal {
   schema_version="1";
@@ -50,8 +46,6 @@ func dotFixtureMinimal() string {
 }`
 }
 
-// dotFixtureWithUnknownAttrs returns a graph with unknown permissive attributes
-// on nodes and edges (WG-031/032 round-trip test).
 func dotFixtureWithUnknownAttrs() string {
 	return `digraph test {
   schema_version="1";
@@ -72,7 +66,6 @@ func dotFixtureWithUnknownAttrs() string {
 }`
 }
 
-// dotFixtureConditionConjunction returns a graph with a &&-conjunction condition.
 func dotFixtureConditionConjunction() string {
 	return `digraph conditions {
   schema_version="1";
@@ -97,7 +90,6 @@ func dotFixtureConditionConjunction() string {
 }`
 }
 
-// dotFixtureGateNode returns a graph with a gate node per WG-005.
 func dotFixtureGateNode() string {
 	return `digraph gate_test {
   schema_version="1";
@@ -120,8 +112,6 @@ func dotFixtureGateNode() string {
   review_gate -> "close-needs-attention" [condition="outcome.status == FAIL", weight="10", ordering_key="b"];
 }`
 }
-
-// ── parse success tests ───────────────────────────────────────────────────────
 
 func TestDotFixtureParseMinimal(t *testing.T) {
 	g, err := Parse(dotFixtureMinimal(), "minimal.dot")
@@ -254,15 +244,12 @@ func TestDotFixtureWG032UnknownAttrsRetained(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: unexpected error: %v", err)
 	}
-	// Graph-level unknown attr.
 	if got := g.UnknownAttrs["custom_meta"]; got != "team-alpha" {
 		t.Errorf("graph UnknownAttrs[custom_meta] = %q, want %q", got, "team-alpha")
 	}
-	// Graph-level warnings emitted.
 	if len(g.Warnings) == 0 {
 		t.Error("expected Warnings for unknown permissive attributes, got none")
 	}
-	// Node-level unknown attrs.
 	var workNode *Node
 	for _, n := range g.Nodes {
 		if n.ID == "work" {
@@ -279,7 +266,6 @@ func TestDotFixtureWG032UnknownAttrsRetained(t *testing.T) {
 	if got := workNode.UnknownAttrs["owner"]; got != "squad-2" {
 		t.Errorf("node work UnknownAttrs[owner] = %q, want %q", got, "squad-2")
 	}
-	// Edge-level unknown attr.
 	if len(g.Edges) == 0 {
 		t.Fatal("no edges")
 	}
@@ -354,7 +340,6 @@ func TestDotFixtureConditionConjunctionParsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: unexpected error: %v", err)
 	}
-	// Find the conjunction edge.
 	var conjEdge *Edge
 	for _, e := range g.Edges {
 		if e.Condition != nil && len(e.Condition.Clauses) == 2 {
@@ -421,8 +406,6 @@ func TestDotFixtureGateNodeParsed(t *testing.T) {
 	}
 }
 
-// ── condition LHS whitelist tests (WG-014) ────────────────────────────────────
-
 func TestDotFixtureConditionBadLHS(t *testing.T) {
 	src := `digraph bad {
   schema_version="1";
@@ -443,7 +426,6 @@ func TestDotFixtureConditionBadLHS(t *testing.T) {
 }
 
 func TestDotFixtureConditionContextLHS(t *testing.T) {
-	// context.<key> is a valid LHS per WG-014.
 	src := `digraph ctx {
   schema_version="1";
   version="1.0";
@@ -522,21 +504,16 @@ func TestDotFixtureInequalityOp(t *testing.T) {
 	}
 }
 
-// ── error message contains file:line tests ────────────────────────────────────
-
 func TestDotFixtureParseErrorHasLine(t *testing.T) {
 	src := "digraph bad {\n  n [type=\"unknown-type\"];\n}"
 	_, err := Parse(src, "bad.dot")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Error should include a line number.
 	if !strings.Contains(err.Error(), "dot:") {
 		t.Errorf("error %q does not include dot: prefix with line number", err.Error())
 	}
 }
-
-// ── tokenizer comment stripping ───────────────────────────────────────────────
 
 func TestDotFixtureBlockComment(t *testing.T) {
 	src := `digraph test {
@@ -576,8 +553,6 @@ func TestDotFixtureLineComment(t *testing.T) {
 	}
 }
 
-// ── sub-workflow node ─────────────────────────────────────────────────────────
-
 func TestDotFixtureSubWorkflowNode(t *testing.T) {
 	src := `digraph sw {
   schema_version="1";
@@ -610,8 +585,6 @@ func TestDotFixtureSubWorkflowNode(t *testing.T) {
 	}
 }
 
-// ── multiple strict errors collected ─────────────────────────────────────────
-
 func TestDotFixtureMultipleStrictErrors(t *testing.T) {
 	src := `digraph multi {
   schema_version="1";
@@ -634,8 +607,6 @@ func TestDotFixtureMultipleStrictErrors(t *testing.T) {
 		t.Errorf("expected ≥3 strict errors, got %d: %v", len(pe), pe)
 	}
 }
-
-// ── testdata/review-loop.dot round-trip ──────────────────────────────────────
 
 // TestDotFixtureReviewLoopFile parses the testdata/review-loop.dot fixture that
 // mirrors the future specs/examples/review-loop.dot (C5 of phase-3-dot).
@@ -668,7 +639,6 @@ func TestDotFixtureReviewLoopFile(t *testing.T) {
 	if len(g.Edges) != 6 {
 		t.Errorf("len(Edges) = %d, want 6", len(g.Edges))
 	}
-	// Verify preferred_label conditions are parsed (WG-019).
 	var approveEdge *Edge
 	for _, e := range g.Edges {
 		if e.Condition != nil {
@@ -682,7 +652,6 @@ func TestDotFixtureReviewLoopFile(t *testing.T) {
 	if approveEdge == nil {
 		t.Error("no edge with outcome.preferred_label == 'APPROVE' found")
 	}
-	// Verify traversal_cap is retained in UnknownAttrs.
 	var capCount int
 	for _, e := range g.Edges {
 		if _, ok := e.UnknownAttrs["traversal_cap"]; ok {
@@ -693,8 +662,6 @@ func TestDotFixtureReviewLoopFile(t *testing.T) {
 		t.Error("no edge with traversal_cap found in UnknownAttrs")
 	}
 }
-
-// ── specs/examples/review-loop.dot round-trip ────────────────────────────────
 
 func TestDotFixtureSpecsExamplesReviewLoop(t *testing.T) {
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
@@ -718,8 +685,6 @@ func TestDotFixtureSpecsExamplesReviewLoop(t *testing.T) {
 		t.Errorf("Nodes = %d, want ≥4", len(g.Nodes))
 	}
 }
-
-// ── round-trip: ConditionRaw retained ────────────────────────────────────────
 
 // TestDotFixtureWG044GoalGraphLevel verifies that the graph-level "goal" attribute
 // is parsed into Graph.Goal (WG-044).
@@ -803,10 +768,6 @@ func TestDotFixtureConditionRawRetained(t *testing.T) {
 	}
 }
 
-// ── no_progress_guard attribute parsing (hk-nvd3) ────────────────────────────
-
-// noProgressGuardFixture returns a minimal two-node graph with the given
-// no_progress_guard attribute value embedded at the graph level.
 func noProgressGuardFixture(val string) string {
 	attr := ""
 	if val != "" {

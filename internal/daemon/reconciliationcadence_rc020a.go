@@ -1,27 +1,5 @@
 package daemon
 
-// reconciliationcadence_rc020a.go — scheduled detector cadence for RC-020a.
-//
-// RC-020a declares three detector dispatch points:
-//   (a) Daemon startup — handled in daemon.Start after orphan sweep.
-//   (b) On-demand operator command — `harmonik reconcile [--run <run_id>]`.
-//   (c) Scheduled cadence — this file: background scan at configurable interval.
-//
-// The scheduled scan emits reconciliation_started{trigger:"scheduled-hourly"}
-// and then runs:
-//   - Cat 3c auto-resolver: bead in_progress + merge commit on target branch → br close.
-//   - Class B orphan repair (hk-m3ydd): bead in_progress with no queue record
-//     → reset to open so it can be re-dispatched.
-//
-// The scan is idempotent across cadence ticks per RC-020a: same
-// (target_run_id, snapshot) always produces the same category.
-//
-// Default interval: 3600 s (hourly) per reconciliation/spec.md §4.3 RC-020a
-// and operator-nfr.md §4.3 knob reconciliation_scan_cadence.
-//
-// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a.
-// Bead ref: hk-63oh.21, hk-m3ydd.
-
 import (
 	"context"
 	"encoding/json"
@@ -74,25 +52,8 @@ type ReconciliationSchedulerConfig struct {
 	LogWriter io.Writer
 }
 
-// startReconciliationSchedulerIfEnabled applies subsystem partitioning to the
-// RC-020a scheduled detector: it is the ONE construction seam for dispatch
-// point (c).
-//
-// When `subsystems.reconciliation_scheduler.enabled: false` is set in
-// .harmonik/config.yaml the scheduler is ABSENT — StartReconciliationScheduler
-// is never called, so there is no goroutine and no ticker. This is deliberately
-// NOT "constructed but inert": inert code still holds the composition root
-// hostage and still costs. Absent forces every consumer seam to be explicit.
-//
-// Absent config (the zero ProjectConfig) enables the scheduler, so a deployment
-// without a subsystems: block behaves exactly as it did before the block existed.
-//
-// Returns true when the scheduler was started. The return value is the
-// observable decision; callers in production ignore it.
 func startReconciliationSchedulerIfEnabled(ctx context.Context, pc projectconfig.ProjectConfig, cfg ReconciliationSchedulerConfig) bool {
 	if !pc.Subsystems.Enabled(projectconfig.SubsystemReconciliationScheduler) {
-		// Say so at boot: a silent partition is indistinguishable from a config
-		// that did not take effect.
 		logW := cfg.LogWriter
 		if logW == nil {
 			logW = os.Stderr
@@ -142,11 +103,7 @@ func StartReconciliationScheduler(ctx context.Context, cfg ReconciliationSchedul
 	}()
 }
 
-// runScheduledReconciliationScan performs one scheduled detector scan:
-// emits reconciliation_started, runs the Cat 3c auto-resolver, runs
-// the Class B orphan repair pass, then emits reconciliation_completed.
 func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSchedulerConfig, logW io.Writer) {
-	// Emit reconciliation_started{trigger:"scheduled-hourly"} (RC-020a).
 	reconciliationRunID, uidErr := uuid.NewV7()
 	if uidErr != nil {
 		fmt.Fprintf(logW, "reconciliation scheduler: generate run ID: %v (skipping tick)\n", uidErr) //nolint:errcheck // best-effort stderr status log
@@ -164,14 +121,10 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	}
 	if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeReconciliationStarted, payloadBytes); emitErr != nil {
 		fmt.Fprintf(logW, "reconciliation scheduler: emit reconciliation_started: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
-		// Non-fatal: continue with the Cat 3c scan regardless.
 	}
 
 	var beadsExamined, beadsClosed, beadsReset int
 
-	// Always emit reconciliation_completed paired with reconciliation_started so
-	// that a hung reconciliation (started with no matching completed) is
-	// detectable. No-op ticks emit with all-zero counts.
 	defer func() {
 		completedPayload := core.ReconciliationCompletedPayload{
 			ReconciliationRunID: runID,
@@ -186,7 +139,6 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		}
 	}()
 
-	// Skip bead-ledger operations when br is not configured.
 	if cfg.BrPath == "" {
 		return
 	}
@@ -230,7 +182,6 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		if !merged {
 			continue
 		}
-		// Cat 3c auto-resolve: implementation has landed; close the bead.
 		if closeErr := adapter.SweepCloseBead(scanCtx, timeoutCfg, bead.BeadID); closeErr != nil {
 			fmt.Fprintf(logW, "reconciliation scheduler: bead %s close: %v\n", bead.BeadID, closeErr) //nolint:errcheck // best-effort stderr status log
 			continue
@@ -239,10 +190,6 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		fmt.Fprintf(logW, "reconciliation scheduler: bead %s closed (Cat 3c scheduled)\n", bead.BeadID) //nolint:errcheck // best-effort stderr status log
 	}
 
-	// Class B orphan repair: reset any in_progress beads that have no queue
-	// record back to open so they can be re-dispatched.
-	//
-	// Spec ref: hk-m3ydd — scheduled reconciliation must repair bead_inprogress_queue_absent.
 	beadsReset = runScheduledClassBRepair(scanCtx, cfg, adapter, beads, logW)
 }
 
@@ -289,16 +236,6 @@ func runScheduledClassBRepair(
 	observedAt := time.Now().UTC()
 	observedAtStr := observedAt.Format(time.RFC3339Nano)
 
-	// Build beadsActivelyDispatched: bead IDs with at least one item in
-	// dispatched state (i.e., the run is live). Items in terminal states
-	// (failed/completed) do NOT block the repair — their run has ended.
-	//
-	// Also build beadsInAnyQueue to distinguish the two mismatch classes.
-	//
-	// hk-e3fy: prior code used beadsInQueue (all items regardless of status).
-	// A bead in a complete-with-failures group with a failed item was skipped
-	// even though its run had ended and ReopenBead had failed (cancelled ctx).
-	// Narrowing to dispatched items closes this strand class.
 	beadsActivelyDispatched := make(map[core.BeadID]struct{})
 	beadsInAnyQueue := make(map[core.BeadID]struct{})
 	names, enumErr := queue.EnumerateQueueNames(cfg.ProjectDir)
@@ -321,12 +258,8 @@ func runScheduledClassBRepair(
 		}
 	}
 
-	// Derive repair dependencies from cfg.ProjectDir.
 	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 	projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
-	// Use the repair-pass timestamp as the idempotency-key NS so each hourly
-	// tick uses a fresh key (allows re-attempts if a prior tick's reset failed
-	// but left no durable intent file).
 	repairNS := observedAt.UnixNano()
 
 	for _, rec := range inFlight {
@@ -334,7 +267,6 @@ func runScheduledClassBRepair(
 			continue // run is live — not a Class B orphan
 		}
 
-		// Determine the mismatch class for observability.
 		mismatchClass := "bead_inprogress_queue_absent"
 		if _, inAnyQueue := beadsInAnyQueue[rec.BeadID]; inAnyQueue {
 			mismatchClass = "bead_inprogress_queue_terminal"
@@ -342,7 +274,6 @@ func runScheduledClassBRepair(
 
 		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s in_progress but %s\n", rec.BeadID, mismatchClass) //nolint:errcheck // best-effort stderr status log
 
-		// Emit reconciliation_mismatch_observed for operator visibility.
 		if cfg.Emitter != nil {
 			p := core.ReconciliationMismatchObservedPayload{
 				QueueID:       "",
@@ -361,7 +292,6 @@ func runScheduledClassBRepair(
 			}
 		}
 
-		// Repair: reset in_progress → open so the bead can be re-dispatched.
 		resetCtx, cancelReset := context.WithTimeout(ctx, 30*time.Second)
 		resetErr := resetter.ResetBead(
 			resetCtx,

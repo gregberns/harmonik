@@ -2,41 +2,6 @@
 
 package main
 
-// subprocess_boot_smoke_test.go — WS2.4 non-docker subprocess daemon-boot smoke.
-//
-// This is the independent, non-docker leg of M6-PLAN §WS2.4: a smoke test that
-// execs the *real built* `harmonik` binary as a separate OS process (not an
-// in-process daemon.Start), waits for the daemon unix socket to appear, submits
-// ONE bead through the real CLI (`harmonik queue submit`), and asserts the
-// daemon drives that bead's run to a TERMINAL outcome (run_completed /
-// run_failed / bead_closed) — proving the whole subprocess boot → socket →
-// CLI-submit → dispatch → terminal-signal pipeline works end-to-end.
-//
-// Billing-free substrate (LOCKED: generic-twin). The real binary exposes no
-// in-process HandlerBinary seam; its only composition-root substrate-swap is the
-// structured Codex driver (HARMONIK_SUBSTRATE=codexdriver + --default-harness
-// codex + --codex-binary). We point --codex-binary at the built `generic-twin`
-// binary. The generic twin speaks harmonik-native NDJSON, not the Codex
-// app-server wire protocol, so the driver's handshake fails fast and the run
-// reaches a terminal outcome (run_failed) WITHOUT ever launching tmux, a real
-// Claude/Codex agent, or touching the network — deterministic and zero-token.
-// This isolates exactly what WS2.4's non-docker leg is chartered to cover: that
-// the real binary boots as a subprocess and drives a CLI-submitted bead to a
-// terminal run state. (A clean bead-close through the real binary is the docker
-// / WS2.3 containerized variant's job and is out of scope here.)
-//
-// Behind the dedicated `subprocess` build tag (LOCKED: a new tag, NOT a reuse of
-// `scenario`) so the default `go build ./...` / `go test ./...` never compile or
-// run it. Idioms reused verbatim:
-//   - go-build-a-cmd-binary: test/scenario/harness_test.go:78 scenarioFixtureBuildTwin
-//   - wait-for-socket (os.ModeSocket + 0600): test/scenario harness socket poll
-//   - project scaffold (git repo + bare origin + br init):
-//     internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go:57,80,178
-//   - terminal-event JSONL poll:
-//     internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go:251
-//
-// Plan ref: plans/2026-07-13-code-revamp/M6-PLAN.md §WS2.4.
-
 import (
 	"context"
 	"os"
@@ -63,15 +28,12 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 
 	moduleRoot := subprocessSmokeModuleRoot(t, goTool)
 
-	// Build the real harmonik binary and the generic twin into a temp dir.
 	binDir := t.TempDir()
 	harmonikBin := subprocessSmokeBuild(t, goTool, moduleRoot, binDir,
 		"harmonik", "github.com/gregberns/harmonik/cmd/harmonik")
 	genericTwinBin := subprocessSmokeBuild(t, goTool, moduleRoot, binDir,
 		"generic-twin", "github.com/gregberns/harmonik/cmd/harmonik-twin-generic")
 
-	// Minimal project scaffold: short socket-safe dir + .harmonik subtree +
-	// git repo with a bare origin + a br workspace holding one open bead.
 	projectDir := subprocessSmokeProjectDir(t)
 	subprocessSmokeGitRepo(t, projectDir)
 	beadID := subprocessSmokeInitBr(t, brPath, projectDir)
@@ -79,8 +41,6 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
 
-	// Launch the real binary as a separate process. The codexdriver substrate
-	// with the generic twin keeps dispatch billing-free and tmux-free.
 	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
 	//nolint:gosec // G204: harmonikBin is a test-built binary; args are literals.
 	daemonCmd := exec.CommandContext(daemonCtx, harmonikBin, "start", "daemon", "--project", projectDir)
@@ -88,7 +48,6 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 	daemonCmd.Env = append(os.Environ(),
 		"HARMONIK_SUBSTRATE=codexdriver",
 	)
-	// --default-harness / --codex-binary are daemon-path flags, appended as args.
 	daemonCmd.Args = append(daemonCmd.Args,
 		"--default-harness", "codex",
 		"--codex-binary", genericTwinBin,
@@ -99,7 +58,6 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 	if err := daemonCmd.Start(); err != nil {
 		t.Fatalf("start harmonik daemon subprocess: %v", err)
 	}
-	// Clean teardown: cancel (SIGKILL via CommandContext) + reap.
 	t.Cleanup(func() {
 		cancelDaemon()
 		_ = daemonCmd.Wait()
@@ -108,7 +66,6 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 		}
 	})
 
-	// Wait for the daemon socket to appear (proves the subprocess booted).
 	if !subprocessSmokeWaitForSocket(t, sockPath, 30*time.Second) {
 		t.Fatalf("daemon socket %s did not appear within 30s\ndaemon output:\n%s",
 			sockPath, daemonOut.String())
@@ -123,15 +80,12 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 		t.Fatalf("queue submit failed: %v\n%s", err, out)
 	}
 
-	// Assert the run reaches a terminal outcome.
 	if !subprocessSmokeWaitTerminal(t, jsonlPath, 90*time.Second) {
 		t.Fatalf("no terminal run event (run_completed/run_failed/bead_closed) within 90s\n"+
 			"jsonl=%s\ndaemon output:\n%s", jsonlPath, daemonOut.String())
 	}
 }
 
-// subprocessSmokeModuleRoot derives the module root from `go env GOMOD`
-// (mirrors test/scenario/harness_test.go:84).
 func subprocessSmokeModuleRoot(t *testing.T, goTool string) string {
 	t.Helper()
 	cwd, err := os.Getwd()
@@ -148,8 +102,6 @@ func subprocessSmokeModuleRoot(t *testing.T, goTool string) string {
 	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
-// subprocessSmokeBuild builds pkg into binDir/name and returns the binary path
-// (mirrors scenarioFixtureBuildTwin, test/scenario/harness_test.go:103).
 func subprocessSmokeBuild(t *testing.T, goTool, moduleRoot, binDir, name, pkg string) string {
 	t.Helper()
 	binPath := filepath.Join(binDir, name)
@@ -163,10 +115,6 @@ func subprocessSmokeBuild(t *testing.T, goTool, moduleRoot, binDir, name, pkg st
 	return binPath
 }
 
-// subprocessSmokeProjectDir creates a socket-safe project dir with the minimal
-// .harmonik subtree (mirrors scenarioFixtureProjectDir + the queue-submit
-// scenario layout). Uses /tmp so the unix socket path stays under macOS's
-// 104-byte sun_path limit.
 func subprocessSmokeProjectDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "hk-subproc-")
@@ -191,8 +139,6 @@ func subprocessSmokeProjectDir(t *testing.T) string {
 	return resolved
 }
 
-// subprocessSmokeGitRepo initialises a git repo with one commit + a bare origin
-// (mirrors queueSubmitDispatchGitRepo, scenario_queue_submit...:80).
 func subprocessSmokeGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -229,9 +175,6 @@ func subprocessSmokeGitRepo(t *testing.T, dir string) {
 	run("push", "origin", "main")
 }
 
-// subprocessSmokeInitBr runs `br init` + `br create` in projectDir and returns
-// the new bead's ID (mirrors queueSubmitDispatchInitBr, scenario...:178). The
-// real daemon runs br with cmd.Dir=projectDir, so it shares this .beads DB.
 func subprocessSmokeInitBr(t *testing.T, brPath, projectDir string) string {
 	t.Helper()
 	initCmd := exec.Command(brPath, "init", "--prefix", "sub")
@@ -239,11 +182,6 @@ func subprocessSmokeInitBr(t *testing.T, brPath, projectDir string) string {
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("br init: %v\n%s", err, out)
 	}
-	// model:<name> label: without it the codex harness refuses to build a
-	// launch spec (pre-dispatch), so the run never reaches the --codex-binary
-	// exec. With it, dispatch actually execs the generic twin (which does not
-	// speak the Codex wire protocol), and the run terminates as run_failed —
-	// a genuine dispatch-to-twin terminal outcome, still billing-free.
 	createCmd := exec.Command(brPath, "create",
 		"subprocess boot smoke bead", "--status", "open",
 		"--labels", "model:o4-mini", "--silent")
@@ -259,9 +197,6 @@ func subprocessSmokeInitBr(t *testing.T, brPath, projectDir string) string {
 	return id
 }
 
-// subprocessSmokeWaitForSocket polls for the daemon socket at sockPath, matching
-// the scenario harness idiom: a socket file with mode&os.ModeSocket set and
-// 0600 perms (test/scenario harness socket poll).
 func subprocessSmokeWaitForSocket(t *testing.T, sockPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -276,9 +211,6 @@ func subprocessSmokeWaitForSocket(t *testing.T, sockPath string, budget time.Dur
 	return false
 }
 
-// subprocessSmokeWaitTerminal polls events.jsonl for a terminal run event
-// (mirrors queueSubmitDispatchWaitRunTerminal, scenario...:251), extended to
-// accept bead_closed as an equally-terminal outcome.
 func subprocessSmokeWaitTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)

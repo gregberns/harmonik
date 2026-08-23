@@ -1,17 +1,5 @@
 package handler_test
 
-// session_test.go — tests for Session (EARLY_ROADMAP row #6, bead hk-8bbp7).
-//
-// Helper prefix: sessionFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-8bbp7).
-//
-// Tests drive a tiny sh -c child and assert:
-//   - SendInput delivers a line to child stdin.
-//   - Kill terminates the subprocess within deadline.
-//   - Wait returns once the subprocess exits.
-//   - Outcome reflects exit code / signal and captures stderr tail.
-//   - Stdout()/Stderr() expose the correct io.Reader instances before Wait.
-
 import (
 	"context"
 	"errors"
@@ -27,15 +15,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
-// sessionFixtureCmd builds an *exec.Cmd for use in session tests.
-//
-// It mirrors the PRODUCTION spawn config (lifecycle.SpawnChildSysProcAttr per
-// HC-044 / PL-006a): Setpgid=true with Pgid set to the daemon's process-group
-// ID, so the child JOINS the daemon's group rather than becoming its own group
-// leader.  This is the configuration session.Kill must operate under; using
-// Pgid:0 here would let the child be its own group leader — a config production
-// never uses — and would mask the hk-4c7kw bug where `kill(-childPid, …)`
-// returns ESRCH because the child is not a group leader.
 func sessionFixtureCmd(t *testing.T, shell string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", shell)
@@ -48,7 +27,6 @@ func sessionFixtureCmd(t *testing.T, shell string) *exec.Cmd {
 func TestSession_SendInput(t *testing.T) {
 	t.Parallel()
 
-	// Child: read one line from stdin, echo it to stdout, then exit.
 	cmd := sessionFixtureCmd(t, `read line; echo "got: $line"`)
 
 	sess, err := handler.NewSession(t.Context(), cmd)
@@ -60,7 +38,6 @@ func TestSession_SendInput(t *testing.T) {
 		t.Fatalf("SendInput: %v", err)
 	}
 
-	// Read stdout to confirm the child received the line.
 	stdoutBytes, err := io.ReadAll(sess.Stdout())
 	if err != nil {
 		t.Fatalf("ReadAll stdout: %v", err)
@@ -81,7 +58,6 @@ func TestSession_SendInput(t *testing.T) {
 func TestSession_Kill(t *testing.T) {
 	t.Parallel()
 
-	// Child: sleep indefinitely.  Kill must interrupt it.
 	cmd := sessionFixtureCmd(t, "sleep 300")
 
 	sess, err := handler.NewSession(t.Context(), cmd)
@@ -99,8 +75,6 @@ func TestSession_Kill(t *testing.T) {
 	waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer waitCancel()
 
-	// Wait must report the abnormal termination — a nil here would mean the
-	// exit status was lost on the way back to the caller.
 	if waitErr := sess.Wait(waitCtx); waitErr == nil {
 		t.Error("Wait after Kill returned nil; want the child's non-zero/signalled exit")
 	}
@@ -160,7 +134,6 @@ func TestSession_Outcome_NonZeroExit(t *testing.T) {
 func TestSession_Outcome_StderrTail(t *testing.T) {
 	t.Parallel()
 
-	// Write a recognizable string to stderr, then exit.
 	cmd := sessionFixtureCmd(t, `echo "error output" >&2; exit 1`)
 
 	sess, err := handler.NewSession(t.Context(), cmd)
@@ -168,7 +141,6 @@ func TestSession_Outcome_StderrTail(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	// The child exits 1 deliberately, so Wait must report that status.
 	var exitErr *exec.ExitError
 	if waitErr := sess.Wait(t.Context()); !errors.As(waitErr, &exitErr) {
 		t.Fatalf("sess.Wait: want *exec.ExitError for the child's exit 1, got %v", waitErr)
@@ -199,7 +171,6 @@ func TestSession_Stdout_Exposed(t *testing.T) {
 		t.Fatal("Stdout() returned nil — row-#7 cannot wire watcher")
 	}
 
-	// Drain stdout so the child can exit and Wait doesn't block.
 	if _, readErr := io.ReadAll(sess.Stdout()); readErr != nil {
 		t.Fatalf("drain stdout: %v", readErr)
 	}
@@ -235,8 +206,6 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 
 	pidFile := t.TempDir() + "/grandchild.pid"
 
-	// Child forks a grandchild sleep, records its PID, then waits.
-	// Both stay alive until the child receives a signal.
 	script := `sh -c 'sleep 300' & echo $! > ` + pidFile + `; wait`
 
 	cmd := sessionFixtureCmd(t, script)
@@ -245,7 +214,6 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	// Wait until the grandchild PID file is written (child has forked).
 	deadline := time.Now().Add(5 * time.Second)
 	var grandchildPIDBytes []byte
 	for time.Now().Before(deadline) {
@@ -265,22 +233,16 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 	if _, scanErr := fmt.Sscan(strings.TrimSpace(string(grandchildPIDBytes)), &grandchildPID); scanErr != nil {
 		t.Fatalf("parse grandchild PID: %v", scanErr)
 	}
-	// Ensure the orphaned grandchild does not leak out of the test regardless of
-	// outcome (the daemon's orphan sweep owns this in production).
 	defer func() {
-		// ESRCH just means the grandchild already exited, which is the good case.
 		if killErr := syscall.Kill(grandchildPID, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
 			t.Errorf("cleanup: kill orphaned grandchild %d: %v", grandchildPID, killErr)
 		}
 	}()
 
-	// Confirm the grandchild is alive before Kill.
 	if probeErr := syscall.Kill(grandchildPID, 0); probeErr != nil {
 		t.Fatalf("grandchild (pid %d) not alive before Kill: %v", grandchildPID, probeErr)
 	}
 
-	// Kill with an already-cancelled ctx exercises the cancel-path escalation
-	// (SIGTERM then immediate SIGKILL) used by waitWithSocketGrace on ctx-cancel.
 	killCtx, killCancel := context.WithCancel(t.Context())
 	killCancel()
 
@@ -289,8 +251,6 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 		t.Fatalf("Kill: %v", err)
 	}
 
-	// Wait must return promptly — the immediate child is reaped within budget,
-	// NOT blocked on the surviving grandchild (the hk-4c7kw regression).
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- sess.Wait(t.Context()) }()
 	select {
@@ -313,7 +273,6 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 func TestSession_Kill_SIGKILL_Escalation(t *testing.T) {
 	t.Parallel()
 
-	// Child traps SIGTERM and sleeps for 60 s; only SIGKILL can kill it.
 	cmd := sessionFixtureCmd(t, "trap '' TERM; sleep 60")
 
 	sess, err := handler.NewSession(t.Context(), cmd)
@@ -321,7 +280,6 @@ func TestSession_Kill_SIGKILL_Escalation(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	// Give Kill a very short deadline so the SIGKILL escalation path is exercised.
 	killCtx, killCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer killCancel()
 
@@ -329,7 +287,6 @@ func TestSession_Kill_SIGKILL_Escalation(t *testing.T) {
 		t.Fatalf("Kill (with escalation): %v", err)
 	}
 
-	// Child must now be dead; Wait must return promptly.
 	waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer waitCancel()
 

@@ -44,9 +44,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── fixtures ──────────────────────────────────────────────────────────────────
-
-// wg018FixtureRun returns a minimal valid Run ready for WG-018 scenario tests.
 func wg018FixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
@@ -61,9 +58,6 @@ func wg018FixtureRun(t *testing.T) *Run {
 	}
 }
 
-// wg018FixtureFailOutcome returns a FAIL Outcome with FailureClass set to
-// budget_exhausted, modelling a handler that emits the class directly
-// (handler-contract.md §4.2a HC-058, EM-005c additive field).
 func wg018FixtureFailOutcome(t *testing.T) Outcome {
 	t.Helper()
 	fc := FailureClassBudgetExhausted
@@ -74,16 +68,6 @@ func wg018FixtureFailOutcome(t *testing.T) Outcome {
 	}
 }
 
-// wg018FixtureEvaluator is a ConditionEvaluator that understands the two
-// condition forms used in the WG-018 scenario:
-//
-//   - `outcome.failure_class == "budget_exhausted"` — evaluates true when
-//     the outcome's FailureClass is budget_exhausted.
-//   - `outcome.status == 'FAIL'` — evaluates true for any FAIL outcome.
-//
-// All other expressions return false.  This evaluator simulates what the
-// expr-lang/expr runtime would produce for these specific condition strings,
-// verifying that the cascade correctly routes on outcome.failure_class (D1/D4).
 func wg018FixtureEvaluator(expr PolicyExpression, _ map[string]any, outcome Outcome) bool {
 	switch string(expr) {
 	case `outcome.failure_class == "budget_exhausted"`:
@@ -95,8 +79,6 @@ func wg018FixtureEvaluator(expr PolicyExpression, _ map[string]any, outcome Outc
 	}
 	return false
 }
-
-// ── (a) D2: top-level field populated ────────────────────────────────────────
 
 // TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated verifies that an Outcome
 // carrying failure_class=budget_exhausted is structurally valid per EM-005c's
@@ -114,7 +96,6 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 
 	fc := FailureClassBudgetExhausted
 
-	// FAIL outcome with budget_exhausted: must be valid.
 	failOutcome := Outcome{
 		Status:       OutcomeStatusFail,
 		FailureClass: &fc,
@@ -124,7 +105,6 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 		t.Error("WG-018 D2: FAIL Outcome with FailureClass=budget_exhausted is invalid; want Valid()=true")
 	}
 
-	// Confirm FailureClass is non-nil and carries the expected value (top-level access).
 	if failOutcome.FailureClass == nil {
 		t.Fatal("WG-018 D2: Outcome.FailureClass is nil; D2 requires it as a top-level field on FAIL outcomes")
 	}
@@ -132,7 +112,6 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 		t.Errorf("WG-018 D2: Outcome.FailureClass = %q, want %q", *failOutcome.FailureClass, FailureClassBudgetExhausted)
 	}
 
-	// HC-058: FailureClass MUST be absent on non-FAIL outcomes.
 	successOutcomeWithFC := Outcome{
 		Status:       OutcomeStatusSuccess,
 		FailureClass: &fc, // invalid: present on SUCCESS
@@ -142,7 +121,6 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 		t.Error("WG-018 D2 / HC-058: SUCCESS Outcome with FailureClass must be invalid; want Valid()=false")
 	}
 
-	// Nil FailureClass on FAIL is valid (handler may omit; daemon back-fills per HC-020).
 	failOutcomeNoFC := Outcome{
 		Status: OutcomeStatusFail,
 		Kind:   OutcomeKindDefault,
@@ -151,8 +129,6 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 		t.Error("WG-018 D2 / HC-058: FAIL Outcome with nil FailureClass must be valid (handler omission is permitted)")
 	}
 }
-
-// ── (b) + (c) cascade routes to expected edge + terminal node ─────────────────
 
 // TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass verifies that the
 // cascade selects the failure_class-specific edge over a generic FAIL fallback
@@ -180,7 +156,6 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 	run := wg018FixtureRun(t)
 	outcome := wg018FixtureFailOutcome(t)
 
-	// Edge A: failure_class-specific (highest weight → must win).
 	condA := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
 	edgeBudgetExhausted := Edge{
 		FromNode:    "node-work",
@@ -190,7 +165,6 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 		OrderingKey: "a",
 	}
 
-	// Edge B: generic FAIL fallback (lower weight → must lose to Edge A when both match).
 	condB := PolicyExpression(`outcome.status == 'FAIL'`)
 	edgeGenericFail := Edge{
 		FromNode:    "node-work",
@@ -200,7 +174,6 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 		OrderingKey: "b",
 	}
 
-	// Edge C: unconditional fallback (lowest weight → must not be selected).
 	edgeUnconditional := Edge{
 		FromNode:    "node-work",
 		ToNode:      "node-unconditional",
@@ -217,14 +190,12 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 		cycles,
 	)
 
-	// (b) cascade must match (not fail with no_outgoing_edge_matches).
 	if !result.Matched {
 		t.Fatalf("WG-018 D1/D4: cascade did not match; failure=%s reason=%s "+
 			"(outcome.failure_class=%v); expected cascade to select budget_exhausted edge (D1 LHS admission)",
 			result.FailureClass, result.FailureReason, outcome.FailureClass)
 	}
 
-	// (c) terminal node: must be node-budget-exhausted (the failure_class-specific edge won).
 	if result.Edge.ToNode != "node-budget-exhausted" {
 		t.Errorf("WG-018 D1/D4: selected edge ToNode=%q, want %q; "+
 			"failure_class-specific edge (weight=10) must beat generic FAIL edge (weight=5) per cascade step 3",
@@ -243,7 +214,6 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 
 	run := wg018FixtureRun(t)
 
-	// Outcome is FAIL but with transient class, not budget_exhausted.
 	fc := FailureClassTransient
 	outcome := Outcome{
 		Status:       OutcomeStatusFail,
@@ -282,8 +252,6 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 		t.Fatalf("WG-018: cascade did not match; failure=%s reason=%s", result.FailureClass, result.FailureReason)
 	}
 
-	// budget_exhausted condition is false for transient failure class →
-	// generic FAIL edge (weight=5) must be selected.
 	if result.Edge.ToNode != "node-generic-fail" {
 		t.Errorf("WG-018: selected %q, want %q; "+
 			"budget_exhausted condition must be false for transient failure class",
@@ -301,7 +269,6 @@ func TestFailureClassCascadeWG018_D2_FailureClassAbsentOnSuccess(t *testing.T) {
 	outcome := Outcome{
 		Status: OutcomeStatusSuccess,
 		Kind:   OutcomeKindDefault,
-		// FailureClass intentionally nil (HC-058: absent on non-FAIL).
 	}
 
 	condFC := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
@@ -388,7 +355,6 @@ func TestFailureClassCascadeWG018_FullDispatch_BudgetExhaustedReachesTerminal(t 
 		PermitGate,
 	)
 
-	// Dispatch must advance (not stay, escalate, or fail).
 	if !result.Advance {
 		t.Fatalf("WG-018 full-dispatch: Advance=false; Stay=%v Escalate=%v Failed=%v "+
 			"FailureClass=%s FailureReason=%s; expected Advance=true",
@@ -396,7 +362,6 @@ func TestFailureClassCascadeWG018_FullDispatch_BudgetExhaustedReachesTerminal(t 
 			result.FailureClass, result.FailureReason)
 	}
 
-	// Terminal node assertion (hk-aoz34 assertion (c)).
 	if result.Edge.ToNode != terminalNodeID {
 		t.Errorf("WG-018 full-dispatch: terminal node reached = %q, want %q "+
 			"(budget_exhausted-specific terminal node per WG-021 distinct terminal IDs)",

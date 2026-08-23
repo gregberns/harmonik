@@ -8,9 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// outcomeSpineFixtureHookVerdictRecord returns a fully-populated
-// HookVerdictRecord with all fields set to valid non-zero values.
-// Used as the base for structural tests (hk-b3f.35).
 func outcomeSpineFixtureHookVerdictRecord(t *testing.T) HookVerdictRecord {
 	t.Helper()
 
@@ -28,8 +25,6 @@ func outcomeSpineFixtureHookVerdictRecord(t *testing.T) HookVerdictRecord {
 	}
 }
 
-// outcomeSpineFixtureHookVerdictRecordSuccess returns a HookVerdictRecord for
-// a successful (non-failed) hook dispatch where Reason is nil.
 func outcomeSpineFixtureHookVerdictRecordSuccess(t *testing.T) HookVerdictRecord {
 	t.Helper()
 
@@ -46,8 +41,6 @@ func outcomeSpineFixtureHookVerdictRecordSuccess(t *testing.T) HookVerdictRecord
 	}
 }
 
-// outcomeSpineFixtureSideEffect returns a valid SideEffect for use in
-// HookVerdictRecord fixture construction.
 func outcomeSpineFixtureSideEffect(t *testing.T) SideEffect {
 	t.Helper()
 	return SideEffect{
@@ -319,9 +312,6 @@ func TestHookVerdictRecord_JSONRoundTrip_WithCognitionMeta(t *testing.T) {
 func TestHookVerdictRecord_SpineTyping(t *testing.T) {
 	t.Parallel()
 
-	// Demonstrate the spine-segment typing: the hook-dispatch segment takes an
-	// Outcome (spine segment 1 output) and produces a HookVerdictRecord (spine
-	// segment 2 output). The type signature is the contract.
 	stubHookDispatch := func(_ Outcome) HookVerdictRecord {
 		return outcomeSpineFixtureHookVerdictRecordSuccess(t)
 	}

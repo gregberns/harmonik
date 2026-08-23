@@ -79,10 +79,6 @@ func ReadEventLog(logPath string) ([]RawEvent, error) {
 		return nil, err
 	}
 
-	// Split on newlines. The last element after splitting is either:
-	//   - empty string  — file ends with \n (clean file); discard it
-	//   - partial record — torn tail (post-fsync partial write); skip silently
-	// Either way, lines[:len(lines)-1] contains only complete lines.
 	lines := bytes.Split(data, []byte("\n"))
 	toProcess := lines[:len(lines)-1]
 
@@ -100,15 +96,8 @@ func ReadEventLog(logPath string) ([]RawEvent, error) {
 	return events, nil
 }
 
-// tokenizePayloadPath splits a dotted-path key into lookup segments per SH-021.
-//
-// Grammar: dots separate object keys; bracket form addresses array indices.
-// "a.b[0].c"  → ["a", "b", "[0]", "c"]
-// "items[0].id" → ["items", "[0]", "id"]
-// "a[0][1]"    → ["a", "[0]", "[1]"]
 func tokenizePayloadPath(path string) []string {
 	var result []string
-	// Process each dot-separated component.
 	for _, part := range strings.Split(path, ".") {
 		if part == "" {
 			continue
@@ -116,20 +105,16 @@ func tokenizePayloadPath(path string) []string {
 		rest := part
 		for rest != "" {
 			if strings.HasPrefix(rest, "[") {
-				// Bracket-form array index.
 				end := strings.Index(rest, "]")
 				if end < 0 {
-					// Malformed; treat remainder as a key.
 					result = append(result, rest)
 					rest = ""
 					break
 				}
 				result = append(result, rest[:end+1])
 				rest = rest[end+1:]
-				// Strip leading "." separator if present (e.g., "[0].foo").
 				rest = strings.TrimPrefix(rest, ".")
 			} else {
-				// Object key; stop before the first "[".
 				bracketIdx := strings.Index(rest, "[")
 				if bracketIdx < 0 {
 					result = append(result, rest)
@@ -144,11 +129,6 @@ func tokenizePayloadPath(path string) []string {
 	return result
 }
 
-// walkPayloadPath resolves a dotted-path key within a JSON-decoded payload
-// per SH-021. Returns (value, true) on success; (nil, false) on missing path
-// or type mismatch.
-//
-// Spec ref: specs/scenario-harness.md §4.6 SH-021.
 func walkPayloadPath(payload any, path string) (any, bool) {
 	if path == "" {
 		return payload, true
@@ -160,7 +140,6 @@ func walkPayloadPath(payload any, path string) (any, bool) {
 			return nil, false
 		}
 		if strings.HasPrefix(seg, "[") && strings.HasSuffix(seg, "]") {
-			// Array index.
 			idx, err := strconv.Atoi(seg[1 : len(seg)-1])
 			if err != nil {
 				return nil, false
@@ -171,7 +150,6 @@ func walkPayloadPath(payload any, path string) (any, bool) {
 			}
 			cur = arr[idx]
 		} else {
-			// Object key.
 			obj, ok := cur.(map[string]any)
 			if !ok {
 				return nil, false
@@ -186,9 +164,6 @@ func walkPayloadPath(payload any, path string) (any, bool) {
 	return cur, true
 }
 
-// jsonAsFloat coerces any JSON- or YAML-decoded numeric value to float64.
-// encoding/json yields float64; gopkg.in/yaml yields int / int64 / uint64 /
-// float64. Returns (0, false) for non-numeric values.
 func jsonAsFloat(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -220,12 +195,6 @@ func jsonAsFloat(v any) (float64, bool) {
 	}
 }
 
-// jsonValuesEqual reports whether two JSON-decoded values are equal per SH-021:
-//   - numbers compare by numeric value (1 == 1.0)
-//   - strings compare byte-equal (NFC normalization; ASCII content is NFC by definition)
-//   - booleans by identity
-//   - null by identity (both nil)
-//   - arrays element-wise; objects key-set and value-wise
 func jsonValuesEqual(a, b any) bool {
 	if a == nil && b == nil {
 		return true
@@ -233,10 +202,6 @@ func jsonValuesEqual(a, b any) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	// encoding/json decodes all numbers as float64, but the declared
-	// payload_match side comes from YAML, which decodes integers as int/int64
-	// (and floats as float64). Compare any numeric pair by numeric value so a
-	// YAML int 1 equals a JSON float64 1.0 (SH-021: "numbers compare by value").
 	if af, aIsNum := jsonAsFloat(a); aIsNum {
 		if bf, bIsNum := jsonAsFloat(b); bIsNum {
 			return af == bf
@@ -283,10 +248,6 @@ func jsonValuesEqual(a, b any) bool {
 	return false
 }
 
-// payloadMatchHolds reports whether the actual raw-JSON event payload satisfies
-// the declared payload_match predicates per SH-021 shallow-merge semantics:
-// declared keys MUST appear in the actual payload with equal values; the actual
-// payload MAY contain additional unmatched keys.
 func payloadMatchHolds(rawPayload json.RawMessage, match map[string]any) bool {
 	if len(match) == 0 {
 		return true
@@ -304,8 +265,6 @@ func payloadMatchHolds(rawPayload json.RawMessage, match map[string]any) bool {
 	return true
 }
 
-// eventMatchesExpectation reports whether ev matches exp's type and optional
-// payload_match predicates.
 func eventMatchesExpectation(ev RawEvent, exp EventExpectation) bool {
 	if ev.Type != string(exp.Type) {
 		return false
@@ -313,8 +272,6 @@ func eventMatchesExpectation(ev RawEvent, exp EventExpectation) bool {
 	return exp.PayloadMatch == nil || payloadMatchHolds(ev.Payload, exp.PayloadMatch)
 }
 
-// evalEventExpectation evaluates a single EventExpectation against the captured
-// event log per SH-021.
 func evalEventExpectation(exp EventExpectation, events []RawEvent) AssertionResult {
 	ar := AssertionResult{
 		Description:   exp.Description,
@@ -349,7 +306,6 @@ func evalEventExpectation(exp EventExpectation, events []RawEvent) AssertionResu
 	return ar
 }
 
-// isFilePredicateKind reports whether kind involves filesystem path resolution.
 func isFilePredicateKind(k WorkspacePredicateKind) bool {
 	switch k {
 	case WorkspacePredicateKindFileExists,
@@ -363,23 +319,7 @@ func isFilePredicateKind(k WorkspacePredicateKind) bool {
 	return false // invalid values are rejected while loading the scenario.
 }
 
-// checkSymlinkSafety returns an error if targetPath escapes workspaceDir via a
-// symlink at ANY path component — leaf OR intermediate directory. A symlinked
-// intermediate directory is the real risk: Lstat-ing only the leaf would let a
-// path like "<ws>/linkdir/secret" (where linkdir → /etc) read arbitrary host
-// files and defeat SH-022 isolation. Returns nil when the path (or its
-// resolvable prefix) stays within the workspace root.
-//
-// Because targetPath may not exist yet (e.g. a file_exists predicate that is
-// expected to fail), we resolve the deepest EXISTING ancestor with
-// EvalSymlinks — which follows every intermediate symlink — and confirm the
-// canonical result is still inside the canonical workspace root. Any
-// not-yet-existing trailing components are plain names (they cannot be
-// traversable symlinks precisely because they do not exist) and are re-checked
-// as a lexical suffix.
 func checkSymlinkSafety(targetPath, workspaceDir string) error {
-	// Canonicalize the workspace root itself (it may sit under a symlinked
-	// temp dir, e.g. /tmp → /private/tmp on macOS).
 	absWS, err := filepath.Abs(workspaceDir)
 	if err != nil {
 		return fmt.Errorf("workspace abs path: %w", err)
@@ -395,9 +335,6 @@ func checkSymlinkSafety(targetPath, workspaceDir string) error {
 		return fmt.Errorf("target abs path: %w", err)
 	}
 
-	// Resolve the deepest existing ancestor of the target; EvalSymlinks
-	// follows EVERY intermediate symlink, so a symlinked directory anywhere
-	// on the path is caught here.
 	existing := absTarget
 	var trailing []string
 	for {
@@ -406,8 +343,6 @@ func checkSymlinkSafety(targetPath, workspaceDir string) error {
 		}
 		parent := filepath.Dir(existing)
 		if parent == existing {
-			// Reached the filesystem root without finding an existing
-			// component; nothing to resolve, treat as safe-by-absence.
 			return nil
 		}
 		trailing = append([]string{filepath.Base(existing)}, trailing...)
@@ -418,9 +353,6 @@ func checkSymlinkSafety(targetPath, workspaceDir string) error {
 	if err != nil {
 		return fmt.Errorf("symlink resolution failed: %w", err)
 	}
-	// Re-attach any not-yet-existing trailing components lexically. These are
-	// guaranteed not to be symlinks (they do not exist), so a lexical join is
-	// sound; Clean collapses any ".." they might contain.
 	full := filepath.Clean(filepath.Join(append([]string{resolved}, trailing...)...))
 
 	if full != rootReal && !strings.HasPrefix(full, rootReal+string(filepath.Separator)) {
@@ -429,14 +361,6 @@ func checkSymlinkSafety(targetPath, workspaceDir string) error {
 	return nil
 }
 
-// evalWorkspacePredicate evaluates a single WorkspacePredicate against the
-// per-scenario worktree at workspaceDir per SH-022.
-//
-// File predicates inspect working files directly. Git predicates (git_ref_at,
-// commit_trailer_present) use git plumbing commands inside workspaceDir.
-// Symlinks that escape the workspace are rejected per SH-022.
-//
-// Spec ref: specs/scenario-harness.md §4.6 SH-022.
 func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) AssertionResult {
 	ar := AssertionResult{
 		AssertionKind: AssertionResultKindWorkspaceState,
@@ -444,7 +368,6 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		ExpectedValue: map[string]any{"kind": string(pred.Kind), "path": pred.Path, "expected": pred.Expected},
 	}
 
-	// Symlink traversal check for file predicates (SH-022).
 	if isFilePredicateKind(pred.Kind) {
 		targetPath := filepath.Join(workspaceDir, filepath.FromSlash(pred.Path))
 		if err := checkSymlinkSafety(targetPath, workspaceDir); err != nil {
@@ -494,12 +417,10 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 
 		case WorkspacePredicateKindGitRefAt,
 			WorkspacePredicateKindCommitTrailerPresent:
-			// These are handled by the git-predicate switch below.
 		}
 		return ar
 	}
 
-	// Git predicates: pred.Path is interpreted as a git ref name.
 	switch pred.Kind {
 	case WorkspacePredicateKindGitRefAt:
 		if !validScenarioGitRef(pred.Path) {
@@ -518,7 +439,6 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		actualSHA := strings.TrimSpace(string(out))
 
 		expected := *pred.Expected
-		// If expected is a ref name (not a full 40-char SHA), resolve it.
 		if !sha1Re.MatchString(expected) {
 			if !validScenarioGitRef(expected) {
 				ar.Passed = false
@@ -559,13 +479,10 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 	case WorkspacePredicateKindFileExists,
 		WorkspacePredicateKindFileContentsEqual,
 		WorkspacePredicateKindFileContentsMatch:
-		// File predicates are handled above.
 	}
 	return ar
 }
 
-// validScenarioGitRef accepts the restricted ref syntax supported by scenario
-// fixtures and rejects option-like, traversal-like, and shell-significant input.
 func validScenarioGitRef(ref string) bool {
 	if ref == "" || strings.HasPrefix(ref, "-") || strings.Contains(ref, "..") || strings.Contains(ref, "//") {
 		return false
@@ -578,8 +495,6 @@ func validScenarioGitRef(ref string) bool {
 	return true
 }
 
-// scenarioGitRefRuneValid reports whether r may appear in a scenario git ref.
-// The set is ASCII alphanumerics plus the four punctuation marks git refs need.
 func scenarioGitRefRuneValid(r rune) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
@@ -589,9 +504,6 @@ func scenarioGitRefRuneValid(r rune) bool {
 	}
 }
 
-// commitMessageHasTrailer reports whether the commit message contains a trailer
-// with the given key. Trailer lines have the form "Key: value" or "Key : value".
-// Key-only matching per §6.3 (values are NOT matched at v0.1).
 func commitMessageHasTrailer(message, key string) bool {
 	for _, line := range strings.Split(message, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -602,14 +514,6 @@ func commitMessageHasTrailer(message, key string) bool {
 	return false
 }
 
-// evalOutcomeExpectation evaluates the OutcomeExpectation (exit_code assertion)
-// against the captured event log per SH-021.
-//
-// Actual outcome derivation:
-//  1. Last outcome_emitted event's outcome_status (§8.1.8 — carries the explicit value).
-//  2. Fallback: run_completed → SUCCESS; run_failed → FAIL.
-//
-// Spec ref: specs/scenario-harness.md §4.6 SH-021.
 func evalOutcomeExpectation(exp OutcomeExpectation, events []RawEvent) AssertionResult {
 	ar := AssertionResult{
 		AssertionKind: AssertionResultKindExitCode,
@@ -620,7 +524,6 @@ func evalOutcomeExpectation(exp OutcomeExpectation, events []RawEvent) Assertion
 	var actual core.OutcomeStatus
 	found := false
 
-	// Priority 1: last outcome_emitted event carries explicit outcome_status.
 	for _, ev := range events {
 		if ev.Type == string(core.EventTypeOutcomeEmitted) {
 			var p struct {
@@ -633,7 +536,6 @@ func evalOutcomeExpectation(exp OutcomeExpectation, events []RawEvent) Assertion
 		}
 	}
 
-	// Priority 2: fall back to terminal event type.
 	if !found {
 		for _, ev := range events {
 			switch ev.Type {
@@ -673,22 +575,18 @@ func evalOutcomeExpectation(exp OutcomeExpectation, events []RawEvent) Assertion
 //
 // Spec ref: specs/scenario-harness.md §4.6 SH-021, SH-022, SH-023.
 func EvaluateAssertions(sf ScenarioFile, events []RawEvent, workspaceDir string) (results []AssertionResult, verdict ScenarioVerdict, fc FailureClass) {
-	// 1. expected_events (declaration order).
 	for _, exp := range sf.ExpectedEvents {
 		results = append(results, evalEventExpectation(exp, events))
 	}
 
-	// 2. expected_workspace (declaration order).
 	for _, pred := range sf.ExpectedWorkspace {
 		results = append(results, evalWorkspacePredicate(pred, workspaceDir))
 	}
 
-	// 3. expected_outcome (single entry if declared).
 	if sf.ExpectedOutcome != nil {
 		results = append(results, evalOutcomeExpectation(*sf.ExpectedOutcome, events))
 	}
 
-	// Determine verdict (SH-023: no short-circuit).
 	for _, r := range results {
 		if !r.Passed {
 			return results, ScenarioVerdictFail, FailureClassAssertionFailed

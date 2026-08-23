@@ -10,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
-// stubCrewStarter is a test double for AdversaryCrewStarter that records calls
-// and optionally returns a configured error.
 type stubCrewStarter struct {
 	calls []json.RawMessage
 	err   error
@@ -25,7 +23,6 @@ func (s *stubCrewStarter) HandleCrewStart(_ context.Context, payload json.RawMes
 	return json.RawMessage(`{"session_id":"test-session","name":"sentinel-adversary"}`), nil
 }
 
-// parseCrewStartPayload unmarshals a HandleCrewStart payload into a map.
 func parseCrewStartPayload(t *testing.T, raw json.RawMessage) map[string]string {
 	t.Helper()
 	var m map[string]string
@@ -68,7 +65,6 @@ func TestSpawnAdversary_SpawnsWhenCrewOffline(t *testing.T) {
 		t.Errorf("queue: got %q, want %q", req["queue"], sentinel.AdversaryQueueName)
 	}
 
-	// mission_path must default to <projectDir>/.flywheel/skills/sentinel-adversary.md
 	wantMission := filepath.Join(projectDir, sentinel.DefaultAdversaryMissionRelPath)
 	if req["mission_path"] != wantMission {
 		t.Errorf("mission_path: got %q, want %q", req["mission_path"], wantMission)

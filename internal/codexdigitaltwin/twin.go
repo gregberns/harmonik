@@ -46,8 +46,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Fault injection (re-exported from substrate) ─────────────────────────────
-
 // FaultMode is re-exported (a type alias) from the generic substrate replay
 // engine so existing call sites keep compiling unchanged.
 type FaultMode = substrate.FaultMode
@@ -67,21 +65,8 @@ const (
 	FaultDup       = substrate.FaultDup
 )
 
-// ─── codexCodec ────────────────────────────────────────────────────────────────
-
-// substrateTruncateSentinel is the message substrate.Twin passes to ErrorEvent
-// on the FaultTruncate path (internal/substrate/replay.go). The codex twin
-// historically reported truncation as "twin: truncated frame"; the codec
-// translates the neutral substrate sentinel back to the codex phrasing so the
-// existing fault tests stay green without edits. A genuine fatal decode error
-// carries the real parser message and is passed through unchanged.
 const substrateTruncateSentinel = "substrate: truncated frame"
 
-// codexCodec implements substrate.ReplayCodec[codexreactor.Event]. It fuses the
-// codex replay leak points — wire decode, server-notification filter, and the
-// Frame→Event map — into DecodeLine, and supplies the two codex-typed synthetic
-// terminal events. The seq counter is codec-internal state (it no longer
-// threads through the substrate surface; RS-008, substrate-design §2.3).
 type codexCodec struct {
 	seq uint64
 }
@@ -94,20 +79,12 @@ type codexCodec struct {
 func (c *codexCodec) DecodeLine(line []byte) (codexreactor.Event, bool, error) {
 	frame, err := codexwire.Parse(line)
 	if err != nil {
-		// Fatal transport failure: substrate emits ErrorEvent(err) and closes.
 		return codexreactor.Event{}, false, err
 	}
-	// Only server notifications translate to reactor events; client frames,
-	// server responses, and server-originated requests (approval prompts —
-	// FrameKindServerRequest) are skipped (not fatal). The twin replays a
-	// captured corpus and never answers requests, so a server request is a
-	// no-op here — but it is now classified distinctly rather than misfiled as a
-	// client request, keeping the twin in parity with the live session (RU-07).
 	if frame.Kind != codexwire.FrameKindServerNotification {
 		return codexreactor.Event{}, false, nil
 	}
 	ev, mapped := frameToEvent(frame, &c.seq)
-	// mapped==false → not a reactor-relevant notification (configWarning, …) → skip.
 	return ev, mapped, nil
 }
 
@@ -126,8 +103,6 @@ func (c *codexCodec) ErrorEvent(msg string) codexreactor.Event {
 func (c *codexCodec) DisconnectEvent() codexreactor.Event {
 	return codexreactor.Event{Seq: 0, Type: codexreactor.EventTypeDisconnected}
 }
-
-// ─── Twin ────────────────────────────────────────────────────────────────────
 
 // Twin replays a captured codex app-server JSONL corpus as a
 // codexreactor.EventSource, optionally injecting transport faults. It is a thin
@@ -151,11 +126,6 @@ func (t *Twin) Events(ctx context.Context) <-chan codexreactor.Event {
 	return t.inner.Events(ctx)
 }
 
-// ─── Frame → Event translation ───────────────────────────────────────────────
-
-// frameToEvent translates a parsed codexwire server notification into a
-// codexreactor.Event. seq is incremented for each successfully translated
-// event. Returns (zero, false) for notifications that are not reactor-relevant.
 func frameToEvent(frame codexwire.Frame, seq *uint64) (codexreactor.Event, bool) {
 	switch frame.Method {
 

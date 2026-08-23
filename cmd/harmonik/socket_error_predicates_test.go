@@ -1,17 +1,5 @@
 package main
 
-// socket_error_predicates_test.go — table-driven coverage for the daemon-socket
-// error predicates in run_via_daemon.go.
-//
-// These predicates decide whether `harmonik run` reports "daemon is down"
-// (exit 17) or a hard failure, so a false negative silently turns a routine
-// "daemon not running" into an opaque error, and a false positive hides a real
-// dial failure behind exit 17. They used to match on err.Error() substrings;
-// they now match on error identity, which only holds if every wrapper in the
-// real dial chain unwraps to the sentinel. The wrapped-chain cases below are
-// the shapes net.Dial actually produces for a unix socket, so a regression in
-// the unwrap chain fails here rather than in production.
-
 import (
 	"errors"
 	"fmt"
@@ -22,9 +10,6 @@ import (
 	"testing"
 )
 
-// unixOpError builds the *net.OpError shape net.Dial returns for a unix-socket
-// dial failure: the syscall error is wrapped in *os.SyscallError, which is
-// wrapped in *net.OpError.
 func unixOpError(errno syscall.Errno) error {
 	return &net.OpError{
 		Op:   "dial",

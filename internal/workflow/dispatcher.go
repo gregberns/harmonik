@@ -91,7 +91,6 @@ func DecideNextNode(
 	run *core.Run,
 	cycles *core.CycleCounter,
 ) DispatchDecision {
-	// Step 1 — terminal-node check.
 	for _, tid := range graph.TerminalNodeIDs {
 		if tid == fromNodeID {
 			return DispatchDecision{
@@ -105,7 +104,6 @@ func DecideNextNode(
 		}
 	}
 
-	// Step 2 — collect outgoing edges from fromNodeID.
 	var outgoing []*dot.Edge
 	for _, e := range graph.Edges {
 		if e.FromNodeID == fromNodeID {
@@ -113,13 +111,6 @@ func DecideNextNode(
 		}
 	}
 
-	// Step 3 — build condition evaluator bridge.
-	//
-	// core.SelectNextEdge calls eval(expr, ctx, outcome) for each edge whose
-	// core.Edge.Condition is non-nil, passing *e.Condition as expr.  We store
-	// the PolicyExpression as the ConditionRaw string and resolve the parsed
-	// *dot.Condition from a lookup map.  Same-raw-string conditions evaluate
-	// identically so key collisions are benign.
 	condByRaw := make(map[string]*dot.Condition, len(outgoing))
 	for _, e := range outgoing {
 		if e.Condition != nil {
@@ -130,33 +121,27 @@ func DecideNextNode(
 	eval := func(expr core.PolicyExpression, ctx map[string]any, o core.Outcome) bool {
 		cond, ok := condByRaw[string(expr)]
 		if !ok {
-			// Defense-in-depth: condition not in lookup → treat as false.
 			return false
 		}
 		strCtx := anyToStringMap(ctx)
 		matched, err := dot.EvalCondition(cond, o, strCtx)
 		if err != nil {
-			// ErrDeterministic: out-of-whitelist LHS that slipped past the
-			// validator. Treat as false (route to structural failure path).
 			return false
 		}
 		return matched
 	}
 
-	// Step 4 — convert dot.Edge to core.Edge for core.SelectNextEdge.
 	candidates := make([]core.Edge, 0, len(outgoing))
 	for _, e := range outgoing {
 		ce := dotEdgeToCoreEdge(e)
 		candidates = append(candidates, ce)
 	}
 
-	// Step 5 — run EM-041 cascade.
 	result := core.SelectNextEdge(run, candidates, outcome, eval, cycles)
 
 	if result.Failed {
 		completionReason := ""
 		if result.FailureClass == core.FailureClassCompilationLoop {
-			// cap_hit per EM-015d-RFD vocabulary.
 			completionReason = "cap_hit"
 		}
 		return DispatchDecision{
@@ -187,15 +172,6 @@ func DecideNextNode(
 	}
 }
 
-// dotEdgeToCoreEdge converts a *dot.Edge to a core.Edge for use by
-// core.SelectNextEdge.
-//
-// Mapping:
-//   - Condition: set to PolicyExpression(ConditionRaw) when non-nil; nil for
-//     unconditional edges (core.SelectNextEdge skips eval for nil conditions).
-//   - Label: set to PreferredLabel when non-empty.
-//   - Weight: parsed from the string field; 0 on parse error or empty string.
-//   - OrderingKey: defaulted to ToNodeID when empty (core.Edge requires non-empty).
 func dotEdgeToCoreEdge(e *dot.Edge) core.Edge {
 	ce := core.Edge{
 		FromNode:    core.NodeID(e.FromNodeID),
@@ -203,7 +179,6 @@ func dotEdgeToCoreEdge(e *dot.Edge) core.Edge {
 		OrderingKey: e.OrderingKey,
 	}
 
-	// OrderingKey must be non-empty per core.Edge.Valid().
 	if ce.OrderingKey == "" {
 		ce.OrderingKey = e.ToNodeID
 	}
@@ -223,10 +198,6 @@ func dotEdgeToCoreEdge(e *dot.Edge) core.Edge {
 		}
 	}
 
-	// Bridge traversal_cap (retained by the parser in UnknownAttrs) into
-	// core.Edge.TraversalCap so core.SelectNextEdge enforces the EM-043 cap
-	// during the cascade (hk-i7yq8). A non-positive / malformed value is treated
-	// as no cap.
 	if raw, ok := e.UnknownAttrs["traversal_cap"]; ok {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			ce.TraversalCap = &n
@@ -236,9 +207,6 @@ func dotEdgeToCoreEdge(e *dot.Edge) core.Edge {
 	return ce
 }
 
-// anyToStringMap converts a map[string]any context to map[string]string,
-// keeping only string-typed values.  Non-string values are silently dropped;
-// dot.EvalCondition only compares against string literals per WG-013/WG-015.
 func anyToStringMap(ctx map[string]any) map[string]string {
 	if len(ctx) == 0 {
 		return nil

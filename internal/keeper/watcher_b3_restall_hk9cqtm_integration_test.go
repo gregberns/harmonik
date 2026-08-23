@@ -2,35 +2,6 @@
 
 package keeper_test
 
-// watcher_b3_restall_hk9cqtm_integration_test.go — L-twin loop proof for
-// Acceptance corpus #4 (B3 watch re-stall auto-heals, hk-9cqtm).
-//
-// This test closes the "no self-healing path" gap (BUGS.md B3) end-to-end
-// against a REAL tmux pane:
-//
-//  1. A twin session is started (its #{pane_current_command} is the binary —
-//     alive, not a shell) and --suppress-statusline-after freezes its gauge
-//     while the pane stays alive (the exact hung-mid-turn reality).
-//  2. The watcher is configured with a WRONG TmuxTarget (models the mangled
-//     target the hk-5266t class produces) and ResolveTmuxTargetFn=nil so the
-//     real ResolveTmuxTarget derives the canonical "session:agent" target from
-//     projectDir+agentName.
-//  3. The watcher detects: stale gauge + IsPaneAlive(mangled)=false →
-//     re-resolves → IsPaneAlive(canonical)=true → fires gated ForceRestart
-//     exactly once (cooldown gate, valid-SID gate).
-//  4. No second recovery fires within the run window (no loop).
-//
-// The LiveRecoverFn spy SIGNALS only — it never actually restarts the twin —
-// so teardown stays deterministic.
-//
-// Helper prefix reuse: tw (twin harness, cycle_twin_e2e_integration_test.go);
-// writeSidFile / primarySID (sessionid_test.go); lprIntRecorder / lprEvents
-// (watcher_live_pane_recover_integration_test.go / watcher_live_pane_recover_test.go).
-//
-// Safety contract: this test creates and destroys ONLY its own uniquely-named
-// throwaway tmux session (prefix "hkb3-twin-"). See
-// cycle_twin_e2e_integration_test.go for the full safety contract.
-
 import (
 	"context"
 	"fmt"
@@ -59,13 +30,6 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 	statusline, idleHook := twScripts(t)
 
 	const emitEvery = 150 * time.Millisecond
-	// The watcher below runs with ResolveTmuxTargetFn=nil, so the REAL
-	// keeper.ResolveTmuxTarget re-derives the canonical
-	// "harmonik-<hash12(project)>-<agent>:agent" target from projectDir+
-	// agentName — it can never find a randomly-named tmux session. Start the
-	// twin under that exact canonical session name so the real re-resolution
-	// path actually locates the live pane (hk-9cqtm twin-loop proof; mirrors
-	// what a real harmonik-launched agent session is named).
 	canonicalSession := keeper.HarmonikSessionName(project, agent)
 	_ = twStartTwin(t, twTwinSpec{
 		project:       project,
@@ -82,17 +46,12 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 		sessionName:   canonicalSession,
 	})
 
-	// Wait for the gauge to appear before the suppression deadline.
 	if cf := twWaitForCtxTokens(t, project, agent, 50_000, 5*time.Second); cf == nil {
 		t.Fatal("b3-twin: .ctx never appeared before suppression deadline")
 	}
 
-	// Bind a valid UUIDv4 identity; without it recovery fails closed.
 	writeSidFile(t, project, agent, primarySID)
 
-	// Build a WRONG TmuxTarget that does not match the live twin session.
-	// ResolveTmuxTargetFn is nil → the real ResolveTmuxTarget is used; it
-	// derives "harmonik-<hash>-<agent>:agent" and verifies it via has-session.
 	wrongTarget := fmt.Sprintf("harmonik-000000000000-%s:agent", agent)
 
 	rec := &lprIntRecorder{fired: make(chan struct{}, 4)}
@@ -108,10 +67,6 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 		OperatorAttachedFn:  func(_ string) bool { return false },
 		LiveRecoverFn:       rec.fn,
 		InjectFn:            func(_ context.Context, _ string) error { return nil },
-		// IsPaneAliveFn = nil → real keeper.IsPaneAlive probes the twin pane.
-		// ResolveTmuxTargetFn = nil → real ResolveTmuxTarget re-derives the target.
-		// HeartbeatEnabled = false → gauge is allowed to go stale.
-		// RespawnCmd = "" → idle-respawn is inert.
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -119,17 +74,14 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 	w := keeper.NewWatcher(cfg, em)
 	go func() { _ = w.Run(ctx) }() //nolint:errcheck // context cancel is expected
 
-	// ── gate 1: recovery fires ────────────────────────────────────────────────
 	select {
 	case <-rec.fired:
-		// recovery fired via re-resolved target — good.
 	case <-ctx.Done():
 		t.Fatalf("b3-twin: live-pane recovery never fired within run window "+
 			"(calls=%d); stale gauge over an alive pane + mangled TmuxTarget "+
 			"must trigger it via re-resolution", rec.count())
 	}
 
-	// Poll for the event (emission races the watcher goroutine).
 	deadline := time.Now().Add(2 * time.Second)
 	for len(em.EventsOfType(core.EventTypeSessionKeeperLivePaneRecover)) == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
@@ -139,10 +91,6 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 		t.Error("b3-twin: want >=1 session_keeper_live_pane_recover event; got 0")
 	}
 
-	// ── gate 2: no loop — exactly 1 fire within the 10s cooldown window ───────
-	// The watcher continues running to the context deadline. The 10s cooldown
-	// must prevent a second attempt within this window. Poll briefly to confirm
-	// no second fire lands in the first 2 seconds after the first fire.
 	firstFire := rec.count()
 	time.Sleep(500 * time.Millisecond)
 	cancel()

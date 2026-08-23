@@ -58,12 +58,10 @@ func TestCodexWorktreeWritableRoots_daegv(t *testing.T) {
 		t.Fatalf("codexWorktreeWritableRoots(%q) = %q, want %q", cwd, got, want)
 	}
 
-	// A non-worktree cwd still keeps the cwd writable but adds no git dir.
 	if got := codexWorktreeWritableRoots("/tmp/plain"); !reflect.DeepEqual(got, []string{"/tmp/plain"}) {
 		t.Fatalf("non-worktree cwd: got %q, want [/tmp/plain]", got)
 	}
 
-	// Empty cwd → nil (the driver omits runtimeWorkspaceRoots).
 	if got := codexWorktreeWritableRoots(""); got != nil {
 		t.Fatalf("empty cwd: got %q, want nil", got)
 	}

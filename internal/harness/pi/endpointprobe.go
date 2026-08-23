@@ -1,15 +1,5 @@
 package pi
 
-// endpointprobe.go — pre-dispatch reachability check for harnesses.pi.base_url
-// (hk-p06sq).
-//
-// The pi harness reaches the DGX-hosted model over a loopback SSH tunnel.
-// Nothing checked that the tunnel was there: base_url named a port nothing
-// listened on, and the failure surfaced only as a dead pi run that read like
-// a lazy implementer instead of a network problem. ProbeBaseURL turns that
-// into one loud, actionable line at daemon boot, naming the port and the
-// fact that nothing is listening.
-
 import (
 	"context"
 	"fmt"

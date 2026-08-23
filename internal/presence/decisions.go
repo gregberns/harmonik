@@ -1,39 +1,5 @@
 package presence
 
-// decisions.go — the open-decision projection (hitl-decisions component K3,
-// lifted from internal/daemon/decisionsprojection.go so the keeper-tick reaper
-// (K5) can import it; the daemon delegates to this canonical definition).
-//
-// The open-decision set is a PURE FOLD over events.jsonl, computed on demand (no
-// persistent aggregator — SPEC §3 / C3). It mirrors ComputeRegistry (presence.go):
-// a single forward eventbus.ScanAfter scan that folds the three hitl-decisions
-// events into a map keyed by decision_id:
-//
-//   - decision_needed    → ADD a Decision keyed by that event's OWN event_id
-//                          (the decision_id IS the decision_needed event_id —
-//                          SPEC §1).
-//   - decision_resolved  → REMOVE the Decision keyed by payload.decision_id.
-//   - decision_withdrawn → REMOVE the Decision keyed by payload.decision_id.
-//
-// Open set = needed − (resolved ∪ withdrawn). The key asymmetry is load-bearing
-// and correct: ADD keys on the event's own event_id; REMOVE keys on the
-// terminal's payload.decision_id (which equals the original decision_needed
-// event_id — SPEC §1, mirrors agent_message.in_reply_to).
-//
-// Dedupe (SPEC §6 N2): a re-delivered event_id is folded once. ADD/REMOVE are
-// each independently idempotent, but we additionally track seen event_ids and
-// skip any event whose own event_id was already folded — making the N2 guarantee
-// explicit and immune to any non-idempotent change.
-//
-// PURITY (de-risks SPEC S6 + makes S5 restart-survivability free): OpenDecisions
-// performs NO socket dial, NO daemon op, NO side effect. It is callable against
-// any events.jsonl path with no daemon running. It is the SHARED source of truth
-// that K2 (raise/wait), K4 (operator list/answer), K5 (orphan reaper), and K6
-// (keeper seam) all read (SPEC §3 / D2).
-//
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/hitl-decisions/SPEC.md §3, §1, §6 N2.
-// Bead refs: hk-qed (component K3, original home), hk-061 (component K5, this lift).
-
 import (
 	"encoding/json"
 
@@ -117,16 +83,9 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 	var zeroID core.EventID
 	open := make(map[string]Decision)
 
-	// seen guards N2 dedupe: at-least-once delivery can re-write the same
-	// event_id into the log; fold each event_id at most once. (ADD/REMOVE are
-	// each independently idempotent, so this is belt-and-suspenders, but it
-	// makes the N2 contract explicit and immune to any non-idempotent change.)
 	seen := make(map[string]struct{})
 
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
-		// Dedupe on the event's own event_id (N2). An event with an empty/zero
-		// event_id (malformed) is skipped — ScanAfter already drops unparseable
-		// lines, but a zero EventID would also be unkeyable here.
 		evID := ev.EventID.String()
 		if _, dup := seen[evID]; dup {
 			continue
@@ -138,9 +97,6 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 			if err := json.Unmarshal(ev.Payload, &p); err != nil {
 				continue
 			}
-			// ADD keyed by the decision_needed event's OWN event_id — that IS
-			// the decision_id (SPEC §1). This asymmetry vs. the terminals
-			// (which key on payload.decision_id) is correct and load-bearing.
 			seen[evID] = struct{}{}
 			open[evID] = Decision{
 				DecisionID:     evID,
@@ -161,9 +117,6 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 			if p.DecisionID == "" {
 				continue
 			}
-			// REMOVE keyed by payload.decision_id (the original decision_needed
-			// event_id). delete is a no-op when the key is absent (unknown or
-			// already-terminal decision — N3 idempotency at the projection level).
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
 
@@ -179,7 +132,6 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 			delete(open, p.DecisionID)
 
 		default:
-			// Every other event type does not change the open decision set.
 		}
 	}
 

@@ -43,23 +43,13 @@ import (
 )
 
 const (
-	// wireInFile / wireOutFile are the per-direction corpus files (WM §4.7).
 	wireInFile  = "wire-in.jsonl"
 	wireOutFile = "wire-out.jsonl"
 
-	// captureLogFile is the mechanical ledger, appended once per capture session
-	// at the sessions-root level (sibling to every ${session_id}/ dir).
 	captureLogFile = "CAPTURE-LOG.md"
 
-	// filePerm mirrors the .harmonik file conventions (brhistoryrotate). The
-	// DIRECTORY mode is core.HarmonikDirMode, not a constant private to this
-	// package: os.MkdirAll does not chmod a directory that already exists, so a
-	// private mode would make .harmonik/sessions/ end up with whichever mode the
-	// first package to create it happened to choose (internal/core/harmonikdirmode.go).
 	filePerm = 0o644
 
-	// defaultKeepN is the number of most-recent session dirs to retain when
-	// Config.KeepN is unset. Bounds the corpus without discarding recent runs.
 	defaultKeepN = 20
 )
 
@@ -118,12 +108,8 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("sessioncapture: mkdir corpus: %w", err)
 	}
 
-	// Retention: prune the sibling session dirs down to the keep-N most recent
-	// and drop any older than MaxAge. Best-effort — a prune error must not fail
-	// the capture (mirrors brhistoryrotate's always-non-fatal discipline).
 	pruneSessions(ctx, root, keepN, cfg.MaxAge, clk)
 
-	// Mechanical CAPTURE-LOG: append one ledger line per capture session.
 	appendCaptureLog(ctx, root, cfg.SessionID, clk.Now())
 
 	inW, err := newPersistWriter(filepath.Join(dir, wireInFile), directionInput)
@@ -165,8 +151,6 @@ func (s *Session) Close() error {
 	return nil
 }
 
-// direction distinguishes the verbatim INPUT sink from the scrubbing OUTPUT
-// sink (AIS-014 / HC-028 / HC-032).
 type direction int
 
 const (
@@ -174,15 +158,6 @@ const (
 	directionOutput
 )
 
-// persistWriter persists one direction's captured bytes to a corpus file. For
-// the OUTPUT direction it applies the HC-032 value-pattern scrub on a
-// per-line boundary (the wire is NDJSON) before writing; a partial trailing
-// line is held until its terminating newline arrives or Close flushes it. For
-// the INPUT direction bytes pass straight through, verbatim (HC-028).
-//
-// A Write error (e.g. disk full) is returned honestly to the caller — the
-// apptap best-effort tee upstream swallows it and degrades to uncaptured
-// (AIS-INV-002). This writer therefore never has to fake success itself.
 type persistWriter struct {
 	mu   sync.Mutex
 	f    *os.File
@@ -217,9 +192,6 @@ func (p *persistWriter) Write(b []byte) (int, error) {
 		}
 		return len(b), nil
 	}
-	// OUTPUT: scrub on line boundaries so a value-pattern match is never split
-	// across two Writes. Accumulate into tail; emit each complete (newline-
-	// terminated) line scrubbed.
 	p.tail = append(p.tail, b...)
 	for {
 		i := indexNewline(p.tail)

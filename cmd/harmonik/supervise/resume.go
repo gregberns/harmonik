@@ -1,20 +1,5 @@
 package supervisecmd
 
-// resume.go — `harmonik supervise resume` (hk-ry8q1).
-//
-// Sends an operator-resume request to the running daemon via its Unix socket.
-// The daemon responds by emitting an operator_resuming event and transitioning
-// the active queue back to active status.
-//
-// Exit codes:
-//
-//	0  — daemon acknowledged the resume (or was not paused)
-//	1  — argument or I/O error
-//	17 — daemon not running (socket absent or ECONNREFUSED)
-//
-// Spec ref: specs/operator-nfr.md §4.3.
-// Bead ref: hk-ry8q1.
-
 import (
 	"context"
 	"fmt"

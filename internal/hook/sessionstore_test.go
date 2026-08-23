@@ -1,19 +1,5 @@
 package hook
 
-// sessionstore_test.go — standalone unit tests for the pure CHB-025 hook-relay
-// state machine (internal/hook). These prove the dedup / registry / agent_ready
-// / WaitForOutcome domain is fully testable WITHOUT standing up the daemon: no
-// socket, no bus, no clock, no UUID. They exercise only the exported surface of
-// SessionStore.
-//
-// Migrated from internal/daemon/hookrelay_chb025_test.go and
-// internal/daemon/hookrelay_waitforoutcome_hkgql2020_test.go (M5 slice 1).
-//
-// Spec refs:
-//   - specs/claude-hook-bridge.md §4.10 CHB-025 (last-received-wins dedup)
-//   - specs/claude-hook-bridge.md §6.1/§6.2 (HookRelayMessage / HookRelayAck)
-//   - CHB-013 / HC-039 / HC-041 (relay-synthesized agent_ready callback)
-
 import (
 	"context"
 	"encoding/json"
@@ -23,12 +9,6 @@ import (
 	"time"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// hookFixtureMakePayload returns a JSON payload for a WORK_COMPLETE
-// outcome_emitted message with the given summary.
 func hookFixtureMakePayload(t *testing.T, summary string) json.RawMessage {
 	t.Helper()
 	pl, err := json.Marshal(map[string]string{"kind": "WORK_COMPLETE", "summary": summary})
@@ -38,7 +18,6 @@ func hookFixtureMakePayload(t *testing.T, summary string) json.RawMessage {
 	return pl
 }
 
-// hookFixtureMakeEnvelope builds a RelayEnvelope for Dispatch calls.
 func hookFixtureMakeEnvelope(runID, claudeSessionID, msgType string, payload json.RawMessage) RelayEnvelope {
 	return RelayEnvelope{
 		Type:             msgType,
@@ -49,7 +28,6 @@ func hookFixtureMakeEnvelope(runID, claudeSessionID, msgType string, payload jso
 	}
 }
 
-// hookFixtureUnmarshal unmarshals a RawMessage into a map, failing on error.
 func hookFixtureUnmarshal(t *testing.T, raw json.RawMessage) map[string]string {
 	t.Helper()
 	var m map[string]string
@@ -58,10 +36,6 @@ func hookFixtureUnmarshal(t *testing.T, raw json.RawMessage) map[string]string {
 	}
 	return m
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dispatch: last-received-wins dedup (CHB-025)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSessionStore_MultiStopDedup verifies that three consecutive
 // outcome_emitted arrivals for the same (run_id, claude_session_id) result in
@@ -173,10 +147,6 @@ func TestSessionStore_UnknownType(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// agent_ready callback (CHB-013 / HC-039 / HC-041)
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestSessionStore_AgentReadyDispatch_TriggersCallback verifies that an
 // agent_ready envelope fires the registered agentReadyCallback.
 func TestSessionStore_AgentReadyDispatch_TriggersCallback(t *testing.T) {
@@ -202,7 +172,6 @@ func TestSessionStore_AgentReadyDispatch_TriggersCallback(t *testing.T) {
 
 	select {
 	case <-called:
-		// expected
 	default:
 		t.Error("agent_ready dispatch: callback was NOT called")
 	}
@@ -237,13 +206,11 @@ func TestSessionStore_AgentReadyLatch_ReplaysOnLateCallback(t *testing.T) {
 	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
-	// agent_ready arrives in the window BEFORE any callback is installed.
 	env := hookFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
 	if ack := store.Dispatch(env); ack.Status != "ok" {
 		t.Fatalf("pre-callback agent_ready dispatch: status=%q, want ok", ack.Status)
 	}
 
-	// Installing the callback now must replay the latched signal immediately.
 	called := make(chan struct{}, 1)
 	store.SetAgentReadyCallback(runID, sessionID, func() {
 		select {
@@ -254,7 +221,6 @@ func TestSessionStore_AgentReadyLatch_ReplaysOnLateCallback(t *testing.T) {
 
 	select {
 	case <-called:
-		// expected — the latch replayed the missed agent_ready.
 	default:
 		t.Error("agent_ready latch: callback was NOT replayed on late install (lost-wakeup)")
 	}
@@ -315,10 +281,6 @@ func TestSessionStore_LaunchInitiated_DoesNotFireCallback(t *testing.T) {
 		t.Error("launch_initiated dispatch: agent_ready callback fired; it MUST NOT (HC-041)")
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WaitForOutcome (hk-gql20.20)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestWaitForOutcome_AlreadyPresent verifies that when an outcome has already
 // arrived, WaitForOutcome returns the payload immediately without blocking.

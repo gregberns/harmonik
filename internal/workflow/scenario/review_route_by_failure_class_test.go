@@ -1,32 +1,5 @@
 package scenario_test
 
-// review_route_by_failure_class_test.go — scenario tests for
-// specs/examples/review-route-by-failure-class.dot.
-//
-// Eight named scenarios:
-//   1. success-path-approve          → start→implementer(SUCCESS)→reviewer(APPROVE)→close (terminal)
-//   2. transient-retry-then-success  → implementer(transient) self-loops once, then SUCCESS→reviewer(APPROVE)→close
-//   3. transient-cap-hit             → 3× transient → cap-hit failure (compilation_loop)
-//   4. structural-needs-attention    → implementer(structural) → close-needs-attention (terminal)
-//   5. deterministic-needs-attention → implementer(deterministic) → close-needs-attention
-//   6. canceled-needs-attention      → implementer(canceled) → close-needs-attention
-//   7. budget-exhausted-needs-attention → implementer(budget_exhausted) → close-needs-attention
-//   8. compilation-loop-needs-attention → implementer(compilation_loop, handler-emitted) → close-needs-attention
-//
-// Spec refs:
-//   - docs/sdlc-workflow-corpus.md §12 (review-route-by-failure-class topology)
-//   - specs/workflow-graph.md  WG-010 (5-step cascade)
-//   - specs/workflow-graph.md  WG-011 (unconditional-edge fallback invariant)
-//   - specs/workflow-graph.md  WG-028 (cycle bounding / traversal_cap)
-//   - specs/execution-model.md EM-015e (no-progress / cap-hit vocabulary)
-//   - specs/execution-model.md EM-043  (traversal-cap enforcement)
-//
-// Live-run note: agents cannot be reliably forced to emit a given failure_class on
-// demand. Scenarios 3–8 drive the non-transient branches with synthetic outcomes;
-// live-branch coverage is gated on hk-1xsyu (stub handler).
-//
-// Helper prefix: rfc (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"os"
 	"path/filepath"
@@ -38,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 )
-
-// ── fixtures ─────────────────────────────────────────────────────────────────
 
 func rfcDotPath(t *testing.T) string {
 	t.Helper()
@@ -65,7 +36,6 @@ func rfcRun(t *testing.T) *core.Run {
 	}
 }
 
-// rfcOutcome builds a SUCCESS/non-FAIL outcome with an optional preferred_label.
 func rfcOutcome(label string) core.Outcome {
 	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
@@ -74,8 +44,6 @@ func rfcOutcome(label string) core.Outcome {
 	return o
 }
 
-// rfcOutcomeFC builds a FAIL outcome carrying the given failure_class.
-// Status must be FAIL for FailureClass to be present per EM-005c.
 func rfcOutcomeFC(fc core.FailureClass) core.Outcome {
 	return core.Outcome{
 		Status:       core.OutcomeStatusFail,
@@ -83,8 +51,6 @@ func rfcOutcomeFC(fc core.FailureClass) core.Outcome {
 		Kind:         core.OutcomeKindDefault,
 	}
 }
-
-// ── Scenario 1: success-path-approve ─────────────────────────────────────────
 
 // TestRFC_SuccessPathApprove exercises the happy path:
 // start → implementer(SUCCESS, no failure_class) → reviewer(APPROVE) → close (terminal).
@@ -100,32 +66,26 @@ func TestRFC_SuccessPathApprove(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// implementer(SUCCESS) → reviewer (failure-class conditions all miss; falls through)
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// reviewer(APPROVE) → close
 	dec = workflow.DecideNextNode(graph, "reviewer", rfcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("reviewer→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 2: transient-retry-then-success ─────────────────────────────────
 
 // TestRFC_TransientRetryThenSuccess exercises the transient self-loop:
 // start → implementer(transient) → implementer (retry) → implementer(SUCCESS) →
@@ -140,43 +100,35 @@ func TestRFC_TransientRetryThenSuccess(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// implementer(transient) → implementer (self-loop, first retry; cap=3, count=0 → OK)
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassTransient), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("implementer(transient)→implementer: Advance=%v NextNodeID=%q, want implementer",
 			dec.Advance, dec.NextNodeID)
 	}
-	// Record the self-loop traversal so the cycle counter reflects the retry.
 	if _, err := cycles.Increment(run.RunID, "implementer", "implementer", nil); err != nil {
 		t.Fatalf("pre-fill cycle counter implementer\u2192implementer: %v", err)
 	}
 
-	// implementer(SUCCESS) → reviewer (failure-class conditions miss; falls through)
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer(SUCCESS)→reviewer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	// reviewer(APPROVE) → close
 	dec = workflow.DecideNextNode(graph, "reviewer", rfcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("reviewer→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	// close is terminal
 	dec = workflow.DecideNextNode(graph, "close", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 3: transient-cap-hit ────────────────────────────────────────────
 
 // TestRFC_TransientCapHit exercises WG-028/EM-043 on the implementer self-loop:
 // after 3 transient traversals the self-loop's traversal_cap is exhausted and the
@@ -191,10 +143,8 @@ func TestRFC_TransientCapHit(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// Navigate: start → implementer.
 	workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of the implementer self-loop.
 	traversalCap := 3
 	for i := 0; i < traversalCap; i++ {
 		if _, err := cycles.Increment(run.RunID, "implementer", "implementer", &traversalCap); err != nil {
@@ -202,8 +152,6 @@ func TestRFC_TransientCapHit(t *testing.T) {
 		}
 	}
 
-	// With the traversal cap exhausted, the transient self-loop is suppressed;
-	// the cascade reports a cap-hit failure (EM-043).
 	dec := workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassTransient), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on transient cap-hit, got: %+v", dec)
@@ -215,8 +163,6 @@ func TestRFC_TransientCapHit(t *testing.T) {
 		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
-
-// ── Scenario 4: structural → close-needs-attention ───────────────────────────
 
 // TestRFC_StructuralNeedsAttention exercises:
 // start → implementer(structural) → close-needs-attention (terminal).
@@ -230,27 +176,22 @@ func TestRFC_StructuralNeedsAttention(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
-	// implementer(structural) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassStructural), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("implementer(structural)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 5: deterministic → close-needs-attention ────────────────────────
 
 // TestRFC_DeterministicNeedsAttention exercises:
 // start → implementer(deterministic) → close-needs-attention (terminal).
@@ -264,27 +205,22 @@ func TestRFC_DeterministicNeedsAttention(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
-	// implementer(deterministic) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassDeterministic), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("implementer(deterministic)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 6: canceled → close-needs-attention ─────────────────────────────
 
 // TestRFC_CanceledNeedsAttention exercises:
 // start → implementer(canceled) → close-needs-attention (terminal).
@@ -298,27 +234,22 @@ func TestRFC_CanceledNeedsAttention(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
-	// implementer(canceled) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassCanceled), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("implementer(canceled)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 7: budget_exhausted → close-needs-attention ─────────────────────
 
 // TestRFC_BudgetExhaustedNeedsAttention exercises:
 // start → implementer(budget_exhausted) → close-needs-attention (terminal).
@@ -332,27 +263,22 @@ func TestRFC_BudgetExhaustedNeedsAttention(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
-	// implementer(budget_exhausted) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassBudgetExhausted), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("implementer(budget_exhausted)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
 }
-
-// ── Scenario 8: compilation_loop (handler-emitted) → close-needs-attention ───
 
 // TestRFC_CompilationLoopNeedsAttention exercises the handler-emitted
 // compilation_loop failure class:
@@ -370,20 +296,17 @@ func TestRFC_CompilationLoopNeedsAttention(t *testing.T) {
 	run := rfcRun(t)
 	cycles := core.NewCycleCounter()
 
-	// start → implementer
 	dec := workflow.DecideNextNode(graph, "start", rfcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
-	// implementer(compilation_loop) → close-needs-attention
 	dec = workflow.DecideNextNode(graph, "implementer", rfcOutcomeFC(core.FailureClassCompilationLoop), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("implementer(compilation_loop)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	// close-needs-attention is terminal
 	dec = workflow.DecideNextNode(graph, "close-needs-attention", rfcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)

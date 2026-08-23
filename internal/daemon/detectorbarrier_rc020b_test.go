@@ -1,16 +1,5 @@
 package daemon_test
 
-// detectorbarrier_rc020b_test.go — tests for DetectorBarrier (RC-020b).
-//
-// RC-020b: a detector that panics during evaluation MUST be caught by a
-// per-detector recover() barrier. On panic the detector is suspended for the
-// daemon's lifetime and priority-order evaluation falls through to the next
-// detector. reconciliation_detector_panic{detector_class, error_class} MUST
-// emit before fall-through.
-//
-// Spec ref: specs/reconciliation/spec.md §4.3 RC-020b.
-// Bead ref: hk-63oh.22.
-
 import (
 	"context"
 	"encoding/json"
@@ -21,9 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ---- test stubs ----
-
-// rc020bFixtureRecordingEmitter records every Emit call for assertion.
 type rc020bFixtureRecordingEmitter struct {
 	mu     sync.Mutex
 	events []rc020bFixtureEmittedEvent
@@ -48,8 +34,6 @@ func (e *rc020bFixtureRecordingEmitter) Events() []rc020bFixtureEmittedEvent {
 	copy(cp, e.events)
 	return cp
 }
-
-// ---- tests ----
 
 // TestRC020b_DetectorBarrier_NoPanicPassesCategoryThrough verifies that a
 // normally-executing detector's result is returned unmodified.
@@ -157,13 +141,11 @@ func TestRC020b_DetectorBarrier_SuspendedDetectorSkipped(t *testing.T) {
 		nil,
 	)
 
-	// First call panics → suspended.
 	_, _ = barrier.Run(context.Background())
 	if !barrier.IsSuspended() {
 		t.Fatal("RC-020b: detector must be suspended after panic")
 	}
 
-	// Second call must be skipped entirely (callCount must not increment).
 	_, fired := barrier.Run(context.Background())
 	if fired {
 		t.Error("RC-020b: suspended detector must return fired=false")
@@ -236,7 +218,6 @@ func TestRC020b_DetectorBarrier_FallThroughToNextDetector(t *testing.T) {
 
 	emitter := &rc020bFixtureRecordingEmitter{}
 
-	// Priority-order evaluation: cat-0 (panics) → cat-6b (succeeds).
 	cat0Barrier := daemon.NewDetectorBarrier(
 		core.DetectorClass("cat-0-detector"),
 		func(_ context.Context) (core.ReconciliationCategory, bool) {
@@ -254,7 +235,6 @@ func TestRC020b_DetectorBarrier_FallThroughToNextDetector(t *testing.T) {
 
 	barriers := []*daemon.DetectorBarrier{cat0Barrier, cat6bBarrier}
 
-	// Simulate the RC-003a priority-order loop.
 	var result core.ReconciliationCategory
 	for _, b := range barriers {
 		cat, fired := b.Run(context.Background())
@@ -268,7 +248,6 @@ func TestRC020b_DetectorBarrier_FallThroughToNextDetector(t *testing.T) {
 		t.Errorf("RC-020b: fall-through result = %q, want %q", result, core.ReconciliationCategoryCat6b)
 	}
 
-	// cat-0 must be suspended; cat-6b must not be.
 	if !cat0Barrier.IsSuspended() {
 		t.Error("RC-020b: cat-0 barrier must be suspended after panic")
 	}
@@ -276,7 +255,6 @@ func TestRC020b_DetectorBarrier_FallThroughToNextDetector(t *testing.T) {
 		t.Error("RC-020b: cat-6b barrier must not be suspended (it did not panic)")
 	}
 
-	// Exactly one reconciliation_detector_panic event for the cat-0 detector.
 	events := emitter.Events()
 	if len(events) != 1 {
 		t.Fatalf("RC-020b: want 1 panic event, got %d", len(events))
@@ -302,7 +280,6 @@ func TestRC020b_DetectorBarrier_NilEmitterDoesNotPanic(t *testing.T) {
 		nil, // nil emitter: must not panic
 	)
 
-	// Must not panic at the test level.
 	_, fired := barrier.Run(context.Background())
 	if fired {
 		t.Error("RC-020b: panicking detector with nil emitter must return fired=false")

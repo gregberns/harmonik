@@ -1,31 +1,5 @@
 package codex
 
-// codexlaunchspec.go — BuildLaunchSpec helper (codex-harness C2/T7, hk-rgxwd).
-//
-// Builds the argv/env spec for launching a codex subprocess for any workflow
-// phase:
-//
-//   - Initial turn (priorThreadID == nil):
-//       codex exec --json -c sandbox_mode="danger-full-access" -C <worktree> <seed-prompt>
-//   - Resume turn (priorThreadID != nil):
-//       codex exec resume <thread_id> --json -c sandbox_mode="danger-full-access" <seed-prompt>
-//
-// The seed prompt instructs codex to read .harmonik/agent-task.md, implement
-// the task, and commit with a "Refs: <beadID>" trailer.
-//
-// Env:
-//   - Strips OPENAI_API_KEY and CODEX_API_KEY from baseEnv and re-emits them as
-//     empty overrides so the tmux server's additive -e mechanism cannot leak live
-//     keys (C3 credential-strip, AC3.1).
-//   - Sets CODEX_HOME to codexHome (default: "$HOME/.codex") so token refresh
-//     works and the pre-flight billing guard can read auth state (AC3.4).
-//
-// Spec refs:
-//   - .kerf/works/codex-harness/05-specs/C2-codex-adapter-spec.md
-//   - .kerf/works/codex-harness/05-specs/C3-auth-billing-spec.md
-//
-// Bead: hk-rgxwd [C2/T7]
-
 import (
 	"context"
 	"fmt"
@@ -37,33 +11,11 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
-// codexCredentialDenyKeys lists the credential environment variable names that
-// MUST be stripped from the codex child environment and re-emitted as empty
-// overrides. The tmux server's additive -e mechanism means merely omitting a
-// key leaves the server env value intact; only an explicit KEY= zeros it.
-//
-// Spec: C3-auth-billing-spec.md AC3.1; specs/harness-contract.md §2 N1.
 var codexCredentialDenyKeys = []string{
 	"OPENAI_API_KEY",
 	"CODEX_API_KEY",
 }
 
-// codexSeedPromptTemplate is the seed prompt template passed to `codex exec` as
-// a positional argument. It instructs codex to read agent-task.md (written by
-// the shared launch path before BuildLaunchSpec is called), implement the
-// task, and commit with the required Refs: trailer so the daemon's
-// commit-detection path can confirm the work landed.
-//
-// The trailer instruction is load-bearing: harmonik detects bead completion by a
-// git commit whose body carries an exact "Refs: <bead-id>" trailer line
-// (workloop.go beadAlreadySubsumedInMain). The instruction is deliberately
-// explicit — single work commit, trailer on its own line in the body — to
-// maximise the chance codex obeys it. The codex commit-after-exit fallback
-// (codexcommit.go EnsureRefsTrailer) is the deterministic backstop for when
-// codex edits files but does not produce a trailer-carrying commit; this prompt
-// is the happy-path INSTRUCT half of the T9 guarantee (hk-bpxci).
-//
-// %s is replaced with the bead ID.
 const codexSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. When you are done, commit ALL your changes in a single git commit, and the commit message MUST include the line "Refs: %s" on its own line in the commit body. This trailer is required — without it the system cannot detect that your work is complete.`
 
 // RunCtx carries the per-launch inputs to BuildLaunchSpec.
@@ -168,32 +120,10 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 		binary = "codex"
 	}
 
-	// Build argv.
-	// Initial: codex exec --json -c sandbox_mode="danger-full-access"
-	//          [--model <model>] -C <wt> <seed>
-	// Resume:  codex exec resume <thread_id> --json
-	//          -c sandbox_mode="danger-full-access" <seed>
-	//
-	// Note: codex exec resume rejects --sandbox, --add-dir, and -C. The global
-	// -c config override works for both initial and resume turns, so sandboxing
-	// uses that uniform mechanism. WorkDir sets the resume subprocess cwd.
-	//
-	// --model is emitted on the initial turn ONLY when rc.Model is non-empty. An
-	// empty model omits the flag so codex uses its $CODEX_HOME/config.toml default
-	// (the account default) — the only working config on the HN-022-mandated
-	// ChatGPT-subscription path, where a named model 400s (see the rc.Model doc).
-	// Resume turns never carry --model: the thread context already encodes the
-	// model, and `codex exec resume` may reject a redundant --model.
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.BeadID)
 	var args []string
 	if rc.PriorThreadID != nil {
-		// Resume turns deliver the reviewer-feedback pointer via the shared resume
-		// prompt so a DOT back-edge re-entry gets an actionable instruction instead
-		// of the identical initial prompt it already satisfied (c073 defect; peer of
-		// pasteInjectImplementerResume for claude).
 		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.BeadID, rc.IterationCount-1)
-		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
-		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
 		args = []string{"exec", "resume", *rc.PriorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}
 		args = append(args, seedPrompt)
 	} else {
@@ -204,18 +134,8 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 		args = append(args, "-C", rc.WorkspacePath, seedPrompt)
 	}
 
-	// Build env: copy baseEnv, strip credential keys, set CODEX_HOME.
 	env := buildCodexEnv(rc.BaseEnv, rc.CodexHome)
 
-	// Positive billing guard (C3/T11, hk-tu48u): materialize
-	// forced_login_method=chatgpt into $CODEX_HOME/config.toml and run a
-	// FAIL-CLOSED pre-flight assert. If the ChatGPT plan cannot be confirmed the
-	// guard returns an error and we refuse to launch codex (no spec returned), so
-	// codex can never be launched against an unforced/API-key config.
-	//
-	// resolveCodexHome here MUST match the CODEX_HOME the child receives (set by
-	// buildCodexEnv above) so the guard inspects exactly the config codex will
-	// read.
 	if !rc.SkipBillingGuard {
 		guardedHome := resolveCodexHome(rc.CodexHome)
 		if err := runCodexBillingGuard(context.Background(), rc.BillingEmitter, rc.RunID, rc.BeadID, guardedHome); err != nil {
@@ -233,12 +153,6 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 	}, nil
 }
 
-// resolveCodexHome normalises a codexHome path the same way buildCodexEnv does:
-// an empty value becomes "$HOME/.codex" via os.UserHomeDir, falling back to the
-// literal "$HOME/.codex" string only if the home directory cannot be resolved.
-// Both buildCodexEnv (for the CODEX_HOME env value) and the billing guard (for
-// the directory it materializes into and asserts against) MUST resolve through
-// this single helper so they never disagree about which CODEX_HOME codex reads.
 func resolveCodexHome(codexHome string) string {
 	if codexHome != "" {
 		return codexHome
@@ -250,17 +164,7 @@ func resolveCodexHome(codexHome string) string {
 	return home + "/.codex"
 }
 
-// buildCodexEnv constructs the codex child environment from baseEnv.
-//
-//   - Strips OPENAI_API_KEY and CODEX_API_KEY, re-emitting them as empty
-//     overrides so the tmux server's additive -e cannot leak live keys (C3 AC3.1).
-//   - Sets CODEX_HOME to codexHome (empty → "$HOME/.codex"). If os.UserHomeDir
-//     fails, the fallback is the literal "$HOME/.codex" string; the pre-flight
-//     billing guard in C3/T11 is the backstop for a misconfigured home directory.
-//   - Preserves all other baseEnv entries unchanged.
 func buildCodexEnv(baseEnv []string, codexHome string) []string {
-	// Resolve CODEX_HOME before iterating baseEnv. resolveCodexHome is shared with
-	// the billing guard (C3/T11) so both agree on which CODEX_HOME codex reads.
 	resolvedCodexHome := resolveCodexHome(codexHome)
 
 	denySet := make(map[string]bool, len(codexCredentialDenyKeys))
@@ -268,10 +172,8 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 		denySet[k] = true
 	}
 
-	// Allocate with capacity for baseEnv + deny-key empty overrides + CODEX_HOME.
 	env := make([]string, 0, len(baseEnv)+len(codexCredentialDenyKeys)+1)
 
-	// Copy non-credential, non-CODEX_HOME entries from baseEnv.
 	hasPath := false
 	for _, kv := range baseEnv {
 		key := shared.EnvKey(kv)
@@ -284,35 +186,17 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 		env = append(env, kv)
 	}
 
-	// Guarantee a working PATH (hk-07jrb, same hazard as buildPiEnv's
-	// hk-6atjk fix). SubstrateSpawn fully replaces the spawned pane's
-	// environment with this slice, and baseEnv can arrive with no PATH
-	// entry. Without one, the spawned codex binary resolves against the
-	// libc default PATH (/usr/bin:/bin), excluding wherever `go`/node/etc.
-	// actually live, and dies with exit 127 before the turn ever starts.
-	// Fall back to the daemon process's own PATH only when baseEnv did not
-	// already carry one (an existing PATH is preserved above). PATH is not
-	// a credential, so this does not weaken the C3 deny-list strip.
 	if !hasPath {
 		if procPath := os.Getenv("PATH"); procPath != "" {
 			env = append(env, "PATH="+procPath)
 		}
 	}
 
-	// Emit empty overrides for credential keys (C3 AC3.1 / CI-INV-002 pattern).
 	for _, k := range codexCredentialDenyKeys {
 		env = append(env, k+"=")
 	}
 
-	// Shell rc-prompt suppression (hk-5s6re). The codex harness spawns through
-	// the same tmux substrate as the claude harness, so its pane shell is the
-	// same interactive login zsh that sources the operator's ~/.zshrc and can
-	// hang at an oh-my-zsh `[Y/n] Would you like to update?` prompt — the spawn
-	// wedge described in ClaudeEnvVars. Injecting the same disable vars makes the
-	// prompt structurally unable to fire here too. Additive env only; never
-	// touches PATH/shell/aliases (see ClaudeEnvVars for the full rationale).
 	env = append(env,
-		// CODEX_HOME (C3 AC3.4).
 		"CODEX_HOME="+resolvedCodexHome,
 		"DISABLE_AUTO_UPDATE=true",
 		"DISABLE_UPDATE_PROMPT=true",

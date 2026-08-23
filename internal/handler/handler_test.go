@@ -1,20 +1,5 @@
 package handler_test
 
-// handler_test.go — tests for Handler.Launch (EARLY_ROADMAP row #7, bead hk-zxpj2).
-//
-// Helper prefix: launchFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-zxpj2).
-//
-// Tests drive a tiny sh -c child that emits valid NDJSON progress-stream lines
-// and asserts:
-//   - Launch returns a non-nil Session and non-nil Watcher.
-//   - The Watcher receives at least one known-type event.
-//   - Session.Wait returns after the child exits.
-//
-// Event collection and dead-letter stubs are provided by
-// handlercontract.CollectingEmitter and handlercontract.NoopWatcherDeadLetter so
-// that this file does not need to import internal/core (EV-002b boundary).
-
 import (
 	"testing"
 	"time"
@@ -23,13 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// launchFixtureHandler constructs a Handler with fresh fixture dependencies.
-// Uses handlercontract.CollectingEmitter and handlercontract.NoopWatcherDeadLetter
-// so the test file has no direct import of internal/core (EV-002b).
 func launchFixtureHandler(t *testing.T) (handler.Handler, *handlercontract.CollectingEmitter) {
 	t.Helper()
 	pub := &handlercontract.CollectingEmitter{}
@@ -39,10 +17,6 @@ func launchFixtureHandler(t *testing.T) (handler.Handler, *handlercontract.Colle
 	return h, pub
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestHandler_Launch_ReturnHandles verifies that Launch returns a non-nil Session
 // and non-nil Watcher when the child exits cleanly.
 func TestHandler_Launch_ReturnHandles(t *testing.T) {
@@ -50,7 +24,6 @@ func TestHandler_Launch_ReturnHandles(t *testing.T) {
 
 	h, _ := launchFixtureHandler(t)
 
-	// Child emits one valid NDJSON agent_ready line and exits immediately.
 	spec := handler.LaunchSpec{
 		Binary:  "sh",
 		Args:    []string{"-c", `printf '{"type":"agent_ready"}\n'`},
@@ -70,7 +43,6 @@ func TestHandler_Launch_ReturnHandles(t *testing.T) {
 		t.Fatal("Launch: returned nil Watcher")
 	}
 
-	// Wait for the watcher to finish (process exits → stdout EOF → watcher done).
 	select {
 	case <-watcher.Done():
 	case <-time.After(10 * time.Second):
@@ -89,7 +61,6 @@ func TestHandler_Launch_WatcherReceivesEvent(t *testing.T) {
 
 	h, pub := launchFixtureHandler(t)
 
-	// Child emits agent_ready followed by agent_completed, then exits.
 	spec := handler.LaunchSpec{
 		Binary:  "sh",
 		Args:    []string{"-c", `printf '{"type":"agent_ready"}\n{"type":"agent_completed"}\n'`},
@@ -103,7 +74,6 @@ func TestHandler_Launch_WatcherReceivesEvent(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	// Wait for watcher to drain all output.
 	select {
 	case <-watcher.Done():
 	case <-time.After(10 * time.Second):
@@ -119,7 +89,6 @@ func TestHandler_Launch_WatcherReceivesEvent(t *testing.T) {
 		t.Fatal("publisher received no events; expected at least one from the child's NDJSON output")
 	}
 
-	// Verify at least one expected event type is present.
 	found := false
 	for _, et := range types {
 		if et == "agent_ready" || et == "agent_completed" {

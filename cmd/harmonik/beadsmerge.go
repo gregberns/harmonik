@@ -1,43 +1,5 @@
 package main
 
-// beadsmerge.go — `harmonik beads-merge` subcommand implementation.
-//
-// # Purpose (hk-jon6r)
-//
-// Custom git merge-driver for .beads/issues.jsonl. Replaces the lossy
-// `git checkout --theirs .beads/issues.jsonl` workaround documented in
-// HANDOFF.md. The driver implements a union-by-bead-ID merge with
-// last-writer-wins (LWW) collision resolution on the updated_at timestamp.
-//
-// # Algorithm
-//
-//  1. Parse %O/%A/%B as map[bead_id]beadRow.
-//  2. Union on bead_id: any bead present in any ancestor is included.
-//  3. On collision (same bead_id in multiple ancestors), pick the row with
-//     the larger updated_at timestamp (LWW).
-//  4. Labels and dependencies: monotonic-additive union (never removed).
-//  5. Write sorted result to %P (the path of the file in the working tree).
-//  6. Cases NOT covered (acceptable for quick win):
-//     - Semantic conflicts on same field within seconds → logged to
-//       .beads/merge-conflicts.log for operator audit.
-//     - Bead deletion → out-of-band (whole-row LWW fallback).
-//     - Schema migrations → whole-row LWW fallback.
-//
-// # Registration
-//
-// Register via:
-//
-//	.gitattributes:   .beads/issues.jsonl  merge=beads-union
-//	.git/config:      [merge "beads-union"]
-//	                    name = Bead Ledger Union Merge
-//	                    driver = harmonik beads-merge %O %A %B %P
-//
-// Post-merge, run `br sync --import-only` to refresh the SQLite ledger from
-// the newly merged JSONL.
-//
-// Spec ref: bead hk-jon6r; internal/daemon/workloop.go:1891-2036 (mergeRunBranchToMain).
-// Bead ref: hk-jon6r.
-
 import (
 	"bufio"
 	"encoding/json"
@@ -49,8 +11,6 @@ import (
 	"time"
 )
 
-// beadRow is a single line from .beads/issues.jsonl decoded as a loose map so
-// unknown fields are preserved verbatim (forward-compatible with schema changes).
 type beadRow struct {
 	// id is the bead ID extracted from the raw map for merge-key purposes.
 	id string
@@ -61,7 +21,6 @@ type beadRow struct {
 	raw map[string]json.RawMessage
 }
 
-// beadsMergeUsage prints the help text for `harmonik beads-merge`.
 func beadsMergeUsage() {
 	fmt.Print(`harmonik beads-merge — custom git merge-driver for .beads/issues.jsonl
 
@@ -91,8 +50,6 @@ EXAMPLES
 `)
 }
 
-// runBeadsMergeSubcommand implements `harmonik beads-merge %O %A %B %P`.
-// subArgs is os.Args[2:] (everything after "beads-merge").
 func runBeadsMergeSubcommand(subArgs []string) int {
 	for _, arg := range subArgs {
 		if arg == "--help" || arg == "-h" {
@@ -130,15 +87,12 @@ func runBeadsMergeSubcommand(subArgs []string) int {
 
 	merged, conflicts := mergeBeadRows(ancestorRows, currentRows, otherRows)
 
-	// Write conflicts to .beads/merge-conflicts.log for operator audit.
 	if len(conflicts) > 0 {
 		if logErr := appendConflictLog(workingPath, conflicts); logErr != nil {
-			// Non-fatal: merge still succeeds; log the warning.
 			fmt.Fprintf(os.Stderr, "harmonik beads-merge: cannot write conflict log: %v\n", logErr)
 		}
 	}
 
-	// Write merged result to %A (current-branch file, which git uses as output).
 	if writeErr := writeBeadsJSONL(currentPath, merged); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: write merged result: %v\n", writeErr)
 		return 1
@@ -155,7 +109,6 @@ func runBeadsMergeSubcommand(subArgs []string) int {
 func parseBeadsJSONL(path string) ([]beadRow, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		// An empty or missing ancestor file is valid (e.g., first merge on a new repo).
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
@@ -169,7 +122,6 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 
 	var rows []beadRow
 	scanner := bufio.NewScanner(f)
-	// Set a generous buffer: some bead descriptions are long.
 	setLargeScanBuffer(scanner)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -178,7 +130,6 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 		}
 		var raw map[string]json.RawMessage
 		if jsonErr := json.Unmarshal([]byte(line), &raw); jsonErr != nil {
-			// Skip malformed lines (forward-compat).
 			continue
 		}
 		id := extractStringField(raw, "id")
@@ -194,21 +145,11 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 	return rows, nil
 }
 
-// mergeBeadRows implements the union-by-bead-ID merge algorithm.
-//
-// Algorithm:
-//  1. Build a map from each input set keyed by bead_id.
-//  2. Union all bead_ids seen across ancestor, current, and other.
-//  3. For each bead_id: pick the row with the largest updated_at (LWW).
-//     - If current and other have the same updated_at and differ: record conflict.
-//  4. Labels and dependencies: union-merge (monotonic-additive across all three).
-//  5. Return rows sorted by id (deterministic output).
 func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, conflicts []conflictRecord) {
 	ancestorMap := rowsToMap(ancestor)
 	currentMap := rowsToMap(current)
 	otherMap := rowsToMap(other)
 
-	// Collect all bead_ids.
 	allIDs := make(map[string]struct{})
 	for _, r := range ancestor {
 		allIDs[r.id] = struct{}{}
@@ -234,9 +175,7 @@ func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, confli
 		var winner beadRow
 		switch {
 		case hasC && hasO:
-			// Both sides have the bead: pick LWW.
 			if cRow.updatedAt.Equal(oRow.updatedAt) {
-				// Same timestamp: check if rows are actually identical.
 				if !rowsEqual(cRow, oRow) {
 					conflicts = append(conflicts, conflictRecord{
 						BeadID:  id,
@@ -244,22 +183,18 @@ func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, confli
 						BStatus: extractStringField(oRow.raw, "status"),
 					})
 				}
-				// Use current as tiebreaker (no data loss; conflict logged above).
 				winner = cRow
 			} else if oRow.updatedAt.After(cRow.updatedAt) {
 				winner = oRow
 			} else {
 				winner = cRow
 			}
-			// Union labels and dependencies monotonically.
 			winner.raw = unionLabelsAndDeps(winner.raw, cRow.raw, oRow.raw, aRow)
 		case hasC:
 			winner = cRow
 		case hasO:
 			winner = oRow
 		default:
-			// Only in ancestor (deleted on both sides — include from ancestor as
-			// the safest fallback; bead deletion is out-of-band per spec).
 			if hasA {
 				winner = aRow
 			}
@@ -270,9 +205,6 @@ func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, confli
 	return merged, conflicts
 }
 
-// rowsToMap converts a slice of beadRow to a map keyed by id.
-// When the same id appears more than once in the input (within-file duplicates),
-// the row with the newest updated_at is kept (LWW by timestamp).
 func rowsToMap(rows []beadRow) map[string]beadRow {
 	m := make(map[string]beadRow, len(rows))
 	for _, r := range rows {
@@ -283,7 +215,6 @@ func rowsToMap(rows []beadRow) map[string]beadRow {
 	return m
 }
 
-// rowsEqual returns true if two beadRows have identical raw JSON content.
 func rowsEqual(a, b beadRow) bool {
 	if len(a.raw) != len(b.raw) {
 		return false
@@ -300,16 +231,12 @@ func rowsEqual(a, b beadRow) bool {
 	return true
 }
 
-// unionLabelsAndDeps merges the "labels" and "dependencies" fields from
-// current and other into the winner's raw map. Both fields are monotonic-additive:
-// any value present in current, other, or ancestor is preserved; none are removed.
 func unionLabelsAndDeps(winner, current, other map[string]json.RawMessage, ancestor beadRow) map[string]json.RawMessage {
 	result := make(map[string]json.RawMessage, len(winner))
 	for k, v := range winner {
 		result[k] = v
 	}
 
-	// Union labels.
 	if mergedLabels, ok := unionStringArray(
 		extractStringArray(current, "labels"),
 		extractStringArray(other, "labels"),
@@ -320,7 +247,6 @@ func unionLabelsAndDeps(winner, current, other map[string]json.RawMessage, ances
 		}
 	}
 
-	// Union dependencies (array of objects; union by depends_on_id).
 	if mergedDeps, ok := unionDependencies(
 		extractRawArray(current, "dependencies"),
 		extractRawArray(other, "dependencies"),
@@ -334,8 +260,6 @@ func unionLabelsAndDeps(winner, current, other map[string]json.RawMessage, ances
 	return result
 }
 
-// unionStringArray returns the union of up to three string slices. Returns
-// (nil, false) when all inputs are nil (field absent in all ancestors).
 func unionStringArray(a, b, c []string) ([]string, bool) {
 	if a == nil && b == nil && c == nil {
 		return nil, false
@@ -364,8 +288,6 @@ func unionStringArray(a, b, c []string) ([]string, bool) {
 	return result, true
 }
 
-// unionDependencies merges dependency arrays by depends_on_id key.
-// Returns (nil, false) when all inputs are nil (field absent in all ancestors).
 func unionDependencies(a, b, c []json.RawMessage) ([]json.RawMessage, bool) {
 	if a == nil && b == nil && c == nil {
 		return nil, false
@@ -381,7 +303,6 @@ func unionDependencies(a, b, c []json.RawMessage) ([]json.RawMessage, bool) {
 			}
 			key := extractStringField(m, "depends_on_id")
 			if key == "" {
-				// Fall back to issue_id+depends_on_id composite.
 				key = extractStringField(m, "issue_id") + ":" + extractStringField(m, "depends_on_id")
 			}
 			if key == "" || key == ":" {
@@ -408,17 +329,12 @@ func unionDependencies(a, b, c []json.RawMessage) ([]json.RawMessage, bool) {
 	return result, true
 }
 
-// conflictRecord captures a LWW collision that could not be deterministically
-// resolved (same updated_at, different content).
 type conflictRecord struct {
 	BeadID  string
 	AStatus string // status value on the current/ours (A) side
 	BStatus string // status value on the other (B) side
 }
 
-// appendConflictLog appends conflict records to .beads/merge-conflicts.log.
-// The log path is derived from the working-tree path of issues.jsonl.
-// Format: <iso8601-timestamp> CONFLICT bead=<id> field=status a=<A_value> b=<B_value> resolution=took-ours
 func appendConflictLog(workingPath string, conflicts []conflictRecord) (err error) {
 	dir := filepath.Dir(workingPath)
 	logPath := filepath.Join(dir, "merge-conflicts.log")
@@ -428,9 +344,6 @@ func appendConflictLog(workingPath string, conflicts []conflictRecord) (err erro
 		return openErr
 	}
 	defer func() {
-		// A write handle's Close is where deferred write errors surface (ENOSPC,
-		// EDQUOT, EIO). Dropping it reports a conflict log that was never durably
-		// recorded as if it had been.
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close conflict log %s: %w", logPath, closeErr)
 		}
@@ -447,7 +360,6 @@ func appendConflictLog(workingPath string, conflicts []conflictRecord) (err erro
 	return nil
 }
 
-// writeBeadsJSONL writes rows to path as JSONL (one JSON object per line).
 func writeBeadsJSONL(path string, rows []beadRow) (err error) {
 	//nolint:gosec // G304: path provided by git merge driver invocation
 	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
@@ -455,9 +367,6 @@ func writeBeadsJSONL(path string, rows []beadRow) (err error) {
 		return openErr
 	}
 	defer func() {
-		// This is the merge driver's O_TRUNC rewrite of the beads ledger. A Close
-		// error here means the tail of the ledger may never have reached disk, so
-		// it must not be reported as a successful merge.
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close %s: %w", path, closeErr)
 		}
@@ -473,8 +382,6 @@ func writeBeadsJSONL(path string, rows []beadRow) (err error) {
 	return nil
 }
 
-// extractStringField returns the string value of a JSON field, or "" if absent
-// or not a JSON string.
 func extractStringField(m map[string]json.RawMessage, key string) string {
 	raw, ok := m[key]
 	if !ok {
@@ -487,8 +394,6 @@ func extractStringField(m map[string]json.RawMessage, key string) string {
 	return s
 }
 
-// extractTimeField parses a time.Time from a JSON string field (RFC3339).
-// Returns zero value if absent or unparseable.
 func extractTimeField(m map[string]json.RawMessage, key string) time.Time {
 	s := extractStringField(m, key)
 	if s == "" {
@@ -504,8 +409,6 @@ func extractTimeField(m map[string]json.RawMessage, key string) time.Time {
 	return t
 }
 
-// extractStringArray unmarshals a JSON string array field from a raw map.
-// Returns nil if the field is absent.
 func extractStringArray(m map[string]json.RawMessage, key string) []string {
 	raw, ok := m[key]
 	if !ok {
@@ -518,8 +421,6 @@ func extractStringArray(m map[string]json.RawMessage, key string) []string {
 	return arr
 }
 
-// extractRawArray returns the raw JSON messages from an array field.
-// Returns nil if the field is absent.
 func extractRawArray(m map[string]json.RawMessage, key string) []json.RawMessage {
 	raw, ok := m[key]
 	if !ok {

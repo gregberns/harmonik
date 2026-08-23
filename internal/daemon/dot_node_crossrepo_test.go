@@ -1,20 +1,5 @@
 package daemon_test
 
-// dot_node_crossrepo_test.go — a graph node asks about the repo the bead's work
-// lands in, not about the harmonik project root.
-//
-// The subsumption check probed env.ProjectDir unconditionally, because
-// driveDotWorkflow never received activeRepo. On a cross-repo bead that is the
-// wrong repository, so "is this bead's work already on main?" could never be
-// answered yes and a subsumed cross-repo bead hard-failed at iteration 1 and was
-// re-dispatched forever.
-//
-// The same run merged into the RIGHT repo the whole time — activeRepo already
-// reached the merge through the run bridge — so it landed work in one repo and
-// asked its questions of another.
-//
-// Bead: hk-pq3ex.
-
 import (
 	"os"
 	"os/exec"
@@ -24,15 +9,11 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// dotFixtureCrossRepoBody is the bead body that declares a cross-repo target.
 func dotFixtureCrossRepoBody(targetRepo string) string {
 	return "## Summary\n\nWork that lands in another repository.\n\n" +
 		"## Branching\n\n```yaml\ntarget_repo: " + targetRepo + "\ntarget_branch: main\n```\n"
 }
 
-// dotFixtureRepoWithSubsumedWork builds a git repo whose main branch already
-// carries the merge commit a prior run leaves behind when it landed this bead's
-// work.
 func dotFixtureRepoWithSubsumedWork(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,14 +22,6 @@ func dotFixtureRepoWithSubsumedWork(t *testing.T, bead core.BeadID) string {
 	return dir
 }
 
-// dotFixtureLandSubsumedCommit lands this bead's work on dir's current branch,
-// the way the daemon lands it: a real file change plus the `Harmonik-Bead-ID`
-// trailer that synthesizeMergeCommitMessage writes (WM-019).
-//
-// The trailer used to be `Refs: <bead>`, which named the bead and proved
-// nothing (hk-1a7yb). A commit that only names a bead is now the subject of
-// TestDotNode_MentionOnlyCommitIsNotEvidenceOfCompletion, where the assertion
-// is the opposite one.
 func dotFixtureLandSubsumedCommit(t *testing.T, dir string, bead core.BeadID) {
 	t.Helper()
 	//nolint:gosec // G306: test fixture file.

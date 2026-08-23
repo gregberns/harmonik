@@ -16,8 +16,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// heartbeat.go — keeper-side gauge liveness (hk-81wk).
-
 // MaxHeartbeatMisses is the number of consecutive ticks on which
 // deriveContextTokens may return false before the heartbeat stops writing the
 // gauge file. At the default 10 s tick cadence, 12 misses ≈ 2 minutes — roughly
@@ -30,32 +28,6 @@ import (
 // Alias of the exported DefaultMaxHeartbeatMisses (thresholds.go single source). hk-gwz6.
 const MaxHeartbeatMisses = DefaultMaxHeartbeatMisses
 
-//
-// PROBLEM. The .ctx gauge's sole writer is scripts/keeper-statusline.sh, which
-// runs ONLY on a Claude Code UI repaint and SKIPS the write whenever the pane
-// reports an absent/NA percentage (right after /clear, or when a busy/idle
-// session stops repainting). Nothing else writes .ctx. So on a perfectly LIVE
-// agent the gauge can age past Staleness(120s); the watcher then takes the
-// stale branch and `continue`s BEFORE any cycle / CrispIdle / act evaluation.
-// BOTH keeper triggers read this same feed, so one stale gauge kills both —
-// this was the dominant failure mass (≈2699 no_gauge:stale events).
-//
-// FIX. Give the keeper its OWN gauge source, independent of statusLine repaint.
-// On each tick, once the gauge is aging toward Staleness while the tmux pane is
-// still alive (the agent process has NOT exited), the watcher re-writes .ctx
-// with a fresh timestamp — deriving a current token count from the session
-// transcript JSONL when it can, otherwise carrying the last-good reading
-// forward. The session_id written is the latched managed UUIDv4 (falling back
-// to the last gauge value), so a transient daemon-UUIDv7 / uppercase poisoning
-// is corrected rather than propagated. The pane-alive gate is what preserves
-// the respawn path: when the agent genuinely exits the pane goes idle, the
-// heartbeat stops, the gauge goes stale, and maybeRespawn fires as before.
-
-// transcriptDirFor returns the Claude Code transcript projects directory for the
-// given project root: ~/.claude/projects/<munged-project-path>. Claude Code
-// sanitises the absolute project path by replacing '/' and '.' with '-' (e.g.
-// /Users/gb/github/harmonik -> -Users-gb-github-harmonik). Returns "" when the
-// home directory cannot be resolved.
 func transcriptDirFor(projectDir string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -65,26 +37,8 @@ func transcriptDirFor(projectDir string) string {
 	return filepath.Join(home, ".claude", "projects", munged)
 }
 
-// deriveContextTailBytes is the tail window read by deriveContextTokens.
-// The last usage-bearing assistant turn is always near EOF (the transcript is
-// append-only), so scanning only the last 512 KB reduces scan cost from
-// O(filesize) to O(1) for sessions with large transcripts. For files smaller
-// than this window the scan is equivalent to a full read. Refs: hk-div6c.
 const deriveContextTailBytes = 512 * 1024
 
-// deriveContextTokens scans the Claude Code transcript JSONL for sessionID under
-// transcriptDir and returns the effective context-token count of the most recent
-// assistant turn that carries a usage block: input_tokens + cache_read_input_tokens +
-// cache_creation_input_tokens + output_tokens. Including output_tokens makes the
-// heartbeat gauge match what /context reports — the model's output from this turn
-// will appear as input to the next turn, so "input + output" is the correct
-// post-turn context occupancy. Returns (0, false) when the transcript is absent,
-// unreadable, or carries no usage — callers then carry the last-good reading
-// forward, so a derivation miss never breaks gauge liveness.
-//
-// Scan is bounded to the tail window (deriveContextTailBytes) because the last
-// usage turn is always near EOF; scanning the full file on every heartbeat tick
-// caused sustained 20-47% CPU on long captain sessions. Refs: hk-div6c.
 func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (int64, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return 0, false
@@ -113,7 +67,6 @@ func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (
 		} `json:"message"`
 	}
 
-	// Seek to the tail window so the scan is O(deriveContextTailBytes) not O(filesize).
 	partialStart := false
 	size, seekErr := f.Seek(0, io.SeekEnd)
 	if seekErr == nil {
@@ -138,11 +91,7 @@ func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (
 		found  bool
 	)
 	sc := bufio.NewScanner(f)
-	// Transcript lines embed tool results and can far exceed the 64KB default;
-	// allow up to 16MB per line so a long line is not silently truncated.
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	// When seeked into the middle of the file, the first read may be a partial
-	// line; discard it so we only parse complete JSON objects.
 	if partialStart {
 		sc.Scan()
 	}
@@ -166,18 +115,11 @@ func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (
 		}
 	}
 	if err := sc.Err(); err != nil {
-		// A scan error after some lines still yields the last-good sum we saw.
 		return tokens, found
 	}
 	return tokens, found
 }
 
-// deriveCachedTokens returns the derive result for (transcriptDir, sid), using
-// the Watcher's in-memory cache when the session and TTL match. Only successful
-// derives are cached; misses always call deriveContextTokens directly so the
-// miss-budget counter (heartbeatMissCount) increments correctly per tick.
-// Single-threaded: only the Run goroutine calls this via maybeHeartbeat.
-// Refs: hk-div6c.
 func (w *Watcher) deriveCachedTokens(ctx context.Context, transcriptDir, sid string, now time.Time) (int64, bool) {
 	if w.deriveCacheSID == sid && now.Before(w.deriveCacheExpiry) {
 		return w.deriveCacheTokens, true
@@ -229,8 +171,6 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 	return nil
 }
 
-// heartbeatSessionID picks the session_id the heartbeat should stamp into .ctx.
-// Preference: the latched managed session, falling back to the last gauge value.
 func heartbeatSessionID(managedSID string, last *CtxFile) string {
 	if managedSID != "" {
 		return managedSID
@@ -238,27 +178,6 @@ func heartbeatSessionID(managedSID string, last *CtxFile) string {
 	return last.SessionID
 }
 
-// maybeHeartbeat keeps the gauge live on an alive agent. It is a no-op unless the
-// heartbeat is enabled, a tmux target is known, the gauge has aged past
-// HeartbeatThreshold, and the pane is NOT idle (the agent process is still
-// running). When it fires it writes a fresh .ctx — token count re-derived from
-// the transcript when available, otherwise the last-good reading carried forward
-// — stamped with the managed session_id and a fresh timestamp.
-//
-// The pane-alive gate is load-bearing: when the agent genuinely exits the pane
-// goes idle, the heartbeat stops, and the gauge is allowed to go stale so the
-// respawn path (maybeRespawn) can fire. The heartbeat ONLY suppresses the false
-// no_gauge:stale on a LIVE agent.
-//
-// It reports whether it WROTE a fresh gauge. The caller needs that answer
-// because it holds a modTime read BEFORE this call: without it, the caller
-// re-tests staleness against the age of a file this function has just replaced,
-// and declares a gauge stale in the same pass that refreshed it (hk-oduuc).
-// Every early return below reports false, which is what keeps the two
-// suppression contracts intact — a pane-idle agent and a derive-miss-budget
-// exhaustion must both still reach genuine staleness.
-// heartbeatDue keeps the pane-alive check separate from the write path. An idle
-// pane must return false so the gauge can become stale and reach respawn.
 func (w *Watcher) heartbeatDue(ctx context.Context, age time.Duration) bool {
 	if !w.cfg.HeartbeatEnabled || w.cfg.TmuxTarget == "" {
 		return false
@@ -279,20 +198,11 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		managedSID = "" // fall back to the last gauge session_id
 	}
 	sid := heartbeatSessionID(managedSID, last)
-	// When .managed is empty (e.g., after a ClearSettle-timeout cycle clears the
-	// binding), fall back to the authoritative .sid channel for the current session
-	// id. Without this, derive targets the previous session's JSONL and exhausts
-	// MaxHeartbeatMisses, suppressing writes and causing gauge-death on a live
-	// agent (K1 of hk-4xni9 — leto gauge stale 23h post-ClearSettle-timeout).
 	if managedSID == "" {
 		if liveSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName); sidErr == nil && isPrimarySID(liveSID) {
 			sid = liveSID
 		}
 	}
-	// Reset the miss budget when the derive target changes (new session detected).
-	// This unblocks a heartbeat that exhausted its budget against a prior
-	// session's transcript and allows the new session a fresh derive window.
-	// Refs: hk-4xni9 K1.
 	if sid != w.heartbeatLastSID {
 		w.heartbeatMissCount = 0
 		w.heartbeatLastSID = sid
@@ -311,20 +221,10 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		SessionID:  sid,
 		Ts:         now.UTC().Format(time.RFC3339),
 	}
-	// Use cached token count when available (same session, within TTL) to avoid
-	// O(filesize) JSONL re-scans on consecutive heartbeat ticks. Misses bypass
-	// the cache so the miss-budget counter increments correctly per tick.
-	// Refs: hk-div6c.
 	derivedTokens, derivedOk := w.deriveCachedTokens(ctx, transcriptDir, sid, now)
 	if derivedOk {
 		w.heartbeatMissCount = 0
 		fresh.Tokens = derivedTokens
-		// Recompute pct only when the window size is authoritative (written by the
-		// statusline script). When WindowSize==0 the statusline hasn't confirmed the
-		// window yet; substituting FallbackWindowSize (200k default) overestimates pct
-		// for large-context sessions (e.g. 210k/200k=105%) which causes
-		// belowWarnThreshold to return false and fires session_keeper_warn below the
-		// configured warn_pct. Carry last.Pct forward instead. Refs: hk-eovln.
 		if fresh.WindowSize > 0 {
 			fresh.Pct = float64(derivedTokens) / float64(fresh.WindowSize) * 100.0
 		}
@@ -332,9 +232,6 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		w.heartbeatMissCount++
 		maxMisses := w.cfg.HeartbeatMaxMisses
 		if w.heartbeatMissCount > maxMisses {
-			// Derive-miss budget exceeded: suppress the carry-forward write so the
-			// gauge ages to genuine staleness. The existing no_gauge:stale path then
-			// fires loudly, restoring the safety signal (hk-lal8).
 			if w.heartbeatMissCount == maxMisses+1 {
 				slog.WarnContext(ctx, "keeper: heartbeat derive-miss budget exceeded, suppressing carry-forward write",
 					"agent", w.cfg.AgentName, "miss_count", w.heartbeatMissCount)

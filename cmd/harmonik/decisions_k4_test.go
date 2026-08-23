@@ -1,26 +1,5 @@
 package main
 
-// decisions_k4_test.go — unit tests for the operator-side `harmonik decisions`
-// CLI (hitl-decisions component K4, bead hk-kba), at the fast-gate level.
-//
-// Coverage:
-//   - flagOrphanedPending: an open decision whose blocked_agent is OFFLINE (per
-//     the SAME events.jsonl presence registry) is flagged orphaned-pending;
-//     Online/Stale/unknown agents are NOT flagged (N9 read-pure flag).
-//   - the flag computation reads the durable log and emits NOTHING — it leaves
-//     the events.jsonl byte-for-byte unchanged (N9 read-pure / S6).
-//   - routing: list/show/answer are dispatched (covered in
-//     decisions_hkxz9_test.go TestDecisionsSubcommand_Routing).
-//
-// The live raise→answer→wake end-to-end + the cross-agent list render are the
-// hk-rz4 / hk-1vl scenario beads (separate, run after K4). K4 needs solid
-// unit/integration coverage of the new logic, which these provide.
-//
-// Reuses the dx9* helpers (decisions_hkxz9_test.go): dx9Needed, dx9BuildEventsFile,
-// dx9Event. New helpers use the "dk4" prefix.
-//
-// Bead ref: hk-kba (K4).
-
 import (
 	"bytes"
 	"os"
@@ -28,8 +7,6 @@ import (
 	"time"
 )
 
-// dk4Presence builds an agent_presence event line for the registry projection.
-// lastSeen is RFC3339 wall time; status "online"/"offline".
 func dk4Presence(t *testing.T, eventID, agent, status, lastSeen, reason string) string {
 	return dx9Event(t, eventID, "agent_presence", map[string]any{
 		"agent":     agent,
@@ -46,14 +23,8 @@ func dk4Presence(t *testing.T, eventID, agent, status, lastSeen, reason string) 
 func TestFlagOrphanedPending_OfflineFlaggedOthersNot(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := now.Format(time.RFC3339)
-	// 15 minutes ago is past presence.StaleCutoff (10m) → Offline by age.
 	stale := now.Add(-15 * time.Minute).Format(time.RFC3339)
 
-	// Three open decisions, three distinct blocked agents:
-	//   alice  → explicit leave (offline) beat → Offline (short-circuit).
-	//   bob    → fresh online beat            → Online (NOT flagged).
-	//   carol  → online beat 15m ago          → Offline by age (flagged).
-	//   dave   → NO presence record           → NOT flagged (no evidence gone).
 	lines := []string{
 		dx9Needed(t, dx9D1, " Q-alice", []string{"a", "b"}, "alice", "hk-a"),
 		dx9Needed(t, dx9D2, "Q-bob", []string{"c", "d"}, "bob", "hk-b"),

@@ -1,16 +1,5 @@
 package daemon
 
-// fakes_launchbuilders_test.go — capture / minimal launch-spec test builders.
-//
-// Split out of export_test.go (RT19.10, P2 E5 export_test.go split). These are
-// test fixtures, not shims — a minimal LaunchSpec builder plus the capture
-// builders that record extra-context / node-prompt / runner / model-effort into
-// a channel, and the ModelEffortPair carrier they emit. They are the real
-// content of a future internal/runlooptest. Same package (daemon), so every
-// daemon_test caller resolves daemon.ExportedX byte-identically after the move.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"fmt"

@@ -1,26 +1,11 @@
 package handler_test
 
-// classify_hc023_test.go — tests for ClassifyExitState (HC-023).
-//
-// HC-023: Mapping a subprocess exit state or adapter-detected condition to a
-// sentinel class MUST be deterministic from structured fields (exit code,
-// payload flags, typed adapter return). No cognition in classification.
-//
-// Spec: specs/handler-contract.md §4.5.HC-023, §8.
-// Bead: hk-8i31.27.
-//
-// Helper prefix: hc023Fixture (per implementer-protocol.md §Helper-prefix discipline).
-
 import (
 	"errors"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/handler"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-023: Priority 1 — CtxCanceled supersedes all other fields.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClassifyExitState_CtxCanceled_SupersedesAll verifies that CtxCanceled==true
 // always produces ErrCanceled regardless of exit code or adapter condition (§8.4).
@@ -87,10 +72,6 @@ func TestClassifyExitState_CtxCanceled_SupersedesAll(t *testing.T) {
 		})
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-023: Priority 2–4 — adapter-returned typed condition.
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestClassifyExitState_AdapterCondition verifies that each AdapterCondition
 // maps to the correct primary sentinel when CtxCanceled==false (§8.1–§8.3).
@@ -186,10 +167,6 @@ func TestClassifyExitState_AdapterCondition_MutualExclusion(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-023: Priority 5–6 — exit-code fallback (no adapter, no cancel).
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestClassifyExitState_ExitCodeFallback verifies that when CtxCanceled==false
 // and AdapterResult==None, both zero-exit-without-outcome and non-zero exit
 // produce ErrStructural (§8.2: crash or exit without outcome is structural).
@@ -248,10 +225,6 @@ func TestClassifyExitState_ExitCodeFallback(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-023: Determinism — identical inputs always produce equivalent results.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestClassifyExitState_Determinism verifies that calling ClassifyExitState
 // twice with identical ExitState values yields errors that satisfy errors.Is
 // for the same primary sentinel — confirming the function is deterministic and
@@ -291,17 +264,12 @@ func TestClassifyExitState_Determinism(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-023: Every result wraps exactly one primary sentinel (HC-020 compliance).
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestClassifyExitState_ExactlyOnePrimary verifies that every ClassifyExitState
 // result satisfies errors.Is for exactly one of the five primary sentinels.
 // This is the boundary-crossing invariant of HC-020 applied to the classifier.
 func TestClassifyExitState_ExactlyOnePrimary(t *testing.T) {
 	t.Parallel()
 
-	// Enumerate representative ExitState inputs covering all code paths.
 	inputs := []struct {
 		name  string
 		state handler.ExitState

@@ -7,9 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// validRun returns a fully-populated Run with all required fields non-zero,
-// Context initialised as a non-nil empty map, and BeadID set to a non-nil
-// non-empty value.
 func validRun(t *testing.T) Run {
 	t.Helper()
 

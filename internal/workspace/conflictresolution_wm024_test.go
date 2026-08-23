@@ -1,17 +1,5 @@
 package workspace
 
-// conflictresolution_wm024_test.go — tests for WM-024 conflict-resolver
-// dispatch mechanism (hk-8mwo.36).
-//
-// Covers:
-//   - ValidateConflictResolutionAttemptCap: bounds [1, 10] per WM-024.
-//   - EffectiveConflictResolutionAttemptCap: zero-value default resolution.
-//   - ShouldDispatchConflictResolver: decision routing per WM-022a, WM-023, WM-024.
-//   - BuildConflictResolverLaunchSpec: LaunchSpec construction and field rules.
-//
-// Spec ref: workspace-model.md §4.6 WM-022, WM-022a, WM-023, WM-024.
-// Bead ref: hk-8mwo.36.
-
 import (
 	"errors"
 	"testing"
@@ -21,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
-
-// ── ValidateConflictResolutionAttemptCap ─────────────────────────────────────
 
 // TestValidateConflictResolutionAttemptCap_ValidRange verifies that all values
 // in [1, 10] are accepted per WM-024.
@@ -52,8 +38,6 @@ func TestValidateConflictResolutionAttemptCap_OutOfRange(t *testing.T) {
 	}
 }
 
-// ── EffectiveConflictResolutionAttemptCap ────────────────────────────────────
-
 // TestEffectiveConflictResolutionAttemptCap_ZeroUsesDefault verifies that a
 // zero operatorCap returns DefaultConflictResolutionAttemptCap.
 func TestEffectiveConflictResolutionAttemptCap_ZeroUsesDefault(t *testing.T) {
@@ -76,8 +60,6 @@ func TestEffectiveConflictResolutionAttemptCap_NonZeroPassthrough(t *testing.T) 
 	}
 }
 
-// ── ShouldDispatchConflictResolver ───────────────────────────────────────────
-
 // TestShouldDispatch_NullRefEscalates verifies that a nil implementer_handler_ref
 // always produces EscalateNullRef per WM-022a, regardless of attempt count or cap.
 func TestShouldDispatch_NullRefEscalates(t *testing.T) {
@@ -86,7 +68,6 @@ func TestShouldDispatch_NullRefEscalates(t *testing.T) {
 	if decision != ConflictResolveEscalateNullRef {
 		t.Errorf("WM-022a: ShouldDispatch(nil ref) = %q; want %q", decision, ConflictResolveEscalateNullRef)
 	}
-	// Even if we're under cap, null ref wins.
 	decision = ShouldDispatchConflictResolver(nil, 1, 10, nil)
 	if decision != ConflictResolveEscalateNullRef {
 		t.Errorf("WM-022a: ShouldDispatch(nil ref, under-cap) = %q; want %q", decision, ConflictResolveEscalateNullRef)
@@ -113,13 +94,11 @@ func TestShouldDispatch_CapExhaustedEscalates(t *testing.T) {
 	ref := core.HandlerRef("agentic-claude")
 	noRetire := func(_ core.HandlerRef) bool { return false }
 
-	// Exactly at cap.
 	decision := ShouldDispatchConflictResolver(&ref, 3, 3, noRetire)
 	if decision != ConflictResolveEscalateCapExhausted {
 		t.Errorf("WM-024: cap=3, attempts=3: ShouldDispatch = %q; want %q", decision, ConflictResolveEscalateCapExhausted)
 	}
 
-	// Over cap.
 	decision = ShouldDispatchConflictResolver(&ref, 4, 3, noRetire)
 	if decision != ConflictResolveEscalateCapExhausted {
 		t.Errorf("WM-024: cap=3, attempts=4: ShouldDispatch = %q; want %q", decision, ConflictResolveEscalateCapExhausted)
@@ -153,14 +132,10 @@ func TestShouldDispatch_NilIsRetiredDoesNotPanic(t *testing.T) {
 	}
 }
 
-// ── BuildConflictResolverLaunchSpec ──────────────────────────────────────────
-
-// wm024FixtureRunID returns a test run ID derived from a deterministic UUID.
 func wm024FixtureRunID() core.RunID {
 	return core.RunID(uuid.MustParse("0196b200-0000-7000-8000-000000024000"))
 }
 
-// wm024FixtureWorkflowID returns a test workflow ID.
 func wm024FixtureWorkflowID() core.WorkflowID {
 	id, err := core.NewWorkflowID("0196b200-0000-7000-8000-000000024001")
 	if err != nil {
@@ -169,8 +144,6 @@ func wm024FixtureWorkflowID() core.WorkflowID {
 	return id
 }
 
-// wm024FixtureParams returns a well-formed ConflictResolverLaunchSpecParams
-// for tests that exercise BuildConflictResolverLaunchSpec.
 func wm024FixtureParams() ConflictResolverLaunchSpecParams {
 	return ConflictResolverLaunchSpecParams{
 		RunID:               wm024FixtureRunID(),

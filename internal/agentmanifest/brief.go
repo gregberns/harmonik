@@ -16,12 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// operatorIntentLine is the fixed grafted line when parent_intent is the terminal "operator".
 const operatorIntentLine = "I am the operator — the human who created and directs this fleet."
 
-// handoffClaimHeader stamps the embedded handoff as a CLAIM from the prior session, not
-// ground truth: `harmonik digest` is the live-state source that overrides it. See
-// plans/2026-07-11-captain-startup-revamp/01-revamp-process.md Step 0.4(b).
 const handoffClaimHeader = "**CLAIM, not ground truth — `harmonik digest` overrides.**"
 
 // SkillEntry is a single skill reference in the boot document.
@@ -116,8 +112,6 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 	}, nil
 }
 
-// resolveParentIntent reads the "I am" line from the parent type's soul.md.
-// parentType may be "operator" (the terminal — no folder) or an existing type folder name.
 func resolveParentIntent(agentsDir, parentType string) (string, error) {
 	if parentType == "operator" {
 		return operatorIntentLine, nil
@@ -137,8 +131,6 @@ func resolveParentIntent(agentsDir, parentType string) (string, error) {
 	return fmt.Sprintf("I am %s", parentType), nil
 }
 
-// extractIAmLine scans soulContent for the first line that starts with "I am"
-// (with optional leading list marker or bold markdown). Returns "" if not found.
 func extractIAmLine(soulContent string) string {
 	scanner := bufio.NewScanner(strings.NewReader(soulContent))
 	for scanner.Scan() {
@@ -152,7 +144,6 @@ func extractIAmLine(soulContent string) string {
 	return ""
 }
 
-// buildSkillEntry resolves a skill context entry to a SkillEntry with short-desc and pointer.
 func buildSkillEntry(agentsDir, typeName, repoRoot string, c ContextEntry) SkillEntry {
 	entry := SkillEntry{
 		Name:     c.Ref,
@@ -171,7 +162,6 @@ func buildSkillEntry(agentsDir, typeName, repoRoot string, c ContextEntry) Skill
 		return entry
 	}
 
-	// Look for SKILL.md inside the resolved directory.
 	skillMD := filepath.Join(resolved, "SKILL.md")
 	if _, err := os.Stat(skillMD); err == nil {
 		entry.Pointer = skillMD
@@ -184,9 +174,6 @@ func buildSkillEntry(agentsDir, typeName, repoRoot string, c ContextEntry) Skill
 	return entry
 }
 
-// buildDocEntry resolves a doc context entry (as: doc) to a SkillEntry carrying the
-// explicit resolved path and a description parsed from the ref's frontmatter, per
-// plans/2026-07-11-captain-startup-revamp/02-cutover-and-open-questions.md §2.4.
 func buildDocEntry(agentsDir, typeName, repoRoot string, c ContextEntry) SkillEntry {
 	entry := SkillEntry{
 		Name:     c.Ref,
@@ -208,9 +195,6 @@ func buildDocEntry(agentsDir, typeName, repoRoot string, c ContextEntry) SkillEn
 	return entry
 }
 
-// readFrontmatterDescription returns the `description:` field of the YAML frontmatter
-// block (delimited by leading "---" lines) at the top of the file at path.
-// Returns "" when the file has no frontmatter or no description field.
 func readFrontmatterDescription(path string) string {
 	//nolint:gosec // G304: path is resolved by buildDocEntry against known roots
 	data, err := os.ReadFile(path)
@@ -235,7 +219,6 @@ func readFrontmatterDescription(path string) string {
 	return strings.TrimSpace(meta.Description)
 }
 
-// readSkillShortDesc returns the first non-blank, non-heading line from skillMDPath.
 func readSkillShortDesc(skillMDPath string) string {
 	//nolint:gosec // G304: path comes from ResolveRef which validates against known dirs
 	data, err := os.ReadFile(skillMDPath)
@@ -253,10 +236,6 @@ func readSkillShortDesc(skillMDPath string) string {
 	return ""
 }
 
-// readHandoff reads HANDOFF-<agentName>.md from repoRoot. It returns the content
-// and whether the file EXISTS. ("", false) = absent; ("", true) = present but
-// zero-byte — a LOST handoff, which the renderers must call out loudly rather
-// than silently conflate with "never written". Refs: hk-4tjyj.
 func readHandoff(repoRoot, agentName string) (string, bool) {
 	path := filepath.Join(repoRoot, fmt.Sprintf("HANDOFF-%s.md", agentName))
 	//nolint:gosec // G304: agentName is validated by the caller
@@ -267,10 +246,6 @@ func readHandoff(repoRoot, agentName string) (string, bool) {
 	return string(data), true
 }
 
-// emptyHandoffWarning is the loud, distinct rendering for a handoff file that
-// EXISTS but is empty. It must never read like "no handoff on record": the two
-// mean opposite things to a rebooting agent, and conflating them is precisely
-// what hid hk-4tjyj (the keeper zeroing the handoff it exists to preserve).
 func emptyHandoffWarning(agentName string) string {
 	return fmt.Sprintf(
 		"**WARNING — HANDOFF-%s.md EXISTS but is EMPTY.** The previous session's handoff was "+
@@ -283,7 +258,6 @@ func emptyHandoffWarning(agentName string) string {
 // Sections are emitted in SPEC §4 order: identity → wake → operating+skills → triggers → handoff.
 func RenderMarkdown(doc *BootDoc, w io.Writer) error {
 	out := &errorWriter{w: w}
-	// §1 Identity / SOUL — soul content byte-identical + grafted parent intent.
 	out.println("## Identity")
 	out.println()
 	writeContent(out, doc.Soul)
@@ -291,14 +265,12 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) error {
 
 	sectionDivider(out)
 
-	// §2 Wake reason.
 	out.println("## Wake reason")
 	out.println()
 	out.println(doc.WakeReason)
 
 	sectionDivider(out)
 
-	// §3 Operating instructions + skills.
 	out.println("## Operating instructions")
 	out.println()
 	writeContent(out, doc.Operating)
@@ -323,7 +295,6 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) error {
 
 	sectionDivider(out)
 
-	// §4 Active triggers.
 	out.println("## Active triggers")
 	out.println()
 	if len(doc.ActiveTriggers) == 0 {
@@ -336,7 +307,6 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) error {
 
 	sectionDivider(out)
 
-	// §5 Handoff — LAST (episodic state only; no identity re-statement).
 	out.println("## Handoff")
 	out.println()
 	out.println(handoffClaimHeader)
@@ -375,26 +345,21 @@ func RenderToon(doc *BootDoc, w io.Writer) error {
 		out.printf("\n╔%s╗\n║ %-58s ║\n╚%s╝\n\n", bar, title, bar)
 	}
 
-	// §1 Identity.
 	boxHeader("IDENTITY")
 	writeContent(out, doc.Soul)
 	out.printf("\nParent intent: %s\n", doc.ParentIntent)
 
-	// §2 Wake reason.
 	boxHeader("WAKE REASON")
 	out.println(doc.WakeReason)
 
-	// §3 Operating + skills.
 	boxHeader("OPERATING INSTRUCTIONS")
 	writeContent(out, doc.Operating)
 	renderToonSkills(out, doc.Skills)
 	renderToonDocs(out, doc.Docs)
 
-	// §4 Triggers.
 	boxHeader("ACTIVE TRIGGERS")
 	renderToonTriggers(out, doc.ActiveTriggers)
 
-	// §5 Handoff — LAST.
 	boxHeader("HANDOFF")
 	out.println(handoffClaimHeader)
 	out.println()
@@ -492,14 +457,12 @@ func (w *errorWriter) println(args ...any) {
 	_, w.err = fmt.Fprintln(w.w, args...)
 }
 
-// sectionDivider writes the markdown section separator.
 func sectionDivider(w *errorWriter) {
 	w.println()
 	w.println("---")
 	w.println()
 }
 
-// writeContent writes content ensuring it ends with a newline.
 func writeContent(w *errorWriter, content string) {
 	w.print(content)
 	if !strings.HasSuffix(content, "\n") {
@@ -507,7 +470,6 @@ func writeContent(w *errorWriter, content string) {
 	}
 }
 
-// renderSkillLine renders a single skill entry as a markdown list item.
 func renderSkillLine(w *errorWriter, s SkillEntry) {
 	if s.Presence == "retrieved" || s.ShortDesc == "" {
 		if s.Pointer != "" {
@@ -524,8 +486,6 @@ func renderSkillLine(w *errorWriter, s SkillEntry) {
 	}
 }
 
-// renderDocLine renders a single doc entry (as: doc) as a markdown list item, always
-// showing the explicit resolved path and, when present, the frontmatter description.
 func renderDocLine(w *errorWriter, d SkillEntry) {
 	if d.Pointer == "" {
 		w.printf("- **%s**\n", d.Name)
@@ -538,7 +498,6 @@ func renderDocLine(w *errorWriter, d SkillEntry) {
 	}
 }
 
-// renderTriggerLine renders a single trigger as a markdown list item.
 func renderTriggerLine(w *errorWriter, t Trigger) {
 	meta := "source: " + t.Source
 	if t.Every != "" {

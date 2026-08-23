@@ -1,11 +1,5 @@
 package core
 
-// dashboardgatepayload_hkxg6rw.go — payload types for the dashboard_stale /
-// dashboard_refreshed event types (plans/2026-07-03-operator-dashboard/DESIGN.md
-// §4, hk-xg6rw).
-//
-// Refs: hk-xg6rw.
-
 // DashboardStalePayload is the event-bus payload for the dashboard_stale event
 // type. Emitted when .harmonik/context/dashboard.json's `updated` timestamp is
 // older than the configured dashboard.max_staleness. While active, the daemon

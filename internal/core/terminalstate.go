@@ -76,17 +76,14 @@ type TerminalStateInput struct {
 // This function is pure: it performs no I/O, does not read the clock, and
 // carries no internal state. It is safe to call from multiple goroutines.
 func ClassifyTerminalState(in TerminalStateInput) TerminalStateKind {
-	// Condition (c): operator stop --immediate wins over all other conditions.
 	if in.OperatorStopImmediate {
 		return TerminalStateCanceled
 	}
 
-	// Condition (b): classifier terminal verdict wins over condition (a).
 	if in.ClassifierVerdictTerminal {
 		return TerminalStateFailed
 	}
 
-	// Condition (a): terminal node + success/partial-success outcome.
 	if (in.LastOutcome == LastOutcomeSuccess || in.LastOutcome == LastOutcomePartialSuccess) &&
 		containsNodeID(in.TerminalNodeIDs, in.CurrentNodeID) {
 		return TerminalStateCompleted
@@ -95,7 +92,6 @@ func ClassifyTerminalState(in TerminalStateInput) TerminalStateKind {
 	return TerminalStateNonTerminal
 }
 
-// containsNodeID reports whether id is in the ids slice.
 func containsNodeID(ids []NodeID, id NodeID) bool {
 	for _, t := range ids {
 		if t == id {

@@ -1,16 +1,5 @@
 package main_test
 
-// settings_smoke_test.go — smoke test for twin --worktree-path + Stop hook
-// execution (hk-e66ht).
-//
-// Builds the twin binary, runs it against a tmp worktree with a real
-// .claude/settings.json that declares a Stop hook script. Asserts:
-//   1. twin_settings_loaded appears in the wire stream with stop_hook_present=true.
-//   2. twin_hook_called appears with hook_type="Stop" and exit_code=0.
-//   3. The hook script's sentinel file was written (proves hook actually ran).
-//
-// Helper prefix: twinSettingsSmokeFixture (bead hk-e66ht).
-
 import (
 	"bufio"
 	"bytes"
@@ -22,8 +11,6 @@ import (
 	"testing"
 )
 
-// twinSettingsSmokeFixtureBinary builds the harmonik-twin-claude binary and
-// returns its path. Reuses the same build pattern as chbE2EFixtureBuildBinary.
 func twinSettingsSmokeFixtureBinary(t *testing.T) string {
 	t.Helper()
 	outDir := t.TempDir()
@@ -34,8 +21,6 @@ func twinSettingsSmokeFixtureBinary(t *testing.T) string {
 		t.Skipf("go toolchain not found in PATH; skipping binary-level smoke test: %v", lookErr)
 	}
 
-	// Find the module root by walking up from the test source file.
-	// The twin source lives at cmd/harmonik-twin-claude; module root is two dirs up.
 	wd, wdErr := os.Getwd()
 	if wdErr != nil {
 		t.Fatalf("twinSettingsSmokeFixtureBinary: getwd: %v", wdErr)
@@ -51,9 +36,6 @@ func twinSettingsSmokeFixtureBinary(t *testing.T) string {
 	return binPath
 }
 
-// twinSettingsSmokeFixtureWorktree creates a tmp directory that acts as the
-// worktree. It writes a .claude/settings.json with a Stop hook that writes a
-// sentinel file, and a simple hook script. Returns (worktreePath, sentinelPath).
 func twinSettingsSmokeFixtureWorktree(t *testing.T) (worktreePath, sentinelPath string) {
 	t.Helper()
 	root := t.TempDir()
@@ -63,7 +45,6 @@ func twinSettingsSmokeFixtureWorktree(t *testing.T) (worktreePath, sentinelPath 
 		t.Fatalf("twinSettingsSmokeFixtureWorktree: mkdir .claude: %v", err)
 	}
 
-	// Write a hook script that creates the sentinel file.
 	sentinelPath = filepath.Join(root, "hook-ran.sentinel")
 	hookScript := filepath.Join(root, "hook.sh")
 	hookBody := "#!/bin/sh\ntouch " + sentinelPath + "\n"
@@ -71,7 +52,6 @@ func twinSettingsSmokeFixtureWorktree(t *testing.T) (worktreePath, sentinelPath 
 		t.Fatalf("twinSettingsSmokeFixtureWorktree: write hook script: %v", err)
 	}
 
-	// Write settings.json declaring the hook script as the Stop hook command.
 	settings := map[string]any{
 		"dangerouslyAllowedPermissions": []string{"Bash(*)", "Read(*)"},
 		"hooks": map[string]any{
@@ -102,13 +82,10 @@ func twinSettingsSmokeFixtureWorktree(t *testing.T) (worktreePath, sentinelPath 
 	return root, sentinelPath
 }
 
-// twinSettingsSmokeFixtureScript writes a minimal YAML script that includes
-// call_stop_hook, and returns its path.
 func twinSettingsSmokeFixtureScript(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "twin-script.yaml")
-	// Minimal script: emit agent_ready, call stop hook, emit outcome, complete.
 	const scriptYAML = `heartbeat_mode: scripted
 messages:
   - type: handler_capabilities
@@ -149,7 +126,6 @@ func TestTwinSettingsSmoke(t *testing.T) {
 	worktreePath, sentinelPath := twinSettingsSmokeFixtureWorktree(t)
 	scriptPath := twinSettingsSmokeFixtureScript(t)
 
-	// Run the twin in scenario=stdout mode (no --socket-path).
 	cmd := exec.CommandContext(t.Context(), binPath, //nolint:gosec // G204: binPath from temp build above
 		"--script-path", scriptPath,
 		"--worktree-path", worktreePath,
@@ -163,7 +139,6 @@ func TestTwinSettingsSmoke(t *testing.T) {
 		t.Fatalf("twin exited non-zero: %v\nstderr: %s\nstdout: %s", runErr, stderr.String(), stdout.String())
 	}
 
-	// Parse the wire stream: collect all message types by order.
 	type wireMsg struct {
 		Type               string  `json:"type"`
 		PermissionsPresent bool    `json:"permissions_present"`
@@ -185,7 +160,6 @@ func TestTwinSettingsSmoke(t *testing.T) {
 		msgs = append(msgs, m)
 	}
 
-	// Locate twin_settings_loaded.
 	var settingsLoaded *wireMsg
 	for i := range msgs {
 		if msgs[i].Type == "twin_settings_loaded" {
@@ -203,7 +177,6 @@ func TestTwinSettingsSmoke(t *testing.T) {
 		t.Error("twin_settings_loaded: stop_hook_present = false, want true")
 	}
 
-	// Locate twin_hook_called.
 	var hookCalled *wireMsg
 	for i := range msgs {
 		if msgs[i].Type == "twin_hook_called" {
@@ -221,7 +194,6 @@ func TestTwinSettingsSmoke(t *testing.T) {
 		t.Errorf("twin_hook_called: exit_code = %d, want 0", int(hookCalled.ExitCode))
 	}
 
-	// Assert sentinel file was written by the hook script.
 	if _, err := os.Stat(sentinelPath); os.IsNotExist(err) {
 		t.Errorf("sentinel file %q not found; hook script did not execute", sentinelPath)
 	}

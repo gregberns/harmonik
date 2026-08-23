@@ -1,20 +1,5 @@
 package daemon
 
-// quiesce_test.go — wake-latency and reliability tests for QuiesceArbiter (hk-jeby, Risk 2).
-//
-// These tests exercise the QuiesceArbiter state machine without a real tmux
-// or brAdapter by injecting stubs through the config fields.
-//
-// Key scenarios covered:
-//
-//   - DRAINED → park: sleep marker written, park comms sent.
-//   - epic_completed event → captain woken within the wake-latency budget.
-//   - agent_message{to="captain"} → captain woken.
-//   - agent_message{to="crew"} → captain NOT woken (routing isolation).
-//   - Max-sleep failsafe: session sleeping beyond the ceiling is auto-woken.
-//   - Queue submit wake: crew bound to a queue is woken when items land.
-//   - Sleep markers cleaned up after wake.
-
 import (
 	"context"
 	"encoding/json"
@@ -32,9 +17,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// --- stubs ---
-
-// capturedNudge records SendKeysEnter calls for assertions.
 type capturedNudge struct {
 	mu      sync.Mutex
 	targets []string
@@ -47,7 +29,6 @@ func (c *capturedNudge) SendKeysEnter(_ context.Context, paneTarget string) erro
 	return nil
 }
 
-// awaitNudge blocks until at least n nudges have been captured or the deadline passes.
 func (c *capturedNudge) awaitNudge(t *testing.T, n int, deadline time.Duration) {
 	t.Helper()
 	endAt := time.Now().Add(deadline)
@@ -68,7 +49,6 @@ func (c *capturedNudge) awaitNudge(t *testing.T, n int, deadline time.Duration) 
 	}
 }
 
-// hasTarget checks whether a pane target was nudged.
 func (c *capturedNudge) hasTarget(target string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -80,7 +60,6 @@ func (c *capturedNudge) hasTarget(target string) bool {
 	return false
 }
 
-// capturedComms captures EmitAgentMessage calls.
 type capturedComms struct {
 	mu   sync.Mutex
 	msgs []core.AgentMessagePayload
@@ -93,7 +72,6 @@ func (c *capturedComms) EmitAgentMessage(_ context.Context, p core.AgentMessageP
 	return core.EventID{}, nil
 }
 
-// hasMsg checks whether a park message to the given agent was captured.
 func (c *capturedComms) hasMsg(to, topic string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -105,10 +83,6 @@ func (c *capturedComms) hasMsg(to, topic string) bool {
 	return false
 }
 
-// --- helpers ---
-
-// newTestQuiesceArbiter creates a QuiesceArbiter wired for unit testing.
-// Returns the arbiter, the nudge recorder, and the comms recorder.
 func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *queuewiring.QueueStore, poll, maxSleep time.Duration) (*QuiesceArbiter, *capturedNudge, *capturedComms) {
 	t.Helper()
 	nudges := &capturedNudge{}
@@ -126,7 +100,6 @@ func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *queuewiring.Queu
 	return arbiter, nudges, comms
 }
 
-// mustEmitEpicCompleted emits an epic_completed event directly onto the arbiter's handler.
 func mustEmitEpicCompleted(t *testing.T, arbiter *QuiesceArbiter) {
 	t.Helper()
 	pl := core.EpicCompletedPayload{
@@ -146,7 +119,6 @@ func mustEmitEpicCompleted(t *testing.T, arbiter *QuiesceArbiter) {
 	}
 }
 
-// mustEmitAgentMessage emits an agent_message event directly onto the arbiter's handler.
 func mustEmitAgentMessage(t *testing.T, arbiter *QuiesceArbiter, from, to string) {
 	t.Helper()
 	pl := core.AgentMessagePayload{From: from, To: to, Topic: "test"}
@@ -163,14 +135,11 @@ func mustEmitAgentMessage(t *testing.T, arbiter *QuiesceArbiter, from, to string
 	}
 }
 
-// forceSleepRecord injects a sleep record directly into the arbiter for test setup.
 func forceSleepRecord(arbiter *QuiesceArbiter, rec sessionSleepRecord) {
 	arbiter.mu.Lock()
 	arbiter.sleeping[rec.agentName] = rec
 	arbiter.mu.Unlock()
 }
-
-// --- tests ---
 
 // TestQuiesceArbiterSubscribeNoError ensures Subscribe returns no error against
 // a real eventbus (pre-seal).
@@ -189,7 +158,6 @@ func TestQuiesceArbiterEpicCompletedWakesCaptain(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
-	// Inject a sleeping captain record.
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
 		paneTarget: captainPane,
@@ -197,21 +165,17 @@ func TestQuiesceArbiterEpicCompletedWakesCaptain(t *testing.T) {
 		sleptAt:    time.Now(),
 	})
 
-	// Emit an epic_completed event.
 	mustEmitEpicCompleted(t, arbiter)
 
-	// Start the arbiter's run loop to drain wakeC.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	arbiter.Start(ctx)
 
-	// Wait for the nudge.
 	nudges.awaitNudge(t, 1, 2*time.Second)
 	if !nudges.hasTarget(captainPane) {
 		t.Errorf("captain pane %q was not nudged; all nudged panes: %v", captainPane, nudges.targets)
 	}
 
-	// Captain should be removed from sleeping map.
 	arbiter.mu.Lock()
 	_, still := arbiter.sleeping[captainAgentName]
 	arbiter.mu.Unlock()
@@ -258,14 +222,12 @@ func TestQuiesceArbiterAgentMessageToOtherDoesNotWakeCaptain(t *testing.T) {
 		sleptAt:    time.Now(),
 	})
 
-	// Message to a crew member, NOT to captain.
 	mustEmitAgentMessage(t, arbiter, captainAgentName, "paul")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	arbiter.Start(ctx)
 
-	// Give the arbiter time to process the event and check that no nudge fires.
 	time.Sleep(200 * time.Millisecond)
 	nudges.mu.Lock()
 	got := len(nudges.targets)
@@ -283,7 +245,6 @@ func TestQuiesceArbiterMaxSleepFailsafe(t *testing.T) {
 
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, 50*time.Millisecond, 100*time.Millisecond)
 
-	// Inject a captain sleep record with sleptAt in the past (already expired).
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
 		paneTarget: captainPane,
@@ -295,7 +256,6 @@ func TestQuiesceArbiterMaxSleepFailsafe(t *testing.T) {
 	defer cancel()
 	arbiter.Start(ctx)
 
-	// The first tick should fire within 50 ms (poll interval) and auto-wake the captain.
 	nudges.awaitNudge(t, 1, 2*time.Second)
 	if !nudges.hasTarget(captainPane) {
 		t.Errorf("failsafe did not nudge captain pane %q; got %v", captainPane, nudges.targets)
@@ -311,17 +271,13 @@ func TestQuiesceArbiterSleepMarkerWrittenAndCleared(t *testing.T) {
 
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
-	// Park the captain directly.
 	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane, SleepSourceCaptain, SleepLevelDrain)
 
-	// Marker file should exist.
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping."+sessionID)
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Fatalf("sleep marker %q not created after parkSession", markerPath)
 	}
 
-	// Now force a sleep record (parkSession may have set it, but let's also ensure
-	// the map is populated for the wake path).
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
 		paneTarget: captainPane,
@@ -334,7 +290,6 @@ func TestQuiesceArbiterSleepMarkerWrittenAndCleared(t *testing.T) {
 	arbiter.Start(ctx)
 	nudges.awaitNudge(t, 1, 2*time.Second)
 
-	// Marker file should be gone.
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Errorf("sleep marker %q still exists after wake", markerPath)
 	}
@@ -346,7 +301,6 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 	crewPane := "harmonik-test0000-paul:hk-crew-paul.0"
 	captainPane := "harmonik-test0000-captain:0.0"
 
-	// Build a QueueStore with a named queue that has a pending item.
 	qs := queuewiring.NewQueueStore()
 	q := &queue.Queue{
 		SchemaVersion: 1,
@@ -359,15 +313,10 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 			},
 		},
 	}
-	// SetQueueByName also fires the wake channel, which setQueueForTest (the
-	// in-package helper this replaced when QueueStore moved to
-	// internal/queuewiring, P2 E3a) deliberately did not. Harmless here: this
-	// test drives arbiter.handleQueueSubmit directly and never reads WakeCh.
 	qs.SetQueueByName("crew-paul-queue", q)
 
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), qs, 5*time.Second, time.Hour)
 
-	// Inject a sleeping captain and a sleeping crew record.
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
 		paneTarget: captainPane,
@@ -382,11 +331,8 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 		sleptAt:    time.Now(),
 	})
 
-	// Call handleQueueSubmit directly (crew registry is empty in this unit test;
-	// the routing falls back to matching sleeping records by queueName).
 	arbiter.handleQueueSubmit(context.Background())
 
-	// Only the crew should be nudged, not the captain.
 	if !nudges.hasTarget(crewPane) {
 		t.Errorf("crew pane %q not nudged; got %v", crewPane, nudges.targets)
 	}
@@ -408,7 +354,6 @@ func TestQuiesceArbiterDuplicateWakeIsIdempotent(t *testing.T) {
 		sleptAt:    time.Now(),
 	})
 
-	// Execute two wake signals for captain.
 	arbiter.executeWake(context.Background(), wakeSignal{captainWake: true, reason: "first"})
 	arbiter.executeWake(context.Background(), wakeSignal{captainWake: true, reason: "second"})
 
@@ -459,7 +404,6 @@ func TestQuiesceArbiterParkIdempotent(t *testing.T) {
 func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	projectDir := t.TempDir()
 
-	// Write a minimal crew record so crew.List returns it.
 	if err := crew.Write(projectDir, crew.Record{
 		Name:      "paul",
 		SessionID: "paul-session-123",
@@ -471,10 +415,8 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 
 	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
-	// Park all sessions (drain scenario).
 	arbiter.parkAllSessions(context.Background(), SleepSourceCaptain, SleepLevelDrain)
 
-	// Paul should be sleeping.
 	arbiter.mu.Lock()
 	_, paulSleeping := arbiter.sleeping["paul"]
 	arbiter.mu.Unlock()
@@ -482,7 +424,6 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 		t.Error("paul not sleeping after parkAllSessions")
 	}
 
-	// Park comms should have been sent to paul.
 	time.Sleep(50 * time.Millisecond)
 	if !comms.hasMsg("paul", "park") {
 		comms.mu.Lock()
@@ -490,7 +431,6 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 		comms.mu.Unlock()
 	}
 
-	// Sleep marker file should exist for paul.
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.paul-session-123")
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Errorf("sleep marker for paul not found at %q", markerPath)
@@ -504,8 +444,6 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 func TestReconcileOrphanedMarkers(t *testing.T) {
 	projectDir := t.TempDir()
 
-	// Simulate a crew session that was parked, then the daemon died: write the
-	// crew record + an orphaned marker parked well in the past.
 	if err := crew.Write(projectDir, crew.Record{
 		Name:      "paul",
 		SessionID: "paul-orphan-sid",
@@ -525,7 +463,6 @@ func TestReconcileOrphanedMarkers(t *testing.T) {
 		t.Fatalf("write orphan marker: %v", err)
 	}
 
-	// Fresh arbiter (the restarted daemon): nothing in the in-memory map yet.
 	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 	arbiter.reconcileOrphanedMarkers(t.Context())
 
@@ -547,7 +484,6 @@ func TestReconcileOrphanedMarkers(t *testing.T) {
 	if rec.source != SleepSourceOperator || rec.level != SleepLevelHandoff {
 		t.Errorf("source/level: got %q/%q want operator/L2", rec.source, rec.level)
 	}
-	// sleptAt must be the ORIGINAL park time (~3h ago), not now.
 	if time.Since(rec.sleptAt) < 2*time.Hour {
 		t.Errorf("sleptAt not seeded from parked_at; since=%v (want ~3h)", time.Since(rec.sleptAt))
 	}
@@ -571,7 +507,6 @@ func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// Parked 1 minute ago; failsafe ceiling is 100ms → immediately expired.
 	parkedAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	markerPath := filepath.Join(dir, ".sleeping.paul-orphan-sid")
 	if err := os.WriteFile(markerPath,
@@ -588,7 +523,6 @@ func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
 	if !nudges.hasTarget("harmonik-abc123-paul:hk-crew-paul.0") {
 		t.Errorf("failsafe did not nudge the reconciled crew pane; got %v", nudges.targets)
 	}
-	// Marker file must be removed after the failsafe wake.
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Errorf("orphan marker %q still present after failsafe wake", markerPath)
 	}
@@ -602,17 +536,12 @@ func TestResolveCaptainTargetLastResort(t *testing.T) {
 	projectDir := t.TempDir()
 	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
-	// Guard against a stray live "captain" tmux session on the dev box, which
-	// would legitimately make resolution return the bare name instead.
 	if tmuxHasSession(t.Context(), captainAgentName) {
 		t.Skip("a live bare 'captain' tmux session exists; last-resort path not exercised")
 	}
 
 	got := arbiter.resolveCaptainTarget(t.Context())
 
-	// In a no-tmux test environment, neither the convention session nor the bare
-	// "captain" session is live, so we expect the last-resort convention form.
-	// It must target the AGENT window's active pane (":agent"), not ":0.0".
 	want := keeper.HarmonikSessionName(projectDir, captainAgentName) + ":agent"
 	if got != want {
 		t.Errorf("resolveCaptainTarget last-resort: got %q want %q", got, want)
@@ -654,7 +583,6 @@ func TestQuiesceArbiterAgentMessageToWatchWakesWatch(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
-	// Park both watch and captain.
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  watchAgentName,
 		paneTarget: watchPane,
@@ -668,7 +596,6 @@ func TestQuiesceArbiterAgentMessageToWatchWakesWatch(t *testing.T) {
 		sleptAt:    time.Now(),
 	})
 
-	// An agent_message directed at "watch" (not captain) should wake the watch.
 	mustEmitAgentMessage(t, arbiter, "paul", watchAgentName)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -677,16 +604,13 @@ func TestQuiesceArbiterAgentMessageToWatchWakesWatch(t *testing.T) {
 
 	nudges.awaitNudge(t, 1, 2*time.Second)
 
-	// Watch pane must be nudged.
 	if !nudges.hasTarget(watchPane) {
 		t.Errorf("watch pane %q not nudged; got %v", watchPane, nudges.targets)
 	}
-	// Captain must NOT be nudged.
 	if nudges.hasTarget(captainPane) {
 		t.Errorf("captain pane %q should NOT be nudged by a message to watch; got %v", captainPane, nudges.targets)
 	}
 
-	// Watch should be removed from sleeping map; captain should remain sleeping.
 	arbiter.mu.Lock()
 	_, watchStillSleeping := arbiter.sleeping[watchAgentName]
 	_, captainStillSleeping := arbiter.sleeping[captainAgentName]

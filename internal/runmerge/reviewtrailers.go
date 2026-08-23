@@ -1,17 +1,5 @@
 package runmerge
 
-// reviewtrailers_hkdyim.go — review verdict commit-trailer injection (hk-dyim).
-//
-// The daemon review loop fires and APPROVEs a bead, but the merge commit that
-// lands on main carries no Reviewed-By / Review-Verdict trailers — the review
-// audit trail never reaches git history. This file implements the fix:
-// AppendReviewTrailersToHEAD amends the HEAD commit in the implementer's
-// worktree (before the FF merge) to embed the verdict as git trailers, matching
-// the format documented in the agent-reviewer skill contract (SKILL.md §"How the
-// verdict lands in git").
-//
-// Bead: hk-dyim.
-
 import (
 	"context"
 	"encoding/json"
@@ -23,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// reviewedByTrailerValue is the fixed Reviewed-By: trailer value per the
-// agent-reviewer skill contract (SKILL.md §"How the verdict lands in git").
 const reviewedByTrailerValue = "agent-reviewer"
 
 // AppendReviewTrailersToHEAD amends the HEAD commit in wtPath to add
@@ -50,9 +36,6 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 		return nil
 	}
 
-	// Marshal the full verdict struct as JSON for the Review-Verdict trailer.
-	// Use the ReviewVerdict struct directly so the JSON fields match the
-	// agent-reviewer schema v1 exactly (same tags as workspace.ReviewVerdict).
 	verdictJSON, err := json.Marshal(verdict)
 	if err != nil {
 		return fmt.Errorf("AppendReviewTrailersToHEAD: marshal verdict: %w", err)
@@ -61,7 +44,6 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	reviewedByLine := "Reviewed-By: " + reviewedByTrailerValue
 	reviewVerdictLine := "Review-Verdict: " + string(verdictJSON)
 
-	// Read the current HEAD commit message.
 	logCmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
 	logCmd.Dir = wtPath
 	out, err := logCmd.Output()
@@ -70,22 +52,17 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	}
 	existing := strings.TrimRight(string(out), "\n")
 
-	// Idempotency: skip if both trailers are already present.
 	hasReviewedBy := shared.ContainsExactLine(existing, reviewedByLine)
 	hasReviewVerdict := shared.ContainsExactLine(existing, reviewVerdictLine)
 	if hasReviewedBy && hasReviewVerdict {
 		return nil
 	}
 
-	// Append missing trailers. Trailers must be separated from the body by a
-	// blank line (git trailer convention). The two trailer lines are adjacent.
 	var newMsg string
 	switch {
 	case !hasReviewedBy && !hasReviewVerdict:
-		// No trailer block yet: open one with the blank-line separator.
 		newMsg = existing + "\n\n" + reviewedByLine + "\n" + reviewVerdictLine
 	case !hasReviewedBy:
-		// A trailer block already ends the message; extend it without a gap.
 		newMsg = existing + "\n" + reviewedByLine
 	default:
 		newMsg = existing + "\n" + reviewVerdictLine

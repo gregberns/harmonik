@@ -1,25 +1,11 @@
 package core
 
-// Property tests for the eight Valid() methods in agentlifecyclepayloads_gjyks.go.
-//
-// Naming: TestProp_* per testing.md §Decisions #10.
-// File:   *_prop_test.go per testing.md §Property layer.
-//
-// Each test uses rapid to draw valid values for all fields NOT under
-// falsification, then verifies the expected Valid() result.
-//
-// Bead ref: hk-z02yj (part of hk-j3hrn core coverage uplift).
-
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// ---------------------------------------------------------------------------
-// AgentCompletedPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_AgentCompletedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -91,10 +77,6 @@ func TestProp_AgentCompletedPayload_Valid_RejectsEmptyOutcomeRef(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// AgentHeartbeatPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_AgentHeartbeatPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := AgentHeartbeatPayload{
@@ -130,10 +112,6 @@ func TestProp_AgentHeartbeatPayload_Valid_RejectsEmptyPhase(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// AgentWarningSilentHangPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_AgentWarningSilentHangPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -210,10 +188,6 @@ func TestProp_AgentWarningSilentHangPayload_Valid_RejectsEmptyFSMState(t *testin
 	})
 }
 
-// ---------------------------------------------------------------------------
-// AgentResumedAfterWarningPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_AgentResumedAfterWarningPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := AgentResumedAfterWarningPayload{
@@ -269,10 +243,6 @@ func TestProp_AgentResumedAfterWarningPayload_Valid_RejectsNegativeWarningDurati
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// AgentSoftTerminatingPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_AgentSoftTerminatingPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -330,10 +300,6 @@ func TestProp_AgentSoftTerminatingPayload_Valid_RejectsEmptyStartedAt(t *testing
 	})
 }
 
-// ---------------------------------------------------------------------------
-// AgentHardTerminatingPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_AgentHardTerminatingPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := AgentHardTerminatingPayload{
@@ -390,10 +356,6 @@ func TestProp_AgentHardTerminatingPayload_Valid_RejectsEmptyStartedAt(t *testing
 	})
 }
 
-// ---------------------------------------------------------------------------
-// BeadClosedPayload
-// ---------------------------------------------------------------------------
-
 func TestProp_BeadClosedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := BeadClosedPayload{
@@ -429,10 +391,6 @@ func TestProp_BeadClosedPayload_Valid_RejectsEmptyBeadID(t *testing.T) {
 		}
 	})
 }
-
-// ---------------------------------------------------------------------------
-// WorkingTreeRefreshFailedPayload
-// ---------------------------------------------------------------------------
 
 func TestProp_WorkingTreeRefreshFailedPayload_Valid_AcceptsFullPayload(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {

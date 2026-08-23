@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-// export_test.go — test-only helpers that expose internal Cycler state to the
-// keeper_test package. Only compiled during `go test`. Refs: hk-wjzf.
-
 // ResolveCyclerDefaultsForTest returns a CyclerConfig whose zero-valued numeric
 // fields have been replaced by their production defaults (CyclerConfig.applyDefaults,
 // sourced from thresholds.go). It lets the external keeper_test suite PIN the

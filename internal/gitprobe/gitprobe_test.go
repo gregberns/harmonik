@@ -1,19 +1,5 @@
 package gitprobe_test
 
-// gitprobe_test.go — unit tests for the shared git probes.
-//
-// The two ResolveWorktreeHEADVia cases moved here verbatim-in-substance from
-// internal/daemon/pasteinject_hkrsb9_test.go (hk-rs-b9-liveness-1m9n) when P2
-// unit E1a lifted the probes out of the daemon: a moved function's tests move
-// with it, or the new package ships untested and the old package keeps testing
-// code it no longer owns.
-//
-// The nil-runner delegation and RunnerIsLocalFS cases are NEW. Both behaviours
-// were load-bearing before the move — the nil path is the NFR7 byte-identical
-// local guarantee, and RunnerIsLocalFS decides whether remote worktree paths get
-// stat-ed on the wrong box — and neither had a direct test; daemon tests only
-// referenced them in comments.
-
 import (
 	"context"
 	"os"
@@ -26,7 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// initGitRepo makes a temp git repo with one commit and returns its path and HEAD.
 func initGitRepo(t *testing.T) (repoPath, headSHA string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -69,8 +54,6 @@ func TestResolveWorktreeHEADVia_RealGit(t *testing.T) {
 	if got != wantSHA {
 		t.Errorf("HEAD = %q, want %q", got, wantSHA)
 	}
-	// The probe must use `git -C <path> rev-parse HEAD` — the -C form is what
-	// makes the same argv work over an SSH runner, where cmd.Dir means nothing.
 	if len(rr.Calls) < 1 || rr.Calls[0].Name != "git" {
 		t.Fatalf("expected a git call, got %v", rr.Calls)
 	}
@@ -84,8 +67,6 @@ func TestResolveWorktreeHEADVia_SSHArgv(t *testing.T) {
 	t.Parallel()
 	ssh := tmux.SSHRunner{Host: "worker@remote.internal"}
 	rr := &tmux.RecordingRunner{CmdFunc: ssh.Command}
-	// The probe itself fails (no real ssh host) — only the recorded argv is under
-	// test, so the error is expected and reported rather than asserted on.
 	if _, err := gitprobe.ResolveWorktreeHEADVia(context.Background(), rr, "/remote/path/wt"); err != nil {
 		t.Logf("ssh probe failed as expected against an unreachable host: %v", err)
 	}
@@ -234,8 +215,6 @@ func TestRunnerIsLocalFS(t *testing.T) {
 func TestIsAncestor_ArgvFormIsBare(t *testing.T) {
 	repoPath, headSHA := initGitRepo(t)
 
-	// A PATH shim that records argv[1] of every git call, then delegates to the
-	// real git so IsAncestor still returns a true answer.
 	realGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Skipf("git not on PATH: %v", err)

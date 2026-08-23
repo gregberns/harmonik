@@ -1,13 +1,5 @@
 package keepertest_test
 
-// L0 unit tier — pure keeper.Step transition tables + property tests
-// (T10; RS-017 L0; measurement-design §3 "L0 unit" row).
-//
-// Everything here is PURE: the reactor is driven directly (or via
-// substrate.SyntheticSource + substrate.FakeEffector + Cycle.Run), no IO, no
-// wall clock, no tokens. Timers are events (SK-010), so timer edges are just
-// TimerFired inputs.
-
 import (
 	"bytes"
 	"context"
@@ -23,15 +15,12 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// l0Base is the fixed virtual epoch for L0 tables.
 var l0Base = time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
 
-// passGates is the all-gates-pass snapshot.
 func passGates() keeper.GateSnapshot {
 	return keeper.GateSnapshot{Managed: true, CrispIdle: true}
 }
 
-// gaugeTick builds a cycle-entry GaugeTick event.
 func gaugeTick(cycleID, sid string, pct float64, gates keeper.GateSnapshot, at time.Time) keeper.Event {
 	return keeper.Event{
 		Kind:    keeper.EvGaugeTick,
@@ -42,9 +31,6 @@ func gaugeTick(cycleID, sid string, pct float64, gates keeper.GateSnapshot, at t
 	}
 }
 
-// runSynthetic drives the reactor over a fixed event slice via the substrate
-// doubles (SyntheticSource + FakeEffector + Run) and returns the recorded
-// actions plus the reactor for state inspection.
 func runSynthetic(t *testing.T, cfg *keeper.CyclerConfig, events []keeper.Event) ([]keeper.Action, *keeper.Cycle) {
 	t.Helper()
 	cyc := keeper.NewCycle(cfg)
@@ -55,8 +41,6 @@ func runSynthetic(t *testing.T, cfg *keeper.CyclerConfig, events []keeper.Event)
 	}
 	return eff.Actions(), cyc
 }
-
-// ─── Gate-ladder table ───────────────────────────────────────────────────────
 
 // TestL0_GateLadderTable walks the MaybeRun gate ladder branch by branch
 // (SK-011): each failing gate must leave the machine Idle and start no cycle.
@@ -138,8 +122,6 @@ func TestL0_GateLadderTable(t *testing.T) {
 	}
 }
 
-// ─── Path tables ─────────────────────────────────────────────────────────────
-
 // TestL0_CleanCycleTable is the full clean-complete transition table:
 // entry → nonce → model-done → SID flip → brief → Complete.
 func TestL0_CleanCycleTable(t *testing.T) {
@@ -171,14 +153,12 @@ func TestL0_CleanCycleTable(t *testing.T) {
 		}
 	}
 
-	// Injection sequence: escape → handoff cmd → clear → brief, in order.
 	var injects []keeper.ActionKind
 	for _, a := range actions {
 		switch a.Kind {
 		case keeper.ActSendEscape, keeper.ActInjectHandoffCmd, keeper.ActInjectClear, keeper.ActInjectBrief:
 			injects = append(injects, a.Kind)
 		default:
-			// other action kinds are not part of the injection sequence
 		}
 	}
 	wantInjects := []keeper.ActionKind{
@@ -220,8 +200,6 @@ func TestL0_MissingHandoffSuspendsTable(t *testing.T) {
 
 	assertOutcome(t, actions, "cyc-l0-pending", outcomeParkedPending)
 	types := emittedTypes(actions)
-	// No restart authority was ever granted, so the destructive tail must not
-	// have started: no handoff_written, and therefore nothing owes a terminal.
 	if countType(types, core.EventTypeSessionKeeperHandoffWritten) != 0 {
 		t.Fatalf("handoff_written on a path where no handoff arrived: %v", types)
 	}
@@ -414,8 +392,6 @@ func TestL0_SettleRetryTable(t *testing.T) {
 			attempts = append(attempts, p.Attempt)
 		}
 	}
-	// Entry attempt 1, then re-injects at settle firings 1 and 2 (attempts 2, 3);
-	// the third firing finds ClearAttempt >= retries and degrades instead.
 	if clears != 3 {
 		t.Fatalf("InjectClear count = %d, want 3 (1 entry + 2 defensive re-injects)", clears)
 	}
@@ -468,8 +444,6 @@ func TestL0_ModelDoneTimeoutFailOpen(t *testing.T) {
 	}
 }
 
-// ─── Stimulus-codec golden round-trip ────────────────────────────────────────
-
 // TestL0_StimulusCodecRoundTrip encodes a synthesized schedule and decodes it
 // back through the Twin (keeperCodec.DecodeLine): the decoded stream must be
 // byte-equivalent to the source events (golden-decode; measurement-design §3
@@ -515,8 +489,6 @@ func TestL0_StimulusCodecRoundTrip(t *testing.T) {
 		}
 	}
 }
-
-// ─── Property tests (SR3/SR4/SR6/SR7 as pure postconditions) ─────────────────
 
 // TestL0_Properties_SRPostconditions feeds seeded-random event sequences to
 // the pure reactor and asserts the SR invariants as postconditions over the
@@ -583,24 +555,6 @@ func TestL0_Properties_SRPostconditions(t *testing.T) {
 	}
 }
 
-// assertSRPostconditions checks the pure-order SR invariants over one emitted
-// action stream. It is keepertest's OWN SR7 — deliberately independent of the
-// internal/replay checker of the same name, so the two cannot agree by sharing
-// a bug.
-//
-// A park closes the open slot, for the same reason internal/replay's SR7 does:
-// both park paths return Phase to Idle, and Idle is the only phase the gate
-// ladder starts a cycle from, so the next handoff_started after a park is a
-// legitimate new cycle and not an overlap.
-//
-// KNOWN GAP, reported rather than papered over: the generator below never
-// emits EvPendingHandoffSeen, so it never produces the SK-025 RESUME — park,
-// then the same cycle id proceeds to handoff_written and cycle_complete. On
-// that stream this function would read the complete as "terminal with no open
-// cycle" and fail wrongly. Closing the slot on park is therefore correct for
-// what this generator produces and untested for what it does not. Fixing it
-// means teaching the generator to resume, which is a coverage change, not part
-// of the park migration.
 func assertSRPostconditions(t *testing.T, seq int, actions []keeper.Action) {
 	t.Helper()
 	open := false // a cycle is open (handoff_started seen, no terminal yet) — SR7
@@ -652,17 +606,11 @@ func assertSRPostconditions(t *testing.T, seq int, actions []keeper.Action) {
 			if !open {
 				t.Fatalf("seq %d action %d: cycle_parked with no open cycle", seq, i)
 			}
-			// SK-INV-005 anchor: a park always happens BEFORE restart
-			// authority. Both park paths leave AwaitingHandoff, which is the
-			// phase before handoff_written. A park after authority would mean
-			// the machine walked away from a destructive tail it owed a
-			// terminal for.
 			if sawWritten {
 				t.Fatalf("seq %d action %d: cycle_parked after handoff_written — an authorized restart owes a terminal (SK-INV-005)", seq, i)
 			}
 			open = false
 		default:
-			// other event types carry no SR invariant checked here
 		}
 	}
 }

@@ -1,22 +1,5 @@
 package daemon_test
 
-// hk_ytzj2_default_harness_wiring_test.go — verifies that Config.DefaultHarness
-// is correctly threaded into the harness-selection precedence walk (hk-ytzj2).
-//
-// # What this file proves
-//
-//  1. TestRuntimeParams.DefaultHarness is carried through ExportedTestRuntime
-//     into testRuntime.defaultHarness so the dispatch path passes it as
-//     resolveHarness's tier-4 global default.
-//
-//  2. The embedded standard-bead.dot REVIEW node carries harness="claude-code"
-//     (tier-3 pin) so the reviewer stays on Claude even when the global default
-//     (tier 4) is pi — dodging the Pi-reviewer pane seed-paste bug (hk-z4nif).
-//
-// Helper prefix: hkytzj2 (per implementer-protocol.md §Helper-prefix discipline).
-//
-// Bead: hk-ytzj2.
-
 import (
 	"testing"
 

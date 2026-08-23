@@ -1,29 +1,5 @@
 package handler
 
-// sessioncleanup_test.go — coverage for the error paths that the
-// "stop losing the subprocess exit error" change newly propagates, and for the
-// file-descriptor cleanup those paths owe.
-//
-// Helper prefix: sessionCleanupFixture (per implementer-protocol.md
-// §Helper-prefix discipline).
-//
-// Three seams are exercised here:
-//
-//   - abandonStartedSession — the cleanup newSessionWithIDs runs when cmd.Start
-//     has already succeeded but construction still fails (a failing close of the
-//     parent write ends, or a rejected Spawning→Initializing transition). Those
-//     returns originally reaped the child but left the stdin write end and the
-//     stdout/stderr read ends open, leaking three descriptors per occurrence.
-//   - bridgeStdout — a mid-stream read failure must reach the reader as an
-//     error, not as a clean EOF that reads like a well-formed but truncated
-//     progress stream.
-//   - newSubstrateAdapter — now returns an error rather than silently handing
-//     back an adapter whose lifecycle Machine is in the wrong state.
-//
-// These tests are in package handler (not handler_test) because every seam
-// above is unexported; the failure conditions themselves are defect-only and
-// cannot be provoked through the exported constructor.
-
 import (
 	"errors"
 	"fmt"
@@ -38,8 +14,6 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
-// sessionCleanupFixturePipes mirrors the descriptor set newSessionWithIDs owns
-// at the moment its two post-Start failure paths return.
 type sessionCleanupFixturePipes struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
@@ -47,16 +21,9 @@ type sessionCleanupFixturePipes struct {
 	stderrR *os.File
 }
 
-// sessionCleanupFixtureStartedChild builds and starts a long-lived child wired
-// exactly the way newSessionWithIDs wires one — cmd.StdinPipe plus two
-// self-owned os.Pipe pairs whose write ends are handed to the child and then
-// closed in the parent. It returns the three parent-side handles that
-// abandonStartedSession is responsible for.
 func sessionCleanupFixtureStartedChild(t *testing.T) sessionCleanupFixturePipes {
 	t.Helper()
 
-	// A bare long-lived binary, no shell: the fixture only needs a child that
-	// stays alive until abandonStartedSession reaps it.
 	cmd := exec.CommandContext(t.Context(), "sleep", "30")
 
 	stdin, err := cmd.StdinPipe()
@@ -77,8 +44,6 @@ func sessionCleanupFixtureStartedChild(t *testing.T) sessionCleanupFixturePipes 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("cmd.Start: %v", err)
 	}
-	// The constructor closes the parent write ends before it can reach either
-	// abandonStartedSession call site, so the fixture does too.
 	if err := closeAll(stdoutW, stderrW); err != nil {
 		t.Fatalf("close parent write ends: %v", err)
 	}
@@ -86,12 +51,6 @@ func sessionCleanupFixtureStartedChild(t *testing.T) sessionCleanupFixturePipes 
 	return sessionCleanupFixturePipes{cmd: cmd, stdin: stdin, stdoutR: stdoutR, stderrR: stderrR}
 }
 
-// sessionCleanupFixtureOpenFDs counts the descriptors this process currently
-// holds by fstat-ing every slot below fdScanLimit: a slot that stats is open.
-// Counting is used rather than the cheaper "lowest descriptor open(2) hands out
-// next" probe because the test binary's descriptor table has holes, and a probe
-// that lands in a hole reports no change however many descriptors leaked above
-// it.
 func sessionCleanupFixtureOpenFDs(t *testing.T) int {
 	t.Helper()
 	open := 0
@@ -104,14 +63,8 @@ func sessionCleanupFixtureOpenFDs(t *testing.T) int {
 	return open
 }
 
-// fdScanLimit bounds the descriptor scan. Nothing in this file opens anything
-// like this many descriptors, and fstat on an unused slot is a cheap EBADF, so a
-// fixed ceiling is preferable to reading RLIMIT_NOFILE (which can be effectively
-// unbounded).
 const fdScanLimit = 4096
 
-// sessionCleanupFixtureAssertClosed asserts that a handle is no longer usable,
-// i.e. that its descriptor was released rather than leaked.
 func sessionCleanupFixtureAssertClosed(t *testing.T, name string, op func() error) {
 	t.Helper()
 	err := op()
@@ -150,7 +103,6 @@ func TestAbandonStartedSession_ClosesEveryParentHandle(t *testing.T) {
 		return err
 	})
 
-	// The child must also have been reaped, not merely signalled.
 	if p.cmd.ProcessState == nil {
 		t.Error("abandoned child was not reaped: cmd.ProcessState is nil")
 	}
@@ -166,8 +118,6 @@ func TestAbandonStartedSession_ClosesEveryParentHandle(t *testing.T) {
 func TestAbandonStartedSession_LeaksNoDescriptors(t *testing.T) {
 	const iterations = 15
 
-	// Warm-up iteration first: the first child spawn can allocate descriptors
-	// (runtime pipes for os/exec, /dev/null, …) that persist for the process.
 	warm := sessionCleanupFixtureStartedChild(t)
 	if err := abandonStartedSession(warm.cmd, warm.stdin, warm.stdoutR, warm.stderrR, nil); err != nil {
 		t.Fatalf("abandonStartedSession (warm-up): unexpected cleanup error: %v", err)
@@ -185,8 +135,6 @@ func TestAbandonStartedSession_LeaksNoDescriptors(t *testing.T) {
 	after := sessionCleanupFixtureOpenFDs(t)
 	runtime.KeepAlive(retained)
 
-	// Slack absorbs unrelated runtime descriptors; leaking the three handles per
-	// iteration adds ~45.
 	const slack = 4
 	if after-before > slack {
 		t.Errorf("open descriptors grew by %d over %d abandoned sessions (before=%d after=%d) — the construction path is leaking handles",
@@ -241,7 +189,6 @@ func TestCloseAll_JoinsFailuresAndSkipsNil(t *testing.T) {
 	}
 }
 
-// sessionCleanupFixtureCloser is an io.Closer returning a fixed error.
 type sessionCleanupFixtureCloser struct{ err error }
 
 func (c sessionCleanupFixtureCloser) Close() error { return c.err }
@@ -264,8 +211,6 @@ func TestBridgeStdout_ReadFailureReachesReader(t *testing.T) {
 
 	bridged := bridgeStdout(pr)
 
-	// The OS pipe buffer absorbs this write immediately; the bridge's io.Copy
-	// picks it up and blocks writing it into the io.Pipe until the read below.
 	if _, err := pw.WriteString("partial"); err != nil {
 		t.Fatalf("writing the first chunk into the bridge source: %v", err)
 	}
@@ -278,7 +223,6 @@ func TestBridgeStdout_ReadFailureReachesReader(t *testing.T) {
 		t.Fatalf("first chunk = %q, want %q", buf, "partial")
 	}
 
-	// Break the source mid-stream: the bridge's io.Copy read now fails.
 	if err := pr.Close(); err != nil {
 		t.Fatalf("closing the bridge source: %v", err)
 	}

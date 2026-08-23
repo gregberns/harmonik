@@ -1,13 +1,5 @@
 package daemon
 
-// dashboardgate.go — the forcing gate (hk-xg6rw): a stale dashboard.json
-// blocks new dispatch to captain-curated queues while never touching
-// in-flight runs, the mailbox, reconcile, or any daemon-core path.
-//
-// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4 (recommendation
-// A+B hybrid) + §6 item 6.
-// Bead ref: hk-xg6rw.
-
 import (
 	"context"
 	"encoding/json"
@@ -26,19 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// dashboardGate is the forcing gate's per-loop mutable state, owned solely by
-// the runWorkLoop goroutine — no locking.
-//
-// A nil *dashboardGate is the OFF state: `subsystems.dashboard_gate.enabled:
-// false` means this is never constructed, the loop never evaluates the gate, and
-// selectNextQueue is handed a nil blocked-queue set. Every method below tolerates
-// a nil receiver, so the nil-guard question is answered once here rather than at
-// each call site in the loop.
-//
-// This gate is the ONLY route by which internal/dashboard reaches package daemon,
-// and the only reason the core dispatch loop reads the captain's lanes.json — so
-// it is exactly the kind of non-core entanglement CHARTER §4 says must be absent
-// when switched off, not merely inert.
 type dashboardGate struct {
 	// lastEval rate-limits evaluation to dashboardGateEvalInterval. The gate
 	// reads three JSON files plus config.yaml, so it must not run every tick.
@@ -55,12 +34,6 @@ type dashboardGate struct {
 	logW io.Writer
 }
 
-// newDashboardGateIfEnabled builds the forcing gate's per-loop state, or returns
-// nil when `subsystems.dashboard_gate.enabled: false` partitions it away.
-//
-// The partition is announced on logW: a silent partition is indistinguishable
-// from a config that did not take effect. An absent subsystems: block enables the
-// gate, so a deployment without one behaves exactly as it did before.
 func newDashboardGateIfEnabled(pc projectconfig.ProjectConfig, logW io.Writer) *dashboardGate {
 	if logW == nil {
 		logW = os.Stderr
@@ -73,9 +46,6 @@ func newDashboardGateIfEnabled(pc projectconfig.ProjectConfig, logW io.Writer) *
 	return &dashboardGate{logW: logW}
 }
 
-// blockedQueueSet is the set of captain-curated queues currently withheld from
-// NEW item dispatch. Nil on an absent gate — nothing is withheld, which is the
-// same answer selectNextQueue already gets when the gate is untripped.
 func (g *dashboardGate) blockedQueueSet() map[string]bool {
 	if g == nil {
 		return nil
@@ -83,15 +53,6 @@ func (g *dashboardGate) blockedQueueSet() map[string]bool {
 	return g.blockedQueues
 }
 
-// tick re-evaluates the forcing gate if the rate limit has elapsed, updating the
-// blocked-queue set and emitting dashboard_stale / dashboard_refreshed on the
-// transition edge. No-op on a nil (absent) gate.
-//
-// Only NEW item dispatch on captain-curated queues is affected: in-flight runs,
-// the mailbox, reconcile, and every daemon-core path are untouched.
-//
-// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4.
-// Bead ref: hk-xg6rw.
 func (g *dashboardGate) tick(ctx context.Context, projectDir string, bus handlercontract.EventEmitter, now time.Time) {
 	if g == nil || now.Sub(g.lastEval) < dashboardGateEvalInterval {
 		return
@@ -100,8 +61,6 @@ func (g *dashboardGate) tick(ctx context.Context, projectDir string, bus handler
 
 	result, gateErr := evaluateDashboardGate(projectDir, now)
 	if gateErr != nil {
-		// Fail loud (the DESIGN §4 no-hardcoded-threshold mandate) but not fatal:
-		// the result already degrades to Blocked=true, the fail-safe direction.
 		fmt.Fprintf(g.logW, "daemon: workloop: dashboard gate: config error, failing closed: %v\n", gateErr) //nolint:errcheck // best-effort stderr status log
 	}
 	g.blockedQueues = result.BlockedQueues
@@ -137,7 +96,6 @@ func (g *dashboardGate) tick(ctx context.Context, projectDir string, bus handler
 	}
 }
 
-// dashboardGateResult is the outcome of one gate evaluation.
 type dashboardGateResult struct {
 	// Blocked reports whether the gate is currently tripped.
 	Blocked bool
@@ -155,16 +113,6 @@ type dashboardGateResult struct {
 	UpdatedAt    string
 }
 
-// evaluateDashboardGate reads the dashboard.max_staleness config, the
-// operator unlock override, and dashboard.json's freshness, and reports
-// whether the forcing gate should currently block new dispatch on
-// captain-curated queues (scoped via lanes.json).
-//
-// Degradation direction on error: a config error (dashboard: block present
-// but malformed/missing max_staleness) fails BLOCKING, never silently
-// disabled — per the DESIGN §4 no-hardcoded-threshold, fail-loud mandate. The
-// caller is expected to log the returned error loudly; it is not fatal to the
-// daemon (mirrors the disk_low / other tick-scoped gates).
 func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResult, error) {
 	if projectDir == "" {
 		return dashboardGateResult{}, nil
@@ -172,16 +120,9 @@ func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResul
 
 	cfg, cfgErr := digest.LoadDashboardGateConfig(projectDir)
 	if cfgErr != nil {
-		// BlockedQueues MUST be populated here, not left nil: selectNextQueue
-		// (workloop.go) gates dispatch off BlockedQueues alone, not off
-		// Blocked. A nil map on a config error would silently NOT force
-		// anything — exactly the fail-open gap the DESIGN §4 fail-loud
-		// mandate forbids.
 		return dashboardGateResult{Blocked: true, BlockedQueues: captainCuratedQueues(projectDir)}, cfgErr
 	}
 	if !cfg.Configured() {
-		// Operator has not opted into the dashboard: block at all — gate stays
-		// off rather than forcing every project to adopt it.
 		return dashboardGateResult{}, nil
 	}
 	if cfg.Unlock {
@@ -197,11 +138,7 @@ func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResul
 	var updatedAt time.Time
 	switch {
 	case errors.Is(readErr, dashboard.ErrNotFound):
-		// Never written: treat as maximally stale — the captain has not
-		// adopted the Tier-B mechanism at all yet (DESIGN §1).
 	case readErr != nil:
-		// Same fail-loud requirement as the cfgErr branch above: populate
-		// BlockedQueues so the dispatch gate actually engages.
 		return dashboardGateResult{Blocked: true, BlockedQueues: captainCuratedQueues(projectDir)}, readErr
 	default:
 		updatedAt = ds.Updated
@@ -227,12 +164,6 @@ func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResul
 	return result, nil
 }
 
-// captainCuratedQueues reads .harmonik/context/lanes.json and returns the set
-// of queue names referenced by any lane (DashLane.Queue) — the "captain-
-// curated lanes" the DESIGN §4 gate is scoped to. Returns nil when lanes.json
-// is absent or malformed: a missing/broken lanes.json fails OPEN on scoping
-// (nothing gated) rather than compounding into a second failure mode — only a
-// stale dashboard.json itself is the forcing signal.
 func captainCuratedQueues(projectDir string) map[string]bool {
 	path := filepath.Join(projectDir, lanesJSONPath)
 	data, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled projectDir

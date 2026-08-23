@@ -1,8 +1,5 @@
 package pi
 
-// endpointprobe_test.go — exercises ProbeBaseURL (hk-p06sq) through the real
-// dial entry point: a listener that accepts, and a port nothing listens on.
-
 import (
 	"context"
 	"net"

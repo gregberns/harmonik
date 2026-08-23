@@ -7,15 +7,7 @@ import (
 	"testing"
 )
 
-// sessionLogFixtureDetectGitignoreMisconfiguration checks the given gitignore
-// content for patterns that would exclude .harmonik/sessions/ from the git
-// index, which would silently break the preserve-in-merged-branch contract.
-//
-// Returns a non-nil error describing the misconfiguration if a problematic
-// pattern is detected.
 func sessionLogFixtureDetectGitignoreMisconfiguration(gitignoreContent string) error {
-	// Patterns that would accidentally exclude .harmonik/sessions/ from commits.
-	// This is an operator-observable misconfiguration per WM-030 and operator-nfr.md §4.9.
 	problematic := []string{
 		".harmonik/sessions/",
 		".harmonik/sessions",
@@ -80,33 +72,19 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 		t.Fatalf("WM-030: sidecar write: %v", err)
 	}
 
-	// Also write a session.log to simulate handler output.
 	sessionLog := filepath.Join(sessionDir, "session.log")
 	if err := os.WriteFile(sessionLog, []byte("session output\n"), 0o600); err != nil {
 		t.Fatalf("WM-030: WriteFile session.log: %v", err)
 	}
 
-	// Simulate "post-merge": the actual merge-back (hk-8mwo.68) integrates the
-	// task branch into the integration branch. The WM-030 durability contract
-	// states the session logs REMAIN in the merged branch tree. Here we simulate
-	// the post-merge state by leaving the files in place (no deletion) and
-	// asserting their continued presence.
-	//
-	// In a real merge-back the files would be part of the commit tree on the
-	// integration branch. This fixture verifies the durability shape: no code
-	// path that runs during merge removes the session logs.
-
-	// Assert: session directory still exists after the (simulated) merge.
 	if info, err := os.Stat(sessionDir); err != nil || !info.IsDir() {
 		t.Errorf("WM-030: session-log directory absent after post-merge state: %v", err)
 	}
 
-	// Assert: sidecar still present.
 	if _, err := os.Stat(sidecarPath); err != nil {
 		t.Errorf("WM-030: harmonik.meta.json absent after post-merge state: %v", err)
 	}
 
-	// Assert: session.log still present.
 	if _, err := os.Stat(sessionLog); err != nil {
 		t.Errorf("WM-030: session.log absent after post-merge state: %v", err)
 	}
@@ -175,7 +153,6 @@ func TestWM030_GitignoreMisconfigurationDetected(t *testing.T) {
 		})
 	}
 
-	// Integration: write an actual .gitignore in a tempRepo and run the detector.
 	t.Run("file-based-detection", func(t *testing.T) {
 		t.Parallel()
 

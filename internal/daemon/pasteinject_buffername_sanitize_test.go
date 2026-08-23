@@ -1,26 +1,5 @@
 package daemon_test
 
-// pasteinject_buffername_sanitize_test.go — regression guard for the
-// unsanitized bufferName helper.
-//
-// internal/daemon's bufferName was a bare fmt.Sprintf with no sanitization,
-// while internal/lifecycle/tmux enforces bufferNameRe
-// (^harmonik-[a-z0-9-]+-[a-z0-9-]+$) inside OSAdapter.LoadBuffer and
-// OSAdapter.PasteBuffer, BEFORE tmux is ever invoked. Five call sites fed raw
-// session ids through it: crewstart.go ("crew-init"), dot_gate.go ("gate") and
-// pasteinject.go itself ("task" x2, "review").
-//
-// It was not firing only because session ids happen to be minted as lowercase
-// UUIDs. A "20060102T150405Z"-style id fails immediately on the uppercase 'T'
-// and 'Z' — and the failure mode is a DROPPED PAYLOAD and a wedged dispatch,
-// not a clean error. That is exactly how hk-lckbv wedged the daemon and how
-// hk-9hvr0 wedged the tmux substrate.
-//
-// The fix routes bufferName through tmux.BufferName, which is valid by
-// construction. These tests assert against tmux.ValidBufferName — the REAL
-// validator — rather than a restated copy of the regex, which is the same
-// reason ValidBufferName is exported at all.
-
 import (
 	"strings"
 	"testing"

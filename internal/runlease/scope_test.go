@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// recorder collects the order in which resources were given back, which is the
-// property three of the run's ordering edges depend on: the agent session must
-// die before the worktree is removed, or `git worktree remove --force` races a
-// live process inside the directory.
 type recorder struct {
 	mu    sync.Mutex
 	order []Resource
@@ -70,8 +66,6 @@ func TestAScopeGivesResourcesBackInTheReverseOfTheOrderItTookThem(t *testing.T) 
 func TestAScopeKeepsWhatTheDispositionKeepsAndDisarmsIt(t *testing.T) {
 	t.Parallel()
 
-	// Disarming is the point. If a kept lease stayed armed, a later deferred
-	// Release would kill the session the run just decided to leave standing.
 	var rec recorder
 	var s Scope
 	s.Hold(WorkerSlot, rec.releaseOf(WorkerSlot))
@@ -106,7 +100,6 @@ func TestAScopeKeepsWhatTheDispositionKeepsAndDisarmsIt(t *testing.T) {
 func TestClosingAScopeTwiceGivesNothingBackTwice(t *testing.T) {
 	t.Parallel()
 
-	// A deferred Close and an explicit one on the success path must not fight.
 	var rec recorder
 	var s Scope
 	s.Hold(Worktree, rec.releaseOf(Worktree))
@@ -128,8 +121,6 @@ func TestClosingAScopeTwiceGivesNothingBackTwice(t *testing.T) {
 func TestAResourceGivenBackEarlyIsNotReportedByTheClose(t *testing.T) {
 	t.Parallel()
 
-	// The spawn slot goes back when the agent reports ready, not at run end,
-	// and the hook session goes back at four sites inside the run.
 	var rec recorder
 	var s Scope
 	spawn := s.Hold(SpawnSlot, rec.releaseOf(SpawnSlot))
@@ -154,8 +145,6 @@ func TestAResourceGivenBackEarlyIsNotReportedByTheClose(t *testing.T) {
 func TestANestedScopeClosesBeforeThePerRunResourcesItSitsInside(t *testing.T) {
 	t.Parallel()
 
-	// A graph run holds one tunnel and one worktree for the whole run while it
-	// takes and gives back one hook session and one agent session per node.
 	var rec recorder
 	var run Scope
 	run.Hold(TunnelProcess, rec.releaseOf(TunnelProcess))
@@ -223,7 +212,6 @@ func TestANestedScopeTakesTheParentsDisposition(t *testing.T) {
 func TestOneFailedReleaseDoesNotStopTheRestFromComingBack(t *testing.T) {
 	t.Parallel()
 
-	// Giving back the remaining resources matters more than the one that stuck.
 	var rec recorder
 	stuck := errors.New("tunnel process will not die")
 	var s Scope
@@ -261,8 +249,6 @@ func TestACleanReportCarriesNoError(t *testing.T) {
 func TestAResourceTakenAfterTheScopeClosedIsGivenBackAtOnce(t *testing.T) {
 	t.Parallel()
 
-	// Taking a resource after its scope closed is a caller mistake. Holding it
-	// forever in a stack nobody will walk again is the worse answer to it.
 	var rec recorder
 	var s Scope
 	s.Close(Reclaim)
@@ -330,10 +316,6 @@ func TestAScopeSurvivesConcurrentHolds(t *testing.T) {
 func TestASecondCloseDoesNotChangeTheAnswerTheFirstOneGave(t *testing.T) {
 	t.Parallel()
 
-	// A deferred Close and an explicit one can carry different dispositions —
-	// the deferred one usually carries the run's real answer and the explicit
-	// one a default. The first close is the run's decision, and a later caller
-	// must not be able to replace it for anything taken afterwards.
 	var rec recorder
 	var s Scope
 
@@ -353,10 +335,6 @@ func TestASecondCloseDoesNotChangeTheAnswerTheFirstOneGave(t *testing.T) {
 func TestAGiveBackCallReachesTheWorldOutsideTheScopeLock(t *testing.T) {
 	t.Parallel()
 
-	// A give-back call kills a process or removes a directory. Holding the
-	// scope lock across it would hold it for an unbounded time (principle 6),
-	// and a call that reaches back into its own scope would deadlock outright.
-	// This test reaches back, so the property is pinned rather than assumed.
 	var s Scope
 	reached := make(chan struct{})
 	s.Hold(Worktree, func() error {
@@ -406,10 +384,6 @@ func TestReportErrCarriesEveryFailure(t *testing.T) {
 func TestAResourceGivenBackEarlyIsNotReportedAsKept(t *testing.T) {
 	t.Parallel()
 
-	// The hook session can go back early on a run that then decides to survive.
-	// It is already back, so the close neither keeps it nor gives it back — a
-	// report that claimed it was kept would say a resource is standing when it
-	// is not.
 	var rec recorder
 	var s Scope
 	hook := s.Hold(HookSession, rec.releaseOf(HookSession))

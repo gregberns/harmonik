@@ -8,8 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// schemaVersion is the only supported queue.json schema version in v0.1.
-// Any envelope with a different value is rejected at unmarshal time.
 const schemaVersion = 1
 
 // QueueNameMain is the reserved default queue name. Submits that omit the
@@ -400,10 +398,6 @@ func UnmarshalQueue(data []byte) (Queue, error) {
 // ErrSchemaVersion is returned by [UnmarshalQueue] when the envelope's
 // schema_version is not equal to 1.
 var ErrSchemaVersion = fmt.Errorf("unsupported queue schema_version")
-
-// ---------------------------------------------------------------------------
-// JSON-RPC request/response payload types (specs/queue-model.md §2.10)
-// ---------------------------------------------------------------------------
 
 // QueueSubmitRequest is the payload for the queue-submit JSON-RPC method
 // (specs/queue-model.md §2.10 RECORD QueueSubmitRequest).

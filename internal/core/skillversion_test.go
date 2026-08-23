@@ -65,13 +65,9 @@ func TestSkillVersion_String_ZeroValueReturnsEmpty(t *testing.T) {
 func TestSkillVersion_TypedAlias_DistinctFromString(t *testing.T) {
 	t.Parallel()
 
-	// This is a compile-time check via type assertion; the test passes if it
-	// compiles. A plain string is NOT assignable to SkillVersion without
-	// explicit conversion — that is the type-safety guarantee.
 	v := SkillVersion("1.0.0")
 	_ = v // used
 
-	// Verify that SkillVersion("") == zero value (same as var declaration).
 	var zero SkillVersion
 	if SkillVersion("") != zero {
 		t.Error("SkillVersion empty literal must equal zero value")

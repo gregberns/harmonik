@@ -156,7 +156,6 @@ func (r ScenarioResult) Valid() bool {
 	if !r.Verdict.Valid() {
 		return false
 	}
-	// Pass-iff-no-failure-class invariant per §6.1 "absent iff verdict=pass".
 	if r.Verdict == ScenarioVerdictPass {
 		if r.FailureClass != "" {
 			return false

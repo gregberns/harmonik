@@ -10,13 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// reconciliationFixtureAuditLogJSON returns canonical JSON for a br --json
-// audit log response for the given bead ID. The fixture includes:
-//   - a "closed" event with a comment
-//   - a "status_changed" event with old_value and new_value
-//   - a "dependency_added" event with a comment
-//
-// This covers optional field presence on relevant events and absence on others.
 func reconciliationFixtureAuditLogJSON(id string) string {
 	return `{"issue_id":"` + id + `","events":[` +
 		`{"id":10677,"event_type":"closed","actor":"gb","timestamp":"2026-05-08T05:38:01.761094Z","comment":"closing after review"},` +
@@ -25,9 +18,6 @@ func reconciliationFixtureAuditLogJSON(id string) string {
 		`]}`
 }
 
-// reconciliationFixtureAuditLogWithUnknownEventJSON returns a fixture that
-// includes an event with an event_type value that harmonik has never seen.
-// The adapter MUST pass it through without rejection (BI-007).
 func reconciliationFixtureAuditLogWithUnknownEventJSON(id string) string {
 	return `{"issue_id":"` + id + `","events":[` +
 		`{"id":10677,"event_type":"closed","actor":"gb","timestamp":"2026-05-08T05:38:01.761094Z"},` +
@@ -35,20 +25,14 @@ func reconciliationFixtureAuditLogWithUnknownEventJSON(id string) string {
 		`]}`
 }
 
-// reconciliationFixtureAuditLogEmptyJSON returns a br audit log response with
-// an empty events array.
 func reconciliationFixtureAuditLogEmptyJSON(id string) string {
 	return `{"issue_id":"` + id + `","events":[]}`
 }
 
-// reconciliationFixtureAuditLogNotFoundJSON returns the br error envelope for
-// ISSUE_NOT_FOUND as produced by `br --json audit log <id>`.
 func reconciliationFixtureAuditLogNotFoundJSON(searchedID string) string {
 	return `{"error":{"code":"ISSUE_NOT_FOUND","message":"Issue not found: ` + searchedID + `","hint":"Check the bead ID and try again.","retryable":false,"context":{"searched_id":"` + searchedID + `"}}}`
 }
 
-// reconciliationFixtureAuditLogOtherErrorJSON returns a br error envelope for
-// a non-NOT_FOUND error from `br --json audit log`.
 func reconciliationFixtureAuditLogOtherErrorJSON() string {
 	return `{"error":{"code":"INTERNAL_ERROR","message":"something went wrong internally","hint":"","retryable":true,"context":{}}}`
 }
@@ -72,7 +56,6 @@ func TestAuditLogSuccess(t *testing.T) {
 		t.Fatalf("len(events) = %d; want 3", len(events))
 	}
 
-	// Verify first event: "closed" with comment, no old_value/new_value.
 	e0 := events[0]
 	if e0.ID != 10677 {
 		t.Errorf("events[0].ID = %d; want 10677", e0.ID)
@@ -93,7 +76,6 @@ func TestAuditLogSuccess(t *testing.T) {
 		t.Errorf("events[0].NewValue = %q; want empty", e0.NewValue)
 	}
 
-	// Verify second event: "status_changed" with old_value / new_value.
 	e1 := events[1]
 	if e1.ID != 10676 {
 		t.Errorf("events[1].ID = %d; want 10676", e1.ID)
@@ -111,7 +93,6 @@ func TestAuditLogSuccess(t *testing.T) {
 		t.Errorf("events[1].Comment = %q; want empty", e1.Comment)
 	}
 
-	// Verify third event: "dependency_added" with comment.
 	e2 := events[2]
 	if e2.ID != 10656 {
 		t.Errorf("events[2].ID = %d; want 10656", e2.ID)
@@ -125,7 +106,6 @@ func TestAuditLogSuccess(t *testing.T) {
 }
 
 func TestAuditLogUnknownEventTypePassthrough(t *testing.T) {
-	// BI-007 tolerance: unknown event_type values MUST be returned as-is.
 	id := core.BeadID("hk-872.15")
 	jsonStr := reconciliationFixtureAuditLogWithUnknownEventJSON(string(id))
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
@@ -144,7 +124,6 @@ func TestAuditLogUnknownEventTypePassthrough(t *testing.T) {
 		t.Fatalf("len(events) = %d; want 2", len(events))
 	}
 
-	// The second event has the unknown type — it MUST appear unchanged.
 	unknownEvent := events[1]
 	if unknownEvent.EventType != "future_unknown_event" {
 		t.Errorf("unknown event_type = %q; want %q", unknownEvent.EventType, "future_unknown_event")
@@ -222,14 +201,12 @@ func TestAuditLogMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
-	// Per BI-025b: parse failures MUST classify as BrSchemaMismatch.
 	if !errors.Is(err, brcli.BrSchemaMismatch) {
 		t.Errorf("errors.Is(err, BrSchemaMismatch) = false per BI-025b; got %v", err)
 	}
 }
 
 func TestAuditLogTimestampParsed(t *testing.T) {
-	// Verify that the RFC3339 timestamp round-trips through time.Time correctly.
 	id := core.BeadID("hk-872.15")
 	jsonStr := reconciliationFixtureAuditLogJSON(string(id))
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
@@ -255,7 +232,6 @@ func TestAuditLogTimestampParsed(t *testing.T) {
 }
 
 func TestAuditLogExecFailure(t *testing.T) {
-	// Use a non-existent binary to trigger exec failure.
 	adapter, err := brcli.New("/nonexistent/path/to/br")
 	if err != nil {
 		t.Fatalf("New: %v", err)

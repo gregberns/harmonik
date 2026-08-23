@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// gitSeedOpFixtureCommit returns a minimally valid commit GitSeedOp.
 func gitSeedOpFixtureCommit(t *testing.T) GitSeedOp {
 	t.Helper()
 	return GitSeedOp{
@@ -15,7 +14,6 @@ func gitSeedOpFixtureCommit(t *testing.T) GitSeedOp {
 	}
 }
 
-// gitSeedOpFixtureBranch returns a minimally valid branch GitSeedOp.
 func gitSeedOpFixtureBranch(t *testing.T) GitSeedOp {
 	t.Helper()
 	return GitSeedOp{
@@ -24,7 +22,6 @@ func gitSeedOpFixtureBranch(t *testing.T) GitSeedOp {
 	}
 }
 
-// gitSeedOpFixtureTag returns a minimally valid tag GitSeedOp.
 func gitSeedOpFixtureTag(t *testing.T) GitSeedOp {
 	t.Helper()
 	return GitSeedOp{
@@ -33,7 +30,6 @@ func gitSeedOpFixtureTag(t *testing.T) GitSeedOp {
 	}
 }
 
-// gitSeedOpFixtureCheckout returns a minimally valid checkout GitSeedOp.
 func gitSeedOpFixtureCheckout(t *testing.T) GitSeedOp {
 	t.Helper()
 	return GitSeedOp{
@@ -79,7 +75,6 @@ func TestGitSeedOpKindMarshalText(t *testing.T) {
 		GitSeedOpCheckout,
 	}
 
-	// Round-trip each valid value through MarshalText → UnmarshalText.
 	for _, k := range validKinds {
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
@@ -102,7 +97,6 @@ func TestGitSeedOpKindMarshalText(t *testing.T) {
 		})
 	}
 
-	// MarshalText on an unknown value must return an error.
 	t.Run("unknown rejects marshal", func(t *testing.T) {
 		t.Parallel()
 		unknown := GitSeedOpKind("unknown-op")
@@ -111,7 +105,6 @@ func TestGitSeedOpKindMarshalText(t *testing.T) {
 		}
 	})
 
-	// UnmarshalText on an unknown value must return an error.
 	t.Run("unknown rejects unmarshal", func(t *testing.T) {
 		t.Parallel()
 		var k GitSeedOpKind
@@ -289,7 +282,6 @@ func TestGitSeedOpJSONRoundTrip(t *testing.T) {
 func TestGitSeedOpRequiredKeys(t *testing.T) {
 	t.Parallel()
 
-	// Expected is the canonical table from specs/scenario-harness.md §6.3.
 	expected := map[GitSeedOpKind][]string{
 		GitSeedOpCommit:   {"message"},
 		GitSeedOpBranch:   {"name"},
@@ -312,7 +304,6 @@ func TestGitSeedOpRequiredKeys(t *testing.T) {
 		}
 	}
 
-	// Verify no extra ops are present beyond the four declared in §6.3.
 	for op := range gitSeedOpRequiredKeys {
 		if _, ok := expected[op]; !ok {
 			t.Errorf("gitSeedOpRequiredKeys has unexpected entry for op %q", string(op))

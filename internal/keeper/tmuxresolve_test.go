@@ -9,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// hashDir mirrors the hash formula used by HarmonikSessionName so tests can
-// compute expected values without importing lifecycle.
 func hashDir(t *testing.T, dir string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(dir)
@@ -74,8 +72,6 @@ func TestResolveTmuxTarget_DerivesFromConventionWhenSessionLive(t *testing.T) {
 
 	dir := t.TempDir()
 	session := keeper.HarmonikSessionName(dir, "orchestrator")
-	// Liveness is probed against the bare SESSION name; the resolved target then
-	// points at the AGENT window's active pane.
 	stub := func(name string) bool { return name == session }
 
 	got := keeper.ResolveTmuxTarget(dir, "orchestrator", "", stub)
@@ -138,7 +134,6 @@ func TestResolveTmuxTarget_ExplicitWindowTarget(t *testing.T) {
 	if called {
 		t.Error("sessionExistsFn should not be called when explicit is non-empty")
 	}
-	// And the resolved target splits back to (session, window=agent).
 	session, window := keeper.SplitTmuxTarget(got)
 	if session != "harmonik-abc-captain" || window != "agent" {
 		t.Errorf("split(%q) = (%q, %q), want (harmonik-abc-captain, agent)", got, session, window)
@@ -237,7 +232,6 @@ func TestResolveTmuxTarget_CrewNaming_B4(t *testing.T) {
 	dir := t.TempDir()
 	crewSession := keeper.HarmonikCrewSessionName(dir, "admiral")
 
-	// Only the crew-prefixed session is live; bare convention is absent.
 	stub := func(name string) bool { return name == crewSession }
 
 	got := keeper.ResolveTmuxTarget(dir, "admiral", "", stub)
@@ -256,7 +250,6 @@ func TestResolveTmuxTarget_BareFirstThenCrew(t *testing.T) {
 	bareSession := keeper.HarmonikSessionName(dir, "captain")
 	crewSession := keeper.HarmonikCrewSessionName(dir, "captain")
 
-	// Both sessions are live — bare must be returned first.
 	stub := func(name string) bool { return name == bareSession || name == crewSession }
 
 	got := keeper.ResolveTmuxTarget(dir, "captain", "", stub)

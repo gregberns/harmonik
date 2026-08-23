@@ -1,23 +1,10 @@
 package orchestrator
 
-// admission_test.go — the admission table's ORDER, STAGES and operator text.
-//
-// These tests are in-package on purpose. The table is the contract this fold
-// creates, and the table is unexported, so the tests that pin it live beside it.
-//
-// Each test names the property it holds. None of them re-states a gate's boolean
-// in a second place: they drive the entry points and assert the verdict an
-// operator or the daemon would see.
-
 import (
 	"errors"
 	"strings"
 	"testing"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Stage placement
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestAdmissionStagePlacement pins which gate sits at which stage. A gate that
 // changes stage changes when the daemon can evaluate it, and every ordering bug
@@ -67,7 +54,6 @@ func TestGreenlightIsQueuePathOnly(t *testing.T) {
 		t.Fatalf("br-ready path held on %s, want admit: the greenlight gate is queue-path only", v.Reason)
 	}
 
-	// Positive control on the SAME labels: the queue path must hold.
 	held.Path = PathQueue
 	v, err = AdmitAfterLookup(held)
 	if err != nil {
@@ -107,10 +93,6 @@ func TestLocalOnlyCapIsQueuePathOnly(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The staged-input guard — the reason this fold exists
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestAfterLookupRefusesAnUnloadedBeadRecord pins the loud failure. Before the
 // fold, a greenlight gate hoisted above the bead-record read saw an empty label
 // list, never held, and dispatched a staged bead with no message and no test
@@ -118,7 +100,6 @@ func TestLocalOnlyCapIsQueuePathOnly(t *testing.T) {
 func TestAfterLookupRefusesAnUnloadedBeadRecord(t *testing.T) {
 	t.Parallel()
 
-	// A staged bead, but the caller has not loaded the record yet.
 	v, err := AdmitAfterLookup(AdmissionInput{
 		Path:             PathQueue,
 		BeadID:           "hk-aaa",
@@ -170,10 +151,6 @@ func TestStagesWithoutBeadRecordGatesDoNotNeedIt(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Order within a stage
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestBeforeLookupReportsDecisionRequiredFirst pins the table order for the one
 // stage that holds two gates.
@@ -227,10 +204,6 @@ func TestBeforeLookupHoldsOnEitherConditionAlone(t *testing.T) {
 		t.Errorf("sentinel alone: verdict %+v", sentinelOnly)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate conditions
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestSplitCapacityGate pins the two-part condition: hold only when local is at
 // the ceiling AND no remote worker can take the run.
@@ -297,7 +270,6 @@ func TestLocalOnlyCapGate(t *testing.T) {
 		t.Errorf("a local-only queue was admitted at the local cap: verdict %+v", v)
 	}
 
-	// Below the ceiling the local-only queue passes.
 	belowCap := localOnly
 	belowCap.LocalInFlight = 0
 	v, err = AdmitBeforeStamp(belowCap)
@@ -330,10 +302,6 @@ func TestSilentGatesCarryNoMessage(t *testing.T) {
 		t.Errorf("local-only-cap verdict = %+v, want a silent hold", stamp)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Operator text — byte-for-byte
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestGateMessagesAreByteForByte pins the exact stderr lines the daemon printed
 // before the fold, including the br-ready suffix difference. Operators grep
@@ -398,10 +366,6 @@ func TestGateMessagesAreByteForByte(t *testing.T) {
 		}
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The per-tick ceiling
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestLocalGateMax pins that the live controller wins when it is present and the
 // boot value is the fallback. Both capacity gates read the ONE value this

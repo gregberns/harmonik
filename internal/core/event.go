@@ -165,17 +165,11 @@ func (e Event) EquivalentTo(other Event) bool {
 		return false
 	}
 
-	// Unmarshal both payloads into generic any values so that reflect.DeepEqual
-	// performs an order-independent structural comparison of JSON object fields.
-	// This handles the common case where map key ordering differs between two
-	// otherwise identical JSON payloads.
 	var ep, op any
 	if err := json.Unmarshal(e.Payload, &ep); err != nil {
-		// Malformed JSON: fall back to byte-level comparison.
 		return string(e.Payload) == string(other.Payload)
 	}
 	if err := json.Unmarshal(other.Payload, &op); err != nil {
-		// Malformed JSON: fall back to byte-level comparison.
 		return string(e.Payload) == string(other.Payload)
 	}
 	return reflect.DeepEqual(ep, op)

@@ -12,18 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// runBranchReapSubcommand implements `harmonik gc branches`: enumerate run/*
-// and worktree-agent-* branches, delete those that are merged into the target
-// branch or are aged orphans with no active worktree.
-//
-// This is the on-demand counterpart to the daemon's per-run branch cleanup;
-// it addresses the unbounded bloat that accumulates when branches are not
-// pruned after merge (hk-fpjxi).
-//
-// Exit codes:
-//
-//	0  — reap pass completed (zero or more branches reaped)
-//	1  — argument or operational error
 func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	var (
 		projectDir   string
@@ -60,8 +48,6 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(args[i], "--max-age="):
 			maxAgeStr = strings.TrimPrefix(args[i], "--max-age=")
 		default:
-			// Fail closed: a mistyped flag (e.g. --dryrun) must not turn a
-			// dry run into a live `git branch -D` pass.
 			if _, err := fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage); err != nil {
 				return 1
 			}
@@ -115,7 +101,6 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 		dryRunTag = " [dry-run]"
 	}
 
-	// Emit one branch_reaped event per deleted branch (newline-delimited JSON).
 	for _, ev := range result.Events {
 		b, mErr := json.Marshal(ev)
 		if mErr != nil {
@@ -160,7 +145,6 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runGCSubcommand dispatches `harmonik gc <verb>`.
 func runGCSubcommand(args []string) int {
 	verb := ""
 	if len(args) > 0 {

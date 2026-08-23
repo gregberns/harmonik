@@ -1,27 +1,5 @@
 package brcli_test
 
-// BI-INV-002 sensor test — bead ID byte-equal across all four harmonik surfaces.
-//
-// Spec ref: specs/beads-integration.md §5 BI-INV-002.
-//
-// BI-INV-002: A bead's ID is stable from creation to tombstone. Every harmonik
-// artifact that binds to a bead (run metadata, checkpoint trailers, event
-// payloads, session-log metadata) MUST use the same ID across the entire bead
-// lifetime. Harmonik MUST NOT mint harmonik-local alternate identifiers for the
-// same bead.
-//
-// This file asserts byte-equality across all four Go surfaces:
-//   - Surface 1: Run.BeadID (execution-model.md §4.3 EM-014; internal/core.Run)
-//   - Surface 2: Checkpoint.BeadID (execution-model.md §4.4 EM-017; internal/core.Checkpoint)
-//   - Surface 3: Event payload "bead_id" (event-model.md §6.3; internal/core.PayloadHasBeadID)
-//   - Surface 4: Session-log sidecar "bead_id" JSON field (workspace-model.md §4.7; WM-028)
-//
-// It also includes a reviewer-scan sub-test that walks internal/ source files
-// looking for any function name matching mint_alternate_id variants — none should
-// exist per BI-INV-002.
-//
-// Dependency beads (all CLOSED): hk-872.18, hk-872.19, hk-872.20, hk-872.21.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -41,18 +19,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// sensorBeadIDFixtureMakeID returns a canonical core.BeadID test value for
-// use across all four BI-INV-002 surfaces. BeadID is an opaque string alias
-// (beads-integration.md BI-008/BI-008a); the constructor is a plain conversion
-// — no Parse/Mint/New/Generate helpers exist by design.
 func sensorBeadIDFixtureMakeID() core.BeadID {
 	return core.BeadID("bead-sensor-biinv002-stable")
 }
 
-// sensorBeadIDFixtureWorkflowID returns the logical workflow identity the
-// BI-INV-002 fixtures use. It builds the value through core.NewWorkflowID so a
-// fixture that stops matching the identity rules fails here, not deep inside
-// Run.Valid().
 func sensorBeadIDFixtureWorkflowID(t *testing.T) core.WorkflowID {
 	t.Helper()
 	id, err := core.NewWorkflowID("sensor-biinv002-graph")
@@ -62,8 +32,6 @@ func sensorBeadIDFixtureWorkflowID(t *testing.T) core.WorkflowID {
 	return id
 }
 
-// sensorBeadIDFixtureMakeRun constructs a minimal valid core.Run whose BeadID
-// is set to id. All identifier fields are populated so Run.Valid() passes.
 func sensorBeadIDFixtureMakeRun(t *testing.T, id core.BeadID) core.Run {
 	t.Helper()
 	now := time.Now()
@@ -80,13 +48,6 @@ func sensorBeadIDFixtureMakeRun(t *testing.T, id core.BeadID) core.Run {
 	}
 }
 
-// sensorBeadIDFixtureMakeCheckpoint constructs a minimal valid core.Checkpoint
-// whose BeadID is set to id. This is the Go carrier for the Harmonik-Bead-ID
-// checkpoint trailer per execution-model.md §4.4 EM-017.
-//
-// TransitionRecordPath is derived from the generated RunID and TransitionID via
-// core.TransitionRecordPath so that Checkpoint.Valid() passes the EM-018
-// path-coherence invariant.
 func sensorBeadIDFixtureMakeCheckpoint(t *testing.T, id core.BeadID) core.Checkpoint {
 	t.Helper()
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
@@ -102,8 +63,6 @@ func sensorBeadIDFixtureMakeCheckpoint(t *testing.T, id core.BeadID) core.Checkp
 	}
 }
 
-// sensorBeadIDFixtureMakeEventPayload constructs a minimal event payload
-// map[string]any that carries "bead_id" per event-model.md §6.3 / BI-019.
 func sensorBeadIDFixtureMakeEventPayload(id core.BeadID) map[string]any {
 	return map[string]any{
 		"bead_id": string(id),
@@ -112,8 +71,6 @@ func sensorBeadIDFixtureMakeEventPayload(id core.BeadID) map[string]any {
 	}
 }
 
-// sensorBeadIDFixtureMakeSidecarJSON builds a minimal session-log sidecar JSON
-// body carrying the bead_id field per workspace-model.md §4.7 WM-028.
 func sensorBeadIDFixtureMakeSidecarJSON(t *testing.T, id core.BeadID) []byte {
 	t.Helper()
 	type sidecar struct {
@@ -144,8 +101,6 @@ func sensorBeadIDFixtureMakeSidecarJSON(t *testing.T, id core.BeadID) []byte {
 	return b
 }
 
-// sensorBeadIDFixtureSidecarWriteAndRead writes sidecarJSON to a temp path and
-// reads it back as a parsed map. The caller can then extract the "bead_id" key.
 func sensorBeadIDFixtureSidecarWriteAndRead(t *testing.T, sidecarJSON []byte) map[string]interface{} {
 	t.Helper()
 	dir := t.TempDir()
@@ -200,12 +155,9 @@ func sensorBeadIDFixtureSidecarWriteAndRead(t *testing.T, sidecarJSON []byte) ma
 func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 	t.Parallel()
 
-	// Single canonical bead ID — the one stable identifier that must propagate
-	// byte-for-byte across every surface per BI-INV-002.
 	canonicalID := sensorBeadIDFixtureMakeID()
 	canonical := string(canonicalID)
 
-	// ─── Surface 1: Run.BeadID ───────────────────────────────────────────────
 	t.Run("surface1-run-bead-id", func(t *testing.T) {
 		t.Parallel()
 
@@ -222,7 +174,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 		}
 	})
 
-	// ─── Surface 2: Checkpoint trailer Harmonik-Bead-ID ──────────────────────
 	t.Run("surface2-checkpoint-trailer-bead-id", func(t *testing.T) {
 		t.Parallel()
 
@@ -238,7 +189,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 			t.Error("BI-INV-002 surface2: Checkpoint.Valid() = false; fixture must be structurally valid")
 		}
 
-		// Confirm the trailer key is registered in the registry.
 		spec, ok := core.LookupTrailer("Harmonik-Bead-ID")
 		if !ok {
 			t.Fatal("BI-INV-002 surface2: LookupTrailer(\"Harmonik-Bead-ID\") = false; trailer must be registered (EM-017)")
@@ -248,18 +198,15 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 		}
 	})
 
-	// ─── Surface 3: Event payload bead_id ────────────────────────────────────
 	t.Run("surface3-event-payload-bead-id", func(t *testing.T) {
 		t.Parallel()
 
 		payload := sensorBeadIDFixtureMakeEventPayload(canonicalID)
 
-		// PayloadHasBeadID is the structural primitive for BI-019 presence rule.
 		if !core.PayloadHasBeadID(payload) {
 			t.Error("BI-INV-002 surface3: PayloadHasBeadID = false; want true (BI-019)")
 		}
 
-		// Extract the raw string value and assert byte-equality.
 		v, ok := payload["bead_id"]
 		if !ok {
 			t.Fatal("BI-INV-002 surface3: payload[\"bead_id\"] absent")
@@ -273,7 +220,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 		}
 	})
 
-	// ─── Surface 4: Session-log sidecar bead_id ──────────────────────────────
 	t.Run("surface4-session-log-sidecar-bead-id", func(t *testing.T) {
 		t.Parallel()
 
@@ -293,7 +239,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 		}
 	})
 
-	// ─── Cross-surface byte-equality: all four must agree ────────────────────
 	t.Run("cross-surface-byte-equality", func(t *testing.T) {
 		t.Parallel()
 
@@ -303,7 +248,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 		sidecarJSON := sensorBeadIDFixtureMakeSidecarJSON(t, canonicalID)
 		sidecar := sensorBeadIDFixtureSidecarWriteAndRead(t, sidecarJSON)
 
-		// Extract each surface value.
 		if run.BeadID == nil {
 			t.Fatal("BI-INV-002 cross: run.BeadID nil")
 		}
@@ -347,10 +291,6 @@ func TestBIINV002_BeadIDByteEqualAcrossSurfaces(t *testing.T) {
 	})
 }
 
-// sensorBeadIDFixtureAltIDPattern matches function names that suggest minting
-// of alternative bead identifiers — a BI-INV-002 violation.
-// Pattern covers: mint_alternate_id, MintAlternateID, alternateBeadID (and
-// case-insensitive variants).
 var sensorBeadIDFixtureAltIDPattern = regexp.MustCompile(
 	`(?i)(mint_alternate_id|MintAlternateID|alternateBeadID)`,
 )
@@ -366,13 +306,10 @@ var sensorBeadIDFixtureAltIDPattern = regexp.MustCompile(
 func TestBIINV002_ReviewerScanNoMintAlternateID(t *testing.T) {
 	t.Parallel()
 
-	// Locate the repo root relative to this test file.
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("TestBIINV002_ReviewerScanNoMintAlternateID: runtime.Caller failed")
 	}
-	// thisFile is .../internal/brcli/sensorbiinv002_test.go
-	// repo root is four directories up: internal/brcli → internal → <repo>
 	internalDir := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	internalDir = filepath.Clean(internalDir)
 
@@ -380,7 +317,6 @@ func TestBIINV002_ReviewerScanNoMintAlternateID(t *testing.T) {
 
 	var violations []string
 
-	// Normalize thisFile for comparison inside the walk.
 	thisFileClean := filepath.Clean(thisFile)
 
 	err := filepath.Walk(internalDir, func(path string, info os.FileInfo, walkErr error) error {
@@ -388,7 +324,6 @@ func TestBIINV002_ReviewerScanNoMintAlternateID(t *testing.T) {
 			return walkErr
 		}
 		if info.IsDir() {
-			// Skip vendor and hidden dirs.
 			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
 				return filepath.SkipDir
 			}
@@ -397,15 +332,11 @@ func TestBIINV002_ReviewerScanNoMintAlternateID(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		// Exclude this sensor file from its own scan: the test function names
-		// here contain the patterns by design (to document what is forbidden).
 		if filepath.Clean(path) == thisFileClean {
 			return nil
 		}
-		// Parse file (no body needed — we only need function names).
 		f, parseErr := parser.ParseFile(fset, path, nil, 0)
 		if parseErr != nil {
-			// Skip unparseable files (generated, syntax errors, etc.).
 			return nil //nolint:nilerr // nil signals "no walk error; skip this file"
 		}
 		for _, decl := range f.Decls {

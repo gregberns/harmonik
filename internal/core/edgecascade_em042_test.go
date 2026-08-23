@@ -26,10 +26,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── fixtures ────────────────────────────────────────────────────────────────
-
-// guardsGatesFixtureRun returns a minimal valid Run ready for EM-042 tests.
-// run.Context is pre-allocated so ApplyContextUpdates may write into it.
 func guardsGatesFixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
@@ -44,7 +40,6 @@ func guardsGatesFixtureRun(t *testing.T) *Run {
 	}
 }
 
-// guardsGatesFixtureOutcome returns a minimal valid Outcome (SUCCESS, default kind).
 func guardsGatesFixtureOutcome(t *testing.T) Outcome {
 	t.Helper()
 	return Outcome{
@@ -53,7 +48,6 @@ func guardsGatesFixtureOutcome(t *testing.T) Outcome {
 	}
 }
 
-// guardsGatesFixtureEdge returns a valid Edge from "node-a" to the given toNode.
 func guardsGatesFixtureEdge(t *testing.T, toNode NodeID, weight int, orderingKey string) Edge {
 	t.Helper()
 	return Edge{
@@ -64,12 +58,9 @@ func guardsGatesFixtureEdge(t *testing.T, toNode NodeID, weight int, orderingKey
 	}
 }
 
-// guardsGatesFixtureEvalAlwaysTrue is a ConditionEvaluator that always returns true.
 func guardsGatesFixtureEvalAlwaysTrue(_ PolicyExpression, _ map[string]any, _ Outcome) bool {
 	return true
 }
-
-// ── EM-042: Guard reordering ─────────────────────────────────────────────────
 
 // TestDispatchEdgeEM042_GuardReordersEdgesBeforeCascade verifies that when a guard
 // swaps two edges, the cascade sees the reordered list and selects accordingly.
@@ -83,18 +74,15 @@ func TestDispatchEdgeEM042_GuardReordersEdgesBeforeCascade(t *testing.T) {
 	run := guardsGatesFixtureRun(t)
 	outcome := guardsGatesFixtureOutcome(t)
 
-	// Two edges with different weights; without guard, node-high wins.
 	eLow := guardsGatesFixtureEdge(t, "node-low", 1, "a")
 	eHigh := guardsGatesFixtureEdge(t, "node-high", 10, "b")
 	candidates := []Edge{eHigh, eLow}
 
-	// Track which list the cascade sees.
 	var cascadeSawOrder []NodeID
 	evalCapture := func(_ PolicyExpression, _ map[string]any, _ Outcome) bool {
 		return true
 	}
 
-	// Guard reverses the list (low comes first) but does NOT add/remove edges.
 	guardCalled := false
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		guardCalled = true
@@ -102,7 +90,6 @@ func TestDispatchEdgeEM042_GuardReordersEdgesBeforeCascade(t *testing.T) {
 		for i, e := range edges {
 			reversed[len(edges)-1-i] = e
 		}
-		// Capture the order that was returned.
 		cascadeSawOrder = make([]NodeID, len(reversed))
 		for i, e := range reversed {
 			cascadeSawOrder[i] = e.ToNode
@@ -114,15 +101,11 @@ func TestDispatchEdgeEM042_GuardReordersEdgesBeforeCascade(t *testing.T) {
 	_ = evalCapture
 
 	cycles := NewCycleCounter()
-	// PermitGate so gate doesn't interfere with reorder test.
 	result := DispatchEdge(run, candidates, outcome, guardsGatesFixtureEvalAlwaysTrue, cycles, guard, PermitGate)
 
 	if !guardCalled {
 		t.Error("EM-042: guard was not called")
 	}
-	// After reorder: [eLow, eHigh]. Cascade condition-filters both (always-true),
-	// then sorts by weight desc: eHigh(10) still wins over eLow(1).
-	// The important invariant is that guard was called and returned same-length slice.
 	if result.Failed {
 		t.Errorf("EM-042: dispatch failed unexpectedly: %s / %s", result.FailureClass, result.FailureReason)
 	}
@@ -141,12 +124,10 @@ func TestDispatchEdgeEM042_GuardReorderAffectsSelectionWhenWeightsTied(t *testin
 	run := guardsGatesFixtureRun(t)
 	outcome := guardsGatesFixtureOutcome(t)
 
-	// Two edges with equal weight; cascade picks by ordering key ("a" < "b").
 	eA := guardsGatesFixtureEdge(t, "node-a-key", 5, "a")
 	eB := guardsGatesFixtureEdge(t, "node-b-key", 5, "b")
 	candidates := []Edge{eB, eA} // guard will reverse
 
-	// Guard swaps them to [eA, eB].
 	guard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return []Edge{edges[1], edges[0]}
 	}
@@ -157,7 +138,6 @@ func TestDispatchEdgeEM042_GuardReorderAffectsSelectionWhenWeightsTied(t *testin
 	if !result.Advance {
 		t.Fatalf("EM-042: expected Advance=true; got failure: %s / %s", result.FailureClass, result.FailureReason)
 	}
-	// Cascade sort: equal weight → ordering key "a" < "b" → node-a-key wins.
 	if result.Edge.ToNode != "node-a-key" {
 		t.Errorf("EM-042: selected %q, want %q (lexical ordering_key wins on equal weight after guard reorder)",
 			result.Edge.ToNode, "node-a-key")
@@ -183,7 +163,6 @@ func TestDispatchEdgeEM042_IdentityGuardIsNoop(t *testing.T) {
 	if !result.Advance {
 		t.Fatalf("EM-042 IdentityGuard: expected Advance=true; failure: %s / %s", result.FailureClass, result.FailureReason)
 	}
-	// Weight 10 > 5 so node-a wins.
 	if result.Edge.ToNode != "node-a" {
 		t.Errorf("EM-042 IdentityGuard: selected %q, want %q", result.Edge.ToNode, "node-a")
 	}
@@ -202,7 +181,6 @@ func TestDispatchEdgeEM042_GuardViolatesLengthInvariantPanics(t *testing.T) {
 	eB := guardsGatesFixtureEdge(t, "node-b", 5, "b")
 	candidates := []Edge{eA, eB}
 
-	// Guard drops one edge — violates EM-042.
 	badGuard := func(_ *Run, edges []Edge, _ Outcome) []Edge {
 		return edges[:1]
 	}
@@ -217,8 +195,6 @@ func TestDispatchEdgeEM042_GuardViolatesLengthInvariantPanics(t *testing.T) {
 
 	DispatchEdge(run, candidates, outcome, guardsGatesFixtureEvalAlwaysTrue, cycles, badGuard, PermitGate)
 }
-
-// ── EM-042: Gate permit/deny/escalate ───────────────────────────────────────
 
 // TestDispatchEdgeEM042_GateAllowAdvancesTransition verifies that [GateActionAllow]
 // returns Advance=true with the chosen edge.
@@ -284,7 +260,6 @@ func TestDispatchEdgeEM042_GateDenyIsNotDurableTransition(t *testing.T) {
 	cycles := NewCycleCounter()
 	result := DispatchEdge(run, []Edge{e}, outcome, guardsGatesFixtureEvalAlwaysTrue, cycles, IdentityGuard, denyGate)
 
-	// Stay=true means no durable transition: Edge must be zero-value.
 	if result.Stay && result.Edge != (Edge{}) {
 		t.Errorf("EM-042/EM-023a: gate denial set Edge=%+v, want zero-value (no checkpoint written)", result.Edge)
 	}
@@ -362,7 +337,6 @@ func TestDispatchEdgeEM042_GateNotCalledOnCascadeFailure(t *testing.T) {
 	}
 
 	cycles := NewCycleCounter()
-	// Empty candidates → cascade structural failure.
 	result := DispatchEdge(run, nil, outcome, guardsGatesFixtureEvalAlwaysTrue, cycles, IdentityGuard, sentinelGate)
 
 	if !result.Failed {
@@ -428,7 +402,6 @@ func TestDispatchEdgeEM042_CascadeFailureForwardedThroughDispatch(t *testing.T) 
 	run := guardsGatesFixtureRun(t)
 	outcome := guardsGatesFixtureOutcome(t)
 
-	// All conditions false → cascade structural failure.
 	cond := PolicyExpression("never")
 	e := Edge{
 		FromNode:    "node-a",

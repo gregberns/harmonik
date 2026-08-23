@@ -1,14 +1,5 @@
 package daemon
 
-// dot_terminal_disposition_test.go — terminal-node disposition classification.
-//
-// Guards the rule that decides whether a DOT run's work is MERGED and its bead
-// closed green. The classifier must read the graph, never a hardcoded terminal
-// name: a graph whose failure terminal is not spelled "close-needs-attention"
-// (eval-bead.dot declares terminal_node_ids="close-pass,close-fail") was
-// previously classified as a success, so failing model-evaluation runs merged
-// and closed green.
-
 import (
 	"os"
 	"path/filepath"
@@ -17,8 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-// evalShapedGraph is the eval-bead.dot terminal shape: two author-defined
-// terminals, neither of which is one of the WG-022 reserved IDs.
 const evalShapedGraph = `digraph "eval-bead" {
     schema_version="1";
     version="1.0";
@@ -36,9 +25,6 @@ const evalShapedGraph = `digraph "eval-bead" {
     grade -> "close-fail";
 }`
 
-// standardShapedGraph is the WG-022 reserved terminal pair, declared with no
-// terminal_disposition attribute at all — exactly as every shipped standard
-// graph declares it today.
 const standardShapedGraph = `digraph "standard-bead" {
     schema_version="1";
     version="1.0";
@@ -56,8 +42,6 @@ const standardShapedGraph = `digraph "standard-bead" {
     review -> "close-needs-attention";
 }`
 
-// undeclaredTerminalGraph has an author-defined terminal that declares no
-// disposition — the graph cannot say whether reaching it is a success.
 const undeclaredTerminalGraph = `digraph "gate-check" {
     schema_version="1";
     version="1.0";
@@ -251,10 +235,6 @@ func TestTerminalDisposition_ExecutableGraphsAllClassify(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}
-			// Deliberately Fatal, not Skip. A graph that later stops parsing
-			// would silently drop out of this sweep's coverage while the test
-			// stayed green — the same shape as a -run filter that matches zero
-			// tests and exits successfully.
 			g, err := dot.Parse(string(src), path)
 			if err != nil {
 				t.Fatalf("graph does not parse: %v", err)

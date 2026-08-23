@@ -14,27 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// awaitack.go — the AGENT-SIDE half of the restart-now/ping ACK handshake
-// (hk-uldg). The keeper->pane half (RestartNow/Ping in restartnow.go) injects
-// `[KEEPER ACK <nonce>] received <kind>` into the agent's pane. This file is the
-// OBSERVER: it polls the pane scrollback for that EXACT line and either confirms
-// the keeper is alive (returns nil / CLI exit 0) or, on timeout, emits a durable
-// session_keeper_ack_timeout event and returns a timeout error (CLI exit 3).
-//
-// Design (authoritative): plans/2026-06-20-keeper-architecture-critique/
-// 18-design-agent-side-ack.md.
-//
-// Decisions baked in (operator-confirmed, do not re-litigate):
-//   - The BINARY does NOT send comms. On timeout it emits the durable event and
-//     returns a timeout error; the calling skill sends the comms alert (the
-//     binary stays identity-free — no hardcoded --from <lane> footgun).
-//   - Defaults: timeout 15s, poll 1s.
-//   - Match on the EXACT bracket token `[KEEPER ACK <nonce>]`, so a stale ACK
-//     from a previous cycle with a DIFFERENT nonce never matches.
-//
-// Non-collision with hk-vpnp: this file adds ZERO code to cycle.go / watcher.go /
-// restartnow.go. It is a brand-new out-of-process observer.
-
 // DefaultAwaitAckTimeout / DefaultAwaitAckPoll are the operator-confirmed
 // defaults for the await-ack primitive (design §0/decision 2). The CLI uses
 // these as flag defaults; AwaitAck fills them when the config leaves them zero.
@@ -43,17 +22,8 @@ const (
 	DefaultAwaitAckPoll    = 1 * time.Second
 )
 
-// awaitAckScrollback is how many lines of pane scrollback the real capturer
-// requests (`tmux capture-pane -p -S -<N>`). A bounded tail catches an ACK that
-// already scrolled off the visible pane between the inject and the first poll,
-// without dragging the entire (potentially huge) history each tick.
 const awaitAckScrollback = 200
 
-// captureErrorBudget bounds consecutive capture-pane failures. A transient tmux
-// error (e.g. pane momentarily busy) is retried each poll; only when the budget
-// is exhausted does AwaitAck give up with the capture error rather than the
-// generic timeout. This keeps a flaky capturer from masquerading as a clean
-// "ack_not_observed" timeout.
 const captureErrorBudget = 5
 
 // PaneCapturer captures the current contents of a tmux pane. Production wires
@@ -116,9 +86,6 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 
 	log := slog.With("agent", cfg.AgentName, "op", "await-ack", "nonce", cfg.Nonce, "kind", kind)
 
-	// A pane is mandatory — without it there is nothing to observe. Emit the
-	// durable event with reason no_tmux_target and fail (the CLI maps to exit 3
-	// like any await-ack failure, and the caller escalates).
 	if cfg.TmuxTarget == "" {
 		log.WarnContext(ctx, "keeper: await-ack: aborted", "reason", "no_tmux_target")
 		emitAckTimeout(ctx, emitter, cfg, kind, timeout, "no_tmux_target")
@@ -149,7 +116,6 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 			}
 		}
 
-		// Timed out? Emit the durable escalation event and return.
 		if !clock.Now().Before(deadline) {
 			log.WarnContext(ctx, "keeper: await-ack: timeout; ack not observed", "timeout", timeout)
 			emitAckTimeout(ctx, emitter, cfg, kind, timeout, "ack_not_observed")
@@ -157,16 +123,11 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 				ErrAckTimeout, token, timeout, cfg.AgentName)
 		}
 
-		// Wait one poll interval (or until the deadline / ctx cancel, whichever
-		// is first) before the next capture.
 		wait := poll
 		if rem := deadline.Sub(clock.Now()); rem > 0 && rem < wait {
 			wait = rem
 		}
 		if !clock.Sleep(ctx, wait) {
-			// Context cancelled (e.g. SIGINT). Surface the cancellation; do NOT
-			// emit a timeout event — the operator interrupted, the keeper is not
-			// implicated.
 			return ctx.Err()
 		}
 	}
@@ -182,9 +143,6 @@ func AckMatchToken(nonce string) string {
 	return fmt.Sprintf("[KEEPER ACK %s]", nonce)
 }
 
-// emitAckTimeout emits the durable session_keeper_ack_timeout event. Best-effort
-// (an emit failure is logged inside FileEmitter); AwaitAck's return value is the
-// authoritative signal to the caller.
 func emitAckTimeout(ctx context.Context, emitter Emitter, cfg AwaitAckConfig, kind string, timeout time.Duration, reason string) {
 	if emitter == nil {
 		return

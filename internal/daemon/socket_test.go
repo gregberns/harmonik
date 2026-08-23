@@ -15,26 +15,10 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// socketFixtureSockPathUnder returns the daemon socket path for a project root.
 func socketFixtureSockPathUnder(root string) string {
 	return filepath.Join(root, ".harmonik", "daemon.sock")
 }
 
-// socketFixtureTempSockPath creates a temporary .harmonik directory and returns
-// a socket path the kernel can actually bind.
-//
-// sockaddr_un.sun_path is a fixed 104-byte array on darwin, and one of those
-// bytes holds the NUL terminator, so the longest bindable path is 103 bytes.
-// t.TempDir() puts the TEST'S OWN NAME in the directory it makes, then appends a
-// random suffix that is sometimes 9 digits and sometimes 10. A long test name
-// therefore lands over the line on some runs and under it on others, which reads
-// as a load artifact and is not one.
-//
-// So this helper measures rather than assumes, and it measures with
-// lifecycle.ValidateSocketPathLength — the same check the daemon runs before it
-// binds. Do not re-spell the limit here. A second copy of the number is what
-// admitted a 104-byte path and made three tests in this package fail about five
-// runs in six (hk-m3jai).
 func socketFixtureTempSockPath(t *testing.T) string {
 	t.Helper()
 
@@ -49,9 +33,6 @@ func socketFixtureTempSockPath(t *testing.T) string {
 	}
 
 	sockPath := socketFixtureSockPathUnder(root)
-	// Say it here, in one line. Without this guard the same mistake surfaces
-	// seconds later as `connect: invalid argument` from a dial several layers
-	// away, which points at the code under test instead of at the path.
 	if lenErr := lifecycle.ValidateSocketPathLength(sockPath); lenErr != nil {
 		t.Fatalf("socketFixtureTempSockPath: no bindable socket path for this test: %v", lenErr)
 	}
@@ -63,8 +44,6 @@ func socketFixtureTempSockPath(t *testing.T) string {
 	return sockPath
 }
 
-// stubHandler is a minimal RequestHandler that records calls for test
-// assertions. It returns configurable results for EmitOutcome and ClaimNext.
 type stubHandler struct {
 	emitOutcomeCalled bool
 	emitOutcomeReq    daemon.OutcomeRequest
@@ -91,8 +70,6 @@ func (s *stubHandler) ClaimNext(_ context.Context, role string) (json.RawMessage
 	return s.claimNextResult, s.claimNextErr
 }
 
-// socketFixtureDial connects to a Unix socket at sockPath using the
-// context-aware Dialer (lint: net.Dial is forbidden).
 func socketFixtureDial(t *testing.T, sockPath string) net.Conn {
 	t.Helper()
 
@@ -103,8 +80,6 @@ func socketFixtureDial(t *testing.T, sockPath string) net.Conn {
 	return conn
 }
 
-// socketFixtureSendRecv writes req as JSON to conn and reads a JSON
-// SocketResponse back. The caller is responsible for closing conn.
 func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest) daemon.SocketResponse {
 	t.Helper()
 
@@ -115,7 +90,6 @@ func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest
 	if _, err := conn.Write(data); err != nil {
 		t.Fatalf("socketFixtureSendRecv: write: %v", err)
 	}
-	// Half-close the write side so the server's json.Decoder can detect EOF.
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}
@@ -127,18 +101,6 @@ func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest
 	return resp
 }
 
-// socketFixtureStartListener starts RunSocketListener in a goroutine and
-// returns a cancel function and a result channel. The channel carries exactly
-// one value (the RunSocketListener return error). The cancel func and channel
-// are independent: calling cancel() causes the listener to stop; the channel
-// value can be read exactly once.
-//
-// A t.Cleanup is registered that cancels the context. If the caller has
-// already drained the channel, the cleanup skips the drain (non-blocking
-// receive) to avoid a deadlock.
-// socketFixtureStartListener starts RunSocketListener in a goroutine.
-// The optional hr argument is forwarded to RunSocketListener as the HookRelayHandler;
-// pass nil (or omit) for tests that only exercise the SocketRequest protocol.
 func socketFixtureStartListener(t *testing.T, sockPath string, h daemon.RequestHandler, hr ...daemon.HookRelayHandler) (cancel context.CancelFunc, done <-chan error) {
 	t.Helper()
 
@@ -154,7 +116,6 @@ func socketFixtureStartListener(t *testing.T, sockPath string, h daemon.RequestH
 	}()
 	t.Cleanup(func() {
 		cancel()
-		// Non-blocking drain: the test may have already read from ch.
 		select {
 		case <-ch:
 		default:
@@ -163,9 +124,6 @@ func socketFixtureStartListener(t *testing.T, sockPath string, h daemon.RequestH
 	return cancel, ch
 }
 
-// socketFixtureWaitReady polls until the socket at sockPath is accepting
-// connections (i.e., a dial succeeds). This is more reliable than polling for
-// file existence because it confirms that both Listen and Accept are running.
 func socketFixtureWaitReady(t *testing.T, sockPath string) {
 	t.Helper()
 
@@ -187,14 +145,6 @@ func socketFixtureWaitReady(t *testing.T, sockPath string) {
 	t.Fatalf("socketFixtureWaitReady: socket at %q not ready within 5s", sockPath)
 }
 
-// socketFixtureWaitMode polls os.Stat(sockPath) at 1 ms intervals for up to
-// budget until the socket's permission bits equal wantMode.
-//
-// This is required because RunSocketListener calls os.Chmod BEFORE starting
-// the accept loop, but a dialled connection can succeed at the kernel level
-// immediately after ln.Listen returns (before Chmod runs). Polling for the
-// mode eliminates the race between socketFixtureWaitReady returning and the
-// mode check in TestRunSocketListener_BindsAndSetsMode.
 func socketFixtureWaitMode(t *testing.T, sockPath string, wantMode os.FileMode, budget time.Duration) os.FileMode {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -222,11 +172,6 @@ func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
 	socketFixtureStartListener(t, sockPath, h)
 	socketFixtureWaitReady(t, sockPath)
 
-	// Poll for the expected mode rather than asserting immediately.
-	// RunSocketListener calls os.Chmod synchronously before its accept loop,
-	// but a kernel-level connection (which socketFixtureWaitReady detects)
-	// can succeed before Chmod runs — creating a race between "socket is
-	// dialable" and "mode has been set".  Polling resolves the race.
 	const wantMode = os.FileMode(0o600)
 	got := socketFixtureWaitMode(t, sockPath, wantMode, 500*time.Millisecond)
 
@@ -249,7 +194,6 @@ func TestRunSocketListener_StaleRemoval(t *testing.T) {
 
 	sockPath := socketFixtureTempSockPath(t)
 
-	// Lay down a stale file (simulates a crashed daemon's leftover socket).
 	if err := os.WriteFile(sockPath, []byte("stale"), 0o600); err != nil {
 		t.Fatalf("WriteFile stale socket: %v", err)
 	}
@@ -267,19 +211,6 @@ func TestRunSocketListener_StaleRemoval(t *testing.T) {
 	}
 }
 
-// socketFixtureCreateStaleSocket creates a Unix domain socket inode at sockPath
-// with nothing listening behind it — the state a SIGKILL'd daemon leaves.
-//
-// The inode has to survive the close, and net.UnixListener unlinks its socket
-// file on Close by default. SetUnlinkOnClose(false) turns that off, which is
-// what lets this use net instead of a raw syscall.Socket. The earlier raw
-// version was written believing net always unlinks, and it cost a descriptor
-// that was not close-on-exec: a raw descriptor is inherited by any subprocess
-// forked before it closes, whereas one from net.* carries the flag for free.
-// internal/specaudit TestRawDescriptorCreatorsNameCloexec now holds that line.
-//
-// Returns a cleanup function that removes the stale socket file. If the socket
-// file is consumed by the daemon under test, the cleanup is a no-op.
 func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 	t.Helper()
 
@@ -288,8 +219,6 @@ func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 		t.Fatalf("socketFixtureCreateStaleSocket: listen %q: %v", sockPath, err)
 	}
 	l.SetUnlinkOnClose(false)
-	// Close the listener — the socket inode stays on disk with no listener behind
-	// it. This is the state left by a SIGKILL'd daemon.
 	if err := l.Close(); err != nil {
 		t.Fatalf("socketFixtureCreateStaleSocket: close listener: %v", err)
 	}
@@ -313,33 +242,25 @@ func TestRunSocketListener_StaleSockFileNoListener(t *testing.T) {
 
 	sockPath := socketFixtureTempSockPath(t)
 
-	// Create a stale socket inode (fd closed immediately, file remains on disk).
-	// A dial to this path returns ECONNREFUSED — no one is Accept()ing.
 	cleanupStale := socketFixtureCreateStaleSocket(t, sockPath)
 	defer cleanupStale()
 
-	// Confirm the stale socket file is present before starting the daemon.
 	if _, statErr := os.Stat(sockPath); statErr != nil {
 		t.Fatalf("StaleSockFileNoListener: stale socket file missing before daemon start: %v", statErr)
 	}
 
-	// Start the daemon's socket listener — it must detect the stale socket and rebind.
 	h := &stubHandler{}
 	cancel, done := socketFixtureStartListener(t, sockPath, h)
 	defer cancel()
 
-	// If RunSocketListener returns an error immediately (EADDRINUSE or stale-socket
-	// check failure), surface it as a test failure.
 	select {
 	case startErr := <-done:
 		t.Fatalf("StaleSockFileNoListener: RunSocketListener returned early with error: %v", startErr)
 	default:
 	}
 
-	// The listener must reach a state where it accepts connections.
 	socketFixtureWaitReady(t, sockPath)
 
-	// Verify the socket is a valid Unix domain socket (not a stale inode).
 	info, err := os.Stat(sockPath)
 	if err != nil {
 		t.Fatalf("StaleSockFileNoListener: Stat socket after rebind: %v", err)
@@ -483,14 +404,11 @@ func TestRunSocketListener_CancelStopsListener(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	cancel()
-	// The channel is buffered (cap 1); block until the goroutine exits.
 	if err := <-done; err != nil {
 		t.Errorf("CancelStopsListener: RunSocketListener returned non-nil after cancel: %v", err)
 	}
 }
 
-// hookRelayFixtureEnvBytes marshals a hookRelayEnvelope map to NDJSON bytes
-// (with trailing newline) for writing to a Unix socket.
 func hookRelayFixtureEnvBytes(t *testing.T, env map[string]interface{}) []byte {
 	t.Helper()
 	data, err := json.Marshal(env)
@@ -500,8 +418,6 @@ func hookRelayFixtureEnvBytes(t *testing.T, env map[string]interface{}) []byte {
 	return append(data, '\n')
 }
 
-// hookRelayFixtureSendAndReadAck sends a hookRelayEnvelope over conn and reads
-// back a hookRelayAckMsg (NDJSON line). The connection is closed by the caller.
 func hookRelayFixtureSendAndReadAck(t *testing.T, conn net.Conn, envBytes []byte) map[string]string {
 	t.Helper()
 	if _, err := conn.Write(envBytes); err != nil {
@@ -529,21 +445,16 @@ func TestSocketListener_HookRelayHandler(t *testing.T) {
 	const runID = "run-wire-hr-01"
 	const sessionID = "claude-sess-wire-hr-01"
 
-	// Construct a real hookSessionStore and register the session window so the
-	// store will accept outcome_emitted messages for (runID, sessionID).
 	store := daemon.ExportedNewHookSessionStore()
 	daemon.ExportedHookRegister(store, runID, sessionID)
 
 	sockPath := socketFixtureTempSockPath(t)
 	h := &stubHandler{}
 
-	// Start the listener with the real store as HookRelayHandler. With hr=nil
-	// the handler would return bad_envelope; with the real store it must return ok.
 	cancel, _ := socketFixtureStartListener(t, sockPath, h, store)
 	defer cancel()
 	socketFixtureWaitReady(t, sockPath)
 
-	// Build a valid hook-relay envelope (outcome_emitted type).
 	payload, err := json.Marshal(map[string]string{"kind": "WORK_COMPLETE", "summary": "wire test"})
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
@@ -558,19 +469,16 @@ func TestSocketListener_HookRelayHandler(t *testing.T) {
 	}
 	envBytes := hookRelayFixtureEnvBytes(t, envMap)
 
-	// Send the envelope and read the ACK.
 	conn := socketFixtureDial(t, sockPath)
 	defer func() { _ = conn.Close() }()
 
 	ack := hookRelayFixtureSendAndReadAck(t, conn, envBytes)
 
-	// Acceptance criterion 1: the envelope is accepted (not bad_envelope).
 	if ack["status"] != "ok" {
 		t.Errorf("hook-relay ACK status = %q (reason=%q), want %q",
 			ack["status"], ack["reason"], "ok")
 	}
 
-	// Acceptance criterion 2: the store has recorded the outcome.
 	got := daemon.ExportedHookLatestOutcome(store, runID, sessionID)
 	if got == nil {
 		t.Fatal("LatestOutcome after hook-relay dispatch: nil, want non-nil")

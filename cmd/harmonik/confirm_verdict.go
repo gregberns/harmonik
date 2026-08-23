@@ -1,59 +1,5 @@
 package main
 
-// confirm_verdict.go — `harmonik confirm-verdict <run_id>` subcommand.
-//
-// # Purpose (RC-027)
-//
-// Implements the operator verdict-confirmation surface per RC-027. RC-027's
-// design is that a reconciliation workflow whose YAML policy declares
-// confirm_required: true pauses verdict execution and waits for operator input.
-// This command sends the "confirm" decision to the daemon so verdict execution
-// proceeds.
-//
-// # NOT CONNECTED — this command cannot succeed under any input
-//
-// The design above is not built. No production code parks a run awaiting an
-// operator decision, so there is never a pending verdict, and every invocation
-// exits 16. Three facts hold at this commit, and each one alone is enough:
-//
-//   - daemon.VerdictConfirmationRegistry.Await has no non-test caller, so the
-//     pending map is always empty and Resolve returns false for every run_id.
-//   - daemon.ExecuteVerdict has no non-test caller either, so wiring Await
-//     alone would not make this command reachable. The whole verdict-executor
-//     is dead code, and scripts/reachability.baseline already records it as
-//     such.
-//   - core.PolicyRequiresConfirmation has no non-test caller, so no policy's
-//     confirm_required field is ever read.
-//
-// The surfaces this file prints MUST say so. An operator who reads a refusal
-// that names only their run_id will go looking for the run, and the time is
-// spent on a feature that is connected to nothing. Whoever wires Await is
-// required to update this file: internal/daemon has a guard test that fails
-// the moment a production caller appears.
-//
-// Bead ref: hk-verdict-override-unwired-aqjxo.
-//
-// # Grammar
-//
-//	harmonik confirm-verdict <run_id> [--project DIR]
-//
-// Positional argument: run_id — the run whose pending verdict to confirm.
-// The daemon MUST have a pending-confirmation entry for this run_id; if not,
-// the command fails with exit code 16 (operator-control-invalid-state).
-//
-// # Exit codes
-//
-//	0  — success; the daemon will proceed with verdict execution
-//	1  — argument or flag error
-//	16 — no pending verdict for the given run_id (operator-control-invalid-state)
-//	17 — daemon not running (socket absent or ECONNREFUSED)
-//
-// Spec refs:
-//   - specs/reconciliation/spec.md §4.5 RC-027
-//   - specs/operator-nfr.md §4.3 ON-014
-//
-// Bead ref: hk-63oh.39.
-
 import (
 	"context"
 	"encoding/json"
@@ -66,7 +12,6 @@ import (
 	"syscall"
 )
 
-// confirmVerdictUsage prints help for `harmonik confirm-verdict`.
 func confirmVerdictUsage() {
 	fmt.Print(`harmonik confirm-verdict — confirm a pending reconciliation verdict
 
@@ -126,8 +71,6 @@ SPEC
 `)
 }
 
-// runConfirmVerdictSubcommand implements `harmonik confirm-verdict <run_id> [--project DIR]`.
-// subArgs is os.Args[2:] (everything after "confirm-verdict").
 func runConfirmVerdictSubcommand(subArgs []string) int {
 	var projectDirFlag string
 	var runID string
@@ -178,23 +121,7 @@ func runConfirmVerdictSubcommand(subArgs []string) int {
 	return sendVerdictOverrideRequest(projectDirFlag, runID, "confirm_verdict", "")
 }
 
-// sendVerdictOverrideRequest sends a verdict-override socket request to the
-// daemon and returns the appropriate exit code.
-//
-// op is one of "confirm_verdict" or "veto_verdict"; promoteTo is the optional
-// --promote-to value (empty for confirm, or "escalate-to-human" for a promoted
-// veto).
-//
-// Exit codes per the operator-nfr.md §8 taxonomy:
-//
-//	0  — success
-//	1  — local error (arg parsing, stat, etc.)
-//	16 — operator-control-invalid-state (no pending verdict for run_id)
-//	17 — daemon not running
 func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
-	// This path is shared by `confirm-verdict` and `veto-verdict`; derive the
-	// diagnostic prefix from the op ("confirm_verdict" → "confirm-verdict",
-	// "veto_verdict" → "veto-verdict") so messages name the actual command.
 	cmdName := strings.ReplaceAll(op, "_", "-")
 	harmonikDir := projectDir + "/.harmonik"
 	sockPath := harmonikDir + "/daemon.sock"
@@ -251,12 +178,8 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 	}
 
 	if !resp.Ok {
-		// exit code 16 = operator-control-invalid-state (no pending verdict)
 		if resp.ErrorCode == 16 {
 			fmt.Fprintf(os.Stderr, "harmonik %s: no pending verdict for run %q (operator-control-invalid-state)\n", cmdName, runID)
-			// Do not let this read as "you picked the wrong run". No run can be
-			// parked in this build, so the refusal is about the feature, not the
-			// argument (hk-verdict-override-unwired-aqjxo).
 			fmt.Fprintf(os.Stderr, "harmonik %s: NOT CONNECTED — no run can have a pending verdict in this build, so this command always fails\n", cmdName)
 			fmt.Fprintf(os.Stderr, "harmonik %s: nothing parks a run awaiting an operator decision; the run_id you gave is not the problem\n", cmdName)
 			fmt.Fprintf(os.Stderr, "harmonik %s: '%s --help' has the detail; tracked by hk-verdict-override-unwired-aqjxo\n", cmdName, cmdName)
@@ -266,25 +189,16 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 		return 1
 	}
 
-	// The veto path prints its own success message; only the confirm path needs
-	// the generic "verdict confirmed" line here.
 	if op == "confirm_verdict" {
 		fmt.Fprintf(os.Stderr, "harmonik %s: verdict confirmed for run %q — daemon will proceed with execution\n", cmdName, runID)
 	}
 	return 0
 }
 
-// isVerdictSocketAbsent reports whether the dial error indicates the socket
-// file does not exist. Linux connect(2) on a missing unix socket returns
-// ENOENT; macOS returns EINVAL because the kernel rejects a path with no
-// socket file at it. Both are matched through the whole error chain rather
-// than by message text, so an unrelated error that merely mentions a missing
-// file cannot be mistaken for "daemon down".
 func isVerdictSocketAbsent(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EINVAL)
 }
 
-// isVerdictConnectionRefused reports whether the dial error is ECONNREFUSED.
 func isVerdictConnectionRefused(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
 }

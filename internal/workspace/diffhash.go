@@ -63,9 +63,6 @@ func ComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, worktree
 	return fmt.Sprintf("%x", sum), nil
 }
 
-// validateDiffHashObjectIDs restricts git diff range components to complete
-// SHA-1 or SHA-256 object IDs. This keeps user-derived revision syntax out of
-// the subprocess argument boundary while supporting either Git hash format.
 func validateDiffHashObjectIDs(parentSHA, headSHA string) error {
 	if !isFullGitObjectID(parentSHA) || !isFullGitObjectID(headSHA) {
 		return fmt.Errorf("workspace: ComputeDiffHash: parent and head must be full Git object IDs")

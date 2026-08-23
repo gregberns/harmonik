@@ -1,23 +1,5 @@
 package hooksystem_test
 
-// dispatcher_cp012_test.go — binding tests for CP-012 "Hook fires on event match".
-//
-// Spec ref: specs/control-points.md §4.3 CP-012 through CP-015.
-// Bead ref: hk-a8bg.11
-//
-// Coverage:
-//
-//	CP-012: Hook fires when subscribed event matches trigger.
-//	CP-013: Trigger name uses on_<event-type> prefix convention.
-//	CP-014: Multiple hooks on one event fire in SubsystemPriority ascending,
-//	        then Name ascending order.
-//	CP-015: halt_on_failure=true stops the hook chain; =false continues.
-//
-// # Helper prefix
-//
-// All package-level identifiers in this file use the cp012Fixture prefix per
-// the implementer-protocol.md helper-prefix discipline.
-
 import (
 	"context"
 	"encoding/json"
@@ -30,14 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/hooksystem"
 )
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-// cp012FixtureMakeHookCP builds a minimal valid Hook ControlPoint.
-//
-// triggerEvent should use the on_ prefix (e.g. "on_agent_started").
-// expression is a boolean policy expression evaluated against the event payload.
 func cp012FixtureMakeHookCP(
 	name string,
 	triggerEvent string,
@@ -66,7 +40,6 @@ func cp012FixtureMakeHookCP(
 	}
 }
 
-// cp012FixtureMakeHookCPWithFilter builds a Hook ControlPoint with a subscription filter.
 func cp012FixtureMakeHookCPWithFilter(
 	name string,
 	triggerEvent string,
@@ -97,16 +70,12 @@ func cp012FixtureMakeHookCPWithFilter(
 	}
 }
 
-// cp012FixtureMapRegistry is a minimal read-only Registry backed by a slice of
-// ControlPoints. It satisfies hooksystem.Registry.
 type cp012FixtureMapRegistry struct {
 	mu  sync.RWMutex
 	cps []core.ControlPoint
 }
 
 func cp012FixtureNewRegistry(cps ...core.ControlPoint) *cp012FixtureMapRegistry {
-	// Stamp DeclarationIndex in registration order so the dispatcher can apply
-	// CP-014's within-priority declaration-order tie-breaker.
 	stamped := make([]core.ControlPoint, len(cps))
 	for i, cp := range cps {
 		cp.DeclarationIndex = i
@@ -127,7 +96,6 @@ func (r *cp012FixtureMapRegistry) LookupByTrigger(trigger string) []core.Control
 	return out
 }
 
-// cp012FixtureEventCollector collects event types emitted to the bus during a test.
 type cp012FixtureEventCollector struct {
 	mu     sync.Mutex
 	events []string // collected event type strings in emission order
@@ -147,13 +115,10 @@ func (c *cp012FixtureEventCollector) all() []string {
 	return out
 }
 
-// cp012FixtureMakeAgentStartedPayload builds a minimal agent_started-like payload.
 func cp012FixtureMakeAgentStartedPayload() json.RawMessage {
 	return json.RawMessage(`{"run_id":"test-run"}`)
 }
 
-// cp012FixtureMakeFilteredPayload builds a payload containing a `score` field for
-// filter tests.
 func cp012FixtureMakeFilteredPayload(score int) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{"score":%d}`, score))
 }
@@ -167,10 +132,6 @@ func cp012FixtureMarshal(t *testing.T, value any) json.RawMessage {
 	return raw
 }
 
-// cp012FixtureBuildBus constructs a bus, registers a collector observer, and
-// seals it. Returns the bus and the collector. The collectorHooks argument
-// provides additional Subscriptions to register before Seal (e.g., the
-// dispatcher's own subscription).
 func cp012FixtureBuildBus(t *testing.T, collector *cp012FixtureEventCollector, extraSubs ...func(eventbus.EventBus) error) eventbus.EventBus {
 	t.Helper()
 
@@ -182,7 +143,6 @@ func cp012FixtureBuildBus(t *testing.T, collector *cp012FixtureEventCollector, e
 		}
 	}
 
-	// Register the collector as an observer for hook_fired and hook_failed.
 	_, err := bus.Subscribe(core.Subscription{
 		ConsumerID:    "test.collector",
 		ConsumerClass: core.ConsumerClassObserver,
@@ -203,7 +163,6 @@ func cp012FixtureBuildBus(t *testing.T, collector *cp012FixtureEventCollector, e
 	return bus
 }
 
-// cp012FixtureEmitEvent emits a minimal event of the given type and payload.
 func cp012FixtureEmitEvent(t *testing.T, bus eventbus.EventBus, eventType string, payload json.RawMessage) {
 	t.Helper()
 	if err := bus.Emit(context.Background(), core.EventType(eventType), payload); err != nil {
@@ -211,17 +170,12 @@ func cp012FixtureEmitEvent(t *testing.T, bus eventbus.EventBus, eventType string
 	}
 }
 
-// cp012FixtureWaitDrain calls Drain to ensure all observer dispatches complete.
 func cp012FixtureWaitDrain(t *testing.T, bus eventbus.EventBus) {
 	t.Helper()
 	if err := bus.Drain(context.Background()); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// CP-012: Hook fires when subscribed event matches trigger
-// ---------------------------------------------------------------------------
 
 // TestCP012_HookFiresOnEventMatch verifies that a hook registered with
 // trigger "on_agent_started" fires when an agent_started event is emitted.
@@ -285,7 +239,6 @@ func TestCP012_HookDoesNotFireOnNonMatchingEvent(t *testing.T) {
 	})
 	_ = disp
 
-	// Emit a different event type — hook must not fire.
 	cp012FixtureEmitEvent(t, bus, "agent_completed", cp012FixtureMakeAgentStartedPayload())
 	cp012FixtureWaitDrain(t, bus)
 
@@ -328,10 +281,6 @@ func TestCP012_HookEvaluatorFalseDoesNotFire(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-013: on_ prefix convention
-// ---------------------------------------------------------------------------
-
 // TestCP013_TriggerNameOnPrefix verifies that a hook registered with
 // trigger "on_run_started" fires when a run_started event is emitted,
 // confirming the on_<event-type> namespace mapping per CP-013.
@@ -371,10 +320,6 @@ func TestCP013_TriggerNameOnPrefix(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Subscription filter (§6.1.2)
-// ---------------------------------------------------------------------------
-
 // TestCP012_SubscriptionFilterMatching verifies that a hook with a subscription
 // filter fires only when the filter condition is met.
 func TestCP012_SubscriptionFilterMatching(t *testing.T) {
@@ -389,7 +334,6 @@ func TestCP012_SubscriptionFilterMatching(t *testing.T) {
 	)
 	reg := cp012FixtureNewRegistry(cp)
 
-	// First bus: emit event where filter PASSES (score=100).
 	collector1 := &cp012FixtureEventCollector{}
 	var disp1 *hooksystem.Dispatcher
 	bus1 := cp012FixtureBuildBus(t, collector1, func(b eventbus.EventBus) error {
@@ -410,7 +354,6 @@ func TestCP012_SubscriptionFilterMatching(t *testing.T) {
 		t.Errorf("subscription_filter: hook_fired not emitted when score=100 (filter: score>50)")
 	}
 
-	// Second bus: emit event where filter FAILS (score=10).
 	collector2 := &cp012FixtureEventCollector{}
 	var disp2 *hooksystem.Dispatcher
 	bus2 := cp012FixtureBuildBus(t, collector2, func(b eventbus.EventBus) error {
@@ -428,10 +371,6 @@ func TestCP012_SubscriptionFilterMatching(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-014: Hook ordering is deterministic
-// ---------------------------------------------------------------------------
-
 // TestCP014_HookOrderingBySubsystemPriority verifies that when multiple hooks
 // match the same event, they fire in SubsystemPriority ascending order per CP-014.
 //
@@ -441,7 +380,6 @@ func TestCP012_SubscriptionFilterMatching(t *testing.T) {
 func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 	t.Parallel()
 
-	// Three hooks with different priorities. We expect p10 before p20 before p30.
 	cpP10 := cp012FixtureMakeHookCP("hook-p10", "on_agent_started", "true", false, 10)
 	cpP30 := cp012FixtureMakeHookCP("hook-p30", "on_agent_started", "true", false, 30)
 	cpP20 := cp012FixtureMakeHookCP("hook-p20", "on_agent_started", "true", false, 20)
@@ -458,10 +396,6 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 	}
 	_ = dispRef
 
-	// Synchronous consumer for hook_fired: records names in emission order.
-	// A synchronous consumer blocks the Emit call so recording is strictly
-	// ordered with each hook_fired emission.
-	// DeclaredEmitTypes is nil (this consumer never emits), so no cycle.
 	if _, err := bus.Subscribe(core.Subscription{
 		ConsumerID:    "test.order-collector",
 		ConsumerClass: core.ConsumerClassSynchronous,
@@ -510,7 +444,6 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 	t.Parallel()
 
-	// Register in order: C, A, B.  Expected fire order: hook-c, hook-a, hook-b.
 	cpC := cp012FixtureMakeHookCP("hook-c", "on_agent_started", "true", false, 0)
 	cpA := cp012FixtureMakeHookCP("hook-a", "on_agent_started", "true", false, 0)
 	cpB := cp012FixtureMakeHookCP("hook-b", "on_agent_started", "true", false, 0)
@@ -527,7 +460,6 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 	}
 	_ = dispRef
 
-	// Synchronous consumer for hook_fired: records names in emission order.
 	if _, err := bus.Subscribe(core.Subscription{
 		ConsumerID:    "test.decl-order-collector",
 		ConsumerClass: core.ConsumerClassSynchronous,
@@ -557,7 +489,6 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 		t.Fatalf("CP-014: expected 3 hook_fired events, got %d: %v", len(firedNames), firedNames)
 	}
 
-	// Declaration order: hook-c (first), hook-a (second), hook-b (third).
 	want := []string{"hook-c", "hook-a", "hook-b"}
 	for i, w := range want {
 		if firedNames[i] != w {
@@ -567,18 +498,12 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-015: Hook failures do not halt the chain (halt_on_failure=false)
-// ---------------------------------------------------------------------------
-
 // TestCP015_HookFailureDoesNotHaltByDefault verifies that when a hook fails
 // with halt_on_failure=false (the default), the remaining hooks in the chain
 // still execute.
 func TestCP015_HookFailureDoesNotHaltByDefault(t *testing.T) {
 	t.Parallel()
 
-	// hook-fail: expression references undefined variable → compile error.
-	// halt_on_failure = false (default).
 	cpFail := cp012FixtureMakeHookCP(
 		"hook-fail",
 		"on_agent_started",
@@ -586,7 +511,6 @@ func TestCP015_HookFailureDoesNotHaltByDefault(t *testing.T) {
 		false,
 		10,
 	)
-	// hook-ok: fires after hook-fail despite its failure.
 	cpOK := cp012FixtureMakeHookCP(
 		"hook-ok",
 		"on_agent_started",
@@ -632,7 +556,6 @@ func TestCP015_HookFailureDoesNotHaltByDefault(t *testing.T) {
 func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 	t.Parallel()
 
-	// hook-halt-fail: bad expression + halt_on_failure=true.
 	cpHaltFail := cp012FixtureMakeHookCP(
 		"hook-halt-fail",
 		"on_agent_started",
@@ -640,7 +563,6 @@ func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 		true,
 		10,
 	)
-	// hook-after: would fire if chain not halted.
 	cpAfter := cp012FixtureMakeHookCP(
 		"hook-after",
 		"on_agent_started",
@@ -702,10 +624,6 @@ func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// CP-012: Hooks do not block run's transition progression
-// ---------------------------------------------------------------------------
-
 // TestCP012_HooksAreObserverClass verifies that the dispatcher registers as
 // ConsumerClassObserver so hook processing cannot block the Emit call path
 // (CP-012: "Hooks MUST NOT block, halt, or alter the run's transition
@@ -762,8 +680,6 @@ func TestCP012_HooksAreObserverClass(t *testing.T) {
 
 	cp012FixtureEmitEvent(t, bus, "agent_started", cp012FixtureMakeAgentStartedPayload())
 
-	// After Drain, hook_fired must be visible. The Dispatcher subscription is
-	// ConsumerClassObserver; its dispatch is off the critical path.
 	cp012FixtureWaitDrain(t, bus)
 
 	mu.Lock()

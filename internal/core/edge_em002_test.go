@@ -22,9 +22,6 @@ import (
 	"testing"
 )
 
-// requiredEM002Fields enumerates the six field names and their expected Go
-// types that EM-002 mandates on the Edge struct. Extensions (Label,
-// TraversalCap) are allowed but not required by EM-002.
 var requiredEM002Fields = []struct {
 	name    string
 	typeStr string
@@ -50,7 +47,6 @@ func TestEdgeEM002_FieldsSufficeForCascade(t *testing.T) {
 
 	edgeType := reflect.TypeOf(Edge{})
 
-	// Build a map of field name → type string for O(1) lookup.
 	present := make(map[string]string, edgeType.NumField())
 	for i := 0; i < edgeType.NumField(); i++ {
 		f := edgeType.Field(i)
@@ -68,8 +64,6 @@ func TestEdgeEM002_FieldsSufficeForCascade(t *testing.T) {
 		}
 	}
 
-	// Enumerate all struct fields and log them so test output documents the
-	// full shape alongside the EM-002 superset assertion.
 	if t.Failed() {
 		t.Logf("Edge fields present: %v", present)
 	}

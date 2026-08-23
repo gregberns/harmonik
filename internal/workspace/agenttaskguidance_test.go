@@ -205,14 +205,6 @@ func TestCommitTemplatePassesTheCommitMessageGate(t *testing.T) {
 	}
 }
 
-// extractCommitTemplate returns the fenced block of the ## Commit Message
-// section that holds the trailers — the one an implementer is told to copy.
-//
-// It copies nothing and strips nothing: the bytes handed to the validator are
-// the bytes between the fence lines. That is the whole point of the test, so a
-// helper that trimmed indentation here would prove the opposite of what is
-// wanted. It fails the test when the section, the fences or the trailers are
-// missing, so a rename cannot quietly turn this into a check of an empty string.
 func extractCommitTemplate(t *testing.T, content string) string {
 	t.Helper()
 
@@ -302,7 +294,6 @@ func TestRenderedCommitRulesMatchTheValidator(t *testing.T) {
 	}
 	content := string(mustReadFile(t, AgentTaskPath(workspacePath)))
 
-	// The type set: exactly the script's, no more and no fewer.
 	gotCount, gotTypes := renderedTypeSet(t, content)
 	if !equalStringSlices(gotTypes, wantTypes) {
 		t.Errorf("rendered task file lists types %v; scripts/validate-commit-msg.sh CC_PATTERN allows %v", gotTypes, wantTypes)
@@ -311,7 +302,6 @@ func TestRenderedCommitRulesMatchTheValidator(t *testing.T) {
 		t.Errorf("rendered task file says %q words; the script allows %d types (%q)", gotCount, len(wantTypes), wantCount)
 	}
 
-	// The subject-length ceiling, and the one-over example that follows it.
 	for _, want := range []string{
 		fmt.Sprintf("The subject MUST be %d characters or fewer.", wantCeiling),
 		fmt.Sprintf("A subject of %d characters is refused.", wantCeiling+1),
@@ -321,35 +311,21 @@ func TestRenderedCommitRulesMatchTheValidator(t *testing.T) {
 		}
 	}
 
-	// The trailing-period refusal. Only the script's HAVING the rule is pinned
-	// (above) — the rule carries no number to drift, so the prose is checked
-	// against a fixed sentence.
 	if want := "The subject MUST NOT end with a period."; !strings.Contains(content, want) {
 		t.Errorf("rendered task file does not state %q, but the script refuses a trailing period", want)
 	}
 }
 
-// ccPatternRE lifts the alternation group out of the validator's CC_PATTERN
-// assignment — the closed set of Conventional Commits types.
 var ccPatternRE = regexp.MustCompile(`(?m)^CC_PATTERN='\^\(([a-z|]+)\)`)
 
-// subjectCeilingRE lifts the number out of the validator's subject-length
-// comparison, `(( SUBJECT_LEN > 72 ))`.
 var subjectCeilingRE = regexp.MustCompile(`\(\(\s*SUBJECT_LEN\s*>\s*(\d+)\s*\)\)`)
 
-// trailingPeriodRE matches the validator's trailing-period test,
-// `grep -qE '\.$' <<<"$SUBJECT"`.
 var trailingPeriodRE = regexp.MustCompile(`grep\s+-qE\s+'\\\.\$'\s*<<<\s*"\$SUBJECT"`)
 
-// renderedTypesRE lifts the count word and the backticked type list out of the
-// rendered task file's type sentence.
 var renderedTypesRE = regexp.MustCompile("(?m)^The `<type>` MUST be one of these ([a-z]+) words: ([^\n]*?) —")
 
-// backtickedWordRE matches one `word` token.
 var backtickedWordRE = regexp.MustCompile("`([a-z]+)`")
 
-// validatorTypeSet returns the sorted Conventional Commits types the validator
-// accepts, read from its CC_PATTERN assignment.
 func validatorTypeSet(t *testing.T, script string) []string {
 	t.Helper()
 
@@ -365,8 +341,6 @@ func validatorTypeSet(t *testing.T, script string) []string {
 	return types
 }
 
-// validatorSubjectCeiling returns the maximum subject length the validator
-// accepts, read from its `(( SUBJECT_LEN > N ))` comparison.
 func validatorSubjectCeiling(t *testing.T, script string) int {
 	t.Helper()
 
@@ -381,9 +355,6 @@ func validatorSubjectCeiling(t *testing.T, script string) int {
 	return n
 }
 
-// requireValidatorRefusesTrailingPeriod fails when the validator no longer
-// carries a trailing-period refusal, so the prose sentence asserted against it
-// cannot outlive the rule.
 func requireValidatorRefusesTrailingPeriod(t *testing.T, script string) {
 	t.Helper()
 
@@ -392,8 +363,6 @@ func requireValidatorRefusesTrailingPeriod(t *testing.T, script string) {
 	}
 }
 
-// renderedTypeSet returns the count word and the sorted list of types the
-// rendered task file tells an implementer it may use.
 func renderedTypeSet(t *testing.T, content string) (word string, types []string) {
 	t.Helper()
 
@@ -413,8 +382,6 @@ func renderedTypeSet(t *testing.T, content string) (word string, types []string)
 	return m[1], types
 }
 
-// countWord spells n for comparison against the rendered prose, which writes
-// the count as a word ("nine") rather than a digit.
 func countWord(t *testing.T, n int) string {
 	t.Helper()
 
@@ -428,7 +395,6 @@ func countWord(t *testing.T, n int) string {
 	return words[n]
 }
 
-// equalStringSlices reports whether two sorted slices hold the same elements.
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -483,7 +449,6 @@ func TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas(t *testing.T) {
 		tmpdir string
 		setEnv bool
 	}{
-		// A wrapped run: srt injects TMPDIR at the granted scratch directory.
 		{"srt_wrapped_run_has_a_tmpdir", sandboxScratch, true},
 		// The gate declined to wrap, or the run is remote. Nothing in harmonik
 		// sets TMPDIR, so the shell sees it unset. This is the case the first
@@ -515,8 +480,6 @@ func TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas(t *testing.T) {
 					"Name a default (${TMPDIR:-/tmp}); a bare $TMPDIR is empty on every launch harmonik does not sandbox.", pathExpr, got)
 			}
 
-			// Writable is the whole promise, so write. A path that exists and
-			// refuses the write is the failure this section was rewritten for.
 			probe := filepath.Join(dir, "harmonik-commit-msg-writable-probe-"+tc.name)
 			if err := os.WriteFile(probe, []byte("probe"), 0o600); err != nil {
 				t.Fatalf("the implementer is told to write its commit message to %q, and %q is not writable: %v", got, dir, err)
@@ -528,14 +491,8 @@ func TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas(t *testing.T) {
 	}
 }
 
-// commitMessagePathRE captures the path expression inside the `git commit -F`
-// instruction the task file gives every implementer.
 var commitMessagePathRE = regexp.MustCompile("git commit -F \"([^\"]+)\"")
 
-// extractCommitMessagePathExpr returns that path expression, unexpanded, exactly
-// as the agent reads it. It fails the test when the instruction is missing or
-// has changed shape, so a rename cannot quietly turn the caller into a check of
-// an empty string.
 func extractCommitMessagePathExpr(t *testing.T, content string) string {
 	t.Helper()
 	m := commitMessagePathRE.FindStringSubmatch(content)
@@ -586,9 +543,6 @@ func TestEveryTempDirectoryTheTaskFileNamesCarriesADefault(t *testing.T) {
 	const wantForm = "${TMPDIR:-/tmp}"
 	found := tmpDirReferenceRE.FindAllString(content, -1)
 
-	// The paired positive. "No bare $TMPDIR" is satisfied for free by a file that
-	// stopped naming a temp directory at all — which is itself a regression, since
-	// the section's job is to tell the implementer where it may write.
 	const wantAtLeast = 3
 	if len(found) < wantAtLeast {
 		t.Fatalf("the rendered task file names a temp directory %d time(s), want at least %d "+
@@ -596,11 +550,6 @@ func TestEveryTempDirectoryTheTaskFileNamesCarriesADefault(t *testing.T) {
 			"The section has stopped telling the implementer where it may write.\n%s", len(found), wantAtLeast, content)
 	}
 
-	// The spelling being right does not make the sentence right. This guidance
-	// exists because a run that was refused a write RETRIED IT WITH sudo and then
-	// threw its finished commit away, so the one instruction that must survive
-	// intact is that escalating does not help. Prose saying the opposite keeps
-	// all three ${TMPDIR:-/tmp} spellings and passes every check above.
 	if !strings.Contains(content, "`sudo` does not lift that refusal") {
 		t.Errorf("the rendered task file no longer says that `sudo` does not lift a sandbox write refusal.\n"+
 			"An implementer that does not read it does what the reported failure did: retries the refused "+
@@ -618,8 +567,4 @@ func TestEveryTempDirectoryTheTaskFileNamesCarriesADefault(t *testing.T) {
 	}
 }
 
-// tmpDirReferenceRE matches one shell reference to the temp directory: the
-// braced form with whatever default it carries, or a bare $TMPDIR. It stops at
-// the closing brace, so the path appended after it is not part of the match and
-// the caller compares against one fixed spelling.
 var tmpDirReferenceRE = regexp.MustCompile(`\$\{TMPDIR[^}]*\}|\$TMPDIR`)

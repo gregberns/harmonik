@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// budgetPayloadFixture returns a fully-populated BudgetPayload with all fields
-// set to valid non-zero values, suitable for structural tests (hk-a8bg.66).
 func budgetPayloadFixture(t *testing.T) BudgetPayload {
 	t.Helper()
 

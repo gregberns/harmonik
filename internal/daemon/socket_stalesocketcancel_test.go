@@ -1,17 +1,5 @@
 package daemon
 
-// socket_stalesocketcancel_test.go — pins the one rule that keeps the PL-003
-// socket-exclusivity guard from destroying the thing it guards.
-//
-// removeStaleSocket reads EVERY dial error as "this socket file is stale" and
-// then deletes the file. So the liveness probe must fail only when the dial
-// really fails. It runs on context.WithoutCancel for that reason: a caller whose
-// context is already done must still get a true answer, not a fast "no".
-//
-// Without this test the invariant is invisible. A later change back to a plain
-// cancellable context compiles, passes every other test, and deletes a live
-// daemon's socket the first time a daemon boots while it is shutting down.
-
 import (
 	"context"
 	"errors"
@@ -27,8 +15,6 @@ import (
 func TestRemoveStaleSocket_CancelledContextStillSeesTheLiveDaemon(t *testing.T) {
 	t.Parallel()
 
-	// A short path: a Unix socket address has a low length limit and t.TempDir
-	// names are long.
 	dir, err := os.MkdirTemp("", "hkstale")
 	if err != nil {
 		t.Fatalf("mkdtemp: %v", err)
@@ -40,8 +26,6 @@ func TestRemoveStaleSocket_CancelledContextStillSeesTheLiveDaemon(t *testing.T) 
 	})
 	sockPath := filepath.Join(dir, "d.sock")
 
-	// The listener stands in for a live daemon. The context bounds the listen
-	// call only — the listener itself stays up until Close.
 	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen unix %q: %v", sockPath, err)

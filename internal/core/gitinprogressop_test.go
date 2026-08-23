@@ -209,7 +209,6 @@ func TestGitInProgressOpRoundTrip(t *testing.T) {
 func TestGitInProgressOpUnmarshalTextErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	// Error message for an unknown value must list all five declared values.
 	var op GitInProgressOp
 	err := op.UnmarshalText([]byte("in-progress"))
 	if err == nil {

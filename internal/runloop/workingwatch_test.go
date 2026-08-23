@@ -1,21 +1,5 @@
 package runloop
 
-// workingwatch_test.go — the acceptance test for the kill half of the stall
-// feeder.
-//
-// internal/runexec stepDispatchWorking turns EvNoChangeTimeout or
-// EvHeartbeatStale into ActKillAgent. That arm had no producer AND no pump: the
-// segment stopped driving the machine the moment it reached Working, so even a
-// perfect producer would have fed a machine nobody was stepping. This file
-// pins BOTH halves at once, through the real DispatchSegment and the real
-// machine — a stall arriving during Working must reach the site's kill hook.
-//
-// Every test carries a control run that is NOT stalled and asserts its kill
-// hook never fires. A watchdog that reaps a working agent is worse than one
-// that reaps nothing, so "the kill hook fired" alone is never the criterion.
-//
-// Helper prefix: workingWatch.
-
 import (
 	"context"
 	"testing"
@@ -25,9 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runexec"
 )
 
-// workingWatchSegment builds a segment wired with a stall feed and a kill hook,
-// drives it to Working, and returns it. The returned channel receives once per
-// stall kill.
 func workingWatchSegment(t *testing.T, stalls <-chan runexec.Event) (seg *DispatchSegment, killReasons <-chan string) {
 	t.Helper()
 	log := &hookLog{}
@@ -67,9 +48,6 @@ func TestDispatchWorkingWatch_AFrozenAgentIsKilledAndAWorkingOneIsNot(t *testing
 			working, workingKilled := workingWatchSegment(t, workingStalls)
 			defer working.StopWorkingWatch()
 
-			// The control is not merely left alone: it is fed the live signals a
-			// Working agent produces. A watch that kills on anything that arrives
-			// passes a control that receives nothing.
 			workingStalls <- runexec.Event{Kind: runexec.EvHeartbeat, At: time.Unix(0, 0)}
 			frozenStalls <- runexec.Event{Kind: kind, At: time.Unix(0, 0)}
 
@@ -187,6 +165,5 @@ func TestDispatchWorkingWatch_StopWaitsForAKillAlreadyRunning(t *testing.T) {
 		t.Fatalf("StopWorkingWatch never returned after the kill finished")
 	}
 
-	// Idempotent: a second stop on a watch that has already ended must return.
 	seg.StopWorkingWatch()
 }

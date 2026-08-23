@@ -63,7 +63,6 @@ import (
 // `.failed-` archive means "this queue stopped", not "this queue failed".
 const FailedArchiveInfix = ".failed-"
 
-// failedArchiveGlobPattern is the glob applied inside .harmonik/queues/.
 const failedArchiveGlobPattern = "*.json" + FailedArchiveInfix + "*"
 
 // FailedArchiveDir returns the directory that holds failed-queue archives for

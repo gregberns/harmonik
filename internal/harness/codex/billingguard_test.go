@@ -1,22 +1,5 @@
 package codex_test
 
-// codexbillingguard_test.go — unit tests for the positive codex billing guard
-// (codex-harness C3/T11, hk-tu48u).
-//
-// Coverage:
-//   - materializeForcedLoginMethod writes forced_login_method="chatgpt" into a
-//     fresh CODEX_HOME/config.toml; is idempotent; rewrites a wrong value;
-//     preserves pre-existing unrelated config content.
-//   - assertChatGPTPlan FAILS CLOSED (table-driven): missing config, wrong
-//     value, populated OPENAI_API_KEY in auth.json; PASSES when forced + clean.
-//   - runCodexBillingGuard emits codex_billing_guard events (materialized +
-//     allowed on success; denied on failure) via a payload-capturing emitter.
-//   - buildCodexLaunchSpec refuses to return a spec when the guard fails closed
-//     (the end-to-end fail-closed wiring).
-//
-// All filesystem state uses t.TempDir() as a fake CODEX_HOME; no real codex home
-// is touched.
-
 import (
 	"bytes"
 	"context"
@@ -31,13 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// payload-capturing emitter
-// ─────────────────────────────────────────────────────────────────────────────
-
-// capturingBillingEmitter records the (eventType, decoded payload) of every
-// emitted event so tests can assert the codex_billing_guard outcome sequence.
-// Safe for concurrent use.
 type capturingBillingEmitter struct {
 	mu      sync.Mutex
 	types   []core.EventType
@@ -78,8 +54,6 @@ func (e *capturingBillingEmitter) guardOutcomes() []core.CodexBillingGuardOutcom
 	return out
 }
 
-// writeForcedConfig writes a config.toml into codexHome with the forced
-// chatgpt login method (the materialized-state fixture).
 func writeForcedConfig(t *testing.T, codexHome string) {
 	t.Helper()
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
@@ -90,10 +64,6 @@ func writeForcedConfig(t *testing.T, codexHome string) {
 		t.Fatalf("writeForcedConfig: write: %v", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// materializeForcedLoginMethod
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestMaterializeForcedLoginMethod_FreshHome verifies forced_login_method is
 // written into a fresh CODEX_HOME/config.toml.
@@ -222,10 +192,6 @@ func TestMaterializeForcedLoginMethod_EmptyHomeErrors(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// assertChatGPTPlan — fail-closed table test
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestAssertChatGPTPlan_FailClosed is the core fail-closed table test: it
 // constructs a CODEX_HOME for each case and asserts whether the pre-flight assert
 // permits (nil) or refuses (non-nil) the launch.
@@ -316,10 +282,6 @@ func TestAssertChatGPTPlan_EmptyHomeErrors(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// runCodexBillingGuard — event emission
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestRunCodexBillingGuard_Success_EmitsMaterializedThenAllowed verifies the
 // happy path: a fresh CODEX_HOME is materialized and the assert permits the
 // launch, emitting materialized then allowed and returning nil.
@@ -355,8 +317,6 @@ func TestRunCodexBillingGuard_ApiKeyLogin_EmitsDenied(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	// Pre-seed an API-key auth.json. materializeForcedLoginMethod will still
-	// force the config, but the assert must deny on the populated key.
 	mustWrite(t, filepath.Join(home, "auth.json"),
 		`{"OPENAI_API_KEY":"sk-pool-billing"}`)
 
@@ -367,7 +327,6 @@ func TestRunCodexBillingGuard_ApiKeyLogin_EmitsDenied(t *testing.T) {
 	}
 
 	got := em.guardOutcomes()
-	// Must include a denied outcome; the last outcome must be denied.
 	if len(got) == 0 || got[len(got)-1] != core.CodexBillingGuardDenied {
 		t.Errorf("expected a trailing denied outcome; got sequence %v", got)
 	}
@@ -387,10 +346,6 @@ func TestRunCodexBillingGuard_NilEmitter(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildCodexLaunchSpec end-to-end fail-closed wiring
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestBuildCodexLaunchSpec_GuardFailClosed_NoSpec verifies that with the guard
 // ENABLED (SkipBillingGuard=false) and a CODEX_HOME that carries an API-key
 // auth.json, buildCodexLaunchSpec refuses to return a launchable spec.
@@ -407,7 +362,6 @@ func TestBuildCodexLaunchSpec_GuardFailClosed_NoSpec(t *testing.T) {
 		Model:          "o4-mini", // required; model guard runs before billing guard
 		CodexHome:      home,
 		BillingEmitter: em,
-		// SkipBillingGuard intentionally false: the guard MUST run.
 	}
 
 	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
@@ -459,7 +413,6 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 		t.Errorf("guard did not materialize forced config; got:\n%s", string(data))
 	}
 
-	// The CODEX_HOME env override must point at the same home.
 	wantKV := "CODEX_HOME=" + home
 	found := false
 	for _, kv := range spec.Env {
@@ -472,14 +425,12 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 		t.Errorf("env missing %q; have %v", wantKV, spec.Env)
 	}
 
-	// Outcomes: materialized then allowed.
 	got := em.guardOutcomes()
 	if len(got) != 2 || got[0] != core.CodexBillingGuardMaterialized || got[1] != core.CodexBillingGuardAllowed {
 		t.Errorf("outcome sequence = %v; want [materialized allowed]", got)
 	}
 }
 
-// mustWrite writes content to path (creating parent dirs) or fails the test.
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

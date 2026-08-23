@@ -1,17 +1,5 @@
 package daemon
 
-// workloop_handlerpause_kac8g.go — dispatcher skip-on-paused gate helpers (hk-kac8g).
-//
-// Owns emitHeldEvent: emits queue_item_held_for_handler_pause at-most-once per
-// (bead_id, paused_epoch) pair per event-model.md §8.11.3 dedup contract.
-//
-// The dispatch-time gate itself is inlined in workloop.go alongside the queue-pull
-// and br-ready paths it guards, for readability.
-//
-// Spec ref: specs/handler-pause.md §6.
-// Event ref: specs/event-model.md §8.11.3.
-// Bead ref: hk-kac8g.
-
 import (
 	"context"
 	"encoding/json"
@@ -21,28 +9,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// heldDedupKey returns the dedup map key for a (bead_id, paused_epoch) pair.
 func heldDedupKey(beadID core.BeadID, epoch int) string {
 	return fmt.Sprintf("%s:%d", string(beadID), epoch)
 }
 
-// emitHeldEvent emits a queue_item_held_for_handler_pause event for
-// (beadID, epoch), subject to the at-most-once-per-(bead_id, epoch)
-// dedup contract from event-model.md §8.11.3.
-//
-// The function is a no-op when:
-//   - gates.bus is nil.
-//   - The (beadID, epoch) pair is already in gates.heldEventDedup (dedup hit).
-//
-// On dedup miss: emit the event and record the key so future calls are suppressed.
-// Emit failures are non-fatal: logged to stderr; dedup key NOT recorded (retried
-// next tick).
-//
-// MUST be called only from the outer poll loop goroutine (single-threaded access
-// to gates.heldEventDedup — no locking needed).
-//
-// Durability class: O (ordinary — reconstructible; low frequency per dedup).
-// Bead ref: hk-kac8g.
 func emitHeldEvent(ctx context.Context, gates dispatchGatesPort, beadID core.BeadID, epoch int) {
 	if gates.bus == nil {
 		return
@@ -70,23 +40,13 @@ func emitHeldEvent(ctx context.Context, gates dispatchGatesPort, beadID core.Bea
 		return
 	}
 	if emitErr := gates.bus.Emit(ctx, core.EventTypeQueueItemHeldForHandlerPause, payloadJSON); emitErr != nil {
-		// Non-fatal: don't record dedup key so next tick retries.
 		fmt.Fprintf(os.Stderr, "daemon: workloop: emitHeldEvent: emit: %v\n", emitErr)
 		return
 	}
 
-	// Record dedup key only after successful emit.
 	gates.heldEventDedup[key] = struct{}{}
 }
 
-// pruneHeldDedupOnEpochChange clears the heldEventDedup map when the pause
-// epoch advances past lastSeenEpoch.  All entries keyed to prior epochs are
-// stale (the pause window they belonged to is over), so a full clear is
-// correct and avoids unbounded map growth across many pause/resume cycles.
-//
-// Returns the new lastSeenEpoch value the caller should store.
-//
-// Bead ref: hk-o48pb (unbounded-growth fix), hk-kac8g.
 func pruneHeldDedupOnEpochChange(gates dispatchGatesPort, epoch, lastSeenEpoch int) int {
 	if epoch != lastSeenEpoch {
 		clear(gates.heldEventDedup)

@@ -1,17 +1,5 @@
 package daemon_test
 
-// dot_node_piprofile_test.go — a bead's Pi provider profile must reach the
-// agent, whichever workflow mode dispatches it.
-//
-// The profile is a five-field tuple — provider, api-key env var, api-key file,
-// base URL, wire API — resolved from the bead's `profile:<name>` label at claim
-// time. The single-mode launch context set all five. The graph node's launch
-// context set none of them, and nothing downstream supplied them, so a graph
-// run silently fell back to the harness-global default provider. The graph is
-// the production default, so in practice the profile never applied.
-//
-// Bead: hk-yo9g6.
-
 import (
 	"context"
 	"testing"
@@ -23,8 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// dotFixturePiProfile is the tuple under test. Every field is distinct so a
-// mis-wired assignment cannot pass by accident.
 var dotFixturePiProfile = projectconfig.PiProfileConfig{
 	Provider:   "fixture-provider",
 	Model:      "fixture-provider/fixture-model",
@@ -36,10 +22,6 @@ var dotFixturePiProfile = projectconfig.PiProfileConfig{
 
 const dotFixturePiProfileName = "fixture"
 
-// dotFixtureLaunchCtxRecorder is the run's launch-spec port with a tap on it.
-// It records the launch context each node is built from and then delegates to
-// the production claude builder, so the run proceeds exactly as it otherwise
-// would.
 type dotFixtureLaunchCtxRecorder struct {
 	seen chan shared.LaunchCtx
 }
@@ -56,7 +38,6 @@ func (r *dotFixtureLaunchCtxRecorder) build(ctx context.Context, rc shared.Launc
 	return claude.BuildLaunchSpec(ctx, rc)
 }
 
-// first returns the first recorded launch context.
 func (r *dotFixtureLaunchCtxRecorder) first(t *testing.T) shared.LaunchCtx {
 	t.Helper()
 	select {
@@ -68,7 +49,6 @@ func (r *dotFixtureLaunchCtxRecorder) first(t *testing.T) shared.LaunchCtx {
 	}
 }
 
-// dotFixturePiProjectCfg is a project config carrying the profile above.
 func dotFixturePiProjectCfg() projectconfig.ProjectConfig {
 	return projectconfig.ProjectConfig{
 		Harnesses: projectconfig.HarnessesConfig{
@@ -81,7 +61,6 @@ func dotFixturePiProjectCfg() projectconfig.ProjectConfig {
 	}
 }
 
-// dotFixtureAssertPiProfile checks all five provider fields against the profile.
 func dotFixtureAssertPiProfile(t *testing.T, mode string, rc shared.LaunchCtx) {
 	t.Helper()
 	for _, f := range []struct {
@@ -106,8 +85,6 @@ func dotFixtureAssertPiProfile(t *testing.T, mode string, rc shared.LaunchCtx) {
 	}
 }
 
-// dotFixturePiOpts are the shared inputs of the two runs below. The ONLY thing
-// that differs between them is the workflow mode.
 func dotFixturePiOpts(t *testing.T, beadID core.BeadID, rec *dotFixtureLaunchCtxRecorder) dotFixtureOpts {
 	t.Helper()
 	return dotFixtureOpts{

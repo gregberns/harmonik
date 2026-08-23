@@ -37,10 +37,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// ---------------------------------------------------------------------------
-// constants and fixtures
-// ---------------------------------------------------------------------------
-
 const (
 	namedQueuesWorkersMaxConcurrent = 4
 
@@ -50,9 +46,6 @@ const (
 
 var namedQueuesWorkersNow = time.Date(2026, 5, 31, 11, 0, 0, 0, time.UTC)
 
-// namedQueuesWorkersMainQueue returns the "main" fixture queue:
-//   - group0 active, wave, 3 pending items (hk-sc2-main-a/b/c)
-//     All three are eligible for concurrent dispatch per QM-036.
 func namedQueuesWorkersMainQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion: 1,
@@ -76,8 +69,6 @@ func namedQueuesWorkersMainQueue() queue.Queue {
 	}
 }
 
-// namedQueuesWorkersInvestigateQueue returns the "investigate" fixture queue:
-//   - group0 active, wave, 1 pending item (hk-sc2-inv-a)
 func namedQueuesWorkersInvestigateQueue() queue.Queue {
 	return queue.Queue{
 		SchemaVersion: 1,
@@ -126,10 +117,6 @@ func namedQueuesWorkersAdmitItems(g *queue.Group, maxConcurrent, currentlyRunnin
 	return admit
 }
 
-// ---------------------------------------------------------------------------
-// SC2.1 — EligibleItems per queue
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesWorkers_MainEligibleItemsCount verifies that the "main" queue's
 // wave group returns all 3 pending items as eligible simultaneously (QM-036).
 //
@@ -170,10 +157,6 @@ func TestNamedQueuesWorkers_InvestigateEligibleItemsCount(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SC2.2 — QM-062 cap: main(3) + investigate(1) fill but never exceed the cap
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesWorkers_QM062_TotalAdmittedEqualsGlobalCap verifies that when
 // both queues dispatch concurrently, the total admitted items equals the global
 // cap (4) and is not exceeded.
@@ -190,7 +173,6 @@ func TestNamedQueuesWorkers_QM062_TotalAdmittedEqualsGlobalCap(t *testing.T) {
 
 	currentlyRunning := 0
 
-	// Dispatch from "main" first.
 	admittedMain := namedQueuesWorkersAdmitItems(
 		&mainQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -199,7 +181,6 @@ func TestNamedQueuesWorkers_QM062_TotalAdmittedEqualsGlobalCap(t *testing.T) {
 	}
 	currentlyRunning += admittedMain
 
-	// Dispatch from "investigate" with 3 slots already taken.
 	admittedInvestigate := namedQueuesWorkersAdmitItems(
 		&invQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -208,7 +189,6 @@ func TestNamedQueuesWorkers_QM062_TotalAdmittedEqualsGlobalCap(t *testing.T) {
 	}
 	currentlyRunning += admittedInvestigate
 
-	// Total running must equal maxConcurrent (all slots filled).
 	if currentlyRunning != namedQueuesWorkersMaxConcurrent {
 		t.Errorf("total running = %d, want %d (all cap slots filled by main+investigate)",
 			currentlyRunning, namedQueuesWorkersMaxConcurrent)
@@ -231,7 +211,6 @@ func TestNamedQueuesWorkers_QM062_TotalNeverExceedsCap(t *testing.T) {
 
 	currentlyRunning := 0
 
-	// Dispatch from "investigate" first this time.
 	admittedInvestigate := namedQueuesWorkersAdmitItems(
 		&invQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -240,7 +219,6 @@ func TestNamedQueuesWorkers_QM062_TotalNeverExceedsCap(t *testing.T) {
 	}
 	currentlyRunning += admittedInvestigate
 
-	// Dispatch from "main" with 1 slot already taken.
 	admittedMain := namedQueuesWorkersAdmitItems(
 		&mainQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -249,7 +227,6 @@ func TestNamedQueuesWorkers_QM062_TotalNeverExceedsCap(t *testing.T) {
 	}
 	currentlyRunning += admittedMain
 
-	// Total must not exceed the global cap.
 	if currentlyRunning > namedQueuesWorkersMaxConcurrent {
 		t.Errorf("total running = %d, exceeds maxConcurrent %d (QM-062 violated)",
 			currentlyRunning, namedQueuesWorkersMaxConcurrent)
@@ -259,10 +236,6 @@ func TestNamedQueuesWorkers_QM062_TotalNeverExceedsCap(t *testing.T) {
 			currentlyRunning, namedQueuesWorkersMaxConcurrent)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC2.3 — At capacity: no further dispatch from either queue
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch verifies that when
 // currently_running equals maxConcurrent, the QM-062 capacity gate admits 0
@@ -276,10 +249,8 @@ func TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch(t *testing.T) {
 	mainQ := namedQueuesWorkersMainQueue()
 	invQ := namedQueuesWorkersInvestigateQueue()
 
-	// Simulate all slots full (running = maxConcurrent).
 	currentlyRunning := namedQueuesWorkersMaxConcurrent
 
-	// No items must be admitted from "main" when at capacity.
 	admittedMain := namedQueuesWorkersAdmitItems(
 		&mainQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -287,7 +258,6 @@ func TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch(t *testing.T) {
 		t.Errorf("admitted from main at capacity = %d, want 0 (QM-062: available slots = 0)", admittedMain)
 	}
 
-	// No items must be admitted from "investigate" when at capacity.
 	admittedInvestigate := namedQueuesWorkersAdmitItems(
 		&invQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -295,7 +265,6 @@ func TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch(t *testing.T) {
 		t.Errorf("admitted from investigate at capacity = %d, want 0 (QM-062: available slots = 0)", admittedInvestigate)
 	}
 
-	// Items must remain pending — capacity gate must not mutate item status.
 	for _, item := range mainQ.Groups[0].Items {
 		if item.Status != queue.ItemStatusPending {
 			t.Errorf("main item %q status = %q after at-cap gate, want pending (no dispatch occurred)",
@@ -310,10 +279,6 @@ func TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// SC2.4 — Completion frees a slot for the next dispatch
-// ---------------------------------------------------------------------------
-
 // TestNamedQueuesWorkers_QM062_CompletionFreesSlot verifies that when one of the
 // dispatched items completes, the freed slot allows one new pending item to be
 // admitted (QM-062: available = maxConcurrent - currently_running > 0).
@@ -324,20 +289,16 @@ func TestNamedQueuesWorkers_QM062_CompletionFreesSlot(t *testing.T) {
 
 	mainQ := namedQueuesWorkersMainQueue()
 
-	// Start at capacity: all 4 slots filled. 3 from main + 1 imaginary other.
-	// Simulate 3 main items dispatched and 1 other in-flight.
 	for i := range mainQ.Groups[0].Items {
 		mainQ.Groups[0].Items[i].Status = queue.ItemStatusDispatched
 	}
 	currentlyRunning := namedQueuesWorkersMaxConcurrent // 4
 
-	// Add one more pending item to main (simulating an appended bead).
 	mainQ.Groups[0].Items = append(mainQ.Groups[0].Items, queue.Item{
 		BeadID: core.BeadID("hk-sc2-main-d"),
 		Status: queue.ItemStatusPending,
 	})
 
-	// At capacity: no new dispatch.
 	admitted := namedQueuesWorkersAdmitItems(
 		&mainQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -345,11 +306,9 @@ func TestNamedQueuesWorkers_QM062_CompletionFreesSlot(t *testing.T) {
 		t.Errorf("admitted before completion = %d, want 0 (at capacity)", admitted)
 	}
 
-	// One item completes: running drops to 3.
 	mainQ.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	currentlyRunning-- // 3
 
-	// One slot available — one new item should be admitted.
 	admitted = namedQueuesWorkersAdmitItems(
 		&mainQ.Groups[0], namedQueuesWorkersMaxConcurrent, currentlyRunning,
 	)
@@ -362,10 +321,6 @@ func TestNamedQueuesWorkers_QM062_CompletionFreesSlot(t *testing.T) {
 			currentlyRunning, namedQueuesWorkersMaxConcurrent)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SC2.5 — QueueStore holds both named queues (QM-060)
-// ---------------------------------------------------------------------------
 
 // TestNamedQueuesWorkers_QueueStore_HoldsBothNamedQueues verifies that the
 // daemon's QueueStore correctly stores and retrieves both "main" and "investigate"
@@ -409,7 +364,6 @@ func TestNamedQueuesWorkers_QueueStore_HoldsBothNamedQueues(t *testing.T) {
 		t.Errorf("investigate.Groups[0].Items count = %d, want 1", len(gotInv.Groups[0].Items))
 	}
 
-	// ClearQueueByName must remove only "investigate"; "main" must remain.
 	qs.ClearQueueByName("investigate")
 	if qs.QueueByName("investigate") != nil {
 		t.Error("QueueByName(\"investigate\") must return nil after ClearQueueByName")
@@ -455,12 +409,10 @@ func TestNamedQueuesWorkers_QueueStore_EligibleFromBothQueues(t *testing.T) {
 		totalEligible += len(eligible)
 	}
 
-	// main(3) + investigate(1) = 4 total eligible items.
 	if totalEligible != 4 {
 		t.Errorf("total eligible across all queues = %d, want 4 (main:3 + investigate:1)", totalEligible)
 	}
 
-	// Total eligible must not exceed the global cap.
 	if totalEligible > namedQueuesWorkersMaxConcurrent {
 		t.Errorf("total eligible = %d, exceeds maxConcurrent %d (would violate QM-062 if all dispatched at once)",
 			totalEligible, namedQueuesWorkersMaxConcurrent)

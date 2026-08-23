@@ -264,7 +264,6 @@ type GovernorSignal struct {
 	LivenessViolated bool
 }
 
-// reviewerVerdictPayload is a minimal unmarshal target for reviewer_verdict events.
 type reviewerVerdictPayload struct {
 	Verdict core.ReviewerVerdict `json:"verdict"`
 }
@@ -296,7 +295,6 @@ func ComputeWindowMovement(
 	return computeWindowMovement(ctx, eventsPath, windowStart, windowEnd, weights, gitPath, projectDir)
 }
 
-// computeWindowMovement is the internal implementation.
 func computeWindowMovement(
 	ctx context.Context,
 	eventsPath string,
@@ -314,18 +312,8 @@ func computeWindowMovement(
 		WindowEnd:   windowEnd,
 	}
 
-	// --- events.jsonl scan ---
-	// Derive a cursor near windowStart so ScanAfter yields only events whose
-	// UUIDv7 is ≥ windowStart, skipping pre-window events at the Go iterator
-	// layer (hk-usn8o). Note: ScanAfter still reads every byte in the file
-	// sequentially; the cursor reduces events yielded/processed, not bytes read.
-	// The wall-clock guard below handles the rare case where UUIDv7 timestamp
-	// and wall-clock differ by <1ms.
 	cursor := eventIDFloorForTime(windowStart)
 	for ev := range eventbus.ScanAfter(eventsPath, cursor) {
-		// Filter to events within the window by wall-clock time.
-		// UUIDv7 ordering would be more correct but wall-clock is sufficient
-		// for a ~30-minute window and avoids timestamp parsing from EventIDs.
 		if ev.TimestampWall.Before(windowStart) {
 			continue
 		}
@@ -352,19 +340,12 @@ func computeWindowMovement(
 			}
 
 		default:
-			// Every other event type is deliberately not movement. The governor
-			// scores TERMINAL progress only (flywheel-motion §6.1), so activity
-			// events — heartbeats, dispatches, state transitions — must not
-			// contribute to MovementScore no matter how many of them appear.
 		}
 	}
 
-	// --- git: commits on origin/main within the window ---
 	headAdvances := countHeadAdvances(ctx, gitPath, projectDir, windowStart, windowEnd)
 	sample.HeadAdvanceCount = headAdvances
 	if headAdvances > 0 {
-		// Each HEAD advance is one terminal-progress unit at the high weight.
-		// Use bead_closed weight as the canonical "high" weight for git advances.
 		highWeight := weights[core.EventTypeBeadClosed]
 		if highWeight == 0 {
 			highWeight = DefaultHighWeight
@@ -375,17 +356,6 @@ func computeWindowMovement(
 	return sample
 }
 
-// eventIDFloorForTime returns the lexicographically minimum UUIDv7 that could
-// represent the given instant. Used as the 'after' cursor to ScanAfter so the
-// iterator yields only events at or after t — skipping pre-window events at the
-// Go layer rather than passing them to the switch (hk-usn8o). ScanAfter still
-// reads every line sequentially; the cursor reduces events yielded/processed, not
-// bytes read from disk.
-//
-// The floor embeds the ms-precision Unix timestamp in the 48 most-significant
-// bits (RFC 9562 §5.7) and zeros all random/variant bits. Any real UUIDv7 at
-// the same millisecond (with non-zero random bits) is strictly greater, so
-// ScanAfter correctly yields events at or after t.
 func eventIDFloorForTime(t time.Time) core.EventID {
 	ms := t.UnixMilli()
 	var b [16]byte
@@ -396,18 +366,13 @@ func eventIDFloorForTime(t time.Time) core.EventID {
 	b[4] = byte(ms >> 8)
 	b[5] = byte(ms)
 	b[6] = 0x70 // version nibble = 7, rand_a high nibble = 0
-	// bytes 7-15: all zero (minimum possible random/variant bits)
 	return core.EventID(b)
 }
 
-// countHeadAdvances counts commits on origin/main whose committer date falls
-// within [windowStart, windowEnd]. Returns 0 on any git error (non-fatal).
 func countHeadAdvances(ctx context.Context, gitPath, projectDir string, windowStart, windowEnd time.Time) int {
 	if projectDir == "" {
 		return 0
 	}
-	// --after and --before use committer date by default.
-	// RFC3339 format is accepted by git log date filters.
 	after := windowStart.UTC().Format(time.RFC3339)
 	before := windowEnd.UTC().Format(time.RFC3339)
 	args := []string{
@@ -472,16 +437,6 @@ func Evaluate(
 		HasOpportunity: input.HasReadyBeads || input.HasUndeployedTail,
 	}
 
-	// --- G-liveness self-kill gate (spec §6.1, bead hk-2do3) ---
-	// Track consecutive evaluation cycles with zero terminal progress independently
-	// of the inverse-staircase gate. Any terminal-progress event (score > 0)
-	// resets the counter; score == 0 increments it.
-	// This tracking runs before the staircase so the counter is always current.
-	//
-	// Operator-pause exemption (bead hk-uxyf1): when the daemon is in a global
-	// operator-pause, zero movement is expected — the system is intentionally idle.
-	// Counting those cycles toward the liveness fault counter conflates legitimate
-	// quiet with a doom-loop; reset instead.
 	if sample.MovementScore == 0 && !input.OperatorPaused {
 		state.ConsecutiveZeroCycles++
 	} else {
@@ -491,8 +446,6 @@ func Evaluate(
 
 	n := cfg.livenessNoProgressN()
 	if n > 0 && state.ConsecutiveZeroCycles >= n {
-		// Respect the warmup gate: a just-restarted daemon has naturally-low
-		// movement, so G-liveness does not fire during the startup grace window.
 		inWarmup := !state.DaemonStartedAt.IsZero() &&
 			input.Now.Sub(state.DaemonStartedAt) < cfg.warmupWindow()
 		if !inWarmup {
@@ -502,11 +455,6 @@ func Evaluate(
 		}
 	}
 
-	// --- Discrete inverse staircase (spec §1.2) ---
-	// A movement score >= highThreshold means at least one terminal-progress event
-	// in the window: the governor is dormant. Every score below it counts toward
-	// the sustained-low gate.
-	// The staircase is auditable by reading sample.MovementScore directly.
 	isHighWindow := sample.MovementScore >= cfg.highThreshold()
 	if isHighWindow {
 		state.ConsecutiveLowWindows = 0
@@ -515,22 +463,16 @@ func Evaluate(
 		return sig
 	}
 
-	// Low and moderate windows both count toward the sustained gate.
 	state.ConsecutiveLowWindows++
 	sig.ConsecutiveLowWindows = state.ConsecutiveLowWindows
 
-	// Default to WATCHING; gates below can promote to ACTIVE.
 	sig.Level = ActivationWatching
 
-	// --- Opportunity gate (spec §1.3) ---
-	// MUST NOT trip if there is no actionable work.
 	if !sig.HasOpportunity {
 		sig.SuppressedBy = "no_opportunity"
 		return sig
 	}
 
-	// --- Cold-start warmup gate (spec §1.4) ---
-	// Suppress until the warmup watermark has elapsed since daemon start.
 	if !state.DaemonStartedAt.IsZero() {
 		elapsed := input.Now.Sub(state.DaemonStartedAt)
 		if elapsed < cfg.warmupWindow() {
@@ -539,14 +481,10 @@ func Evaluate(
 		}
 	}
 
-	// --- Sustained-low gate (spec §1.4) ---
-	// Require ≥ sustainedWindows consecutive low windows before tripping.
 	if state.ConsecutiveLowWindows < cfg.sustainedWindows() {
-		// Still watching; not yet sustained.
 		return sig
 	}
 
-	// All gates passed: trip.
 	sig.Level = ActivationActive
 	return sig
 }

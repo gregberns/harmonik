@@ -78,7 +78,6 @@ func TestUpdateSessionID(t *testing.T) {
 	if got.SessionID != newSess {
 		t.Errorf("SessionID = %q, want %q", got.SessionID, newSess)
 	}
-	// All other fields must be unchanged.
 	if got.Queue != r.Queue {
 		t.Errorf("Queue mutated: got %q, want %q", got.Queue, r.Queue)
 	}
@@ -196,7 +195,6 @@ func TestLegacyRecordNoTypeField(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Write the record without the type field (legacy format).
 	legacyJSON := `{"schema_version":1,"name":"oldcrew","session_id":"s1","queue":"main","epic":"","handle":"h1","started_at":"2026-01-01T00:00:00Z"}`
 	crewDir := filepath.Join(dir, ".harmonik", "crew")
 	//nolint:gosec // G301: test fixture directory
@@ -223,7 +221,6 @@ func TestLegacyRecordNoTypeField(t *testing.T) {
 func TestResolveType(t *testing.T) {
 	t.Parallel()
 
-	// Shared fixture: a project dir with crew records + an agents dir with type folders.
 	setup := func(t *testing.T) (projectDir, agentsDir string) {
 		t.Helper()
 		base := t.TempDir()
@@ -240,12 +237,10 @@ func TestResolveType(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(agentsDir, "admiral"), 0o755); err != nil {
 			t.Fatalf("mkdir agents/admiral: %v", err)
 		}
-		// Write a crew instance record for "leto" (no explicit type → defaults to crew).
 		letoRec := makeRecord("leto")
 		if err := crew.Write(projectDir, letoRec); err != nil {
 			t.Fatalf("Write leto: %v", err)
 		}
-		// Write a crew instance record for "remus" with explicit type "admiral".
 		remusRec := makeRecord("remus")
 		remusRec.Type = "admiral"
 		if err := crew.Write(projectDir, remusRec); err != nil {
@@ -306,7 +301,6 @@ func TestResolveType(t *testing.T) {
 		t.Parallel()
 		projectDir, agentsDir := setup(t)
 
-		// Write a record file with invalid JSON to simulate corruption.
 		crewDir := filepath.Join(projectDir, ".harmonik", "crew")
 		//nolint:gosec // G301: test fixture directory
 		if err := os.MkdirAll(crewDir, 0o755); err != nil {
@@ -363,7 +357,6 @@ func TestHKAOAPQ_List_EmptyFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Write a valid crew record first, then simulate a 0-byte crash of a second.
 	if err := crew.Write(dir, makeRecord("valid")); err != nil {
 		t.Fatalf("Write valid: %v", err)
 	}
@@ -379,7 +372,6 @@ func TestHKAOAPQ_List_EmptyFile(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("List len = %d, want 2 (valid record + stub for empty file)", len(records))
 	}
-	// Find the stub.
 	var stub *crew.Record
 	for i := range records {
 		if records[i].Name == "empty" {
@@ -446,18 +438,15 @@ func TestHKAOAPQ_List_OneGoodOneCorrupt(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("List len = %d, want 2", len(records))
 	}
-	// Both should be present (sort order: alpha < corrupt).
 	if records[0].Name != "alpha" {
 		t.Errorf("records[0].Name = %q, want %q", records[0].Name, "alpha")
 	}
 	if records[1].Name != "corrupt" {
 		t.Errorf("records[1].Name = %q, want %q", records[1].Name, "corrupt")
 	}
-	// The valid record must have its fields.
 	if records[0].SessionID != "sess-alpha" {
 		t.Errorf("alpha SessionID = %q, want %q", records[0].SessionID, "sess-alpha")
 	}
-	// The stub must have only the name.
 	if records[1].SessionID != "" {
 		t.Errorf("corrupt stub SessionID = %q, want empty", records[1].SessionID)
 	}

@@ -1,27 +1,5 @@
 package core
 
-// cp011_gate_cognition_s01_test.go — conformance tests for CP-011.
-//
-// specs/control-points.md §4.2.CP-011:
-//
-//	Gate evaluator MAY be cognition-tagged
-//	A Gate's evaluator MAY be cognition-tagged (delegating to a model) when
-//	the policy requires judgment that a mechanism-tagged expression cannot
-//	express. Cognition-tagged Gate evaluators MUST satisfy the §4.8
-//	replay-safety contract (persisted-verdict).
-//
-// Coverage (§7.2 three-path logic + structural invariants):
-//  1. First invocation: evaluator called once; mechanical fields are stamped.
-//  2. Replay — hash match: evaluator NOT called; persisted verdict returned.
-//  3. Replay — hash mismatch: ErrGateVerdictEnvelopeMismatch returned; evaluator NOT called.
-//  4. Evaluator error: error propagated; no verdict returned.
-//  5. Reader error: error propagated; evaluator NOT called.
-//  6. Mechanism-tagged ControlPoint: error returned immediately (invariant guard).
-//  7. Cognition-tagged ControlPoint with nil DelegationPath: error returned (invariant guard).
-//  8. GateName is stamped from the ControlPoint, not from the evaluator.
-//
-// Refs: hk-a8bg.10
-
 import (
 	"context"
 	"errors"
@@ -32,9 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ── test-local stubs ──────────────────────────────────────────────────────────
-
-// cp011StubEval is a stub CognitionGateEvaluator that records call count.
 type cp011StubEval struct {
 	returnVerdict GateVerdictRecord
 	returnErr     error
@@ -46,7 +21,6 @@ func (e *cp011StubEval) EvaluateCognitionGate(_ context.Context, _ ControlPoint,
 	return e.returnVerdict, e.returnErr
 }
 
-// cp011StubReader is a stub GateVerdictReader.
 type cp011StubReader struct {
 	found   bool
 	verdict GateVerdictRecord
@@ -57,13 +31,10 @@ func (r *cp011StubReader) LookupGateVerdict(_ context.Context, _ RunID, _ string
 	return r.verdict, r.found, r.readErr
 }
 
-// Compile-time interface satisfaction checks.
 var (
 	_ CognitionGateEvaluator = (*cp011StubEval)(nil)
 	_ GateVerdictReader      = (*cp011StubReader)(nil)
 )
-
-// ── fixtures ──────────────────────────────────────────────────────────────────
 
 func cp011FixtureRun(t *testing.T) *Run {
 	t.Helper()
@@ -89,8 +60,6 @@ func cp011FixtureOutcome(t *testing.T) Outcome {
 	return Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
 }
 
-// cp011FixtureCognitionGate returns a cognition-tagged Gate ControlPoint with
-// a fully-populated DelegationPath.
 func cp011FixtureCognitionGate(t *testing.T, name string) ControlPoint {
 	t.Helper()
 	dp := DelegationPath{
@@ -116,10 +85,6 @@ func cp011FixtureCognitionGate(t *testing.T, name string) ControlPoint {
 	}
 }
 
-// cp011FixtureEnvelope returns a minimal valid InputEnvelope for use in CP-011
-// tests. ContextSubsetModeConservative is used with the full run.Context map per
-// CP-040a. Callers must pass the same envelope to both InvokeCognitionGate and
-// cp011ComputeExpectedHash to ensure hash-match replay tests are coherent.
 func cp011FixtureEnvelope(t *testing.T, run *Run) InputEnvelope {
 	t.Helper()
 	return InputEnvelope{
@@ -132,9 +97,6 @@ func cp011FixtureEnvelope(t *testing.T, run *Run) InputEnvelope {
 	}
 }
 
-// cp011ComputeExpectedHash computes the hash that InvokeCognitionGate should
-// produce for the given envelope. Used in tests that pre-seed the reader with
-// a correctly-hashed persisted verdict.
 func cp011ComputeExpectedHash(t *testing.T, envelope InputEnvelope) string {
 	t.Helper()
 	hash, err := ComputeInputEnvelopeHash(envelope)
@@ -143,8 +105,6 @@ func cp011ComputeExpectedHash(t *testing.T, envelope InputEnvelope) string {
 	}
 	return hash
 }
-
-// ── CP-011 §1: first invocation ───────────────────────────────────────────────
 
 // TestCP011_FirstInvocation_EvaluatorCalledOnce verifies that on first invocation
 // (no prior verdict), the cognition evaluator is called exactly once and the
@@ -177,33 +137,26 @@ func TestCP011_FirstInvocation_EvaluatorCalledOnce(t *testing.T) {
 		t.Fatalf("CP-011: unexpected error: %v", err)
 	}
 
-	// Evaluator must have been called exactly once (first invocation).
 	if eval.callCount != 1 {
 		t.Errorf("CP-011: evaluator called %d times, want 1 (first invocation)", eval.callCount)
 	}
 
-	// GateName must be stamped from the ControlPoint, not the evaluator's value.
 	if verdict.GateName != cp.Name {
 		t.Errorf("CP-011: verdict.GateName = %q, want %q (stamped from ControlPoint)", verdict.GateName, cp.Name)
 	}
 
-	// InputEnvelopeHash must be non-empty and 64-char lowercase hex.
 	if len(verdict.InputEnvelopeHash) != 64 {
 		t.Errorf("CP-011: InputEnvelopeHash len = %d, want 64 (SHA-256 hex)", len(verdict.InputEnvelopeHash))
 	}
 
-	// ProducedAt must be non-empty.
 	if verdict.ProducedAt == "" {
 		t.Error("CP-011: ProducedAt is empty; InvokeCognitionGate must stamp ProducedAt")
 	}
 
-	// Action from the evaluator must be preserved.
 	if verdict.Action != GateActionDeny {
 		t.Errorf("CP-011: verdict.Action = %q, want %q", verdict.Action, GateActionDeny)
 	}
 }
-
-// ── CP-011 §2: replay — hash match ───────────────────────────────────────────
 
 // TestCP011_Replay_HashMatch_EvaluatorNotCalled verifies that when a persisted
 // verdict exists with a matching envelope hash, the evaluator is NOT called and
@@ -237,13 +190,11 @@ func TestCP011_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 		t.Fatalf("CP-011: unexpected error on replay: %v", err)
 	}
 
-	// Evaluator MUST NOT be called on replay (idempotency=idempotent).
 	if eval.callCount != 0 {
 		t.Errorf("CP-011: evaluator called %d times on replay, want 0 "+
 			"(CP-INV-003: persisted verdict must be reused without re-invoking the model)", eval.callCount)
 	}
 
-	// Returned verdict must be the persisted one.
 	if verdict.GateName != persistedVerdict.GateName {
 		t.Errorf("CP-011: replay returned verdict.GateName = %q, want %q", verdict.GateName, persistedVerdict.GateName)
 	}
@@ -254,8 +205,6 @@ func TestCP011_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 		t.Errorf("CP-011: replay returned verdict.Action = %q, want %q", verdict.Action, GateActionAllow)
 	}
 }
-
-// ── CP-011 §3: replay — hash mismatch ────────────────────────────────────────
 
 // TestCP011_Replay_HashMismatch_ReturnsEnvelopeMismatchError verifies that when
 // a persisted verdict exists but its envelope hash does not match the current
@@ -307,13 +256,10 @@ func TestCP011_Replay_HashMismatch_ReturnsEnvelopeMismatchError(t *testing.T) {
 		t.Error("CP-011: mismatch error StoredHash == CurrentHash; hashes should differ")
 	}
 
-	// Evaluator MUST NOT be called on hash mismatch.
 	if eval.callCount != 0 {
 		t.Errorf("CP-011: evaluator called %d times on hash mismatch, want 0", eval.callCount)
 	}
 }
-
-// ── CP-011 §4: evaluator error ────────────────────────────────────────────────
 
 // TestCP011_EvaluatorError_PropagatesError verifies that when the cognition
 // evaluator returns an error, InvokeCognitionGate propagates it and no verdict
@@ -339,13 +285,10 @@ func TestCP011_EvaluatorError_PropagatesError(t *testing.T) {
 		t.Errorf("CP-011: error chain does not include original dispatch error: %v", err)
 	}
 
-	// Evaluator was called (dispatch was attempted).
 	if eval.callCount != 1 {
 		t.Errorf("CP-011: evaluator callCount = %d, want 1 (dispatch was attempted)", eval.callCount)
 	}
 }
-
-// ── CP-011 §5: reader error ───────────────────────────────────────────────────
 
 // TestCP011_ReaderError_PropagatesError verifies that when the GateVerdictReader
 // returns an error, InvokeCognitionGate propagates it and does NOT call the
@@ -371,13 +314,10 @@ func TestCP011_ReaderError_PropagatesError(t *testing.T) {
 		t.Errorf("CP-011: error chain does not include original read error: %v", err)
 	}
 
-	// Evaluator MUST NOT be called when the reader fails.
 	if eval.callCount != 0 {
 		t.Errorf("CP-011: evaluator called %d times despite reader error, want 0", eval.callCount)
 	}
 }
-
-// ── CP-011 §6: mechanism-tagged ControlPoint rejected ────────────────────────
 
 // TestCP011_MechanismTaggedCP_ReturnsError verifies that InvokeCognitionGate
 // returns an error when called with a mechanism-tagged ControlPoint.
@@ -416,13 +356,10 @@ func TestCP011_MechanismTaggedCP_ReturnsError(t *testing.T) {
 		t.Fatal("CP-011: expected error for mechanism-tagged ControlPoint, got nil")
 	}
 
-	// Evaluator and reader MUST NOT be called.
 	if eval.callCount != 0 {
 		t.Errorf("CP-011: evaluator called on mechanism-tagged CP, want 0 calls")
 	}
 }
-
-// ── CP-011 §7: nil DelegationPath rejected ────────────────────────────────────
 
 // TestCP011_NilDelegationPath_ReturnsError verifies that InvokeCognitionGate
 // returns an error when the ControlPoint claims ModeTagCognition but has a nil
@@ -461,8 +398,6 @@ func TestCP011_NilDelegationPath_ReturnsError(t *testing.T) {
 		t.Fatal("CP-011: expected error for nil DelegationPath, got nil")
 	}
 }
-
-// ── CP-011 §8: GateName is stamped from ControlPoint ─────────────────────────
 
 // TestCP011_GateName_StampedFromControlPoint verifies that the GateName in the
 // returned verdict is taken from cp.Name (not from the evaluator's return value).

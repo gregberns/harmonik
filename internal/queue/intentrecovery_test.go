@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// intentRecoveryCrashAfterIntent runs a replacement that installs its durable
-// intent and then dies, leaving whatever the cut left on disk. It returns the
-// plan so a test can address the same queue again.
 func intentRecoveryCrashAfterIntent(t *testing.T, cut func(*namespaceOps)) ReplacementPlan {
 	t.Helper()
 	plan := transactionFixturePlan(t, t.TempDir())
@@ -52,8 +49,6 @@ func intentRecoveryOnly(t *testing.T, plan ReplacementPlan) ReplaceIntentRecover
 	return recoveries[0]
 }
 
-// cutRename fails the candidate-to-canonical rename, which is the only rename
-// writeReplacement performs. The candidate and the intent both survive.
 func cutRename(ops *namespaceOps) {
 	ops.rename = func(string, string) error { return errors.New("cut candidate rename") }
 }
@@ -88,8 +83,6 @@ func TestRecoverReplaceIntents_MissingQueuesDirIsNotAnError(t *testing.T) {
 func TestRecoverReplaceIntents_DropsIntentWhenRenameAlreadyLanded(t *testing.T) {
 	t.Parallel()
 
-	// A committed replacement leaves the intent for the QueueStore to remove.
-	// Crashing before that removal is the promote-canonical state.
 	plan := intentRecoveryCrashAfterIntent(t, nil)
 	if !intentRecoveryIntentPresent(t, plan) {
 		t.Fatal("setup did not leave a replace intent on disk")
@@ -141,8 +134,6 @@ func TestRecoverReplaceIntents_RollsBackWhenCandidateNeverLanded(t *testing.T) {
 	t.Parallel()
 
 	plan := intentRecoveryCrashAfterIntent(t, cutRename)
-	// Remove the candidate to reach the state where the write never reached the
-	// queues directory at all.
 	entries, err := os.ReadDir(queuesDir(plan.ProjectDir))
 	if err != nil {
 		t.Fatal(err)
@@ -183,8 +174,6 @@ func TestRecoverReplaceIntents_ReportsAReaddirFailureRatherThanClaimingACleanBoo
 func TestRecoverReplaceIntents_ACorruptIntentDoesNotStopTheOthers(t *testing.T) {
 	t.Parallel()
 
-	// One queue crashed mid-replace and is recoverable. A second queue's intent
-	// is unreadable. The recoverable one must still be resolved.
 	good := intentRecoveryCrashAfterIntent(t, nil)
 	badIntentPath := filepath.Join(queuesDir(good.ProjectDir), "other.replace-intent")
 	if err := os.WriteFile(badIntentPath, []byte(`{"schema_version":1,`), 0o600); err != nil {
@@ -331,9 +320,6 @@ func TestRecoverReplaceIntents_UnwedgesTheQueueAfterACrash(t *testing.T) {
 		t.Fatal("setup did not leave a replace intent on disk")
 	}
 
-	// The next replacement carries a different transaction, so its intent bytes
-	// differ from the leftover one. Each attempt gets its own transaction ID,
-	// the way PrepareFailedRecovery allocates one per call in production.
 	attempt := func(transactionID string) ReplacementPlan {
 		p := transactionFixturePlan(t, crashed.ProjectDir)
 		p.TransactionID = transactionID

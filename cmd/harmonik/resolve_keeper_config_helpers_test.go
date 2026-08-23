@@ -7,23 +7,8 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// resolve_keeper_config_helpers_test.go — shared test fixtures for the resolver.
-//
-// Operator-philosophy change: ResolveKeeperConfig imposes NO runtime defaults — an
-// unset required value aggregates into a *KeeperConfigMissingError. So almost every
-// resolver test needs a COMPLETE, valid daemon.KeeperConfig as its baseline, then
-// overrides the one field under test. completeTestKeeperConfig is that baseline; it
-// uses the keeper.Default* consts as suggested values (the SAME numbers the
-// `keeper config --example` template ships) and sets every Present flag so the
-// missing-value gate passes.
-
-// completeTestKeeperConfig returns a daemon.KeeperConfig with EVERY operator-required
-// keeper value set to its suggested (keeper.Default*) value and the corresponding
-// Present flag true. Resolving it (with empty flags) yields zero missing-value errors
-// and a valid band. Tests start from this and override the field(s) under test.
 func completeTestKeeperConfig() projectconfig.KeeperConfig {
 	cfg := projectconfig.KeeperConfig{
-		// ── thresholds ──
 		WarnAbsTokens:      keeper.DefaultWarnAbsTokens,
 		ActAbsTokens:       keeper.DefaultActAbsTokens,
 		ForceActAbsTokens:  keeper.DefaultActAbsTokens + keeper.DefaultForceActAbsOffset,

@@ -1,12 +1,5 @@
 package daemon_test
 
-// claudeheartbeat_test.go — unit tests for newDaemonHeartbeatEmitter (HC-057).
-//
-// Helper-prefix discipline (implementer-protocol.md §Helper-prefix discipline):
-// per-bead camelCase prefix "heartbeatEmitter" for all test helpers in this file.
-//
-// Bead: hk-gql20.17.
-
 import (
 	"context"
 	"encoding/json"
@@ -19,19 +12,12 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// heartbeatEmitter test helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// heartbeatEmitterRecordedEvent captures a single bus.EmitWithRunID call.
 type heartbeatEmitterRecordedEvent struct {
 	RunID     core.RunID
 	EventType core.EventType
 	Payload   json.RawMessage
 }
 
-// heartbeatEmitterBus is a minimal handlercontract.EventEmitter stub that
-// records EmitWithRunID calls.
 type heartbeatEmitterBus struct {
 	mu     sync.Mutex
 	events []heartbeatEmitterRecordedEvent
@@ -70,7 +56,6 @@ func (b *heartbeatEmitterBus) recorded() []heartbeatEmitterRecordedEvent {
 	return out
 }
 
-// heartbeatEmitterNewRunID returns a fresh RunID for tests.
 func heartbeatEmitterNewRunID(t *testing.T) core.RunID {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -79,10 +64,6 @@ func heartbeatEmitterNewRunID(t *testing.T) core.RunID {
 	}
 	return core.RunID(u)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHeartbeatEmitterEmitsAgentHeartbeatEvent verifies that calling the
 // emitter once puts an agent_heartbeat event on the bus with:
@@ -108,17 +89,14 @@ func TestHeartbeatEmitterEmitsAgentHeartbeatEvent(t *testing.T) {
 
 	ev := events[0]
 
-	// Verify event type.
 	if ev.EventType != core.EventTypeAgentHeartbeat {
 		t.Errorf("event type: got %q, want %q", ev.EventType, core.EventTypeAgentHeartbeat)
 	}
 
-	// Verify envelope run_id.
 	if ev.RunID != runID {
 		t.Errorf("run_id: got %v, want %v", ev.RunID, runID)
 	}
 
-	// Decode and verify payload fields.
 	var pl struct {
 		SessionID string `json:"session_id"`
 		Phase     string `json:"phase"`

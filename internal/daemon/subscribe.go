@@ -1,65 +1,5 @@
 package daemon
 
-// subscribe.go — "subscribe" socket op (hk-6ynv4).
-//
-// Long-running socket op: a client connects, sends a single JSON request
-// describing the event-type filter and heartbeat cadence, and then receives
-// an NDJSON stream of envelopes on the same connection until the client
-// closes or the daemon stops.
-//
-// Replaces the brittle "tail .harmonik/events/events.jsonl" pattern with a
-// first-class subscriber interface.
-//
-// # Request shape
-//
-//	{
-//	  "op": "subscribe",
-//	  "types": ["run_completed","run_failed", ...],
-//	  "since_event_id": "",
-//	  "heartbeat_seconds": 60
-//	}
-//
-// An empty or missing "types" array subscribes to ALL event types (wildcard).
-// "heartbeat_seconds" is clamped to [10, 600] inclusive; default 60.
-//
-// # Output
-//
-// Each matched event becomes one NDJSON line carrying the full core.Event
-// envelope (event_id, type, payload, run_id, ...) as defined in
-// internal/core/event.go. Two additional connection-only event kinds are
-// emitted directly to the subscriber and are NOT bus-published:
-//
-//	{"type":"heartbeat","ts":"...","active_runs":[...],"last_event_id":"..."}
-//	{"type":"subscription_gap","dropped":N}
-//
-// # Back-pressure (EV-012 observer-class invariant)
-//
-// The bus dispatches to this consumer via the observer class. The handler
-// performs a non-blocking send into a 256-slot buffered channel. If the
-// channel is full (slow client), the OLDEST queued event is discarded and a
-// drop counter is incremented. On the next successful send to the socket a
-// subscription_gap line is emitted carrying the accumulated drop count, then
-// the counter resets. The bus's emission goroutine is NEVER blocked by a slow
-// subscriber.
-//
-// # Heartbeat
-//
-// A timer fires every heartbeat_seconds. On fire, an active-runs snapshot is
-// taken from RunRegistry and a heartbeat line is written to the connection.
-// Heartbeats are subscription-only — they do NOT pollute events.jsonl.
-//
-// # Lifecycle
-//
-// - subscribe() returns when the client disconnects (write error), the daemon
-//   context is cancelled, or the connection's read side closes.
-// - The bus subscription is best-effort transient: it must be registered
-//   BEFORE bus.Seal at daemon startup (EV-009). Because subscribers connect
-//   AFTER seal, we register a single long-lived hub-style observer at startup
-//   that fans matched events to per-connection channels (registered/removed
-//   on the fly).
-//
-// Bead ref: hk-6ynv4.
-
 import (
 	"bytes"
 	"context"
@@ -113,35 +53,16 @@ type SubscribeRequest struct {
 	Topic string `json:"topic,omitempty"`
 }
 
-// subscribeHeartbeatMin / Max / Default define the heartbeat-clamp range.
 const (
 	subscribeHeartbeatMin     = 10
 	subscribeHeartbeatMax     = 600
 	subscribeHeartbeatDefault = 60
 
-	// subscribeChannelCapacity is the per-subscriber buffered-channel depth.
-	// On overflow the OLDEST event is dropped (see drop-oldest discipline).
 	subscribeChannelCapacity = 256
 
-	// subscribeWriteTimeout bounds how long a single write to a subscriber
-	// connection may take. Without this, a client that stops reading (dead or
-	// cleared session whose socket fd is still held open by a lingering
-	// descendant process, so no read-side EOF is ever observed) can leave
-	// conn.Write blocked forever once the kernel socket buffer fills, which
-	// permanently strands the connection's slot in connCount/subscribers and
-	// is the root cause of fleet-wide subscribe_capacity_exceeded (hk-qsz0p).
-	// A write that misses this deadline errors out, HandleSubscribe returns,
-	// and its deferred cleanup releases the slot without a daemon restart.
-	// Heartbeats guarantee a periodic write attempt even on an otherwise-idle
-	// connection, so a stuck subscriber is reaped within one heartbeat cycle.
 	subscribeWriteTimeout = 30 * time.Second
 )
 
-// commsCursorFlushInterval bounds how often a `comms recv --follow` subscribe
-// session fsyncs the agent's durable comms cursor (hk-tafd4). Advancing per
-// delivered event would fsync on every message; batching every few seconds
-// bounds the IO while keeping the replay-on-restart window small. The cursor is
-// also flushed once on session return so the final delivered event is durable.
 const commsCursorFlushInterval = 2 * time.Second
 
 // ActiveRunsSource is the minimal RunRegistry surface that subscribeHub
@@ -151,10 +72,6 @@ type ActiveRunsSource interface {
 	Snapshot() []*RunHandle
 }
 
-// subscribeMaxConnectionsDefault is the default per-process connection cap
-// applied when SubscribeHubConfig.MaxConnections is zero. A daemon is
-// single-user (0600 socket), so 32 concurrent subscribers is a generous
-// ceiling that still bounds memory consumption (32 × 256 × core.Event).
 const subscribeMaxConnectionsDefault = 32
 
 // NewTimerFn is a factory that creates a timer for a given duration.
@@ -163,7 +80,6 @@ const subscribeMaxConnectionsDefault = 32
 // (mirrors time.Timer.Reset). Tests inject a fake via SubscribeHubConfig.NewTimer.
 type NewTimerFn func(d time.Duration) (c <-chan time.Time, stop func() bool, reset func(time.Duration))
 
-// realNewTimer wraps time.NewTimer to satisfy NewTimerFn.
 func realNewTimer(d time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
 	t := time.NewTimer(d)
 	return t.C, t.Stop, func(d time.Duration) { t.Reset(d) }
@@ -293,9 +209,6 @@ func (h *SubscribeHub) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// dispatch is the observer-class handler invoked by the bus for every event.
-// It MUST NOT block (EV-012); the per-subscriber send is non-blocking with
-// drop-oldest discipline.
 func (h *SubscribeHub) dispatch(_ context.Context, evt core.Event) error {
 	h.lastEventID.Store(evt.EventID.String())
 	h.mu.RLock()
@@ -323,8 +236,6 @@ func (h *SubscribeHub) dispatch(_ context.Context, evt core.Event) error {
 //
 // Bead ref: hk-a5sil.
 func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req SubscribeRequest) {
-	// Enforce per-process connection cap. Use a compare-and-increment loop so
-	// two concurrent callers can't both pass the check and both exceed the cap.
 	maxConn := int64(h.cfg.MaxConnections)
 	if maxConn <= 0 {
 		maxConn = subscribeMaxConnectionsDefault
@@ -337,7 +248,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		cur := h.connCount.Load()
 		if cur >= maxConn {
 			if dlErr := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); dlErr != nil {
-				// No deadline means the refusal write below can block forever.
 				slog.WarnContext(ctx, "daemon: subscribe: set write deadline on refused connection", "err", dlErr)
 			}
 			writeSubscribeError(conn, "subscribe_capacity_exceeded")
@@ -349,7 +259,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	}
 	defer h.connCount.Add(-1)
 
-	// Build the type filter.
 	typeFilter := make(map[string]struct{}, len(req.Types))
 	for _, t := range req.Types {
 		if t != "" {
@@ -358,7 +267,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	}
 	wildcard := len(typeFilter) == 0
 
-	// Clamp heartbeat.
 	hb := req.HeartbeatSeconds
 	if hb <= 0 {
 		hb = subscribeHeartbeatDefault
@@ -380,8 +288,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		topic:      req.Topic,
 	}
 
-	// Register BEFORE replay so live events are buffered while we replay from
-	// JSONL. Deregister on return so the bus stops fanning out.
 	h.mu.Lock()
 	h.subscribers[s] = struct{}{}
 	h.mu.Unlock()
@@ -391,9 +297,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		h.mu.Unlock()
 	}()
 
-	// Emit a refresh beat for the subscribing agent (hk-6vwi3 fix #2): a receive-only
-	// agent that opens a subscribe session stays visible in "comms who" even if it
-	// never calls comms-send. Best-effort: errors are silently dropped (O-class).
 	if h.cfg.PresenceEmitter != nil && req.To != "" {
 		if _, emitErr := h.cfg.PresenceEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
 			Agent:    req.To,
@@ -405,8 +308,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		}
 	}
 
-	// Detect client-side close: a goroutine reads from the conn and signals
-	// via cancellation. Any read error (EOF, RST, deadline) cancels.
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -421,48 +322,21 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 
 	enc := json.NewEncoder(conn)
 
-	// Comms-cursor advancement for `comms recv --follow`/`--wait` (hk-tafd4).
-	// When the hub has a cursor store and the request carries an agent name
-	// (req.To), we advance that agent's durable LIVE cursor as agent_message
-	// events directed to it are delivered, so a watcher restart does NOT replay
-	// already-delivered messages. To bound fsync churn we track the
-	// last-delivered event_id and flush it to the cursor at most every
-	// cursorFlushInterval (and once more on return). Advancing AFTER delivery
-	// preserves at-least-once (N3): a crash between deliver and flush
-	// re-delivers; clients dedup on event_id.
-	//
-	// B1 (hk-8xspi, superseding the hk-d65rb pin): this LIVE cursor is
-	// INDEPENDENT of the POLL cursor a plain one-shot `comms recv --agent`
-	// advances. A one-shot recv called after a --follow/--wait session has
-	// advanced the live cursor still drains its own backlog from the poll
-	// cursor's position — it is no longer starved by follow/wait consumption.
-	// N3 at-least-once + mandatory dedupe-on-event_id makes the resulting
-	// duplicate delivery across the two cursors harmless. Operators can also
-	// audit the full message history cursor-independently via `comms log
-	// --since`, which scans events.jsonl without consulting either cursor.
 	cursorAdvanceEnabled := h.cursorStore != nil && req.To != ""
 	var pendingCursorID string // last agent_message event_id delivered but not yet flushed
 	flushCursor := func() {
 		if !cursorAdvanceEnabled || pendingCursorID == "" {
 			return
 		}
-		// Best-effort: a failed flush is non-fatal (at-least-once tolerates it).
-		// Serialize against concurrent one-shot comms-recv on the same agent.
 		agentMu := h.cursorStore.AgentMu(req.To)
 		agentMu.Lock()
 		if advErr := h.cursorStore.Advance(req.To, pendingCursorID); advErr != nil {
-			// At-least-once tolerates this: the agent re-reads from the old cursor
-			// and sees the message again.
 			fmt.Fprintf(os.Stderr, "daemon: subscribe: advance comms cursor for %s: %v\n", req.To, advErr)
 		}
 		agentMu.Unlock()
 		pendingCursorID = ""
 	}
 	defer flushCursor()
-	// Only arm the cursor-flush timer when advancement is enabled. When it is
-	// not, leave cursorFlushC nil so the select branch below never fires and the
-	// timer factory (which tests inspect for the FIRST call = heartbeat interval)
-	// is not invoked for a flush timer at all.
 	var cursorFlushC <-chan time.Time
 	cursorFlushStop := func() bool { return true }
 	cursorFlushReset := func(time.Duration) {}
@@ -487,8 +361,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 						continue
 					}
 				}
-				// Agent-message addressing filter (N1). Applies on agent_message
-				// events only; other event types bypass this block.
 				if evt.Type == "agent_message" && (req.To != "" || req.From != "" || req.Topic != "") {
 					var p AgentMessagePayload
 					if unmarshalErr := json.Unmarshal(evt.Payload, &p); unmarshalErr != nil || !MatchAgentMessage(p, req.To, req.From, req.Topic) {
@@ -502,13 +374,10 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 					return
 				}
 				lastReplayedUID = [16]byte(evt.EventID)
-				// Advance the comms cursor over replayed agent_message events too:
-				// the replay window covers messages this agent has now seen.
 				if cursorAdvanceEnabled && evt.Type == "agent_message" {
 					pendingCursorID = evt.EventID.String()
 				}
 			}
-			// Persist progress made during replay before entering the live loop.
 			flushCursor()
 		}
 	}
@@ -522,9 +391,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			return
 
 		case evt := <-s.ch:
-			// Deduplicate events already sent during JSONL replay.
-			// UUIDv7 byte comparison: if this event's id ≤ the last replayed
-			// id it was covered by the replay window (EV-002).
 			if lastReplayedUID != ([16]byte{}) {
 				evtUID := [16]byte(evt.EventID)
 				if bytes.Compare(evtUID[:], lastReplayedUID[:]) <= 0 {
@@ -536,7 +402,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				return
 			}
 
-			// Drop-gap notice first if we accumulated drops.
 			if dropped := s.swapDropped(); dropped > 0 {
 				if err := enc.Encode(subscriptionGapLine{
 					Type:    "subscription_gap",
@@ -548,12 +413,9 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			if err := enc.Encode(evt); err != nil {
 				return
 			}
-			// hk-tafd4: record this delivered agent_message so the cursor advances
-			// past it. Flush is batched on the cursorFlushC tick (and on return).
 			if cursorAdvanceEnabled && evt.Type == "agent_message" {
 				pendingCursorID = evt.EventID.String()
 			}
-			// Reset heartbeat — we just wrote, so the line is fresh.
 			if !hbStop() {
 				select {
 				case <-hbC:
@@ -563,7 +425,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			hbReset(heartbeatInterval)
 
 		case <-cursorFlushC:
-			// Batched durable cursor advance for --follow (hk-tafd4).
 			flushCursor()
 			cursorFlushReset(commsCursorFlushInterval)
 
@@ -580,7 +441,6 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	}
 }
 
-// makeHeartbeat snapshots active-run metadata and packages a heartbeat line.
 func (h *SubscribeHub) makeHeartbeat() heartbeatLine {
 	out := heartbeatLine{
 		Type:        "heartbeat",
@@ -617,7 +477,6 @@ func (h *SubscribeHub) loadLastEventID() string {
 	return v
 }
 
-// subscriptionStream is the per-connection event channel + drop counter.
 type subscriptionStream struct {
 	ch         chan core.Event
 	typeFilter map[string]struct{}
@@ -630,18 +489,12 @@ type subscriptionStream struct {
 	dropped atomic.Int64
 }
 
-// offer attempts a non-blocking send. On full channel: drops OLDEST, counts.
-// Filters by type before queuing to avoid burning channel slots on
-// uninteresting events. For agent_message events, also applies the
-// addressing filter (N1) via MatchAgentMessage.
 func (s *subscriptionStream) offer(evt core.Event) {
 	if !s.wildcard {
 		if _, ok := s.typeFilter[string(evt.Type)]; !ok {
 			return
 		}
 	}
-	// Agent-message addressing filter (N1). Applies on agent_message events
-	// only; other event types bypass this block.
 	if evt.Type == "agent_message" && (s.to != "" || s.from != "" || s.topic != "") {
 		var p AgentMessagePayload
 		if err := json.Unmarshal(evt.Payload, &p); err != nil || !MatchAgentMessage(p, s.to, s.from, s.topic) {
@@ -653,29 +506,24 @@ func (s *subscriptionStream) offer(evt core.Event) {
 		case s.ch <- evt:
 			return
 		default:
-			// Channel full → drop OLDEST and retry.
 			select {
 			case <-s.ch:
 				s.dropped.Add(1)
 			default:
-				// Raced with a consumer drain; retry the send.
 			}
 		}
 	}
 }
 
-// swapDropped atomically reads and zeros the drop counter.
 func (s *subscriptionStream) swapDropped() int64 {
 	return s.dropped.Swap(0)
 }
 
-// activeRunSummary is one entry in the heartbeat active_runs array.
 type activeRunSummary struct {
 	BeadID     string `json:"bead_id"`
 	AgeSeconds int    `json:"age_seconds"`
 }
 
-// heartbeatLine is the per-heartbeat NDJSON payload.
 type heartbeatLine struct {
 	Type        string             `json:"type"`
 	Timestamp   string             `json:"ts"`
@@ -683,14 +531,11 @@ type heartbeatLine struct {
 	LastEventID string             `json:"last_event_id"`
 }
 
-// subscriptionGapLine is the connection-only payload announcing dropped events.
 type subscriptionGapLine struct {
 	Type    string `json:"type"`
 	Dropped int64  `json:"dropped"`
 }
 
-// writeSubscribeError writes a SocketResponse error and is used when no
-// SubscribeHandler is wired or the request is malformed.
 func writeSubscribeError(w io.Writer, msg string) {
 	data, marshalErr := json.Marshal(SocketResponse{Ok: false, Error: msg})
 	if marshalErr != nil {

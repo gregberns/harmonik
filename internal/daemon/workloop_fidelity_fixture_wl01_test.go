@@ -9,8 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// wl01Trace records the external effects this characterization freezes. It is
-// deliberately smaller than testRuntime: tests name semantic effects only.
 type wl01Trace struct {
 	mu     sync.Mutex
 	events []string
@@ -28,9 +26,6 @@ func (w *wl01Trace) snapshot() []string {
 	return append([]string(nil), w.events...)
 }
 
-// wl01SingleOwnerEffects groups effects that have one owner in each bounded
-// scenario. Outcome variants share an owner so a compensating success/failure,
-// close/reopen, or terminal/revert pair cannot hide duplicate ownership.
 var wl01SingleOwnerEffects = map[string]string{
 	"queue.reservation.durable":   "queue.reservation",
 	"ledger.claim":                "ledger.claim",
@@ -90,9 +85,6 @@ func wl01AssertTrace(t *testing.T, got, required, forbidden []string) {
 	}
 }
 
-// wl01Ledger is a controlled adapter for the ledger boundary. It records only
-// Ready/Show/Claim/terminal effects; production owns selection, registration,
-// executor launch, and queue mutation.
 type wl01Ledger struct {
 	trace        *wl01Trace
 	ready        []core.BeadRecord

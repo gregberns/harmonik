@@ -35,8 +35,6 @@ import (
 // time; if we reach here the graph was not properly validated.
 var ErrDeterministic = errors.New("dot: deterministic condition evaluation error")
 
-// lhsWhitelist is the closed set of valid LHS prefixes per WG-014.
-// "outcome.<field>" and "context.<key>" are the two namespaces.
 const (
 	lhsOutcomeStatus         = "outcome.status"
 	lhsOutcomePreferredLabel = "outcome.preferred_label"
@@ -71,7 +69,6 @@ func EvalCondition(cond *Condition, outcome core.Outcome, ctx map[string]string)
 	return true, nil
 }
 
-// evalEquality evaluates one Equality clause.
 func evalEquality(eq Equality, outcome core.Outcome, ctx map[string]string) (bool, error) {
 	lhsVal, err := resolveLHS(eq.LHS, outcome, ctx)
 	if err != nil {
@@ -87,8 +84,6 @@ func evalEquality(eq Equality, outcome core.Outcome, ctx map[string]string) (boo
 	}
 }
 
-// resolveLHS extracts the runtime value for the given LHS expression.
-// Returns ErrDeterministic for any LHS outside the WG-014 whitelist.
 func resolveLHS(lhs string, outcome core.Outcome, ctx map[string]string) (string, error) {
 	switch lhs {
 	case lhsOutcomeStatus:

@@ -8,24 +8,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// dispatch.go — the PURE per-agent-session Dispatch reactor (RSM-004/005/006;
-// runexec-design §3). It mirrors internal/keeper/step.go: it holds
-// DispatchState, exposes Step(ev) []Action / State() / InFlight(), and is
-// drivable by the free function substrate.Run[Event, Action]. stepDispatch is
-// TOTAL and pure — no I/O, no clock reads, no id minting; every timestamp comes
-// from the event's shell-stamped At.
-//
-// States (RSM-004):
-//   Idle → Launching → AwaitingReady → Briefing → Working →
-//     {Completed | Exited | Stalled | ReadyTimeout→Failed | Failed | Aborted}
-// A SkipReadyHandshake session (completion-by-process-exit harness) transitions
-// Launching → Working directly, skipping AwaitingReady and Briefing.
-//
-// Liveness (RSM-005 / RSM-INV-002): the AwaitingReady agent_ready-timer edge is
-// the SR9 edge — it emits an outgoing action set (kill + reap-timer +
-// agent_ready_timeout emission), never a silent wait. Every timer-fired
-// transition lands in a state with an action or a real state change.
-
 // DispatchPhase is the Dispatch machine's state (RSM-004).
 type DispatchPhase string
 
@@ -47,8 +29,6 @@ const (
 	DispatchAborted   DispatchPhase = "aborted"
 )
 
-// dispatchTerminals is the set of terminal phases (structural: no outgoing
-// edges, RSM-003). ReadyTimeout is NOT terminal (it steps to Failed).
 var dispatchTerminals = map[DispatchPhase]struct{}{
 	DispatchCompleted: {}, DispatchExited: {}, DispatchStalled: {},
 	DispatchFailed: {}, DispatchAborted: {},
@@ -136,13 +116,10 @@ func (m *Dispatch) Run(ctx context.Context, src substrate.EventSource[Event], ef
 	return substrate.Run(ctx, src, m.Step, eff)
 }
 
-// stepDispatch is the total pure transition (cfg, state, event) → (state', []action).
-// Terminal phases have no outgoing edges (every event → no-op).
 func stepDispatch(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	if _, terminal := dispatchTerminals[s.Phase]; terminal {
 		return s, nil
 	}
-	// EvAborted is a uniform non-terminal edge (runexec-design §3 "any non-terminal").
 	if ev.Kind == EvAborted {
 		s.Phase = DispatchAborted
 		s.Reason = ev.Reason
@@ -166,8 +143,6 @@ func stepDispatch(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState,
 	}
 }
 
-// stepDispatchIdle: the shell's StartDispatch entry launches the agent and arms
-// the agent-ready deadline.
 func stepDispatchIdle(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	if ev.Kind != EvStartDispatch {
 		return s, nil
@@ -180,9 +155,6 @@ func stepDispatchIdle(cfg DispatchConfig, s DispatchState, ev Event) (DispatchSt
 	}
 }
 
-// stepDispatchLaunching: on EvLaunched emit the held-back launch_initiated
-// (RF :4667) and advance. A SkipReadyHandshake harness goes straight to Working
-// (RSM-004); otherwise it awaits the readiness handshake.
 func stepDispatchLaunching(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	switch ev.Kind {
 	case EvLaunched:
@@ -206,20 +178,12 @@ func stepDispatchLaunching(cfg DispatchConfig, s DispatchState, ev Event) (Dispa
 		if ev.Timer != TimerAgentReady {
 			return s, nil
 		}
-		// RSM-005 / RSM-INV-002: the agent_ready deadline is armed at
-		// Idle→Launching entry and stays live through Launching. A hung launch (no
-		// EvLaunched/EvLaunchFailed — e.g. tmux_new_window_timeout) that lets the
-		// deadline expire here MUST NOT be a silent wait; it rides the SAME SR9 edge
-		// as AwaitingReady (kill + reap + agent_ready_timeout). RSM-005 now names
-		// this Launching edge explicitly (carry-in (a), RT7 spec row).
 		return dispatchReadyTimeoutEdge(cfg, s)
 	default:
 		return s, nil
 	}
 }
 
-// stepDispatchAwaitingReady: the readiness handshake or its timeout (the SR9
-// edge). Readiness is signalled by a run-attributed agent_ready (RSM-005).
 func stepDispatchAwaitingReady(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	switch ev.Kind {
 	case EvAgentReady:
@@ -247,11 +211,6 @@ func stepDispatchAwaitingReady(cfg DispatchConfig, s DispatchState, ev Event) (D
 	}
 }
 
-// dispatchReadyTimeoutEdge is the SR9 edge (RSM-005 / RSM-INV-002): the
-// agent_ready deadline expired without a readiness signal — kill, arm the
-// kill-reap deadline, and emit agent_ready_timeout. NEVER a silent wait. Shared
-// by Launching (hung launch, no launch event) and AwaitingReady (launched but
-// never ready), since the same timer is live across both phases.
 func dispatchReadyTimeoutEdge(cfg DispatchConfig, s DispatchState) (DispatchState, []Action) {
 	s.Phase = DispatchReadyTimeout
 	s.Reason = "agent_ready_timeout"
@@ -262,9 +221,6 @@ func dispatchReadyTimeoutEdge(cfg DispatchConfig, s DispatchState) (DispatchStat
 	}
 }
 
-// stepDispatchReadyTimeout: the kill-reap awaits either the agent's exit or the
-// reap deadline, then settles into Failed(agent_ready_timeout). The Run machine
-// reopens (RSM-025).
 func stepDispatchReadyTimeout(_ DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	switch ev.Kind {
 	case EvAgentExited, EvTimerFired:
@@ -279,12 +235,9 @@ func stepDispatchReadyTimeout(_ DispatchConfig, s DispatchState, ev Event) (Disp
 	}
 }
 
-// stepDispatchBriefing: await the input Ack. A rejection or input-ack timeout
-// retries the delivery (Attempt++ < max) or fails closed (RSM-INV-001).
 func stepDispatchBriefing(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	switch ev.Kind {
 	case EvInputAck:
-		// Drop a duplicate ack for an already-correlated submission (RSM-027).
 		if ev.InputID != "" && ev.InputID == s.LastAckedInput {
 			return s, nil
 		}
@@ -308,9 +261,6 @@ func stepDispatchBriefing(cfg DispatchConfig, s DispatchState, ev Event) (Dispat
 	}
 }
 
-// dispatchBriefRetry is the RSM-INV-001 edge: retry the brief while attempts
-// remain, else fail closed (input_undeliverable). Either branch is an outgoing
-// action, never a silent no-op (RSM-INV-002).
 func dispatchBriefRetry(cfg DispatchConfig, s DispatchState) (DispatchState, []Action) {
 	if s.Attempt < cfg.MaxInputAttempts {
 		s.Attempt++
@@ -324,13 +274,9 @@ func dispatchBriefRetry(cfg DispatchConfig, s DispatchState) (DispatchState, []A
 	return s, []Action{{Kind: ActCancelTimer, Timer: TimerInputAck}}
 }
 
-// stepDispatchWorking: only agent-derived signals sustain/advance progress
-// (RSM-006). A bare daemon heartbeat is explicitly NOT progress.
 func stepDispatchWorking(_ DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
 	switch ev.Kind {
 	case EvHeartbeat:
-		// RSM-006: daemon-goroutine liveness is NOT agent progress — no-op, and
-		// LastProgressAt deliberately does NOT advance.
 		return s, nil
 	case EvCommitObserved:
 		s.LastProgressAt = ev.At // observed worktree-HEAD advance IS progress
@@ -353,9 +299,6 @@ func stepDispatchWorking(_ DispatchConfig, s DispatchState, ev Event) (DispatchS
 	}
 }
 
-// launchFailedEventType maps the launch-failure reason to its event type
-// (runexec-design §3: ActEmit(spawn_cap_blocked/tmux…)). The reason string is
-// the shell-classified launch error (RF :4639–:4661).
 func launchFailedEventType(reason string) core.EventType {
 	if reason == string(core.EventTypeTmuxNewWindowTimeout) {
 		return core.EventTypeTmuxNewWindowTimeout
@@ -363,8 +306,6 @@ func launchFailedEventType(reason string) core.EventType {
 	return core.EventTypeSpawnCapBlocked
 }
 
-// deliverInputAction builds the brief-vs-resume input delivery (RSM-005: brief
-// on first launch, resume_prompt on resume).
 func deliverInputAction(sess SessionRef, id InputID, isResume bool) Action {
 	kind := InputBrief
 	if isResume {

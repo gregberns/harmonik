@@ -47,9 +47,6 @@ func NewLiveRecoverViaRespawn(projectDir, respawnCmd string) func(ctx context.Co
 	}
 }
 
-// shellCmds is the set of process names that indicate a tmux pane is idle
-// (running a shell, not the managed agent). When pane_current_command matches
-// any of these, the pane is considered available for respawn.
 var shellCmds = map[string]struct{}{
 	"zsh":  {},
 	"bash": {},

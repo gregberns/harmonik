@@ -9,16 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// skillResolution — per-bead helper prefix for test helpers in this file.
-// (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.56)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test fixtures
-// ─────────────────────────────────────────────────────────────────────────────
-
-// skillResolutionFixtureDir creates a temporary directory containing the
-// specified skill-name sub-directories.  Returns the parent directory path.
-// The directory (and all contents) is cleaned up via t.Cleanup.
 func skillResolutionFixtureDir(t *testing.T, skills ...string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -29,10 +19,6 @@ func skillResolutionFixtureDir(t *testing.T, skills ...string) string {
 	}
 	return dir
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-047 — ResolveSkill tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC047_ResolveSkill_FirstMatchReturned verifies that ResolveSkill returns
 // the first matching search-path entry.
@@ -136,7 +122,6 @@ func TestHC047_ResolveSkill_FileNotDirectory(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	// Create a file (not a directory) with the skill name.
 	filePath := filepath.Join(dir, "not-a-dir-skill")
 	if err := os.WriteFile(filePath, []byte("not a skill"), 0o600); err != nil {
 		t.Fatalf("setup: WriteFile: %v", err)
@@ -147,10 +132,6 @@ func TestHC047_ResolveSkill_FileNotDirectory(t *testing.T) {
 		t.Errorf("HC-047: ResolveSkill: file-not-dir: got %v, want ErrSkillProvisioningFailed", err)
 	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HC-048 — ResolveAllSkills tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // TestHC048_ResolveAllSkills_EmptyRequired verifies that a nil or empty
 // required_skills list returns an empty slice without error.
@@ -240,7 +221,6 @@ func TestHC048_ResolveAllSkills_FailFastOnFirstUnresolvable(t *testing.T) {
 
 	dir := skillResolutionFixtureDir(t, "skill-a", "skill-c") // skill-b absent
 
-	// skill-a resolves; skill-b does not → fail-fast; skill-c never tried.
 	_, err := handlercontract.ResolveAllSkills(
 		[]string{"skill-a", "skill-b", "skill-c"},
 		[]string{dir},

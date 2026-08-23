@@ -43,9 +43,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// hqwn10SpecContent reads specs/event-model.md, locates the EV-007 anchor, and
-// returns the paragraph that contains it.  It fails the test if the file is
-// unreadable or the anchor is missing.
 func hqwn10SpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -53,7 +50,6 @@ func hqwn10SpecContent(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed — cannot locate repo root")
 	}
-	// Walk up: internal/core/<file> → repo root
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 	specPath := filepath.Join(repoRoot, "specs", "event-model.md")
 
@@ -63,15 +59,12 @@ func hqwn10SpecContent(t *testing.T) string {
 	}
 	content := string(raw)
 
-	// Confirm the EV-007 section header is present.
 	const anchor = "EV-007"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
 		t.Fatalf("spec %s does not contain %q; EV-007 may have been removed or renamed", specPath, anchor)
 	}
 
-	// Return the paragraph starting at the anchor (up to the next section
-	// boundary) so callers can assert on its contents.
 	paragraph := content[idx:]
 	if end := strings.Index(paragraph, "\n####"); end > 0 {
 		paragraph = paragraph[:end]
@@ -79,13 +72,6 @@ func hqwn10SpecContent(t *testing.T) string {
 	return paragraph
 }
 
-// hqwn10EventGoContent reads internal/core/event.go and returns the godoc block
-// for the TimestampMonoNsec field.  It fails the test if the file is unreadable
-// or the field declaration is absent.
-//
-// The search locates the field declaration line (the line where
-// "TimestampMonoNsec" appears followed by its type, preceded by whitespace),
-// then walks the preceding lines to collect the associated comment block.
 func hqwn10EventGoContent(t *testing.T) string {
 	t.Helper()
 
@@ -100,9 +86,6 @@ func hqwn10EventGoContent(t *testing.T) string {
 		t.Fatalf("cannot read %s: %v", eventGoPath, err)
 	}
 
-	// Split into lines and find the field declaration line: a line whose
-	// trimmed form starts with "TimestampMonoNsec" followed by whitespace
-	// (i.e. not the comment line "// TimestampMonoNsec is …").
 	lines := strings.Split(string(raw), "\n")
 	fieldLineIdx := -1
 	for i, line := range lines {
@@ -116,7 +99,6 @@ func hqwn10EventGoContent(t *testing.T) string {
 		t.Fatal("event.go does not contain a TimestampMonoNsec field declaration; field may have been renamed")
 	}
 
-	// Walk backwards from the field declaration line to collect the comment block.
 	var commentLines []string
 	for i := fieldLineIdx - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -129,9 +111,6 @@ func hqwn10EventGoContent(t *testing.T) string {
 	return strings.Join(commentLines, "\n")
 }
 
-// hqwn10MakeEvent returns a minimal valid Event with the given mono timestamp
-// value.  When monoNsec is 0 the TimestampMonoNsec field is left nil so the
-// helper can produce both nil and set variants.
 func hqwn10MakeEvent(t *testing.T, monoNsec int64) Event {
 	t.Helper()
 	id, err := uuid.NewV7()
@@ -154,10 +133,6 @@ func hqwn10MakeEvent(t *testing.T, monoNsec int64) Event {
 	return e
 }
 
-// hqwn10IsNonDecreasing reports whether the sequence of TimestampMonoNsec values
-// across the given events satisfies EV-007: non-decreasing across emissions in
-// emission order.  Events with nil TimestampMonoNsec are skipped (EV-007 only
-// applies "when present").
 func hqwn10IsNonDecreasing(events []Event) bool {
 	var last *int64
 	for i := range events {
@@ -289,7 +264,6 @@ func TestMonoTsMono_EV007_NonDecreasingPredicateAcceptsValidSequence(t *testing.
 func TestMonoTsMono_EV007_NonDecreasingPredicateAcceptsNilInterspersed(t *testing.T) {
 	t.Parallel()
 
-	// Events with nil mono are produced by hqwn10MakeEvent(t, 0).
 	noMono := hqwn10MakeEvent(t, 0) // TimestampMonoNsec will be nil
 
 	events := []Event{

@@ -1,18 +1,5 @@
 package daemon
 
-// export_readywait_test.go — agent-ready / post-ready-hang / socket-grace seams.
-//
-// Split out of export_test.go (RT19.4, P2 E5 export_test.go split) so the
-// ready-wait shims (agent-ready timeout knobs now homed in internal/runlaunch,
-// waitsocketgrace.go stop-hook grace seams) live in one topic file. Same
-// package (daemon), so every
-// daemon_test caller resolves daemon.ExportedX byte-identically after the move.
-//
-// Two of the originally-catalogued agent-ready shims were deleted by RT14 (the
-// agentready.go removal); only the surviving 11 seams are relocated here.
-//
-// Bead: hk-ecrxy.
-
 import (
 	"context"
 	"time"

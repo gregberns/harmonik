@@ -1,15 +1,5 @@
 package keeper_test
 
-// backstop_test.go — tests for the two keeper backstops added in hk-34ac:
-//
-//  1. Blind-keeper alarm (Backstop 1): emit session_keeper_blind after
-//     5+ minutes of continuous foreign_session rejection. Latched per episode;
-//     cleared when the gauge becomes readable.
-//
-//  2. SID-independent hard-ceiling failsafe (Backstop 2): force a restart when
-//     any watched pane's token count meets or exceeds HardCeilingAbsTokens
-//     (280 000), regardless of whether the SID binding is correct.
-
 import (
 	"context"
 	"encoding/json"
@@ -24,10 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// foreignSessionConfig returns a WatcherConfig pre-wired for foreign_session
-// testing: the managed binding is "sess-managed" and the .sid endorses
-// "sess-managed" (so the gauge's foreign sid is NOT adopted). The gauge file
-// carries the provided token count. PollInterval is tiny for test speed.
 func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) keeper.WatcherConfig {
 	t.Helper()
 
@@ -36,7 +22,6 @@ func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) 
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Write gauge with a foreign session_id and the specified token count.
 	data, err := json.Marshal(keeper.CtxFile{
 		Pct:       50.0,
 		Tokens:    tokens,
@@ -90,38 +75,12 @@ func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) 
 func TestBlindKeeperAlarm_FiresAfter5Min(t *testing.T) {
 	t.Parallel()
 
-	// We fake time by controlling blindSince via the ReadManagedSessionFn, but
-	// the watcher's internal clock is time.Now(). To test the 5-minute threshold
-	// without sleeping 5 minutes, we start the watcher in a mode where the
-	// managed session always differs from the gauge (foreign every tick), but
-	// we observe that no blind event fires within the first few ticks (< 5 min),
-	// then switch to a very short threshold via a short-running sub-test approach.
-	//
-	// Since we cannot override the watcher's internal time.Since, we test the
-	// observable behaviour differently:
-	// (a) Short run with short blind threshold (N/A — threshold is a constant).
-	//
-	// The real 5-min threshold is a compile-time constant in watcher.go. We
-	// cannot inject a fake clock without refactoring. So we use a two-phase
-	// approach: run the watcher very briefly (no blind event expected), then
-	// verify the LATCH behaves correctly by checking that the watcher correctly
-	// does NOT re-emit after the first alarm.
-	//
-	// For the full 5-min firing we do a best-effort: run for a few ticks and
-	// confirm no blind event fires (the threshold is not yet crossed). This is
-	// a partial test of the early-arm path; see below for the latch behaviour test.
-	//
-	// The definitive "fires after threshold" path is verified structurally in
-	// TestBlindKeeperAlarm_LatchClearedOnReadableGauge, which exercises the
-	// blind→clear→blind state machine end-to-end.
-
 	projectDir := t.TempDir()
 	agent := "blind-alarm-agent"
 
 	em := &keeper.RecordingEmitter{}
 	cfg := foreignSessionConfig(t, projectDir, agent, 50_000)
 
-	// Short run — no blind event expected (threshold is 5 min).
 	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
 
 	blindEvents := em.EventsOfType(core.EventTypeSessionKeeperBlind)
@@ -129,8 +88,6 @@ func TestBlindKeeperAlarm_FiresAfter5Min(t *testing.T) {
 		t.Errorf("want 0 session_keeper_blind events in short run (threshold 5 min not crossed); got %d", len(blindEvents))
 	}
 
-	// Also verify the no_gauge event IS emitted (confirms the foreign_session
-	// path is being hit, not some other early-exit path).
 	noGauge := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
 	if len(noGauge) == 0 {
 		t.Error("want ≥1 session_keeper_no_gauge for foreign_session; got 0 (foreign_session path not reached)")
@@ -156,13 +113,11 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Track which session_id the ReadManagedSessionFn returns; controlled by test.
 	var mu sync.Mutex
 	managedSID := "sess-managed"
 
 	em := &keeper.RecordingEmitter{}
 
-	// Write gauge initially with foreign session_id.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
 
 	cfg := keeper.WatcherConfig{
@@ -182,7 +137,6 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 		ReadSidFn: func(_, _ string) (string, time.Time, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			// .sid endorses managedSID so foreign is never auto-adopted.
 			return managedSID, time.Time{}, nil
 		},
 	}
@@ -197,30 +151,22 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 		}
 	}()
 
-	// Phase 1: run a few ticks with foreign gauge — no blind event (5 min not crossed).
 	time.Sleep(30 * time.Millisecond)
 
-	// Phase 2: switch gauge to the matching session_id so the next tick is a
-	// successful (non-foreign) read — this clears blindSince and blindAlarmFired.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-managed")
 	time.Sleep(30 * time.Millisecond)
 
-	// Phase 3: switch back to foreign again — blindSince should now be ZERO
-	// (cleared in phase 2), so the new blind streak starts fresh.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
 	time.Sleep(30 * time.Millisecond)
 
 	cancel()
 	<-done
 
-	// We expect 0 blind events (5 min never elapsed in any phase).
 	blindEvents := em.EventsOfType(core.EventTypeSessionKeeperBlind)
 	if len(blindEvents) != 0 {
 		t.Errorf("want 0 session_keeper_blind events (threshold never crossed); got %d", len(blindEvents))
 	}
 
-	// Confirm the warn state is reset after the readable phase (below 80%).
-	// This is an indirect check that the fresh-gauge path cleared keeper state.
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
 	if len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn events (pct=50<80); got %d", len(warns))
@@ -253,11 +199,8 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	// Track which session_id the gauge carries (controlled by the test) and
-	// which session_id is "managed"/.sid-endorsed (constant "sess-managed").
 	em := &keeper.RecordingEmitter{}
 
-	// Start with a foreign gauge.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
 
 	cfg := keeper.WatcherConfig{
@@ -289,8 +232,6 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 		}
 	}()
 
-	// Phase 1: foreign streak well past the 30ms threshold (≈ many ticks). The
-	// alarm must fire exactly ONCE — the latch suppresses every later tick.
 	time.Sleep(120 * time.Millisecond)
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperBlind)); n != 1 {
 		cancel()
@@ -298,18 +239,14 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 		t.Fatalf("phase 1: want exactly 1 session_keeper_blind after injected threshold; got %d", n)
 	}
 
-	// Phase 2: a matched (non-foreign) tick — clears blindSince + blindAlarmFired.
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-managed")
 	time.Sleep(40 * time.Millisecond)
-	// Still exactly one (the readable tick must not emit a new blind event).
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperBlind)); n != 1 {
 		cancel()
 		<-done
 		t.Fatalf("phase 2: matched gauge must not add a blind event; got %d", n)
 	}
 
-	// Phase 3: foreign again — a FRESH clock arms; after the threshold a SECOND
-	// blind event must emit (proves the latch+timer reset on the readable tick).
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
 	time.Sleep(120 * time.Millisecond)
 
@@ -321,7 +258,6 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 	}
 }
 
-// restartSpy records calls to a restart function and counts them.
 type restartSpy struct {
 	mu    sync.Mutex
 	calls int
@@ -363,18 +299,15 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 
 		runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-		// Restart must have fired.
 		if n := spy.count(); n == 0 {
 			t.Error("want ≥1 hard-ceiling restart call at 290K tokens (foreign session); got 0")
 		}
 
-		// session_keeper_hard_ceiling event must have been emitted.
 		ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling)
 		if len(ceilEvents) == 0 {
 			t.Error("want ≥1 session_keeper_hard_ceiling event at 290K tokens; got 0")
 		}
 
-		// Verify payload fields.
 		if len(ceilEvents) > 0 {
 			var payload core.SessionKeeperHardCeilingPayload
 			if err := json.Unmarshal(ceilEvents[0].Payload, &payload); err != nil {
@@ -386,9 +319,6 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 			if payload.ContextLen != 290_000 {
 				t.Errorf("payload.ContextLen = %d; want 290000", payload.ContextLen)
 			}
-			// The emitted ceiling must reflect the EFFECTIVE configured value.
-			// This cfg left HardCeilingTokens at zero, so applyDefaults fills it
-			// with DefaultHardCeilingTokens (== HardCeilingAbsTokens alias).
 			if payload.HardCeiling != keeper.DefaultHardCeilingTokens {
 				t.Errorf("payload.HardCeiling = %d; want default %d", payload.HardCeiling, keeper.DefaultHardCeilingTokens)
 			}
@@ -409,12 +339,10 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 
 		runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-		// Restart must NOT have fired at 270K (below the 280K ceiling).
 		if n := spy.count(); n != 0 {
 			t.Errorf("want 0 hard-ceiling restart calls at 270K tokens; got %d", n)
 		}
 
-		// No session_keeper_hard_ceiling events.
 		ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling)
 		if len(ceilEvents) != 0 {
 			t.Errorf("want 0 session_keeper_hard_ceiling events at 270K tokens; got %d", len(ceilEvents))
@@ -439,34 +367,10 @@ func TestHardCeiling_CooldownPreventsMultipleRestarts(t *testing.T) {
 	cfg.HardCeilingRestartFn = spy.restart
 	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → only one attempt
 
-	// ANCHOR VIRTUAL TIME AT THE GAUGE'S REAL MOD-TIME. foreignSessionConfig
-	// wrote the gauge just now, at real time. The watcher reads gauge age as
-	// Clock.Since(modTime) — an injected clock against a real filesystem
-	// mod-time — so a fake clock that starts at some unrelated epoch is not
-	// commensurate with it. This test used to start virtual time in November
-	// 2023 against a gauge written today, which made every age about MINUS 2.7
-	// years: no positive Staleness could ever read true, and the whole staleness
-	// fixture was decorative. Starting from the stat'd mod-time makes the
-	// boot-time age exactly zero and each tick adds one PollInterval, so the
-	// gauge ages 40 × 5ms = 200ms of virtual time over the run — comfortably
-	// inside the 120s window, and now that is a fact rather than an accident.
-	// Refs: hk-3ty39; idiom and full rationale in watcher_test.go
-	// driveWatcherFakeClockFrom.
 	_, gaugeModTime := readCtxFor(t, projectDir, agent)
 
-	// Drive 40 deterministic ticks, all above 280K. The first fires the restart;
-	// the rest fall within the 10s cooldown (40 × 5ms = 200ms virtual ≪ 10s), so
-	// exactly one restart fires. FakeClock removes the -race tick-starvation flake
-	// where a fixed 300ms real window could yield zero effective ticks (hk-3dn16).
 	driveWatcherFakeClockFrom(t, gaugeModTime, cfg, em, 40)
 
-	// The gauge must stay inside the staleness window for the whole run. This is
-	// the assertion that gives Staleness teeth: the stale branch `continue`s past
-	// the hard-ceiling backstop, so a gauge that goes stale silently disarms the
-	// failsafe the rest of this test is about. Drop cfg.Staleness below the 200ms
-	// virtual run and this count goes red — which is exactly what could not
-	// happen while every age was negative. Measured: the restart count stays at
-	// 1 under that control, so this assertion is the only sensor for staleness.
 	if n := noGaugeStaleCount(em); n != 0 {
 		t.Errorf("want 0 no_gauge:stale over the run (the gauge must stay fresh, or the hard ceiling is never reached); got %d", n)
 	}
@@ -490,12 +394,10 @@ func TestHardCeiling_AlarmEmitsWhenFnNil(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 
 	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
-	// Default mode is alarm (zero value); HardCeilingRestartFn left nil.
 	cfg.HardCeilingCooldown = 10 * time.Second // alarm at most once
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// The alarm MUST emit even though the fn is nil (the hk-746u fix).
 	ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling)
 	if len(ceilEvents) == 0 {
 		t.Error("hk-746u regression: want ≥1 session_keeper_hard_ceiling in alarm mode with nil fn; got 0")
@@ -567,12 +469,10 @@ func TestHardCeiling_RestartMode_NilFnDegradesToAlarm(t *testing.T) {
 
 	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
 	cfg.HardCeilingMode = keeper.HardCeilingModeRestart
-	// HardCeilingRestartFn deliberately nil — must NOT panic.
 	cfg.HardCeilingCooldown = 10 * time.Second
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// Degrades to alarm: the event still emits, no panic occurred (test reached here).
 	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) == 0 {
 		t.Error("restart mode with nil fn: want ≥1 alarm event (degrade-to-alarm); got 0")
 	}
@@ -597,7 +497,6 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	// SID-MATCHED gauge ("sess-managed") above the ceiling — the NORMAL path.
 	data, err := json.Marshal(keeper.CtxFile{
 		Pct:       99.0,
 		Tokens:    290_000,
@@ -632,18 +531,13 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 		HardCeilingMode:      keeper.HardCeilingModeRestart,
 		HardCeilingRestartFn: ceilSpy.restart,
 		HardCeilingCooldown:  10 * time.Second,
-		// Cycler nil: the normal path is exercised without needing a live tmux
-		// target; we are only asserting the ceiling gate is NOT reached here.
 	}
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// The ceiling fn must NEVER fire on the normal path (double-fire guard).
 	if n := ceilSpy.count(); n != 0 {
 		t.Errorf("double-fire guard: hard-ceiling restart fn called %d times on the NORMAL path; want 0 (force_act owns the restart there)", n)
 	}
-	// No SID-independent ceiling alarm on the normal path either — the alarm is
-	// foreign-path-only.
 	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) != 0 {
 		t.Errorf("normal path: want 0 session_keeper_hard_ceiling events (alarm is foreign-path-only); got %d", len(ceilEvents))
 	}
@@ -660,7 +554,6 @@ func TestHardCeiling_SkipsWhenTokensZero(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &restartSpy{}
 
-	// Tokens == 0 means the field was absent/unset in the .ctx file.
 	cfg := foreignSessionConfig(t, projectDir, agent, 0)
 	cfg.HardCeilingRestartFn = spy.restart
 
@@ -687,8 +580,6 @@ func TestHardCeiling_EffectiveThresholdWiredThrough(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &restartSpy{}
 
-	// 260K is BELOW the 280K default but ABOVE the configured 250K ceiling, so
-	// it only trips when the configured value is actually used by the gate.
 	cfg := foreignSessionConfig(t, projectDir, agent, 260_000)
 	cfg.HardCeilingMode = keeper.HardCeilingModeRestart // hk-z8d0: restart mode calls the fn
 	cfg.HardCeilingTokens = effectiveCeiling
@@ -697,7 +588,6 @@ func TestHardCeiling_EffectiveThresholdWiredThrough(t *testing.T) {
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// Gate must have fired at 260K because the effective ceiling is 250K.
 	if n := spy.count(); n == 0 {
 		t.Errorf("want ≥1 restart at 260K with a 250K configured ceiling; got 0 (gate ignored cfg.HardCeilingTokens?)")
 	}
@@ -710,7 +600,6 @@ func TestHardCeiling_EffectiveThresholdWiredThrough(t *testing.T) {
 	if err := json.Unmarshal(ceilEvents[0].Payload, &payload); err != nil {
 		t.Fatalf("unmarshal hard_ceiling payload: %v", err)
 	}
-	// The CORE assertion: the payload carries 250000, NOT the 280000 default.
 	if payload.HardCeiling != effectiveCeiling {
 		t.Errorf("payload.HardCeiling = %d; want effective %d (NOT the %d default)",
 			payload.HardCeiling, effectiveCeiling, keeper.DefaultHardCeilingTokens)
@@ -733,13 +622,10 @@ func TestHardCeilingMode_ZeroValueIsAlarm(t *testing.T) {
 	if zero.String() != "alarm" {
 		t.Errorf("zero HardCeilingMode.String() = %q; want \"alarm\"", zero.String())
 	}
-	// applyDefaults must not flip the zero value away from alarm: a config built
-	// without setting HardCeilingMode keeps the alarm default.
 	cfg := keeper.WatcherConfig{}
 	if cfg.HardCeilingMode != keeper.HardCeilingModeAlarm {
 		t.Errorf("unset cfg.HardCeilingMode = %v; want HardCeilingModeAlarm", cfg.HardCeilingMode)
 	}
-	// ParseHardCeilingMode round-trips and empty/unknown → alarm.
 	for _, tc := range []struct {
 		in   string
 		want keeper.HardCeilingMode

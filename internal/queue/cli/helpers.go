@@ -11,26 +11,10 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// parseQueueFlags parses the --project and --json/--format flags from subArgs
-// and returns:
-//   - projectDir: resolved project directory (cwd if unspecified)
-//   - positional: remaining non-flag arguments
-//   - outputJSON: true when --json or --format json was given
-//   - ok: false if an unrecoverable parse error occurred
-//
-// Both `--project value` and `--project=value` forms are accepted per PL-028c.
-// --json and --format json|text are accepted per hk-5553i policy.
 func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, positional []string, outputJSON, ok bool) {
 	return parseQueueFlagsExtra(subArgs, errOut, nil)
 }
 
-// parseQueueFlagsExtra is like parseQueueFlags but accepts an optional
-// extraFlagFn callback that can handle subcommand-specific flags. The callback
-// receives (args, i) and returns (nextI, consumed). If consumed is false the
-// flag is treated as unknown and skipped (passed to positional).
-//
-// The --json flag (shorthand) and --format json (long form) are handled here
-// for all queue subcommands. --json ≡ --format json per hk-5553i policy.
 func parseQueueFlagsExtra(
 	subArgs []string,
 	errOut io.Writer,
@@ -47,7 +31,6 @@ func parseQueueFlagsExtra(
 			projectDir = strings.TrimPrefix(arg, "--project=")
 			i++
 		case arg == "--json":
-			// Convenience alias: --json ≡ --format json (mirrors handler status convention).
 			outputJSON = true
 			i++
 		case arg == "--format" && i+1 < len(subArgs):
@@ -57,7 +40,6 @@ func parseQueueFlagsExtra(
 			outputJSON = strings.TrimPrefix(arg, "--format=") == "json"
 			i++
 		default:
-			// Delegate to extra flag handler if provided.
 			if extraFlagFn != nil {
 				nextI, consumed := extraFlagFn(subArgs, i)
 				if consumed {
@@ -65,25 +47,15 @@ func parseQueueFlagsExtra(
 					continue
 				}
 			}
-			// Reject an UNRECOGNIZED leading-dash token LOUDLY (ok=false → exit 2)
-			// instead of silently consuming it as a positional. This mirrors the
-			// keeper subcommand parser-parity discipline (hk-t1wd / hk-snjr):
-			// every recognized flag is matched in an earlier case (or by the verb's
-			// extraFlagFn), so any remaining "--bogus"/"-x" is a typo the caller must
-			// see, not a queue name. A bare "-" (len 1) and all genuine positionals
-			// (bead IDs, queue names, file paths, group indices) do not start with a
-			// dash, so this never swallows real arguments.
 			if len(arg) > 1 && arg[0] == '-' {
 				diag.printf("harmonik queue: unrecognized flag %q\n", arg)
 				return "", nil, false, false
 			}
-			// Treat as positional.
 			positional = append(positional, arg)
 			i++
 		}
 	}
 
-	// Resolve project directory.
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -100,9 +72,6 @@ func parseQueueFlagsExtra(
 	return abs, positional, outputJSON, true
 }
 
-// harmonikDirFromProject returns the .harmonik subdirectory under projectDir.
-// Returns "" and writes an error to errOut if the project directory does not
-// exist.
 func harmonikDirFromProject(projectDir string, errOut io.Writer) string {
 	diag := newPrinter(errOut)
 	if _, err := os.Stat(projectDir); err != nil {
@@ -112,12 +81,6 @@ func harmonikDirFromProject(projectDir string, errOut io.Writer) string {
 	return filepath.Join(projectDir, ".harmonik")
 }
 
-// buildEnvelope constructs a socket request envelope by merging an "op" field
-// into an existing JSON document map. This lets the CLI forward queue document
-// fields (groups, schema_version, etc.) to the daemon at the top level of the
-// SocketRequest, which is what HandlerAdapter.HandleQueueSubmit /
-// HandleQueueDryRun expect (they unmarshal the whole raw request as the
-// typed request RECORD).
 func buildEnvelope(op string, fields map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	opBytes, err := json.Marshal(op)
 	if err != nil {
@@ -131,8 +94,6 @@ func buildEnvelope(op string, fields map[string]json.RawMessage) (map[string]jso
 	return out, nil
 }
 
-// encodeEnvelope wraps a queue document in an "op" envelope and marshals it to
-// the wire bytes the daemon socket expects.
 func encodeEnvelope(op string, doc map[string]json.RawMessage) ([]byte, error) {
 	envelope, err := buildEnvelope(op, doc)
 	if err != nil {
@@ -145,13 +106,6 @@ func encodeEnvelope(op string, doc map[string]json.RawMessage) ([]byte, error) {
 	return payload, nil
 }
 
-// loadQueueDocFromFile reads a queue document from queueFile, normalises its
-// group kinds, and applies the --queue name override when queueName is
-// non-empty. verb names the subcommand ("submit" / "dry-run") for diagnostics.
-//
-// Returns ok=false after writing the operator-facing diagnostic through diag;
-// the caller exits without adding a second message. submit and dry-run share
-// this path verbatim — the two used to carry byte-identical copies of it.
 func loadQueueDocFromFile(verb, queueFile, queueName string, diag *printer) (doc map[string]json.RawMessage, ok bool) {
 	//nolint:gosec // G304: path comes from operator CLI argument
 	data, readErr := os.ReadFile(queueFile)
@@ -163,7 +117,6 @@ func loadQueueDocFromFile(verb, queueFile, queueName string, diag *printer) (doc
 		diag.printf("harmonik queue %s: invalid JSON in %q: %v\n", verb, queueFile, jsonErr)
 		return nil, false
 	}
-	// Default omitted/empty group kind to stream; warn on wave groups (hk-c6grw).
 	if normErr := normalizeQueueDocGroups(doc, diag); normErr != nil {
 		diag.printf("harmonik queue %s: cannot normalize group kinds: %v\n", verb, normErr)
 		return nil, false
@@ -180,23 +133,10 @@ func loadQueueDocFromFile(verb, queueFile, queueName string, diag *printer) (doc
 	return doc, true
 }
 
-// marshalJSON is a thin wrapper around json.Marshal that returns []byte.
-// Used to keep the call sites readable.
 func marshalJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-// normalizeQueueDocGroups defaults any group with a missing or empty "kind"
-// field to "stream" and prints a warning on errOut for any group with
-// kind "wave". Mutates the "groups" entry of doc in place.
-//
-// This is an interim guard (hk-c6grw) until named-queues (hk-tigaf) lands:
-// the file-based submit path passed raw JSON straight through, so agents who
-// omitted "kind" silently got an empty string that the daemon rejected, and
-// agents who wrote kind:"wave" hit QM-027 single-active lockout on a shared
-// daemon.
-//
-// Bead ref: hk-c6grw.
 func normalizeQueueDocGroups(doc map[string]json.RawMessage, diag *printer) error {
 	groupsRaw, ok := doc["groups"]
 	if !ok {
@@ -229,21 +169,6 @@ func normalizeQueueDocGroups(doc map[string]json.RawMessage, diag *printer) erro
 	return nil
 }
 
-// beadsToQueueDoc builds a minimal QueueSubmitRequest JSON map from a list of
-// bead IDs. Produces a single stream group (kind=stream, status=pending,
-// group_index=0) containing one item per bead ID.
-//
-// queueName is the optional routing key (absent/empty → default "main"). When
-// non-empty it is embedded as the "name" field in the returned document.
-//
-// workflowMode is stamped onto each minted item so the queue.json record is
-// self-describing (hk-tldws). Pass "" to omit it (daemon default applies).
-//
-// The returned map is in the same shape expected by buildEnvelope — a
-// map[string]json.RawMessage keyed by field name — so the caller can pass it
-// directly to buildEnvelope("queue-submit", ...) or buildEnvelope("queue-dry-run", ...).
-//
-// Bead ref: hk-tigaf.8, hk-tldws.
 func beadsToQueueDoc(beadIDs []string, queueName, workflowMode string) (map[string]json.RawMessage, error) {
 	type itemDoc struct {
 		BeadID       string `json:"bead_id"`
@@ -286,9 +211,6 @@ func beadsToQueueDoc(beadIDs []string, queueName, workflowMode string) (map[stri
 	return m, nil
 }
 
-// parseBeadsFlag splits a --beads value (comma- or space-separated bead IDs)
-// into individual IDs. Also accepts repeated --beads flags via the accumulator
-// pattern (pass a pointer to []string and append to it).
 func parseBeadsFlag(raw string) []string {
 	var ids []string
 	for _, part := range strings.Split(raw, ",") {

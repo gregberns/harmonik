@@ -1,33 +1,5 @@
 package daemon_test
 
-// crossharness_empty_model_test.go — cross-harness empty-model asymmetry lock
-// (GAP-4).
-//
-// # Why this asymmetry exists (and MUST be preserved)
-//
-// An empty model resolves to DIFFERENT behavior per harness, and that difference
-// is deliberate — not an inconsistency to be "fixed" by making both branches
-// match:
-//
-//   - Codex: an empty model is VALID. buildCodexLaunchSpec omits the --model flag
-//     so codex resolves the model from $CODEX_HOME/config.toml — the account
-//     default. This is the ONLY working configuration on the HN-022-mandated
-//     ChatGPT-subscription auth path, where every explicitly-named model 400s
-//     ("not supported when using Codex with a ChatGPT account"). Codex has an
-//     account-default fallback, so no model on the command line is runnable.
-//
-//   - Pi: an empty model is a HARD ERROR. The pi argv is
-//     `--provider <p> --model <p/id>` with NO account-default fallback — an empty
-//     model is structurally un-runnable for pi, so buildPiLaunchSpec fails loud
-//     (pointing at the missing harnesses.pi.model config) rather than launching a
-//     broken invocation.
-//
-// If a future refactor made codex fail-loud on empty (re-adding the retired
-// hk-heh3t guard) OR made pi tolerate empty, this test breaks — which is the
-// intent: the two branches must never silently converge.
-//
-// Bead refs: hk-d170r (codex empty→account-default), hk-heh3t (retired codex guard).
-
 import (
 	"strings"
 	"testing"
@@ -41,7 +13,6 @@ import (
 func TestCrossHarness_EmptyModelAsymmetry(t *testing.T) {
 	t.Parallel()
 
-	// ── Codex half: empty model → no error, argv omits --model. ──────────────
 	t.Run("codex empty model omits --model and succeeds", func(t *testing.T) {
 		t.Parallel()
 		rc := daemon.ExportedCodexRunCtx{
@@ -62,7 +33,6 @@ func TestCrossHarness_EmptyModelAsymmetry(t *testing.T) {
 		}
 	})
 
-	// ── Pi half: empty model with a provider → hard error naming the config. ──
 	t.Run("pi empty model with provider errors", func(t *testing.T) {
 		t.Parallel()
 		rc := daemon.ExportedPiRunCtx{

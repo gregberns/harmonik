@@ -1,16 +1,5 @@
 package workers
 
-// bootwire.go — boot-time construction of the remote-worker Registry
-// (remote-substrate B4/B6), lifted out of internal/daemon/workloop.go by P2
-// unit E4c (plans/2026-07-21-p2-extraction/E4-ssh.md §4).
-//
-// The daemon's newWorkLoopDeps calls BuildRegistry to populate
-// deps.workerRegistry; everything the construction needs — Config, NewRegistry,
-// RunHealthCheck, EmitFunc and the tmux.CommandRunner transport seam — already
-// lives in this package, so the wiring belongs here rather than in the monolith.
-//
-// Bead ref: hk-rs-b4-bootwire-b44z, hk-rs-b6-healthcheck-isda, hk-qmyis.
-
 import (
 	"context"
 	"log/slog"
@@ -57,20 +46,10 @@ func BuildRegistry(ctx context.Context, cfg Config, emit EmitFunc) *Registry {
 // as configured); this is also the unsupported-transport AND all-disabled
 // behaviour (the registry is built but no probes run).
 func BuildRegistryWithRunner(ctx context.Context, cfg Config, emit EmitFunc, runner tmux.CommandRunner) *Registry {
-	// Build the registry whenever a worker is CONFIGURED — not only when one is
-	// ENABLED — so a live `worker enable` (hk-xjbvi) has a registry to flip without
-	// a restart. An all-disabled config still dispatches local-only because
-	// SelectWorker returns nil while Enabled==false (verified identical to the old
-	// nil-registry path). Zero configured workers stays nil (NFR7 local-only).
 	if len(cfg.Workers) == 0 {
 		return nil
 	}
 
-	// hk-qmyis: make "workers.yaml has entries but none enabled" visible at
-	// startup — previously this looked identical to "no workers.yaml at all"
-	// because both paths were silent. The registry is rebuilt at process start
-	// only, so editing workers.yaml under a running daemon is a no-op until the
-	// next restart; the warning below says so explicitly.
 	enabledCount := 0
 	for _, w := range cfg.Workers {
 		if w.Enabled {
@@ -84,9 +63,6 @@ func BuildRegistryWithRunner(ctx context.Context, cfg Config, emit EmitFunc, run
 
 	reg := NewRegistry(cfg)
 
-	// B6 boot health check: probe each enabled worker over its transport runner.
-	// On a probe failure the worker is disabled in-registry and a worker_unhealthy
-	// event is emitted, so SelectWorker() skips it and the run falls back to local.
 	if runner != nil {
 		if err := RunHealthCheck(ctx, runner, cfg, reg, emit); err != nil {
 			slog.ErrorContext(ctx, "worker boot health check failed", "error", err)

@@ -46,26 +46,6 @@ type ReviewVerdict struct {
 // ReadReviewVerdict rejects any file whose schema_version field differs from this.
 const ReviewVerdictSchemaVersion = 1
 
-// Verdict read-retry bounds (hk-clrts, widened hk-l489f, deadline-bounded
-// hk-qts7r; local finalize path hk-1hgjr). A verdict read — whether a cat-over-SSH
-// read of a worker's review.json (remote) or an os.ReadFile of the reviewer's
-// box-A-local worktree (local finalize) — can observe a partially-written /
-// not-yet-durable file while the reviewer's claude is still flushing it, so
-// parseReviewVerdict returns ErrMalformed on a transient truncated read. The
-// retrying readers (ReadReviewVerdictVia remote branch, ReadReviewVerdictLocalRetry)
-// retry-until-valid ONLY on ErrMalformed with bounded exponential backoff (100ms
-// base, doubling, capped at reviewVerdictRemoteMaxBackoff) up to
-// reviewVerdictRemoteRetryBudget of total elapsed time — a DEADLINE rather than a
-// fixed attempt count, so a slow-flush read whose fsync takes several seconds
-// still recovers, while a genuinely-malformed verdict fails once the budget is
-// spent. ctx cancellation / deadline is honored in every inter-attempt wait.
-//
-// NFR7 note: the bare ReadReviewVerdict and the ReadReviewVerdictVia nil/local
-// branch stay byte-identical no-retry — the retry is opt-in via the dedicated
-// retrying readers, so the quit-watchdog gate and other pollers keep their fast
-// absent/malformed return.
-//
-// Declared as vars so tests can shrink the budget for fast, deterministic runs.
 var (
 	reviewVerdictRemoteRetryBudget = 6300 * time.Millisecond
 	reviewVerdictRemoteBaseBackoff = 100 * time.Millisecond
@@ -199,23 +179,10 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 	}
 	target := ReviewVerdictPath(workspacePath)
 
-	// Remote read-retry (hk-clrts, deadline-bounded hk-qts7r): a cat-over-SSH read
-	// can observe a partially-written / not-yet-durable review.json on the worker,
-	// so a transient truncated read makes parseReviewVerdict return ErrMalformed
-	// and the run false-fails fast. Retry-until-valid ONLY on ErrMalformed with
-	// bounded exponential backoff up to reviewVerdictRemoteRetryBudget of total
-	// elapsed time; cat-error (absent) and a clean parse short-circuit with the
-	// existing contract, and a genuinely-malformed verdict still fails once the
-	// budget is spent (no false positives — just bounded extra latency).
 	return retryVerdictReadOnMalformed(ctx, func(ctx context.Context) (*ReviewVerdict, error) {
 		out, err := runner.Command(ctx, "cat", target).Output()
 		if err != nil {
 			if tmux.IsSSHConnectionFailure(err) {
-				// SSH transport failure (ssh exit 255) — NOT a confirmed-absent
-				// verdict. The verdict may exist on the worker; we could not reach
-				// it. Surface as inconclusive so the retry budget re-tries the read
-				// and, if it persists, the caller escalates rather than mis-reading a
-				// network blip as "verdict absent" and deciding the review gate. H4.
 				return nil, fmt.Errorf("%w: cat %s: %w", ErrRemoteTransport, target, err)
 			}
 			// Non-transport cat failure (exit 1: no such file) → genuinely absent,
@@ -223,16 +190,6 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			//nolint:nilnil // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
 		}
-		// Empty (whitespace-only) stdout → treat as absent. ROOT CAUSE: on some
-		// remote workers the ssh login shell rc (e.g. a `-zsh` login profile that
-		// resets $?) masks the exit code, so `ssh cat <absent-file>` returns err==nil
-		// with EMPTY stdout instead of the expected non-zero — the err != nil
-		// absent-branch above never fires. A real verdict is never empty, so an empty
-		// read is a genuinely-absent file; short-circuit to absent (nil,nil =
-		// inconclusive) INSIDE the retried closure rather than feeding "" to
-		// parseReviewVerdict, which would return ErrMalformed ("unexpected end of
-		// JSON input") and false-fail the run. Mirrors ParseAutoStatusMarker's
-		// len(data)==0 treat-as-absent guard.
 		if len(bytes.TrimSpace(out)) == 0 {
 			return nil, nil //nolint:nilnil // empty read = absent verdict per WM-027a §(e); ssh-exit-0 masking
 		}
@@ -273,25 +230,8 @@ func ReadReviewVerdictLocalRetry(ctx context.Context, workspacePath string) (*Re
 	})
 }
 
-// verdictRead performs a single verdict read attempt. It returns:
-//   - (*ReviewVerdict, nil) on a clean parse (valid verdict).
-//   - (nil, nil) when the file is absent — the inconclusive condition.
-//   - (nil, err) wrapping ErrMalformed for a transient/genuine malformed read.
-//
-// It should honor ctx for the read itself where applicable.
 type verdictRead func(ctx context.Context) (*ReviewVerdict, error)
 
-// retryVerdictReadOnMalformed runs read repeatedly, retrying on a transient
-// ErrMalformed (truncated mid-write read) OR ErrRemoteTransport (SSH connection
-// failure) result with bounded exponential backoff up to
-// reviewVerdictRemoteRetryBudget of total elapsed time (deadline-bounded, not a
-// fixed attempt count), honoring ctx cancellation in every inter-attempt wait.
-//
-// A clean parse and an absent (nil,nil) read short-circuit immediately with the
-// existing contract; a genuinely-malformed read still returns its last
-// ErrMalformed-wrapped error once the budget is spent. Shared by the remote
-// ReadReviewVerdictVia branch and the local ReadReviewVerdictLocalRetry so both
-// apply byte-identical retry semantics.
 func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*ReviewVerdict, error) {
 	var lastErr error
 	backoff := reviewVerdictRemoteBaseBackoff
@@ -299,18 +239,10 @@ func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*Review
 	for {
 		v, err := read(ctx)
 		if err == nil || (!errors.Is(err, ErrMalformed) && !errors.Is(err, ErrRemoteTransport)) {
-			// Clean parse / absent (nil,nil), or a non-retryable error (defensive):
-			// return as-is. ErrMalformed (transient truncated read) and
-			// ErrRemoteTransport (transient SSH connection failure) are both
-			// retried within the budget below, then surfaced so the caller can
-			// escalate on a genuinely-malformed or persistently-unreachable read.
 			return v, err
 		}
 		lastErr = err
 
-		// Deadline-bounded retry: stop once the retry budget is spent, surfacing
-		// the last ErrMalformed-wrapped error so a genuinely-malformed verdict still
-		// fails. Don't sleep past the deadline.
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			break
@@ -407,12 +339,6 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	return nil
 }
 
-// runnerIsLocalFS reports whether r operates on the daemon box's local filesystem
-// — i.e. the worktree paths it is given are directly readable with os.ReadFile.
-// A nil runner (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or
-// any other transport) does NOT, because its worktree lives on a remote worker.
-// Mirrors the daemon-package runnerIsLocalFS so the workspace remote-aware
-// readers share the same local/remote classification.
 func runnerIsLocalFS(r tmux.CommandRunner) bool {
 	switch r.(type) {
 	case nil, tmux.LocalRunner:
@@ -422,25 +348,17 @@ func runnerIsLocalFS(r tmux.CommandRunner) bool {
 	}
 }
 
-// parseReviewVerdict validates raw verdict-file bytes against the agent-reviewer
-// JSON schema v1 and returns the typed verdict. target is used only for error
-// messages (the path the bytes came from). Shared by ReadReviewVerdict (local
-// os.ReadFile) and ReadReviewVerdictVia (runner-routed read) so both paths apply
-// byte-identical validation (NFR7).
 func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
-	// Unmarshal into a raw map first so we can detect missing keys vs. zero values.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("%w: json parse error at %q: %w", ErrMalformed, target, err)
 	}
 
-	// Unmarshal into typed struct for field access.
 	var v ReviewVerdict
 	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, fmt.Errorf("%w: json unmarshal into ReviewVerdict at %q: %w", ErrMalformed, target, err)
 	}
 
-	// Validate schema_version: key must be present and equal ReviewVerdictSchemaVersion.
 	if _, ok := raw["schema_version"]; !ok {
 		return nil, fmt.Errorf("%w: schema_version field missing in %q", ErrMalformed, target)
 	}
@@ -449,19 +367,16 @@ func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
 			ErrMalformed, v.SchemaVersion, ReviewVerdictSchemaVersion, target)
 	}
 
-	// Validate verdict: key must be present and a recognised value.
 	if _, ok := raw["verdict"]; !ok {
 		return nil, fmt.Errorf("%w: verdict field missing in %q", ErrMalformed, target)
 	}
 	switch v.Verdict {
 	case ReviewVerdictApprove, ReviewVerdictRequestChanges, ReviewVerdictBlock:
-		// valid
 	default:
 		return nil, fmt.Errorf("%w: verdict = %q; must be APPROVE, REQUEST_CHANGES, or BLOCK in %q",
 			ErrMalformed, v.Verdict, target)
 	}
 
-	// Validate flags: key must be present (null → empty slice is acceptable).
 	if _, ok := raw["flags"]; !ok {
 		return nil, fmt.Errorf("%w: flags field missing in %q", ErrMalformed, target)
 	}
@@ -469,7 +384,6 @@ func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
 		v.Flags = []string{}
 	}
 
-	// Validate notes: key must be present and non-empty.
 	if _, ok := raw["notes"]; !ok {
 		return nil, fmt.Errorf("%w: notes field missing in %q", ErrMalformed, target)
 	}
@@ -512,7 +426,6 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	src := ReviewVerdictPath(workspacePath)
 	dst := ReviewVerdictArchivePath(workspacePath, iterationN)
 
-	// Check that the source exists; report ErrNotFound if absent.
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: review.json absent at %q", ErrNotFound, src)
@@ -520,20 +433,16 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 		return fmt.Errorf("workspace: ArchiveVerdict: Stat source %q: %w", src, err)
 	}
 
-	// Check that the destination does not exist; error on double-archive.
 	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: destination already exists at %q (double-archive at iteration %d)", dst, iterationN)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("workspace: ArchiveVerdict: Stat destination %q: %w", dst, err)
 	}
 
-	// Atomic rename: POSIX rename(2) is atomic within one filesystem.
 	if err := os.Rename(src, dst); err != nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: Rename %q → %q: %w", src, dst, err)
 	}
 
-	// Fsync the parent directory so the rename is durable — best-effort on
-	// macOS/APFS per WM-026 precedent.
 	dir := filepath.Dir(src)
 	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
 	dirFD, err := os.Open(dir)

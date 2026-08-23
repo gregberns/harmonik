@@ -1,47 +1,5 @@
 package daemon
 
-// conformance_m4c7_test.go — remote-substrate M4-C7 (T8): the CONTINUOUS
-// conformance gate that GATES every M4 merge.
-//
-// It proves three invariants hold across ALL of M4 (Claude/tmux, Codex/codexdriver,
-// and Pi), consolidating the per-harness coverage that T1–T7 landed rather than
-// inventing a parallel abstraction:
-//
-//  1. NFR7 — zero/disabled workers ⇒ byte-identical LOCAL operation.  Each of the
-//     three harness paths spawns LOCALLY (nil / LocalRunner) when no worker is
-//     selected, so the spawned argv/env/cwd are byte-identical to the pre-M4 local
-//     path.
-//       - Claude/tmux : perRunSubstrate.commandRunner() falls through to
-//         tmux.LocalRunner{} when the per-run runner is nil (T1 seam).
-//       - Codex        : buildCodexRoutedLaunchSpec(AgentTypeCodex) yields a nil
-//         LaunchSpec.Runner ⇒ handler.Launch takes the byte-identical
-//         exec.CommandContext local path (T5 fall-through).
-//       - Pi           : buildCodexRoutedLaunchSpec(AgentTypePi) yields a nil
-//         LaunchSpec.Runner ⇒ same exec.CommandContext local path (T6 fall-through).
-//     (The composition-root Codex router's own zero/disabled-worker NFR7 proof lives
-//     next to it in cmd/harmonik/substrate_select_router_hkm4c3_test.go — that path
-//     is not importable from this package.)
-//
-//  2. Seam-survival (structural / grep) — the remote seam is NOT deleted and no
-//     runner!=nil / rbc!=nil dual-path branch was removed (DEC-A cleanup DEFERRED,
-//     decision 5).  A floor-based static audit fails if any load-bearing seam symbol
-//     drops below its expected count.
-//
-//  3. Billing fail-closed (D2) on ALL THREE remote harness paths — ANTHROPIC_API_KEY
-//     is NEVER forwarded to a remote spawn.  The D2 chokepoint (hasAPIKeyInEnv on
-//     spec.Env, guarded only by rbc!=nil in workloop.go) is harness-agnostic: it
-//     gates whatever the specBuilder produced, Claude OR Codex OR Pi.  We assert the
-//     Codex and Pi remote specs introduce no key AND that the shared chokepoint would
-//     refuse them identically if one leaked in.  (Claude's equivalent is
-//     remote_substrate_b10_test.go's TestRSB10_APIKeyInEnv_Refused; re-asserted here
-//     so the gate reads as one suite.)
-//
-// Gate-runnable: no real tmux, SSH, git, or network required.  All routing is
-// exercised through package-internal builders with a RecordingRunner / nil runner
-// standing in for the worker's SSHRunner (same idiom as the sibling M4 tests).
-//
-// Bead: T8 / M4-C7 (codename:remote-substrate).
-
 import (
 	"bufio"
 	"context"
@@ -61,19 +19,12 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (1) NFR7 — zero/disabled workers ⇒ byte-identical LOCAL for each harness
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestM4C7_NFR7_LocalByteIdentical_AllHarnesses proves the zero/disabled-worker
 // local path for all three M4 harnesses in one place: no worker selected ⇒ the
 // run is spawned LOCALLY (LocalRunner / nil Runner), never over ssh.
 func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 	ctx := context.Background()
 
-	// ── Claude/tmux ──────────────────────────────────────────────────────────
-	// A per-run substrate built with a nil runner (no worker) must fall through
-	// to tmux.LocalRunner{} — the byte-identical box-A-local command path.
 	t.Run("claude_tmux_nil_runner_is_LocalRunner", func(t *testing.T) {
 		ts := &tmuxSubstrate{sessionName: "m4c7-local"}
 		prs := newPerRunSubstrate(ts, "claude", nil) // nil runner == no worker selected
@@ -86,9 +37,6 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 		}
 	})
 
-	// ── Codex/codexdriver ────────────────────────────────────────────────────
-	// A nil rc.runner (no worker) must produce a LaunchSpec with a nil Runner, so
-	// handler.Launch's exec path uses exec.CommandContext locally (NFR7).
 	t.Run("codex_nil_runner_localspawn", func(t *testing.T) {
 		wt := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
@@ -114,8 +62,6 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 		}
 	})
 
-	// ── Pi ───────────────────────────────────────────────────────────────────
-	// Same nil-runner fall-through for the Pi harness (T6).
 	t.Run("pi_nil_runner_localspawn", func(t *testing.T) {
 		t.Setenv("OPENROUTER_API_KEY", "sk-test-m4c7")
 		wt := t.TempDir()
@@ -149,11 +95,6 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 	})
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (3) Billing fail-closed (D2) — ANTHROPIC_API_KEY never on a remote spawn env,
-//     enforced identically for Claude / Codex / Pi.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestM4C7_BillingFailClosed_AllRemoteHarnesses proves the D2 chokepoint is
 // harness-agnostic: the same hasAPIKeyInEnv guard that refuses a Claude remote run
 // with ANTHROPIC_API_KEY in its spawn env would refuse a Codex or Pi remote run just
@@ -161,7 +102,6 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 	ctx := context.Background()
 
-	// ── Claude (re-assert the shared chokepoint; full matrix in b10 test) ─────
 	t.Run("claude_key_refused_absent_ok", func(t *testing.T) {
 		if !hasAPIKeyInEnv([]string{"PATH=/usr/bin", "ANTHROPIC_API_KEY=sk-ant-x"}) {
 			t.Error("D2: claude spawn env with ANTHROPIC_API_KEY not refused")
@@ -171,9 +111,6 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		}
 	})
 
-	// codexRemoteSpecEnv / piRemoteSpecEnv build a WORKER-selected (remote) spec
-	// and return its spawn env. The per-run runner is a RecordingRunner standing
-	// in for the worker's SSHRunner (rc.runner != nil == remote).
 	codexRemoteSpecEnv := func(t *testing.T) []string {
 		t.Helper()
 		wt := t.TempDir()
@@ -237,7 +174,6 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		return spec.Env
 	}
 
-	// Codex/Pi remote spawn env must NOT introduce ANTHROPIC_API_KEY on its own.
 	t.Run("codex_remote_env_carries_no_anthropic_key", func(t *testing.T) {
 		if hasAPIKeyInEnv(codexRemoteSpecEnv(t)) {
 			t.Error("D2: codex remote spawn env carries ANTHROPIC_API_KEY (must never be forwarded to a worker)")
@@ -249,11 +185,6 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		}
 	})
 
-	// The shared D2 chokepoint operates on the Codex/Pi spec's OWN env slice exactly
-	// as it does for Claude: if a leaked ANTHROPIC_API_KEY ever reached the spawn env
-	// of any harness, workloop's hasAPIKeyInEnv(spec.Env) refuses the remote run. We
-	// append the key to the actual codex/pi spec.Env slice — the identical argument
-	// the workloop guard receives — and assert the chokepoint catches it.
 	t.Run("codex_spec_env_with_leaked_key_is_caught", func(t *testing.T) {
 		env := append(codexRemoteSpecEnv(t), "ANTHROPIC_API_KEY=sk-ant-leak")
 		if !hasAPIKeyInEnv(env) {
@@ -394,19 +325,10 @@ func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	}
 }
 
-// d2GuardFixture is the canonical guard as beadRunOne spells it, including the
-// `return false` demanded by its named `succeeded bool` result.
 const d2GuardFixture = `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return false }`
 
-// d2SegmentFixture is the INDIRECT launch shape: the launch lives in a closure
-// hanging off a runloop.DispatchSegment literal, which a separate statement runs.
-// This is the shape beadRunOne actually has since the segment extraction.
 const d2SegmentFixture = `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`
 
-// d2CollapsedGuardFixture is the canonical guard as runAgentLaunch spells it
-// after the launch-path collapse: the remote predicate arrives on the input
-// struct, the refusal is reported through refuseLaunch (the caller decides what
-// it means), and the function returns its result value.
 const d2CollapsedGuardFixture = `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }`
 
 func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
@@ -439,11 +361,6 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		{name: "guard after launch", body: `sess, watcher, err := runH.Launch(ctx, spec); if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`, ownsLaunch: true},
 		{name: "duplicate launch ambiguity", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; sess, watcher, err := runH.Launch(ctx, spec); sess2, watcher2, err2 := runH.Launch(ctx, spec)`, ownsLaunch: true},
 
-		// ── INDIRECT SHAPE: the launch lives in a DispatchSegment closure ──────
-		// The cases above all assume the launch is a statement of beadRunOne. Since
-		// the segment extraction it is not, so every bypass has an indirect twin;
-		// without these, teaching the checker to follow the closure would MOVE the
-		// unsoundness rather than fix it.
 		{name: "indirect canonical", body: d2GuardFixture + `; ` + d2SegmentFixture, want: true, ownsLaunch: true},
 		// The guard refuses and returns, but the launch it was meant to prevent is
 		// built and run on the refusal path itself — a guard that returns whose
@@ -464,11 +381,6 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		// only accepted refusal returns are `return` and `return false`.
 		{name: "indirect refusal returns success", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return true }; ` + d2SegmentFixture, ownsLaunch: true},
 
-		// ── POST-GUARD TAMPERING ──────────────────────────────────────────────
-		// Adjacency used to make these impossible by leaving nowhere to put them.
-		// Dominance opens the gap, so each shape gets its own case. Only the first
-		// is an assignment to spec.Env; the rest leak through an alias, a callee or
-		// a receiver, and a checker that looked for assignments would pass them all.
 		{name: "post-guard environment append", body: d2GuardFixture + `; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late"); ` + d2SegmentFixture, ownsLaunch: true},
 		// Hidden one level deeper: the closure re-adds the key just before spawning,
 		// where a checker that only walked top-level statements would never look.
@@ -487,21 +399,8 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		// the shapes above through, so the rule stays blunt and this case pins it.
 		{name: "post-guard read of spec is refused too", body: d2GuardFixture + `; logf("binary=%s", spec.Binary); ` + d2SegmentFixture, ownsLaunch: true},
 
-		// KNOWN GAP, pinned deliberately as want:true. An alias taken BEFORE the
-		// guard and written after it leaks through the shared backing array without
-		// naming spec anywhere the checker looks, so the gate stays green. This case
-		// exists so the limit is a recorded fact rather than a discovery: if someone
-		// later adds alias tracking, this case fails and gets flipped to want:false —
-		// which is the notification. The wider defence is that the launch spec is
-		// built once and not passed around; see hasValidD2Wiring's KNOWN GAP note.
 		{name: "known gap: pre-guard alias written after the guard", body: `preAlias := spec.Env; ` + d2GuardFixture + `; preAlias[0] = "ANTHROPIC_API_KEY=leak"; ` + d2SegmentFixture, want: true, ownsLaunch: true},
 
-		// ── POST-COLLAPSE SHAPE (runAgentLaunch) ──────────────────────────────
-		// The guard moved into runAgentLaunch with the launch, and spells its two
-		// variable parts differently: `in.Remote` for the remote predicate and
-		// refuseLaunch(reason) for the report, because the caller now owns what a
-		// refusal means. These twins prove the loosened predicates did not loosen
-		// the property: every bypass the old shape refuses, the new shape refuses.
 		{name: "collapsed canonical", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; ` + d2SegmentFixture, want: true, ownsLaunch: true},
 		{name: "collapsed disabled remote", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote && false, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
 		{name: "collapsed agent narrowed", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote && isClaude, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
@@ -552,47 +451,6 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 	}
 }
 
-// hasValidD2Wiring reports whether beadRunOne's D2 credential guard dominates its
-// launch. See TestM4C7_D2Chokepoint_IsHarnessAgnostic's doc comment for why this is
-// structural and why the rule is dominance rather than adjacency.
-//
-// Four conditions, all necessary:
-//
-//	(a) exactly one beadRunOne, holding exactly one d2RemoteAPIKeyRefusal call and
-//	    exactly one launch — a second decision call is a bypass, a second launch is
-//	    a path the guard may not cover, and both are refused rather than reasoned about;
-//	(b) the sole decision call is the init of a well-formed guard (isValidD2If) that
-//	    is a TOP-LEVEL statement of beadRunOne, so returning from it leaves the function;
-//	(c) that guard's statement index is strictly less than the index of the top-level
-//	    statement lexically containing the launch — whether the launch is that
-//	    statement itself or sits inside a closure it defines;
-//	(d) after the guard, the identifier spec is mentioned exactly once — as the
-//	    launched value — so the bytes the guard inspected are the bytes spawned.
-//
-// (d) is deliberately blunt. The adjacency rule this checker replaced made
-// post-guard tampering structurally impossible by leaving no room for it; nothing
-// weaker than "do not touch spec at all after the guard" recovers that. A rule
-// that hunted for assignments specifically would miss the aliasing shapes —
-// `env := spec.Env; env[0] = …`, `inject(spec)`, `spec.AddEnv(…)`,
-// `p := &spec.Env; *p = append(*p, …)` — every one of which leaks through a
-// backing array or a receiver without an assignment to spec in sight.
-//
-// KNOWN GAP, stated rather than papered over: (d) sees only the identifier spec,
-// so anything that binds a handle to it BEFORE the guard escapes entirely. The
-// simplest form needs no closure and no call at all —
-//
-//	preAlias := spec.Env                          // before the guard
-//	<guard>
-//	preAlias[0] = "ANTHROPIC_API_KEY=leak"        // leaks through the backing array
-//
-// and the same is true of a helper or closure that captured spec earlier and is
-// invoked later. Catching these needs alias tracking, which a conformance test is
-// the wrong place for. The gap is pinned by the "known gap" case in
-// TestM4C7_D2Wiring_RejectsAdversarialMutations, so it stays a documented limit
-// rather than becoming a surprise. The decision function itself is covered
-// behaviourally by TestM4C7_D2RemoteAPIKeyRefusal and
-// TestM4C7_BillingFailClosed_AllRemoteHarnesses; what is asserted here is only
-// the wiring.
 func hasValidD2Wiring(file *ast.File, fnName string) bool {
 	var beadRunOne *ast.FuncDecl
 	for _, decl := range file.Decls {
@@ -608,7 +466,6 @@ func hasValidD2Wiring(file *ast.File, fnName string) bool {
 		return false
 	}
 
-	// (a) One decision, one launch — anywhere in the function, closures included.
 	decisionCalls, launchCalls := 0, 0
 	var launch *ast.CallExpr
 	ast.Inspect(beadRunOne.Body, func(node ast.Node) bool {
@@ -629,7 +486,6 @@ func hasValidD2Wiring(file *ast.File, fnName string) bool {
 		return false
 	}
 
-	// (b) The guard is a well-formed, top-level statement.
 	var guard *ast.IfStmt
 	guardIndex := -1
 	for i, stmt := range beadRunOne.Body.List {
@@ -646,21 +502,14 @@ func hasValidD2Wiring(file *ast.File, fnName string) bool {
 		return false
 	}
 
-	// (c) The guard dominates the launch. A launch inside the guard's own body
-	// resolves to launchIndex == guardIndex and is refused by the same comparison.
 	launchIndex := topLevelStmtIndexContaining(beadRunOne.Body.List, launch)
 	if launchIndex < 0 || guardIndex >= launchIndex {
 		return false
 	}
 
-	// (d) The inspected environment is the launched environment.
 	return specUntouchedAfter(beadRunOne.Body, guard.End(), unparenExpr(launch.Args[1]))
 }
 
-// specUntouchedAfter reports whether every mention of the identifier spec beyond
-// after is the launched value itself. Anything else — an assignment, an alias, a
-// helper call, a method call, taking its address — is refused without trying to
-// decide whether that particular shape happens to be harmless.
 func specUntouchedAfter(body *ast.BlockStmt, after token.Pos, launchArg ast.Expr) bool {
 	clean := true
 	ast.Inspect(body, func(node ast.Node) bool {
@@ -676,9 +525,6 @@ func specUntouchedAfter(body *ast.BlockStmt, after token.Pos, launchArg ast.Expr
 	return clean
 }
 
-// topLevelStmtIndexContaining returns the index of the top-level statement that
-// lexically contains target, or -1. This is what makes the checker indifferent to
-// whether the launch is a direct statement or lives in a closure the statement builds.
 func topLevelStmtIndexContaining(list []ast.Stmt, target ast.Node) int {
 	for i, stmt := range list {
 		found := false
@@ -736,16 +582,6 @@ func isValidD2If(ifStmt *ast.IfStmt) bool {
 	return failIndex >= 0 && returnIndex == failIndex+1
 }
 
-// isRefusalReturn accepts exactly the three spellings that abandon the run: a
-// bare `return`, `return false`, and `return res`. beadRunOne has a named
-// `succeeded bool` result so its guard spells it `return false`; runAgentLaunch
-// returns its populated result value so its guard spells it `return res`.
-//
-// The allow-list is a closed set of names rather than "any identifier that is
-// not true". A blanket ident rule would accept `return succeeded` — an
-// identifier that may well BE true — which is the same "refused run reported as
-// successful" defect `return true` is refused for. Naming the two accepted
-// identifiers costs nothing and leaves no judgment to a future reader.
 func isRefusalReturn(ret *ast.ReturnStmt) bool {
 	switch len(ret.Results) {
 	case 0:
@@ -758,11 +594,6 @@ func isRefusalReturn(ret *ast.ReturnStmt) bool {
 	}
 }
 
-// isRunLaunchCall matches `runH.Launch(<ctx>, spec)`. The context argument is any
-// identifier: inside the DispatchSegment closure the segment supplies its own
-// launch context (`lctx`), and pinning the name would re-create the brittleness
-// this checker exists to avoid. What is load-bearing is that the launched value is
-// `spec` — the same object the guard inspected.
 func isRunLaunchCall(call *ast.CallExpr) bool {
 	if len(call.Args) != 2 || !isIdent(call.Args[1], "spec") {
 		return false
@@ -785,23 +616,6 @@ func isD2DecisionCall(call *ast.CallExpr) bool {
 	return ok && isIdent(env.X, "spec") && env.Sel.Name == "Env"
 }
 
-// isWholeRemotePredicate accepts the remote predicate only in a form that cannot
-// have been narrowed, widened or switched off:
-//
-//	rbc != nil   — beadRunOne's pre-collapse spelling
-//	in.Remote    — runAgentLaunch's, arriving on the input struct
-//
-// Anything composite is refused. That is the whole point: `rbc != nil && false`,
-// `in.Remote && isClaude` and `in.Remote || local` are all BinaryExprs, so
-// loosening the accepted spelling to include a field selector did NOT loosen the
-// rule — a bare selector is as unmodifiable as `rbc != nil` was. A bare boolean
-// literal is refused for the same reason.
-//
-// The BASE of the selector is pinned to `in`, exactly as the environment
-// argument is pinned to `spec`. Accepting any `<ident>.Remote` would let a decoy
-// struct with an always-false Remote field disarm the gate while reading as
-// correct — the same substitution the "wrong environment" case already refuses
-// on the other argument.
 func isWholeRemotePredicate(expr ast.Expr) bool {
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		return isIdent(sel.X, "in") && sel.Sel.Name == "Remote"
@@ -810,11 +624,6 @@ func isWholeRemotePredicate(expr ast.Expr) bool {
 	return ok && remote.Op == token.NEQ && isIdent(remote.X, "rbc") && isNil(remote.Y)
 }
 
-// isRefusalReportWithReason matches the call that reports the refusal, in either
-// spelling: beadRunOne's failRun(reason, reason) — it owned the run's terminal
-// spine — or runAgentLaunch's refuseLaunch(reason), which records the refusal on
-// the result for the caller to act on. Every argument must be the reason bound
-// from the refusal, so a report that invents its own text is refused.
 func isRefusalReportWithReason(call *ast.CallExpr, reason *ast.Ident) bool {
 	var want int
 	switch {
@@ -856,17 +665,12 @@ func isNil(expr ast.Expr) bool {
 	return isIdent(expr, "nil")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (2) Seam-survival — the remote seam is NOT deleted; no dual-path branch removed.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // TestM4C7_SeamSurvival_StructuralFloors is the DEC-A-deferred (decision 5) guard:
 // M4 wires new harnesses onto the EXISTING remote seam and deletes nothing. This
 // static audit fails if any load-bearing seam symbol drops below its expected floor.
 func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 	t.Parallel()
 
-	// (a) The CommandRunner seam + its two implementations must exist verbatim.
 	runnerSrc := readRepoFile(t, "internal", "lifecycle", "tmux", "runner.go")
 	for _, decl := range []string{
 		"type CommandRunner interface",
@@ -878,8 +682,6 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 		}
 	}
 
-	// (b) The reverse-tunnel seam must exist. It left internal/daemon in P2 unit
-	// E4a and now lives in internal/transport/tunnel; the seam itself is unchanged.
 	rtSrc := readRepoFile(t, "internal", "transport", "tunnel", "tunnel.go")
 	for _, sym := range []string{"ReverseTunnelRunner", "BuildArgs"} {
 		if !strings.Contains(rtSrc, sym) {
@@ -887,67 +689,22 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 		}
 	}
 
-	// (c) The runner-threading through the shared harness builder must survive.
 	hrSrc := readRepoFile(t, "internal", "daemon", "harnessregistry.go")
 	if !strings.Contains(hrSrc, "Runner: rc.Runner") {
 		t.Error("seam deleted: harnessregistry.go no longer threads the per-run runner (Runner: rc.Runner)")
 	}
 
-	// (d) …Via(runner) helpers — the CommandRunner-aware file I/O seam. M4 landed
-	// with a large family of them; a floor guards against a wholesale collapse to
-	// bare os.* (which would silently break remote runs).
 	viaFloor := 12
 	if n := countViaHelpers(t); n < viaFloor {
 		t.Errorf("seam eroded: only %d …Via helper decls across internal/daemon+internal/workspace; want >= %d (DEC-A cleanup is DEFERRED)", n, viaFloor)
 	}
-
-	// (e) REMOVED 2026-07-22 — the `strings.Count(workloop.go, "rbc != nil") >= 8` floor.
-	//
-	// It asserted a magic number of occurrences of a string in a source file, as a
-	// proxy for "the remote/local dual path has not been collapsed". That is not a
-	// test of behaviour, and it failed on three counts:
-	//
-	//   1. It could not detect the thing it claimed to. Deleting the local
-	//      fall-through entirely while leaving eight `rbc != nil` predicates
-	//      elsewhere passes. Conversely a legitimate refactor that consolidates
-	//      predicates fails. The signal is uncorrelated with the invariant.
-	//   2. The threshold was arbitrary and slack — the floor was 8 against an
-	//      actual count of 20, so it only tripped after a change had already
-	//      removed 60% of the branch sites.
-	//   3. It obstructed exactly the refactoring P2 exists to do: any extraction
-	//      touching the remote path trips it for reasons unrelated to correctness.
-	//
-	// The invariant it was reaching for — that the local and remote paths BOTH still
-	// work — is covered behaviourally, and those tests fail for the right reasons:
-	//
-	//   - TestSingleModeWorkloopThreadsRunnerIntoSubstrate_hkfxy9  (substrate_runner_parity_hkfxy9_test.go)
-	//         local run threads its runner into the substrate
-	//   - TestReviewLoopReviewerSubstrateRunnerIsNil_hkfxy9        (substrate_runner_parity_hkfxy9_test.go)
-	//         a local reviewer run carries a nil runner
-	//   - TestScenario_RemoteSubstrate_Localhost_DOT_E2E               (scenario_remote_substrate_localhost_dot_test.go)
-	//         the remote path end-to-end over a localhost worker
-	//   - TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty
-	//         no worker available => the run falls through to local
-	//
-	// The D2 credential guard, which is the one genuinely security-critical
-	// structural property here, keeps a static test — but an AST-based one. See
-	// TestM4C7_D2Chokepoint_IsHarnessAgnostic above for why that one stays static.
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// repoRootForConformance returns the repository root (the directory two levels
-// above this test file: internal/daemon/ → repo root).
 func repoRootForConformance() string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	// thisFile = .../internal/daemon/conformance_m4c7_test.go
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 }
 
-// readRepoFile reads a source file addressed by path segments relative to the repo
-// root, failing the test if it cannot be read.
 func readRepoFile(t *testing.T, segments ...string) string {
 	t.Helper()
 	path := filepath.Join(append([]string{repoRootForConformance()}, segments...)...)
@@ -958,8 +715,6 @@ func readRepoFile(t *testing.T, segments ...string) string {
 	return string(data)
 }
 
-// countViaHelpers counts distinct `func …Via(` declarations across the daemon and
-// workspace packages — the CommandRunner-aware file-I/O seam.
 func countViaHelpers(t *testing.T) int {
 	t.Helper()
 	seen := map[string]bool{}
@@ -997,8 +752,6 @@ func countViaHelpers(t *testing.T) int {
 	return len(seen)
 }
 
-// extractViaFuncName returns the function name from a `func …` declaration line if
-// it ends in "Via" (optionally with a receiver), else "".
 func extractViaFuncName(line string) string {
 	s := strings.TrimPrefix(line, "func ")
 	if strings.HasPrefix(s, "(") { // method receiver

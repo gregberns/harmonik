@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// cognitionMetaFixture returns a fully-populated CognitionMeta with all fields
-// set to valid non-zero values.
 func cognitionMetaFixture(t *testing.T) CognitionMeta {
 	t.Helper()
 	usage := 512
@@ -24,8 +22,6 @@ func cognitionMetaFixture(t *testing.T) CognitionMeta {
 	}
 }
 
-// cognitionMetaFixtureNoTokenUsage returns a valid CognitionMeta with a nil
-// TokenUsage (usage not reported by provider).
 func cognitionMetaFixtureNoTokenUsage(t *testing.T) CognitionMeta {
 	t.Helper()
 	m := cognitionMetaFixture(t)

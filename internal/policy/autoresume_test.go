@@ -1,12 +1,5 @@
 package policy
 
-// autoresume_test.go — pure backoff-math tests for BackoffDuration.
-// These exercise the exponential-backoff arithmetic in isolation (value-in /
-// value-out); the timer/goroutine/Diagnose/Resume and functional flap-window
-// coverage stays in package daemon (handlerpause_autoresume_0otqs_test.go).
-//
-// Spec ref: specs/handler-pause.md §1.2.
-
 import (
 	"testing"
 	"time"

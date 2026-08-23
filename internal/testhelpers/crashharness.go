@@ -35,15 +35,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// b87254IntentDirName is the canonical subdirectory name for intent-log files,
-// relative to the .harmonik root.
-//
-// Spec ref: specs/beads-integration.md §6.2 — ".harmonik/beads-intents/".
 const b87254IntentDirName = "beads-intents"
 
-// b87254IntentEntryWire is the on-disk JSON shape for an IntentLogEntry written
-// by the harness. It mirrors core.IntentLogEntry using the field names from the
-// spec's RECORD definition, serialised with snake_case JSON keys.
 type b87254IntentEntryWire struct {
 	IdempotencyKey    string    `json:"idempotency_key"`
 	RunID             string    `json:"run_id"`
@@ -126,11 +119,8 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 		t.Fatalf("B87254WriteIntentEntry: json.Marshal: %v", err)
 	}
 
-	// Encode colons in key to underscores per OQ-BI-003 (filesystem portability).
 	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
 
-	// Step 1: write to temp file with random suffix (prevents collision under
-	// concurrent recovery per BI-030 note).
 	randSuffix, err := b87254RandHex(8)
 	if err != nil {
 		t.Fatalf("B87254WriteIntentEntry: rand suffix: %v", err)
@@ -151,7 +141,6 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 		t.Fatalf("B87254WriteIntentEntry: write temp file %q: %v", tempPath, err)
 	}
 
-	// Step 2: fsync(temp_fd) per BI-030.
 	if err := tf.Sync(); err != nil {
 		if closeErr := tf.Close(); closeErr != nil {
 			t.Errorf("B87254WriteIntentEntry: close temp file after fsync failure: %v", closeErr)
@@ -162,7 +151,6 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 		t.Fatalf("B87254WriteIntentEntry: close temp file %q: %v", tempPath, err)
 	}
 
-	// Step 3: rename to final path per BI-030.
 	finalName := encodedKey + ".json"
 	finalPath := filepath.Join(intentDir, finalName)
 	if err := os.Rename(tempPath, finalPath); err != nil {
@@ -249,9 +237,6 @@ func B87254ReadIntentEntries(t *testing.T, intentDir string) []B87254IntentWrite
 			continue
 		}
 		name := de.Name()
-		// Skip temp files — these represent crashes during the write step,
-		// before the rename completed; the rename never happened so the write
-		// did not land.
 		if strings.Contains(name, ".tmp-") {
 			continue
 		}
@@ -375,8 +360,6 @@ func B87254NewMockBrDir(t *testing.T) string {
 	return filepath.Join(dir, "br")
 }
 
-// b87254WireToEntry converts a b87254IntentEntryWire to a core.IntentLogEntry,
-// parsing the typed fields. Returns an error if any field fails to parse.
 func b87254WireToEntry(wire b87254IntentEntryWire) (core.IntentLogEntry, error) {
 	var runID core.RunID
 	if err := runID.UnmarshalText([]byte(wire.RunID)); err != nil {
@@ -410,7 +393,6 @@ func b87254WireToEntry(wire b87254IntentEntryWire) (core.IntentLogEntry, error) 
 	}, nil
 }
 
-// b87254RandHex returns n cryptographically random lowercase hex characters.
 func b87254RandHex(n int) (string, error) {
 	const hexChars = "0123456789abcdef"
 	out := make([]byte, n)

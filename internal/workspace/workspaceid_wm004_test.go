@@ -54,7 +54,6 @@ func TestWM004_WorkspaceIDFromRunID(t *testing.T) {
 	t.Run("derivation-is-deterministic", func(t *testing.T) {
 		t.Parallel()
 
-		// The same run_id must always produce the same workspace_id (no randomness).
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0004"
 		first := WorkspaceIDFromRunID(runID)
 		second := WorkspaceIDFromRunID(runID)
@@ -66,8 +65,6 @@ func TestWM004_WorkspaceIDFromRunID(t *testing.T) {
 	t.Run("workspace-id-starts-with-ws-prefix", func(t *testing.T) {
 		t.Parallel()
 
-		// WM-004: the prefix "ws-" is fixed; downstream MUST NOT parse it but it
-		// must be present for the contract to hold.
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0005"
 		got := WorkspaceIDFromRunID(runID)
 		if !strings.HasPrefix(got, "ws-") {
@@ -78,8 +75,6 @@ func TestWM004_WorkspaceIDFromRunID(t *testing.T) {
 	t.Run("run-id-embedded-in-workspace-id", func(t *testing.T) {
 		t.Parallel()
 
-		// The run_id portion is embedded after the "ws-" prefix — downstream
-		// MUST NOT rely on this parsing, but the embedding is normative.
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0006"
 		got := WorkspaceIDFromRunID(runID)
 		if !strings.HasSuffix(got, runID) {

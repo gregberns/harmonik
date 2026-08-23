@@ -50,21 +50,15 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 		Handler: func(_ context.Context, evt core.Event) error {
 			switch evt.Type {
 			case core.EventTypeRunStarted:
-				// Initial event A: announce we're in-flight, wait until DrainRun
-				// is active, then emit the run-scoped cascade B while the run is
-				// mid-drain — the exact window the seal-orphan bug drops.
 				close(aStarted)
 				<-proceed
 				if reErr := bus.EmitWithRunID(ctx, runID, core.EventTypeRunCompleted, payload); reErr != nil {
 					t.Errorf("re-entrant EmitWithRunID: %v", reErr)
 				}
 			case core.EventTypeRunCompleted:
-				// Cascade event B: record delivery. A short delay widens the
-				// window in which a buggy DrainRun would return early.
 				time.Sleep(10 * time.Millisecond)
 				atomic.StoreInt32(&cascadeDelivered, 1)
 			default:
-				// This fixture emits no other event type.
 			}
 			return nil
 		},
@@ -81,9 +75,6 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 		t.Fatal("bus does not implement eventbus.RunDrainer")
 	}
 
-	// Emit A. addRunDrainer increments the run counter synchronously before the
-	// dispatch goroutine launches, so the run is in-flight the moment Emit
-	// returns; the A handler then parks on `proceed`.
 	if err := bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, payload); err != nil {
 		t.Fatalf("EmitWithRunID(A): %v", err)
 	}
@@ -94,9 +85,6 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 		drainDone <- rd.DrainRun(ctx, runID)
 	}()
 
-	// Give DrainRun time to enter its wait (and, under the old code, to seal the
-	// run) before A emits the cascade. This makes the seal-orphan reproduce
-	// deterministically on the buggy implementation.
 	time.Sleep(20 * time.Millisecond)
 	close(proceed)
 

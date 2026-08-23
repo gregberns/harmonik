@@ -60,8 +60,6 @@ func (a AgentType) Reserved() bool {
 // and the runtime regex stay byte-for-byte identical.
 const AgentTypeRegexPattern = `^[a-z][a-z0-9-]{1,62}$`
 
-// agentTypeRegex enforces the AR-025 shape: lowercase alphanumeric + hyphen,
-// must start with a letter, length 2..63 inclusive.
 var agentTypeRegex = regexp.MustCompile(AgentTypeRegexPattern)
 
 // Valid reports whether a matches the agent-type regex shape (AR-027).

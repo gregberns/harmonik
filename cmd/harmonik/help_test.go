@@ -1,17 +1,5 @@
 package main
 
-// help_test.go — substring-assertion tests for `harmonik --help` and all
-// subcommand --help flags (hk-u0oo2).
-//
-// Helper prefix: helpFixture (per implementer-protocol.md §Helper-prefix
-// discipline; bead hk-u0oo2).
-//
-// All tests are parallel-safe except TestHarmonikTopLevelHelp and
-// TestMaxConcurrentDefaultNotDuplicated, which redirect os.Stderr and/or
-// mutate os.Args + flag.CommandLine (see package comment in main_test.go).
-//
-// Bead: hk-u0oo2.
-
 import (
 	"bytes"
 	"flag"
@@ -20,9 +8,6 @@ import (
 	"testing"
 )
 
-// helpFixtureCaptureStderr redirects os.Stderr to an in-process pipe, calls
-// fn, then returns everything written to the redirected stderr. The original
-// os.Stderr is restored via t.Cleanup regardless of panics.
 func helpFixtureCaptureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -48,8 +33,6 @@ func helpFixtureCaptureStderr(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-// helpFixtureCaptureStdout redirects os.Stdout to an in-process pipe, calls
-// fn, then returns everything written to the redirected stdout.
 func helpFixtureCaptureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -169,7 +152,6 @@ func TestQueueSubmitHelpFlag(t *testing.T) {
 		t.Errorf("run() with queue submit --help: got exit code %d, want 0", exitCode)
 	}
 
-	// The bug printed "open --help: no such file"; the help must NOT contain it.
 	if strings.Contains(output, "no such file") {
 		t.Errorf("queue submit --help swallowed --help as a filepath:\n%s", output)
 	}
@@ -247,10 +229,6 @@ func TestRunHelpFlag(t *testing.T) {
 		}
 	}
 
-	// The retired review-loop flags MUST NOT be advertised (EM-015d). Help text
-	// is the surface an operator copies from, so listing a flag that now exits 1
-	// is worse than listing nothing. --workflow-mode above is the replacement
-	// this help must carry instead.
 	for _, banned := range []string{
 		"--review-loop",
 		"--no-review-loop",
@@ -361,13 +339,11 @@ func TestMaxConcurrentDefaultNotDuplicated(t *testing.T) {
 		_ = run()
 	})
 
-	// The doubled-default string must not appear.
 	if strings.Contains(output, "(default 1) (default 1)") {
 		t.Errorf("top-level help contains doubled default %q:\n%s",
 			"(default 1) (default 1)", output)
 	}
 
-	// The flag itself must still appear (sanity check that we got real output).
 	if !strings.Contains(output, "--max-concurrent") {
 		t.Errorf("top-level help missing --max-concurrent entirely:\n%s", output)
 	}
@@ -498,5 +474,4 @@ func TestTopLevelHelpListsConfirmVetoCmds(t *testing.T) {
 	}
 }
 
-// Compile-time assertion: flag package is imported and used (avoids unused-import lint).
 var _ = flag.CommandLine

@@ -1,20 +1,5 @@
 package runmerge_test
 
-// fixture_test.go — the git-repo fixtures the moved merge-path tests need.
-//
-// These four helpers are DUPLICATED from internal/daemon/mergetomain_hkftyvo_test.go
-// rather than moved. That file cannot follow the merge path into this package: it
-// drives the full work loop through daemon.ExportedRunWorkLoop,
-// daemon.ExportedWorkLoopDeps, daemon.WorkLoopDepsParams and
-// daemon.ExportedProductionWorktreeFactory, and 20 daemon test files consume its
-// fixture family (8 of which cannot move either). Importing it from here would
-// give this package's external test binary an internal/daemon edge — exactly what
-// the P2 E5 RT13 depguard deny rule forbids. Duplicating four ~20-line git-repo
-// setup helpers is the cheaper trade.
-//
-// Origin: internal/daemon/mergetomain_hkftyvo_test.go (hk-ftyvo).
-// Bead: P2 unit E5 RT13.
-
 import (
 	"context"
 	"os"
@@ -26,9 +11,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// mergeToMainFixtureGitRepo initialises a git repository in dir with:
-//   - git identity set to daemon@harmonik.local
-//   - "main" branch with an initial commit
 func mergeToMainFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -53,7 +35,6 @@ func mergeToMainFixtureGitRepo(t *testing.T, dir string) {
 	run("commit", "-m", "init")
 }
 
-// mergeToMainFixtureProjectDir creates the minimal .harmonik/ directory tree.
 func mergeToMainFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -68,7 +49,6 @@ func mergeToMainFixtureProjectDir(t *testing.T) string {
 	return dir
 }
 
-// mergeToMainFixtureHeadSHA resolves the HEAD SHA of branch in repoRoot.
 func mergeToMainFixtureHeadSHA(t *testing.T, repoRoot, branch string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "refs/heads/"+branch)
@@ -80,10 +60,6 @@ func mergeToMainFixtureHeadSHA(t *testing.T, repoRoot, branch string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// mergeToMainFixtureAdvanceMain creates a diverging commit on main in repoRoot
-// so that any run-branch is no longer a fast-forward. The commit touches a
-// different file than the agent's work.txt, so a rebase will succeed without
-// conflicts.
 func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -104,10 +80,6 @@ func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	run("commit", "-m", "diverging commit on main")
 }
 
-// discardingEmitter is a handlercontract.EventEmitter that drops every event.
-// The merge-path tests in this package assert on git state, not on the event
-// stream, so the daemon's recording stubEventCollector (146 consumers, cannot
-// move) is not needed here.
 type discardingEmitter struct{}
 
 func (discardingEmitter) Emit(context.Context, core.EventType, []byte) error { return nil }

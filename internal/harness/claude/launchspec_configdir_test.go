@@ -1,10 +1,5 @@
 package claude
 
-// launchspec_configdir_test.go — pins WHO gets CLAUDE_CONFIG_DIR.
-// REMOTE (rc.runner != nil) provisions a private, worker-absolute config dir and
-// exports it (hk-qxvc2). LOCAL (rc.runner == nil) must export NOTHING: the local
-// isolation was reverted after it broke claude auth (hk-8juwz).
-
 import (
 	"context"
 	"path/filepath"
@@ -15,8 +10,6 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
-// envValue returns the value of key in a KEY=VALUE env slice, and whether it was
-// present.
 func envValue(env []string, key string) (string, bool) {
 	pfx := key + "="
 	for _, kv := range env {
@@ -41,7 +34,6 @@ func envValue(env []string, key string) (string, bool) {
 // claude authenticated AND suppresses the bypass modal.
 func TestBuildClaudeLaunchSpec_Local_NoClaudeConfigDir(t *testing.T) {
 	ctx := context.Background()
-	// Redirect the shared-global trust writer off the real ~/.claude.json.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), ".claude.json"))
 
 	wt := t.TempDir()
@@ -102,8 +94,6 @@ func TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir(t *testing.T) {
 		t.Fatalf("BuildLaunchSpec (remote): %v", err)
 	}
 
-	// CLAUDE_CONFIG_DIR must now be exported, pointing at the worker-absolute
-	// isolated dir under the (worker) worktree path.
 	got, ok := envValue(spec.Env, "CLAUDE_CONFIG_DIR")
 	if !ok {
 		t.Fatalf("CLAUDE_CONFIG_DIR absent from remote launch env:\n%v", spec.Env)
@@ -113,8 +103,6 @@ func TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir(t *testing.T) {
 		t.Errorf("CLAUDE_CONFIG_DIR = %q, want %q", got, wantDir)
 	}
 
-	// The isolation-provisioning program must run ON THE WORKER — i.e. through the
-	// runner as `python3 - <workspacePath>` (fed on stdin, not via -c).
 	var sawPrepare bool
 	for _, c := range rr.Calls {
 		if c.Name == "python3" && len(c.Args) >= 2 && c.Args[0] == "-" && c.Args[len(c.Args)-1] == wt {

@@ -32,7 +32,6 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 
 		repo, sha := tempRepo(t)
 
-		// Create two registered worktrees.
 		runIDs := []string{
 			"0196a1b2-c3d4-713c-8a1b-aabbccddeeff",
 			"0196a1b2-c3d4-713c-8a1b-112233445566",
@@ -53,7 +52,6 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 		}
 
-		// --- Step (a): enumerate subdirectories of <repo>/.harmonik/worktrees/ ---
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
 		entries, err := os.ReadDir(worktreeRoot)
 		if err != nil {
@@ -83,13 +81,11 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 
 		for _, runID := range foundRunIDs {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			// The worktree path must appear in the porcelain output.
 			if !leaseFixtureFindSubstring(porcelainOutput, worktreePath) {
 				t.Errorf("WM-013c: worktree path %q not found in porcelain output", worktreePath)
 			}
 		}
 
-		// --- Step (c): read lease-lock to recover run_id, pid, created_at ---
 		for _, runID := range foundRunIDs {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
@@ -115,23 +111,17 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 				t.Errorf("WM-013c: lock.created_at %q not RFC 3339: %v", lock.CreatedAt, err)
 			}
 
-			// --- Step (d): stat sessions/ directory ---
 			sessionsDir := filepath.Join(worktreePath, ".harmonik", "sessions")
 			_, statErr := os.Stat(sessionsDir)
-			// sessions/ may or may not exist; the daemon checks for its presence.
-			// This test: no sessions were started, so sessions/ MUST NOT exist.
 			if statErr != nil && !os.IsNotExist(statErr) {
 				t.Errorf("WM-013c: Stat sessions/: unexpected error: %v", statErr)
 			}
-			// (sessions/ does not exist → no session was ever started, correct.)
 		}
 	})
 
 	t.Run("orphan-directory-not-in-porcelain-excluded", func(t *testing.T) {
 		t.Parallel()
 
-		// A directory that exists under .harmonik/worktrees/ but is NOT registered
-		// in git worktree list is an orphan — not a live workspace.
 		repo, _ := tempRepo(t)
 
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
@@ -159,8 +149,6 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 	t.Run("discovery-reads-all-required-lock-fields", func(t *testing.T) {
 		t.Parallel()
 
-		// Verify that a startup discovery pass reads the three fields cited in
-		// WM-013c step (c): run_id, pid, created_at.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713c-8a1b-readallfields"
 		branch := "run/" + runID
@@ -181,7 +169,6 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		lp := leaseFixtureLeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, wantPID, wantCreatedAt))
 
-		// Simulate discovery: parse the lock file.
 		data := mustReadFile(t, lp)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(data, &parsed); err != nil {
@@ -200,7 +187,6 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WM-013c: git worktree list --porcelain: %v", err)
 		}
-		// Each worktree block starts with "worktree <path>".
 		if !leaseFixtureFindSubstring(string(out), worktreePath) {
 			t.Errorf("WM-013c: worktree path %q not in porcelain:\n%s", worktreePath, strings.TrimSpace(string(out)))
 		}

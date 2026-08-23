@@ -24,17 +24,10 @@ import (
 // Spec ref: execution-model.md §4.5 EM-024a.
 var ErrBranchTipRewound = errors.New("lifecycle: branch tip rewound — new tip is not a fast-forward descendant of persisted prior tip (EM-024a Cat 3 violation)")
 
-// runTipsDir returns the directory used to persist per-run last-observed
-// task-branch-tip SHAs: <projectDir>/.harmonik/run-tips/.
-//
-// Spec ref: execution-model.md §4.5 EM-024a — "e.g., under
-// .harmonik/run-tips/<run_id>".
 func runTipsDir(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "run-tips")
 }
 
-// runTipPath returns the path of the persisted tip file for a specific run:
-// <projectDir>/.harmonik/run-tips/<run_id>.
 func runTipPath(projectDir string, runID core.RunID) string {
 	return filepath.Join(runTipsDir(projectDir), runID.String())
 }
@@ -135,7 +128,6 @@ func CheckBranchTipMonotonicity(ctx context.Context, repoDir, projectDir string,
 		return fmt.Errorf("lifecycle: CheckBranchTipMonotonicity(%s): read prior tip: %w", runID, err)
 	}
 
-	// First observation: no prior tip file. Initialize and return — not a violation.
 	if prior == "" {
 		if writeErr := WritePersistedTip(projectDir, runID, newTipSHA); writeErr != nil {
 			return fmt.Errorf("lifecycle: CheckBranchTipMonotonicity(%s): initialize tip: %w", runID, writeErr)
@@ -143,7 +135,6 @@ func CheckBranchTipMonotonicity(ctx context.Context, repoDir, projectDir string,
 		return nil
 	}
 
-	// Identical tip: idempotent re-check; persist and return without ancestry check.
 	if prior == newTipSHA {
 		if writeErr := WritePersistedTip(projectDir, runID, newTipSHA); writeErr != nil {
 			return fmt.Errorf("lifecycle: CheckBranchTipMonotonicity(%s): persist same tip: %w", runID, writeErr)
@@ -151,17 +142,14 @@ func CheckBranchTipMonotonicity(ctx context.Context, repoDir, projectDir string,
 		return nil
 	}
 
-	// Perform the fast-forward ancestry check.
 	isDescendant, err := IsFastForwardDescendant(ctx, repoDir, prior, newTipSHA)
 	if err != nil {
 		return fmt.Errorf("lifecycle: CheckBranchTipMonotonicity(%s): ancestry check: %w", runID, err)
 	}
 	if !isDescendant {
-		// Branch was rewound externally. Do NOT persist the new tip.
 		return fmt.Errorf("%w: run=%s prior=%s new=%s", ErrBranchTipRewound, runID, prior, newTipSHA)
 	}
 
-	// Normal fast-forward advance: persist the new tip.
 	if writeErr := WritePersistedTip(projectDir, runID, newTipSHA); writeErr != nil {
 		return fmt.Errorf("lifecycle: CheckBranchTipMonotonicity(%s): persist new tip: %w", runID, writeErr)
 	}

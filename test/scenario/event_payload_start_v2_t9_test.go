@@ -19,8 +19,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
-// eventPayloadT9BuildHarmonik builds the production CLI for the isolated
-// scenario. The test invokes this binary through its public run command.
 func eventPayloadT9BuildHarmonik(t *testing.T) string {
 	t.Helper()
 	goTool, err := exec.LookPath("go")
@@ -42,8 +40,6 @@ func eventPayloadT9BuildHarmonik(t *testing.T) string {
 	return binPath
 }
 
-// eventPayloadT9RunStarted reads the one expected start event and decodes it
-// through the strict current-version payload contract.
 func eventPayloadT9RunStarted(t *testing.T, jsonlPath string) (core.Event, core.RunStartedPayload) {
 	t.Helper()
 	var starts []core.Event
@@ -79,9 +75,6 @@ func TestScenario_EventPayloadStartV2_DOTLifecycle(t *testing.T) {
 
 	realBrPath := codexLifecycleFixtureBrPath(t)
 	project := scenarioFixtureProjectDir(t)
-	// scenarioFixtureProjectDir already returns a symlink-resolved path, and it
-	// measured THAT path against the sun_path limit. Re-resolving here is what
-	// used to make the guard and the bound socket two different strings.
 	projectDir := project.projectDir
 	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	codexLifecycleFixtureGitRepo(t, projectDir)
@@ -92,7 +85,6 @@ func TestScenario_EventPayloadStartV2_DOTLifecycle(t *testing.T) {
 	handlerScript := codexLifecycleFixtureHandlerScript(t, codexTwinBinaryPath)
 	beadID := codexLifecycleFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
-	// Keep workspace trust state inside the temporary scenario project.
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), ".claude.json"))
 	queueStore := queuewiring.NewQueueStore()
 	cancel, daemonDone := scenarioFixtureStartDaemon(t, daemon.Config{
@@ -178,9 +170,6 @@ func TestScenario_EventPayloadStartV2_DOTLifecycle(t *testing.T) {
 	}
 }
 
-// eventPayloadT10InitLegacySingleBead seeds one open bead with the legacy
-// workflow:single label. The resolver must map this compatibility input to the
-// registered no-review DOT graph before it emits run_started.
 func eventPayloadT10InitLegacySingleBead(t *testing.T, brPath, projectDir, brWrapper string) string {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "t10") //nolint:gosec // fixed test command
@@ -202,7 +191,6 @@ func eventPayloadT10InitLegacySingleBead(t *testing.T, brPath, projectDir, brWra
 	return beadID
 }
 
-// eventPayloadT10StreamEvents decodes the public subscribe command's NDJSON.
 func eventPayloadT10StreamEvents(t *testing.T, raw string) []core.Event {
 	t.Helper()
 	var events []core.Event
@@ -221,9 +209,6 @@ func eventPayloadT10StreamEvents(t *testing.T, raw string) []core.Event {
 	return events
 }
 
-// eventPayloadT10SubscriberSawEvent reads completed NDJSON records from the
-// public subscriber. A final partial record is still being written and is not
-// yet evidence of delivery.
 func eventPayloadT10SubscriberSawEvent(path string, want core.EventType) bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -266,9 +251,6 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 
 	realBrPath := codexLifecycleFixtureBrPath(t)
 	project := scenarioFixtureProjectDir(t)
-	// scenarioFixtureProjectDir already returns a symlink-resolved path, and it
-	// measured THAT path against the sun_path limit. Re-resolving here is what
-	// used to make the guard and the bound socket two different strings.
 	projectDir := project.projectDir
 	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	codexLifecycleFixtureGitRepo(t, projectDir)
@@ -326,8 +308,6 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 		}
 	}()
 
-	// The public subscriber is live-only. Give its socket request time to arm
-	// before the queue command emits the start record.
 	time.Sleep(250 * time.Millisecond)
 	submitCmd := exec.CommandContext(t.Context(), harmonikBin,
 		"queue", "submit", "--project", projectDir, "--beads", beadID, "--json") //nolint:gosec // temporary test binary
@@ -339,8 +319,6 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 	if !scenarioFixturePollJSONLForEvent(t, jsonlPath, []string{string(core.EventTypeRunCompleted)}, 90*time.Second) {
 		t.Fatalf("isolated queue run did not complete; log:\n%s", strings.Join(scenarioFixtureReadJSONLLines(t, jsonlPath), "\n"))
 	}
-	// JSONL persistence proves the daemon emitted completion. Wait for the public
-	// subscriber's own output before its interrupt closes the socket.
 	eventPayloadT10WaitForSubscriberEvent(t, subscribePath, core.EventTypeRunCompleted, 10*time.Second)
 	if err := subscribeCmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("stop public subscribe command: %v", err)

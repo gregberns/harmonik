@@ -8,9 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// freshV7 returns a valid UUIDv7 string for use as a cursor event_id. Cursors in
-// production are always real event_ids (UUIDv7); Advance parses them to enforce
-// the monotonic-advance invariant (hk-fvo9e), so test cursors must be valid too.
 func freshV7(t *testing.T) string {
 	t.Helper()
 	u, err := uuid.NewV7()
@@ -20,8 +17,6 @@ func freshV7(t *testing.T) string {
 	return u.String()
 }
 
-// orderedV7Pair returns two valid UUIDv7 strings in strictly ascending order
-// (first < second by byte/chronological order, EV-002).
 func orderedV7Pair(t *testing.T) (string, string) {
 	t.Helper()
 	for {
@@ -33,7 +28,6 @@ func orderedV7Pair(t *testing.T) (string, string) {
 		if b < a {
 			return b, a
 		}
-		// equal (same intra-ms slot collision) — retry
 	}
 }
 
@@ -112,7 +106,6 @@ func TestCursorStoreSurvivesRestart(t *testing.T) {
 		t.Fatalf("Advance: %v", err)
 	}
 
-	// Simulate daemon restart: new CursorStore instance, same directory.
 	cs2 := NewCursorStore(cursorDir)
 	got, err := cs2.Get("flywheel")
 	if err != nil {

@@ -1,46 +1,5 @@
 package daemon
 
-// handlerpause_persist_m0k0a.go — Handler-pause persistence layer (hk-m0k0a).
-//
-// Implements the .harmonik/handler-state.json read/write layer used by
-// HandlerPauseController.  Three public entry points:
-//
-//   - MakeHandlerPausePersistFn(stateDir) returns a persistFn closure for
-//     injection into NewHandlerPauseController.  Each call atomically writes
-//     the full handler state to handler-state.json per WM-026.
-//
-//   - LoadHandlerPauseState(ctx, stateDir, ctrl) reads handler-state.json at
-//     daemon startup and seeds ctrl with any persisted paused handlers.
-//     File absent → all handlers default live.
-//     Forward-incompatible schema → ErrHandlerStateSchemaUnsupported (caller
-//     treats this as a fatal startup error, exit code 2).
-//
-// On-disk schema (handler-state.json):
-//
-//	{
-//	  "schema_version": 1,
-//	  "handlers": {
-//	    "claude-code": {
-//	      "status": "paused",
-//	      "cause": { ... },
-//	      "in_flight_at_pause": [ ... ],
-//	      "paused_epoch": 1
-//	    }
-//	  }
-//	}
-//
-// Schema is intentionally isomorphic to the shapes defined in
-// cmd/harmonik/handler.go (handlerStateDisk / handlerEntryDisk).  The CLI and
-// daemon share the same file; CLI reads it for `handler status`, daemon writes
-// it on Pause/Resume.
-//
-// Atomic-write discipline (WM-026): CreateTemp → Write → Sync → Close →
-// Rename → parent-dir Sync.  Same sequence used by cmd/harmonik/handler.go
-// atomicWriteHandlerState.
-//
-// Spec ref: specs/handler-pause.md §3.5.
-// Bead ref: hk-m0k0a.
-
 import (
 	"context"
 	"encoding/json"
@@ -52,33 +11,15 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// handlerStateSchemaVersionDaemon is the schema version this daemon binary
-// reads and writes.  Forward-incompatible versions (schema_version >
-// handlerStateSchemaVersionDaemon) cause LoadHandlerPauseState to return
-// ErrHandlerStateSchemaUnsupported, which the caller maps to exit code 2.
-//
-// v2 introduces the per-account sub-map (HP-072 / hk-lhxzc).  A v2 daemon
-// reads v1 files via backwards-compat migration: a v1 paused handler is loaded
-// as an anonymous account (AnonymousAccountID) within that handler type.
-//
-// Matches handlerStateSchemaVersion in cmd/harmonik/handler.go.
 const handlerStateSchemaVersionDaemon = 2
 
-// handlerStateFileName is the on-disk filename.
-// Sibling to queue.json inside <ProjectDir>/.harmonik/.
 const handlerStateFileName = "handler-state.json"
 
-// ---------------------------------------------------------------------------
-// On-disk schema types (daemon-side mirror of cmd/harmonik/handler.go shapes)
-// ---------------------------------------------------------------------------
-
-// handlerStateDiskDaemon is the top-level on-disk JSON structure.
 type handlerStateDiskDaemon struct {
 	SchemaVersion int                               `json:"schema_version"`
 	Handlers      map[string]handlerEntryDiskDaemon `json:"handlers"`
 }
 
-// handlerEntryDiskDaemon is one handler-type entry in handler-state.json.
 type handlerEntryDiskDaemon struct {
 	Status          string                              `json:"status"`
 	Cause           *handlerCauseDiskDaemon             `json:"cause"`
@@ -87,8 +28,6 @@ type handlerEntryDiskDaemon struct {
 	Accounts        map[string]handlerAccountDiskDaemon `json:"accounts,omitempty"` // v2+
 }
 
-// handlerAccountDiskDaemon is a per-account entry inside handlers.<type>.accounts
-// introduced in schema v2 (HP-072 / hk-lhxzc).
 type handlerAccountDiskDaemon struct {
 	Status          string                  `json:"status"`
 	Cause           *handlerCauseDiskDaemon `json:"cause"`
@@ -96,7 +35,6 @@ type handlerAccountDiskDaemon struct {
 	PausedEpoch     int                     `json:"paused_epoch"`
 }
 
-// handlerCauseDiskDaemon is the cause sub-object inside a paused handler entry.
 type handlerCauseDiskDaemon struct {
 	FailureClass string `json:"failure_class"`
 	SubReason    string `json:"sub_reason"`
@@ -105,16 +43,11 @@ type handlerCauseDiskDaemon struct {
 	TrippedAt    string `json:"tripped_at"`
 }
 
-// inFlightRunDiskDaemon is a single entry in in_flight_at_pause.
 type inFlightRunDiskDaemon struct {
 	RunID        string `json:"run_id"`
 	BeadID       string `json:"bead_id"`
 	DispatchedAt string `json:"dispatched_at"`
 }
-
-// ---------------------------------------------------------------------------
-// ErrHandlerStateSchemaUnsupported
-// ---------------------------------------------------------------------------
 
 // ErrHandlerStateSchemaUnsupported is returned when the on-disk schema_version
 // is newer than this binary supports.  The caller (daemon.Start) should treat
@@ -145,10 +78,6 @@ func IsErrHandlerStateSchemaUnsupported(err error) bool {
 	return errors.As(err, &e)
 }
 
-// ---------------------------------------------------------------------------
-// MakeHandlerPausePersistFn — closure factory
-// ---------------------------------------------------------------------------
-
 // MakeHandlerPausePersistFn returns a persistFn closure for injection into
 // NewHandlerPauseController.
 //
@@ -168,21 +97,6 @@ func MakeHandlerPausePersistFn(stateDir string) func(ctx context.Context, snapsh
 	}
 }
 
-// ---------------------------------------------------------------------------
-// atomicWriteHandlerStateDaemon — WM-026 atomic write
-// ---------------------------------------------------------------------------
-
-// atomicWriteHandlerStateDaemon serialises snapshots to handler-state.json
-// using WM-026 discipline:
-//
-//  1. CreateTemp in the same directory as the target file.
-//  2. Write JSON bytes.
-//  3. fsync the temp file.
-//  4. Close the temp file.
-//  5. Rename temp → target (atomic on POSIX).
-//  6. fsync the parent directory.
-//
-// Bead ref: hk-m0k0a, WM-026.
 func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseStatusSnapshot) error {
 	disk := snapshotsToDisk(snapshots)
 
@@ -194,14 +108,12 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 
 	dir := filepath.Dir(statePath)
 
-	// Step 1: create temp file in the same directory so that rename is atomic.
 	tmp, err := os.CreateTemp(dir, ".handler-state-tmp-")
 	if err != nil {
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: CreateTemp in %s: %w", dir, err)
 	}
 	tmpPath := tmp.Name()
 
-	// Steps 2–4: write, fsync, close.
 	if _, writeErr := tmp.Write(data); writeErr != nil {
 		writeErr = errors.Join(writeErr, tmp.Close(), os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: write %s: %w", tmpPath, writeErr)
@@ -215,17 +127,11 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: close %s: %w", tmpPath, closeErr)
 	}
 
-	// Step 5: atomic rename.
 	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
 		renameErr = errors.Join(renameErr, os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: rename %s → %s: %w", tmpPath, statePath, renameErr)
 	}
 
-	// Step 6: fsync the parent directory to flush the new directory entry.
-	// This is a durability barrier: without it, the rename's new dirent may not
-	// survive a crash.  Propagate its failure rather than swallowing it — the
-	// fsync error wins over the close error, mirroring the material-error-first
-	// handling of the tmp Sync/Close steps above.
 	dirF, openErr := os.Open(dir) //nolint:gosec // G304: operator-controlled project dir (== filepath.Dir(statePath); see os.ReadFile below)
 	if openErr != nil {
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: open dir %s: %w", dir, openErr)
@@ -241,10 +147,6 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// LoadHandlerPauseState — startup read
-// ---------------------------------------------------------------------------
 
 // LoadHandlerPauseState reads <stateDir>/handler-state.json at daemon startup
 // and seeds ctrl with any persisted paused handlers.
@@ -266,7 +168,6 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 	data, err := os.ReadFile(statePath) //nolint:gosec // G304: operator-controlled project dir
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File absent → all handlers default live; no-op.
 			return nil
 		}
 		return fmt.Errorf("LoadHandlerPauseState: read %s: %w", statePath, err)
@@ -277,7 +178,6 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 		return fmt.Errorf("LoadHandlerPauseState: parse %s: %w", statePath, jsonErr)
 	}
 
-	// Schema-version guard (mirrors QM-002 forward-incompatible handling).
 	if disk.SchemaVersion > handlerStateSchemaVersionDaemon {
 		return &ErrHandlerStateSchemaUnsupported{
 			Path: statePath,
@@ -286,31 +186,23 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 		}
 	}
 
-	// Seed the controller with persisted paused handlers.
 	for agentTypeStr, entry := range disk.Handlers {
 		agentType := core.AgentType(agentTypeStr)
 		if !agentType.Valid() {
-			// Unknown agent type in file; skip silently.
 			continue
 		}
 
-		// Restore handler-level pause (present in both v1 and v2).
 		if entry.Status == "paused" && entry.Cause != nil {
 			cause := diskCauseToCore(entry.Cause)
 			if cause.Valid() {
 				inFlight := diskInFlightToCore(entry.InFlightAtPause)
-				// Call Pause to restore persisted handler-level state.
 				if pauseErr := ctrl.Pause(ctx, agentType, cause, inFlight); pauseErr != nil {
 					return fmt.Errorf("LoadHandlerPauseState: restore pause for %q: %w", agentTypeStr, pauseErr)
 				}
-				// NOTE on paused_epoch: same as before — restores epoch=1, not the exact value.
 				_ = entry.PausedEpoch
 			}
 		}
 
-		// v1 backwards compat (HP-072): if schema_version == 1 and the handler is
-		// paused, also restore the state as the anonymous account so callers using
-		// IsAccountPaused("", ...) observe the same pause.
 		if disk.SchemaVersion == 1 && entry.Status == "paused" && entry.Cause != nil {
 			cause := diskCauseToCore(entry.Cause)
 			if cause.Valid() {
@@ -321,7 +213,6 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 			}
 		}
 
-		// Restore per-account pauses (schema v2+).
 		for accountIDStr, acct := range entry.Accounts {
 			if acct.Status != "paused" || acct.Cause == nil {
 				continue
@@ -342,11 +233,6 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// Conversion helpers
-// ---------------------------------------------------------------------------
-
-// snapshotsToDisk converts []HandlerPauseStatusSnapshot to handlerStateDiskDaemon.
 func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDaemon {
 	disk := &handlerStateDiskDaemon{
 		SchemaVersion: handlerStateSchemaVersionDaemon,
@@ -378,7 +264,6 @@ func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDa
 		} else {
 			entry.InFlightAtPause = []inFlightRunDiskDaemon{}
 		}
-		// Write per-account state (v2+ schema).
 		if len(s.Accounts) > 0 {
 			entry.Accounts = make(map[string]handlerAccountDiskDaemon, len(s.Accounts))
 			for aid, as := range s.Accounts {
@@ -415,7 +300,6 @@ func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDa
 	return disk
 }
 
-// diskCauseToCore converts a handlerCauseDiskDaemon to core.HandlerPauseCause.
 func diskCauseToCore(d *handlerCauseDiskDaemon) core.HandlerPauseCause {
 	return core.HandlerPauseCause{
 		FailureClass: core.FailureClass(d.FailureClass),
@@ -426,11 +310,6 @@ func diskCauseToCore(d *handlerCauseDiskDaemon) core.HandlerPauseCause {
 	}
 }
 
-// diskInFlightToCore converts []inFlightRunDiskDaemon to []InFlightBeadRecord.
-//
-// The element copy is a conversion, not a field-by-field literal. The disk shape
-// and the in-memory record must stay identical, and a conversion turns any future
-// drift into a compile error instead of a silently dropped field.
 func diskInFlightToCore(rs []inFlightRunDiskDaemon) []InFlightBeadRecord {
 	out := make([]InFlightBeadRecord, 0, len(rs))
 	for _, r := range rs {

@@ -1,14 +1,5 @@
 package main
 
-// schedule_parse_test.go — table-driven coverage for the `harmonik schedule`
-// argument parsers and renderers.
-//
-// parseScheduleSpec is the validation boundary for `schedule add --schedule`:
-// its whole reason to call NextFire at parse time is so a bad spec fails when
-// the operator types it rather than silently never firing. Nothing covered
-// that, so a spec form that quietly stopped validating would look identical to
-// one that worked until the job failed to run.
-
 import (
 	"strings"
 	"testing"

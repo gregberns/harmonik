@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// pgidFixtureValue returns a test PGID value.
 func pgidFixtureValue(t *testing.T) PGID {
 	t.Helper()
 	return PGID(12345)

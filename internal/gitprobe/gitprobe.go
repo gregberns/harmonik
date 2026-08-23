@@ -87,11 +87,6 @@ func RevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 // `git merge-base --is-ancestor` exits 0 for yes and 1 for no. Any other
 // result is a git failure and is returned as an error.
 func IsAncestor(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	// cmd.Dir, not `git -C`: merge-queue-design §2 ends the commit-phase command
-	// list with "All Dir=projectDir", and this probe runs inside that phase.
-	// Matches ResolveWorktreeHEAD and RevParse above. The -C form in this file
-	// belongs to ResolveWorktreeHEADVia alone, which needs it because an SSH
-	// runner has no working directory to set.
 	cmd := exec.CommandContext(ctx, "git",
 		"merge-base", "--is-ancestor", ancestor, descendant)
 	cmd.Dir = repoDir
@@ -119,7 +114,6 @@ func RunnerIsLocalFS(r tmux.CommandRunner) bool {
 	}
 }
 
-// trimTrailingNewlines strips every trailing newline from git's stdout.
 func trimTrailingNewlines(s string) string {
 	return strings.TrimRight(s, "\n")
 }

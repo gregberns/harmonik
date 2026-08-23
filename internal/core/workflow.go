@@ -128,22 +128,17 @@ func (w Workflow) Valid() bool {
 	if w.StartNodeID == "" {
 		return false
 	}
-	// StartNodeID must be present in Nodes.
 	if !b3f72nodeIDInList(w.StartNodeID, w.Nodes) {
 		return false
 	}
-	// TerminalNodeIDs: non-empty (EM-001).
 	if len(w.TerminalNodeIDs) == 0 {
 		return false
 	}
-	// Every terminal node ID must be present in Nodes.
 	for _, tid := range w.TerminalNodeIDs {
 		if !b3f72nodeIDInList(tid, w.Nodes) {
 			return false
 		}
 	}
-	// Every edge must be structurally valid and its FromNode/ToNode must be
-	// present in Nodes (well-formed directed graph per EM-001).
 	for _, e := range w.Edges {
 		if !e.Valid() {
 			return false
@@ -155,8 +150,6 @@ func (w Workflow) Valid() bool {
 			return false
 		}
 	}
-	// WorkflowClass: when set, must be a valid WorkflowClass (currently one
-	// value only; EM-038, reconciliation/schemas.md §6.5).
 	if w.WorkflowClass != nil && !w.WorkflowClass.Valid() {
 		return false
 	}
@@ -166,7 +159,6 @@ func (w Workflow) Valid() bool {
 	return true
 }
 
-// b3f72nodeIDInList reports whether id appears as the NodeID of any node in nodes.
 func b3f72nodeIDInList(id NodeID, nodes []Node) bool {
 	for i := range nodes {
 		if nodes[i].NodeID == id {

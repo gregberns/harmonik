@@ -1,28 +1,5 @@
 package runmerge_test
 
-// stripruncontext_test.go — tests for StripRunContextFromMerge (hk-4je).
-//
-// The function is the last gate that keeps .harmonik/run-context/** off the
-// merge target: its single caller (prepareInitialMerge, merge.go) turns any
-// error into a terminal `strip_run_context_failed` Outcome and aborts the
-// merge, while a (false, nil) return lets the fast-forward proceed. So the
-// distinction between "no-op" and "error" IS the safety property, and each of
-// the three exits is covered here:
-//
-//   - wtPath does not exist            → (false, nil)  no-op. This is the
-//     LEGITIMATE remote-run case: RunBranchToTarget's hk-sfy7f fallback tries
-//     `git worktree add` and, when that fails, the merge continues with no
-//     local worktree. Stripping is impossible and unnecessary there, so the
-//     no-op must survive.
-//   - wtPath stat fails for any OTHER  → (false, err). The index state is
-//     reason                             unknown; reporting a clean no-op would
-//     fast-forward the target with run-context files still in the tree.
-//   - run-context tracked in the index → (true, nil) plus a strip commit.
-//
-// The error case is reproduced portably with ENOTDIR — a regular file used as
-// a path component. No chmod, no root/non-root dependency, same result on
-// linux and darwin.
-
 import (
 	"errors"
 	"io/fs"
@@ -35,9 +12,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
-// stripFixtureRepo initialises a git repo in a fresh temp dir and returns its
-// path. Reuses the package's mergeToMainFixtureGitRepo so the git identity and
-// initial commit match every other merge-path test in this package.
 func stripFixtureRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,7 +19,6 @@ func stripFixtureRepo(t *testing.T) string {
 	return dir
 }
 
-// stripFixtureGit runs a git command in dir, failing the test on error.
 func stripFixtureGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
@@ -57,15 +30,9 @@ func stripFixtureGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
-// stripFixtureCommitRunContext force-commits a run-context file into the repo,
-// mirroring what CHB-023 (sessioncontext) does on the run branch.
 func stripFixtureCommitRunContext(t *testing.T, dir, runID string) string {
 	t.Helper()
 	rcDir := filepath.Join(dir, runmerge.RunContextDirPrefix, runID)
-	// 0o750 / 0o600 rather than the 0755 / 0644 the older fixtures in this
-	// package use: at those modes gosec G301/G306 fire and would need a lint
-	// suppression, and a suppression that a permission change removes outright
-	// is masking rather than an idiom.
 	if err := os.MkdirAll(rcDir, 0o750); err != nil {
 		t.Fatalf("mkdir run-context dir: %v", err)
 	}
@@ -73,14 +40,11 @@ func stripFixtureCommitRunContext(t *testing.T, dir, runID string) string {
 	if err := os.WriteFile(rcPath, []byte(`{"session_id":"abc"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write context.json: %v", err)
 	}
-	// -f mirrors CHB-023: the path may be gitignored in a real project.
 	stripFixtureGit(t, dir, "add", "-f", "--", runmerge.RunContextDirPrefix)
 	stripFixtureGit(t, dir, "commit", "-m", "chore: record run context")
 	return rcPath
 }
 
-// stripFixtureTrackedRunContext returns the tracked .harmonik/run-context/**
-// entries in the repo index.
 func stripFixtureTrackedRunContext(t *testing.T, dir string) string {
 	t.Helper()
 	return stripFixtureGit(t, dir, "ls-files", "--cached", "--", runmerge.RunContextDirPrefix)
@@ -96,8 +60,6 @@ func TestStripRunContextFromMerge_MissingWorktreeIsNoOp(t *testing.T) {
 
 	wtPath := filepath.Join(t.TempDir(), "run-worktree-that-was-never-created")
 
-	// Precondition: the path really is absent, i.e. the stat error really is
-	// ENOENT and not something else that happens to look like it.
 	if _, statErr := os.Stat(wtPath); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Fatalf("fixture: want an fs.ErrNotExist stat error for %s, got %v", wtPath, statErr)
 	}
@@ -129,11 +91,8 @@ func TestStripRunContextFromMerge_NonNotExistStatErrorFails(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("regular file\n"), 0o600); err != nil {
 		t.Fatalf("fixture: write regular file: %v", err)
 	}
-	// A regular file used as a path COMPONENT → ENOTDIR, not ENOENT.
 	wtPath := filepath.Join(filePath, "worktree")
 
-	// Precondition: the stat error must be non-nil and must NOT satisfy
-	// fs.ErrNotExist, or the test would prove nothing about the new branch.
 	_, statErr := os.Stat(wtPath)
 	if statErr == nil {
 		t.Fatalf("fixture: os.Stat(%s) unexpectedly succeeded; ENOTDIR setup is wrong", wtPath)
@@ -188,8 +147,6 @@ func TestStripRunContextFromMerge_StripsTrackedRunContext(t *testing.T) {
 	if headAfter := stripFixtureGit(t, dir, "rev-parse", "HEAD"); headAfter == headBefore {
 		t.Error("HEAD did not advance: the strip commit is what the fast-forward carries to the target")
 	}
-	// --cached: the removal is index-only, so the crash-recovery reader still
-	// sees the file in the worktree for the rest of the merge.
 	if _, statErr := os.Stat(rcPath); statErr != nil {
 		t.Errorf("git rm --cached must leave the working-tree file in place: %v", statErr)
 	}

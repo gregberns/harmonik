@@ -1,28 +1,10 @@
 package pi_test
 
-// pijsonlparser_ws1d_test.go — Pi NDJSON usage-extraction tests (WS1d).
-//
-// Coverage:
-//   - parsePiNDJSONEvent: message_start decodes usage from nested "message.usage".
-//   - parsePiNDJSONEvent: message_end decodes usage from top-level "usage".
-//   - parsePiNDJSONEvent: agent_end sums usage across messages array.
-//   - parsePiNDJSONEvent: events without usage fields produce zero Usage.
-//   - capturePiUsage: accumulates InputTokens from message_start events.
-//   - capturePiUsage: accumulates OutputTokens from message_end events.
-//   - capturePiUsage: ignores session, agent_end, and other events.
-//   - capturePiUsage: accumulates correctly across a multi-turn stream.
-//
-// Bead: hk-eval-prog-pi-tokens-sr316 (WS1d).
-
 import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/harness/pi"
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
-// parsePiNDJSONEvent — usage field extraction
-// ─────────────────────────────────────────────────────────────────────────────
 
 func TestParsePiNDJSONEvent_MessageStart_Usage(t *testing.T) {
 	t.Parallel()
@@ -145,7 +127,6 @@ func TestParsePiNDJSONEvent_AgentEnd_EmptyMessages(t *testing.T) {
 func TestParsePiNDJSONEvent_AgentEnd_MessagesWithoutUsage(t *testing.T) {
 	t.Parallel()
 
-	// Messages that don't carry a usage field should contribute zero.
 	line := []byte(`{"type":"agent_end","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hey"}]}`)
 	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
@@ -162,7 +143,6 @@ func TestParsePiNDJSONEvent_AgentEnd_MessagesWithoutUsage(t *testing.T) {
 func TestParsePiNDJSONEvent_Session_ZeroUsage(t *testing.T) {
 	t.Parallel()
 
-	// Session events never carry usage; Usage must be zero.
 	line := []byte(`{"type":"session","version":3,"id":"abc-123","cwd":"/tmp/wt"}`)
 	_, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
@@ -173,16 +153,10 @@ func TestParsePiNDJSONEvent_Session_ZeroUsage(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// capturePiUsage — accumulation
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestCapturePiUsage_MessageStart_AccumulatesInputOnly(t *testing.T) {
 	t.Parallel()
 
 	var arts pi.ExportedPiRunArtifacts
-	// message_start carries the prompt cost in input_tokens; output_tokens is an
-	// initial draft count that must NOT be accumulated (message_end owns outputs).
 	line := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":200,"output_tokens":1}}}`)
 	if !pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned false; want true for message_start with non-zero input_tokens")
@@ -190,7 +164,6 @@ func TestCapturePiUsage_MessageStart_AccumulatesInputOnly(t *testing.T) {
 	if arts.TotalUsage.InputTokens != 200 {
 		t.Errorf("TotalUsage.InputTokens = %d; want 200", arts.TotalUsage.InputTokens)
 	}
-	// output_tokens from message_start is NOT accumulated — message_end owns it.
 	if arts.TotalUsage.OutputTokens != 0 {
 		t.Errorf("TotalUsage.OutputTokens = %d; want 0 (message_start output_tokens must not be accumulated)", arts.TotalUsage.OutputTokens)
 	}
@@ -256,7 +229,6 @@ func TestCapturePiUsage_ReturnsFalse_ZeroUsage(t *testing.T) {
 	t.Parallel()
 
 	var arts pi.ExportedPiRunArtifacts
-	// message_start with no usage sub-object → zero usage → returns false.
 	line := []byte(`{"type":"message_start","message":{}}`)
 	if pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned true for message_start with zero usage; want false")
@@ -289,8 +261,6 @@ func TestCapturePiUsage_MultiTurnAccumulation(t *testing.T) {
 	for _, line := range stream {
 		pi.ExportedCapturePiUsage(&arts, line)
 	}
-	// input: 100 (turn 1 message_start) + 200 (turn 2 message_start) = 300
-	// output: 50 (turn 1 message_end) + 75 (turn 2 message_end) = 125
 	if arts.TotalUsage.InputTokens != 300 {
 		t.Errorf("TotalUsage.InputTokens = %d; want 300", arts.TotalUsage.InputTokens)
 	}

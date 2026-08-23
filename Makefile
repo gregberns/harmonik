@@ -325,6 +325,18 @@ test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10
 	scripts/codex-coverage-gate.sh
 	$(MAKE) codex-capture-pane-gate
 
+# comment-only-commit-gate: the comment-volume ratchet. A Go change may not be
+# all comment and no code. Measured over the 300 commits before 2026-08-23,
+# eight changed <=5 lines of Go code and >=20 lines of Go comment, five of them
+# re-editing the same two daemon test files. A per-block LENGTH cap fires on
+# none of them (the blocks are short) and cannot pass this tree without a
+# path-keyed allow list, so the gate gets the SHAPE of the work instead. A net
+# reduction always passes, so a commentcut sweep stays legal. Wired into
+# `make fast` via freeze-gates.
+.PHONY: comment-only-commit-gate
+comment-only-commit-gate:  ## forbid a Go change that is all comment and no code
+	scripts/comment-only-commit-gate.sh
+
 # codex-capture-pane-gate: the SC6 capture-pane grep ratchet — the structured
 # input driver must never scrape a tmux pane (capture-pane is an exec-arg string,
 # not an import, so a grep gate is the cheapest enforcement; the forbidigo +
@@ -917,6 +929,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/commit-msg-gate-test.sh
 	scripts/secret-scan-test.sh
 	scripts/pipefail-grepq-gate-test.sh
+	scripts/comment-only-commit-gate-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
@@ -940,6 +953,7 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
 	scripts/lint-allow-ratchet.sh
+	scripts/comment-only-commit-gate.sh
 	scripts/required-check-name-gate.sh
 	scripts/pipefail-grepq-gate.sh
 

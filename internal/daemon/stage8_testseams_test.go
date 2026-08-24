@@ -71,5 +71,14 @@ func newDispatchGatesPortFromDeps(r testRuntime) dispatchGatesPort {
 }
 
 func runTestWorkLoop(ctx context.Context, r testRuntime, lifecycle loopLifecyclePort, repair ledgerRepairPort, disk diskReclaimPort, governor governorPort, enabled bool, capacity capacityPort, surface queueSurfacePort, gates dispatchGatesPort, noAutoPull bool) error {
-	return runWorkLoop(ctx, r.env, r.ports, r.handles, r.ledger, r.queueStore, r.runRegistry, r.substratePort, r.mergeQueue, r.launchBuilder, lifecycle, repair, schedulePort{}, coordinatorReapPort{}, disk, eagerRefillPort{}, governor, enabled, capacity, surface, gates, noAutoPull)
+	return runWorkLoop(ctx, workLoopInput{
+		baseEnv: r.env, basePorts: r.ports, handles: r.handles, ledger: r.ledger,
+		queueStore: r.queueStore, runRegistry: r.runRegistry, substrate: r.substratePort,
+		mergeQueue: r.mergeQueue, launchBuilder: r.launchBuilder,
+	}, loopCollaborators{
+		lifecycle: lifecycle, ledgerRepair: repair, schedule: schedulePort{},
+		coordinatorReap: coordinatorReapPort{}, diskReclaim: disk, eagerRefill: eagerRefillPort{},
+		governor: governor, governorEnabled: enabled, capacity: capacity,
+		queueSurface: surface, dispatchGates: gates,
+	}, noAutoPull)
 }

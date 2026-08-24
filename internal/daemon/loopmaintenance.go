@@ -92,18 +92,18 @@ type loopMaintenance struct {
 	logW io.Writer
 }
 
-func newLoopMaintenance(projectCfg projectconfig.ProjectConfig, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(projectCfg projectconfig.ProjectConfig, collaborators loopCollaborators, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
-		lifecycle:       lifecycle,
-		coordinatorReap: coordinatorReap,
-		diskReclaim:     diskReclaim,
-		eagerRefill:     eagerRefill,
-		schedule:        schedule,
-		capacity:        capacity,
-		queueSurface:    queueSurface,
-		dispatchGates:   dispatchGates,
+		lifecycle:       collaborators.lifecycle,
+		coordinatorReap: collaborators.coordinatorReap,
+		diskReclaim:     collaborators.diskReclaim,
+		eagerRefill:     collaborators.eagerRefill,
+		schedule:        collaborators.schedule,
+		capacity:        collaborators.capacity,
+		queueSurface:    collaborators.queueSurface,
+		dispatchGates:   collaborators.dispatchGates,
 		dashGate:        newDashboardGateIfEnabled(projectCfg, logW),
-		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
+		governor:        newMovementGovernorIfEnabled(collaborators.governor, collaborators.governorEnabled, logW),
 		logW:            logW,
 	}
 }

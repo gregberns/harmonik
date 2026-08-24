@@ -30,6 +30,7 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
+//nolint:gocognit,cyclop,funlen // Pre-existing boot wiring complexity; grouping the work-loop inputs does not add a decision.
 func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Time, bootBackoffDelay time.Duration, workflowModeDefault core.WorkflowMode) error {
 	if bs.cfg.BrPath == "" {
 		return nil
@@ -142,7 +143,15 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, baseEnv, basePorts, handles, ledger, bs.qs, runRegistry, cfg.Substrate, mergeQueue, nil, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, cfg.NoAutoPull)
+		loopDone <- runWorkLoop(ctx, workLoopInput{
+			baseEnv: baseEnv, basePorts: basePorts, handles: handles, ledger: ledger,
+			queueStore: bs.qs, runRegistry: runRegistry, substrate: cfg.Substrate, mergeQueue: mergeQueue,
+		}, loopCollaborators{
+			lifecycle: lifecyclePort, ledgerRepair: ledgerRepair, schedule: schedulePort,
+			coordinatorReap: coordinatorReap, diskReclaim: diskReclaim, eagerRefill: eagerRefill,
+			governor: governor, governorEnabled: governorEnabled, capacity: capacity,
+			queueSurface: queueSurface, dispatchGates: dispatchGates,
+		}, cfg.NoAutoPull)
 	}()
 	<-loopDone
 	return nil

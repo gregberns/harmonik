@@ -62,6 +62,49 @@ type ledgerRepairPort struct {
 	strandedResetDaemonNS      int64
 }
 
+type loopCollaborators struct {
+	lifecycle       loopLifecyclePort
+	ledgerRepair    ledgerRepairPort
+	schedule        schedulePort
+	coordinatorReap coordinatorReapPort
+	diskReclaim     diskReclaimPort
+	eagerRefill     eagerRefillPort
+	governor        governorPort
+	governorEnabled bool
+	capacity        capacityPort
+	queueSurface    queueSurfacePort
+	dispatchGates   dispatchGatesPort
+}
+
+type workLoopInput struct {
+	baseEnv       runloop.RunEnv
+	basePorts     runloop.RunPorts
+	handles       runloop.SharedHandles
+	ledger        beadLedger
+	queueStore    *queuewiring.QueueStore
+	runRegistry   *RunRegistry
+	substrate     handler.Substrate
+	mergeQueue    *mergeq.Queue
+	launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
+}
+
+type workLoopState struct {
+	wg                        sync.WaitGroup
+	effectiveMax              int
+	claimSem                  chan struct{}
+	lastSeenPauseEpoch        int
+	rrCursor                  int
+	maintenance               *loopMaintenance
+	reapPort                  reapSeamPort
+	completionPort            runCompletionPort
+	itemRefusedUntil          map[core.BeadID]time.Time
+	tickRefusals              map[core.BeadID]bool
+	walkingThisTick           bool
+	readyPathAttempts         map[core.BeadID]int
+	queuePreClaimShowAttempts map[queuePreClaimAttemptKey]int
+	crossQueueCollisions      map[queuePreClaimAttemptKey]crossQueueCollisionState
+}
+
 func newLedgerRepairPort(adapter beadLedger, projectDir string) ledgerRepairPort {
 	var closer lifecycle.BeadCat3cCloser
 	if value, ok := adapter.(lifecycle.BeadCat3cCloser); ok {
@@ -275,8 +318,21 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.RunPorts, handles runloop.SharedHandles, ledger beadLedger, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, substratePort handler.Substrate, mergeQueue *mergeq.Queue, launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error), loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, noAutoPull bool) error {
-	var wg sync.WaitGroup
+func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCollaborators, noAutoPull bool) error {
+	baseEnv := input.baseEnv
+	basePorts := input.basePorts
+	handles := input.handles
+	ledger := input.ledger
+	queueStore := input.queueStore
+	runRegistry := input.runRegistry
+	substratePort := input.substrate
+	mergeQueue := input.mergeQueue
+	launchBuilder := input.launchBuilder
+	loopLifecycle := collaborators.lifecycle
+	ledgerRepair := collaborators.ledgerRepair
+	capacity := collaborators.capacity
+	queueSurface := collaborators.queueSurface
+	dispatchGates := collaborators.dispatchGates
 
 	if mergeQueue == nil {
 		mergeQueue = mergeq.New(nil)
@@ -286,34 +342,20 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	}
 	basePorts.Merge = newMergePort(mergeQueue)
 
-	effectiveMax := capacity.maxConcurrent
-	if effectiveMax <= 0 {
-		effectiveMax = 1
+	state := workLoopState{effectiveMax: capacity.maxConcurrent}
+	if state.effectiveMax <= 0 {
+		state.effectiveMax = 1
 	}
-
-	claimSem := make(chan struct{}, effectiveMax)
-
-	lastSeenPauseEpoch := 0
-
-	rrCursor := 0
-
-	maint := newLoopMaintenance(baseEnv.ProjectCfg, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, os.Stderr)
-	reapPort := newReapSeamPort(basePorts.Emitter, baseEnv.ProjectDir, baseEnv.TargetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, eagerRefill)
-	completionPort := newRunCompletionPort(baseEnv.BrPath, reapPort)
-
-	itemRefusedUntil := make(map[core.BeadID]time.Time)
-
-	tickRefusals := make(map[core.BeadID]bool)
-
-	walkingThisTick := false
-
-	readyPathAttempts := make(map[core.BeadID]int)
-
-	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
-
-	crossQueueCollisions := make(map[queuePreClaimAttemptKey]crossQueueCollisionState)
-
-	dispatchCtx := ctx //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+	state.claimSem = make(chan struct{}, state.effectiveMax)
+	state.maintenance = newLoopMaintenance(baseEnv.ProjectCfg, collaborators, os.Stderr)
+	state.reapPort = newReapSeamPort(basePorts.Emitter, baseEnv.ProjectDir, baseEnv.TargetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, collaborators.eagerRefill)
+	state.completionPort = newRunCompletionPort(baseEnv.BrPath, state.reapPort)
+	state.itemRefusedUntil = make(map[core.BeadID]time.Time)
+	state.tickRefusals = make(map[core.BeadID]bool)
+	state.readyPathAttempts = make(map[core.BeadID]int)
+	state.queuePreClaimShowAttempts = make(map[queuePreClaimAttemptKey]int)
+	state.crossQueueCollisions = make(map[queuePreClaimAttemptKey]crossQueueCollisionState)
+	dispatchCtx := ctx //nolint:contextcheck // Config.StopDispatchCtx is a context by design.
 	if loopLifecycle.stopDispatchCtx != nil {
 		dispatchCtx = loopLifecycle.stopDispatchCtx
 	}
@@ -321,7 +363,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	exitClean := func() error { //nolint:unparam // pre-existing: Seam A moved this code out of workloop.go unchanged
 		drainDone := make(chan struct{})
 		go func() {
-			wg.Wait()
+			state.wg.Wait()
 			close(drainDone)
 		}()
 		select {
@@ -358,9 +400,9 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				for _, rec := range liveRecs {
 					//nolint:copyloopvar // pre-existing: Seam A moved this code out of workloop.go unchanged
 					rec := rec // capture loop variable
-					wg.Add(1)
+					state.wg.Add(1)
 					go func() {
-						defer wg.Done()
+						defer state.wg.Done()
 						adoptLiveRunSession(ctx, ledger, baseEnv, queueStore, handles.TIDGen, rec, tmuxAdp)
 					}()
 				}
@@ -369,10 +411,10 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	}
 
 	for {
-		if !walkingThisTick {
-			clear(tickRefusals)
+		if !state.walkingThisTick {
+			clear(state.tickRefusals)
 		}
-		walkingThisTick = false
+		state.walkingThisTick = false
 
 		select {
 		case <-dispatchCtx.Done():
@@ -380,7 +422,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		default:
 		}
 
-		preObs := maint.tickBeforeDispatch(ctx)
+		preObs := state.maintenance.tickBeforeDispatch(ctx)
 		if preObs.halt {
 			return exitClean()
 		}
@@ -395,7 +437,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		if capacity.concurrencyCtrl != nil {
 			controllerMax, controllerPresent = capacity.concurrencyCtrl.Get(), true
 		}
-		gateMax := orchestrator.LocalGateMax(effectiveMax, controllerMax, controllerPresent)
+		gateMax := orchestrator.LocalGateMax(state.effectiveMax, controllerMax, controllerPresent)
 
 		tickVerdict, tickAdmitErr := orchestrator.AdmitAtTick(orchestrator.AdmissionInput{
 			Path:          orchestrator.PathAny,
@@ -406,7 +448,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			WorkerHasFreeSlot: handles.Workers != nil && handles.Workers.HasFreeSlot(),
 		})
 		if tickAdmitErr != nil {
-			wg.Wait()
+			state.wg.Wait()
 			return fmt.Errorf("daemon: workloop: tick admission: %w", tickAdmitErr)
 		}
 		if !tickVerdict.Admitted {
@@ -419,7 +461,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			continue
 		}
 
-		selObs := maint.tickBeforeSelect(ctx, baseEnv.ProjectDir, basePorts.Emitter, reapPort, governorInputPort{projectDir: baseEnv.ProjectDir, brPath: baseEnv.BrPath, ledger: ledger}, time.Now())
+		selObs := state.maintenance.tickBeforeSelect(ctx, baseEnv.ProjectDir, basePorts.Emitter, state.reapPort, governorInputPort{projectDir: baseEnv.ProjectDir, brPath: baseEnv.BrPath, ledger: ledger}, time.Now())
 
 		var (
 			beadRecord core.BeadRecord
@@ -492,8 +534,8 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					continue
 				}
 
-				skipBeads := offerableSkipSet(itemRefusedUntil, tickRefusals, time.Now())
-				sel, ok := selectNextQueue(lq, runRegistry, effectiveMax, rrCursor, selObs.blockedQueues, skipBeads)
+				skipBeads := offerableSkipSet(state.itemRefusedUntil, state.tickRefusals, time.Now())
+				sel, ok := selectNextQueue(lq, runRegistry, state.effectiveMax, state.rrCursor, selObs.blockedQueues, skipBeads)
 				loadedQueueCount := len(lq.LockedAllQueueNames())
 				lq.Done()
 				if !ok {
@@ -503,14 +545,14 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 								return exitClean()
 							}
 						} else {
-							if sleepErr := scheduleAwareIdleWait(dispatchCtx, scheduleInput, queueSurface.submitWakeC); sleepErr != nil {
+							if sleepErr := scheduleAwareIdleWait(dispatchCtx, collaborators.schedule, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
 						}
 						continue
 					}
 				} else {
-					rrCursor++
+					state.rrCursor++
 
 					snapItemIdx = sel.itemIdx
 					snapItemBeadID = sel.itemBeadID
@@ -527,7 +569,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			}
 
 			if snapItemIdx >= 0 {
-				if expiry, ok := itemRefusedUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
+				if expiry, ok := state.itemRefusedUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
@@ -536,7 +578,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 				if dispatchGates.handlerPauseController != nil {
 					epoch, isPaused := dispatchGates.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
-					lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, lastSeenPauseEpoch)
+					state.lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, state.lastSeenPauseEpoch)
 					if isPaused {
 						emitHeldEvent(ctx, dispatchGates, snapItemBeadID, epoch)
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
@@ -550,10 +592,10 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					Path:            orchestrator.PathQueue,
 					BeadID:          string(snapItemBeadID),
 					DecisionBlocked: dispatchGates.decisionBlocker != nil && dispatchGates.decisionBlocker.IsBeadBlocked(snapItemBeadID),
-					SentinelBlocked: maint.sentinelBlocksDispatch(dispatchGates),
+					SentinelBlocked: state.maintenance.sentinelBlocksDispatch(dispatchGates),
 				})
 				if preLookupErr != nil {
-					wg.Wait()
+					state.wg.Wait()
 					return fmt.Errorf("daemon: workloop: before-lookup admission (queue path): %w", preLookupErr)
 				}
 				if !preLookupVerdict.Admitted {
@@ -580,15 +622,15 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						if dispatchCtx.Err() != nil {
 							return exitClean()
 						}
-						queuePreClaimShowAttempts[preClaimKey]++
-						preClaimAttempts := queuePreClaimShowAttempts[preClaimKey]
+						state.queuePreClaimShowAttempts[preClaimKey]++
+						preClaimAttempts := state.queuePreClaimShowAttempts[preClaimKey]
 						if preClaimAttempts >= maxItemAttempts {
-							delete(queuePreClaimShowAttempts, preClaimKey)
+							delete(state.queuePreClaimShowAttempts, preClaimKey)
 							fmt.Fprintf(os.Stderr,
 								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
 								snapItemBeadID, preClaimAttempts, preClaimErr)
 							markQueueItemFailureReason(ctx, queueStore, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
+							evaluateGroupAdvanceWithOutcome(ctx, state.reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
 							continue
 						}
 						fmt.Fprintf(os.Stderr,
@@ -599,7 +641,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						}
 						continue
 					}
-					delete(queuePreClaimShowAttempts, preClaimKey)
+					delete(state.queuePreClaimShowAttempts, preClaimKey)
 					preClaimRecord = rec
 					preClaimLoaded = true
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
@@ -620,7 +662,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 								"daemon: workloop: bead %s is %s — advancing its queue item to completed rather than failing it "+
 									"(§3.2b QM-002b Class A, hk-rern1)\n",
 								snapItemBeadID, preClaimRecord.Status)
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, true, time.Now())
+							evaluateGroupAdvanceWithOutcome(ctx, state.reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, true, time.Now())
 						} else {
 							if preClaimRecord.Status == core.CoarseStatusInProgress &&
 								ledgerRepair.strandedInProgressResetter != nil &&
@@ -647,12 +689,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 							}
 							if preClaimRecord.Status == core.CoarseStatusInProgress {
 								now := time.Now()
-								for id, exp := range itemRefusedUntil {
+								for id, exp := range state.itemRefusedUntil {
 									if now.After(exp) {
-										delete(itemRefusedUntil, id)
+										delete(state.itemRefusedUntil, id)
 									}
 								}
-								itemRefusedUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
+								state.itemRefusedUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
 							}
 							if queueStore != nil {
 								lq := queueStore.LockForMutation()
@@ -694,15 +736,15 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					BeadLabels:       preClaimRecord.Labels,
 				})
 				if afterLookupErr != nil {
-					wg.Wait()
+					state.wg.Wait()
 					return fmt.Errorf("daemon: workloop: after-lookup admission (queue path): %w", afterLookupErr)
 				}
 				if !afterLookupVerdict.Admitted {
 					if afterLookupVerdict.Message != "" {
 						fmt.Fprint(os.Stderr, afterLookupVerdict.Message)
 					}
-					tickRefusals[snapItemBeadID] = true
-					walkingThisTick = true
+					state.tickRefusals[snapItemBeadID] = true
+					state.walkingThisTick = true
 					continue
 				}
 
@@ -714,7 +756,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					QueueLocalOnly: capturedQueueLocalOnly,
 				})
 				if beforeStampErr != nil {
-					wg.Wait()
+					state.wg.Wait()
 					return fmt.Errorf("daemon: workloop: before-stamp admission (queue path): %w", beforeStampErr)
 				}
 				if !beforeStampVerdict.Admitted {
@@ -730,7 +772,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				{
 					runUUID, uuidErr := uuid.NewV7()
 					if uuidErr != nil {
-						wg.Wait()
+						state.wg.Wait()
 						return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 					}
 					reservedRunID = core.RunID(runUUID)
@@ -765,7 +807,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 					switch reservation.Verdict {
 					case reservationReserved:
-						delete(crossQueueCollisions, queuePreClaimAttemptKey{
+						delete(state.crossQueueCollisions, queuePreClaimAttemptKey{
 							queueID:    snapQueueID,
 							groupIndex: snapGroupIndex,
 							itemIdx:    snapItemIdx,
@@ -777,12 +819,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 							emitter:      basePorts.Emitter,
 							queueStore:   queueStore,
 							projectDir:   baseEnv.ProjectDir,
-							reap:         reapPort,
-							collisions:   crossQueueCollisions,
-							tickRefusals: tickRefusals,
-							refusedUntil: itemRefusedUntil,
+							reap:         state.reapPort,
+							collisions:   state.crossQueueCollisions,
+							tickRefusals: state.tickRefusals,
+							refusedUntil: state.itemRefusedUntil,
 						}, collisionSite, reservation.Collision) {
-							walkingThisTick = true
+							state.walkingThisTick = true
 						}
 						continue
 
@@ -795,7 +837,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s failed at reservation: %s\n",
 								snapItemBeadID, reservation.FailureReason)
 						}
-						evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
+						evaluateGroupAdvanceWithOutcome(ctx, state.reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
 						continue
 
 					case reservationWriteFailed:
@@ -863,7 +905,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 			beadRecord = readyRecords[0]
 
-			if readyPathAttempts[beadRecord.BeadID] >= maxItemAttempts {
+			if state.readyPathAttempts[beadRecord.BeadID] >= maxItemAttempts {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d on br-ready path — skipping (hk-6pspu)\n",
 					beadRecord.BeadID, maxItemAttempts)
 				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
@@ -874,7 +916,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 			if dispatchGates.handlerPauseController != nil {
 				epoch, isPaused := dispatchGates.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
-				lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, lastSeenPauseEpoch)
+				state.lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, state.lastSeenPauseEpoch)
 				if isPaused {
 					emitHeldEvent(ctx, dispatchGates, beadRecord.BeadID, epoch)
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
@@ -888,10 +930,10 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				Path:            orchestrator.PathBrReady,
 				BeadID:          string(beadRecord.BeadID),
 				DecisionBlocked: dispatchGates.decisionBlocker != nil && dispatchGates.decisionBlocker.IsBeadBlocked(beadRecord.BeadID),
-				SentinelBlocked: maint.sentinelBlocksDispatch(dispatchGates),
+				SentinelBlocked: state.maintenance.sentinelBlocksDispatch(dispatchGates),
 			})
 			if readyPreLookupErr != nil {
-				wg.Wait()
+				state.wg.Wait()
 				return fmt.Errorf("daemon: workloop: before-lookup admission (br-ready path): %w", readyPreLookupErr)
 			}
 			if !readyPreLookupVerdict.Admitted {
@@ -910,7 +952,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		if !runIDReserved {
 			runUUID, uuidErr := uuid.NewV7()
 			if uuidErr != nil {
-				wg.Wait()
+				state.wg.Wait()
 				return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 			}
 			runID = core.RunID(runUUID)
@@ -930,17 +972,17 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				if dispatchCtx.Err() != nil {
 					return exitClean()
 				}
-				readyPathAttempts[beadID]++
-				if readyPathAttempts[beadID] >= maxItemAttempts {
+				state.readyPathAttempts[beadID]++
+				if state.readyPathAttempts[beadID] >= maxItemAttempts {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s failed %d times, skipping bead (hk-kupeo): %v\n",
-						beadID, readyPathAttempts[beadID], showErr)
+						beadID, state.readyPathAttempts[beadID], showErr)
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
 				}
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (attempt %d/%d, will retry): %v\n",
-					beadID, readyPathAttempts[beadID], maxItemAttempts, showErr)
+					beadID, state.readyPathAttempts[beadID], maxItemAttempts, showErr)
 				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
@@ -957,12 +999,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		}
 
 		select {
-		case claimSem <- struct{}{}:
+		case state.claimSem <- struct{}{}:
 		case <-dispatchCtx.Done():
 			return exitClean()
 		}
 		claimErr := ledger.ClaimBead(ctx, baseEnv.IntentLogDir, baseEnv.BrTimeoutCfg, runID, claimTID, beadID)
-		<-claimSem
+		<-state.claimSem
 		if claimErr != nil {
 			if dispatchCtx.Err() != nil {
 				return exitClean()
@@ -989,7 +1031,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						ClaimTransitionID: claimTID,
 					}, "claim_dependency_refusal", queue.PreclaimTerminalDependencyRefusal)
 					if finishErr := finishDependencyRefusal(failed, func() {
-						evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false, time.Now())
+						evaluateGroupAdvanceWithOutcome(ctx, state.reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false, time.Now())
 					}); finishErr != nil {
 						return exitFatal(fmt.Errorf("daemon: workloop: %w", finishErr))
 					}
@@ -999,7 +1041,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
 			if queueItemIndex < 0 {
-				readyPathAttempts[beadID]++
+				state.readyPathAttempts[beadID]++
 			}
 			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.TargetBranch, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
 			if queueItemIndex >= 0 && queueStore != nil && queueGroupIdxFd != nil {
@@ -1082,13 +1124,13 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			dispatchedHandle.Remote.Store(true)
 		}
 
-		wg.Add(1)
+		state.wg.Add(1)
 		env := runEnvWithDispatch(baseEnv, runID, beadRecord, capturedQueueName, capturedQueueID,
 			capturedQueueGroupIdx, capturedItemIndex, capturedWorkflow,
 			capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness)
 		rp, runHandles := buildRunBundles(basePorts, handles, env, launchBuilder)
-		go runDispatchedBead(runCtx, ctx, env, rp, runHandles, completionPort, capturedCtx,
-			preSelectedWorker, isLocalDispatch, &wg, runCancel)
+		go runDispatchedBead(runCtx, ctx, env, rp, runHandles, state.completionPort, capturedCtx,
+			preSelectedWorker, isLocalDispatch, &state.wg, runCancel)
 	}
 }
 

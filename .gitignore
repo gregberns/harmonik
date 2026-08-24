@@ -230,3 +230,13 @@ scripts/.reachability.baseline.tmp.*
 #
 # Root-anchored so it cannot hide a tmp/ directory inside a package's testdata.
 /tmp/
+
+# A compiled judge binary at the PROJECT ROOT only. scripts/lint-allow.sh builds
+# tools/lintreport into a mktemp dir and deletes it on exit, so the sanctioned
+# path never puts one here. A hand-run `go build -o lintreport ./tools/lintreport`
+# does, and on 2026-08-24 the daemon's residual-delta sweeper committed the
+# resulting 4.2 MB Mach-O to the integration branch (ac26f67c8) with a message
+# that named nothing about it.
+#
+# Root-anchored so it cannot hide the tools/lintreport package directory.
+/lintreport

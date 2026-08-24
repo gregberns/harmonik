@@ -45,6 +45,17 @@ Applies to whoever writes the citation and to whoever reviews it. A normative do
 anything an agent is expected to act on: `specs/`, `docs/foundation/`, any `SKILL.md`,
 any plan recipe.
 
+**A comment inside a `.go` file is NOT a normative doc, and this section does not
+apply to it.** The list above is the whole list. This exclusion is stated because the
+section was being applied to Go comments anyway, and the cost was measured: over the
+300 commits before 2026-08-23, eight changed five or fewer lines of Go code and twenty
+or more lines of Go comment, five of them re-editing the same two daemon test files —
+a claim corrected, then the correction corrected. A `REQUEST_CHANGES` on comment prose
+spawns a comment-only commit, which draws another review, which falsifies the
+replacement prose. That loop is why this repo carries 90,000 fewer comment lines than
+it did. A wrong comment on code nobody is touching is a defect to file, not a round of
+review to open.
+
 1. **Open the file and read the code before you cite it.** A grep hit, a memory, or a
    prior doc's citation is not evidence. Four false citations shipped this way in one
    session: two named real files that did not contain the idiom claimed (`internal/keeper`
@@ -492,6 +503,17 @@ Findings → flag: `orphaned-reader`
 
 Use these tags in the `flags` array. Invent new tags only when none fits; prefix new
 tags with `x-` to distinguish them from v1 vocabulary.
+
+**A finding whose only remedy is editing comment prose inside a `.go` file raises
+NO flag.** Put it in `notes` and let the author take it or leave it. It never
+produces `REQUEST_CHANGES` on its own, because the only commit that answers it is a
+comment-only commit, which `scripts/comment-only-commit-gate.sh` refuses. Raise such
+a finding when the author is already touching that code; otherwise let it go.
+
+This softens no check on code. A comment carrying a `//go:` directive, one that
+changes what the code does, and the sole documentation of an exported symbol are all
+code and are reviewed as code. Nor does it reach a normative doc: a wrong citation in
+`specs/`, `docs/foundation/` or a `SKILL.md` is flagged exactly as before.
 
 | Tag | When to use |
 |---|---|

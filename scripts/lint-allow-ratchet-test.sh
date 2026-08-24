@@ -207,7 +207,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 5 — reordering and re-commenting change nothing.
+# CASE 10 — reordering and re-commenting change nothing.
 #
 # The verdict is about the SET of pairs. A list that churns on formatting would
 # fail on unrelated edits, and a gate that cries wolf gets switched off.
@@ -223,7 +223,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 6 — a missing allow list fails closed, and does not read as "nothing to
+# CASE 11 — a missing allow list fails closed, and does not read as "nothing to
 # tolerate, so nothing was added".
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
@@ -239,7 +239,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 7 — a merge is judged against the union of its parents.
+# CASE 12 — a merge is judged against the union of its parents.
 #
 # One side adds nothing the other side did not already carry, so the merge
 # introduces no new pair and must pass. Judging a merge against its first
@@ -267,7 +267,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 8 — a FULLY CLEANED list passes.
+# CASE 13 — a FULLY CLEANED list passes.
 #
 # An empty tolerated set is the state this ratchet exists to reach, and the
 # first version of the script failed it: blank lines were dropped by `grep -v`,
@@ -288,7 +288,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 9 — an empty list at HEAD that gains a pair still FAILS.
+# CASE 14 — an empty list at HEAD that gains a pair still FAILS.
 #
 # The guard above must not turn into "an empty base means anything goes".
 # ---------------------------------------------------------------------------
@@ -310,7 +310,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 10 — the override cannot point the parser at executable product code.
+# CASE 15 — the override cannot point the parser at executable product code.
 # A shell script can contain two-field lines by accident; treating it as an
 # allow list turns a configuration mistake into a false pass.
 # ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 11 — the ratchet is actually wired into the inner loop.
+# CASE 16 — the ratchet is actually wired into the inner loop.
 #
 # Every case above is worthless if the step never runs. `make -n` expands the
 # real step list, so a comment naming the script cannot satisfy this.

@@ -7,13 +7,17 @@ import (
 	"strings"
 )
 
-// RunQueueRecover sends a `queue-recover` request for one named queue.
+// RunQueueRecover sends a `queue-recover` (or, with --drop, a `queue-drop`)
+// request for one named queue.
 //
 // Flag args (subArgs is os.Args[3:]):
 //
 //	<name>             required positional: the queue name to recover
 //	--queue <name>     the queue name (flag form, alternative to positional)
 //	--queue=<name>     equals form
+//	--drop             dispose of the failed entries instead of re-arming
+//	                   them — see `harmonik queue --help` for how this
+//	                   differs from a plain recover and from cancel
 //	--project <dir>    project directory (default: cwd)
 //	--project=<dir>    equals form
 //	--json             output raw JSON (shorthand for --format json)
@@ -24,50 +28,24 @@ import (
 // the usage error (hk-wki4e).
 func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	diag := newPrinter(errOut)
-	var queueName string
-	queueNameGiven := false
-	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
-		switch {
-		case args[i] == "--queue" && i+1 < len(args):
-			queueName = args[i+1]
-			queueNameGiven = true
-			return i + 2, true
-		case strings.HasPrefix(args[i], "--queue="):
-			queueName = strings.TrimPrefix(args[i], "--queue=")
-			queueNameGiven = true
-			return i + 1, true
-		}
-		return i, false
-	})
+	queueName, dropFlag, projectDir, outputJSON, ok := parseQueueRecoverArgs(subArgs, errOut, diag)
 	if !ok {
 		return exitTransportError
 	}
 
-	switch {
-	case queueNameGiven && queueName == "":
-		diag.println("harmonik queue recover: --queue was given an empty value; pass a queue name or drop the flag. Nothing was recovered.")
-		return exitTransportError
-	case len(positional) > 0 && positional[0] == "":
-		diag.println("harmonik queue recover: the queue name argument was empty; pass a queue name or drop the argument. Nothing was recovered.")
-		return exitTransportError
-	}
-
-	if queueName == "" {
-		if len(positional) < 1 {
-			diag.println("harmonik queue recover: usage: harmonik queue recover <name>")
-			return exitTransportError
-		}
-		queueName = positional[0]
+	verb, op, renderFn := "recover", "queue-recover", renderQueueRecoverText
+	if dropFlag {
+		verb, op, renderFn = "recover --drop", "queue-drop", renderQueueDropText
 	}
 
 	msg := struct {
 		Op    string `json:"op"`
 		Queue string `json:"queue"`
-	}{Op: "queue-recover", Queue: queueName}
+	}{Op: op, Queue: queueName}
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		diag.printf("harmonik queue recover: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue %s: cannot marshal request: %v\n", verb, marshalErr)
 		return exitTransportError
 	}
 
@@ -79,12 +57,62 @@ func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Write
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			diag.println("harmonik queue recover: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
+			diag.printf("harmonik queue %s: daemon not running (no socket at %s/daemon.sock)\n", verb, harmonikDir)
 		}
 		return earlyExit
 	}
 
-	return handleResponse(resp, out, outputJSON, renderQueueRecoverText)
+	return handleResponse(resp, out, outputJSON, renderFn)
+}
+
+// parseQueueRecoverArgs parses and validates the `queue recover` flag set,
+// including --drop. ok is false when subArgs failed validation and a
+// diagnostic has already been printed to diag.
+func parseQueueRecoverArgs(subArgs []string, errOut io.Writer, diag *printer) (queueName string, dropFlag bool, projectDir string, outputJSON, ok bool) {
+	var queueNameGiven bool
+	projectDir, positional, outputJSON, parsedOK := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
+		switch {
+		case args[i] == "--queue" && i+1 < len(args):
+			queueName = args[i+1]
+			queueNameGiven = true
+			return i + 2, true
+		case strings.HasPrefix(args[i], "--queue="):
+			queueName = strings.TrimPrefix(args[i], "--queue=")
+			queueNameGiven = true
+			return i + 1, true
+		case args[i] == "--drop":
+			dropFlag = true
+			return i + 1, true
+		}
+		return i, false
+	})
+	if !parsedOK {
+		return "", false, "", false, false
+	}
+
+	verb := "recover"
+	if dropFlag {
+		verb = "recover --drop"
+	}
+
+	switch {
+	case queueNameGiven && queueName == "":
+		diag.printf("harmonik queue %s: --queue was given an empty value; pass a queue name or drop the flag. Nothing was done.\n", verb)
+		return "", false, "", false, false
+	case len(positional) > 0 && positional[0] == "":
+		diag.printf("harmonik queue %s: the queue name argument was empty; pass a queue name or drop the argument. Nothing was done.\n", verb)
+		return "", false, "", false, false
+	}
+
+	if queueName == "" {
+		if len(positional) < 1 {
+			diag.printf("harmonik queue %s: usage: harmonik queue %s <name>\n", verb, verb)
+			return "", false, "", false, false
+		}
+		queueName = positional[0]
+	}
+
+	return queueName, dropFlag, projectDir, outputJSON, true
 }
 
 func renderQueueRecoverText(result json.RawMessage, out io.Writer) int {
@@ -122,4 +150,30 @@ func renderQueueRecoverText(result json.RawMessage, out io.Writer) int {
 	default:
 		return exitTransportError
 	}
+}
+
+func renderQueueDropText(result json.RawMessage, out io.Writer) int {
+	var response struct {
+		Queue        string   `json:"queue"`
+		QueueID      string   `json:"queue_id"`
+		Dropped      []string `json:"dropped"`
+		DroppedCount int      `json:"dropped_count"`
+		ArchivePath  string   `json:"archive_path"`
+	}
+	p := newPrinter(out)
+	if err := json.Unmarshal(result, &response); err != nil {
+		p.printf("%s\n", result)
+		return renderExit(p)
+	}
+	if response.Queue != "" {
+		p.printf("dropped: %s\n", response.Queue)
+	}
+	p.printf("removed: %d\n", response.DroppedCount)
+	for _, id := range response.Dropped {
+		p.printf("  %s\n", id)
+	}
+	if response.ArchivePath != "" {
+		p.printf("archived to: %s\n", response.ArchivePath)
+	}
+	return renderExit(p)
 }

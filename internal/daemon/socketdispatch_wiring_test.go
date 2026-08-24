@@ -26,6 +26,7 @@ var frozenRoutableOps = []string{
 	"operator-resume",
 	"queue-append",
 	"queue-cancel",
+	"queue-drop",
 	"queue-dry-run",
 	"queue-list",
 	"queue-recover",
@@ -44,8 +45,8 @@ func TestBuildSocketRouter_FrozenOpSet(t *testing.T) {
 	want := append([]string(nil), frozenRoutableOps...)
 	sort.Strings(want)
 
-	if len(got) != 29 {
-		t.Fatalf("router registered %d ops, want 29: %v", len(got), got)
+	if len(got) != 30 {
+		t.Fatalf("router registered %d ops, want 30: %v", len(got), got)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("router op set drift:\n got: %v\nwant: %v", got, want)
@@ -53,12 +54,12 @@ func TestBuildSocketRouter_FrozenOpSet(t *testing.T) {
 }
 
 // TestSocketSurface_TwoPreBranches statically pins the daemon pre-branch surface:
-// the 29 routable ops + the two pre-branches (subscribe, hook-relay) == the full
-// 30-op protocol surface + the hook-relay envelope. If subscribe ever appears in
+// the 30 routable ops + the two pre-branches (subscribe, hook-relay) == the full
+// 31-op protocol surface + the hook-relay envelope. If subscribe ever appears in
 // the router's Ops(), or the routable count changes, this fails.
 func TestSocketSurface_TwoPreBranches(t *testing.T) {
 	const daemonPreBranchOps = 1 // "subscribe" (hook-relay is keyed on the "type" envelope, not an op)
-	const totalProtocolOps = 30  // the frozen op surface of handleSocketConn's switch
+	const totalProtocolOps = 31  // the frozen op surface of handleSocketConn's switch
 	routable := len(buildSocketRouter(&socketDispatch{}).Ops())
 
 	if routable+daemonPreBranchOps != totalProtocolOps {

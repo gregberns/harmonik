@@ -74,6 +74,8 @@ VERBS
   pause     Pause a named queue (daemon must be running)
   resume    Release a DRAIN pause on a named queue (daemon must be running)
   recover   Re-arm the failed items of a queue paused by FAILURE (daemon must be running)
+  recover --drop  Dispose of a failure-paused queue's failed items instead of
+            re-arming them (daemon must be running); see NOTES
   dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
   set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
@@ -93,6 +95,20 @@ NOTES
   failure pause also marks the failed items, so it needs 'recover', which
   re-arms them. 'resume' against a failure-paused queue is refused and names
   'recover'.
+  'recover' and 'recover --drop' are also not interchangeable. 'recover'
+  re-arms the failed items for another try. 'recover --drop' never re-arms
+  anything: it archives the queue file and drops the entry, for a failure
+  whose bead already finished elsewhere (so re-arming would dispatch it a
+  second time). It refuses unless every failed bead is closed, and unless the
+  failure is the queue's LAST group — a queue with real pending work behind
+  the failure is left alone rather than silently discarded.
+  'cancel' differs from both: it archives the WHOLE queue regardless of
+  status, including any pending or dispatched work, and needs no live
+  daemon. Use it to clear a queue left by a killed daemon. Against a live
+  daemon it also works (it routes through the daemon when one is running),
+  but a live daemon's own dispatch loop is a much more common reason to be
+  looking at a paused queue — reach for 'recover --drop' first when the goal
+  is only to clear a stale failure, not to discard the queue's other work.
 
 EXIT CODES
   0   Success (JSON response to stdout)
@@ -114,6 +130,7 @@ EXAMPLES
   harmonik queue pause investigate
   harmonik queue resume investigate
   harmonik queue recover investigate
+  harmonik queue recover --drop investigate
   harmonik queue cancel
   harmonik queue cancel --force
   harmonik queue set-concurrency 4

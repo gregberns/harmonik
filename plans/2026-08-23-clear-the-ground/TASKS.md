@@ -34,8 +34,10 @@ branch only, `dead-shell-sweep` and `run-goroutine-supervisor` are on `work/char
 | 10 | [`ops-monitor-never-flags-a-stopped-queue`](tasks/ops-monitor-never-flags-a-stopped-queue.md) | P1 | W7 | `hk-ops-monitor-never-flags-a-stopped-queue-nb2zv` | **The health check that is supposed to catch a stopped queue needs the crew ONLINE to fire, which is exactly when nobody is watching.** It also guesses the crew name by stripping a trailing `-q`, so `charlie-batch` never matches, and `main` is on its own suppression list while its header claims to cover `main`. Neither queue in the 2026-08-24 incident would ever have been flagged. Independent of everything else. |
 | 11 | [`red-gate-merges-without-reviewer`](tasks/red-gate-merges-without-reviewer.md) | P1 | W7 | `hk-red-gate-merges-without-reviewer-uhboc` | **A RED commit gate merges anyway when the graph declares no reviewer node.** The defect reproduces in 15 seconds with a test already in the tree — `TestDeterministicGateFail_TellsTheImplementerToFixTheFailure` drives the real cascade over a reviewer-less graph with an always-red gate and gets `Success:true`; it passes today only because it logs the result and asserts nothing. The salvage also returns success with an EMPTY terminal node, which contradicts a normative spec, so this is spec alignment rather than a judgment call. **Load-time validation is the wrong fix** — reviewer-less graphs are legal and shipped; the file says why. Touches `dot_cascade_core.go`, which no live run holds. |
 
-**Eleven rows, plus the thirteen linter rows below.** Two review-gate repairs that outrank everything
-else on the list, one structural change, one test repair, two command-line splits, the rest
+| 12 | [`ops-monitor-ignores-lane-status`](tasks/ops-monitor-ignores-lane-status.md) | P1 | W7 | `hk-uzd5j` | **A previously-inert defect that a 2026-08-24 change ARMED.** The fleet-stall check reads every field in the lane index except the one that says a lane is parked, so a lane parked on purpose fires an IMMEDIATE operator wake. It was harmless only because the lane array was empty; that array was re-seeded and the live index now produces a candidate. Independent of everything else. |
+
+**Twelve rows, plus the thirteen linter rows below.** Two review-gate repairs that outrank everything
+else on the list, one structural change, two test repairs, two command-line splits, the rest
 measurement, governance and review.
 
 ## The lint exclusion-list burn-down — thirteen rows, all feedable

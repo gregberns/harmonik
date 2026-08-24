@@ -113,8 +113,24 @@ echo ""
 #                         `queuewiring.RecoverFailed` refuses any other status.
 #   paused-by-drain    -> `queue resume`   releases the drain pause.
 #                         `queue.ResumeQueueFromDrain` refuses any other status.
-#   paused-by-budget   -> NEITHER VERB.    Both are refused. The queue clears at
-#                         UTC day-rollover, or when its spend ceiling is raised.
+#   paused-by-budget   -> NO VERB CLEARS IT IN PLACE, and one of the two reports
+#                         success while doing nothing. `queue recover` is refused:
+#                         `RecoverFailed` takes only paused-by-failure. `queue resume`
+#                         is NOT refused — `refuseFailureParkedLocked` screens for
+#                         paused-by-failure alone, so resume exits 0, emits
+#                         `operator_resuming`, and leaves the status untouched.
+#                         The only code that returns the queue to ACTIVE is
+#                         `PerQueueSpendMeter.unpauseBudgetPausedQueues`, reached only
+#                         from `rolloverIfNewDayLocked`, whose one caller is the
+#                         spend-accrual subscriber. So it clears when the meter next
+#                         sees a SPEND EVENT on a new UTC day, not at the rollover.
+#                         That makes it SELF-LOCKING: if the paused queue is the only
+#                         capped one, nothing dispatches on it to produce the accrual,
+#                         and waiting never clears it.
+#                         No mutator, no RPC and no CLI flag raises the ceiling in
+#                         place. `queue cancel` then re-submit under the same name with
+#                         a new `spend_cap_usd` does raise it, at the cost of archiving
+#                         the pending items.
 #
 # The selector also matches `complete-with-failures`, which is NOT a queue status
 # today — it is a GroupStatus, and a group reaching it is what sets the queue to
@@ -138,7 +154,7 @@ PAUSED=$(jq -r '.queues[] | select((.status // "") | test("paused|complete-with-
              | . as $q
              | (if   $q.status == "paused-by-failure" then "-> harmonik queue recover --queue \($q.name)"
                 elif $q.status == "paused-by-drain"   then "-> harmonik queue resume --queue \($q.name)"
-                elif $q.status == "paused-by-budget"  then "-> no verb clears this: it lifts at UTC day-rollover, or raise the queue spend ceiling"
+                elif $q.status == "paused-by-budget"  then "-> no verb clears this in place. `queue resume` exits 0 and changes nothing; `queue recover` is refused. It clears only when the spend meter sees a spend event on a NEW UTC day — self-locking if this is the only capped queue. To move now: `queue cancel` then re-submit with a new spend_cap_usd (archives pending items), or resubmit the work elsewhere."
                 elif $q.status == "complete-with-failures" then "-> harmonik queue recover --queue \($q.name)  (DC-010 reserves this name at queue level; a group in this state pauses its queue by failure)"
                 else "-> unrecognised status; read internal/queue/types.go before acting"
                 end) as $next
@@ -165,12 +181,18 @@ echo "## 6. Recent Comms — last 30m (STARTUP.md §2f)"
 # full length would cost more than the bead listing this digest just dropped.
 # A boot digest needs to know WHO talked to WHOM about WHAT. Truncate the body;
 # `harmonik comms log` reads the full text when there is a reason to.
-CLOG=$(harmonik comms log --since 30m --json 2>&1 | tail -40)
+# The command's OWN exit status is captured, not just jq's. Piping to `tail` puts it in
+# PIPESTATUS[0], and without it a failed `comms log` sends its error text into CLOG, jq's
+# `select(.payload)` matches nothing, jq exits 0, and this section prints "Nothing on the
+# bus" — the same false all-clear section 5 exists to warn about, reached by another road.
+CLOG=$(harmonik comms log --since 30m --json 2>&1 | tail -40); CLOG_RC=${PIPESTATUS[0]}
 CLOG_LINES=$(jq -r 'select(.payload) | .payload
         | ((.body // "") | gsub("\n"; " ")) as $b
         | "- \(.from // "?") → \(.to // "?")  [\(.topic // "?")]  \(if ($b|length) > 160 then ($b[0:160] + " …[truncated]") else $b end)"' \
     <<<"$CLOG" 2>/dev/null); CLOG_JQ=$?
-if [[ $CLOG_JQ -eq 0 && -n "$CLOG_LINES" ]]; then
+if [[ $CLOG_RC -ne 0 ]]; then
+  echo "(comms log unavailable — \`comms log\` exited $CLOG_RC. Do NOT read this as a quiet bus.)"
+elif [[ $CLOG_JQ -eq 0 && -n "$CLOG_LINES" ]]; then
   echo "$CLOG_LINES"
 elif [[ $CLOG_JQ -eq 0 ]]; then
   echo "Nothing on the bus in the last 30 minutes."
@@ -213,4 +235,6 @@ echo ""
 
 echo "---"
 echo "_Digest complete — $(date -u +"%Y-%m-%dT%H:%M:%SZ")_"
-echo "_Next: reconcile anything registered-but-offline, then establish a lane per ready initiative._"
+# The footer used to print a "_Next:_" line. Removed 2026-08-24: this script says what is
+# RUNNING and does not say what to do about it. A header that promises that and a footer that
+# breaks it taught every reader that the header was decorative.

@@ -8,7 +8,7 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 5. Post the boot status; then enter the loop.
 
 ## Dispatch loop
-1. Find ready children of the epic (`br ready --limit 0` ∩ epic scope; `--limit 0` always).
+1. Find ready children of the epic, scoped to that epic. `br ready` prints 20 rows and does not say it truncated, so pass `--limit 0` when you need to know the real depth — that is a fact about the tool, not an instruction to read the whole ledger at boot. `beads-cli` owns it.
 2. `harmonik queue submit --queue <queue> --beads …` — YOUR queue, NEVER `main`. Leave every child UNASSIGNED.
 3. Arm `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --json`.
 4. On beads I submit to my queue: never `br close/claim/reopen`, and never pre-set `in_progress` — the daemon owns those terminal writes and fires `epic_completed`. A pre-set status makes `queue submit` refuse the bead (`bead_already_dispatched`, `-32015`, exit 1), so the work never reaches the queue, and a close I make by hand desynchronizes the ledger from the run state, so that event never fires. Neither hazard exists for a bead I fix by hand and submit to no queue: I close that one myself, because nothing else will — `harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. The predicate is what I submitted, never what looks idle.

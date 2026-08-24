@@ -40,16 +40,37 @@ br ready --label clear-the-ground --sort priority --limit 0
 Take the top row. Order is already priority-then-dependency, so there is no judgment here unless
 the operator has said otherwise — stated intent outranks the list.
 
-**2. Pre-screen.** A bead can be open but already done. Skip it if this returns anything:
+**2. Pre-screen.** A bead can be open but already done. **Ask the task file, not the git log.**
 
-```bash
-git fetch origin --quiet
-git log origin/work/alpha-integration-merge --grep "<bead-id>" --oneline
-```
+Every task file in `plans/2026-08-23-clear-the-ground/tasks/` carries a `done-when` list. **Run
+the first item that is a COMMAND.** If it already passes, the work is done and the bead should be
+closed rather than dispatched. If it fails, the bead is live — submit it.
 
-Scope it to that branch, not `--all`. Unmerged branches carry commits that never landed —
-`work/charlie-file-diet` is pushed and still not integrated — and matching one would false-skip a
-bead that is genuinely open.
+Not every first item is runnable, and the exceptions are on the highest-priority rows. The
+review-trailer P0's first item is marked "post-redeploy" and needs a redeployed daemon;
+`run-verb-table` leads with a metric to measure, not a check. **Skip to the first runnable item.
+If none is runnable, treat the bead as live and submit it** — a bead wrongly submitted costs one
+run, and a bead wrongly skipped costs however long nobody notices.
+
+That is the whole pre-screen. It is a direct measurement of the thing you care about, and it
+cannot be fooled by what a commit message happens to say.
+
+> **Do NOT screen with `git log --grep "<bead-id>"`.** It false-skips, and on 2026-08-24 it nearly
+> cost a P0. The planning commits that stock this list quote bead ids in their message bodies, so
+> `50041208c` — a feed-restock commit that touches none of the fix files — matches the
+> review-trailer P0 and reports it as already landed. Measured 2026-08-24: three of the
+> twenty-one ready beads false-match, and one of them is a P0. Three of twenty-one is not
+> "most", and the rule stands anyway — one false skip on a P0 is enough to justify it.
+>
+> The `Harmonik-Bead-ID:` trailer is not the repair either, however reasonable it sounds. Measured
+> on 2026-08-24: **zero of the last 500 commits on the integration branch carry it.** The daemon
+> writes it on run-branch checkpoint commits (`internal/core/releaseclaimcheckpoint.go`), and it
+> does not survive to the integration branch. A predicate that matches nothing is not safer than
+> one that matches too much — it just fails quietly in the other direction.
+>
+> If you want corroboration beyond the done-when check, ask which FILES moved:
+> `git log origin/work/alpha-integration-merge --oneline -- <the files the task file names>`.
+> That is evidence about the code. A message match is evidence about prose.
 
 **3. Submit.**
 
@@ -57,9 +78,21 @@ bead that is genuinely open.
 harmonik queue submit --beads <bead-id> --queue charlie-batch
 ```
 
-Returns a `queue_id` and does not block. **One bead at a time** until the pipeline has landed three
-clean in a row; then two. The daemon has never been driven by this loop before, so widen on
-evidence, not on optimism.
+Returns a `queue_id` and does not block.
+
+**Run at least three at once. Four is this project's configured ceiling** — `max_concurrent` in
+`.harmonik/config.yaml`, which survives restart and auto-revive. It is not a property of the
+daemon: the compiled default is 1, and `BandwidthTuner` re-adjusts the live ceiling every 60
+seconds from rolling token consumption, snapping to 1 during a rate-limit window. **Fewer than
+four in flight is normal under token pressure, not a fault.** Operator directive, 2026-08-24; it
+replaces the "one bead at a time until three land clean" rule this file used to carry, and the
+pipeline has since been driven at four.
+
+Sequence on FILE OVERLAP, not on caution. Two beads whose task files name no Go file in common are
+safe to co-run; two that share one are not. The worked example to copy: the review-trailer P0 and
+the red-gate repair both touch `dot_cascade_core.go`, `dot_cascade_helpers.go` and `workloop.go`,
+so they go in different batches. `tools/lintreport/allow.txt` is TOLERATED contention — refusing to
+co-run on the lint exclusion list would mean never running more than one bead in this programme.
 
 **4. Watch.** Submitting tells you nothing after the fact. Arm a Monitor on:
 
@@ -71,12 +104,20 @@ harmonik subscribe --types run_completed,run_failed,run_stale,queue_paused,heart
 
 ```bash
 git -C /Users/gb/github/harmonik fetch origin --quiet
-git log --oneline origin/work/alpha-integration-merge --grep "<bead-id>"   # expect the commit
-git log --oneline -1 origin/main                                          # expect NO movement
+git log --oneline origin/work/alpha-integration-merge -- <the files the task file names>  # expect a new commit
+git log --oneline -1 origin/main                                                          # expect NO movement
 ```
 
-A commit on the integration branch and a still `main` is a landed bead. Anything else, stop and
-tell the operator.
+Then **re-run the task file's `done-when` checks**. That is the step that actually decides it: a
+commit proves something was written, and the checks prove it works.
+
+A commit that moved the named files, a still `main`, and green done-when checks is a landed bead.
+Anything else, stop and tell the operator.
+
+> Same trap as step 2, and worse here because this is the step the role exists for. `--grep
+> "<bead-id>"` matches any commit whose message mentions the bead — including the planning commits
+> that put it on the list — so it reports a bead as landed when nothing was built. Match on files
+> and confirm with the checks.
 
 **6. Repeat.** Pick the next. The ledger is the record — do not keep a second one; the bead column
 in `TASKS.md` is the planning agent's and it is not yours to edit. When the ready list empties, say

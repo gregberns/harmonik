@@ -170,7 +170,12 @@ what five previous efforts found.
 ## Step 1a — Take the mechanical wins now
 
 **Owner: this session. No judgement calls. LANDED 2026-08-24** in commits
-`2e4e5b5a6` (digest), `1b1462bbf` (tier files), `2e765cf79` (mirror gate).
+`c99dbeaa8` (digest), `081b38b6e` (tier files), `a8e72b909` (mirror gate).
+
+> The three hashes first written here — `2e4e5b5a6`, `1b1462bbf`, `2e765cf79` — are not
+> ancestors of HEAD. They were the history a reviewer sub-agent committed over its own work,
+> which was unwound the same day; tag `pre-unwind-2026-08-24` still marks it. Left visible on
+> purpose: a plan that cites a commit nobody can reach is the failure this program is about.
 
 | Item | Result |
 |---|---|
@@ -424,8 +429,12 @@ ones rejected.
 ## Done means
 
 1. The true starting context of a live captain is recorded, work discovery is out of the boot
-   digest and out of `AGENTS.md`, and the stale tier files are fixed or gone. Verified by a
-   fresh digest byte count against the 90,059-byte baseline.
+   digest and out of `AGENTS.md`, and the stale tier files are fixed or gone. Verified by
+   running `scripts/captain-boot-digest.sh` and reading it: no section enumerates the ledger,
+   and no section names what to work on. **Not by a byte count against a fixed baseline** —
+   the digest reads live fleet data, so its size drifts by design, and three mutually
+   inconsistent figures for the same cut (90,160, 90,059 and 90,647 before; 4,362, 5,012 and
+   4,152 after) are what a fixed baseline produced here. Size was the symptom, never the goal.
 2. A captain's always-loaded corpus is four pages, and its measured cold-boot cost is at most a
    quarter of the Step 1a baseline. Verified by the numbers in `04-boot.md` and
    `07-verification.md`.

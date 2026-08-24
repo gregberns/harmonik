@@ -74,7 +74,9 @@ expect "an absent _skills mirror is allowed"    0 "skill mirrors agree" \
 expect "a missing source tree fails"            1 "NO SOURCES" \
   sh -c 'rm -rf cmd/harmonik/assets/skills'
 
-# Skills ship executables next to their markdown, and //go:embed takes the whole tree.
+# Every shipped source file is markdown today. The sweep is deliberately NOT limited to
+# markdown, because `//go:embed assets` takes the whole tree — so this case guards the
+# first non-markdown asset on the day it lands, rather than describing what ships now.
 expect "drift in a non-markdown asset fails"    1 "DRIFT" \
   sh -c 'printf "#!/bin/bash\n" > .claude/skills/demo/run'
 

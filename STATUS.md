@@ -11,9 +11,13 @@
 > **Corrected 2026-07-30:** this line named `reviewloop.go` as a third file. That file no longer
 > exists. Commit `3cec5afd7` (2026-07-28) retired review-loop mode and deleted its driver, so Phase 3
 > is a two-file unit. `runWorkLoop` also moved out of `workloop.go` into `internal/daemon/scheduler.go`
-> in commit `756b6604c`. The **daemon is intentionally DOWN** (no `harmonik start daemon` process on this
-> machine, checked 2026-07-30). Work lands single-writer and human-reviewed on branch
-> `phase1-session-restart-substrate`.
+> in commit `756b6604c`.
+> **Corrected 2026-08-24:** this line said the **daemon is intentionally DOWN** (checked 2026-07-30).
+> That was six weeks stale. The daemon is UP and dispatching — `harmonik queue status` returns exit 0
+> with four items in flight. The same false claim was corrected further down this file on 2026-08-24
+> and survived here, which is the shape to watch for: a correction applied at one site while the
+> claim it corrects sits twice more in the same document.
+> Work lands single-writer and human-reviewed on branch `phase1-session-restart-substrate`.
 > **Corrected 2026-07-30:** this line called that branch unpushed. It is pushed —
 > `refs/remotes/origin/phase1-session-restart-substrate` exists and the local branch is 10 commits
 > ahead of it. The per-session authority is a `HANDOFF-*.md` file. That file is gitignored and
@@ -52,7 +56,7 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 
 **Corrected 2026-07-30:** this paragraph named the remote-substrate end-to-end run as the critical-path blocker, on bead `hk-538l`. That bead is CLOSED. It closed on 2026-06-21 as proven fixed by a DOT end-to-end run on gb-mbp. Nothing here blocks anything today.
 
-For live lanes (lane → crew → queue → epic), see [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md). **Treat that file as stale:** its own current-truth block is dated 2026-07-22 and describes a dispatching seven-session fleet. The delete-and-rewrite program started 2026-07-27 and the daemon is down.
+For live lanes (lane → crew → queue → epic), see [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md). **Corrected 2026-08-24:** this said to treat that file as stale because its current-truth block was dated 2026-07-22 and the daemon was down. Both halves have lapsed — the block is now dated 2026-08-24 and the daemon is up and dispatching. Read the file.
 
 ### Recently completed (2026-06-20 burst)
 

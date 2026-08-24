@@ -6,7 +6,7 @@ priority: 1
 labels: [observability, gate, clear-the-ground]
 depends_on: []
 blocks: []
-workstream: W1
+workstream: W0
 batch: 1
 ---
 
@@ -17,7 +17,7 @@ between two reviews with nothing noticing. Its proposed fix was a line-count sco
 
 A line-count scoreboard would have been defeated the next day. The comment cut (`028be0740`, 23 Aug)
 removed 14,945 production lines from `internal/daemon` in one commit and changed no architecture.
-`runWorkLoop` went from 1,432 lines to 816 while keeping all 22 parameters and all 158 of its
+`runWorkLoop` went from 1,432 lines to 816 while keeping all 22 parameters and all 161 of its
 cyclomatic complexity. A line-count board would have shown the single largest "improvement" in the
 program's history on a commit that improved nothing structural.
 

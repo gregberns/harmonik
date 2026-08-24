@@ -12,7 +12,7 @@ batch: 2
 
 ## Problem
 
-`internal/daemon/scheduler.go` `runWorkLoop` is 816 lines, cyclomatic complexity 158, and takes **22
+`internal/daemon/scheduler.go` `runWorkLoop` is 816 lines, cyclomatic complexity 161, and takes **22
 parameters** declared on a single source line. It is the largest function and the widest signature in
 the repo, and it drives the whole dispatch loop.
 
@@ -50,9 +50,13 @@ Two moves, in this order:
 2. The loop's mutable state is a named type, not a set of locals.
 3. `internal/daemon` behaviour is unchanged — the existing daemon tests pass without modification to
    their assertions.
-4. The `gocognit`/`cyclop` entries for `runWorkLoop` in `tools/lintreport/allow.txt` are **not**
-   touched. They come out when the complexity falls, in `workloop-extract-pure-decisions`, and not
-   before.
+4. The complexity suppression on `runWorkLoop` is **not** touched. It is the
+   `//nolint:gocognit,cyclop,funlen` directive on the line directly above the function in
+   `internal/daemon/scheduler.go`. (An earlier draft of this task placed it in
+   `tools/lintreport/allow.txt`. It is not there — that list is keyed per file and linter today.
+   `lint-rekey-exclusion-list` is changing the key to name a symbol, but the suppression on this
+   function is the directive either way.) The directive comes out when the complexity actually falls, in
+   `workloop-extract-pure-decisions`, and not before.
 
 ## Limits
 

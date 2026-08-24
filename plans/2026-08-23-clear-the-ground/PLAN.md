@@ -27,17 +27,30 @@ it directly, and its findings are source-verified. Its line-count measurements a
 | `internal/daemon` | 33,566 production lines, 110 files, 414 files total in one flat directory |
 | `internal/core` | 30,208 production lines across **449 files in one flat directory** |
 | `cmd/harmonik` | 24,491 production lines in `package main` |
-| `runWorkLoop` | 816 lines, **22 parameters**, cyclomatic complexity 158 |
+| `runWorkLoop` | 816 lines, **22 parameters**, cyclomatic complexity 161 |
 | Shell scripts | 35,484 lines across 140 files; `scripts/` alone is 30,741 |
 | Makefile | 1,712 lines, 149 targets, references 68 scripts |
-| Lint exclusion list | 580 pairs — 249 daemon, 106 cmd/harmonik, 37 core; 155 are complexity suppressions |
-| Issue ledger | 606 open, 477 bugs, **none closed since 15 August** |
+| Lint exclusion list | 575 pairs (in a 580-line file; five lines are header) — 249 daemon, 106 cmd/harmonik, 37 core; 161 are complexity suppressions, counting `gocognit` 124, `cyclop` 31 and `funlen` 6 |
+| Issue ledger | 626 open, 476 bugs (re-counted 2026-08-23 evening; the "none closed since 15 August" line went stale within hours of being written — Charlie closed beads that same evening) |
 
 **Do not measure this program in lines.** The comment cut removed 14,945 production lines from the
 daemon overnight and changed no architecture. `runWorkLoop` "shrank" from 1,432 lines to 816 with its
-complexity of 158 untouched. Every workstream below states a structural acceptance test instead.
+complexity of 161 untouched. Every workstream below states a structural acceptance test instead.
 
 ---
+
+## W0 — Measure it, and stop the one thing that wedges restart
+
+Two tasks that the rest of the program leans on. Both were written and given issues, and both were
+filed under `W1` — but W1 is the exclusion-list burn-down and neither of these is that. They are
+collected here, and `TASKS.md` and their task files now say `W0`.
+
+- **W0.1 — `structural-scoreboard`.** Standing rule 2 below says a task is not done without a
+  structural acceptance test. This is the thing that measures one. Until it exists, the rule has no
+  instrument and the program cannot tell real progress from a comment deletion. Nothing blocks it.
+- **W0.2 — `dispatch-activation-guard`.** Make it impossible to wire the crash-safe dispatch
+  producer by accident. Cheap, and the thing it prevents can permanently wedge restart. Nothing
+  blocks it.
 
 ## W1 — Unblock file moves, then burn the exclusion list down
 
@@ -46,19 +59,30 @@ says the exclusion list may never gain a pair. A pair is keyed `<path> <linter>`
 mints a new key and reads as new debt. That is what has blocked every extraction.
 
 A rename-aware fix was attempted and reverted on 2026-08-23 because an adversarial review found three
-routes to forge a rename and mint a free exemption. **Do not re-attempt that fix.** The operator's
-ruling makes it unnecessary: change the rule instead of teaching the ratchet to detect renames.
+routes to forge a rename and mint a free exemption. **That attempt left no trace in this repository**
+— checked 2026-08-23 evening across the main checkout and every worktree; one commit has ever touched
+`scripts/lint-allow-ratchet.sh` and it is unrelated. Nobody can now read the reverted code or the
+review that rejected it, so treat the three routes as an unauditable caution. **Do not re-attempt
+that fix** — but the reason is the operator's ruling, which stands on its own: change the rule
+instead of teaching the ratchet to detect renames.
 
 - **W1.1 — Re-key the exclusion list off file paths.** A tolerated finding should be identified by
-  what it is, not where it lives. Key on `<linter> <symbol-or-finding-identity>`; a pure move then
-  changes no key and the ratchet never fires. *Done when:* moving any file between packages with no
+  what it is, not where it lives. The requirement is a property: **the key must contain neither a
+  file path nor a package name.** A pure move then changes no key and the ratchet never fires. Note
+  a package qualifier is still location and does not satisfy this — see the task file, which also
+  carries the collision question the implementer has to answer. *Done when:* moving any file between packages with no
   content change leaves the pair set byte-identical, proved by a test that performs a real move.
 - **W1.2 — Keep the ratchet's one real job.** It must still refuse a genuinely new tolerated finding.
   *Done when:* a deliberately-introduced new finding is still rejected, proved by mutation.
-- **W1.3 — Burn down the centre.** 392 of 580 pairs sit in `daemon`, `cmd/harmonik` and `core`. Fix
-  the findings; do not re-tolerate them. Order: `gosec` (106 — these are security findings we are
-  currently ignoring), then `errcheck` (45), then `unused` (36). *Done when:* each is zero in the
-  three centre packages.
+- **W1.3 — Burn down the centre. NOT YET A TASK FILE AND NOT YET AN ISSUE** (noted 2026-08-23
+  evening). It is named in the order below and nothing tracks it, so as written it will silently
+  never start. It is also the largest single piece of W1, and it wants splitting per linter before
+  anyone picks it up. 392 of 575 pairs sit in `daemon`, `cmd/harmonik` and `core`. Fix
+  the findings; do not re-tolerate them. Order: `gosec` first — these are security findings we are
+  currently ignoring — then `errcheck`, then `unused`. **Scoped to the three centre packages the
+  counts are 70, 40 and 27**, not the 106, 45 and 36 an earlier draft gave; those are whole-tree
+  figures and they oversize the work by about 40%. *Done when:* each is zero in the three centre
+  packages.
 - **W1.4 — Leave the complexity suppressions for last, on purpose.** The 155 `gocognit`/`cyclop`
   entries are a symptom of W2 and W3. They should disappear because the functions got smaller, never
   because the finding got fixed in place.
@@ -70,7 +94,7 @@ W1.1 blocks W3 and W4. Nothing else waits on it.
 **Nobody is doing this.** Charlie is on the instruction corpus, not the run machine. This is the
 work item the operator named first and it currently has no owner.
 
-The target is not line count. It is: 816 lines, 22 parameters on one signature, complexity 158,
+The target is not line count. It is: 816 lines, 22 parameters on one signature, complexity 161,
 driving the whole dispatch loop.
 
 - **W2.1 — Collapse the 22 parameters into named state.** Thirteen of them are already `*Port`
@@ -78,13 +102,17 @@ driving the whole dispatch loop.
   across seven files. They are one thing. *Done when:* the signature is under 6 parameters and the
   loop's mutable state is a named type, not a stack frame.
 - **W2.2 — Extract one pure decision at a time.** Each extraction must come with a table test that a
-  deliberate mutation proves observes the production path. *Done when:* complexity is under 30 and
-  each extracted decision has a test that fails when the decision changes.
+  deliberate mutation proves observes the production path. *Done when:* `runWorkLoop` is under all three
+  ceilings that apply to it — `cyclop` 15, `gocognit` 20, `funlen` 100 lines and 60 statements —
+  and each extracted decision has a test that fails when the decision changes. It measures 161, 505
+  and 384 statements today. See the task file: the numbers are invisible until the `//nolint`
+  directive above the function is stripped.
 - **W2.3 — Same treatment for the next four.** `run() int` (770 lines), `runBeadSubcommandIO` (540),
   `beadRunOne` (501), `driveDotWorkflow` (495). Serialize these behind one owner — they touch the
   same files and parallel lanes will collide.
 
-**Acceptance for the whole workstream is the complexity number, not the line count.**
+**Acceptance for the whole workstream is the three complexity ceilings, not the line count.**
+`funlen` counts statements as well as lines, so deleting comments moves none of them.
 
 ## W3 — Break `internal/core` into real packages
 
@@ -147,6 +175,11 @@ Two separate things, both operator-raised.
   exclusion in `.claude/skills/agent-reviewer/SKILL.md` only. `.claude/agents/agent-reviewer.md` is
   1,936 bytes short and still enforces the retired rule, so every spawned reviewer sub-agent is
   currently manufacturing comment-only commits. *One file.*
+
+  **Overlaps W8, checked 2026-08-23 evening.** Charlie's branch edits this same file, but only to
+  swap a script path in the `APPROVE` paragraph; it does not touch the comment rule. So this is real
+  work, it is not already done, and the two edits sit in different parts of the file. Whichever lands
+  second resolves the overlap. This task is dispatched on `charlie-q`.
 - **W7.2 — Check it is any good, and check it travels.** The operator's concern: other projects will
   need their own reviewer, so harmonik's protocols must not be baked into it. Report which parts are
   general review judgement and which are harmonik-specific, and whether the split is clean enough
@@ -157,10 +190,20 @@ Two separate things, both operator-raised.
 
 ## W8 — Instruction corpus
 
-Charlie has this in flight — 13 skill files modified and uncommitted in its worktree. **Do not touch
-those files from another lane.**
+**Corrected 2026-08-23 evening. Charlie's work is committed, not in flight.** It is 4 commits on the
+branch `work/charlie-file-diet`, 129 files, +9,088/-16,718, and the worktree is clean. W8.1 is a
+merge someone has to perform, not a lane anyone is waiting on.
 
-- **W8.1 — Land Charlie's work.**
+The merge is **not** a fast-forward any more. Both branches have moved since they parted at
+`aa423dcc0`: the integration branch gained two docs-only commits, and one file is edited on both
+sides — `.harmonik/crew/missions/charlie.md`. Expect to resolve that one file by hand.
+
+**The merge is gated on the red merge gate, which is an operator call** — see the handoff. Charlie's
+whole `internal/daemon` diff is one path-helper swap and a comment, so it is almost certainly not the
+cause, but the repo rule says a timeout never approves.
+
+- **W8.1 — Merge `work/charlie-file-diet` into the integration branch.** Not a fast-forward; one
+  file conflicts. Gated on the merge-gate ruling.
 - **W8.2 — Document the three structural causes** so the re-measure has something to check against:
   (1) four physical copies, only two governed; (2) `AGENTS.md`'s load map and the agent manifests are
   two independent, disagreeing specifications of what each role loads — neither is a superset of the
@@ -173,18 +216,23 @@ those files from another lane.**
 
 ## Order
 
-**Start now, no dependencies, parallel:** W1.1+W1.2 (one owner), W2 (one owner), W4.1, W5.1, W6, W7.
+**Start now, no dependencies, parallel:** W0.1, W0.2, W1.1+W1.2 (one owner), W2 (one owner), W4.1, W5.1, W6, W7.
 
-**After W1.1 lands:** W3, W4.2, W1.3.
+**After W1.1 lands:** W3, W4.2, W1.3 — and W1.3 needs writing up first; see above.
 
-**Charlie continues on W8 alone.** Nothing else touches `.claude/skills/` or `.harmonik/agents/`.
+**W8 is a merge, not a lane.** Charlie's instruction-corpus work is already committed on its own
+branch and waits only on the merge-gate ruling. The "nothing else touches `.claude/skills/` or
+`.harmonik/agents/`" freeze is lifted — there is no uncommitted work left to protect. W7.1 edits a
+file that branch also edits; see W7.1 for why that is safe.
 
 **Serialize W2 under a single owner.** It and W4.3 touch the same functions.
 
 ## Staffing
 
-Queues are not being used; agents work tasks directly. This plan assumes hand-run lanes and
-sub-agents, not queue dispatch. Fixing the queue is not in this plan.
+**Corrected 2026-08-23 evening: the queue is in use.** Charlie now runs as a queue manager and is
+dispatching these issues through `charlie-q`. Tasks must therefore be self-contained enough for an
+implementer that reads the task file and nothing else. If a task file is ambiguous, that is a defect
+in the task file, not a question for the implementer.
 
 ## Standing rules for this program
 

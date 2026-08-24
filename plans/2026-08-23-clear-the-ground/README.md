@@ -4,7 +4,7 @@ Three files matter, and they have different jobs.
 
 | Path | What it is | Who reads it |
 |---|---|---|
-| `PLAN.md` | Why this program exists and what the eight workstreams are. Changes rarely. | Anyone picking up the program |
+| `PLAN.md` | Why this program exists and what the nine workstreams are. Changes rarely. | Anyone picking up the program |
 | `TASKS.md` | The semi-ordered list of tasks that are **ready to run**. | Charlie — this is the processing list |
 | `tasks/` | One file per named task. Self-contained, shaped to become a bead. | Charlie, and whoever implements |
 
@@ -29,7 +29,7 @@ priority: 0 | 1 | 2 | 3
 labels: [...]
 depends_on: [<slug>, ...]      # other task slugs, or [] when free to start
 blocks: [<slug>, ...]
-workstream: W1..W8
+workstream: W0..W8
 batch: <n>
 ---
 

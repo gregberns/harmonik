@@ -328,6 +328,10 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		switch eventType {
 		case core.EventTypeBeadClosed, core.EventTypeRunCompleted, core.EventTypeRunFailed, core.EventTypeOutcomeEmitted:
 			observe(string(eventType))
+		default:
+			// The fixture observes four terminal types on purpose. Every other
+			// event type is not interesting here, and naming them would make
+			// this test churn each time the registry gains a type.
 		}
 	}}
 

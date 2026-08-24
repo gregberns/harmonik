@@ -152,7 +152,7 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 		}
 	}
 
-	if prepOut := prepareInitialMerge(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, &mainTip); prepOut != nil {
+	if prepOut := prepareInitialMerge(ctx, wtPath, projectDir, runID, bus, beadID, runBranch, targetBranch, &runTip, &mainTip); prepOut != nil {
 		return *prepOut
 	}
 
@@ -182,7 +182,7 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 		}
 		if adv.retry {
 			mainTip = adv.newMainTip
-			if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, mergePrepareNonFFRetry, pushAttempt); prepOut != nil {
+			if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, bus, beadID, runBranch, targetBranch, &runTip, mainTip, mergePrepareNonFFRetry, pushAttempt); prepOut != nil {
 				return *prepOut
 			}
 			continue
@@ -217,7 +217,7 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 		}
 
 		mainTip = co.newMainTip
-		if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, co.retryKind, pushAttempt); prepOut != nil {
+		if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, bus, beadID, runBranch, targetBranch, &runTip, mainTip, co.retryKind, pushAttempt); prepOut != nil {
 			return *prepOut
 		}
 	}
@@ -263,9 +263,9 @@ func resolveMergeTips(ctx context.Context, projectDir, runBranch, targetBranch, 
 	return rt, mt, nil
 }
 
-func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip, mainTip *string) *Outcome {
+func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, runBranch, targetBranch string, runTip, mainTip *string) *Outcome {
 	if _, statErr := os.Stat(wtPath); statErr == nil {
-		DiscardDirtyChurn(ctx, wtPath)
+		DiscardDirtyChurn(ctx, wtPath, projectDir, runID, bus, beadID)
 		// The step after this one deletes untracked files, so a save that failed
 		// has to stop the merge here. Let it through and `git clean -fd` removes
 		// exactly the authored files the save did not capture. Refs hk-33u5r.
@@ -285,7 +285,7 @@ func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID c
 					residualErr),
 			}
 		}
-		CleanUntrackedFiles(ctx, wtPath)
+		CleanUntrackedFiles(ctx, wtPath, projectDir, runID, bus, beadID)
 
 		if out, rebaseErr := rebaseOntoTarget(ctx, wtPath, targetBranch); rebaseErr != nil {
 			gitRebaseAbort(ctx, wtPath)
@@ -621,7 +621,7 @@ func gitUpdateRefBestEffort(ctx context.Context, dir, branch, sha string) {
 	}
 }
 
-func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip *string, mainTip string, kind mergePrepareKind, pushAttempt int) *Outcome {
+func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, runBranch, targetBranch string, runTip *string, mainTip string, kind mergePrepareKind, pushAttempt int) *Outcome {
 	conflictReason := "rebase_conflict_on_non_ff_merge_retry"
 	droppedReason := "rebase_dropped_commits_on_non_ff_merge_retry"
 	if kind == mergePreparePushRetry {
@@ -630,7 +630,7 @@ func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.Ru
 	}
 
 	if _, statErr := os.Stat(wtPath); statErr == nil {
-		DiscardDirtyChurn(ctx, wtPath)
+		DiscardDirtyChurn(ctx, wtPath, projectDir, runID, bus, beadID)
 		if residualErr := CommitResidualDelta(ctx, wtPath, runID); residualErr != nil {
 			return &Outcome{
 				Success: false,

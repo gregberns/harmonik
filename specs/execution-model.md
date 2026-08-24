@@ -8,10 +8,10 @@ requirement-prefix: EM
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.11.0
+version: 0.11.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-13
+last-updated: 2026-08-24
 depends-on:
   - architecture
 ---
@@ -1019,6 +1019,11 @@ steps BEFORE calling `CloseBead`:
    failure). If worktree creation fails, the step is skipped (best-effort
    fallback).
 
+   `git rebase` refuses to start in a dirty worktree, so the daemon cleans the
+   run worktree before it rebases. Two of those cleanup steps destroy
+   uncommitted work, and each one MUST report what it destroyed: EM-072 governs
+   the churn revert, and EM-073 governs the untracked-file clean.
+
 3. **Fast-forward check.** Resolve the current tip SHA of `main` via
    `git rev-parse refs/heads/main`. If `main` is an ancestor of the run-branch
    tip (i.e., the merge is a fast-forward), proceed to step 4. If `main` is NOT
@@ -1206,6 +1211,164 @@ but it is a real hole, not a clean fallback.
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 Refs: hk-4goy3, hk-my7y8, hk-7qmpp
+
+#### EM-072 — The pre-rebase churn revert MUST name the uncommitted edits it destroys
+
+Tags: mechanism
+
+Step 2 of §4.12.EM-052 cleans the run worktree before it rebases. The first
+cleanup step reverts the daemon-owned and agent-owned churn paths with
+`git checkout -- <path>`. The churn paths are the allowlist EM-054 forbids
+narrowing — `IsHarmonikChurn` in `internal/runmerge`, which covers `.harmonik/`,
+`.claude/`, `.beads/issues.jsonl`, and `AGENT_COMMS.md`. The revert acts on the
+churn paths that `git status --porcelain` reports as tracked changes. It does
+not act on an untracked churn file, and EM-073's clean is what removes one.
+
+`git checkout -- <path>` restores the content of the INDEX. The content it
+destroys is therefore the UNSTAGED edit on that path, and nothing else. The
+revert MUST stay, because the rebase cannot start without it. The revert MUST
+NOT destroy that edit in silence.
+
+Before the first `git checkout` of a cleanup runs, the daemon MUST do the
+following:
+
+1. Name the churn paths that carry an unstaged edit, with `git diff
+   --name-only` and no commit argument. A path with no unstaged edit loses
+   nothing to the revert. `git diff HEAD` is the wrong comparison here, because
+   it also names paths whose content the revert keeps.
+2. Read those edits with `git diff --binary` and write them to a recovery
+   artifact (see "Recovery artifacts" below). `--binary` is required, or a
+   binary churn file gives a stub that `git apply` cannot use.
+3. Write a warning to standard error. The warning MUST name the paths and the
+   artifact. The base of the artifact is the run worktree INDEX, so the warning
+   MUST tell the reader to apply it with `git apply -3`.
+4. Emit `run_worktree_churn_edits_discarded` on the bus, carrying `run_id`,
+   `bead_id`, `worktree_path`, the discarded `paths`, and the `recovery_patch`
+   location. `recovery_patch` is empty when no artifact was written.
+
+Apply this artifact on the machine that ran the merge. The preimage of the diff
+can be a blob that lives in that machine's object store and in no clone of it.
+The artifact also does not promise a clean restore in every case. When a churn
+path carried an unstaged edit only, `git apply` and `git apply -3` both restore
+it, in the originating repository and in a clone. When the path carried a staged
+edit as well, `git apply -3` restores it WITH CONFLICTS in the originating
+repository and fails outright in a clone. The event names the loss. It does not
+promise the loss is undone.
+
+When no churn path carries an unstaged edit, the obligation is a no-op and the
+daemon MUST NOT emit the event. That is the ordinary case: a churn file rewritten
+to the same content, or changed only in the index, loses nothing to the revert.
+
+The daemon MUST emit the event even when step 2 failed. A revert that destroyed
+work and saved none of it is the case an operator most needs to hear about, so
+the report MUST NOT depend on the file.
+
+Every step above is best effort. The daemon MUST write each failure to standard
+error, and MUST NOT fail the merge on it. A merge that failed because a rescue
+failed would be a new outage on a path that worked before.
+
+This cleanup runs once per rebase attempt, not once per merge. The daemon
+prepares a rebase again on each non-fast-forward retry and on each push retry,
+and the churn paths get dirty again between attempts by design. One merge can
+therefore emit this event more than once, and each emission MUST name its own
+artifact.
+
+The report is not a recovery. The reverted edit does not reach the merge target.
+The merge ships without it, and a person decides what to do with the artifact.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+Refs: hk-nqvqr
+
+#### EM-073 — The pre-rebase untracked clean MUST name the files it deletes
+
+Tags: mechanism
+
+The last cleanup step before the FIRST rebase of a merge deletes the untracked
+non-ignored files in the run worktree with `git clean -fd`. The clean MUST stay,
+for the reason EM-072 gives. It MUST NOT delete those files in silence.
+
+By the time the clean runs, the daemon has already committed the residual delta
+onto the run branch (`CommitResidualDelta` in `internal/runmerge`), and that
+commit stages everything except `.claude/` and `.harmonik/`. The files that
+reach the clean are therefore the files that exclusion holds back, plus any
+untracked churn file the revert does not touch. A `.claude/` file can hold a
+credential, which is why the exclusion exists and why it stays.
+
+Before `git clean -fd` runs, the daemon MUST do the following:
+
+1. Name the files the clean will delete, with `git ls-files --others
+   --exclude-standard`. The daemon MUST read the list NUL-separated, so a path
+   that holds a space or a quote survives the read. `git clean` and `git
+   ls-files --exclude-standard` read the same exclude rules, so a gitignored
+   file is neither named nor deleted.
+2. Read each named file as an add-this-file patch, with `git diff --no-index
+   --binary -- /dev/null <path>`. `git diff --no-index` exits non-zero when the
+   two inputs differ, which is true of every file here, so the daemon MUST read
+   the output and MUST NOT read the exit status. A file the daemon cannot read
+   MUST NOT stop the rescue of the others. The daemon MUST write the patches of
+   one clean into ONE recovery artifact. Because every patch in it adds a file
+   against `/dev/null`, the artifact needs no base and a reader applies it with
+   plain `git apply`, never with `git apply -3`.
+3. Write a warning to standard error. The warning MUST name the files, the
+   artifact, and every file the artifact does not hold.
+4. Emit `run_worktree_untracked_files_removed` on the bus, carrying `run_id`,
+   `bead_id`, `worktree_path`, the deleted `paths`, the `unsaved_paths`, and the
+   `recovery_patch` location.
+
+When the worktree holds no untracked non-ignored file, the obligation is a no-op
+and the daemon MUST NOT emit the event.
+
+`paths` MUST name every file the clean deletes, and that includes a file the
+daemon could not read at step 2. `unsaved_paths` MUST name the entries of
+`paths` that the artifact does NOT hold. It is usually empty. The two fields
+together are what makes a partial save legible as one: without `unsaved_paths`
+the event names a deleted file beside a non-empty `recovery_patch` that does not
+hold it, and reads as a save that happened. A non-empty `recovery_patch`
+therefore holds the files in `paths` that are not in `unsaved_paths`, and
+nothing more. An empty one holds nothing, whatever `unsaved_paths` says. Naming
+the loss is the first duty. The artifact is the second one.
+
+The daemon MUST emit the event even when no artifact was written, and every step
+is best effort. Both rules hold for the reasons EM-072 gives.
+
+This clean runs at most ONCE per merge. Only the first rebase preparation cleans
+untracked files. A retry preparation reverts the churn paths, commits the
+residual delta, and rebases. Do not write a consumer that expects one of these
+events per rebase attempt.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+Refs: hk-4q6ah
+
+**Recovery artifacts (EM-072 and EM-073).** Both cleanups MUST write the rescued
+content under `.harmonik/recovery/` in the PROJECT repository root, and never
+inside the run worktree. Most harnesses remove the run worktree with the run, so
+an artifact written inside it dies with the work it holds.
+
+Each write MUST create a NEW file. It MUST NOT truncate an existing artifact,
+and it MUST NOT append to one. The daemon takes the first free name in the
+sequence `<stem>-1.patch`, `<stem>-2.patch`, and so on, and it MUST create that
+file exclusively, so two writers cannot take one name. The daemon MUST bound the
+sequence it will try, so a caller in a retry loop cannot fill the disk. The
+bound is 100 files today.
+
+Appending is the trap this rule exists for, and EM-072 is where it bites. Two
+`git diff` patches for the same path against the same index base do not apply
+when a writer concatenates them. `git apply` refuses the second hunk and
+restores nothing. `git apply -3`, which the EM-072 warning recommends, does
+something worse — it leaves the file conflicted, with markers in it.
+
+The two artifacts carry the same field name and take DIFFERENT apply commands,
+so do not blur them. The EM-072 artifact is a diff against the run worktree
+index, and a reader applies it with `git apply -3` on the machine that ran the
+merge. The EM-073 artifact is a set of add-this-file patches against
+`/dev/null`, it needs no base, and a reader applies it with plain `git apply`.
+
+The directory mode MUST be 0700 and the file mode MUST be 0600. The EM-073
+rescue does not filter by path, so it copies files such as
+`.claude/settings.local.json`, which can hold an authentication token in plain
+text. Operator-readable here means readable by the owner.
 
 ## 4.13 Eager refill obligation
 
@@ -1637,6 +1800,7 @@ All schemas in this spec carry a `schema_version` integer. The compatibility con
 This spec's requirements drive emission of the following events whose names and payload schemas are declared in [event-model.md §8]:
 
 - Run lifecycle — `run_started` (on dispatch against a bead or standalone input), `run_completed` (on success terminal state), `run_failed` (on failure terminal state; payload includes the failure class per §8). All three carry the resolved `workflow_mode` (per §4.3.EM-012a) on their payloads per [event-model.md §8.1]. When the run originated from a queued dispatch per [queue-model.md §4 QM-010..012], all three additionally carry the optional `queue_id` and `queue_group_index` fields per §4.3.EM-015a, §4.3.EM-015b and [event-model.md §8.10].
+- Run-worktree recovery — `run_worktree_churn_edits_discarded` (before the pre-rebase churn revert per §4.12.EM-072) and `run_worktree_untracked_files_removed` (before the pre-rebase untracked clean per §4.12.EM-073). Both carry `run_id`, `bead_id`, `worktree_path`, the affected `paths`, and the `recovery_patch` location, which is empty when no artifact was written. The untracked event also carries `unsaved_paths`, the entries of `paths` the artifact does not hold. This spec owns WHEN each one fires, including the rule that the churn event can fire more than once per merge and the untracked event at most once. [event-model.md §8.1] owns the names, the payload shapes, and the durability class.
 - Review-loop cycle (only when `workflow_mode = review-loop`) — `implementer_resumed` (on every implementer-launch after the first), `reviewer_launched` (on every reviewer-launch), `reviewer_verdict` (after `.harmonik/review.json` is read and validated; carries the RAW agent-reviewer JSON schema v1 fields verbatim, including a `REQUEST_CHANGES` later normalized to approval per §4.3.EM-015e), `iteration_cap_hit` (on the cap-hit close path per §4.3.EM-015e — actionable `REQUEST_CHANGES` only), `review_fixup_stalled` (on the fix-up-stalled early-exit per §4.3.EM-015e), `review_loop_cycle_complete` (exactly once per cycle, before the terminal `run_completed` / `run_failed`). The `no_progress_detected` event is NOT emitted on the review-loop **post-`REQUEST_CHANGES`** path — `review_fixup_stalled` supersedes it there — and is retained for historical traces and for the separately owned `dot`-cascade no-progress signal. [event-model.md §8.1a] step (c) keeps an `otherwise` branch routing a review-loop no-progress detection with no prior `REQUEST_CHANGES` to `no_progress_detected`; that branch is unreachable in `review-loop` mode, because the stall check runs only from iteration 2 onward and reaching iteration 2 is structural proof of a prior actionable `REQUEST_CHANGES` (§4.3.EM-015e). Retiring it is an event-model amendment, not this spec's to make.
 - Queue lifecycle (for the named queue identified by each event while a QueueStore named set is loaded per §7.4) — `queue_submitted` (on per-name queue load), `queue_group_started` (on that queue's group activation per §4.3.EM-015f), `queue_group_completed` (on that queue's group terminal per §4.3.EM-015f; payload's `final_status` is `complete-success` or `complete-with-failures`), `queue_paused` (on that queue's `complete-with-failures` per §4.3.EM-015f), `queue_appended` (on per-name append per [queue-model.md §7]), `queue_item_deferred_for_ledger_dep` (on ledger-blocked items per §7.4). Event names and payload field lists are normative in [event-model.md §8.10].
 - State lifecycle — a `state_entered` event (on entry to a new state) and a `state_exited` event (on exit from a state, prior to transition selection).
@@ -2045,7 +2209,7 @@ Failure classes are emitted as payload fields on run_failed events per [event-mo
 
 ### 10.1 Conformance profiles
 
-**Core (amended — EM-061).** An implementation conforming to Core MUST pass every requirement in EM-001 through EM-046 (including sub-requirements EM-012a, EM-015a, EM-015b, EM-015c, EM-015d, EM-015e, EM-015f, EM-017a, EM-018a, EM-020a, EM-023a, EM-024a, EM-025a, EM-031a, EM-034a, EM-034b, EM-034c, EM-036a, EM-041a, EM-042a, EM-043a, EM-046a, EM-046b) and EM-049 through EM-054 (concurrency primitives §4.11, merge-to-main §4.12), **and EM-055 through EM-059 (`dot`-mode binding §7.5)**, **and EM-066 through EM-067 (no-auto-pull topology + operator-pause fallback gate §4.11)**, plus invariants EM-INV-001, EM-INV-004, and EM-INV-005 (the three invariants surviving the §5 selection test; EM-INV-002, EM-INV-003, EM-INV-006 are retired). New runs use `workflow_mode = dot`. Historic `single` is read-only compatibility, while a legacy `workflow:single` label selects a named no-review DOT graph. **`workflow_mode = review-loop` is RETIRED at v0.10.0 (§4.3.EM-015d) and is NOT a Core conformance obligation.** **For `workflow_mode = dot`, the input contract (§7.5.1.EM-055), dispatch equivalence (§7.5.2.EM-056), validator obligations (§7.5.3.EM-057), and node-type dispatch table (§7.5.4.EM-058) MUST be observed.** Dispatch input MUST be selected from a complete QueueStore snapshot of all named queues per §7.4, restricted to eligible active queues and gated by both daemon-wide `--max-concurrent` and the selected queue's `workers`; every selection advances the QM-067 round-robin cursor. Queue-only is the default for all topologies (per §4.11.EM-066 — hk-8vy18); `br ready` MUST be consulted only when the complete named set is empty, never merely because existing queues are paused, completed, full, or otherwise ineligible. When `--auto-pull` is set, that empty-set `br ready` fallback is a conforming opt-in, gated on operator-pause state per §4.11.EM-067. Per-name submit follows EM-065 after the all named queues duplicate pre-screen of EM-063/EM-064. The `--no-auto-pull` flag is accepted as a no-op back-compat alias. The EM-007 amendment per §4.2 (admitting `handler_ref` on `non-agentic` and `gate` nodes) is normative at Core.
+**Core (amended — EM-061).** An implementation conforming to Core MUST pass every requirement in EM-001 through EM-046 (including sub-requirements EM-012a, EM-015a, EM-015b, EM-015c, EM-015d, EM-015e, EM-015f, EM-017a, EM-018a, EM-020a, EM-023a, EM-024a, EM-025a, EM-031a, EM-034a, EM-034b, EM-034c, EM-036a, EM-041a, EM-042a, EM-043a, EM-046a, EM-046b) and EM-049 through EM-054 (concurrency primitives §4.11, merge-to-main §4.12), **and EM-055 through EM-059 (`dot`-mode binding §7.5)**, **and EM-066 through EM-067 (no-auto-pull topology + operator-pause fallback gate §4.11)**, **and EM-072 through EM-073 (pre-rebase worktree-cleanup reports §4.12)**, plus invariants EM-INV-001, EM-INV-004, and EM-INV-005 (the three invariants surviving the §5 selection test; EM-INV-002, EM-INV-003, EM-INV-006 are retired). New runs use `workflow_mode = dot`. Historic `single` is read-only compatibility, while a legacy `workflow:single` label selects a named no-review DOT graph. **`workflow_mode = review-loop` is RETIRED at v0.10.0 (§4.3.EM-015d) and is NOT a Core conformance obligation.** **For `workflow_mode = dot`, the input contract (§7.5.1.EM-055), dispatch equivalence (§7.5.2.EM-056), validator obligations (§7.5.3.EM-057), and node-type dispatch table (§7.5.4.EM-058) MUST be observed.** Dispatch input MUST be selected from a complete QueueStore snapshot of all named queues per §7.4, restricted to eligible active queues and gated by both daemon-wide `--max-concurrent` and the selected queue's `workers`; every selection advances the QM-067 round-robin cursor. Queue-only is the default for all topologies (per §4.11.EM-066 — hk-8vy18); `br ready` MUST be consulted only when the complete named set is empty, never merely because existing queues are paused, completed, full, or otherwise ineligible. When `--auto-pull` is set, that empty-set `br ready` fallback is a conforming opt-in, gated on operator-pause state per §4.11.EM-067. Per-name submit follows EM-065 after the all named queues duplicate pre-screen of EM-063/EM-064. The `--no-auto-pull` flag is accepted as a no-op back-compat alias. The EM-007 amendment per §4.2 (admitting `handler_ref` on `non-agentic` and `gate` nodes) is normative at Core.
 
 **Deferred extensions (amended — EM-061).** Failure-commit emission (deferred per §4.5.EM-025) and `recoverable-non-idempotent` node-type defaults (§4.2.EM-010) are additive extensions to Core; neither is required to claim Core conformance. **Parallel fan-out in `dot` mode** (multiple concurrent sub-dispatches from a single node) is a deferred extension reserved per §7.5.5.EM-059; the v1 `dot` dispatcher dispatches sequentially. Runtime mutation of `max_concurrent` (§4.11.EM-051) is a deferred extension.
 
@@ -2079,6 +2243,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EM-066 — EM-067 (no-auto-pull topology + operator-pause fallback gate).** Quiet-daemon test: boot a daemon without `--auto-pull` (the default) and submit no queue; verify over a bounded observation window that zero `run_started` events are emitted, no agent subprocess is spawned, and the daemon sits in the `idle_wait_for_queue_submission` branch (EM-066). Historical-topology test: boot a daemon WITH `--auto-pull` with ≥1 ready bead and no queue; verify the `br ready` fallback dispatches `ready[0]` (EM-066 opt-in branch). Nonempty-ineligible-fleet test: boot a daemon WITH `--auto-pull`, install ≥1 named queue while every named queue is paused, completed, full, or otherwise ineligible, and provide ≥1 ready bead; verify `br ready` is not consulted and no fallback dispatch occurs. Sealing test: verify the auto-pull configuration is sealed at startup and not re-read for the daemon's lifetime (parity with EM-051). Pause-gate test (observable outcome): with the fallback enabled (`--auto-pull` set), ≥1 ready bead, no queue, and the daemon's operator-control state driven to `paused` (via the ON-056/ON-057 producer), verify no new `run_started` is emitted while paused — this is the observable EM-067 conformance criterion regardless of whether the primary §7.4 loop-top ON-008 gate or the inline defense-in-depth assertion enforces it — and that on `resume` (state → `running`) fallback dispatch of `ready[0]` resumes (EM-067). Single-source-of-truth test: assert the pause state observed by the fallback gate is the same `operator_pause_status` value (ON-056/ON-057) that drives the queue-level QM-054 transition — not a divergent pause concept.
 - **EM-052 — EM-053 (merge-to-main on success).** Integration test: simulate a successful run on a worktree branch (`run/<run_id>`) with one commit; verify (a) `refs/heads/main` advances to the run-branch tip after Step 9 success branch executes, (b) a push-origin-main attempt is made, (c) `outcome_emitted{kind=approved}` event is emitted before `bead_closed`, (d) `bead_closed` event is emitted after `CloseBead`, (e) `run_completed{success:true}` is the final lifecycle event. Non-FF test: place an out-of-ancestry commit on `main` after the worktree branch is cut AND after the rebase completes; verify (f) `ReopenBead` is called, (g) `outcome_emitted{kind=rejected, reason=non_ff_merge}` is emitted, (h) `CloseBead` is NOT called (EM-053). Rebase test: advance `main` concurrently without conflicts; verify (i) rebase succeeds, (j) `refs/heads/main` advances to the rebased run-branch tip, (k) `outcome_emitted{kind=approved}` is emitted. Rebase-conflict test: advance `main` with a conflicting change; verify (l) `ReopenBead` is called with `rebase_conflict` reason, (m) `CloseBead` is NOT called. Build-gate test (EM-052 step 4a): commit a Go module (`go.mod`) to the initial `main` branch; agent commit introduces a compile error; verify (n1) `merge_build_failed` is emitted, (n2) `ReopenBead` is called, (n3) `CloseBead` is NOT called, (n4) `refs/heads/main` is NOT advanced (rollback fired). Vet-gate test: agent commit introduces a `go vet` failure; verify same assertions (n1)–(n4) with reason containing `go vet`. No-go.mod test: project dir has no `go.mod`; agent commits any file; verify (p) the build gate is skipped, normal success path runs (`CloseBead` called, `refs/heads/main` advances).
 - **EM-054 (working-tree refresh after successful merge).** Integration test: after a successful merge-to-main (EM-052 path), verify that `git status --porcelain` in the project root is empty for files modified by the run-branch commit (i.e., the project working tree reflects HEAD). **Scope test (hk-7qmpp):** seed an uncommitted edit on a tracked path the merged commit does NOT change; after the merge, verify the edit is still present — a tree-wide refresh fails this test, which is its purpose. **Overwrite-naming test (hk-7qmpp):** seed an uncommitted edit on a path the merged commit DOES change; verify (a) the merged content wins, (b) exactly one `working_tree_local_edits_overwritten` event is emitted naming that path, (c) the referenced recovery patch exists and is non-empty. Refresh-failure test: inject a stub that makes the refresh fail; verify (a) `CloseBead` is still called (merge succeeded), (b) a `working_tree_refresh_failed` event is emitted, (c) `ReopenBead` is NOT called.
+- **EM-072 — EM-073 (pre-rebase worktree-cleanup reports).** Churn-discard test: seed an unstaged edit on a tracked churn path in the run worktree, run the merge, and verify (a) the revert still happened (the path matches the committed content), (b) exactly one `run_worktree_churn_edits_discarded` event names that path, (c) the artifact it names exists, and (d) `git apply -3` of that artifact restores the edit in the originating repository, where the seeded edit is unstaged only. Staged-only test: seed a churn edit that is staged and not unstaged; verify no event and no artifact — `git checkout -- <path>` keeps the index content, so the revert destroys nothing. Clean-worktree test: with no dirty churn path, verify no event and no artifact. Repeat test: drive one merge through a rebase retry with the churn path dirty at each attempt; verify each attempt writes its OWN artifact and that each artifact applies on its own — one concatenated artifact fails this test, which is its purpose. Untracked-rescue test: seed an untracked non-ignored file under `.claude/`; verify (a) `git clean -fd` still deleted it, (b) exactly one `run_worktree_untracked_files_removed` event names it, and (c) `git apply` of the artifact recreates every named file with its original content. Partial-rescue test: seed two untracked files under `.claude/` and make one of them unreadable; verify (a) `paths` names both, (b) `unsaved_paths` names the unreadable one only, and (c) the artifact recreates the other one. Ignored-file test: seed a gitignored file; verify the event does not name it and the clean does not delete it. Artifact-mode test: verify the artifact is readable and writable by the owner only. Best-effort test: make the artifact write fail; verify (a) the merge still succeeds, (b) the event is still emitted, and (c) its `recovery_patch` is empty.
 - **EM-055 — EM-059 (`dot`-mode binding §7.5).** The following test obligations apply to the `dot`-mode ingestion and dispatch path:
   - **Round-trip parse (EM-055).** Parse [specs/examples/review-loop.dot] through the §7.5.1 ingestion pipeline; verify the produced §6.1 `Workflow` record has `workflow_id`, `start_node_id`, and `terminal_node_ids` matching the DOT graph-level attributes. Verify that a `.dot` artifact with a missing `workflow_id` attribute fails ingestion before §7.4 starts.
   - **Restart-reparse equivalence (EM-055).** Simulate a daemon restart after `dot` ingestion completes: re-run steps 1–5; verify the produced `Workflow.workflow_id` and `workflow_version` match the pre-restart values. Mutate the artifact on disk between runs; verify the mismatch routes to reconciliation Cat 3 and does NOT silently proceed.
@@ -2150,6 +2315,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-24 | 0.11.1 | agent (hk-nqvqr, hk-4q6ah) | **The two pre-rebase cleanup steps stop destroying uncommitted work in silence (new EM-072, EM-073).** §4.12.EM-052 step 2 cleans the run worktree before it rebases, because `git rebase` refuses to start in a dirty worktree. Two of those cleanup steps destroy uncommitted work and used to destroy it with no record: the churn revert (`git checkout -- <path>`, which restores the index content and so destroys the unstaged edit) and the untracked clean (`git clean -fd`, which deletes the untracked non-ignored files the residual-delta commit excluded — `.claude/` and `.harmonik/`). Both steps STAY. **EM-072** requires the churn revert to name the unstaged edits first, write them to a recovery artifact, warn on standard error with the `git apply -3` idiom the index base needs, and emit the new `run_worktree_churn_edits_discarded` event. **EM-073** requires the untracked clean to list the doomed files NUL-separated, copy them into one add-this-file artifact, warn, and emit the new `run_worktree_untracked_files_removed` event. Both events fire even when the artifact could not be written, because naming the loss matters more than the file, and every step is best effort and can never fail the merge. **A partial save is legible as one:** the untracked event also carries `unsaved_paths`, the entries of `paths` the artifact does not hold, because a file the rescue could not read is still deleted and used to be listed beside a non-empty `recovery_patch` that did not hold it. **The two artifacts take different apply commands and the text keeps them apart:** the churn artifact is a diff against the run worktree index, so a reader applies it with `git apply -3` on the machine that ran the merge, and it restores cleanly only when the path carried an unstaged edit alone; the untracked artifact adds files against `/dev/null`, needs no base, and takes plain `git apply`. **Cadence differs and the text says so:** the churn revert runs once per rebase attempt, so one merge can emit its event more than once; the untracked clean runs at most once per merge, because only the first rebase preparation cleans. **Shared recovery-artifact rules:** `.harmonik/recovery/` in the project root and never in the run worktree, a NEW file per write taken exclusively from a bounded `<stem>-<n>.patch` sequence, 0700 directory and 0600 file. The one-file-per-write rule is load-bearing: two `git diff` patches for one path against the same index base do not apply concatenated — `git apply` restores nothing and `git apply -3` leaves the file conflicted, which is worse. The 0600 mode is load-bearing too: the untracked rescue does not filter by path and copies files such as `.claude/settings.local.json`, which can hold a plaintext token. §6.5 gains a run-worktree-recovery bullet, §10.1 Core adds EM-072 through EM-073, and §10.2 gains a matching obligation with a repeat test and a failed-artifact test. Companion: [event-model.md] v0.7.10, which carries the two §8.1 rows and the §8.9 evidence. No requirement IDs renumbered or retired. Refs: hk-nqvqr, hk-4q6ah. |
 | 2026-08-13 | 0.11.0 | agent (lane alpha, hk-jqz61) | **EM-015b's ordering sentence is reversed to match EM-052, its citation of BI-010 is re-scoped, and §7.4's `finalize_run` pseudocode is corrected to match. No other EM obligation changes.** EM-015b closed by requiring the terminal-transition bead write to FOLLOW the terminal event; §4.12.EM-052 steps 6-8 and §4.12.EM-053 steps 1-3 in this same file require the opposite, as do the §10.2 conformance obligation for EM-052, [run-state-machine.md §7 RSM-021], and the `internal/twinparity` equivalence spine, whose `TerminalKinds` order and `bead_closed -> run_completed` causal edge mechanically fail a stream in the retired order. Both sentences were MUSTs, both were in force, and neither marked the other as amended; EM-015b dates from 0.3.0 (2026-04-24) and the merge-to-main work that established the live order landed at 0.5.1 (2026-05-14, hk-ftyvo) without revisiting it. **The retired order was not merely stale, it was unimplementable alongside the rest of the spec:** EM-052 step 6 requires `run_failed` rather than `run_completed` when `CloseBead` errors, which is impossible if the terminal event must already have been emitted, so an implementer conforming to EM-015b would reintroduce the hk-wfbxf split-brain bug. **The BI-010 citation was separately unsupported and is re-scoped rather than removed:** BI-010 states when a write is legal in terms of run state, and BI-010a classifies writes without ordering them against the terminal event, so EM-015b attributed an ordering rule to a section that has none. The citation stays in the sentence, demoted from sourcing the ordering rule to naming WHICH write is ordered. **§7.4 `finalize_run` is corrected in the same pass** (architect review): it encoded the retired emit-then-write order in both branches under the same BI-010 citation, inside the section that calls itself the normative single source of truth for run termination and that §7.5.2.EM-056 binds `dot` mode to unchanged -- the likeliest site for a reader to re-derive the retired rule. Its success branch now also shows the terminal type being taken FROM the close result, which is the hk-wfbxf property EM-052 step 6 states. The replacement is scoped to a run's own truth-claim `close`/`reopen` against its own terminal event, and explicitly does NOT reach the activity-marker `reset` of [process-lifecycle.md §PL-006h], which legitimately emits `run_failed` before resetting the bead. Code was already correct and is untouched (`internal/runexec` `stepRunFinalizing`). Companion: [beads-integration.md] v0.9.6, which records the same scoping under BI-010a. No requirement IDs added, renumbered, or retired. Refs: hk-jqz61, hk-wfbxf, hk-ftyvo. |
 | 2026-08-05 | 0.10.8 | agent (spec repair, hk-6lt60) | **EM-053a retired. The number is not reusable. No requirement text changes.** EM-053a arrived at 0.10.5 from the second, superseded table of a kerf work whose changelog states that the plan of record wins a disagreement. The plan of record for this file reads "Defines shutdown drain and the immutable Git-backed release claim used to reconstruct unfinished DOT release", and that change landed on 2026-08-04 at 0.10.6 as §4.7 EM-031b. The two rules describe the same restart decision, arrived two days apart, cite neither each other, and share no field: EM-053a names bead, queue item and ladder stage, and EM-031b names dispatch-head SHA, merge-target ref and SHA, and remote endpoint. EM-053a also named no storage medium, so "persist a terminal-recovery record" and "use that record with Git and Beads" posit a third store beside the two authorities of §5 EM-INV-001, which EM-031b explicitly bars. **The number is burned, not freed:** the approved draft uses EM-053a for a DIFFERENT rule, "Shutdown drain of a committed DOT run", which has not landed and MUST take a fresh number when it does. **One clause is recorded as an open gap rather than folded in:** nothing else in `specs/` bars a second queue advance on the restart path, and adding that MUST to EM-031b would put an unimplemented obligation on a requirement that already carries a declared implementation gap. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-04 | 0.10.7 | agent (spec lane a-spec) | **EM-054's rationale stops citing a deleted check. No EM obligation changes.** The §4.12 prose behind EM-054 explained, in the present tense, why the old tree-wide refresh destroyed state invisibly: a pre-merge escape check failed a run on a dirty main root but exempted `.harmonik/` and `.claude/` as expected churn. That check was deleted on 2026-08-04 (commits `8ba6bfb57` and `d6c12a669`), together with the Go symbol this spec named. Three passages are re-aimed. (1) The invisibility rationale moves to the past tense and adds that the deleted check cannot bring the interaction back. (2) The churn allowlist keeps its MUST NOT-narrow rule with a live reason: the allowlist outlived the check as `IsHarmonikChurn` in `internal/runmerge`, and the worktree-state restore path still reads it. The old reason, that a narrower list "would fail nearly every run", died with the check. (3) The refresh-skip passage stops saying the stale state is invisible only inside the exempt region. Nothing reports it on any path now, so the hole is wider than the allowlist and the text says so instead of understating it. The refresh scope, the uncommitted-changes policy, the pre-merge-tip detection rule, the refresh-failure routing, and every §10.2 obligation are UNCHANGED. No requirement IDs added, renumbered, or retired. Companion: [run-state-machine.md] v0.4.0, which carries the decision, and [process-lifecycle.md] v0.7.6. |

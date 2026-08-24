@@ -51,7 +51,7 @@ func TestCommitResidualDelta_CommitsTrackedDeletionAndAllowsRebase(t *testing.T)
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, "code.txt") {
 		t.Fatalf("precondition: expected staged deletion of code.txt; got status:\n%s", status)
 	}
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, "code.txt") {
 		t.Fatalf("discardDirtyChurn must NOT discard the real deletion (hk-i1n7j); got:\n%s", status)
 	}
@@ -116,7 +116,7 @@ func TestCommitResidualDelta_GitignoredUntrackedNotSwept(t *testing.T) {
 	writeFile(t, wtPath+"/code.txt", "code\nagent work\nreview-loop iteration edit\n")
 	writeFile(t, wtPath+"/junk.log", "i am ignored runtime junk\n")
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	commitResidualDeltaOK(t, wtPath, newResidualRunID(t))
 
@@ -155,7 +155,7 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 	}
 	writeFile(t, wtPath+"/.claude/settings.local.json", `{"localOverride":true}`+"\n")
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	runID := newResidualRunID(t)
 	commitResidualDeltaOK(t, wtPath, runID)
@@ -197,7 +197,7 @@ func TestCommitResidualDelta_CapturesUntrackedNewFile(t *testing.T) {
 	writeFile(t, wtPath+"/code.txt", "code\nagent work\nRED test added\n")
 	writeFile(t, wtPath+"/new_source.go", "package green\n\n// authored GREEN, never committed\n")
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	runID := newResidualRunID(t)
 	commitResidualDeltaOK(t, wtPath, runID)

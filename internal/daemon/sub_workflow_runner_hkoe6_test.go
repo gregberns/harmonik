@@ -321,6 +321,9 @@ func TestSubWorkflowRunner_EventsCarryParentRunID(t *testing.T) {
 			if p.RunID != parentRunID {
 				t.Errorf("exited.RunID = %v, want parent RunID %v (SW-005/SW-INV-001)", p.RunID, parentRunID)
 			}
+		default:
+			// This test asserts the parent run id on the two sub-workflow
+			// events only. Other types on the bus are not its subject.
 		}
 	}
 	if !gotEntered {

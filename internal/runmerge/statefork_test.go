@@ -210,7 +210,7 @@ func TestCleanUntrackedFiles_StoppedCleanRunsAgain(t *testing.T) {
 	writeFixtureFile(t, dir, junkName, "build output\n")
 	countPath := stopGitOnceOn(t, "clean", gitStubAnyArgs, "before")
 
-	CleanUntrackedFiles(context.Background(), dir)
+	CleanUntrackedFiles(context.Background(), dir, t.TempDir(), fixtureRunID(t), &eventPayloadCapture{}, core.BeadID("hk-clean"))
 
 	if _, err := os.Stat(junk); err == nil {
 		t.Error("the untracked artifact survived the clean; the rebase that follows would abort on it")
@@ -233,7 +233,7 @@ func TestDiscardDirtyChurn_StoppedCheckoutRunsAgain(t *testing.T) {
 	writeFixtureFile(t, dir, ledgerPath, "churn\n")
 	countPath := stopGitOnceOn(t, "checkout", gitStubAnyArgs, "before")
 
-	DiscardDirtyChurn(context.Background(), dir)
+	DiscardDirtyChurn(context.Background(), dir, t.TempDir(), fixtureRunID(t), &eventPayloadCapture{}, core.BeadID("hk-churn"))
 
 	if got := stateForkRead(t, ledger); got != "committed\n" {
 		t.Errorf("the ledger holds %q; want the committed content back", got)

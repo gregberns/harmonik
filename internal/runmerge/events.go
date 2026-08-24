@@ -79,6 +79,47 @@ func emitWorkingTreeLocalEditsOverwritten(ctx context.Context, bus handlercontra
 	}
 }
 
+// emitRunWorktreeChurnEditsDiscarded names the uncommitted edits the pre-rebase
+// churn revert destroyed, and where the patch that holds them is.
+func emitRunWorktreeChurnEditsDiscarded(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, paths []string, recoveryPatch string) {
+	pl := core.RunWorktreeChurnEditsDiscardedPayload{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		WorktreePath:  wtPath,
+		Paths:         paths,
+		RecoveryPatch: recoveryPatch,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		reportEmitFailure(core.EventTypeRunWorktreeChurnEditsDiscarded, fmt.Errorf("marshal payload: %w", err))
+		return
+	}
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeRunWorktreeChurnEditsDiscarded, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeRunWorktreeChurnEditsDiscarded, emitErr)
+	}
+}
+
+// emitRunWorktreeUntrackedFilesRemoved names the untracked files the pre-rebase
+// `git clean -fd` deleted, and where the patch that recreates them is.
+func emitRunWorktreeUntrackedFilesRemoved(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, paths, unsavedPaths []string, recoveryPatch string) {
+	pl := core.RunWorktreeUntrackedFilesRemovedPayload{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		WorktreePath:  wtPath,
+		Paths:         paths,
+		UnsavedPaths:  unsavedPaths,
+		RecoveryPatch: recoveryPatch,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		reportEmitFailure(core.EventTypeRunWorktreeUntrackedFilesRemoved, fmt.Errorf("marshal payload: %w", err))
+		return
+	}
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeRunWorktreeUntrackedFilesRemoved, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeRunWorktreeUntrackedFilesRemoved, emitErr)
+	}
+}
+
 func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, buildErr error, output []byte) {
 	errMsg := buildErr.Error()
 	if len(output) > 0 {

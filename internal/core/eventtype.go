@@ -109,6 +109,25 @@ const (
 	// Refs: hk-cd8yu.
 	EventTypeImplementerPhaseComplete EventType = "implementer_phase_complete"
 
+	// EventTypeRunWorktreeChurnEditsDiscarded is the
+	// run_worktree_churn_edits_discarded event type. Emitted by the pre-rebase
+	// churn cleanup when it reverts a tracked churn path that carried an
+	// uncommitted edit. The revert stays — the rebase needs a clean worktree —
+	// but the unstaged delta is written to a recovery patch first, and the
+	// payload names both the paths and the patch.
+	// Durability class: O.
+	// Refs: hk-nqvqr.
+	EventTypeRunWorktreeChurnEditsDiscarded EventType = "run_worktree_churn_edits_discarded"
+
+	// EventTypeRunWorktreeUntrackedFilesRemoved is the
+	// run_worktree_untracked_files_removed event type. Emitted by the pre-rebase
+	// `git clean -fd` when it is about to delete untracked non-ignored files.
+	// The files are copied into a recovery patch first, and the payload names
+	// both the files and the patch.
+	// Durability class: O.
+	// Refs: hk-4q6ah.
+	EventTypeRunWorktreeUntrackedFilesRemoved EventType = "run_worktree_untracked_files_removed"
+
 	// EventTypeMergeBuildFailed is the merge_build_failed event type.
 	// Emitted inside lockedMergeRunBranchToMain when go build+vet fails on
 	// the freshly fast-forwarded merged tree, before the push. The update-ref

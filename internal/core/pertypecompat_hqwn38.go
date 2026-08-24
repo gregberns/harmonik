@@ -56,6 +56,9 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeImplementerPhaseComplete, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-o68j3: post-merge build gate event.
 	{TypeName: EventTypeMergeBuildFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-nqvqr / hk-4q6ah: the pre-rebase cleanup names what it destroys.
+	{TypeName: EventTypeRunWorktreeChurnEditsDiscarded, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeRunWorktreeUntrackedFilesRemoved, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	{TypeName: EventTypeImplementerResumed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeReviewerLaunched, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

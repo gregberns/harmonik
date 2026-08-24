@@ -71,6 +71,12 @@ func registerRunLifecycle() {
 	})
 	mustRegister(EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} })
 	mustRegister(EventTypeMergeBuildFailed, func() EventPayload { return &MergeBuildFailedPayload{} })
+	mustRegister(EventTypeRunWorktreeChurnEditsDiscarded, func() EventPayload {
+		return &RunWorktreeChurnEditsDiscardedPayload{}
+	})
+	mustRegister(EventTypeRunWorktreeUntrackedFilesRemoved, func() EventPayload {
+		return &RunWorktreeUntrackedFilesRemovedPayload{}
+	})
 }
 
 func registerControlPoints() {

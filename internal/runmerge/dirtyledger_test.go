@@ -1,14 +1,11 @@
 package runmerge_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 func dirtyLedgerGit(t *testing.T, dir string, args ...string) string {
@@ -83,7 +80,7 @@ func TestDiscardDirtyChurn_AllowsRebase(t *testing.T) {
 		t.Fatalf("precondition: expected dirty .beads/issues.jsonl; got status:\n%s", status)
 	}
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after discardDirtyChurn: expected clean worktree; got:\n%s", status)
@@ -113,7 +110,7 @@ func TestDiscardDirtyChurn_DiscardsClaudeSettings(t *testing.T) {
 		t.Fatalf("precondition: expected dirty .claude/settings.json; got status:\n%s", status)
 	}
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after discardDirtyChurn: expected clean worktree; got:\n%s", status)
@@ -143,7 +140,7 @@ func TestDiscardDirtyChurn_PreservesOtherDirtyFiles(t *testing.T) {
 		`{"hooks":{},"permissions":{"allow":["Read"]}}`+"\n")
 	writeFile(t, filepath.Join(wtPath, "code.txt"), "code\nagent work\nUNCOMMITTED EDIT\n")
 
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 
 	status := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
 	if strings.Contains(status, ".beads/issues.jsonl") {
@@ -181,7 +178,7 @@ func TestDiscardDirtyChurn_NoOpOnCleanWorktree(t *testing.T) {
 	wtPath := dirtyLedgerSetup(t)
 
 	before := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
-	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
+	discardChurnInTest(t, wtPath)
 	after := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
 
 	if before != after {

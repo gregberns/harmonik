@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -74,7 +75,7 @@ func TestPrepareInitialMerge_RebaseStoppedBeforeItStartedRunsAgain(t *testing.T)
 	calls := stopGitOnceOn(t, "rebase", gitStubNonFlagArg, "before")
 
 	out := prepareInitialMerge(context.Background(), wtPath, repoRoot, fixtureRunID(t),
-		fixtureRunBranch, "main", &runTip, &mainTip)
+		&eventPayloadCapture{}, core.BeadID("hk-prepare"), fixtureRunBranch, "main", &runTip, &mainTip)
 	if out != nil {
 		t.Fatalf("prepareInitialMerge = %+v; want the merge to survive one stopped git", *out)
 	}
@@ -100,7 +101,7 @@ func TestPrepareInitialMerge_RebaseStoppedMidRebaseDoesNotRunAgain(t *testing.T)
 	calls := stopGitOnceOn(t, "rebase", gitStubNonFlagArg, "after")
 
 	out := prepareInitialMerge(context.Background(), wtPath, repoRoot, fixtureRunID(t),
-		fixtureRunBranch, "main", &runTip, &mainTip)
+		&eventPayloadCapture{}, core.BeadID("hk-prepare"), fixtureRunBranch, "main", &runTip, &mainTip)
 	if out == nil {
 		t.Fatal("prepareInitialMerge reported success though the rebase never finished")
 	}

@@ -1,14 +1,11 @@
 package runmerge_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 func integArtifactGit(t *testing.T, dir string, args ...string) string {
@@ -81,7 +78,7 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 		t.Errorf("git rebase --abort: %v\n%s", abortErr, out)
 	}
 
-	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
+	cleanUntrackedInTest(t, wtPath)
 
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.bin")); err == nil {
 		t.Fatal("cleanUntrackedFiles should have removed artifact.bin; it still exists")
@@ -111,7 +108,7 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 		t.Fatalf("precondition: expected clean worktree; got:\n%s", beforeStatus)
 	}
 
-	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
+	cleanUntrackedInTest(t, wtPath)
 
 	afterStatus := integArtifactGit(t, wtPath, "status", "--porcelain")
 	if beforeStatus != afterStatus {
@@ -119,6 +116,7 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 			beforeStatus, afterStatus)
 	}
 
+	//nolint:gosec // G304: path is constructed from t.TempDir() in test, not user input
 	content, err := os.ReadFile(filepath.Join(wtPath, "code.txt"))
 	if err != nil {
 		t.Fatalf("ReadFile code.txt: %v", err)
@@ -144,7 +142,7 @@ func TestCleanUntrackedFiles_PreservesGitignored(t *testing.T) {
 	writeFile(t, filepath.Join(wtPath, "keeper.test"), "test binary\n")
 	writeFile(t, filepath.Join(wtPath, "artifact.txt"), "integration artifact\n")
 
-	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
+	cleanUntrackedInTest(t, wtPath)
 
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.txt")); err == nil {
 		t.Error("cleanUntrackedFiles should have removed non-gitignored artifact.txt; it still exists")

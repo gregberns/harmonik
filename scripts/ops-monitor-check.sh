@@ -6,7 +6,7 @@
 #   1a. supervisor-up   — harmonik supervise status --json; file-surface, no daemon needed.
 #                         supervisor-down is [IMMEDIATE]; when BOTH daemon and supervisor are
 #                         down the fleet has no self-healing path (hk-pen9: 7h11m gap).
-#   2. paused-queues    — main queue or active crew queue paused-by-failure
+#   2. paused-queues    — main queue or crew queue paused-by-failure
 #   3. single-mode      — max_concurrent == 1 (throughput bottleneck)
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses;
 #                         suppressed if crew posted an agent_message within 900s (comms
@@ -93,9 +93,7 @@ CAPTAIN_ABSENT_THRESHOLD=600   # seconds the captain may be absent from comms-wh
 
 # Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
 # immediate alert. Add exact names or fnmatch-style globs. Editable here.
-INERT_SUPPRESS_JSON='["main","remote-substrate","chani-q*","duncan-q*","liet-q*","stilgar-q*"]'
-# Queues that are always alert-worthy even when their crew is offline.
-LIVE_ALLOW_JSON='[]'
+INERT_SUPPRESS_JSON='["remote-substrate","chani-q*","duncan-q*","liet-q*","stilgar-q*"]'
 # Re-alert cooldown for the SAME still-active immediate signal (seconds).
 IMMEDIATE_COOLDOWN=1800  # 30 minutes
 # Shorter re-alert cooldown for critical-component down signals (daemon / supervisor / fleet /
@@ -746,7 +744,7 @@ _OM_PY=$(mktemp "${TMPDIR:-/tmp}/ops-monitor-XXXXXX.py")
 # Part 1: imports + variable bindings — shell expansion via heredoc (writing to a
 # file, not a -c arg, so double-quotes in expanded values are passed through safely).
 cat >> "$_OM_PY" << OM_VARS
-import json, sys, os, datetime, fnmatch
+import json, sys, os, datetime, fnmatch, glob
 
 proj               = '$PROJ'
 ts                 = '$TS'
@@ -772,7 +770,6 @@ persistent_immediate_cooldown = int('$PERSISTENT_IMMEDIATE_COOLDOWN')
 ops_critical_count   = int('$OPS_CRITICAL_COUNT')
 ops_critical_elapsed = int('$OPS_CRITICAL_ELAPSED')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
-live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
 qlist_raw          = '''$QUEUE_LIST_JSON'''
 ready_count        = int('$READY_COUNT')
@@ -1179,7 +1176,22 @@ for line in comms_raw.strip().splitlines():
 queues = []
 max_concurrent = 0
 paused_queues  = []
+paused_queue_owners = {}
 ready_unstaffed = []
+
+# Queue names are operator-defined routing keys. Resolve their owners from the
+# durable crew registry instead of deriving a crew name from the queue name.
+queue_owners = {}
+for crew_path in glob.glob(os.path.join(proj, '.harmonik', 'crew', '*.json')):
+    try:
+        with open(crew_path, encoding='utf-8') as crew_file:
+            crew_record = json.load(crew_file)
+        crew_name = crew_record.get('name', '')
+        crew_queue = crew_record.get('queue', '')
+        if crew_name and crew_queue:
+            queue_owners[crew_queue] = crew_name
+    except Exception:
+        pass
 
 if daemon_up and qlist_raw.strip().startswith('{'):
     try:
@@ -1194,16 +1206,14 @@ if daemon_up and qlist_raw.strip().startswith('{'):
             queues.append({'name': qname, 'status': qstatus, 'workers': workers,
                            'pending_items': pending, 'failed_items': failed})
 
-            # Paused signal: alert only when queue is NOT inert AND its crew is
-            # online (or the queue is in the explicit live-allow list).
+            # A stopped non-inert queue needs attention whether its owner is
+            # online, offline, or unknown. An offline owner makes the alert more
+            # important because nobody is present to notice the failure.
             if qstatus == 'paused-by-failure':
                 is_inert = any(fnmatch.fnmatch(qname, pat) for pat in inert_suppress)
                 if not is_inert:
-                    crew_guess    = qname[:-2] if qname.endswith('-q') else qname
-                    is_crew_online = crew_guess in online_crews
-                    is_live_allow  = qname in live_allow
-                    if is_crew_online or is_live_allow:
-                        paused_queues.append(qname)
+                    paused_queues.append(qname)
+                    paused_queue_owners[qname] = queue_owners.get(qname, '')
 
             # Ready-unstaffed: pending items but workers==0 and crew not online
             if pending > 0 and workers == 0 and qstatus not in ('paused-by-failure', 'paused-by-drain'):
@@ -1804,6 +1814,7 @@ snapshot = {
     'single_mode': single_mode,
     'queues': queues,
     'paused_queues': paused_queues,
+    'paused_queue_owners': paused_queue_owners,
     'crew_status': crew_status,
     'stale_crews': stale_signal_crews,
     'ready_unstaffed': ready_unstaffed,

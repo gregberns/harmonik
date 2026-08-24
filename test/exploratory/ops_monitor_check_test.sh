@@ -3,19 +3,19 @@
 #
 # Injects each failure scenario via a stubbed 'harmonik' binary on PATH;
 # asserts correct comms signal tier (immediate vs ≤15m digest), latest.json
-# content, all-green sends nothing, and inert-queue suppression.
+# content, all-green sends nothing, and paused main-queue coverage.
 #
 # DONE-CHECK:
 #   [x] daemon-down          → immediate signal
 #   [x] supervisor-down      → immediate signal (supervisor not running; no auto-revive)
 #   [x] fleet-down           → immediate signal (both daemon and supervisor down; hk-pen9)
-#   [x] paused-queue         → immediate signal (non-inert crew online)
+#   [x] paused-queue         → immediate signal (crew online or offline)
 #   [x] single-mode          → immediate signal (max_concurrent==1)
 #   [x] stale-crew ×2 misses → digest signal
 #   [x] ready-unstaffed      → digest signal
 #   [x] idle-fleet           → digest signal
 #   [x] all-green            → no comms sent
-#   [x] inert-queue suppression (main queue paused → no alert)
+#   [x] main queue paused    → immediate signal
 #   [x] review-gate bypass   → immediate signal (reviewer_launched, NO reviewer_verdict)
 #   [x] review-gate clean    → no flag (reviewer_launched has matching verdict)
 #   [x] review-gate grace    → no flag (fresh reviewer_launched, verdict may be in flight)
@@ -550,7 +550,7 @@ rm -rf "$PROJ"
 
 # ── Test 3: paused-queue (non-inert crew online) — immediate ──────────────────
 echo ""
-echo "=== Test 3: paused-queue (non-inert crew online) — immediate ==="
+echo "=== Test 3: paused-queue (crew-online fixture) — immediate ==="
 CREW_TS=$(ts_ago 10)
 COMMS_WHO='{"agent":"myagent","status":"online","last_seen":"'"$CREW_TS"'"}'
 QLIST='{"queues":[{"name":"myagent-q","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
@@ -575,6 +575,33 @@ fi
 rm -rf "$PROJ"
 
 # ── Test 4: single-mode (max_concurrent==1) — immediate ──────────────────────
+echo ""
+echo "=== Test 3b: charlie-batch paused with owner offline — immediate ==="
+QLIST='{"queues":[{"name":"charlie-batch","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json "$QLIST" \
+  --hk-comms-who-json '' \
+)
+mkdir -p "$PROJ/.harmonik/crew"
+printf '%s\n' '{"schema_version":1,"name":"charlie","queue":"charlie-batch"}' \
+  > "$PROJ/.harmonik/crew/charlie.json"
+OUTPUT=$(run_check "$PROJ")
+assert_contains "offline paused queue stdout IMMEDIATE" "IMMEDIATE" "$OUTPUT"
+assert_contains "offline paused queue names charlie-batch" "charlie-batch" "$OUTPUT"
+assert_json_list_contains "offline paused queue is immediate" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "paused-queue:charlie-batch"
+OWNER=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json'))['paused_queue_owners']['charlie-batch'])")
+assert_eq "offline paused queue owner comes from registry" "charlie" "$OWNER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "offline paused queue: comms sent"
+  assert_contains "offline paused queue comms names charlie-batch" "charlie-batch" "$(cat "$LOG")"
+else
+  fail "offline paused queue: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
 echo ""
 echo "=== Test 4: single-mode (max_concurrent==1) — immediate ==="
 PROJ=$(setup_fixture \
@@ -693,24 +720,24 @@ rm -rf "$PROJ"
 
 # ── Test 8: inert-queue suppression (main queue paused → no alert) ────────────
 echo ""
-echo "=== Test 8: inert-queue suppression (main queue paused) — no alert ==="
-CREW_TS=$(ts_ago 10)
-CW='{"agent":"main","status":"online","last_seen":"'"$CREW_TS"'"}'
+echo "=== Test 8: main queue paused — immediate ==="
 QLIST='{"queues":[{"name":"main","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":2}],"max_concurrent":4}'
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json "$QLIST" \
-  --hk-comms-who-json "$CW" \
+  --hk-comms-who-json '' \
 )
 OUTPUT=$(run_check "$PROJ")
-assert_not_contains "inert suppression: no paused-queue in stdout" "paused-queue" "$OUTPUT"
-assert_json_list_empty "inert suppression: no immediate_signals" \
-  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_contains "main paused queue stdout IMMEDIATE" "IMMEDIATE" "$OUTPUT"
+assert_contains "main paused queue named in stdout" "paused-queue:main" "$OUTPUT"
+assert_json_list_contains "main paused queue is immediate" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "paused-queue:main"
 LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
-  fail "inert suppression: should NOT have sent comms"
+  pass "main paused queue: comms sent"
+  assert_contains "main paused queue comms signal" "paused-queue:main" "$(cat "$LOG")"
 else
-  pass "inert suppression: no comms sent"
+  fail "main paused queue: expected comms send, got none"
 fi
 rm -rf "$PROJ"
 

@@ -463,10 +463,24 @@ func TestRunBranchToTarget_FailedRescueDoesNotStopTheMerge(t *testing.T) {
 // applyRecoveryArtifact applies a churn recovery patch to a worktree with
 // `git apply -3` and returns the error, if any.
 //
-// -3, not a plain apply: the churn patch's base is the run worktree's INDEX,
-// not HEAD, so a plain apply usually fails on context. Three-way needs only the
-// `index <sha>..<sha>` blobs the patch names, and those live in the shared
-// object store.
+// -3 rather than a plain apply, but not because a plain apply fails here: in the
+// repository that ran the merge the revert put the index content back and the
+// patch is cut against that same index, so the file matches the preimage and
+// both commands restore it.
+//
+// EM-072 names `-3` because of the one case a plain apply cannot help at all. A
+// repository whose file no longer matches the preimage, but whose object store
+// still holds the `index <sha>..<sha>` blobs, gets the destroyed content written
+// into the file between conflict markers instead of a refusal. That is a
+// recovery a person finishes by hand, not a restore, which is why EM-072 says it
+// does not promise the loss is undone.
+//
+// `-3` is NOT strictly better, and neither command is the right advice alone.
+// `-3` implies --index, whose check is stat-only and never re-hashes, so it
+// refuses with "does not match index" in states a plain apply handles: measured,
+// after a plain `git reset` the plain apply exits 0 and restores the edit while
+// `-3` exits 1 and touches nothing, and a bare `touch` of a byte-identical file
+// is enough to do the same.
 func applyRecoveryArtifact(t *testing.T, wtPath, projectDir, name string) error {
 	t.Helper()
 	path := filepath.Join(projectDir, ".harmonik", "recovery", name)
@@ -745,5 +759,103 @@ func TestCleanUntrackedFiles_NamesTheFilesItCouldNotSave(t *testing.T) {
 	}
 	if strings.Contains(rescued, "THIS-ONE-IS-LOST") {
 		t.Errorf("the artifact holds content the test believes was unreadable, so it measures nothing")
+	}
+}
+
+// TestDiscardDirtyChurn_StagedPlusUnstagedArtifactRestoresCleanlyInOriginatingRepo
+// is the sensor for a spec claim that was wrong.
+//
+// EM-072 used to say that a churn path carrying a STAGED edit as well as a
+// further unstaged one comes back WITH CONFLICTS from `git apply -3` in the
+// repository that ran the merge. It does not, and the mechanism says why: the
+// revert is `git checkout -- <path>`, which puts the INDEX content back, and the
+// artifact is `git diff --binary` cut against that same index. The file
+// therefore MATCHES the preimage of the diff, so plain `git apply` and
+// `git apply -3` both restore the edit cleanly — staged edit present or not.
+//
+// The claim was believed for long enough to reach the spec and the payload
+// documentation, so a re-reading of the same case has to fail here rather than
+// go back into the text. What a conflicted restore would look like is a file
+// holding markers, which is why the content is compared byte for byte AND read
+// for markers.
+//
+// RED→GREEN: against a revert that restores the COMMITTED content
+// (`git checkout HEAD -- <path>`) the file no longer matches the preimage, and
+// both gates fire — the plain apply fails on context, and `-3` fails by applying
+// WITH CONFLICTS, which is the outcome the retired claim described.
+func TestDiscardDirtyChurn_StagedPlusUnstagedArtifactRestoresCleanlyInOriginatingRepo(t *testing.T) {
+	t.Parallel()
+
+	wtPath := dirtyLedgerSetup(t)
+	projectDir := t.TempDir()
+	bus := newRecordingEmitter()
+
+	// Three contents on one tracked churn path: committed, then staged, then a
+	// further unstaged edit. Only the last one is what the revert destroys.
+	churnPath := filepath.Join(".claude", "settings.json")
+	stagedBody := `{"hooks":{"note":"STAGED-EDIT-SURVIVES-THE-REVERT"}}` + "\n"
+	writeFile(t, filepath.Join(wtPath, churnPath), stagedBody)
+	dirtyLedgerGit(t, wtPath, "add", ".claude/settings.json")
+	unstagedBody := `{"hooks":{"note":"UNSTAGED-EDIT-THE-REVERT-DESTROYS"}}` + "\n"
+	writeFile(t, filepath.Join(wtPath, churnPath), unstagedBody)
+
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath, projectDir,
+		newResidualRunID(t), bus, core.BeadID("hk-nqvqr"))
+
+	var pl core.RunWorktreeChurnEditsDiscardedPayload
+	bus.payload(t, core.EventTypeRunWorktreeChurnEditsDiscarded, &pl)
+	if len(pl.Paths) != 1 || pl.Paths[0] != ".claude/settings.json" {
+		t.Errorf("the event must name the path whose unstaged edit was destroyed; got %v", pl.Paths)
+	}
+
+	artifacts := recoveryArtifacts(t, projectDir)
+	if len(artifacts) != 1 {
+		t.Fatalf("want exactly 1 recovery artifact, got %d: %v", len(artifacts), artifacts)
+	}
+
+	// The revert restores the INDEX, so the staged edit is still there and only
+	// the unstaged one is gone. Without this the two applies below would be
+	// measuring a plain unstaged-only case under a staged-case name.
+	afterRevert := readWorktreeFile(t, wtPath, churnPath)
+	if afterRevert != stagedBody {
+		t.Fatalf("the revert must leave the STAGED content in place\n got: %q\nwant: %q", afterRevert, stagedBody)
+	}
+
+	// Plain `git apply` first, because it leaves the index alone, so the -3 run
+	// below starts from the same index base this one did.
+	if err := applyRecoveryArtifactPlain(t, wtPath, projectDir, artifacts[0]); err != nil {
+		t.Fatalf("plain `git apply` must restore the edit in the repository that ran the merge: %v", err)
+	}
+	assertRestoredWithoutConflict(t, wtPath, churnPath, unstagedBody, "git apply")
+
+	// Back to the post-revert state for the second command. A checkout of the
+	// pathspec restores the index content, which is where the plain apply started.
+	dirtyLedgerGit(t, wtPath, "checkout", "--", ".claude/settings.json")
+
+	if err := applyRecoveryArtifact(t, wtPath, projectDir, artifacts[0]); err != nil {
+		t.Fatalf("`git apply -3` must restore the edit in the repository that ran the merge: %v", err)
+	}
+	assertRestoredWithoutConflict(t, wtPath, churnPath, unstagedBody, "git apply -3")
+}
+
+// assertRestoredWithoutConflict holds both halves of a clean restore: the file
+// holds exactly the destroyed content, and it holds no conflict marker.
+//
+// The marker check is diagnostic rather than detective, and it is kept for that.
+// The exact-equality compare below already rejects a file carrying markers, and
+// `git apply -3` exits non-zero on a conflict, so the caller fails before this
+// helper runs. What the marker loop buys is the failure message: it says the
+// restore CONFLICTED instead of dumping two long JSON bodies that differ, which
+// is the distinction this test exists to make.
+func assertRestoredWithoutConflict(t *testing.T, wtPath, rel, want, how string) {
+	t.Helper()
+	got := readWorktreeFile(t, wtPath, rel)
+	for _, marker := range []string{"<<<<<<<", "=======", ">>>>>>>"} {
+		if strings.Contains(got, marker) {
+			t.Fatalf("%s left a conflict marker %q in %s; file holds:\n%s", how, marker, rel, got)
+		}
+	}
+	if got != want {
+		t.Errorf("%s restored the wrong content\n got: %q\nwant: %q", how, got, want)
 	}
 }

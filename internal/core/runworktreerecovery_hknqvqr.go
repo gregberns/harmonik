@@ -32,13 +32,17 @@ import (
 // which puts the INDEX content back. The content it destroys is therefore the
 // UNSTAGED delta, and that is what RecoveryPatch holds.
 //
-// Apply it with `git apply -3`, on the machine that ran the merge. The patch is
-// cut against the run worktree INDEX rather than against a commit, so its
-// preimage can be a blob that exists in that machine's object store and in no
-// clone of it. When the discarded path also carried a STAGED edit, `-3` applies
-// with conflicts rather than cleanly: the destroyed content is in the file,
-// between markers, and a person has to finish the job. A plain `git apply`
-// restores the ordinary case and refuses that one.
+// Apply it on the machine that ran the merge, where `git apply` and `git apply -3`
+// both restore the edit cleanly: the revert put the index content back and the
+// patch is cut against that same index, so the file matches the preimage.
+//
+// Elsewhere it depends on whether the object store holds the preimage blob. The
+// patch is cut against the INDEX rather than against a commit, so when the
+// discarded path also carried a STAGED edit the preimage is a blob no commit
+// reaches. A clone taken over a transport lacks it, and `-3` refuses there. A
+// clone taken from a path on the same machine hardlinks the object store, keeps
+// the blob, and `-3` applies with conflicts: the destroyed content is in the
+// file, between markers, and a person has to finish the job.
 type RunWorktreeChurnEditsDiscardedPayload struct {
 	RunID        RunID  `json:"run_id"`
 	BeadID       string `json:"bead_id"`

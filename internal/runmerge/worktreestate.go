@@ -255,8 +255,8 @@ func saveChurnEdits(ctx context.Context, wtPath, projectDir string, runID core.R
 	// matters more than the recovery file, and a discard that saved nothing is
 	// the case an operator most needs to hear about.
 	fmt.Fprintf(os.Stderr, "daemon: DiscardDirtyChurn: WARNING: discarding uncommitted edits to %d churn path(s)"+
-		" in the run worktree (bead %s run %s): %s; recovery patch (base is the run worktree INDEX,"+
-		" so apply it with `git apply -3`): %s\n",
+		" in the run worktree (bead %s run %s): %s; recovery patch (apply it with `git apply -3`,"+
+		" on THIS machine: its base is the run worktree INDEX, so the preimage can be a blob no clone has): %s\n",
 		len(edited), beadID, runID.String(), strings.Join(edited, ", "), recoveryPatchNote(patchPath))
 	emitRunWorktreeChurnEditsDiscarded(ctx, bus, runID, beadID, wtPath, edited, patchPath)
 }

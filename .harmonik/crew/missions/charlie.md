@@ -139,9 +139,16 @@ once will collide. One bead at a time satisfies this for free; remember it if yo
 - **Never run `br` from a worktree.** It writes to a ghost ledger and exits 0.
 - **Never redeploy the daemon binary.** The running one is the 15 Aug build and it is signed off.
   Newer is not better here.
-- **Never let anything reach `main`.** `.harmonik/branching.yaml` already sets
-  `lands_on: work/alpha-integration-merge` and lists `main` under `protect_branches`, so a run that
-  resolves to main is refused twice. If you ever find yourself editing that file, stop.
+- **Never let anything reach `main`.** `.harmonik/branching.yaml` sets
+  `lands_on: work/charlie-batch-1`, and `protect_branches` holds `main`, `master` AND
+  `work/alpha-integration-merge`, so a run that resolves to any of the three is refused twice.
+  (An earlier version of this line named the alpha branch as the landing target. That is the
+  RETIRED model — the alpha branch is now a merge target for a tested batch, never a landing
+  target for one bead.)
+  **You edit that file at exactly one moment: the batch turnover in `BATCH-GATE.md` Step 3, with
+  nothing in flight.** Outside that moment, stop. Read the mechanism section of `BATCH-GATE.md`
+  first — an edit to `lands_on` re-targets runs that are ALREADY RUNNING, and an edit to
+  `protect_branches` does nothing at all until the daemon restarts.
 - **At most 3 sub-agents while a bead is in flight.** Daemon-launched sessions and your sub-agents
   share one API rate limit; a wave of sub-agents once queued a daemon run behind it for 56 minutes
   with no error surfaced.

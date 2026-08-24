@@ -33,71 +33,104 @@ target.
 
 ---
 
-## 2. The measured boot budget
+## 2. The boot budget — measured live, and the first attempt was wrong by half
 
-| Source | Always / boot | Bytes | Est. tokens |
-|---|---|---:|---:|
-| **Harness, before harmonik does anything** | | | |
-| `CLAUDE.md` to `AGENTS.md` | always | 23,232 | 5,808 |
-| `~/.claude/CLAUDE.md` | always | 2,094 | 524 |
-| Auto-memory index | always | 1,174 | 294 |
-| Project skill descriptions (17) | always | 7,598 | 1,900 |
-| Global skill descriptions (4) | always | 1,035 | 259 |
-| Built-in skill descriptions (~15) | always | ~7,000 | ~1,750 |
-| Base system prompt and tool schemas | always | — | ~4,000 |
-| **Captain boot, per `STARTUP.md`** | | | |
-| `harmonik agent brief` output | boot | 6,844 | 1,711 |
-| `.harmonik/context/project.yaml` | boot | 2,045 | 511 |
-| `.harmonik/context/captain-lanes.md` | boot | 3,418 | 855 |
-| `.harmonik/context/direction-log.md` | boot | 7,676 | 1,919 |
-| `.claude/skills/captain/STARTUP.md` | boot | 22,204 | 5,551 |
-| `.claude/skills/captain/SKILL.md` | boot | 21,607 | 5,402 |
-| `.claude/skills/orchestrator-rules/SKILL.md` | boot | 5,222 | 1,306 |
-| **`scripts/captain-boot-digest.sh` output** | boot | **90,059** | **22,515** |
-| **Measured total** | | **194,208** | **48,552** |
-| **With estimated harness overhead** | | ~208,000 | **~54,300** |
-| *On demand, if pulled* | | *76,687* | *19,172* |
+**A captain starts at roughly 110,000 tokens before the Step 1a cut, and roughly 74,000
+after it.** Not the 48,500 this section first reported.
 
-A captain starts at roughly **48.5 K tokens measured, 54 K including harness** — about 27 %
-of a 200 K window. Fully loaded, with every on-demand skill pulled, about 73 K.
+The first figure summed file sizes from disk and divided bytes by four. Both halves were
+wrong, and they compounded.
 
-No tokenizer is installed on this machine. Token figures are bytes divided by four, the
-conservative end: these files run 6.3 to 7.6 bytes per word, so a word-based estimate lands
-20 to 25 % lower.
+### What the disk sum could not see: a 39,000-token floor
 
-### The one number that dominates
+Claude Code writes a transcript per session under `~/.claude/projects/`, and the first
+assistant message of a session carries its usage accounting. Summing `input_tokens`,
+`cache_creation_input_tokens` and `cache_read_input_tokens` on that first turn gives the
+whole context before the agent has read anything. Every live crew was keeper-restarted on
+2026-08-24, so all three are fresh boots:
 
-**The boot digest is 57 % of the whole boot, and 87 % of the digest is one section.** Its
-ready-beads section is 78,019 bytes of the digest's 90,059 — 658 rows, because the script
-passes an explicit no-limit flag. Every other section is under 2.2 KB except the kerf map at
-7.1 KB.
+| Agent | First-turn total |
+|---|---:|
+| charlie | 37,924 |
+| charlie (earlier restart) | 39,005 |
+| alpha | 39,111 |
+| bravo (in a worktree) | 35,382 |
 
-Capping that section at the top sixty beads removes about **17,500 tokens**, more than the
-entire captain skill corpus. It is a one-line change to a shell script and it is not an
-instruction problem at all.
+Each session's first user message is a single 94-character command, so that is essentially
+pure overhead. **The floor is about 39,000 tokens at the repo root and 35,400 in a
+worktree, and it is identical for a captain, a crew, and an oversight session** — same
+binary, same repo, same auto-injected files.
 
-### The tax nobody can escape
+This accounting is the one the keeper already uses: `internal/keeper/gauge.go` reads a
+per-agent context file written from Claude Code's own total. Cross-checked at a single
+moment — the gauge said 79,221 and the transcript sum said 79,079.
 
-`AGENTS.md` is 23 KB, and the harness injects it into **every agent in this project** before
-a single command runs. The captain's own load map says a captain does not boot-read it.
-Nothing on the harmonik side can suppress it. Cutting `AGENTS.md` is a fleet-wide saving
-multiplied by every running agent, not a captain-only one.
+Where the floor goes, from a live `/context` in this repo:
 
-### Handoffs, not briefs, are what get expensive
+| Category | Tokens |
+|---|---:|
+| System tools | 11,800 |
+| System tools, deferred | 9,100 |
+| Base system prompt | 3,600 |
+| Connected tool servers | 320 |
+| Custom agent definitions | 270 |
+| **Harness subtotal** | **~25,100** |
+| `AGENTS.md` (8.8 K) + global instructions + memory index | 8,900 |
+| Skill descriptions, 38 of them | 5,000 |
+| **Auto-injected project text** | **~13,900** |
 
-A captain brief is only 6,844 bytes because no `HANDOFF-captain.md` exists. Lane briefs
-measured: alpha 34,109 B, of which 18,376 is an inlined handoff; bravo 25,636 B; assessor
-32,139 B; admiral 17,235 B. A captain handoff written at alpha's size would roughly triple
-the captain's brief.
+**The harness was estimated at 4,000 and is really about 25,100 — a 21,100-token miss, and
+21,000 of it is tool schemas.** The base system prompt really is small. Connected tool
+servers are negligible.
 
-### One more mechanism worth knowing
+### The second error: this repo does not tokenize at four bytes
 
-The captain is launched with a seed message pasted into its pane — an instruction to run
-`harmonik agent brief` and begin the loop. So the brief enters context as a command result,
-billed as conversation rather than system prompt, and it is **paid again on every keeper
-restart**.
+No tokenizer is installed here, so the ratio was measured against the live tokenizer by
+injecting known-size payloads and reading the usage delta:
 
----
+| Text | Bytes | Tokens | Bytes/token |
+|---|---:|---:|---:|
+| `harmonik agent brief` output | 15,391 | 6,154 | 2.50 |
+| Boot-digest bead rows | 20,000 | 8,140 | 2.46 |
+| `captain/STARTUP.md` + `SKILL.md` prose | 20,000 | 7,729 | 2.59 |
+| A whole crew boot, including tool envelopes | 50,383 | 23,871 | 2.11 |
+
+**About 2.5, not 4.** Path-heavy, identifier-heavy markdown tokenizes far worse than plain
+prose, which is why `AGENTS.md` costs 8,800 tokens rather than the 5,800 first claimed.
+
+### The captain, rebuilt
+
+| Item | Tokens |
+|---|---:|
+| Harness floor, measured | 39,000 |
+| `harmonik agent brief` | 2,757 |
+| The three context tier files | 3,059 |
+| `.claude/skills/captain/STARTUP.md` | 8,729 |
+| `.claude/skills/captain/SKILL.md` | 8,323 |
+| `orchestrator-rules/SKILL.md` | 2,016 |
+| Boot digest, **before** Step 1a | 36,848 |
+| The captain's own boot thinking and tool calls | 8,000–19,000 |
+| **Before Step 1a** | **~110,000** |
+| **After Step 1a** | **~74,000** |
+
+A crew, measured directly rather than derived: charlie went 37,924 → 69,018 over a
+two-and-a-half-minute boot; alpha 39,111 → about 60,042.
+
+### The three numbers that should govern the rest of this plan
+
+**1. Step 1a was worth about 35,400 tokens, not the 21,300 first reported.** The bead
+listing and kerf map were 85 KB of digest at 2.5 bytes per token, not at 4.
+
+**2. The harness floor is larger than the entire captain instruction corpus.** 39,000
+tokens arrive before any harmonik file is read, and `STARTUP.md` + `SKILL.md` +
+`orchestrator-rules/SKILL.md` together are about 19,000. Nothing in Steps 2 or 3 can touch
+the floor. Two of its parts are reachable, though, and neither is an instruction-cutting
+problem: 21,000 tokens of tool schemas, and the 8,800 that `AGENTS.md` costs every agent.
+
+**3. So the honest ceiling for the corpus cut is about 14,000 to 19,000 tokens.** Deleting
+the whole captain corpus saves 19,000. Cutting it to four pages of roughly 12 KB saves
+about 14,000. That is worth doing and it is not where the remaining bulk is. **Say so
+rather than letting the plan imply otherwise.**
 
 ## 3. Duplication — 25 rules stated in two or more places
 
@@ -290,14 +323,16 @@ stays open here.
 
 ## 8. Where the leverage is, in order
 
-| Rank | Change | Saving | Cost to make it |
-|---|---|---:|---|
-| 1 | Cap the digest's ready-beads section | ~17,500 tok | one line of shell |
-| 2 | Stop the captain reading `STARTUP.md` and `SKILL.md` at boot — the router flip | ~11,000 tok | the flip nobody made |
-| 3 | Cut `AGENTS.md` to a real router | ~4,000 tok, **times every agent** | a careful pass |
-| 4 | Delete the 25 duplicated rules | ~3,000–3,750 tok | a careful pass |
-| 5 | Fix or delete the stale tier files | ~1,500 tok | judgement, and it fixes wrong instruction too |
-| 6 | Drop the mirror banner from shipped skill bodies | ~475 tok | depends on the mirror collapse |
+| Rank | Change | Saving | Cost to make it | State |
+|---|---|---:|---|---|
+| 1 | Take work discovery out of the boot digest | **~35,400 tok** | one section of shell | **DONE** |
+| 2 | Trim the tool schemas the harness injects | up to ~21,000 tok | not an instruction problem at all — unexamined | open |
+| 3 | Stop the captain reading `STARTUP.md` and `SKILL.md` at boot — the router flip | ~17,000 tok | the flip nobody made | Step 4 |
+| 4 | Cut `AGENTS.md` to a real router | ~6,000 tok, **times every agent** | a careful pass | Step 5 |
+| 5 | Delete the 25 duplicated rules | ~5,000–6,000 tok | a careful pass | Step 2 |
+| 6 | Fix or delete the stale tier files | ~3,200 tok | judgement, and it fixes wrong instruction too | **DONE** |
 
-The first two are mechanical and together are worth more than everything the disposition
-ledger in Step 2 can plausibly delete. **They should not wait for the ledger.**
+Item 2 is the surprise and nobody has looked at it. 21,000 tokens of tool-schema text
+arrives in every agent in this project, which is more than the whole captain corpus, and it
+is a harness-configuration question rather than a writing one. It is out of scope for this
+plan as written. **It should not stay out of scope for long.**

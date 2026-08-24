@@ -10,62 +10,53 @@ not grow back, as it has after every previous cut.
 
 active — Step 1a landed 2026-08-24
 
-## The problem, measured
+## The problem, measured live
 
-A captain boots at **~48,500 tokens of files it reads, ~54,000 once harness overhead is
-estimated in** — about 27 % of a 200 K window before it does any work. Pulling every
-on-demand skill takes it to ~73 K. Full detail in [`01-inventory.md`](01-inventory.md).
-
-**Treat that as a floor, not the number.** The 48.5 K is what is measurable from disk. The
-base system prompt, the tool schemas, any connected tool servers, and the seed message are
-estimated at ~4 K and nobody has checked. Step 1a's first act is to read the real figure out
-of a live session rather than adding up files.
-
-Where those tokens actually are, in order of size:
+**A captain started at about 110,000 tokens. Step 1a took that to about 74,000.** Those are
+measured from live session transcripts, not summed from disk — the first attempt at this
+number summed file sizes and divided bytes by four, and was wrong by half in both halves.
+Working detail in [`01-inventory.md`](01-inventory.md) §2.
 
 | Source | Tokens | Kind |
 |---|---:|---|
-| `scripts/captain-boot-digest.sh` output | **22,500** | live data, not instruction |
-| `.claude/skills/captain/STARTUP.md` | 5,551 | instruction |
-| `.claude/skills/captain/SKILL.md` | 5,402 | instruction |
-| `AGENTS.md` / `CLAUDE.md`, auto-injected | 5,808 | instruction |
-| The three context tier files | 3,285 | state |
-| Skill descriptions (~36 skills) | 3,900 | harness |
-| `harmonik agent brief` output | 1,711 | generated |
-| `orchestrator-rules/SKILL.md` | 1,306 | instruction |
-| *on demand, if pulled* | *19,172* | *instruction* |
+| **Harness floor, before any harmonik file is read** | **39,000** | untouchable here |
+| — of which tool schemas | 21,000 | harness config, not writing |
+| — of which `AGENTS.md`, injected into every agent | 8,800 | instruction |
+| — of which skill descriptions and memory index | 5,300 | harness |
+| — of which base system prompt | 3,600 | harness |
+| `.claude/skills/captain/STARTUP.md` | 8,729 | instruction |
+| `.claude/skills/captain/SKILL.md` | 8,323 | instruction |
+| The captain's own boot thinking and tool calls | 8,000–19,000 | unavoidable |
+| The three context tier files | 3,059 | state |
+| `harmonik agent brief` output | 2,757 | generated |
+| `orchestrator-rules/SKILL.md` | 2,016 | instruction |
+| Boot digest, after Step 1a | ~1,450 | live data |
+| *Boot digest, before Step 1a* | *36,848* | *removed* |
 
-Three facts in that table reset the plan's priorities.
+Three facts here set what the rest of this plan can honestly claim.
 
-**The digest is 57 % of the boot, and 87 % of the digest is one section.** Section 7 lists
-ready beads at `--limit 0` — 658 rows, 78 KB of the digest's 90 KB. Removing it outright
-(what Step 1a did) saves about 17,500 tokens, more than the entire captain skill corpus. It is
-also a one-line change to a shell script, and it is not an instruction problem at all.
-**Step 1a does it first, before anything else in this plan.**
+**The single largest item was never instructions.** The boot digest was a third of the whole
+boot, and 85 KB of it was a bead listing and a kerf map. Removing them was worth about
+35,400 tokens for one section of shell. That is done.
 
-**Skill bodies are never injected — only their descriptions.** A 21 KB `SKILL.md` costs
-nothing until something reads it. So the cost is not the file; it is the *instruction to
-read the file*. Deleting a "read this at boot" line is worth exactly as much as deleting
-the file it points at, and it is far cheaper. Every on-demand skill in the table above is
-free until the corpus tells the captain to open it.
+**The harness floor is larger than the entire captain corpus.** 39,000 tokens arrive before
+a captain reads one harmonik file. `STARTUP.md`, `SKILL.md` and `orchestrator-rules/SKILL.md`
+together are about 19,000. **So the honest ceiling for Steps 2 and 3 is roughly 14,000 to
+19,000 tokens** — deleting the entire corpus saves 19,000, and cutting it to four pages saves
+about 14,000. Worth doing. Not where the remaining bulk is, and this plan says so rather than
+implying otherwise.
 
-**The captain is told not to read `AGENTS.md`, and gets all 23 KB of it anyway.** The load
-map excludes it; Claude Code auto-injects the project `CLAUDE.md` symlink before the captain
-runs a single command, and nothing on the harmonik side can suppress that. So the router
-document is a fixed tax on *every* agent in the project — which makes Step 5 a
-fleet-wide saving, not a captain one.
+**The biggest untouched number is not a writing problem.** 21,000 tokens of tool-schema text
+reaches every agent in this project. That is more than the whole captain corpus, nobody has
+looked at it, and it is a harness-configuration question. Out of scope here, and it should not
+stay out of scope for long.
 
-Two costs come out of all this.
+So the case for Steps 2 and 3 rests on the second cost, not the first.
 
-**Context.** The window a captain spends on reading is a window it cannot spend on
-coordinating. The target is a captain that reaches its restart at 170–200 K tokens of
-*work*, not one that starts at 54 K of *reading*.
-
-**Steerability.** An operator directive is one paragraph arguing against ninety kilobytes
-of standing text. That is why the captain has been hard to steer: the corpus outvotes the
-operator. Cutting the corpus is what gives a directive weight.
-
----
+**Steerability.** An operator directive is one paragraph arguing against ninety kilobytes of
+standing text. That is why the captain has been hard to steer: the corpus outvotes the
+operator. Cutting the corpus is what gives a directive weight — and that argument does not
+depend on the token count at all.
 
 ## What the record says, and what this plan must not repeat
 
@@ -183,22 +174,25 @@ what five previous efforts found.
 
 | Item | Result |
 |---|---|
-| Work discovery out of the boot digest | 90,059 → 5,012 bytes. **~21,300 tokens off every boot**, and off every keeper restart, which re-pays the boot cost each time. |
+| Work discovery out of the boot digest | 90,647 → ~3,800 bytes. **~35,400 tokens off every boot**, and off every keeper restart, which re-pays the boot cost each time. Measured at the real 2.5 bytes/token, not the 4 first assumed. |
 | The standing `--limit 0` rule deleted | Gone from `AGENTS.md`, `STATUS.md`, both `AGENTS.template.md` copies, the scaffold index, and three sites in the captain runbook. The *tool fact* is kept, stated once, owned by `beads-cli`. |
 | Stale tier files | `captain-lanes.md` 3,418 → 2,635. `direction-log.md` 7,676 → 2,007. `lanes.json` re-seeded. `captain-monitor.md` deleted. |
 | The 76 KB pointer | The five-item "durable docs" enumeration is gone from the orchestrator reference and the captain skill. `admiral-initiatives.md` is still indexed for a captain elsewhere. |
 | Mirror gate | `scripts/skill-mirror-check.sh` in `gate-static-product`, with an eight-case self-test wired into `script-tests`. |
 
-**Still open in this step:** the true starting number, read out of a live captain session
-rather than summed from disk. The 48.5 K baseline in `01-inventory.md` counts files; it
-does not count the base system prompt, the tool schemas, or connected tool servers. Do
-this before Step 2 so the cut is measured against a real number.
+**The true baseline is now measured, and it moved the target.** Live-transcript figures
+replaced the disk sum: ~110,000 before Step 1a, ~74,000 after. See `01-inventory.md` §2.
+The correction was worth making before Step 2 rather than after — it says the corpus cut is
+worth 14,000 to 19,000 tokens rather than the larger number the disk sum implied, and it
+found 21,000 tokens of tool schemas that no amount of editing prose will reach.
 
 ### What Step 1a proved, and it changes how Step 2 should be run
 
-**Most of the cost was not instructions.** 21,300 of the roughly 26,000 tokens removed so
-far came out of one shell script's output and four stale state files. The corpus itself
-has barely been touched. Do not assume the remaining savings live where the prose is.
+**Most of the cost was not instructions.** Nearly all of the roughly 38,600 tokens removed
+so far came out of one shell script's output and four stale state files. The corpus itself
+has barely been touched, and the measurement says what is left in it is worth 14,000 to
+19,000. Do not assume the remaining savings live where the prose is — twice now they have
+not.
 
 **Some rules exist because a tool lies.** "A queue paused by failure needs recover, not
 resume" was written into six separate instruction files because the digest printed the

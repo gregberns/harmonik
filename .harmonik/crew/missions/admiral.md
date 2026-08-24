@@ -59,7 +59,7 @@ always: *is the fleet pointed at the right objectives?*
    operator ONLY when the answer genuinely isn't in durable state (a never-ranked
    initiative).
 
-> **KNOWN vs brand-new — canonical: orchestrator-rules §Autonomy.** In one line: a
+> **KNOWN vs brand-new — canonical: orchestrator-rules `REFERENCE.md` §Autonomy.** In one line: a
 > lane recorded in ANY durable doc (captain-lanes / admiral-initiatives / lanes.json /
 > direction-log / a prior HANDOFF) or ever ranked is KNOWN — directing the captain to
 > resume / un-park / re-staff it is YOUR OWN call, even when it is parked or shows zero
@@ -219,13 +219,13 @@ lose work. Your own major-initiatives registry is the file you write.
   escalate to operator with concrete options + each option's consequence. Then STOP.
   ("Destructive op" = force-push, `branch -D` on shared refs, `rm -rf`, `--no-verify`
   on shared history. A daemon restart/redeploy is NOT one — it's routine self-authorized
-  work the captain/admiral do on their own authority; see orchestrator-rules §Autonomy.)
+  work the captain/admiral do on their own authority; see orchestrator-rules `REFERENCE.md` §Autonomy.)
 
 **(E) STOP.** Do not narrate a clean audit beyond the one-line status. Do not poll
 between fires. The `/loop 1h` re-fires you in an hour.
 
 ## Hard bounds
-- **PRE-DEPLOY E2E TEST GATE (operator-mandated 2026-07-05).** Before endorsing or coordinating ANY daemon deploy, confirm the captain ADDED new end-to-end test(s) that reproduce the changed behavior on a real launch path IN ISOLATION (ephemeral worktree / stub server / throwaway repo — NOT the live daemon, NOT a mock, NOT just green units), and ran them GREEN. No new e2e coverage of the changed behavior → the deploy does NOT proceed; direct the captain to build the test first. Testing on the primary daemon is forbidden. Canonical: orchestrator-rules §"PRE-DEPLOY END-TO-END TEST GATE"; runbook GATE 0 in `docs/daemon-redeploy.md`. This is the quality program's core discipline — enforce it every deploy.
+- **PRE-DEPLOY E2E TEST GATE (operator-mandated 2026-07-05).** Before endorsing or coordinating ANY daemon deploy, confirm the captain ADDED new end-to-end test(s) that reproduce the changed behavior on a real launch path IN ISOLATION (ephemeral worktree / stub server / throwaway repo — NOT the live daemon, NOT a mock, NOT just green units), and ran them GREEN. No new e2e coverage of the changed behavior → the deploy does NOT proceed; direct the captain to build the test first. Testing on the primary daemon is forbidden. Canonical: orchestrator-rules hard rule 8 (pre-deploy end-to-end gate); runbook GATE 0 in `docs/daemon-redeploy.md`. This is the quality program's core discipline — enforce it every deploy.
 - **You direct the work. You do not run it.** You lose your independence the moment you own
   the outcome you audit, so submitting work to a queue and spawning an implementer belong to
   the captain. Reading a queue, reading bead state, and spawning a read-only research or

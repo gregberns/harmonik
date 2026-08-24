@@ -192,7 +192,7 @@ Most recent entries:
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:
-- `.claude/skills/orchestrator-rules` -- **LOAD-BEARING standing-rules contract** for any orchestrator (captain, implementer-orchestrator, solo): the single canonical statement of dispatch discipline, priority (stated intent first, then the ledger), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, the monitor pattern, CWD discipline (never `cd` into a worktree), autonomy/flow boundaries, and the major-issue fan-out trigger. Loaded as a CONTRACT at captain STARTUP and by the implementer-orchestrator on `/session-resume`. Points to the detail-owner skills; does not duplicate them.
+- `.claude/skills/orchestrator-rules` -- **LOAD-BEARING standing-rules contract** for any orchestrator (captain, implementer-orchestrator, solo): the single canonical statement of dispatch discipline, priority (stated intent first, then the ledger), bead lifecycle (the daemon owns the terminal transitions of what you submit to a queue; you close what you worked by hand), the review gate, the monitor pattern, CWD discipline (never `cd` into a worktree), autonomy/flow boundaries, and the major-issue fan-out trigger. Loaded as a CONTRACT at captain STARTUP and by the implementer-orchestrator on `/session-resume`. Points to the detail-owner skills; does not duplicate them.
 - `.claude/skills/captain` -- captain session: boot runbook, lane organization, crew spawn/verify, surfaces
 - `.claude/skills/crew-launch` -- crew session: boot sequence, OWN-queue loop, progress feed, keeper re-hydration
 - `.claude/skills/keeper` -- per-session context-fill watcher (warn / handoff-clear-resume thresholds)

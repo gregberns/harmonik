@@ -1,150 +1,70 @@
 ---
 name: major-issue-fanout
 description: >
-  Protocol for diagnosing major, recurring critical-path blockers via parallel
-  agent fan-out. Triggers when root cause has been refuted ≥2× or a wedge has
-  survived ≥2 fix attempts. Core rule: NEVER hand-grep events.jsonl by run_id
-  (false negatives); use harmonik subscribe --json or jq structured queries.
-  Fan out 10-15 agents on DISTINCT angles + ≥2 adversarial verifiers that can
-  OVERRULE a wrong synthesis. Captain orchestrates (spawns + synthesizes),
-  never debugs inline. Source: logmine F14 + 2026-06-09-concurrent-dispatch-wedge postmortem.
-
-sources:
-  - docs/major-issue-fanout-protocol.md
-  - docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md
-  - docs/orchestrator-rules.md
+  Protocol for diagnosing a recurring critical-path blocker by parallel agent
+  fan-out, with adversarial verifiers that can overrule the synthesis.
 ---
 
 <!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/major-issue-fanout/SKILL.md (Go //go:embed).
      The copy at .claude/skills/major-issue-fanout/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
      overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. To change this skill:
-     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
-     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+     only there silently drifts and is eventually reverted. Edit the cmd/harmonik/assets/
+     copy, then mirror it byte-for-byte into .claude/skills/ in the SAME commit. -->
 
 # Major-Issue Fan-Out Skill
 
-Load this skill when: a daemon wedge or failure class has survived ≥2 fix attempts, the
-root cause has flip-flopped ≥2×, and you're considering "let me look at X one more time."
-That instinct is wrong. This protocol replaces it.
+Reach for this when a wedge or failure class has survived two or more fix
+attempts, the root cause has flip-flopped, and you are thinking "let me look at X
+one more time." That instinct is what this protocol replaces.
 
----
+It DIAGNOSES a stuck blocker. It does not DECIDE an open question.
 
 ## The one rule that matters most
 
-**NEVER hand-grep `events.jsonl` by `run_id`.**
+**Never hand-grep `events.jsonl` by `run_id`.**
 
 ```bash
-# WRONG — produces false negatives; drove 18h of wrong diagnoses:
+# WRONG — false negatives; drove 18h of wrong diagnoses:
 grep "019eae67" .harmonik/events/events.jsonl
 
 # RIGHT — structured, ordered, complete:
-jq 'select(.run_id == "019eae67-b1f0-7e4c-8f96-14e2ad3c3353")' \
-  $HARMONIK_PROJECT/.harmonik/events/events.jsonl
+jq 'select(.run_id == "<full-run-id>")' $HARMONIK_PROJECT/.harmonik/events/events.jsonl
 
-# RIGHT — live stream, filtered:
-harmonik subscribe --json \
-  --types run_completed,run_failed,run_stale,launch_stall_detected
+# RIGHT — live and filtered:
+harmonik subscribe --json --types run_completed,run_failed,run_stale,launch_stall_detected
 ```
 
-Events may carry `run_id` under a nested key or may not carry it at all at the top level.
-Substring grep silently drops those events. Structured `jq select()` does a full-object match.
+An event may carry `run_id` under a nested key, or not at the top level at all.
+Substring grep silently drops those. `jq select()` matches the whole object.
 
----
+## The protocol
 
-## Escalation gate (when to trigger)
+Full detail: `docs/major-issue-fanout-protocol.md`.
 
-Fire this protocol when ALL hold:
-1. Wedge survived **≥2 fix attempts** without resolution.
-2. Root cause refuted/retracted **≥2×** (different hypotheses each time).
-3. Issue is blocking the critical path (daemon down, no-spawn, no-merge).
-4. At least one refutation came from a **live-smoke**, not reasoning alone.
+**1. Pause and announce.** Broadcast that a fan-out is starting and that restarts
+and deploys should hold.
 
-> **NOT for deciding open questions** — that is the captain skill's §0.1
-> consensus-first gate (a 3-agent consensus run before any surface-and-await). This
-> protocol DIAGNOSES a stuck BLOCKER only; it does not DECIDE a question.
+**2. Quiesce the queue.** A fan-out spawns far more parallel agents than a daemon
+phase tolerates. Stop submitting beads and let the in-flight work drain first — a
+fan-out layered on a live dispatching queue puts the daemon's claude processes
+behind your agents in the API rate-limiter. See the **harmonik-dispatch** skill,
+§ Do not run the daemon and a sub-agent wave at once.
 
----
+**3. Collect durable artifacts** — a structured event dump, the bead state, recent
+commits. Anchor every agent to artifacts that outlive the moment: file paths,
+symbol names, `events.jsonl` entries. Never a tmux pane's contents.
 
-## The protocol (abbreviated)
+**4. Fan out ten to fifteen agents on DISTINCT angles.** Do not repeat an angle.
+Useful ones: the code around the wedge event and its goroutine and channel
+lifecycle; the ordered event timeline and its gaps; config and binary drift at
+wedge time; the concurrency model under N above 1; the regression window and
+first-bad commit; a minimal reproducer; the event diff between a healthy run and
+the wedged one; external state such as tmux, flock holders, disk and file
+descriptors; and one agent whose whole job is to say why each prior hypothesis
+was wrong. Spawn them all in the background, in parallel.
 
-Full detail: `docs/major-issue-fanout-protocol.md`
-
-### Step 1 — Pause and announce
-
-```bash
-harmonik comms send --from captain --broadcast \
-  -- "MAJOR-ISSUE fan-out starting for <wedge description>. Hold restarts/deploys."
-```
-
-### Step 2 — Collect durable artifacts
-
-```bash
-# Event dump (structured):
-harmonik subscribe --json --types run_failed,run_stale,launch_stall_detected \
-  | head -200 > /tmp/event-dump.json
-
-# Bead state:
-br show <bead_id> --format json
-
-# Recent commits:
-git -C $HARMONIK_PROJECT log --oneline -20
-
-# Run stale goroutine count:
-jq 'select(.event_type == "run_stale") | {run_id, goroutine_count, active_run_count}' \
-  $HARMONIK_PROJECT/.harmonik/events/events.jsonl | tail -5
-```
-
-### Step 3 — Fan out 10–15 agents at DISTINCT angles
-
-Pick angles from this taxonomy (don't repeat angles across agents):
-
-| Angle | Focus |
-|---|---|
-| Code structure | File:line in wedge event; goroutine lifecycle; channel ownership |
-| Event timeline | Ordered event sequence; timing gaps; missing events |
-| **run_id lifecycle (context_cancel precondition)** | **Before any other hypothesis: was a reaper-spawn / `agent_ready` observed for this run_id? A context_cancel with NO observed reaper lifecycle means investigate the lifecycle, NOT the deadline or cache.** See §run_id lifecycle check below. |
-| Config drift | Binary version, `--workflow-mode`, daemon flags at wedge time |
-| Concurrency model | Channel consumers; mutex holders; race under N>1 |
-| Regression window | First-bad commit; what changed? `git bisect` direction |
-| Reproducer | Minimal reproducing case |
-| Contrast (working vs broken) | Event diff between a healthy run and wedged run |
-| External dependencies | tmux state, flock holders, trust-file size, disk/fd |
-| Prior hypotheses | Evidence for each prior diagnosis; why was each wrong? |
-| Canary isolation | Last known-good vs first known-bad configuration delta |
-
-**Spawn all in parallel, `run_in_background=True`.**
-
-**A fan-out is a sub-agent phase — quiesce the queue before you start one.** Ten to
-fifteen parallel agents is far above the ≤3-concurrent ceiling the **harmonik-dispatch**
-skill sets for a daemon phase, and that is fine, because the two are alternating modes and
-not simultaneous ones. Stop submitting beads and let the in-flight work drain first. A
-fan-out layered on a live dispatching queue puts the daemon's claude processes behind your
-agents in the API rate-limiter — the 56-minute silent stall documented in
-harmonik-dispatch §API rate-limit concurrency rule.
-
----
-
-### run_id lifecycle check (mandatory precondition for `context_cancel`)
-
-**Before accepting ANY timing / cache / graph-size hypothesis for a `context_cancel` event:**
-
-1. Pull the full event sequence for the affected `run_id` via structured query:
-   ```bash
-   jq 'select(.run_id == "<run_id>")' $HARMONIK_PROJECT/.harmonik/events/events.jsonl \
-     | jq -s 'sort_by(.timestamp) | .[] | {timestamp, event_type, run_id}'
-   ```
-2. Confirm that `agent_ready` (or equivalent reaper-spawn) appears **before** the `context_cancel`.
-3. If **no** `agent_ready` / reaper-spawn event exists for this `run_id`:
-   - **Reject all timing/cache/graph-size hypotheses immediately.**
-   - The cancel was fired by a reaper whose `stalewatch.observe()` received a nil `run_id` event — it cancelled PER-RUN contexts for a run that never spawned. Investigate the lifecycle gap, not the deadline.
-   - Reference fix: `960deafc` (stalewatch nil-run_id skip).
-
-**Lesson source:** 2026-06-18 DOT context-cancel saga — ~270 min burned on two refuted hypotheses (cold-cache, DOT-deadline) before the nil-run_id lifecycle gap surfaced via hk-wths.
-
-### Step 4 — Synthesize, then verify adversarially
-
-After agents report, draft ONE candidate root cause. Then spawn ≥2 adversarial verifiers:
+**5. Synthesize once, then verify adversarially.** Draft ONE candidate root
+cause, then spawn at least two verifiers that can overrule it:
 
 ```
 Your job: REFUTE the synthesis below if you can.
@@ -157,7 +77,7 @@ Synthesis: [paste candidate root cause + evidence]
 Report exactly one of three verdicts, with concrete evidence — a file plus the
 symbol you read, a structured event, or a reproducing case:
 
-  REFUTED  — you found evidence that contradicts the synthesis. Name it.
+  REFUTED   — you found evidence that contradicts the synthesis. Name it.
   CONFIRMED — you found evidence that supports it and none that contradicts it.
   UNCERTAIN — you could not settle it either way. Say what specific evidence
               WOULD settle it, and where you would look for that evidence.
@@ -165,62 +85,37 @@ symbol you read, a structured event, or a reproducing case:
 Reasoning alone is not evidence for any of the three.
 ```
 
-**Three answers, not two.** A verifier told to "default to REFUTED when uncertain" can
-never contribute a CONFIRM, so the convergence gate below becomes unreachable and the
-fan-out loops forever on a synthesis that may well be right. UNCERTAIN is the honest third
-answer, and it is productive: the missing evidence it names becomes the next angle.
+**Three answers, not two.** A verifier told to default to REFUTED can never
+contribute a CONFIRM, so the gate becomes unreachable and the fan-out loops
+forever on a synthesis that may well be right. UNCERTAIN is the honest third
+answer and it is productive: the missing evidence it names becomes the next
+angle.
 
-Route each verdict:
+Route the verdicts:
 
-- **Any REFUTED** → discard the synthesis. Return to step 3 with the refutation as a new
-  angle.
-- **All UNCERTAIN, or not enough CONFIRMs to clear the gate** → the synthesis is not wrong,
-  it is unproven. Return to step 3 with each verifier's named missing evidence as a new
-  angle, and re-verify. Do not re-run the same verifiers on the same synthesis with no new
-  evidence.
-- **≥2 CONFIRMED and no REFUTED** → step 5.
+- **Any REFUTED** — discard the synthesis; return to the fan-out with the
+  refutation as a new angle.
+- **All UNCERTAIN** — the synthesis is unproven, not wrong. Return to the fan-out
+  with each verifier's named missing evidence as a new angle. Do not re-run the
+  same verifiers on the same synthesis with no new evidence.
+- **Two or more CONFIRMED and none REFUTED** — you have converged.
 
-### Step 5 — Convergence gate
+**6. Converge on an artifact, not an argument.** Exit only when two verifiers
+confirm the same root cause, none refutes it, and you hold something concrete: a
+file plus a symbol, a structured event, or a reproducing test. Reasoning alone is
+not enough, and an UNCERTAIN does not count toward the two.
 
-Exit when: ≥2 verifiers CONFIRM the same root cause, no verifier REFUTES it, AND you hold a
-concrete artifact (a file plus the symbol, a structured event, or a reproducing test).
-Reasoning alone is not sufficient. An UNCERTAIN is not a CONFIRM and does not count toward
-the two.
+**7. Fix, then validate the way the bug actually manifests.** A concurrency bug
+needs two or more real concurrent beads to validate — a single-bead or doc-only
+smoke gave false "validated" signals three times in the incident this protocol
+came from. Live-smoke any daemon-code deploy before declaring it done, and get an
+independent fresh-context approval before merging.
 
-### Step 6 — Fix + validate correctly
+## The captain's role during a fan-out
 
-- **Concurrency bugs require ≥2 real concurrent beads** to validate — not single-bead or trivial doc smokes.
-- **Trivial smokes gave false "validated" signals 3× in the 2026-06-09 incident.**
-- Live-smoke daemon-code deploys before declaring done.
-- Get a lane-owner **independent fresh-context APPROVE** before merging.
+Spawn, synthesize, route to verifiers, announce the result. That is all.
 
----
-
-## Captain's role during fan-out
-
-- Spawn agents → synthesize → route to verifiers → announce result. That's it.
-- **Do NOT read code inline on the main thread.** Anchoring bias + context exhaustion.
-- **Do NOT restart the daemon or deploy code** without announcing via comms first.
-- **File a bead for the root cause** before dispatching the fix.
-
----
-
-## Anti-patterns (what burned 18h)
-
-| Pattern | Cost |
-|---|---|
-| `grep run_id events.jsonl` | False negatives; drove 4 wrong root causes |
-| Iterating on one hypothesis without a reproducer | Sequential "definitive" diagnoses, each overturned |
-| Treating a reasoning chain as evidence | "MOOT" call retracted next hour |
-| Single-bead trivial smoke as concurrency validator | Masked the real bug 3× |
-| Captain debugging inline | Context exhaustion + blocked main thread |
-| Declaring fixed without independent lane review | Required by orchestrator-rules.md |
-| Accepting timing/cache hypothesis for `context_cancel` without checking run_id lifecycle | ~270 min burned on two refuted hypotheses (2026-06-18); nil-run_id skip in stalewatch was the real cause (hk-wths / `960deafc`) |
-
----
-
-## References
-
-- Full protocol: `docs/major-issue-fanout-protocol.md`
-- Motivating incident: `docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md` §8
-- Orchestrator delegation rule: `docs/orchestrator-rules.md` §"Delegate Investigation to Sub-Agents"
+**Do not read code inline on the main thread** — it costs you the context you
+exist to protect and anchors you on the first hypothesis you read. Do not restart
+the daemon or deploy code without announcing it first. File a bead for the root
+cause before dispatching the fix.

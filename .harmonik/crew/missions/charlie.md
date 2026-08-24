@@ -37,13 +37,16 @@ key discriminator — if the same timeout hits a DIFFERENT node in a DIFFERENT h
   (HC-056), and why the node's agent never signaled. Compare the two nodes/harnesses.
 - If root cause is refuted ≥2× or a fix survives ≥2 attempts, tell captain — that trips the
   major-issue fan-out (captain orchestrates it, you don't fan out solo).
-- If a fix is warranted AND root-caused: fix in the main working tree, **explicit paths only** (NEVER
-  `git add -A`/`.`, bare commit, reset, or `--amend`), reference hk-go6nq in the subject, spawn an
-  independent reviewer, and let the captain gate the merge. Whoever runs the work owns the terminal
-  transitions, and here that is the captain, not you. Do not set `in_progress` and do not close. A
-  pre-set status makes the bead undispatchable, and the run then goes nowhere with no error. A close you
-  make by hand leaves the ledger out of step with the run state, so the completion event never fires. A
-  crew closes its own beads only when its mission file grants it in writing, and this file does not.
+- If a fix is warranted AND root-caused: fix in the main working tree, **explicit paths only**
+  (NEVER `git add -A`/`.`, bare commit, reset, or `--amend`), reference hk-go6nq in the subject,
+  spawn an independent reviewer, and let the captain gate the merge. Whoever runs the work owns the
+  terminal transitions, and here that is the captain, not you. Do not set `in_progress` and do not
+  close. A pre-set status makes `queue submit` refuse the bead (`bead_already_dispatched`, `-32015`,
+  exit 1), so the work never reaches the queue. A close you make by hand leaves the ledger out of
+  step with the run state, so the completion event never fires. A bead you work by hand and submit
+  to no queue is the other case, and it needs no grant: close that one yourself, because nothing
+  else will — `harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:`
+  trailer, and a hand commit never carries one.
 
 ## On boot
 0. `harmonik agent brief`.

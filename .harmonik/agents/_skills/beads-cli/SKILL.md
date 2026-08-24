@@ -1,279 +1,124 @@
 ---
 name: beads-cli
 description: >
-  Agent-facing wrapper for `br` (Beads CLI), the task ledger for harmonik.
-  Declares the read surface agents may use (br show, br list, br ready, br dep
-  cycles) and the write discipline they must follow (agents MUST NOT issue
-  terminal-transition writes; the daemon owns those per beads-integration.md §4.4).
-  Required in every agent's launch context per BI-028 and CP-031.
-
-  Load-bearing: must not rot. Kept current with br v0.1.x and beads-integration.md.
-
-sources:
-  - specs/beads-integration.md §4.9 (BI-027, BI-028)
-  - specs/handler-contract.md §4.11 (HC-046–HC-049)
-  - specs/control-points.md §4.6 (CP-031, CP-052)
+  The `br` (Beads) task ledger: the read surface agents use, and the write
+  discipline they follow — whoever runs the work owns the terminal transitions.
+  Load-bearing: must not rot.
 ---
 
 <!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/beads-cli/SKILL.md (Go //go:embed).
      The copy at .claude/skills/beads-cli/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
      overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. To change this skill:
-     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
-     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+     only there silently drifts and is eventually reverted. Edit the cmd/harmonik/assets/
+     copy, then mirror it byte-for-byte into .claude/skills/ in the SAME commit. -->
 
 # Beads-CLI Skill
 
-You are operating inside a harmonik run. Beads is harmonik's task ledger (SQLite +
-JSONL, accessed via the `br` CLI). This skill defines the `br` surface available to
-you and the write discipline you must follow.
+Beads is harmonik's task ledger, reached through the `br` CLI. This skill is the
+surface available to you and the discipline you follow when you write.
 
----
+## Write discipline (read this first)
 
-## Write discipline (READ THIS FIRST)
+**Who runs the work owns its terminal transitions.** `claim` (open to
+in_progress), `close` (in_progress to closed) and `reopen` are the terminal
+transitions. One question decides whether any of them is yours: **did I submit
+this bead to a queue?** Ask that, not "is it dispatched" — you cannot observe
+dispatch, but you always know what you submitted.
 
-**Agents MUST NOT issue terminal-transition `br` writes.**
+**A bead you submit to a queue belongs to the daemon.** It claims the bead when
+it dispatches and closes it when the work merges. Do not pre-set `in_progress`:
+`queue submit` refuses that bead with `bead_already_dispatched` (JSON-RPC
+`-32015`), prints the refusal, and exits 1, so the work never reaches the queue.
+Do not `br close` it by hand either — a close from inside a worktree leaks to the
+parent repo even when no code landed, so the ledger claims done over work that
+does not exist. Bypassing the daemon's adapter also breaks the idempotency and
+intent-log contracts it depends on.
 
-**Whoever runs the work owns the terminal transitions, and that is not you.** On a lane the
-daemon dispatches, the terminal transitions — `claim` (open → in_progress), `close`
-(in_progress → closed), and `reopen` (closed → open) — are owned exclusively by the harmonik
-daemon per [beads-integration.md §4.4 BI-010]. Bypassing the daemon's adapter violates the
-idempotency and intent-log contracts of §4.10. On a lane a captain runs by hand, no daemon
-writes anything, so the captain gates the close.
+**A bead you work by hand you close yourself, because nothing else will.**
+`harmonik reconcile` closes only beads whose commit carries a
+`Harmonik-Bead-ID:` trailer, and a hand commit never carries one — so a crew
+orchestrator that fixes something inline, a hand-run delivery lane, a solo
+session or the operator gets no help from any sweep. An open bead over finished
+work is a lie in the ledger that costs the next reader a reconcile pass.
 
-The one exception arrives as a written grant, never as your own reading of live
-state. A crew closes its own beads only when its own mission file says so in writing —
-the hand-run delivery lanes that answer to no captain carry that sentence. Do not derive the
-exception from what looks idle: whether anything dispatches your queue right now is the race
-this rule prevents.
+**The one genuinely silent failure is claiming and then not submitting.** Both
+hazards above are loud. Claim a bead by hand and then never submit it, and
+nothing reports anything at all — no run exists, so no watcher, no timeout and
+no sweep has anything to notice. If you claim, either submit it or work it
+through.
 
-Agent-permissible writes are limited to:
+**Do not settle which case you are in from what looks idle.** Whether anything
+drains your queue right now is the race this rule prevents, and a quiet queue is
+not evidence. Your mission file or your role contract names your lane; read it
+there.
 
-| Operation | Command | Notes |
-|---|---|---|
-| Add a comment | `br comments add <bead_id> --message "..."` | Progress notes, observations |
-| Add a label | `br update <bead_id> --add-label <label>` | Non-status metadata only |
-| Remove a label | `br update <bead_id> --remove-label <label>` | Non-status metadata only |
-| Update description/notes | `br update <bead_id> --notes "..."` | Clarifications, findings |
+What you MAY write on any lane is metadata:
 
-Agents MUST NOT call `br update --claim`, `br close`, `br reopen`, or any command
-that transitions a bead's `status` field. Those paths belong to whoever runs the work,
-and a written grant in your own mission file is the only thing that makes them yours.
-
----
+| Operation | Command |
+|---|---|
+| Add a comment | `br comments add <bead_id> --message "..."` |
+| Add or remove a label | `br update <bead_id> --add-label <l>` / `--remove-label <l>` |
+| Update notes | `br update <bead_id> --notes "..."` |
 
 ## Read surface
 
 ### Check available work
 
 ```bash
-# List beads ready to claim (open, unblocked, not deferred)
-# ALWAYS pass --limit 0 (unlimited): bare `br ready` silently caps at 20.
-br ready --format json --limit 0 -l scope:bootstrap
-
-# Filter by label (AND logic)
-br ready --format json --limit 0 -l scope:bootstrap -l kind:scaffold
-
-# Order it. Default sort is `hybrid`; ask for the one you actually want.
+br ready --format json --limit 0                      # everything dispatchable now
 br ready --format json --limit 0 --sort priority      # by the br priority field
 br ready --format json --limit 0 --sort oldest        # surfaces work that is starving
 br ready --format json --limit 0 --parent <epic_id>   # scope to one lane
+br ready --format json --limit 0 -l scope:x -l kind:y # label filters, AND logic
 ```
 
-`br ready --sort priority` is where an ordering of the unclaimed backlog comes from.
-Above that line, priority comes from stated intent — the named initiatives of the
-operator and the admiral, which no ledger query returns.
+**`br ready` means dispatchable-now, not is-there-work.** Always pass `--limit 0`:
+a bare `br ready` caps at 20 rows and silently makes the backlog look shorter, or
+empty, when it is not. The default sort is `hybrid`, so ask for the ordering you
+actually want. A bead correctly hidden from `br ready` — blocked, in-progress,
+draft — is still work: never read an empty result as "drained" without also
+checking in-progress beads, beads blocked by an open epic, and paused or failed
+queues.
 
-`br ready` returns beads whose dependencies are all satisfied and whose status is
-`open`. It natively excludes `draft`-status beads (harmonik's readiness gate for
-loaded-but-not-yet-dispatchable work).
+`br ready --sort priority` is where an ordering of the *unclaimed backlog* comes
+from. Above that line, priority comes from stated intent — the named initiatives
+of the operator and the admiral, which no ledger query returns.
 
-**RULE — `br ready` = dispatchable-now, NOT is-there-work.** Always pass `--limit 0`
-(bare `br ready` truncates at 20 and silently misleads you into thinking the queue is
-shorter — or empty — when it isn't). Never read an empty `br ready` as "fleet drained"
-without ALSO checking: in-progress beads + beads blocked-by-an-open-epic + paused/failed
-queues. A bead correctly hidden from `br ready` (blocked, in-progress, draft) is still work.
-
-### Inspect a bead
+### Inspect, list, search
 
 ```bash
-# Full detail (use this; text-output parsing is forbidden per BI-025b)
-br show <bead_id> --format json
-
-# Multiple beads at once
-br show <bead_id1> <bead_id2> --format json
-```
-
-Always use `--format json`. Parsing text output from `br` is forbidden (BI-025b).
-
-### List and search beads
-
-```bash
-# All open bootstrap beads
-br list --format json -l scope:bootstrap -s open
-
-# All in-progress beads (what is currently running)
-br list --format json -s in_progress
-
-# Children of an epic
-br list --format json --label codename:<epic_id>
-
-# Search by text
+br show <bead_id> [<bead_id2> ...] --format json
+br list --format json -s open -l scope:x        # by status and label
+br list --format json --label codename:<epic>   # children of an epic
 br search --format json "keyword"
-
-# Count by status. Note: br count returns scalar text and does not support
-# --format json — this is one of the rare BI-025b exceptions; do not pipe to jq.
-br count --by status
+br count --by status                            # scalar text; no --format json
+br dep cycles | br dep list <id> | br dep tree <id>
 ```
 
-### Dependency queries
+## Output format
 
-```bash
-# Cycle check (should always be clean)
-br dep cycles
+Pass `--format json` to every `br` invocation that offers it, and parse only
+that. The text layout is presentation: it re-flows on a column change or a
+version bump, so a parser built on it breaks silently and reports the wrong state
+rather than an error.
 
-# What does a bead depend on?
-br dep list <bead_id>
+**The rule is about parsing, not about the flag.** A few subcommands emit a
+scalar and support no `--format` at all — `br count` is the one you will meet.
+Read its scalar directly and do not pipe it to `jq`. If a command you need has no
+JSON form, that is a gap worth a bead, not a licence to regex a table.
 
-# Dependency tree (recursive)
-br dep tree <bead_id>
-```
+`br schema issue` / `issue-details` / `ready-issue` emit JSON Schema for the
+response shapes if you need them.
 
----
+## What agents should not do
 
-## Idiomatic jq pipelines
-
-Extract the description of a bead:
-
-```bash
-br show <bead_id> --format json | jq -r '.[0].description'
-```
-
-List IDs of ready bootstrap beads:
-
-```bash
-br ready --format json -l scope:bootstrap | jq -r '.[].id'
-```
-
-Check a bead's status:
-
-```bash
-br show <bead_id> --format json | jq -r '.[0].status'
-```
-
-Get all labels on a bead:
-
-```bash
-br show <bead_id> --format json | jq -r '.[0].labels[]'
-```
-
-List IDs of blocked beads:
-
-```bash
-br blocked --format json | jq -r '.[].id'
-```
-
----
-
-## Output formats
-
-Pass `--format json` to every `br` invocation that produces structured output, and parse
-only that. BI-025b forbids parsing `br` text output, and the reason is that the text
-layout is presentation: it re-flows on a column change or a version bump, and a parser
-built on it breaks silently and reports the wrong state rather than an error.
-
-**The rule is about parsing, not about the flag.** A few subcommands emit a scalar and
-support no `--format` at all — `br count` is the one you will meet. Read its scalar
-directly, do not pipe it to `jq`, and do not treat the missing flag as a reason to start
-parsing a table. If a command you need has no JSON form, that is a gap worth a bead, not
-a licence to regex the human output.
-
-The TOON format is an alternative token-optimized notation — use json for pipelines, toon
-is optional for human-readable inspection only.
-
-`br schema` emits JSON Schema definitions for all output types if you need to
-understand the shape of a response:
-
-```bash
-br schema issue         # Core Issue object
-br schema issue-details # Show view: Issue + relations/comments/events
-br schema ready-issue   # Ready list row
-```
-
----
-
-## Status vocabulary
-
-Beads exposes a read surface with 8+ status values. The ones you will encounter:
-
-| Status | Meaning |
-|---|---|
-| `open` | Ready to work; dispatchable via `br ready` |
-| `draft` | Loaded but not yet dispatchable (harmonik's readiness gate) |
-| `in_progress` | Claimed and actively running |
-| `blocked` | Has unsatisfied dependencies |
-| `deferred` | Scheduled for later; excluded from `br ready` by default |
-| `closed` | Completed |
-| `tombstone` | Deleted |
-| `pinned` | Pinned by Beads; pass through, do not interpret |
-
-Agents read all status values; agents write none of them (see Write discipline above).
-
----
-
-## Subprocess timeout discipline
-
-Per BI-025c, the daemon's adapter enforces:
-
-- **5 s** for read commands (default; operator-tunable)
-- **10 s** for write commands (default; operator-tunable)
-
-When you invoke `br` directly from a shell tool, respect the same guidance: do not
-allow `br` invocations to hang indefinitely. If a `br` invocation times out, report
-it rather than retrying in a loop.
-
----
-
-## Version
-
-Harmonik does not check which `br` version you have. Daemon startup only checks that
-`br` is present and runnable, per BI-024a. Startup fails with exit code 8
-(`beads-unavailable`) when `br` cannot be executed at all, or when `br --version`
-exits non-zero. Any version, and any banner text, is accepted otherwise.
-
-The harmonik release manifest still names the `br` version the release was tested
-against. That is a record for a human reading the manifest. No code reads it, and a
-difference between it and your `br` is not an error.
-
-If a `br` command fails, report the failure itself. Do not report it as a version
-problem and do not try to change the installed `br` to match the manifest.
-
----
-
-## What agents should NOT do
-
-- Do NOT call `br update --claim`, `br close`, or `br reopen` — owned by whoever runs
-  the work, not by you. See §Write discipline.
-- Do NOT parse `br` text output. Use `--format json` wherever the subcommand offers it,
-  and read the scalar directly on the few (such as `br count`) that do not — see
-  §Output formats.
-- Do NOT write additional Beads status values beyond the five-value write subset
-  `{open, in_progress, closed, deferred, tombstone}` — harmonik MUST NOT extend
-  Beads's status enum via writes (BI-007).
-- Do NOT mint, parse, or rewrite bead IDs — they are project-scoped opaque strings
-  owned by Beads (BI-008a).
-- Do NOT use `br` to track intra-run node transitions — those live in the git
-  checkpoint trail and JSONL event log, not Beads (BI-007, BI-011).
-
----
-
-## Sources
-
-- `specs/beads-integration.md §4.9` — BI-027 (skill as only agent access path),
-  BI-028 (skill in every agent's launch context by default)
-- `specs/beads-integration.md §4.4` — terminal-transition write ownership (daemon only)
-- `specs/beads-integration.md §4.8a` — BI-025b (--format json mandatory),
-  BI-025c (timeout discipline)
-- `specs/handler-contract.md §4.11` — HC-046–HC-049 (skill provisioning obligations)
-- `specs/control-points.md §4.6` — CP-031/CP-052 (Beads-CLI in every required
-  role's default_skills)
+- Do NOT issue a terminal transition on a bead you submitted to a queue — see
+  § Write discipline.
+- Do NOT parse `br` text output.
+- Do NOT mint, parse, or rewrite bead IDs. They are opaque strings owned by
+  Beads.
+- Do NOT use `br` to track transitions *inside* a run. Those live in the git
+  checkpoint trail and the JSONL event log.
+- Do NOT report a failing `br` command as a version problem. harmonik checks only
+  that `br` is present and runnable; any version is accepted. Report the failure
+  itself.

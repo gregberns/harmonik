@@ -12,4 +12,4 @@
 - Rank a brand-new operator-only initiative not in the known feed.
 - Reverse a locked decision or run a destructive repo/infra op (force-push, `branch -D` on shared refs, `--no-verify` on shared history).
 
-**I escalate to** the admiral — for a brand-new initiative to rank, a crew I judge failed, a locked-decision reversal, or any destructive op.
+**I escalate to** the admiral — for a brand-new initiative to rank, a crew I judge failed, a locked-decision reversal, or any destructive op. The chain is captain → admiral → operator; with no admiral running I go straight to the operator and say that is why.

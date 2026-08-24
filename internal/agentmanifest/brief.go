@@ -165,9 +165,11 @@ func buildSkillEntry(agentsDir, typeName, repoRoot string, c ContextEntry) Skill
 	skillMD := filepath.Join(resolved, "SKILL.md")
 	if _, err := os.Stat(skillMD); err == nil {
 		entry.Pointer = skillMD
-		if c.Presence != "retrieved" {
-			entry.ShortDesc = readSkillShortDesc(skillMD)
-		}
+		// Read the description whatever the presence. `retrieved` means "pull the
+		// body on demand", not "do not tell the reader what this is" — a pointer
+		// that names nothing on the other side gets loaded just in case, which is
+		// the cost `retrieved` exists to avoid.
+		entry.ShortDesc = readSkillShortDesc(skillMD)
 	} else {
 		entry.Pointer = resolved
 	}
@@ -219,21 +221,77 @@ func readFrontmatterDescription(path string) string {
 	return strings.TrimSpace(meta.Description)
 }
 
+// readSkillShortDesc returns the one-line description the brief prints beside a
+// skill's path. A SKILL.md that opens with YAML frontmatter gets its
+// `description:` field; otherwise the first prose line wins.
+//
+// The frontmatter case is why this is not just "first non-blank line": that
+// rule returned the literal "---" opening fence for every skill that has
+// frontmatter, so the brief rendered pointers like "agent-comms: ---" — a
+// pointer that names nothing on the other side.
 func readSkillShortDesc(skillMDPath string) string {
 	//nolint:gosec // G304: path comes from ResolveRef which validates against known dirs
 	data, err := os.ReadFile(skillMDPath)
 	if err != nil {
 		return ""
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		l := strings.TrimSpace(scanner.Text())
-		if l == "" || strings.HasPrefix(l, "#") {
-			continue
-		}
-		return l
+	content := string(data)
+	if desc := readFrontmatterDescription(skillMDPath); desc != "" {
+		return firstLine(desc)
+	}
+	return firstProseLine(stripFrontmatter(content))
+}
+
+// stripFrontmatter drops a leading YAML frontmatter block, fences included.
+// Content that does not open with a fence is returned unchanged.
+func stripFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
+		return content
+	}
+	rest := strings.SplitN(content, "\n", 2)[1]
+	end := strings.Index(rest, "\n---")
+	if end == -1 {
+		return content
+	}
+	after := rest[end+len("\n---"):]
+	if i := strings.Index(after, "\n"); i != -1 {
+		return after[i+1:]
 	}
 	return ""
+}
+
+// firstProseLine returns the first non-blank line that is not a markdown
+// heading or an HTML comment (the SOURCE OF TRUTH banner every shipped skill
+// carries).
+func firstProseLine(content string) string {
+	inComment := false
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		l := strings.TrimSpace(scanner.Text())
+		switch {
+		case inComment:
+			if strings.Contains(l, "-->") {
+				inComment = false
+			}
+		case strings.HasPrefix(l, "<!--"):
+			if !strings.Contains(l, "-->") {
+				inComment = true
+			}
+		case l == "" || strings.HasPrefix(l, "#"):
+		default:
+			return l
+		}
+	}
+	return ""
+}
+
+// firstLine collapses a multi-line YAML folded description to its first line,
+// so a skill pointer stays one line in the rendered brief.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i != -1 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 func readHandoff(repoRoot, agentName string) (string, bool) {
@@ -380,10 +438,13 @@ func renderToonSkills(out *errorWriter, skills []SkillEntry) {
 	}
 	out.println("\nSkills:")
 	for _, skill := range skills {
-		if skill.Presence == "retrieved" || skill.ShortDesc == "" {
-			out.printf("  • %s (pull on demand)", skill.Name)
-		} else {
+		if skill.ShortDesc != "" {
 			out.printf("  • %s: %s", skill.Name, skill.ShortDesc)
+		} else {
+			out.printf("  • %s", skill.Name)
+		}
+		if skill.Presence == "retrieved" {
+			out.print(" (pull on demand)")
 		}
 		if skill.Pointer != "" {
 			out.printf(" — see %s", skill.Pointer)
@@ -471,18 +532,19 @@ func writeContent(w *errorWriter, content string) {
 }
 
 func renderSkillLine(w *errorWriter, s SkillEntry) {
-	if s.Presence == "retrieved" || s.ShortDesc == "" {
-		if s.Pointer != "" {
-			w.printf("- **%s** _(pull on demand)_ — see `%s`\n", s.Name, s.Pointer)
-		} else {
-			w.printf("- **%s** _(pull on demand)_\n", s.Name)
-		}
-		return
+	suffix := ""
+	if s.Presence == "retrieved" {
+		suffix = " _(pull on demand)_"
 	}
-	if s.Pointer != "" {
-		w.printf("- **%s:** %s — see `%s`\n", s.Name, s.ShortDesc, s.Pointer)
-	} else {
-		w.printf("- **%s:** %s\n", s.Name, s.ShortDesc)
+	switch {
+	case s.ShortDesc != "" && s.Pointer != "":
+		w.printf("- **%s:** %s%s — see `%s`\n", s.Name, s.ShortDesc, suffix, s.Pointer)
+	case s.ShortDesc != "":
+		w.printf("- **%s:** %s%s\n", s.Name, s.ShortDesc, suffix)
+	case s.Pointer != "":
+		w.printf("- **%s**%s — see `%s`\n", s.Name, suffix, s.Pointer)
+	default:
+		w.printf("- **%s**%s\n", s.Name, suffix)
 	}
 }
 

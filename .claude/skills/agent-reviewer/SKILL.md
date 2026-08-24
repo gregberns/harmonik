@@ -605,7 +605,7 @@ you raised nothing; leaving the key out is not. The Go reader in
 the marshaller in `internal/runmerge/reviewtrailers.go` always writes one, so a
 verdict without it is a shape no reader here accepts.
 
-An `APPROVE` is held to more than the other verdicts. `scripts/validate-commit-msg.sh`
+An `APPROVE` is held to more than the other verdicts. `harmonik commit-msg validate`
 requires the `Reviewed-By:` value to be the bare name of a reviewer skill this repo has
 — `agent-reviewer` or `agent-config-reviewer` — and refuses a value that says "self".
 Write `Reviewed-By: agent-reviewer`, and write nothing after the name. A qualifier is

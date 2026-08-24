@@ -1,430 +1,191 @@
 ---
 name: agent-comms
 description: >
-  Agent-facing contract for `harmonik comms` — the inter-agent messaging
-  surface. Declares the at-least-once delivery guarantee (N3), the NORMATIVE
-  requirement to dedupe on `event_id`, and the CLI surface for
-  send/recv/log/join/leave/who. Required in every agent's launch context that
-  participates in agent-to-agent coordination.
-
-  Load-bearing: must not rot. Kept current with agent-comms spec
-  (FINALIZED 2026-06-01, peer sign-off; AMENDMENT B1 2026-07-11, hk-8xspi).
-
-sources:
-  - ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §N3 (FINALIZED)
-  - ~/.kerf/projects/gregberns-harmonik/agent-comms/07-tasks.md T12
-  - specs/handler-contract.md §4.11 (HC-046–HC-049)
+  The `harmonik comms` inter-agent message bus: the at-least-once delivery
+  guarantee, the normative requirement to dedupe on `event_id`, and the CLI
+  surface. Load-bearing: must not rot.
 ---
 
 <!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/agent-comms/SKILL.md (Go //go:embed).
      The copy at .claude/skills/agent-comms/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
      overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. To change this skill:
-     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
-     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+     only there silently drifts and is eventually reverted. Edit the cmd/harmonik/assets/
+     copy, then mirror it byte-for-byte into .claude/skills/ in the SAME commit. -->
 
 # Agent-Comms Skill
 
-You are operating inside a harmonik run. This skill defines how you send and
-receive messages from other agents via the `harmonik comms` surface, and
-explains the delivery guarantee you MUST rely on.
+How you send and receive messages from other agents, and the delivery guarantee
+you must build on.
 
----
+## Delivery guarantee — read this first (N3, NORMATIVE)
 
-## Delivery guarantee — READ THIS FIRST (N3, NORMATIVE)
+**Delivery is at-least-once, not exactly-once.**
 
-**Comms delivery is at-least-once, NOT exactly-once.**
+Every `agent_message` carries a unique `event_id`. The cursor advances *after* a
+batch is returned, so a crash between delivery and cursor-advance replays the
+whole batch on the next `recv`.
 
-Every `agent_message` carries a unique UUIDv7 `event_id` in its envelope. A
-crash or restart before the daemon advances the cursor causes the same batch to
-be re-delivered on the next `recv` call.
+> A recipient that has already processed an `event_id` MUST treat a re-delivery
+> of that same `event_id` as a **no-op**.
 
-**NORMATIVE requirement (N3):**
-
-> A recipient that has already processed an `event_id` MUST treat a
-> re-delivery of that same `event_id` as a **no-op**. Never assume
-> exactly-once. Dedupe by `event_id`.
-
-Practical dedupe pattern:
-
-```python
-# pseudo-code — adapt to your language/context
-seen = set()          # or a persistent store keyed on event_id
-
-for msg in recv_batch:
-    if msg["event_id"] in seen:
-        continue      # re-delivery — skip
-    seen.add(msg["event_id"])
-    handle(msg)
-```
-
-Why: the cursor advances **after** the batch is returned, so a crash between
-delivery and cursor-advance replays the same batch. The `event_id` is the only
-safe dedup key — do not rely on body content or wall-clock time.
-
----
+Keep a `seen` set of processed `event_id` values and skip anything already in it.
+`event_id` is the only safe dedupe key — never body content, never a timestamp.
 
 ## Identity
 
-Every comms op requires an agent identity. Resolution order:
+Every op needs an identity: an explicit flag, else `$HARMONIK_AGENT` (set at
+launch). With neither, the command exits 1.
 
-1. Explicit flag (`--from`, `--name`, `--agent`).
-2. `$HARMONIK_AGENT` environment variable (set by the daemon at launch).
+**The identity flag is spelled differently per subcommand**, and the wrong one
+fails with `unknown flag`:
 
-If both are absent, the command exits with code 1.
+| Subcommand | Identity flag |
+|---|---|
+| `recv` | `--agent NAME` |
+| `join`, `leave` | `--name NAME` |
+| `send` | `--from NAME` (`--to` is the recipient, not your identity) |
+| `who` | none — read-only |
 
-> **FLAG-SPLIT TRAP — identity flags differ per subcommand**
->
-> | Subcommand | Identity flag |
-> |------------|---------------|
-> | `recv`     | `--agent NAME` |
-> | `join`, `leave` | `--name NAME` |
-> | `send`     | `--from NAME` (recipient is `--to`, not identity) |
-> | `who`      | no identity flag (read-only, no cursor) |
->
-> `harmonik comms recv --name X` fails with `unknown flag --name` — use `--agent` instead. Passing the wrong flag to any subcommand produces the same error. Rely on `$HARMONIK_AGENT` (set at launch) to avoid flag spelling entirely.
+Relying on `$HARMONIK_AGENT` avoids the spelling entirely.
 
----
-
-## CLI surface
-
-### `harmonik comms send` — send a message (requires daemon)
+## `harmonik comms send`
 
 ```
 harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T]
                     [--reply-to ID] [--wake | --no-wake] [--project DIR] [--] <body>
 ```
 
-- `--to NAME` XOR `--broadcast` (sets `to:"*"`). Exactly one required.
-- `--from NAME` — sender identity (default: `$HARMONIK_AGENT`).
-- `--topic T` — optional free-text filter key.
-- `--reply-to ID` — optional `event_id` of the message being replied to.
-- Directed sends **nudge the recipient's tmux pane by default** so an idle
-  session wakes and processes the durable message. `--wake` remains as an
-  explicit compatible spelling; `--no-wake` opts out. Waking requires a directed
-  `--to NAME` (rejected with `--broadcast` — you cannot wake a broadcast). The
-  pane target is resolved from the crew registry (`.harmonik/crew/<name>.json`),
-  falling back through the crew and bare-agent tmux session conventions. The nudge is delivered
-  via bracketed-paste (the same mechanism the keeper uses). Best-effort: a wake
-  failure (no tmux, pane gone) is reported to stderr but does NOT affect the exit
-  code or the message delivery. See § Waking an idle peer below.
-- `<body>` — trailing args joined by space, or `-` to read stdin.
-- Prints the minted `event_id` on success.
-- Exit 17 = daemon not running.
-- **Exit 1 = the recipient is a name this project does not know.** The message is
-  still recorded and still durable — a peer that boots later still reads it on
-  its first `recv` — but nobody has received it yet, and a caller that branches
-  on the exit code must not read that as delivered. A name counts as known when
-  it is in the crew registry, in `.harmonik/agents/`, or in the presence
-  registry; `operator` is always addressable and a `--broadcast` is never
-  checked.
-- For a name that matches NOTHING, `harmonik wake --agent <name>` exits 1 too.
-  Do not read that as the two surfaces sharing one list — they do not. `wake`
-  reaches a tmux pane and `send` reaches a mailbox, so `operator` is addressable
-  by `send` and not wakeable, and the sets stay deliberately different. They
-  agree only on a name neither of them knows.
+`--to` and `--broadcast` are exclusive and one is required. The body is the
+trailing args, or `-` to read stdin. On success it prints the minted `event_id`.
+
+**A directed send nudges the recipient's tmux pane by default**, so an idle
+session wakes and processes the message. `--wake` is the explicit spelling of
+that default and `--no-wake` opts out. You cannot wake a broadcast. **The nudge
+is best-effort**: if no pane can be found or pasted into, it prints to stderr and
+neither the exit code nor the delivery changes. An armed `comms recv --follow` on
+the recipient is the half that does not fail silently — crews are expected to
+keep one running for their whole life.
+
+**Exit 1 means the recipient is a name this project does not know.** The message
+is still recorded and still durable, and a peer that boots later reads it on its
+first `recv` — but nobody has received it yet, and a caller that branches on the
+exit code must not read that as delivered. A name counts as known when it is in
+the crew registry, in `.harmonik/agents/`, or in the presence registry.
+`operator` is always addressable, and a broadcast is never checked.
+
+`harmonik wake --agent <name>` also exits 1 on a name that matches nothing, but
+the two surfaces do not share a list: `wake` reaches a tmux pane and `send`
+reaches a mailbox, so `operator` is addressable and not wakeable. They agree only
+on a name neither knows.
 
 ```bash
-# Direct message
 harmonik comms send --to orchestrator -- Batch complete
-
-# Broadcast
 harmonik comms send --broadcast --from myagent -- Status: ready
-
-# With topic
-harmonik comms send --to alice --from bob --topic status -- ready
-
-# Deliver without waking (directed sends wake by default)
 harmonik comms send --to crew-alpha --no-wake -- Non-urgent status
-
-# Stdin body
-echo '{"result": "ok"}' | harmonik comms send --to orchestrator --from myagent -
+echo '{"result":"ok"}' | harmonik comms send --to orchestrator -
 ```
 
----
-
-### `harmonik comms recv` — receive messages from durable cursor (requires daemon)
+## `harmonik comms recv`
 
 ```
 harmonik comms recv [--agent NAME] [--from NAME] [--topic T]
                     [--follow] [--json] [--project DIR]
 ```
 
-Reads unread `agent_message` events from this agent's persisted cursor
-forward, advancing the cursor after delivery (at-least-once, N3). Delivers
-events where `to == me || to == "*"`.
+Reads unread messages from this agent's durable cursor forward and advances it.
+Delivers events where `to` is you or `*`.
 
-> **DECOUPLED CURSORS (B1, bead hk-8xspi)** — a plain one-shot `comms recv
-> --agent` and a `--follow`/`--wait` session each own an INDEPENDENT durable
-> cursor for the same agent. Draining one never advances the other, so a
-> polling `comms recv --agent X` and an armed `comms recv --agent X --follow`
-> can both run concurrently without either starving the other's view of the
-> backlog — at the cost of each seeing (and needing to dedupe) messages the
-> other already consumed. This is exactly what N3 dedupe-on-`event_id` already
-> requires of you, so no extra handling is needed beyond following N3.
-
-- `--agent NAME` — agent identity (default: `$HARMONIK_AGENT`).
-- `--from NAME` — filter: only messages from NAME.
-- `--topic T` — filter: only messages with topic T.
-- `--follow` — replay backlog, then tail live events until signal (no gap).
-  Uses the LIVE cursor (shared with `--wait` and `harmonik subscribe --to`),
-  not the plain-recv POLL cursor.
-- `--wait` — block until exactly one message arrives, then exit. Mutually
-  exclusive with `--follow`; also uses the LIVE cursor.
-- `--json` — emit one JSON object per message (NDJSON).
+- `--follow` replays the backlog then tails live with no gap. `--wait` blocks for
+  exactly one message. Both use the LIVE cursor.
+- `--json` emits one JSON object per message. Use it always.
 - Exit 17 = daemon not running.
 
-```bash
-# Drain backlog once (one-shot)
-harmonik comms recv --agent myagent
+> **A one-shot `recv` and a `--follow` session own INDEPENDENT cursors.** Draining
+> one never advances the other, so a polling `recv` and an armed `--follow` can
+> both run without starving each other's view — at the cost of each seeing
+> messages the other consumed. Dedupe on `event_id` already handles this.
 
-# Drain then stream live
-harmonik comms recv --agent myagent --follow
+`recv --json` is flat: `.from`, `.to`, `.topic`, `.body`, `.event_id`, `.ts`.
 
-# Filter and stream JSON
-harmonik comms recv --agent myagent --from orchestrator --topic status --json
+> **`recv --json` is FLAT; `log --json` is a NESTED envelope, and a jq filter
+> written for one silently matches nothing on the other.** `log` marshals the
+> whole event, so the same fields live under `.payload` and the timestamp key is
+> `timestamp_wall`, not `ts`. The failure looks like health: an agent that arms
+> its Monitor with `jq 'select(.payload.from == "operator")'` against a `recv`
+> stream sees zero matches forever while `ps` shows a live follower. Match
+> `.from` on a `recv` stream and `.payload.from` on a `log` scan.
 
-# Uses $HARMONIK_AGENT
-harmonik comms recv --follow
-```
-
-**JSON output shape (per message):**
-
-```json
-{
-  "event_id": "<UUIDv7>",
-  "from": "sender-name",
-  "to": "myagent",
-  "topic": "status",
-  "body": "...",
-  "in_reply_to": "<UUIDv7 or omitted>",
-  "ts": "2026-06-01T12:00:00Z"
-}
-```
-
-`event_id` is the dedup key. See "Delivery guarantee" above.
-
-> **`recv --json` is FLAT; `log --json` is a NESTED envelope. They are not
-> interchangeable — a jq filter written for one silently matches nothing on the
-> other (hk-wwa4z).** `recv` emits the message fields at top level, exactly as
-> shown above: `.from`, `.to`, `.topic`, `.body`, `.event_id`, `.ts`. `log`
-> marshals the whole `core.Event` envelope, so the same fields live one level
-> down under `.payload`, and the timestamp key is `timestamp_wall`, not `ts`:
->
-> ```json
-> {"event_id":"<UUIDv7>","schema_version":1,"type":"agent_message",
->  "timestamp_wall":"2026-06-01T12:00:00Z","source_subsystem":"daemon",
->  "payload":{"from":"sender-name","to":"myagent","topic":"status","body":"..."}}
-> ```
->
-> The failure this causes is SILENT and looks like health: an agent that arms
-> its Monitor with `jq 'select(.payload.from == "operator")'` against a `recv
-> --follow` stream sees zero matches forever, while `ps` shows a live follower
-> and presence reads Online. Match `.from` on a `recv` stream; match
-> `.payload.from` on a `log` scan.
-
----
-
-### `harmonik comms log` — operator view (no daemon needed)
+## `harmonik comms log`
 
 ```
 harmonik comms log [--since <event_id|duration>] [--to NAME] [--from NAME]
                    [--topic T] [--json] [--project DIR]
 ```
 
-Read-only scan of ALL `agent_message` events in `events.jsonl`. Does NOT
-advance any agent cursor. Use for debugging / human inspection.
+Read-only scan of every `agent_message` in `events.jsonl`. Needs no daemon and
+advances no cursor. For debugging and human inspection — never as a substitute
+for `recv`, which it cannot replace because it ignores per-agent addressing.
 
-- `--since EVENT_ID` — scan after that event.
-- `--since DURATION` — events within the last duration (e.g. `30m`, `1h`).
-- `--to NAME` — filter: only to NAME or broadcast.
-- `--from NAME` — filter: only from NAME.
-- `--topic T` — filter: only with topic T.
-- `--json` — NDJSON output (full event envelope).
-
-```bash
-harmonik comms log --since 30m
-harmonik comms log --from orchestrator --json
-harmonik comms log --since 1h --to myagent
-```
-
----
-
-### `harmonik comms join` / `leave` — presence beats (requires daemon)
+## `harmonik comms join` / `leave` — presence
 
 ```
-harmonik comms join [--name NAME] [--reason join|refresh] [--project DIR]
-harmonik comms leave [--name NAME] [--project DIR]
+harmonik comms join [--name NAME] [--reason join|refresh]
+harmonik comms leave [--name NAME]
 ```
 
-- `join` → emits `agent_presence{status:"online", reason:"join"|"refresh"}`.
-- `leave` → emits `agent_presence{status:"offline", reason:"leave"}`.
-- Prints the minted `event_id` on success.
-- Exit 17 = daemon not running.
+Call `join` at session start and `leave` at clean shutdown. An agent that crashes
+without `leave` expires when its last beat ages past the TTL.
 
-```bash
-harmonik comms join --name myagent               # first join at boot
-harmonik comms join --name myagent --reason=refresh  # heartbeat tick (not persisted)
-harmonik comms leave --name myagent
-harmonik comms join    # uses $HARMONIK_AGENT
-```
+**An armed `comms recv --follow` self-refreshes presence.** It emits its own
+`agent_presence{reason:"refresh"}` beat on its own timer and its own connection,
+so a quiet subscriber stays Online in `comms who` with no traffic at all, and it
+emits a `leave` beat immediately on a clean exit. Several role docs contradict
+this and are wrong.
 
-Call `join` at session start; call `leave` at clean shutdown. An agent that
-crashes without calling `leave` expires naturally when its last presence beat
-ages past the TTL (~120s).
+So **do not run a manual `join` timer alongside `--follow`** — double beats just
+pollute `events.jsonl`. Without `--follow` armed, re-run `harmonik comms join
+--reason=refresh` yourself on a timer comfortably inside the TTL. Use
+`--reason=refresh`, not a bare `join`, so the heartbeat is not persisted.
 
-**Presence-refresh (this file is the canonical statement — several role docs
-contradict it and are wrong):** An armed `comms recv --follow` **does**
-self-refresh. It emits its own lightweight `agent_presence{reason:"refresh"}`
-beat every ~60s for as long as the stream is open, so a quiet subscriber stays
-Online in `comms who` even with no traffic (B2, bead hk-qw63o). The beat runs on
-its own timer and its own connection, independent of message delivery — it does
-not require receiving or sending anything. When `--follow` exits on a signal, it
-emits a `leave` beat immediately so the registry reflects the departure without
-waiting for the TTL (hk-ru45u).
+The durations are compiled constants — cite the symbols, not the numbers:
+`internal/presence` `TTL` and `StaleCutoff`, and `cmd/harmonik/comms.go`
+`commsFollowPresenceBeatInterval`, which is half the TTL by design so one dropped
+beat does not age you out.
 
-The three durations are compiled constants — cite the symbols, not the numbers:
-`internal/presence` `TTL` (Online window, ~120s) and `StaleCutoff` (Stale until
-this, then Offline, ~10min), and `cmd/harmonik/comms.go`
-`commsFollowPresenceBeatInterval` (the refresh cadence, ~60s — half the TTL by
-design, so one dropped beat does not age you out).
+Two cases where presence still ages out with `--follow` running, neither of which
+contradicts the above: the **daemon is down**, so the beat cannot be delivered and
+`--follow` is retrying with backoff; or the session was **parked**, where
+`--follow` exits on the park message, stops beating, and deliberately sends no
+`leave`. A parked agent reading Stale is intended — quiesced, not gone.
 
-**Two cases where presence still ages out with `--follow` running.** Neither is a
-contradiction of the above, and knowing them stops the wrong conclusion:
+## `harmonik comms who`
 
-1. **The daemon is down.** The beat is delivered over the daemon socket. When the
-   daemon is not there the beat fails, logs, and `--follow` retries the subscribe
-   with backoff. Presence ages out normally in the meantime.
-2. **The session was parked.** `--follow` exits on the daemon's `park` message and
-   stops beating, and it deliberately sends no `leave`. A parked agent therefore
-   reads Stale and then Offline. That is intended — quiesced, not gone.
+Lists agents Online, plus agents that have gone Stale but not yet Offline.
+Read-only. `--json` emits one
+`{"agent","last_seen","status"}` per line.
 
-**Single-emit discipline (hk-ru45u):** Do NOT also run a manual `comms join`
-timer when `--follow` is armed — `--follow` already handles periodic refresh
-via its own beat ticker. Running both causes double-emits that pollute
-events.jsonl with redundant `reason:join` entries. If you are NOT keeping
-`--follow` armed, re-run `harmonik comms join --reason=refresh` on a ≤90s
-timer yourself (use `--reason=refresh` so the heartbeat is not persisted).
-
----
-
-### `harmonik comms who` — presence registry (no daemon needed)
-
-```
-harmonik comms who [--json] [--project DIR]
-```
-
-Lists agents online within the ~120s staleness window, and agents that have gone
-stale but not yet offline. Read-only; emits nothing, advances no cursor.
-
-- `--json` — NDJSON, one
-  `{"agent": "name", "last_seen": "RFC3339", "status": "online"|"stale"}` per
-  line. **`status` is part of the contract, not optional.** An agent past the
-  120s window but inside the offline cutoff is reported with `status: "stale"`
-  rather than dropped, so a consumer that ignores the field treats a stale agent
-  as a healthy one. `scripts/ops-monitor-check.sh` depends on it. Agents that are
-  fully offline — past the stale cutoff, or with a `leave` beat — are omitted
-  from the output entirely.
-
-```bash
-harmonik comms who
-harmonik comms who --json
-```
-
----
-
-## § Waking an idle peer
-
-An idle recipient does **not** reliably process a message the instant
-`comms send` delivers it: a one-shot or idle Claude session needs either an
-**armed `comms recv --follow` stream** kept running for its lifetime, or a pane
-nudge, to actually pick the message up. Directed sends therefore wake by default:
-
-1. **`comms send --to NAME`** — the CLI nudges the recipient's tmux pane right
-   after delivery. Best-effort and directed-only. Use `--no-wake` only when
-   durable delivery without an immediate action is intentional.
-2. **Keep `comms recv --follow` armed via the Monitor tool** on the recipient as
-   a durable live inbox. The default pane nudge remains the action-level wake
-   guarantee; an armed stream alone has not reliably resumed an idle session.
-   Crews are expected to keep the stream running for their whole life (see the
-   crew-launch skill, § Idle-crew-wake protocol).
-
-   > **The `--follow` stream MUST be armed via the Monitor tool, not a background
-   > bash (hk-b51bg).** A delivered line only becomes an ACTION the recipient reads
-   > and acts on when a Monitor re-invocation surfaces it as a REPL turn. A plain
-   > `run_in_background` bash streaming `--follow` to a file just accumulates bytes
-   > an idle session never reads — the message is delivered but never acted on. This
-   > was the root cause of the fleet "unread directives" under-drain. Backstop: a
-   > one-shot `comms recv --agent <me> --json` sweep on an idle timer (own POLL
-   > cursor, B1) catches a silently-dead `--follow`; re-arm the Monitor on any hit.
-
-If the recipient has gone fully idle with no armed `--follow`, the default
-directed-send nudge is the action-level backstop.
-
----
-
-## § Monitoring daemon run events — `harmonik subscribe`
-
-`comms` streams **agent messages**. The complementary surface for **daemon run
-events** is `harmonik subscribe`: an NDJSON stream of run-lifecycle events
-(`run_completed`, `run_failed`, `run_stale`, `heartbeat`) with a server-side
-heartbeat so you wake periodically even when the daemon is quiet.
-
-```bash
-harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat \
-                   --heartbeat 60s --json
-```
-
-Arm `subscribe` alongside your `comms recv --follow` loop: `recv` tells you what
-peers are saying, `subscribe` tells you what the daemon is doing with your
-dispatched beads. They are distinct surfaces — do not conflate them. (Full
-`subscribe` docs live with the dispatch/monitoring runbook; this is only a
-cross-reference.)
-
----
+**`status` is part of the contract, not optional.** An agent past the Online
+window but inside the offline cutoff is reported as `stale` rather than dropped,
+so a consumer that ignores the field treats a stale agent as a healthy one.
+Fully-offline agents are omitted entirely.
 
 ## Exit codes
 
 | Code | Meaning |
-|------|---------|
+|---|---|
 | 0 | Success |
-| 1 | Argument error, op rejected, or — on `send` — the recipient is a name this project does not know (see above: the message is still recorded, but nobody has received it) |
+| 1 | Argument error, op rejected, or on `send` an unknown recipient (see above) |
 | 2 | Unrecognised verb |
-| 17 | Daemon not running (send/recv/join/leave) |
+| 17 | Daemon not running (send / recv / join / leave) |
 
----
+## What agents must and must not do
 
-## What agents MUST do
-
-- **Dedupe on `event_id`** — never assume exactly-once (N3).
-- Use `$HARMONIK_AGENT` as identity (already set in the launch environment).
-- Use `--follow` for persistent message loops; without it `recv` is one-shot. Arm
-  the `--follow` stream **via the Monitor tool**, not a background bash — only a
-  Monitor re-invocation delivers a line as an actionable REPL turn (hk-b51bg;
-  see § Waking an idle peer).
-- Call `comms join` at startup and `comms leave` at clean shutdown.
-- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s
-  (`commsFollowPresenceBeatInterval`, hk-qw63o), so you add nothing. Without `--follow`
-  armed, re-run `comms join --reason=refresh` on a ≤90s timer yourself (hk-ru45u: use
-  `--reason=refresh` so the heartbeat is not persisted to events.jsonl). The Online
-  window is `internal/presence` `TTL`. See the **Presence-refresh** note under `harmonik comms join / leave` for the two cases where a
-  running `--follow` still ages out.
-
-## What agents MUST NOT do
-
-- Do NOT assume a message will be delivered exactly once.
-- Do NOT use `comms log` as a substitute for `recv` — `log` does not advance
-  any cursor and ignores per-agent addressing.
-- Do NOT parse the human-readable output of `comms recv` — use `--json`.
-- Do NOT pass --name to recv — it takes --agent. (--name works for join/leave; send uses --from; who needs no identity flag.)
-
----
-
-## Spec references
-
-- **N3** (normative, FINALIZED 2026-06-01):
-  `~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §FINALIZED`
-- **Q3** (acks, at-least-once): same file, §Q3 / §5 step 4.
-- **AMENDMENT B1** (decoupled poll/live cursors, operator-ratified 2026-07-11,
-  bead hk-8xspi, supersedes hk-d65rb): same file, §AMENDMENT B1.
-- `specs/handler-contract.md §4.11` — HC-046–HC-049 (skill provisioning).
+- **Dedupe on `event_id`.** Never assume exactly-once.
+- Arm a `--follow` stream **through the Monitor tool**, not a background bash.
+  Only a Monitor re-invocation delivers a line as a turn you act on; a
+  backgrounded follow writing to a file is delivered and never read.
+- Use `--json`. Never parse the human-readable output of any comms verb.
+- `comms` carries agent messages. **Daemon run events are a different surface** —
+  `harmonik subscribe`, owned by the **harmonik-dispatch** skill. Arm both: one
+  tells you what peers are saying, the other what the daemon is doing with your
+  beads.

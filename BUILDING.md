@@ -20,32 +20,47 @@ make bootstrap      # installs pinned dev tools
 
 Git hooks are **retired**: lefthook was removed (it re-armed itself on every
 commit). Validation — format/lint gates, the secret scan, and commit-message
-trailers — runs from the two gate targets rather than from a
+trailers — runs from the gate targets rather than from a
 pre-commit/pre-push/commit-msg hook. `gate-static-product`, which `make fast`,
 `make full` and `make core` all reach, calls
-`scripts/commit-msg-gate.sh --head-only` and
-`scripts/secret-scan.sh --head-only`: both read the commit just made. The gates
-run after the commit, when the ordinary flow leaves nothing staged, so an index
-scope there would read whatever happened to be staged rather than the change
-under test.
+`scripts/secret-scan.sh --head-only`, which reads the commit just made. The
+gates run after the commit, when the ordinary flow leaves nothing staged, so an
+index scope there would read whatever happened to be staged rather than the
+change under test.
+**The commit-message gate is not on that line.** Since 2026-08-23 it runs in
+`make full` alone, through the `commit-msg-check` target, which calls
+`scripts/commit-msg-gate.sh --head-only`. `make fast` and `make core` do not
+read a commit message at all.
 `make full` adds `scripts/secret-scan.sh --range`, which reads every line the
 branch adds on top of the baseline named in that script and FAILS on a finding.
 **That scope narrows when the baseline does not resolve.** When the baseline
 commit is missing, is not an ancestor of `HEAD`, or IS `HEAD`, the scan falls
-back to `HEAD^1..HEAD` and reports clean if that is clean. The baseline is not
-an ancestor of `main`, so on `main` — and on any lane branched from `main` that
-has not merged in a branch carrying the baseline — the range is the tip, not the
-branch. The credential scan's `--head-only` carries the weight there. The
-commit-message gate's does NOT: it goes advisory and exits 0 off the baseline
-line, so on `main` that gate blocks nothing (bead
-`hk-commit-msg-gate-advisory-on-main-ap068`). See
+back to `HEAD^1..HEAD` and reports clean if that is clean. **Both baselines
+reach `main` now**, so this narrowing does not apply there: measured 2026-08-23,
+`main` == `origin/main` == `aa423dcc0`, and `git merge-base --is-ancestor`
+returns 0 for the credential baseline `0743e4dec` and for the message baseline
+`4102b4e2e`. This paragraph said the opposite until the merge that superseded
+`main` with the integration branch carried both baselines over. A lane cut from
+a point before a baseline still gets the narrow scope, and the message gate
+still demotes itself to advice on such a lane (bead
+`hk-commit-msg-gate-advisory-on-main-ap068`, a condition that has cleared on
+`main`). **What has NOT cleared is that the message check reads one commit.**
+`--head-only` reads `git rev-parse HEAD`; a push of five commits is one CI run,
+so four of the five messages are never read at all — the same gap bead
+`hk-254ea` records for the credential scan. See
 [`docs/foundation/project-level/build-practices.md`](docs/foundation/project-level/build-practices.md)
-§"Git hooks are retired" for the full statement, and bead `hk-254ea` for the gap.
+§"Git hooks are retired" for the full statement of both gates.
 `scripts/secret-scan.sh` also runs on its own with no argument. That scope is
 the staged index — the right one before a commit exists, and the reason no gate
 calls it that way. `scripts/commit-msg-gate.sh` with no argument does something
 different: it reads every commit from the baseline forward and reports what it
-finds. `make full` calls it that way, in addition to `--head-only`.
+finds. **No target calls it that way any more.** It read 236 commits, took 47
+seconds, named 109 rejections and exited 0 regardless, so `make full` dropped
+it and keeps `--head-only` alone.
+To check one message before you commit it, call the validator directly:
+`harmonik commit-msg validate <file>`. It exits 0 on a clean message and 1 with
+every problem numbered on stderr. The rules live in the Go package
+`internal/commitmsg`; the shell validator it replaced is gone.
 
 ## The check targets
 

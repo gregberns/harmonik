@@ -24,14 +24,11 @@ After tier-3 (project.yaml) and tier-2 (captain-lanes.md), READ direction-log.md
 acting. It is short by design. Its RETURN-PATH is ground truth for sequencing intent.
 
 ## KNOWN vs brand-new — DO NOT re-decide it here
-The canonical definition lives in the orchestrator-rules skill (§Autonomy). In one line:
-a lane that appears in ANY durable doc in this folder, in a past plan order, or in the backlog is
-KNOWN — resuming/un-parking/re-staffing it is AUTONOMOUS, NOT an operator escalation,
-EVEN IF it is parked or shows zero ready beads in the live feed right now. Only a
-NEVER-ranked body of work is the operator's to rank. A lane is GATED only if a NAMED,
-DATED, OWNED, EXPIRING gate is present (in lanes.json: a non-null, unexpired `gate`
-object); absence of a live named gate means KNOWN/resumable. There is no PARKED-known
-tag to set — "parked" just means "zero ready beads now."
+Canonical in the orchestrator-rules skill, `REFERENCE.md` §Autonomy. The consequence for THIS folder: a lane
+named in any durable doc here is KNOWN, so resuming, un-parking, or re-staffing it is
+autonomous even when it shows zero ready beads right now. "Parked" only ever means "zero
+ready beads now" — there is no PARKED-known tag to set, and a lane is GATED only when
+`lanes.json` carries a non-null, unexpired `gate` object.
 
 ## Forced WRITE
 - Whenever you ISSUE or RELAY a direction change, you MUST append a direction-log.md
@@ -51,22 +48,12 @@ direction-log.md is capped ~10 entries / ~60 lines, newest-first. Delete the old
 overflow. No archive.
 
 ## Keep the priority story in one place
-Priority comes from stated intent first, then from the ledger. The named initiatives of the
-operator and the admiral lead, and they live in the active plan's order, in the dated
-directive block in `captain-lanes.md`, and in the direction-log RETURN-PATH. Below that
-line, order the unclaimed backlog with `br ready --sort priority --limit 0`, scoped to a
-lane with `--parent <epic_id>`. Pass `--limit 0` — `br ready` returns 20 rows by default
-and sorts by `hybrid`, so a short listing is not evidence of a short backlog.
-
-`kerf` plans work. It does not rank work. `kerf map` shows which work owns a bead and what
-context it carries. Do not take an order from `kerf next`: its score comes from graph
-structure and never reads the `br` priority field, so a P0 bead and a P3 bead come back the
-same, and it reports empty for a work with no `bead_filter`.
-
-This folder holds a SNAPSHOT of that ordering. A fourth standing priority list here is a
-smell worth stopping for — it means two documents now disagree about what comes next, and
-the next reader cannot tell which one is current. Record the intent in the dated block and
-the direction log, and let the ledger supply the rest.
+The rule — stated intent first, then the ledger — is canonical in the `orchestrator-rules`
+skill §Priority. This folder holds a SNAPSHOT of the resulting order, in the dated directive
+block in `captain-lanes.md` and the direction-log RETURN-PATH. **Do not write a standing
+priority list here.** Another one means two documents disagree about what comes next and the
+next reader cannot tell which is current. Record the intent in the dated block and the
+direction log, and let the ledger supply the rest.
 
 `direction-log.md` takes direction CHANGES only. Status updates and per-tick notes drown
 the signal a fresh session comes here to find. Crews do not write in this folder.

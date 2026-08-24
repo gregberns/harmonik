@@ -14,14 +14,8 @@ Standing behavioral rules: the **`orchestrator-rules` skill** (`.claude/skills/o
 
 Each role loads only its slice. **This map is the reading order.** Where any other file states one, it defers here. Each role's skill stays authoritative for that role's own steps; this is the map across roles. The slices differ on purpose: a captain does not boot-read `AGENT_INDEX.md` or `STATUS.md`, and an implementer-orchestrator has three steps where the captain has four.
 
-- **Captain — cold boot** (see `.claude/skills/captain/STARTUP.md`):
-  1. Step 0 — identity + CWD guard.
-  2. Step 0a — tier-3 `.harmonik/context/project.yaml` (phase, locked decisions, guardrails).
-  3. Step 0b — tier-2 `.harmonik/context/captain-lanes.md` (lanes + epics-in-progress + parked + dated operator directives).
-  4. Step 1 — `captain/SKILL.md` + the **`orchestrator-rules` skill** (standing rules) + tier-1 `HANDOFF.md` (a claim, not ground truth).
-  5. Step 2 — boot digest = ground-truth; overrides every claim above. Steps 3–6 reconcile / plan / staff / arm watchers.
-  - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `.harmonik/context/roadmap.md` only on cold boot / milestone.
-- **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
+- **Captain — cold boot.** Boots from `harmonik agent brief`, which injects its identity and last handoff and hands it PATHS for the rest. Then it loads the tier files under `.harmonik/context/` (`project.yaml` = phase and locked decisions; `captain-lanes.md` = the lane table; `direction-log.md` = what resumes in what order), `captain/STARTUP.md` (the ordered boot runbook, which owns the step order — this map does not restate it), `captain/SKILL.md`, and the **`orchestrator-rules` skill**. Ground truth is one boot-digest call, which overrides every claim in a handoff or a tier file. Does **NOT** boot-read `AGENT_INDEX.md`, `STATUS.md`, the `docs/` knowledge base, or any full skill body.
+- **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read the tier files + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
 - **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (roadmap, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
 - **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`. **Three steps, not the captain's four:** `.harmonik/context/captain-lanes.md` is captain-tier, and its own tier header says so.
 - **Any session with no role:** `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`.
@@ -34,7 +28,7 @@ Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge 
 
 ## Standing rules → the `orchestrator-rules` skill
 
-Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (stated intent first, then the ledger), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
+Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (stated intent first, then the ledger), bead lifecycle (the daemon owns the terminal transitions of what you submit to a queue; you close what you worked by hand), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
 
 - **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill.
 - **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill.
@@ -69,10 +63,12 @@ Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (stated
 > delete each claim upstream makes that is false here: (1) the bead ledger is gitignored and
 > machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits
 > the required review trailers; (3) commit-message validation is agent-enforced — git hooks
-> (lefthook) are retired, not "wired via `lefthook.yml`"; (4) an agent never claims a bead with
-> `br update --status=in_progress` and never closes one with `br close` — the daemon owns terminal
-> transitions, and a bead pre-set to `in_progress` stops being dispatchable with nothing reporting an
-> error; (5) `kerf next` is not the entry point for what to work on. Diff the block before you accept
+> (lefthook) are retired, not "wired via `lefthook.yml`"; (4) on a bead submitted to a queue, an
+> agent never claims a bead with `br update --status=in_progress` (`queue submit` then refuses it:
+> `bead_already_dispatched`, `-32015`, exit 1) and never closes one with `br close` (that close
+> leaks from the worktree to the parent repo before any code lands) — the daemon owns those
+> transitions there; a bead worked by hand, submitted to no queue, is closed by whoever worked it,
+> because nothing else will; (5) `kerf next` is not the entry point for what to work on. Diff the block before you accept
 > the result.
 
 ---
@@ -114,9 +110,13 @@ br comment <id> "..."
 - **Types**: task, bug, feature, epic, chore, docs, question.
 - **Dependencies**: a bead can block another. `br ready` shows only unblocked work.
 
-### The daemon owns the terminal transitions
+### Who runs the work owns the terminal transitions
 
-**Do not set a bead to `in_progress`, and do not close one yourself.** The daemon claims a bead when it dispatches it and closes it when the work merges. A bead an agent pre-set to `in_progress` is no longer dispatchable, and the daemon cannot tell that state from a live run, so the work stalls and nothing reports an error. Creating beads, commenting on them, and adding dependencies are yours.
+**The question is: did you submit this bead to a queue?** Ask that, not "is it dispatched" — you cannot observe dispatch, but you always know what you submitted.
+
+**On a bead you submit to a queue, do not set `in_progress` and do not close it yourself.** The daemon claims that bead when it dispatches it and closes it when the work merges. Both hazards are loud, not silent: `queue submit` refuses a bead already pre-set to `in_progress` with `bead_already_dispatched` (JSON-RPC `-32015`, exit 1), so the work never reaches the queue; and a `br close` from inside a dispatch worktree leaks to the parent repo even when no code landed. The failure nothing reports is a third one — claim a bead by hand and never submit it, and no run exists for any watcher or sweep to notice.
+
+**On a bead you work by hand, close it yourself, because nothing else will.** `harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. An open bead over finished work is a lie in the ledger. Creating beads, commenting on them, and adding dependencies are always yours.
 
 ### Committing
 

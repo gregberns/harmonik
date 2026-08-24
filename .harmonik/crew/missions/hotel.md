@@ -45,15 +45,18 @@ stays out of keeper code until Track A lands. If you find yourself needing to to
 stop and tell captain (that's yankee's lane).
 
 ## How you work (INLINE — daemon worktree-dispatch is off; do NOT `queue submit`)
-`br show <id>` → root-cause → fix in the main tree → **independent review** (spawn a reviewer sub-agent; captain
-gates) → commit **explicit paths only** (NEVER `git add -A`/`.`, bare commit, reset, amend). **Keep the shared
-tree BUILD-GREEN at every pause.** After each commit **verify `git rev-parse HEAD` == your new SHA** (concurrent-commit
-race, hk-jejte) — if not, your changes are still staged, retry. Reference the bead id in the commit subject.
-**Whoever runs the work owns the terminal transitions, and here that is the captain, not you.** Do not set
-`in_progress` and do not close. A pre-set status makes the bead undispatchable, and the run then goes
-nowhere with no error. A close you make by hand leaves the ledger out of step with the run state, so the
-completion event never fires. A crew closes its own beads only when its mission file grants it in
-writing, and this file does not.
+`br show <id>` → root-cause → fix in the main tree → **independent review** (spawn a reviewer
+sub-agent; captain gates) → commit **explicit paths only** (NEVER `git add -A`/`.`, bare commit,
+reset, amend). **Keep the shared tree BUILD-GREEN at every pause.** After each commit **verify `git
+rev-parse HEAD` == your new SHA** (concurrent-commit race, hk-jejte) — if not, your changes are
+still staged, retry. Reference the bead id in the commit subject. **Whoever runs the work owns the
+terminal transitions, and here that is the captain, not you.** Do not set `in_progress` and do not
+close. A pre-set status makes `queue submit` refuse the bead (`bead_already_dispatched`, `-32015`,
+exit 1), so the work never reaches the queue. A close you make by hand leaves the ledger out of step
+with the run state, so the completion event never fires. A bead you work by hand and submit to no
+queue is the other case, and it needs no grant: close that one yourself, because nothing else will —
+`harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a
+hand commit never carries one.
 
 ## On boot
 0. `harmonik agent brief`.

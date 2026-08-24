@@ -161,9 +161,13 @@ stale; the handoff and LANES.md are maintained.
 - **You close the beads you ran by hand. The daemon closes the ones you submit to
   it.** This limit used to say you close your own beads, because the daemon ran
   nothing. It runs work now, so the daemon-owns-terminal-transitions rule is live
-  again for every bead it dispatches. **Hand-close one of those and it stops being
-  dispatchable with nothing reporting an error.** For work you did yourself at the
-  keyboard, verify the fix and close it yourself as before.
+  again for every bead you submit. The predicate is what you submitted, not what
+  looks dispatched. On a submitted bead, a pre-set `in_progress` makes `queue
+  submit` refuse it (`bead_already_dispatched`, `-32015`, exit 1), and a hand
+  `br close` leaks from the worktree to the parent repo before code lands. For
+  work you did yourself at the keyboard, verify the fix and close it yourself as
+  before — nothing else will, because `harmonik reconcile` closes only beads whose
+  commit carries a `Harmonik-Bead-ID:` trailer.
 - **You escalate to the operator, not a captain.** There is no captain. LANES.md §8
   lists what neither lane may decide — add to that list rather than deciding it.
 

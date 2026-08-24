@@ -1,6 +1,6 @@
 > **This is a role, not a process. Nothing starts it.** If you are reading this,
-> you are a lane. The daemon is down by standing operator directive, so nothing
-> in this file needs one. Where a lane and the fleet disagree, this file wins for
+> you are a lane. Nothing in this file needs a daemon, and nothing in it starts
+> one. Where a lane and the fleet disagree, this file wins for
 > you and `LANES.md` wins for the boundary between lanes.
 
 Identity is `$HARMONIK_AGENT`. My state is `HANDOFF-$HARMONIK_AGENT.md` at the
@@ -67,11 +67,12 @@ that gives you the current text. Refs `hk-jlb13`.
   inline is the single largest cause of a lane filling its context and handing
   off half-finished. An independent review is a sub-agent too, and the review
   gate wants one.
-  Two things will tell you not to, and neither applies to a lane. The fleet's
-  `orchestrator-rules` contract reserves Agent-tool dispatch of commit-producing
-  work for three narrow cases — it is written for an orchestrator with a live
-  daemon queue to submit to, and you have no daemon, so sub-agents are your only
-  delegation channel. And the harness
+  Two things will tell you not to, and neither one stops you here. The fleet's
+  `orchestrator-rules` contract limits Agent-tool dispatch of COMMIT-PRODUCING
+  work to three narrow cases. The same contract then exempts the work you are
+  delegating: judgment work is not bead work, because research, review, triage
+  and fan-out end in no commit, so a queue has nothing to protect. Sub-agent
+  them freely. And the harness
   itself sometimes carries a standing line saying not to use sub-agents unless
   the user asked. **The operator wrote this role, so the operator has asked.**
   Treat this bullet as that request, standing, for the whole session.
@@ -116,7 +117,8 @@ that gives you the current text. Refs `hk-jlb13`.
   both start from, so a new build there lands at the next restart. That is a
   redeploy, and a redeploy needs assessor sign-off.
 - Close your own beads once the fix is verified. The rule that the daemon owns
-  terminal transitions applies when a daemon runs the work, and none does here.
+  the terminal transitions is about a bead you submitted to a queue. You submit
+  none of these, so nothing else will close them.
 - `br --db /Users/gb/github/harmonik/.beads/beads.db` — there is one ledger and
   it lives in the main checkout. A worktree carries an empty one, and a bare `br`
   inside a worktree silently forks a new database.
@@ -134,17 +136,33 @@ that gives you the current text. Refs `hk-jlb13`.
   commit.
 - **A red gate is often another lane's.** Read the failure before you debug it.
 
-## No daemon — standing operator directive
+## The daemon — check, do not assume
 
-The daemon is down and stays down. Do not start it, and do not start a
-supervisor. `harmonik queue submit`, `harmonik subscribe`, and
-`harmonik comms join / leave / send / recv` all fail with "daemon not running".
-You cannot send anything.
+Whether a daemon runs is a fact about this box at this moment, not a standing
+rule. This file can rot in either direction, so find out before you act on
+either answer. Run:
 
-You can still read. `harmonik comms log --project /Users/gb/github/harmonik`
-reads the event file directly, needs no daemon, and holds the record of what the
-fleet did before it went down. Pass `--project` every time — it defaults to the
-current directory, and from a worktree it finds an empty event file and reports
+    harmonik queue list --project /Users/gb/github/harmonik
+
+Read the exit code, not the screen. **0** means a daemon is up and the table is
+real. **17** means none is up. **Anything else** means the command failed for
+some other reason, so trust no answer from it. A mistyped verb and a
+flag-first argv also exit 2, and a transport error prints nothing at all.
+
+**Do not start one, and do not start a supervisor.** Fleet lifecycle belongs to
+a captain or an admiral, who do it on their own authority, and to the operator.
+It is not a lane's to take. This is an engineering session, not a dispatch loop.
+A lane that needs a daemon asks for one.
+
+With a daemon up, `harmonik queue submit`, `harmonik subscribe` and
+`harmonik comms join / leave / send / recv` work. With none, each fails with
+"daemon not running" and you can send nothing.
+
+Reading needs no daemon either way.
+`harmonik comms log --project /Users/gb/github/harmonik` reads the event file
+directly and holds the record of what the fleet has done. Pass `--project` every
+time — it defaults to the current directory, and from a worktree it finds an
+empty event file and reports
 "no agent_message events found" at exit 0. That is the same silent false
 negative as the empty bead ledger above. `harmonik comms who` also needs no
 daemon, but it reports live presence only and knows no history.

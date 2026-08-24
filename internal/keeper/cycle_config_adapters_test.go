@@ -35,10 +35,13 @@ func TestConfigAdaptersKeepEntryTranscriptReadsLazy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			roles := map[string]int{}
 			cfg := CyclerConfig{
-				AgentName: "adapter", ProjectDir: t.TempDir(), TmuxTarget: "adapter:0",
+				AgentName:            "adapter",
+				ProjectDir:           t.TempDir(),
+				TmuxTarget:           "adapter:0",
 				OperatorTurnLookback: tc.lookback,
 			}
 			deps := CycleDepsFromConfig(cfg, nil)
+			deps.Operator = operatorProbeFunc(func(string) bool { return false })
 			deps.Activity = countingActivity{ActivityProbe: deps.Activity, roles: roles}
 			cycler, err := NewCyclerWithDeps(
 				CyclePolicyFromConfig(cfg), CycleEnvFromConfig(cfg), deps,

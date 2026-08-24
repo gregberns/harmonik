@@ -41,6 +41,7 @@ func lprConfig(projectDir, agent string, recoverFn func(context.Context, string)
 		TmuxTarget:           "dummy-pane",
 		IsPaneAliveFn:        func(_ context.Context, _ string) bool { return true },
 		OperatorAttachedFn:   func(_ string) bool { return false },
+		ResolveTmuxTargetFn:  func(_, _ string) string { return "" },
 		LiveRecoverFn:        recoverFn,
 		InjectFn:             func(_ context.Context, _ string) error { return nil },
 		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },

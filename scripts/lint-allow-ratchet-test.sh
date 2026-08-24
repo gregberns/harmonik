@@ -37,12 +37,14 @@ pass() {
 # fixture — a scratch repository whose HEAD carries a two-pair allow list.
 fixture() {
     local dir="$1"
-    mkdir -p "$dir/tools"
+    mkdir -p "$dir/tools" "$dir/internal/alpha" "$dir/internal/beta"
     git -C "$dir" init --quiet
     git -C "$dir" config user.email test@example.com
     git -C "$dir" config user.name test
-    printf '# a comment line\n\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\n' >"$dir/tools/allow.txt"
-    git -C "$dir" add tools/allow.txt
+    printf 'package alpha\n\nfunc alphaFinding() {}\n' >"$dir/internal/alpha/alpha.go"
+    printf 'package beta\n\nfunc betaFinding() {}\n' >"$dir/internal/beta/beta.go"
+    printf '# a comment line\n\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\t# internal/alpha/alpha.go:10 alphaFinding\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\t# internal/beta/beta.go:20 betaFinding\n' >"$dir/tools/allow.txt"
+    git -C "$dir" add tools/allow.txt internal
     git -C "$dir" commit --quiet -m seed
     printf 'x\n' >"$dir/other.txt"
     git -C "$dir" add other.txt
@@ -108,13 +110,97 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 4 — REMOVING a pair passes. The list may get shorter.
+# CASE 4 — a SWAP fails even though the list has the same number of entries.
+# A count ratchet cannot distinguish this from a fix.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/swap"
+printf 'package gamma\n\nfunc gammaFinding() {}\n' >"$work/swap/internal/alpha/gamma.go"
+rm "$work/swap/internal/beta/beta.go"
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\t# internal/alpha/alpha.go:10 alphaFinding\ncccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\tfunlen\t# internal/gamma/gamma.go:30 gammaFinding\n' >"$work/swap/tools/allow.txt"
+run_subject "$work/swap"
+status=$?
+if [ "$status" -eq 1 ] && grep -Fq $'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\tfunlen' "$work/out"; then
+    pass "a same-size swap fails and names the replacement finding"
+else
+    fail "a same-size swap did not fail and name the replacement (exit $status, wanted 1)"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 5 — moving a file AND changing its finding fails.
+# The location changes, but the new content identity must still be caught.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/moved-and-changed"
+mkdir -p "$work/moved-and-changed/internal/moved"
+git -C "$work/moved-and-changed" mv internal/alpha/alpha.go internal/moved/alpha.go
+printf '\nfunc addedFinding() {}\n' >>"$work/moved-and-changed/internal/moved/alpha.go"
+printf 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\terrcheck\t# internal/moved/alpha.go:10 alphaFinding\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\t# internal/beta/beta.go:20 betaFinding\n' >"$work/moved-and-changed/tools/allow.txt"
+run_subject "$work/moved-and-changed"
+status=$?
+if [ "$status" -eq 1 ] && grep -Fq $'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\terrcheck' "$work/out"; then
+    pass "a moved and changed file fails and names its new finding"
+else
+    fail "a moved and changed file laundered its new finding (exit $status, wanted 1)"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 6 — moving a finding between symbols in one file fails.
+# The file path stays fixed, while the enclosing syntax changes its identity.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/moved-symbol"
+printf 'package alpha\n\nfunc otherFinding() {}\n' >"$work/moved-symbol/internal/alpha/alpha.go"
+printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\terrcheck\t# internal/alpha/alpha.go:40 otherFinding\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\t# internal/beta/beta.go:20 betaFinding\n' >"$work/moved-symbol/tools/allow.txt"
+run_subject "$work/moved-symbol"
+status=$?
+if [ "$status" -eq 1 ] && grep -Fq $'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\terrcheck' "$work/out"; then
+    pass "a finding moved between symbols fails and is named"
+else
+    fail "a finding moved between symbols was not caught (exit $status, wanted 1)"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 7 — a pure move between packages passes.
+# Only the location aid changes; the content identity stays fixed.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/package-move"
+mkdir -p "$work/package-move/internal/moved"
+git -C "$work/package-move" mv internal/alpha/alpha.go internal/moved/alpha.go
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\t# internal/moved/alpha.go:10 alphaFinding\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\t# internal/beta/beta.go:20 betaFinding\n' >"$work/package-move/tools/allow.txt"
+if run_subject "$work/package-move"; then
+    pass "a pure file move between packages passes"
+else
+    fail "a pure file move between packages was refused"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 8 — a rename in place passes.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/rename"
+git -C "$work/rename" mv internal/alpha/alpha.go internal/alpha/renamed.go
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\t# internal/alpha/renamed.go:10 alphaFinding\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\t# internal/beta/beta.go:20 betaFinding\n' >"$work/rename/tools/allow.txt"
+if run_subject "$work/rename"; then
+    pass "a file renamed in place passes"
+else
+    fail "a file renamed in place was refused"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 9 — REMOVING a pair passes. The list may get shorter.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fixture "$work/shorter"
 printf '# a comment line\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\n' >"$work/shorter/tools/allow.txt"
 if run_subject "$work/shorter"; then
-    pass "removing a pair passes"
+    pass "a finding deleted because it was fixed passes"
 else
     fail "removing a pair was refused, so the list can never be cleaned"
     cat "$work/out" >&2

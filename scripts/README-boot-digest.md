@@ -7,7 +7,7 @@ context before real orchestration begins (bead **hk-039z**, captain-economy CE1)
 
 | script | replaces | who runs it |
 |---|---|---|
-| `captain-boot-digest.sh` | STARTUP.md Steps 2a–2g + Step 4 (daemon status, comms who, crew list, tmux fleet, paused queues, recent comms, ready beads, open epics, kerf map) | a captain session, at boot AND on every keeper-restart resume |
+| `captain-boot-digest.sh` | Fleet condition (daemon status, comms who, crew list, tmux fleet, paused queues, recent comms, open epics) | a captain session, at boot AND on every keeper-restart resume |
 | `crew-boot-digest.sh` | crew-launch SKILL.md Steps 1–2 (mission file, identity check, daemon status, comms who, my-queue status, epic state, ready beads, recent comms) | a crew session, at boot |
 
 ## Why they exist in git
@@ -21,28 +21,27 @@ reference `scripts/captain-boot-digest.sh` / `scripts/crew-boot-digest.sh`.
 
 ## What the captain digest deliberately leaves out
 
-**There is no `kerf next` section.** kerf plans work; it does not rank work. Its
-score comes from graph structure and never reads the `br` priority field, so a P0
-bead and a P3 bead come back the same, and a kerf work with no `bead_filter` reports
-empty. Priority in this project is stated intent first — the operator's and the
-admiral's named initiatives, in the active plan's order, in dated directives in
-`captain-lanes.md`, and in the direction-log RETURN-PATH — and then the ledger, via
-`br ready --sort priority --limit 0`. That ledger query IS the "Ready Beads" section.
+**No bead listing, and no kerf map.** Removed 2026-08-24, and size was only half the
+reason — the two sections were 85 KB of a 90 KB digest. The other half is that **a boot
+digest states fleet condition; it does not decide what to work on.** How a captain finds
+work changes, and pinning it to whatever sits at the top of one ledger query makes that
+choice on the captain's behalf. Where work comes from belongs in the agent's direction — for a
+captain, `captain-lanes.md` and the direction log. There is no captain mission file.
+This script reports what is running.
 
-**`kerf map` stays.** It answers a question nothing else answers: which kerf work
-owns a given bead, and what context that work carries. That is navigation, not
+**No `kerf next` either**, and for a separate reason: kerf plans work, it does not rank
+work. Its score comes from graph structure and never reads the priority field, so a P0 and
+a P3 come back the same.
+
+**Open epics stay.** An epic is a lane, so that section is fleet structure rather than a
 ranking.
-
-The "Ready Beads" section passes `--sort priority --limit 0` on purpose. `br ready`
-defaults to `hybrid` order and to 20 rows, and both defaults mislead a captain
-reading a digest: a short listing is not evidence of a short backlog.
 
 ## What they do NOT do
 
 They cover DISCOVERY only — pure deterministic reads. Every JUDGMENT step stays
 LLM-driven and is explicitly excluded:
 
-- captain: zombie classification, lane planning, fleet establishment, bead selection.
+- captain: zombie classification, lane planning, fleet establishment, choosing the work.
 - crew: comms join, `br update --assignee` mirror, `recv --follow` arming, boot-status post.
 
 ## Usage
@@ -55,7 +54,7 @@ scripts/captain-boot-digest.sh [--project DIR]
 scripts/crew-boot-digest.sh [--crew NAME] [--project DIR]
 ```
 
-Both are read-only against live state (queue/comms/beads RPCs + tmux + kerf) and
+Both are read-only against live state (queue/comms/beads RPCs + tmux) and
 exit 0 even when the daemon is down — the local reads (`crew list`, `comms who`,
 `comms log`) still work, and the digest flags the daemon-down condition inline.
 

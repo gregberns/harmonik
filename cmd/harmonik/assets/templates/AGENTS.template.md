@@ -81,15 +81,9 @@ This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) 
 
 ### What to work on
 
-Priority comes from stated intent first, then from the ledger. Work the named initiatives of the operator first — the active plan's order and the dated directives in `.harmonik/context/captain-lanes.md`. Below that line, order the unclaimed backlog:
+Priority comes from stated intent first, then from the ledger. Work the named initiatives of the operator first — the active plan's order and the dated directives in `.harmonik/context/captain-lanes.md`.
 
-```bash
-br ready --sort priority --limit 0                      # whole ready set, highest priority first
-br ready --sort priority --parent <epic_id> --limit 0   # scoped to one lane
-br ready --sort oldest --limit 0                        # what is starving
-```
-
-Pass `--limit 0`. `br ready` returns 20 rows by default and sorts by `hybrid`, so a short default listing is not evidence of a short backlog.
+**How an agent finds work belongs in its mission, not here.** Which query surfaces the backlog, in what order, and how deep, changes; a rule in this file fixes that choice for every agent and outlives the reason it was written. One fact about the tool is not a choice: `br ready` returns 20 rows by default, sorts by `hybrid`, and does not say that it truncated — so a short listing is never evidence of a short backlog, and `--limit 0` is what defeats it.
 
 `kerf` plans work; it does not rank work. `kerf map` shows which planned work owns a bead and what context it carries. Do not take an order from `kerf next` — its score comes from graph structure and never reads the `br` priority field, so a P0 bead and a P3 bead come back the same, and it reports empty for a work with no `bead_filter`. Ranking what matters is judgment, and a graph metric cannot do it for you.
 

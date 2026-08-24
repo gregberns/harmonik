@@ -95,10 +95,18 @@ echo ""
 
 # ── Agents online ─────────────────────────────────────────────────────────────
 echo "## 4. Agents Online — comms who"
+# `--json` emits JSON LINES, one object per line — not an array. `jq '.[]'` fails on
+# an object, and the old `jq -e '.'` guard passed anyway because it only saw the first
+# one, so this section used to dump raw JSON. Format per line instead. Same fix as
+# scripts/captain-boot-digest.sh section 2.
 WHO_JSON=$(harmonik comms who --json 2>&1)
-if echo "$WHO_JSON" | jq -e '.' >/dev/null 2>&1; then
-  echo "$WHO_JSON" | jq -r '.[] | "- \(.agent)  (age_seconds=\(.age_seconds // "?"))"' 2>/dev/null \
-    || echo "$WHO_JSON"
+WHO_RC=$?
+WHO_LINES=""
+if [[ $WHO_RC -eq 0 ]]; then
+  WHO_LINES="$(jq -r 'select(.agent) | "- \(.agent)  \(.status // "?")  last_seen=\(.last_seen // "?")"' <<<"$WHO_JSON" 2>/dev/null)" || WHO_LINES=""
+fi
+if [[ -n "$WHO_LINES" ]]; then
+  echo "$WHO_LINES"
 else
   harmonik comms who 2>&1 || echo "(comms unavailable)"
 fi

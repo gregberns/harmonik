@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# captain-boot-digest.sh — collapse STARTUP.md Steps 2 & 4 discovery into one call.
+# captain-boot-digest.sh — report fleet condition in one call.
 #
-# Runs ALL deterministic discovery from Steps 2a–2g and Step 4 (queue status,
-# comms who, crew list, tmux fleet, paused queues, recent comms, ready beads,
-# open epics, kerf map) and emits a single Markdown STATE DIGEST.
-# The LLM reads ONE digest instead of 10+ individual discovery turns, reducing
-# context accrued before real work begins.
+# Runs the deterministic fleet-condition checks in one call — queue status, comms
+# who, crew list, tmux fleet, paused queues, recent comms, open epics — and emits a
+# single Markdown STATE DIGEST. The agent reads ONE digest instead of ten discovery
+# turns.
 #
-# Judgment steps (zombie classification, lane planning, fleet establishment,
-# bead selection) remain LLM-driven and are NOT attempted here.
+# What this script reports is what is RUNNING. It does not report what to work on:
+# there is no ready-bead listing and no kerf map, on purpose. See the note above
+# section 7.
+#
+# Judgment steps (zombie classification, lane planning, fleet establishment) remain
+# agent-driven and are NOT attempted here.
 #
 # Usage:
 #   scripts/captain-boot-digest.sh [--project DIR]
@@ -26,13 +29,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-cd "$HK_PROJECT"
+cd "$HK_PROJECT" || { echo "cannot cd to $HK_PROJECT" >&2; exit 1; }
 TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 echo "# Captain Boot Digest — $TS"
 echo ""
-echo "> One-call digest: replaces STARTUP.md Steps 2a–2g + Step 4 individual discovery commands."
-echo "> Judgment steps (zombie classification, lane planning, fleet establishment) stay LLM-driven."
+echo "> One-call digest of fleet condition. It says what is running, not what to work on."
+echo "> Where work comes from is your direction's call, not this digest's."
 echo ""
 
 # ── 2a: Daemon up? ────────────────────────────────────────────────────────────
@@ -52,26 +55,42 @@ echo ""
 
 # ── 2b: Who is online ─────────────────────────────────────────────────────────
 echo "## 2. Agents Online — comms who (STARTUP.md §2b)"
-WHO_JSON=$(harmonik comms who --json 2>&1)
-WHO_RC=$?
-if [[ $WHO_RC -eq 0 ]] && echo "$WHO_JSON" | jq -e '.' >/dev/null 2>&1; then
-  echo "$WHO_JSON" | jq -r '.[] | "- \(.agent)  (age_seconds=\(.age_seconds // "?"))"' 2>/dev/null \
-    || echo "$WHO_JSON"
-else
+# `--json` emits JSON LINES, one object per line — not an array. `jq '.[]'` fails on
+# an object, and the old code fell back to dumping raw JSON, so this section cost ~5x
+# what it needed to and read like a bug. Format per line instead.
+#
+# Branch on EXIT STATUS, not on empty output. An empty result and a broken filter both
+# produce "", so a fallback keyed on emptiness cannot tell a quiet fleet from a bug —
+# which is exactly how the JSON-shape defect above survived. Each section below reports
+# the three cases separately.
+WHO_JSON=$(harmonik comms who --json 2>&1); WHO_RC=$?
+WHO_LINES=$(jq -r 'select(.agent) | "- \(.agent)  \(.status // "?")  last_seen=\(.last_seen // "?")"' <<<"$WHO_JSON" 2>/dev/null); WHO_JQ=$?
+if [[ $WHO_RC -ne 0 ]]; then
   harmonik comms who 2>&1 || echo "(comms unavailable — daemon may be down)"
+elif [[ $WHO_JQ -ne 0 ]]; then
+  echo "(could not parse \`comms who --json\` — the output shape changed. First lines:)"
+  head -3 <<<"$WHO_JSON"
+elif [[ -z "$WHO_LINES" ]]; then
+  echo "Nobody on the bus."
+else
+  echo "$WHO_LINES"
 fi
 echo ""
 
 # ── 2c: Registered crews ──────────────────────────────────────────────────────
 echo "## 3. Registered Crews — crew list (STARTUP.md §2c)"
-CREW_JSON=$(harmonik crew list --json 2>&1)
-CREW_RC=$?
-if [[ $CREW_RC -eq 0 ]] && echo "$CREW_JSON" | jq -e '.' >/dev/null 2>&1; then
-  echo "$CREW_JSON" | jq -r \
-    '.[] | "- \(.name)  queue=\(.queue // "?")  session=\(.session_id // "?")  status=\(.status // "?")"' \
-    2>/dev/null || echo "$CREW_JSON"
-else
+# JSON LINES again, and the same three-way branch — see the note in section 2.
+CREW_JSON=$(harmonik crew list --json 2>&1); CREW_RC=$?
+CREW_LINES=$(jq -r 'select(.name) | "- \(.name)  type=\(.type // "crew")  queue=\(.queue // "?")  started=\(.started_at // "?" | .[0:10])"' <<<"$CREW_JSON" 2>/dev/null); CREW_JQ=$?
+if [[ $CREW_RC -ne 0 ]]; then
   harmonik crew list 2>&1 || echo "(crew list unavailable)"
+elif [[ $CREW_JQ -ne 0 ]]; then
+  echo "(could not parse \`crew list --json\` — the output shape changed. First lines:)"
+  head -3 <<<"$CREW_JSON"
+elif [[ -z "$CREW_LINES" ]]; then
+  echo "No crews registered."
+else
+  echo "$CREW_LINES"
 fi
 echo ""
 
@@ -86,80 +105,112 @@ echo ""
 
 # ── 2g: Paused / failed queues ────────────────────────────────────────────────
 # (Placed before comms log since it's a go/no-go gate)
+#
+# The next action is printed per queue, because it differs by status and one of the
+# three has no verb at all. `internal/queue/types.go` defines them:
+#
+#   paused-by-failure  -> `queue recover`  re-arms the failed items.
+#                         `queuewiring.RecoverFailed` refuses any other status.
+#   paused-by-drain    -> `queue resume`   releases the drain pause.
+#                         `queue.ResumeQueueFromDrain` refuses any other status.
+#   paused-by-budget   -> NEITHER VERB.    Both are refused. The queue clears at
+#                         UTC day-rollover, or when its spend ceiling is raised.
+#
+# The selector also matches `complete-with-failures`, which is NOT a queue status
+# today — it is a GroupStatus, and a group reaching it is what sets the queue to
+# `paused-by-failure`. `specs/digest-command.md` DC-010 reserves the name for a
+# future queue-level status and says so, so the sweep matches it on purpose. Give
+# it the failure verb rather than calling it unrecognised.
+#
+# This script used to print `resume` for all of them, which sent a captain to a
+# refused command on two statuses out of three. A tool that names the right next
+# action does not need a rule elsewhere telling agents what it should have said.
 echo "## 5. Paused / Failed Queues (STARTUP.md §2g)"
-QL_JSON=$(harmonik queue list --json 2>&1)
-if echo "$QL_JSON" | jq -e '.' >/dev/null 2>&1; then
-  PAUSED=$(echo "$QL_JSON" \
-    | jq -r '.queues[]? | select(.status | test("paused|complete-with-failures")) | "- \(.name): \(.status)"' \
-    2>/dev/null || true)
-  if [[ -z "$PAUSED" ]]; then
-    echo "None — all queues active or idle-healthy."
-  else
-    echo "**BLOCKED QUEUES** — resume each with: \`harmonik queue resume --queue <name>\`"
-    echo "$PAUSED"
-  fi
+# THE SECTION MOST WORTH GETTING RIGHT, because it fails toward reassurance. The other
+# sections degrade to something a reader can see is broken; this one degraded to
+# "None — all queues active or idle-healthy" while a queue sat paused-by-failure.
+# Two ways it happened: `.queues[]?` swallows a shape change, and a queue with a null
+# status makes `test()` exit 5, which `|| true` then hid. Both produced an empty result
+# that was indistinguishable from a healthy fleet. Same three-way branch as sections 2,
+# 3, 6 and 7 — and note that here the empty case is a real answer, not a fallback.
+QL_JSON=$(harmonik queue list --json 2>&1); QL_RC=$?
+PAUSED=$(jq -r '.queues[] | select((.status // "") | test("paused|complete-with-failures"))
+             | . as $q
+             | (if   $q.status == "paused-by-failure" then "-> harmonik queue recover --queue \($q.name)"
+                elif $q.status == "paused-by-drain"   then "-> harmonik queue resume --queue \($q.name)"
+                elif $q.status == "paused-by-budget"  then "-> no verb clears this: it lifts at UTC day-rollover, or raise the queue spend ceiling"
+                elif $q.status == "complete-with-failures" then "-> harmonik queue recover --queue \($q.name)  (DC-010 reserves this name at queue level; a group in this state pauses its queue by failure)"
+                else "-> unrecognised status; read internal/queue/types.go before acting"
+                end) as $next
+             | "- \($q.name): \($q.status)  \($next)"' <<<"$QL_JSON" 2>/dev/null); PAUSED_JQ=$?
+if [[ $QL_RC -ne 0 ]]; then
+  echo "(queue list unavailable — \`queue list\` exited $QL_RC. Daemon may be down.)"
+elif [[ $PAUSED_JQ -ne 0 ]]; then
+  echo "**CANNOT TELL** — \`queue list --json\` did not parse, so this section knows nothing."
+  echo "Do NOT read this as all-clear. First lines of the raw output:"
+  head -3 <<<"$QL_JSON"
+elif [[ -z "$PAUSED" ]]; then
+  echo "None — every queue is active or idle-healthy."
 else
-  echo "(queue list unavailable — daemon may be down)"
+  echo "**BLOCKED QUEUES** — each line carries its next action. They are not all the same."
+  echo "$PAUSED"
 fi
 echo ""
 
 # ── 2f: Recent comms log ──────────────────────────────────────────────────────
 echo "## 6. Recent Comms — last 30m (STARTUP.md §2f)"
+# Two things were wrong here. The fields live under `.payload`, not at the top
+# level, so every line rendered as `[?→?][topic=?]:` and told the reader nothing.
+# And a single agent message body runs to several kilobytes, so reading them at
+# full length would cost more than the bead listing this digest just dropped.
+# A boot digest needs to know WHO talked to WHOM about WHAT. Truncate the body;
+# `harmonik comms log` reads the full text when there is a reason to.
 CLOG=$(harmonik comms log --since 30m --json 2>&1 | tail -40)
-if echo "$CLOG" | jq -e '.' >/dev/null 2>&1; then
-  echo "$CLOG" | jq -r '"[\(.from // "?")→\(.to // "?")][topic=\(.topic // "?")]: \(.body // "")"' \
-    2>/dev/null || echo "$CLOG"
+CLOG_LINES=$(jq -r 'select(.payload) | .payload
+        | ((.body // "") | gsub("\n"; " ")) as $b
+        | "- \(.from // "?") → \(.to // "?")  [\(.topic // "?")]  \(if ($b|length) > 160 then ($b[0:160] + " …[truncated]") else $b end)"' \
+    <<<"$CLOG" 2>/dev/null); CLOG_JQ=$?
+if [[ $CLOG_JQ -eq 0 && -n "$CLOG_LINES" ]]; then
+  echo "$CLOG_LINES"
+elif [[ $CLOG_JQ -eq 0 ]]; then
+  echo "Nothing on the bus in the last 30 minutes."
 else
   harmonik comms log --since 30m 2>&1 | tail -20 || echo "(comms log unavailable)"
 fi
 echo ""
 
-# ── Step 4: Work plan discovery ───────────────────────────────────────────────
-# --sort priority: `br ready` defaults to `hybrid` and to 20 rows. Both defaults
-# mislead a captain reading a boot digest — a short listing is not a short backlog,
-# and hybrid order is not priority order.
-echo "## 7. Ready Beads — all rows, priority order (STARTUP.md §4)"
-# Capture, then slice the capture. `br` is a Go binary and a slow streaming writer:
-# in `br ready ... | head -40` the head leaves as soon as it has 40 lines, br dies on
-# the closed pipe (exit 134, an abort trap, measured on this machine at 451 lines /
-# 58 KB), and `pipefail` reports that death as the status of the whole pipeline. A
-# here-string has no writer process to kill, so it cannot fail that way.
-READY_JSON="$(br ready --sort priority --limit 0 --json 2>&1)"
-READY_LINES="$(jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' <<<"$READY_JSON" 2>/dev/null)" || READY_LINES=""
-if [[ -n "$READY_LINES" ]]; then
-  echo "$READY_LINES"
+# ── Lane structure ─────────────────────────────────────────────────────────────
+# There is deliberately NO ready-bead listing and NO kerf map here.
+#
+# Both were removed on 2026-08-24, and size was only half the reason: the ready
+# listing was 78 KB of a 90 KB digest, and the kerf map another 7 KB. The other
+# half is that **the boot digest states fleet condition; it does not decide what to
+# work on.** How a captain finds work changes, and pinning it to whatever sits at
+# the top of one ledger query makes that choice for it. The mission says where work
+# comes from. This script says what is running.
+#
+# Open epics stay, because an epic is a lane — that is fleet structure, not a
+# ranking.
+echo "## 7. Open Epics — one epic is one lane"
+# `br list --json` returns an OBJECT, `{"issues":[...]}`, not an array. `jq '.[]'`
+# exits 5 against it. That defect lived here behind a text fallback that produced
+# plausible output with the assignee field silently missing — and the lane model
+# attributes a finished epic through exactly that field. Same lesson as section 2:
+# branch on exit status, and never let a fallback stand in for a working filter.
+EPICS_JSON=$(br list --status=open --type=epic --json 2>&1); EPICS_RC=$?
+EPICS_LINES=$(jq -r '.issues[]? | "- \(.id)  assignee=\(.assignee // "unassigned"): \(.title)"' <<<"$EPICS_JSON" 2>/dev/null); EPICS_JQ=$?
+if [[ $EPICS_RC -ne 0 ]]; then
+  echo "(br unavailable — \`br list\` exited $EPICS_RC)"
+elif [[ $EPICS_JQ -ne 0 ]]; then
+  echo "(could not parse \`br list --json\` — the output shape changed. First lines:)"
+  head -3 <<<"$EPICS_JSON"
+elif [[ -z "$EPICS_LINES" ]]; then
+  echo "No open epics."
 else
-  READY_TXT="$(br ready --sort priority --limit 0 2>&1)"
-  head -40 <<<"$READY_TXT"
-fi
-echo ""
-
-echo "## 8. Open Epics (STARTUP.md §4)"
-# Same capture-then-slice shape as section 7, and for the same reason.
-EPICS_JSON="$(br list --status=open --type=epic --json 2>&1)"
-EPICS_LINES="$(jq -r '.[] | "- \(.id)  assignee=\(.assignee // "unassigned"): \(.title)"' <<<"$EPICS_JSON" 2>/dev/null)" || EPICS_LINES=""
-if [[ -n "$EPICS_LINES" ]]; then
   echo "$EPICS_LINES"
-else
-  EPICS_TXT="$(br list --status=open --type=epic 2>&1)"
-  head -20 <<<"$EPICS_TXT"
 fi
-echo ""
-
-# NOTE: there is deliberately no `kerf next` section. kerf plans work, it does not
-# rank work — its score comes from graph structure and never reads the `br` priority
-# field, so a P0 and a P3 bead come back the same. Priority is stated intent first
-# (operator / admiral initiatives), then `br ready --sort priority --limit 0`, which
-# is section 7 above. `kerf map` stays: it answers "which kerf work owns this bead
-# and what context does it carry", which nothing else answers.
-echo "## 9. Kerf Map — which work owns which bead (STARTUP.md §4)"
-# `kerf map` is small enough today (89 lines / 9.5 KB) that it fits the pipe buffer
-# and finishes before `head` closes the pipe. That is luck, not safety: the map grows
-# with the plan. Capture first so growing past the buffer changes nothing.
-KERF_MAP="$(kerf map 2>&1)"
-head -60 <<<"$KERF_MAP"
 echo ""
 
 echo "---"
 echo "_Digest complete — $(date -u +"%Y-%m-%dT%H:%M:%SZ")_"
-echo "_Next: STARTUP.md Step 3 (zombie reconciliation) → Step 4 (lane table) → Step 5 (fleet establishment)._"
+echo "_Next: reconcile anything registered-but-offline, then establish a lane per ready initiative._"

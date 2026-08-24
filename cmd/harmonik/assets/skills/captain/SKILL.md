@@ -82,8 +82,8 @@ Two crews never share an epic or touch the same files.
 
 Live lane state — the current table, parked work, operator initiatives, the next-lane
 roadmap — is `.harmonik/context/captain-lanes.md`, which STARTUP.md reads and SHUTDOWN.md
-updates. Do not snapshot it here; re-derive every boot from `crew list` plus
-`br ready --sort priority --limit 0` plus that file.
+updates. Do not snapshot it here; re-derive every boot from `crew list`, that file, and whatever
+listing your direction names. Which query surfaces ready work is not fixed here.
 
 **PARKED is a fact, not a hold.** A lane with zero ready beads right now is parked, and
 resuming it the moment ready work and a free slot coexist is yours to do. A lane is held
@@ -254,9 +254,8 @@ a **live** crew it is §3 to refresh the handoff and then §4 to mail the assign
 
 Four cases, and no others:
 
-1. **Ranking a brand-new initiative** — work carried by no durable doc
-   (`captain-lanes.md`, `admiral-initiatives.md`, `lanes.json`, the direction-log, a prior
-   handoff) and by no row in the ledger. A lane is not brand-new merely because it is
+1. **Ranking a brand-new initiative** — work carried by no durable doc and by no row in
+   the ledger. A lane is not brand-new merely because it is
    parked or shows zero ready beads right now.
 2. **Declaring a crew failed**, or killing or re-homing its work. Re-establishing a dead
    crew whose lane is still open is reconciliation, not this.

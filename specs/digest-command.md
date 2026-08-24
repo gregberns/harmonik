@@ -257,6 +257,14 @@ this writing; the output is captured verbatim rather than parsed. A future
 kerf release adding structured output for `map` may upgrade this field
 without a schema-version bump (it remains a free-text field either way).
 
+**The stated basis for this requirement is gone, and the requirement still stands
+until someone decides otherwise.** DC-011 was added "for parity with
+`scripts/captain-boot-digest.sh`" (see the 2026-07-11 changelog row). On 2026-08-24
+that script stopped running `kerf map`, on the grounds that a boot digest reports
+fleet condition and does not decide what to work on. So `harmonik digest` now carries
+a requirement whose only recorded reason no longer holds. This note records the gap
+rather than closing it: dropping a normative MUST is a decision, not a doc edit.
+
 Tags: mechanism
 
 ## 5. Invariants
@@ -303,3 +311,4 @@ EXIT CODES
 |------------|---------|--------|---------|
 | 2026-05-30 | 0.1.0   | agent  | Initial draft (hk-1qrty). CL-030..033 + OQ-CL-002 resolved as subcommand. |
 | 2026-07-11 | 0.2.0   | agent  | hk-j5yer.13: fixed the `br_ready` collector's exit-2 bug (`--json` must follow the `ready` subcommand, not precede it as `--format json`); added DC-009 (comms-who, crew list, tmux fleet), DC-010 (paused/failed queue sweep — `.harmonik/queues/*.json`, regex `paused\|complete-with-failures`), DC-011 (`kerf map` raw text) for parity with `scripts/captain-boot-digest.sh`. |
+| 2026-08-24 | 0.2.1   | agent  | Recorded that DC-011's parity basis lapsed: `scripts/captain-boot-digest.sh` no longer runs `kerf map` or lists ready beads. DC-010 is unaffected — its sweep pattern is unchanged. No normative requirement altered. |

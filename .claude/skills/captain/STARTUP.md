@@ -87,8 +87,9 @@ read surface and the write discipline that keeps you off terminal transitions) �
 two fix attempts).
 
 **Do not boot-read** `AGENT_INDEX.md`, `STATUS.md`, `TASKS.md`, `PRINCIPLES.md`, or the
-programme charter. Phase, locked decisions, lanes, and backlog come from the tier files
-plus the Step 2 digest. `PRINCIPLES.md` is the standard for code you write, and you do
+programme charter. Phase, locked decisions, and lanes come from the tier files plus the
+Step 2 digest. The backlog does NOT: the digest carries no bead listing, and where work
+comes from is your direction's call. `PRINCIPLES.md` is the standard for code you write, and you do
 not write code while a crew can take it. The programme is "delete the test mass, then
 decompose the core"; if you need its sequence or its definition of done, read §2 and §6
 of `plans/2026-07-27-delete-and-rewrite/CHARTER.md`, not the whole charter.
@@ -97,9 +98,9 @@ of `plans/2026-07-27-delete-and-rewrite/CHARTER.md`, not the whole charter.
 
 ## Step 2 — Ground-truth the live state
 
-One command runs the whole discovery set — daemon status, agents online, crew registry,
-tmux fleet, paused queues, recent comms, ready beads, open epics, kerf map — and covers
-Step 4's discovery too.
+One command reports fleet condition — daemon status, agents online, crew registry, tmux
+fleet, paused queues, recent comms, open epics. It says what is RUNNING. It does not say
+what to work on, and it carries no bead listing and no kerf map on purpose.
 
 ```bash
 scripts/captain-boot-digest.sh        # in-repo, portable; --project DIR optional
@@ -168,12 +169,12 @@ queue paused, fleet wedged — needs one line naming the fix, and then you fix i
 first, plan second. The smell worth stopping for is dispatching work whose shape you have
 not decided.
 
-Build from the digest's ready-beads, open-epics, and kerf-map sections rather than
-re-running `br ready` / `br list` / `kerf map`. Priority is **stated intent first, then
-the ledger** — `orchestrator-rules` `REFERENCE.md` §Priority owns that rule; in practice the stated
-intent is the active plan's order, the dated directives in `captain-lanes.md`, and the
-direction-log RETURN-PATH. Organizing that known feed into lanes and staffing it is
-autonomous, as is resuming a parked or drained lane any durable doc or ledger row records.
+**Where work comes from is your direction's call, not this runbook's.** The operator's and
+the admiral's named initiatives, the active plan's order, the dated directives in
+`captain-lanes.md`, and the direction-log RETURN-PATH are the feed. Which ledger query
+surfaces the rest, and in what order, changes — so it is stated in your direction and it is
+not fixed here. Organizing that feed into lanes and staffing it is autonomous, as is
+resuming a parked or drained lane any durable doc or ledger row records.
 
 | lane (crew) | epic id | epic title (plain English) | ordered ready beads | keystone-gated? |
 |---|---|---|---|---|
@@ -200,8 +201,10 @@ Step 5. Do not block on a reply for work a durable doc or ledger row already car
 All five sub-steps, for every lane. A lane is not done until it passes 5d — `crew start`
 exiting 0 is not verification.
 
-**5·0** Confirm ready work (`br ready --limit 0` filtered to the epic or its `codename:`
-label). None, and no in-flight run ⇒ **PARKED**, skip 5a–5d.
+**5·0** Confirm the lane has ready work before you staff it — scoped to its epic or its
+`codename:` label. None, and no in-flight run ⇒ **PARKED**, skip 5a–5d. This is a check on
+one lane, not a ranking of the backlog: **where work comes from is your direction's call**,
+and the `beads-cli` skill owns the listing surface and the flag that stops it truncating.
 
 **5a** Write the mission handoff to `.harmonik/crew/missions/<crew>.md` FIRST. It is
 tracked in git — commit it. Schema: `SKILL.md` §3. Contract: `specs/crew-handoff-schema.md`.
@@ -264,8 +267,9 @@ diagnostic subscribe during an incident is fine — kill it when the incident cl
 
 **The loop is active, not passive.** Purely event-driven is the idle-fleet failure: when
 lanes drain or block, no event fires, so nothing re-staffs them. Block on the feeds, and
-between events — at least every 5 minutes — run `br ready --sort priority --limit 0` and
-staff any free slot with ready work beside it. This pull runs only while you are awake; a
+between events — at least every 5 minutes — check for ready work and staff any free slot
+with work beside it. Which listing answers that, and in what order, comes from your
+direction, not from this runbook. This pull runs only while you are awake; a
 dormant captain is woken solely by push — ops-monitor `[IMMEDIATE]`, watch escalations,
 operator messages. Your own liveness is the ops-monitor's job; do not self-poll.
 
@@ -321,8 +325,8 @@ dead wake-trigger, re-drive with the crew's next directive or re-point it at its
 
 ### Idle-triggered realign
 
-Fires on genuine system idle, not on a clock — no flagged checks, `br ready --limit 0`
-empty with no undeployed code, and no crew dispatching. Then read
+Fires on genuine system idle, not on a clock — no flagged checks, no ready work anywhere,
+no undeployed code, and no crew dispatching. Then read
 `.harmonik/intent/goal-state.json` once (skip silently if absent) and compare its
 `objectives` / `antigoals` / `operator_directives` to the lane table. Drift ⇒ one
 `--topic intent` message to the operator. No drift ⇒ idle silently; do not narrate

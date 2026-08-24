@@ -203,11 +203,35 @@ is the first.
    project does not use. It asserts the wake **does** fire and names the lane. That is what pins the
    deny-list, and without it the next author can quietly turn the rule into an allow-list and break
    nothing visible.
-2. **`bash test/exploratory/ops_monitor_check_test.sh` exits 0** and its closing summary line reads
-   `Results: <n> passed, 0 failed`. Nothing in `make fast`, `make full` or CI runs this harness — checked — so running it
-   by hand is the only evidence that exists.
-3. **Test 39c and Test 36 pass inside that run.** Name them in the commit body with the observed
-   PASS lines, because they are the two cases a too-broad fix breaks.
+2. **The whole harness runs, and it introduces no failure that your own baseline did not already have.**
+   `bash test/exploratory/ops_monitor_check_test.sh`. **It is NOT green today and that is not your
+   doing.** Measured baseline on `work/alpha-integration-merge`, whole file, before any change:
+
+   ```
+   Results: 314 passed, 2 failed
+     - 27e: release-due should be suppressed at 6 min (30-min IMMEDIATE_COOLDOWN, not 5-min critical)
+     - 27e: no release-due comms should be sent within 30-min cooldown
+   ```
+
+   Both are in Test 27e, they are about the release-due cooldown, and they have nothing to do with
+   Check 9. **Do not fix them and do not fold them in** — a second defect in the same file is a
+   separate bead, `hk-release-due-cooldown-chujb`, and it is open.
+
+   **The criterion is that no NEW failure appears — not that the count is exactly two.** That bead
+   may land before yours. If it does, the two 27e failures go away and a fully green run is the
+   correct result. This baseline has already drifted once, from 313 to 314. So take your own
+   baseline on the tip you branch from, before you change anything, and compare against that rather
+   than against the block above. What must be true at the end: every failure in your run also
+   appears in your own baseline, and the passed count rose by your new assertions.
+
+   The harness exits 1 while any failure stands, so the exit code proves nothing here; read the
+   summary block.
+   Nothing in `make fast`, `make full` or CI runs this harness — checked — so running it by hand is
+   the only evidence that exists.
+3. **Test 39c and Test 36 pass inside that run.** Both pass today; the measured lines are
+   `PASS: 39c past gate: known_ready_lane == lapsed-lane` and
+   `PASS: SD4+ immediate_signals names wake-economy`. Quote your own observed lines in the commit
+   body, because these are the two cases a too-broad fix breaks.
 4. **The live index produces no candidate.** Run Check 9's `jq` program, as patched, against
    `.harmonik/context/lanes.json` with `--argjson now "$(date +%s)"`. It prints nothing and exits 0.
    Before the fix the same command prints `sandbox`.
@@ -255,9 +279,13 @@ is the first.
   conclude from the disabled schedule that the check is dead, and do not try to reproduce this
   through the live fleet. The whole defect and the whole fix are observable from the repository with
   `jq` and the test harness, which is how every measured claim above was taken.
-- **The harness is slow.** A full run takes several minutes of wall clock because each case shells
-  out to a stubbed binary. Budget for it rather than running a subset and calling it green — the
-  summary line at the end is the only thing that reports the count.
+- **The harness is slow and it is already red.** Every case shells out to a stubbed binary, so a
+  full run costs minutes, not seconds. The one measurement taken here: tests 1 through 17 — 23 of
+  the 75 `run_check` calls, 132 assertions — took 2m42s on this box at load average ~19, which
+  extrapolates to roughly 9 minutes for the whole file. Treat that as an order of magnitude and not
+  a promise; it was extrapolated rather than timed end to end, and it moves with machine load. Do
+  not run a subset and call it green. It ends red before you touch anything, and it exits 1 — read
+  the summary block rather than the exit code, and see done-when 2 for how to judge the failures.
 - **Four run worktrees under `.harmonik/worktrees/` hold their own copies of
   `scripts/ops-monitor-check.sh`.** They are other runs' checkouts. Edit the one at the repository
   root and leave the rest alone.

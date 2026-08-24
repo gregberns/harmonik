@@ -300,7 +300,7 @@ func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
 
 func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Pct < c.WarnPct || cf.Tokens < c.warnThreshold(cf.WindowSize)
+		return cf.Tokens < c.warnThreshold(cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
 }

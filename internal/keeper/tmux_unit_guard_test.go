@@ -18,6 +18,7 @@ func TestMain(m *testing.M) {
 	logPath := filepath.Join(guardDir, "calls")
 	shimPath := filepath.Join(guardDir, "tmux")
 	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$KEEPER_TMUX_GUARD_LOG\"\nexit 127\n"
+	//nolint:gosec // G306: the test-owned command shim must be executable.
 	if err := os.WriteFile(shimPath, []byte(shim), 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "keeper tmux guard: write shim: %v\n", err)
 		os.Exit(1)
@@ -34,6 +35,7 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+	//nolint:gosec // G304: logPath is derived from the test-owned temporary directory.
 	calls, readErr := os.ReadFile(logPath)
 	if readErr == nil && len(calls) > 0 {
 		fmt.Fprintf(os.Stderr, "keeper unit tests reached real tmux command paths:\n%s", calls)

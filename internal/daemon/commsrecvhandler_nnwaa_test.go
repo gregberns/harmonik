@@ -13,7 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-func writeTestEvent(t *testing.T, path string, evType string, payload any) string {
+func writeTestEvent(t *testing.T, path, evType string, payload any) string {
 	t.Helper()
 	raw, err := uuid.NewV7()
 	if err != nil {
@@ -34,7 +34,8 @@ func writeTestEvent(t *testing.T, path string, evType string, payload any) strin
 	if err != nil {
 		t.Fatalf("writeTestEvent: marshal event: %v", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	//nolint:gosec // G304: path is t.TempDir-derived, test-only
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("writeTestEvent: open %s: %v", path, err)
 	}

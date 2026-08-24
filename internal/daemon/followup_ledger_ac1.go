@@ -55,7 +55,8 @@ func appendFollowUpLedger(path, key string) error {
 	}
 	data = append(data, '\n')
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	//nolint:gosec // G304: path is the daemon's own ledger under <projectDir>/.harmonik, not user input
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("appendFollowUpLedger: open %s: %w", path, err)
 	}

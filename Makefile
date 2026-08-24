@@ -922,6 +922,7 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 # script-tests here compile Go unwrapped and predate that wrapper.
 .PHONY: script-tests
 script-tests:  ## Self-tests for the shell the gate depends on
+	scripts/skill-mirror-check-test.sh
 	scripts/go-format-test.sh
 	scripts/agent-reviewer-run-test.sh
 	scripts/agent-reviewer-prompt-parity-test.sh
@@ -1024,6 +1025,11 @@ gate-static-product:  ## Static half without the script self-tests (what `make c
 		echo "      the toolchain itself will hang instead of failing. brew install coreutils."; \
 	fi
 	$(MAKE) fmt-check
+	# Skill mirrors. A shipped skill lives in up to three places and there is no
+	# reverse sync, so editing one copy is silent: the agent keeps booting the old
+	# text and nothing reports an error. This costs milliseconds, so unlike the
+	# commit-message check below it earns a place in the inner loop.
+	scripts/skill-mirror-check.sh
 	# NO COMMIT-MESSAGE CHECK HERE, ON PURPOSE. It used to run at this line and
 	# it is now in `full` only, under the commit-msg-check target. Operator
 	# call, 2026-08-23: policing the shape of a commit message is not worth a

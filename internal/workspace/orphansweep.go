@@ -184,7 +184,7 @@ func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, 
 			result.Failed = append(result.Failed, p)
 			continue
 		}
-		if err := PruneWorktreeTrust(p); err != nil && logger != nil {
+		if err := PruneWorktreeTrust(ctx, p); err != nil && logger != nil {
 			logger.Printf("workspace: RemoveStaleWorktrees: PruneWorktreeTrust %q: %v (non-fatal)", p, err)
 		}
 		if logger != nil {

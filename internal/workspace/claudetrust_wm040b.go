@@ -416,14 +416,14 @@ func acquireExclusiveBounded(fd int, timeout time.Duration) error {
 // malformed or the bounded lock cannot be acquired). It takes the same bounded
 // exclusive lock as the write path so it never wedges the daemon. When the entry
 // is absent it does NOT rewrite the file.
-func PruneWorktreeTrust(worktreePath string) error {
+func PruneWorktreeTrust(ctx context.Context, worktreePath string) error {
 	if resolved, err := filepath.EvalSymlinks(worktreePath); err == nil {
 		worktreePath = resolved
 	}
-	return pruneWorktreeTrustAt(worktreePath, claudeGlobalConfigPath())
+	return pruneWorktreeTrustAt(ctx, worktreePath, claudeGlobalConfigPath())
 }
 
-func pruneWorktreeTrustAt(worktreePath, cfgPath string) error {
+func pruneWorktreeTrustAt(ctx context.Context, worktreePath, cfgPath string) error {
 	trustWriteMu.Lock()
 	defer trustWriteMu.Unlock()
 
@@ -434,7 +434,7 @@ func pruneWorktreeTrustAt(worktreePath, cfgPath string) error {
 	}
 	defer func() {
 		if closeErr := lockFd.Close(); closeErr != nil {
-			slog.WarnContext(context.Background(), "workspace: PruneWorktreeTrust: close lockfile", "err", closeErr, "path", lockPath)
+			slog.WarnContext(ctx, "workspace: PruneWorktreeTrust: close lockfile", "err", closeErr, "path", lockPath)
 		}
 	}()
 

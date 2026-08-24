@@ -1,14 +1,17 @@
 package gitprobe_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -104,19 +107,15 @@ func TestProcessDidNotRun(t *testing.T) {
 	}
 }
 
-// fakeGitOnPath puts a git on PATH that counts its own invocations and behaves
-// as behaviour says before it hands over to the real git. It returns the path of
-// the counter file.
+// fakeBinOnPath puts a program named name on PATH that counts its own
+// invocations and then does what behaviour says. It returns the path of the
+// counter file.
 //
 // The stub is a whole-process PATH swap, which is the only seam this package's
 // bare exec has. Build any repository the test needs BEFORE calling it.
-func fakeGitOnPath(t *testing.T, behaviour string) string {
+func fakeBinOnPath(t *testing.T, name, behaviour string) string {
 	t.Helper()
 
-	realGit, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("find the real git: %v", err)
-	}
 	binDir := t.TempDir()
 	countPath := filepath.Join(t.TempDir(), "invocations")
 
@@ -124,17 +123,30 @@ func fakeGitOnPath(t *testing.T, behaviour string) string {
 		"n=$(cat " + countPath + " 2>/dev/null || echo 0)\n" +
 		"n=$((n+1))\n" +
 		"echo $n > " + countPath + "\n" +
-		behaviour + "\n" +
-		"exec " + realGit + " \"$@\"\n"
+		behaviour + "\n"
 
-	//nolint:gosec // G306: a fake git has to be executable to stand in for one
-	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(script), 0o700); err != nil {
-		t.Fatalf("write the fake git: %v", err)
+	//nolint:gosec // G306: a stub program has to be executable to stand in for one
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o700); err != nil {
+		t.Fatalf("write the fake %s: %v", name, err)
 	}
 	// binDir goes in FRONT of the real PATH rather than replacing it: the stub
 	// is a shell script and it needs the ordinary commands to still be there.
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return countPath
+}
+
+// fakeGitOnPath is fakeBinOnPath for git, and it hands over to the real git when
+// behaviour lets it run on. A behaviour that ends the script itself keeps the
+// real git out of the test.
+func fakeGitOnPath(t *testing.T, behaviour string) string {
+	t.Helper()
+
+	// Look the real git up BEFORE the PATH swap, or the stub finds itself.
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find the real git: %v", err)
+	}
+	return fakeBinOnPath(t, "git", behaviour+"\n"+"exec "+realGit+" \"$@\"")
 }
 
 func invocations(t *testing.T, countPath string) int {
@@ -213,4 +225,198 @@ func TestOutput_DoesNotRetryForACallerThatAlreadyCancelled(t *testing.T) {
 	if got := invocations(t, countPath); got > 1 {
 		t.Errorf("git ran %d times for a caller that had already cancelled; want at most 1", got)
 	}
+}
+
+// TestCombinedOutputStdin_GivesTheWholeInputToEveryAttempt is the reason the
+// input is a string and not an io.Reader. A reader is spent by the attempt that
+// read it, so the attempt after a dead child would run against nothing. git
+// would then answer for an empty input and the caller would get a clean report
+// that says the opposite of the truth.
+func TestCombinedOutputStdin_GivesTheWholeInputToEveryAttempt(t *testing.T) {
+	repo, _ := initGitRepo(t)
+	seen := filepath.Join(t.TempDir(), "stdin-of-the-second-git")
+	// The first git reads its input and is then stopped, which is the worst
+	// case: the input is gone and no answer came back for it.
+	countPath := fakeGitOnPath(t,
+		`if [ "$n" -le 1 ]; then cat > /dev/null; kill -SEGV $$; fi`+"\n"+
+			"cat > "+seen+"\n"+
+			"exit 0")
+
+	const input = "one.txt\ntwo.txt\nthree.txt\n"
+	if _, err := gitprobe.CombinedOutputStdin(t.Context(), repo, input, "check-ignore", "--stdin"); err != nil {
+		t.Fatalf("CombinedOutputStdin after one killed git = %v; want the second git's answer", err)
+	}
+	if got := invocations(t, countPath); got != 2 {
+		t.Fatalf("git ran %d times; want 2 — one killed, one that answered", got)
+	}
+
+	//nolint:gosec // G304: seen is a path this test just made under t.TempDir()
+	raw, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatalf("read the stdin the second git saw: %v", err)
+	}
+	if string(raw) != input {
+		t.Errorf("the second git read %q on stdin; want the whole input %q", raw, input)
+	}
+}
+
+// TestCombinedOutputStdin_FeedsTheInputToARealGit holds the plain case: the
+// string reaches git, and it reaches it whole.
+func TestCombinedOutputStdin_FeedsTheInputToARealGit(t *testing.T) {
+	t.Parallel()
+	repo, _ := initGitRepo(t)
+
+	// git's object format fixes this SHA for the content "hello", so an empty
+	// or a short stdin cannot produce it.
+	const helloBlob = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
+
+	out, err := gitprobe.CombinedOutputStdin(t.Context(), repo, "hello", "hash-object", "--stdin")
+	if err != nil {
+		t.Fatalf("CombinedOutputStdin: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != helloBlob {
+		t.Errorf("git hashed the input to %q; want %q, the blob SHA of \"hello\"", got, helloBlob)
+	}
+}
+
+// TestCommandOutput_RunsANamedBinaryAgainWhenASignalStopsIt holds the point of
+// the two Command functions: a child that never ran is a fork condition, and a
+// caller that runs a program other than git meets the same one.
+func TestCommandOutput_RunsANamedBinaryAgainWhenASignalStopsIt(t *testing.T) {
+	dir := t.TempDir()
+	countPath := fakeBinOnPath(t, "probe-stub", `if [ "$n" -le 1 ]; then kill -SEGV $$; fi`+"\necho ready")
+
+	out, err := gitprobe.CommandOutput(t.Context(), dir, "probe-stub")
+	if err != nil {
+		t.Fatalf("CommandOutput after one killed child = %v; want the program's output", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "ready" {
+		t.Errorf("CommandOutput = %q; want %q", got, "ready")
+	}
+	if got := invocations(t, countPath); got != 2 {
+		t.Errorf("probe-stub ran %d times; want 2 — one killed, one that answered", got)
+	}
+}
+
+// TestCommandOutput_ReportsANamedBinaryExitStatusTheFirstTime keeps the fix as
+// narrow for a named program as it is for git. An exit status is the program's
+// own answer and it is returned unchanged.
+func TestCommandOutput_ReportsANamedBinaryExitStatusTheFirstTime(t *testing.T) {
+	dir := t.TempDir()
+	countPath := fakeBinOnPath(t, "probe-stub", "exit 7")
+
+	_, err := gitprobe.CommandOutput(t.Context(), dir, "probe-stub")
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("CommandOutput for a program that exited 7 gave %v; want an exit status", err)
+	}
+	if exitErr.ExitCode() != 7 {
+		t.Errorf("exit code %d; want 7 — the program's own answer, unchanged", exitErr.ExitCode())
+	}
+	if got := invocations(t, countPath); got != 1 {
+		t.Errorf("probe-stub ran %d times; want 1 — an exit status is an answer", got)
+	}
+}
+
+// TestCommandCombinedOutput_FoldsInStandardError separates the two Command
+// functions: one hands back what the program said to a caller, the other hands
+// back everything it said.
+func TestCommandCombinedOutput_FoldsInStandardError(t *testing.T) {
+	dir := t.TempDir()
+	fakeBinOnPath(t, "probe-stub", "echo to-stdout\necho to-stderr >&2")
+
+	combined, err := gitprobe.CommandCombinedOutput(t.Context(), dir, "probe-stub")
+	if err != nil {
+		t.Fatalf("CommandCombinedOutput: %v", err)
+	}
+	if !strings.Contains(string(combined), "to-stdout") || !strings.Contains(string(combined), "to-stderr") {
+		t.Errorf("CommandCombinedOutput = %q; want both streams", combined)
+	}
+
+	plain, err := gitprobe.CommandOutput(t.Context(), dir, "probe-stub")
+	if err != nil {
+		t.Fatalf("CommandOutput: %v", err)
+	}
+	if strings.Contains(string(plain), "to-stderr") {
+		t.Errorf("CommandOutput = %q; want standard output alone", plain)
+	}
+}
+
+// TestCommandOutput_NamesTheProgramInTheLogLineWhenItRetries keeps the log line
+// useful now that the command is not always git. A reader who finds this line
+// has to be able to see which program failed.
+func TestCommandOutput_NamesTheProgramInTheLogLineWhenItRetries(t *testing.T) {
+	dir := t.TempDir()
+	fakeBinOnPath(t, "probe-stub", `if [ "$n" -le 1 ]; then kill -SEGV $$; fi`+"\necho ready")
+	logs := captureLogs(t)
+
+	if _, err := gitprobe.CommandOutput(t.Context(), dir, "probe-stub", "--once"); err != nil {
+		t.Fatalf("CommandOutput after one killed child = %v; want the program's output", err)
+	}
+	if got := logs.String(); !strings.Contains(got, `"command":"probe-stub --once"`) {
+		t.Errorf("the retry log line does not name the program that failed:\n%s", got)
+	}
+}
+
+// TestCombinedOutput_StillRunsGitAgainWhenASignalStopsIt holds the retry for
+// CombinedOutput, which now reaches the attempt loop through CommandCombinedOutput.
+func TestCombinedOutput_StillRunsGitAgainWhenASignalStopsIt(t *testing.T) {
+	repo, headSHA := initGitRepo(t)
+	countPath := fakeGitOnPath(t, `if [ "$n" -le 1 ]; then kill -SEGV $$; fi`)
+
+	out, err := gitprobe.CombinedOutput(t.Context(), repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("CombinedOutput after one killed git = %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != headSHA {
+		t.Errorf("CombinedOutput = %q; want %q", got, headSHA)
+	}
+	if got := invocations(t, countPath); got != 2 {
+		t.Errorf("git ran %d times; want 2 — one killed, one that answered", got)
+	}
+}
+
+// TestCombinedOutput_StillFoldsInGitsStandardError holds the other half of what
+// CombinedOutput promises its callers: git's own words, which git writes on
+// standard error.
+func TestCombinedOutput_StillFoldsInGitsStandardError(t *testing.T) {
+	t.Parallel()
+	repo, _ := initGitRepo(t)
+
+	out, err := gitprobe.CombinedOutput(t.Context(), repo, "cat-file", "-p", "no-such-ref")
+	if err == nil {
+		t.Fatalf("CombinedOutput reported success for a name git cannot resolve:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Not a valid object name") {
+		t.Errorf("CombinedOutput = %q; want git's own words", out)
+	}
+}
+
+// logCapture collects log lines for a test to read. It holds a lock because the
+// default logger is process-wide and another test in this package can reach it.
+type logCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *logCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+// captureLogs points the default logger at a buffer for the length of the test.
+func captureLogs(t *testing.T) *logCapture {
+	t.Helper()
+	c := &logCapture{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(c, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return c
 }

@@ -79,40 +79,16 @@ func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 	return true, nil
 }
 
-// commitStrip creates the strip commit.
-//
-// Every other git command on this path can simply run again, because a second
-// run means what the first run meant. `git commit` does not: run it twice after
-// a first run that committed and the worktree gets a second commit, which then
-// fast-forwards onto the merge target carrying whatever else was staged.
-//
-// So a stopped commit is decided by the worktree, not guessed at. HEAD is read
-// before the attempt and again after it. A HEAD that moved means the commit
-// landed before the signal arrived. A HEAD that did not means it is safe to run
-// the command again. A worktree that cannot answer either question gets neither
-// treatment: the original failure is reported and the merge fails cleanly,
-// because a wrong merge is worse than a failed one.
+// commitStrip creates the strip commit. `git commit` is the one command on
+// this path that does not mean the same thing twice, so it does not go through
+// gitprobe's blind retry — see runCommitOnce for how a stopped commit is
+// decided instead.
 //
 // Bead: hk-jbtj6.
 func commitStrip(ctx context.Context, wtPath string) ([]byte, error) {
-	before, beforeErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
-
-	out, err := commitStripOnce(ctx, wtPath)
-	if !gitprobe.ProcessDidNotRun(ctx, err) {
-		return out, err
-	}
-	if beforeErr != nil {
-		return out, err
-	}
-
-	after, afterErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
-	if afterErr != nil {
-		return out, err
-	}
-	if after != before {
-		return out, nil
-	}
-	return commitStripOnce(ctx, wtPath)
+	return runCommitOnce(ctx, wtPath, func() ([]byte, error) {
+		return commitStripOnce(ctx, wtPath)
+	})
 }
 
 func commitStripOnce(ctx context.Context, wtPath string) ([]byte, error) {

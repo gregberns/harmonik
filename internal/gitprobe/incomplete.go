@@ -129,25 +129,66 @@ func runAttempts(ctx context.Context, command string, attempt func() ([]byte, er
 // second run would not mean what its first run meant — `git commit` is the one
 // on this path, and its caller checks the repository state instead.
 func Output(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return runAttempts(ctx, gitCommandLine(args), func() ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		return cmd.Output()
-	})
+	return CommandOutput(ctx, dir, "git", args...)
 }
 
 // CombinedOutput is Output with git's standard error folded into the returned
 // bytes, for the callers that put git's own words in a failure reason.
 func CombinedOutput(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return runAttempts(ctx, gitCommandLine(args), func() ([]byte, error) {
+	return CommandCombinedOutput(ctx, dir, "git", args...)
+}
+
+// CombinedOutputStdin is CombinedOutput for a git command that reads its input
+// on standard input, such as a pathspec list.
+//
+// It takes that input as a string, not as an io.Reader, and it makes a new
+// reader inside each attempt. A reader is spent by the attempt that read it, so
+// a retry would hand git an empty input and git would answer for nothing: an
+// empty pathspec list matches no path, and the caller gets a clean report that
+// says the opposite of the truth. A wrong answer that looks right is worse than
+// the failure the retry exists to repair. Hold the bytes and every attempt can
+// have the same input.
+func CombinedOutputStdin(ctx context.Context, dir, stdin string, args ...string) ([]byte, error) {
+	return runAttempts(ctx, commandLine("git", args), func() ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		// A new reader for each attempt. The one before it is spent.
+		cmd.Stdin = strings.NewReader(stdin)
+		return cmd.CombinedOutput()
+	})
+}
+
+// CommandOutput runs `<bin> <args...>` in dir and returns its standard output,
+// with the same retry Output gives git. bin is a bare name that PATH resolves,
+// or an absolute path.
+//
+// A child that dies before it runs is not a git condition. Any program a caller
+// forks on the critical path can lose the same way, so a caller that runs
+// something other than git gets the same repair here. The rule on when to use it
+// is the one Output states: only for a command whose second run means what its
+// first run meant.
+func CommandOutput(ctx context.Context, dir, bin string, args ...string) ([]byte, error) {
+	return runAttempts(ctx, commandLine(bin, args), func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = dir
+		return cmd.Output()
+	})
+}
+
+// CommandCombinedOutput is CommandOutput with the command's standard error
+// folded into the returned bytes, for the callers that put the program's own
+// words in a failure reason.
+func CommandCombinedOutput(ctx context.Context, dir, bin string, args ...string) ([]byte, error) {
+	return runAttempts(ctx, commandLine(bin, args), func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = dir
 		return cmd.CombinedOutput()
 	})
 }
 
-// gitCommandLine renders args for a log line, so a reader sees which git call
-// failed rather than only the package that made it.
-func gitCommandLine(args []string) string {
-	return "git " + strings.Join(args, " ")
+// commandLine renders a call for a log line, so a reader sees which command
+// failed rather than only the package that made it. A git call still renders as
+// `git <args...>`, which is what a reader and a log grep already look for.
+func commandLine(bin string, args []string) string {
+	return strings.Join(append([]string{bin}, args...), " ")
 }

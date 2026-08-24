@@ -2,7 +2,9 @@ package runmerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,9 +142,7 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
 
 	if _, statErr := os.Stat(wtPath); statErr != nil {
-		addWtCmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
-		addWtCmd.Dir = projectDir
-		if _, addErr := addWtCmd.CombinedOutput(); addErr == nil {
+		if addErr := addMergeWorktree(ctx, projectDir, wtPath, runBranch); addErr == nil {
 			cleanupCtx := context.WithoutCancel(ctx)
 			defer func() {
 				if cleanupErr := RemoveWorktree(cleanupCtx, projectDir, wtPath); cleanupErr != nil {
@@ -269,9 +269,7 @@ func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID c
 		CommitResidualDelta(ctx, wtPath, runID)
 		CleanUntrackedFiles(ctx, wtPath)
 
-		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-		rebaseCmd.Dir = wtPath
-		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
+		if out, rebaseErr := rebaseOntoTarget(ctx, wtPath, targetBranch); rebaseErr != nil {
 			gitRebaseAbort(ctx, wtPath)
 			return &Outcome{
 				Success: false,
@@ -321,12 +319,108 @@ func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID c
 	return nil
 }
 
+// gitRebaseAbort ends a rebase the worktree is in the middle of.
+//
+// The command means the same thing every time it runs, so gitprobe may run it
+// again when the git process does not complete. A second abort finds no rebase
+// to end and says so; that is git's own answer and it is printed unchanged.
 func gitRebaseAbort(ctx context.Context, wtPath string) {
-	abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-	abortCmd.Dir = wtPath
-	if out, err := abortCmd.CombinedOutput(); err != nil {
+	if out, err := gitprobe.CombinedOutput(ctx, wtPath, "rebase", "--abort"); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: git rebase --abort failed in %s: %v\n%s", wtPath, err, out)
 	}
+}
+
+// addMergeWorktree adds the temporary merge worktree at wtPath.
+//
+// A stopped child is decided from the filesystem here, not by running the
+// command again blind. The signal can arrive AFTER git made the worktree, and a
+// second `git worktree add` on a path that already exists fails. The caller
+// reads that failure as "no worktree of mine", skips the deferred cleanup, and
+// leaves the directory behind for good.
+//
+// So the path is looked at again, but the directory alone does not answer it:
+// git makes the directory first and checks the files out last, so a signal in
+// that window leaves a directory that exists and holds nothing. The `.git` file
+// is what git writes to say the worktree is real, so that is what is looked for.
+// Anything else means the add can run once more.
+//
+// Bead: hk-7neu1.
+func addMergeWorktree(ctx context.Context, projectDir, wtPath, runBranch string) error {
+	add := func() error {
+		cmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
+		cmd.Dir = projectDir
+		_, err := cmd.CombinedOutput()
+		return err
+	}
+
+	err := add()
+	if !gitprobe.ProcessDidNotRun(ctx, err) {
+		return err
+	}
+	if _, statErr := os.Stat(filepath.Join(wtPath, ".git")); statErr == nil {
+		return nil
+	}
+	return add()
+}
+
+// rebaseOntoTarget rebases the branch checked out in wtPath onto targetBranch.
+//
+// A stopped rebase does not go through gitprobe's blind retry. A signal can land
+// in the MIDDLE of a rebase, which leaves rebase state in the worktree, and a
+// second `git rebase` there refuses to start. The caller would then report a
+// rebase conflict that the bead's code never caused.
+//
+// So the worktree is asked first. A worktree with no rebase in progress never
+// got past the start, so the command runs again. A worktree that is in a rebase,
+// or one that cannot answer, keeps the original failure and goes to the caller's
+// abort-and-classify path.
+//
+// Bead: hk-7neu1.
+func rebaseOntoTarget(ctx context.Context, wtPath, targetBranch string) ([]byte, error) {
+	rebase := func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
+		cmd.Dir = wtPath
+		return cmd.CombinedOutput()
+	}
+
+	out, err := rebase()
+	if !gitprobe.ProcessDidNotRun(ctx, err) {
+		return out, err
+	}
+	inProgress, probeErr := rebaseInProgress(ctx, wtPath)
+	if probeErr != nil || inProgress {
+		return out, err
+	}
+	return rebase()
+}
+
+// rebaseInProgress reports whether the worktree at wtPath sits in the middle of
+// a rebase. git is asked where its rebase state lives rather than the path being
+// built here: a linked worktree keeps that state under the repository, not under
+// the worktree, and the two spellings of a rebase (merge and apply) each get
+// their own directory.
+func rebaseInProgress(ctx context.Context, wtPath string) (bool, error) {
+	for _, state := range []string{"rebase-merge", "rebase-apply"} {
+		out, err := gitprobe.Output(ctx, wtPath, "rev-parse", "--git-path", state)
+		if err != nil {
+			return false, fmt.Errorf("runmerge: ask git for the %s path in %s: %w", state, wtPath, err)
+		}
+		statePath := strings.TrimRight(string(out), "\n")
+		if statePath == "" {
+			continue
+		}
+		if !filepath.IsAbs(statePath) {
+			statePath = filepath.Join(wtPath, statePath)
+		}
+		_, statErr := os.Stat(statePath)
+		if statErr == nil {
+			return true, nil
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			return false, fmt.Errorf("runmerge: stat %s: %w", statePath, statErr)
+		}
+	}
+	return false, nil
 }
 
 func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *Outcome {
@@ -424,10 +518,14 @@ func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch stri
 	return commitAdvanceResult{advanced: true, priorMainTip: mainTip}
 }
 
+// gitPushOrigin publishes the target branch to origin.
+//
+// The push is safe to run again, so it goes through gitprobe. The same refspec
+// pushed twice is either a no-op that says everything is up to date, or a
+// rejection the push classifier already reads. A second run cannot land
+// anything the first run did not.
 func gitPushOrigin(ctx context.Context, projectDir, targetBranch string) ([]byte, error) {
-	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
-	pushCmd.Dir = projectDir
-	return pushCmd.CombinedOutput()
+	return gitprobe.CombinedOutput(ctx, projectDir, "push", "origin", targetBranch)
 }
 
 func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, priorMainTip, advancedTip string, pushOut []byte, pushErr error, pushAttempt, maxPushAttempts int) commitOutcome {
@@ -442,9 +540,9 @@ func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, prio
 		}}
 	}
 
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
-	fetchCmd.Dir = projectDir
-	if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+	// The fetch only reads from origin and writes a remote-tracking ref, so
+	// gitprobe may run it again when the git process does not complete.
+	if fetchOut, fetchErr := gitprobe.CombinedOutput(ctx, projectDir, "fetch", "origin", targetBranch); fetchErr != nil {
 		return commitOutcome{done: &Outcome{
 			Success: false,
 			Reason:  fmt.Sprintf("push_failed_fetch (attempt %d): %v\n%s", pushAttempt, fetchErr, fetchOut),
@@ -457,9 +555,10 @@ func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, prio
 			Reason:  fmt.Sprintf("push_failed_rev_parse_remote (attempt %d): rev-parse refs/remotes/origin/%s", pushAttempt, targetBranch),
 		}}
 	}
-	updateToRemoteCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newMainTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	updateToRemoteCmd.Dir = projectDir
-	if updateOut, updateErr := updateToRemoteCmd.CombinedOutput(); updateErr != nil {
+	// update-ref sets an exact value, so it means the same thing every time it
+	// runs and gitprobe may run it again — the same reason commitAdvanceRef
+	// gives for the update-ref it makes.
+	if updateOut, updateErr := gitprobe.CombinedOutput(ctx, projectDir, "update-ref", "refs/heads/"+targetBranch, newMainTip); updateErr != nil {
 		return commitOutcome{done: &Outcome{
 			Success: false,
 			Reason:  fmt.Sprintf("push_failed_update_to_remote (attempt %d): %v\n%s", pushAttempt, updateErr, updateOut),
@@ -493,10 +592,13 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 	}
 }
 
+// gitUpdateRefBestEffort puts a branch back to an earlier commit after a push
+// was rejected. It only prints its failure, but the failure matters: a rollback
+// that does not happen leaves the target branch on a commit that origin never
+// took. update-ref sets an exact value, so gitprobe may run it again when the
+// git process does not complete.
 func gitUpdateRefBestEffort(ctx context.Context, dir, branch, sha string) {
-	cmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+branch, sha) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := gitprobe.CombinedOutput(ctx, dir, "update-ref", "refs/heads/"+branch, sha); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: rollback update-ref %s failed: %v\n%s", branch, err, out)
 	}
 }
@@ -512,9 +614,7 @@ func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.Ru
 	if _, statErr := os.Stat(wtPath); statErr == nil {
 		DiscardDirtyChurn(ctx, wtPath)
 		CommitResidualDelta(ctx, wtPath, runID)
-		retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-		retryRebaseCmd.Dir = wtPath
-		if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
+		if out, rebaseErr := rebaseOntoTarget(ctx, wtPath, targetBranch); rebaseErr != nil {
 			gitRebaseAbort(ctx, wtPath)
 			return &Outcome{
 				Success: false,

@@ -9,13 +9,12 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 func mergedCommitPaths(ctx context.Context, projectDir, mainTip, runTip string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
+	out, err := gitprobe.Output(ctx, projectDir, "diff", "--name-only", mainTip, runTip)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --name-only %s %s: %w", mainTip, runTip, err)
 	}
@@ -37,10 +36,12 @@ func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID
 		emitWorkingTreeLocalEditsOverwritten(ctx, bus, runID, beadID, projectDir, overwritten, patchPath)
 	}
 
-	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=-")
-	restoreCmd.Dir = projectDir
-	restoreCmd.Stdin = strings.NewReader(strings.Join(paths, "\n") + "\n")
-	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
+	// The path list goes to git on standard input. gitprobe holds the list as a
+	// string and makes a new reader for each attempt, so a second attempt gets
+	// the same paths as the first one.
+	out, restoreErr := gitprobe.CombinedOutputStdin(ctx, projectDir, strings.Join(paths, "\n")+"\n",
+		"restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=-")
+	if restoreErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: WARNING: scoped working-tree refresh failed (bead %s run %s): %v\n%s",
 			beadID, runID.String(), restoreErr, out)
 		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, restoreErr)
@@ -49,9 +50,7 @@ func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID
 
 func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths []string) []string {
 	args := append([]string{"diff", "--name-only", mainTip, "--"}, paths...)
-	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; args are a git SHA and repo-relative paths from git itself
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
+	out, err := gitprobe.Output(ctx, projectDir, args...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: WARNING: local-edits diagnostic failed against %s: %v\n", mainTip, err)
 		return nil
@@ -71,9 +70,7 @@ func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID
 		return ""
 	}
 	args := append([]string{"diff", mainTip, "--"}, paths...)
-	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; args are a git SHA and repo-relative paths from git itself
-	cmd.Dir = projectDir
-	patch, err := cmd.Output()
+	patch, err := gitprobe.Output(ctx, projectDir, args...)
 	if err != nil || len(patch) == 0 {
 		return ""
 	}
@@ -118,16 +115,21 @@ func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID
 // post-merge escape check that used to share this allowlist is deleted.
 //
 // Errors are non-fatal and best-effort: if `git status` or a `git checkout`
-// fails, the function continues / returns silently and the subsequent rebase
-// reports the real failure. It is a no-op when no churn paths are dirty.
+// fails, the function writes the failure to stderr, continues / returns, and
+// the subsequent rebase reports the real failure. It is a no-op when no churn
+// paths are dirty.
 //
 // Beads: hk-3yz2d (ledger), hk-aiw63 (generalized to .claude/settings.json and
 // the full IsHarmonikChurn allowlist).
 func DiscardDirtyChurn(ctx context.Context, wtPath string) {
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = wtPath
-	statusOut, statusErr := statusCmd.Output()
-	if statusErr != nil || strings.TrimSpace(string(statusOut)) == "" {
+	statusOut, statusErr := gitprobe.Output(ctx, wtPath, "status", "--porcelain")
+	if statusErr != nil {
+		// A failed status is not a clean worktree. Say so, or the churn is left
+		// dirty and the rebase failure that follows names the wrong cause.
+		fmt.Fprintf(os.Stderr, "daemon: DiscardDirtyChurn: git status --porcelain: %v\n", statusErr)
+		return
+	}
+	if strings.TrimSpace(string(statusOut)) == "" {
 		return
 	}
 
@@ -154,10 +156,9 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 	}
 
 	for _, path := range churnPaths {
-		//nolint:gosec // G204: fixed git binary; path is parsed from git status, accepted only by IsHarmonikChurn, and follows `--`.
-		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", path)
-		checkoutCmd.Dir = wtPath
-		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		// A checkout of a pathspec puts the committed content back. It means the
+		// same thing every time, so a stopped child can run again.
+		if out, err := gitprobe.CombinedOutput(ctx, wtPath, "checkout", "--", path); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: DiscardDirtyChurn: git checkout -- %s: %v\n%s",
 				path, err, out)
 		}
@@ -218,10 +219,11 @@ func residualDeltaCommitMessage(runID core.RunID) string {
 // Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
 // fix (hk-cmry defect #3).
 func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = wtPath
-	statusOut, statusErr := statusCmd.Output()
+	statusOut, statusErr := gitprobe.Output(ctx, wtPath, "status", "--porcelain")
 	if statusErr != nil {
+		// A failed status reads exactly like a clean worktree here. Say which one
+		// it was, or a dropped residual delta leaves no trace at all.
+		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git status --porcelain: %v\n", statusErr)
 		return
 	}
 
@@ -245,22 +247,28 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return // no genuine residual delta — do not create an empty commit
 	}
 
-	addCmd := exec.CommandContext(ctx, "git", "add", "-A", "--",
+	// Staging sets the index to an exact state, so a stopped child can run again.
+	out, err := gitprobe.CombinedOutput(ctx, wtPath, "add", "-A", "--",
 		".",
 		":(exclude).claude",
 		":(exclude).harmonik",
 	)
-	addCmd.Dir = wtPath
-	if out, err := addCmd.CombinedOutput(); err != nil {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git add -A: %v\n%s", err, out)
 		return
 	}
 
-	//nolint:gosec // G204: fixed git binary; commit message is daemon-generated from a typed RunID and a constant template.
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", residualDeltaCommitMessage(runID))
-	commitCmd.Dir = wtPath
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git commit: %v\n%s", err, out)
+	// A commit does not mean the same thing twice, so it does not go through the
+	// shared retry. runCommitOnce reads HEAD around the one attempt and runs the
+	// commit again only when HEAD did not move.
+	commitOut, commitErr := runCommitOnce(ctx, wtPath, func() ([]byte, error) {
+		//nolint:gosec // G204: fixed git binary; commit message is daemon-generated from a typed RunID and a constant template.
+		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", residualDeltaCommitMessage(runID))
+		commitCmd.Dir = wtPath
+		return commitCmd.CombinedOutput()
+	})
+	if commitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git commit: %v\n%s", commitErr, commitOut)
 	}
 }
 
@@ -288,9 +296,9 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 //
 // Bead: hk-g9zz.
 func CleanUntrackedFiles(ctx context.Context, wtPath string) {
-	cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd")
-	cleanCmd.Dir = wtPath
-	if out, err := cleanCmd.CombinedOutput(); err != nil {
+	// A second clean removes whatever the first one did not, so a stopped child
+	// can run again.
+	if out, err := gitprobe.CombinedOutput(ctx, wtPath, "clean", "-fd"); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: CleanUntrackedFiles: git clean -fd: %v\n%s", err, out)
 	}
 }

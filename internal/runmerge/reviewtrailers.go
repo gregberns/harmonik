@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -44,9 +45,9 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	reviewedByLine := "Reviewed-By: " + reviewedByTrailerValue
 	reviewVerdictLine := "Review-Verdict: " + string(verdictJSON)
 
-	logCmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
-	logCmd.Dir = wtPath
-	out, err := logCmd.Output()
+	// Reading the HEAD message changes nothing, so gitprobe may run it again
+	// when the git process does not complete.
+	out, err := gitprobe.Output(ctx, wtPath, "log", "-1", "--format=%B", "HEAD")
 	if err != nil {
 		return fmt.Errorf("AppendReviewTrailersToHEAD: git log HEAD: %w", err)
 	}
@@ -68,10 +69,22 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 		newMsg = existing + "\n" + reviewVerdictLine
 	}
 
-	amendCmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", newMsg)
-	amendCmd.Dir = wtPath
-	if out, err := amendCmd.CombinedOutput(); err != nil {
+	if out, err := amendHEADMessage(ctx, wtPath, newMsg); err != nil {
 		return fmt.Errorf("AppendReviewTrailersToHEAD: git commit --amend: %w\ngit output: %s", err, out)
 	}
 	return nil
+}
+
+// amendHEADMessage rewrites the HEAD commit message. The amend is commit-class:
+// it makes a new commit object, so a second run would rewrite a commit that was
+// already rewritten. It does not go through gitprobe's blind retry — a stopped
+// amend is decided from HEAD, which moves when the amend lands.
+//
+// Bead: hk-7neu1.
+func amendHEADMessage(ctx context.Context, wtPath, message string) ([]byte, error) {
+	return runCommitOnce(ctx, wtPath, func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", message)
+		cmd.Dir = wtPath
+		return cmd.CombinedOutput()
+	})
 }

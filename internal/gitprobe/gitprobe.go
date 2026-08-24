@@ -16,6 +16,16 @@
 // The package is a leaf: stdlib plus the pre-existing tmux.CommandRunner seam. It
 // adds no dependency that its callers did not already have.
 //
+// # The retry is about the child, not about git
+//
+// Every command this package runs is run again when the forked child never ran
+// at all. That condition belongs to the fork, not to git: a child can die
+// between fork and exec, and the caller then holds a failure that no program
+// chose. So CommandOutput and CommandCombinedOutput give the same repair to a
+// named binary, and a caller that runs something other than git is in the right
+// place here. The package keeps its name because git is what it mostly probes.
+// incomplete.go holds the reason for the retry and its limits.
+//
 // Bead: hk-04q2j-adjacent P2/E1a extraction. Origin: internal/daemon/pasteinject.go
 // (hk-rs-b9-liveness-1m9n) and internal/daemon/sessioncontext_chb023.go (CHB-023).
 package gitprobe

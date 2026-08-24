@@ -1,5 +1,6 @@
-// Package gitprobe holds the read-only git probes that both internal/daemon and
-// the extracted harness packages need.
+// Package gitprobe holds the git probes that both internal/daemon and the
+// extracted harness packages need: the read-only ones it was made for, and the
+// small repeatable writes that ride the same retry (see incomplete.go).
 //
 // # Why this package exists
 //
@@ -32,9 +33,7 @@ import (
 // ResolveWorktreeHEAD returns the current HEAD commit SHA in the worktree at
 // wtPath, probing box A's local filesystem with a bare exec.
 func ResolveWorktreeHEAD(ctx context.Context, wtPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
+	out, err := Output(ctx, wtPath, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("gitprobe: ResolveWorktreeHEAD: git rev-parse HEAD in %q: %w", wtPath, err)
 	}
@@ -56,7 +55,9 @@ func ResolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 	if runner == nil {
 		return ResolveWorktreeHEAD(ctx, wtPath)
 	}
-	out, err := runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
+	out, err := runAttempts(ctx, "git -C "+wtPath+" rev-parse HEAD", func() ([]byte, error) {
+		return runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
+	})
 	if err != nil {
 		return "", fmt.Errorf("gitprobe: ResolveWorktreeHEADVia: git -C %q rev-parse HEAD: %w", wtPath, err)
 	}
@@ -70,9 +71,7 @@ func ResolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 // RevParse runs `git rev-parse <ref>` in repoRoot and returns the trimmed
 // SHA on success. On non-zero exit it returns an error.
 func RevParse(ctx context.Context, repoRoot, ref string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
+	out, err := Output(ctx, repoRoot, "rev-parse", ref)
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
 	}
@@ -87,10 +86,12 @@ func RevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 // `git merge-base --is-ancestor` exits 0 for yes and 1 for no. Any other
 // result is a git failure and is returned as an error.
 func IsAncestor(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git",
-		"merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Dir = repoDir
-	err := cmd.Run()
+	_, err := runAttempts(ctx, "git merge-base --is-ancestor "+ancestor+" "+descendant, func() ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git",
+			"merge-base", "--is-ancestor", ancestor, descendant)
+		cmd.Dir = repoDir
+		return nil, cmd.Run()
+	})
 	if err == nil {
 		return true, nil
 	}

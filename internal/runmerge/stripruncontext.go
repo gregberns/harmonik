@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/gitprobe"
 )
 
 // RunContextDirPrefix is the directory prefix under .harmonik/ for run-context
@@ -56,9 +58,7 @@ func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 		return false, nil
 	}
 
-	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--cached", "--", RunContextDirPrefix)
-	lsCmd.Dir = wtPath
-	lsOut, lsErr := lsCmd.Output()
+	lsOut, lsErr := gitprobe.Output(ctx, wtPath, "ls-files", "--cached", "--", RunContextDirPrefix)
 	if lsErr != nil {
 		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git ls-files --cached: %w", lsErr)
 	}
@@ -66,17 +66,57 @@ func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 		return false, nil
 	}
 
-	rmCmd := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", "--ignore-unmatch", "--", RunContextDirPrefix)
-	rmCmd.Dir = wtPath
-	if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
+	// --ignore-unmatch makes this command mean the same thing every time it
+	// runs, so gitprobe may run it again when the git process does not complete.
+	if out, rmErr := gitprobe.CombinedOutput(ctx, wtPath, "rm", "--cached", "-r", "--ignore-unmatch", "--", RunContextDirPrefix); rmErr != nil {
 		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git rm --cached -r: %w\ngit output: %s", rmErr, out)
 	}
 
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", stripRunContextCommitMessage)
-	commitCmd.Dir = wtPath
-	if out, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
+	if out, commitErr := commitStrip(ctx, wtPath); commitErr != nil {
 		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git commit: %w\ngit output: %s", commitErr, out)
 	}
 
 	return true, nil
+}
+
+// commitStrip creates the strip commit.
+//
+// Every other git command on this path can simply run again, because a second
+// run means what the first run meant. `git commit` does not: run it twice after
+// a first run that committed and the worktree gets a second commit, which then
+// fast-forwards onto the merge target carrying whatever else was staged.
+//
+// So a stopped commit is decided by the worktree, not guessed at. HEAD is read
+// before the attempt and again after it. A HEAD that moved means the commit
+// landed before the signal arrived. A HEAD that did not means it is safe to run
+// the command again. A worktree that cannot answer either question gets neither
+// treatment: the original failure is reported and the merge fails cleanly,
+// because a wrong merge is worse than a failed one.
+//
+// Bead: hk-jbtj6.
+func commitStrip(ctx context.Context, wtPath string) ([]byte, error) {
+	before, beforeErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
+
+	out, err := commitStripOnce(ctx, wtPath)
+	if !gitprobe.ProcessDidNotRun(ctx, err) {
+		return out, err
+	}
+	if beforeErr != nil {
+		return out, err
+	}
+
+	after, afterErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
+	if afterErr != nil {
+		return out, err
+	}
+	if after != before {
+		return out, nil
+	}
+	return commitStripOnce(ctx, wtPath)
+}
+
+func commitStripOnce(ctx context.Context, wtPath string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", "commit", "-m", stripRunContextCommitMessage)
+	cmd.Dir = wtPath
+	return cmd.CombinedOutput()
 }

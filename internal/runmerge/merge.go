@@ -304,9 +304,19 @@ func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID c
 		}
 	}
 	if stripped {
-		if newTip, resolveErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
-			*runTip = newTip
+		// The strip commit moved the run branch, so the caller has to be given
+		// the new tip. Letting this failure pass would fast-forward the target
+		// to the tip from BEFORE the strip, which still carries the very files
+		// the strip exists to remove — a wrong merge instead of a failed one.
+		// Refusing the merge is the safe answer. Bead: hk-jbtj6.
+		newTip, resolveErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
+		if resolveErr != nil {
+			return &Outcome{
+				Success: false,
+				Reason:  fmt.Sprintf("strip_run_context_failed: re-resolve the run tip after the strip commit: %v", resolveErr),
+			}
 		}
+		*runTip = newTip
 	}
 	return nil
 }
@@ -375,16 +385,13 @@ func runMergeBuildStep(ctx context.Context, run mergeBuildRunner, dir string, ar
 }
 
 func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch string, pushAttempt, maxPushAttempts int) commitAdvanceResult {
-	freshMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	freshMainCmd.Dir = projectDir
-	freshMainOut, freshMainErr := freshMainCmd.Output()
+	mainTip, freshMainErr := gitprobe.RevParse(ctx, projectDir, "refs/heads/"+targetBranch)
 	if freshMainErr != nil {
 		return commitAdvanceResult{done: &Outcome{
 			Success: false,
 			Reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, freshMainErr),
 		}}
 	}
-	mainTip := strings.TrimRight(string(freshMainOut), "\n")
 
 	isAncestor, ancestryErr := gitprobe.IsAncestor(ctx, projectDir, mainTip, runTip)
 	if ancestryErr != nil {
@@ -403,9 +410,11 @@ func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch stri
 		return commitAdvanceResult{retry: true, newMainTip: mainTip}
 	}
 
-	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	updateRefCmd.Dir = projectDir
-	if out, err := updateRefCmd.CombinedOutput(); err != nil {
+	// update-ref sets an exact value, so it means the same thing every time it
+	// runs and gitprobe may run it again. The wait it can add is bounded and
+	// short on purpose: this runs inside the merge exclusion domain, where a
+	// long backoff would hold up every other merge waiting behind it.
+	if out, err := gitprobe.CombinedOutput(ctx, projectDir, "update-ref", "refs/heads/"+targetBranch, runTip); err != nil {
 		return commitAdvanceResult{done: &Outcome{
 			Success: false,
 			Reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),

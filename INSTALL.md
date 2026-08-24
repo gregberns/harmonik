@@ -40,7 +40,7 @@ SQLite database), not a Go tool.
 The project README publishes this install path:
 
 ```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust
+cargo install --git https://github.com/Dicklesworthstone/beads_rust beads_rust
 ```
 
 This installs `br` into your Cargo bin directory (`~/.cargo/bin`), which must be on

@@ -66,7 +66,7 @@ New here? Read these in order, then keep the references on hand.
 `br` is the task ledger CLI. harmonik reads and writes bead state through it.
 
 ```bash
-cargo install --git https://github.com/Dicklesworthstone/beads_rust
+cargo install --git https://github.com/Dicklesworthstone/beads_rust beads_rust
 ```
 
 > **Note:** this install path has not been verified on a clean machine. If it fails, check the

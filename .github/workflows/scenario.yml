@@ -55,7 +55,7 @@ jobs:
 
       - name: install br
         run: |
-          cargo install --git https://github.com/Dicklesworthstone/beads_rust
+          cargo install --git https://github.com/Dicklesworthstone/beads_rust beads_rust
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # Do NOT add continue-on-error to this step. It hid the result on every REST

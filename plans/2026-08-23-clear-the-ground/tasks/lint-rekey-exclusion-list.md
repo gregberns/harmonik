@@ -49,7 +49,7 @@ changed.
 
 An earlier draft of this task said "package-qualified symbol". That was wrong and it was
 self-defeating: a package qualifier *is* location. `internal/daemon.RunRegistry.Get` becomes
-`internal/runregistry.RunRegistry.Get` under exactly the cross-package moves the six tasks blocked on
+`internal/runregistry.RunRegistry.Get` under exactly the cross-package moves the eight tasks blocked on
 this one exist to perform — a new key, read as new debt, build stopped. Do not use one.
 
 ### The design decision this task is really asking you to make

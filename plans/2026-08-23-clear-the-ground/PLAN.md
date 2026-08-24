@@ -83,9 +83,9 @@ instead of teaching the ratchet to detect renames.
   counts are 70, 40 and 27**, not the 106, 45 and 36 an earlier draft gave; those are whole-tree
   figures and they oversize the work by about 40%. *Done when:* each is zero in the three centre
   packages.
-- **W1.4 — Leave the complexity suppressions for last, on purpose.** The 155 `gocognit`/`cyclop`
-  entries are a symptom of W2 and W3. They should disappear because the functions got smaller, never
-  because the finding got fixed in place.
+- **W1.4 — Leave the complexity suppressions for last, on purpose.** All 161 of them — 124
+  `gocognit`, 31 `cyclop`, 6 `funlen` — are a symptom of W2 and W3. They should disappear because
+  the functions got smaller, never because the finding got fixed in place.
 
 W1.1 blocks W3 and W4. Nothing else waits on it.
 
@@ -194,16 +194,15 @@ Two separate things, both operator-raised.
 branch `work/charlie-file-diet`, 129 files, +9,088/-16,718, and the worktree is clean. W8.1 is a
 merge someone has to perform, not a lane anyone is waiting on.
 
-The merge is **not** a fast-forward any more. Both branches have moved since they parted at
-`aa423dcc0`: the integration branch gained two docs-only commits, and one file is edited on both
-sides — `.harmonik/crew/missions/charlie.md`. Expect to resolve that one file by hand.
-
-**The merge is gated on the red merge gate, which is an operator call** — see the handoff. Charlie's
-whole `internal/daemon` diff is one path-helper swap and a comment, so it is almost certainly not the
-cause, but the repo rule says a timeout never approves.
-
-- **W8.1 — Merge `work/charlie-file-diet` into the integration branch.** Not a fast-forward; one
-  file conflicts. Gated on the merge-gate ruling.
+- **W8.1 — Merge `work/charlie-file-diet` into the integration branch. DONE 2026-08-23 evening**,
+  as `208d95fec`. It was not a fast-forward — both branches had moved since they parted at
+  `aa423dcc0` — and exactly one file conflicted, `.harmonik/crew/missions/charlie.md`. Charlie's
+  side edited the July root-cause mission this branch had already replaced with the queue-manager
+  mission, so the resolution kept this branch's file and folded in the one measured correction
+  charlie's side carried. The merged tree compiles. **It is not yet pushed: the `make full` decision
+  is still outstanding**, and the repo rule is that a timeout never approves. Charlie's whole
+  `internal/daemon` diff is one path-helper swap and a comment, so it is very unlikely to be the
+  cause of a red gate, but that has to be measured rather than argued.
 - **W8.2 — Document the three structural causes** so the re-measure has something to check against:
   (1) four physical copies, only two governed; (2) `AGENTS.md`'s load map and the agent manifests are
   two independent, disagreeing specifications of what each role loads — neither is a superset of the

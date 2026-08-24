@@ -476,6 +476,7 @@ func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {
 	}
 }
 
+//nolint:gosec // Test runs fixed git and statusline commands with temporary paths.
 func TestKeeperStatuslineScript_LinkedWorktreeWritesPrimaryProjectGauge(t *testing.T) {
 	for _, tool := range []string{"bash", "jq", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -485,7 +486,7 @@ func TestKeeperStatuslineScript_LinkedWorktreeWritesPrimaryProjectGauge(t *testi
 
 	primary := filepath.Join(t.TempDir(), "primary")
 	linked := filepath.Join(t.TempDir(), "linked")
-	if err := os.MkdirAll(primary, 0o755); err != nil {
+	if err := os.MkdirAll(primary, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	runGit := func(args ...string) {

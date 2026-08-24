@@ -15,7 +15,7 @@ import (
 
 const restartTestSID = "11111111-1111-4111-8111-111111111111"
 
-func writeRestartFixture(t *testing.T, dir, agent, sid, handoff string) {
+func writeRestartFixture(t *testing.T, dir, agent, sid, handoff string) { //nolint:unparam // The agent argument keeps fixture intent explicit.
 	t.Helper()
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
@@ -184,6 +184,7 @@ func TestDriveRestartAfterReturn_NoTurnoverNeverRetriesClearOrBriefs(t *testing.
 	}
 }
 
+//nolint:errcheck // Test goroutine writes a best-effort observation file.
 func TestDriveRestartAfterReturn_TurnoverDuringGraceSkipsClearAndReset(t *testing.T) {
 	dir := t.TempDir()
 	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")

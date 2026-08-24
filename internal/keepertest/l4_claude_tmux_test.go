@@ -19,6 +19,8 @@ import (
 // It starts an actual Claude Code TUI in tmux. It sends one clear, waits for
 // the SessionStart hook to report a different session ID, and only then sends
 // a resume message. This test uses a real model and is opt-in.
+//
+//nolint:gosec // Opt-in test runs fixed tmux and Claude argv.
 func TestL4_RealClaudeClearThenBrief(t *testing.T) {
 	if os.Getenv("KEEPER_LIVE_CLAUDE") != "1" {
 		t.Skip("KEEPER_LIVE_CLAUDE=1 required for the real Claude scenario")
@@ -106,7 +108,7 @@ func writeLiveClaudeHook(t *testing.T, hookPath, hookLog, sidPath string) {
 		"payload=$(sed -n '1p')\n" +
 		"printf '%s\\n' \"$payload\" >> \"" + hookLog + "\"\n" +
 		"printf '%s\\n' \"$payload\" | jq -r '.session_id' > \"" + sidPath + "\"\n"
-	if err := os.WriteFile(hookPath, []byte(body), 0o700); err != nil {
+	if err := os.WriteFile(hookPath, []byte(body), 0o700); err != nil { //nolint:gosec // Hook fixture must be executable.
 		t.Fatalf("write SessionStart hook: %v", err)
 	}
 }
@@ -130,6 +132,7 @@ func writeLiveClaudeSettings(t *testing.T, settingsPath, hookPath string) {
 	}
 }
 
+//nolint:gosec // Executable test fixture needs owner execute permission.
 func writeLiveClaudeLauncher(t *testing.T, path, settingsPath, sessionID string) {
 	t.Helper()
 	body := "#!/bin/sh\nexec claude --dangerously-skip-permissions --model sonnet --effort low" +
@@ -139,6 +142,7 @@ func writeLiveClaudeLauncher(t *testing.T, path, settingsPath, sessionID string)
 	}
 }
 
+//nolint:gosec // Fixed tmux argv with a generated test session.
 func liveClaudePaneTarget(t *testing.T, session string) string {
 	t.Helper()
 	out, err := exec.CommandContext(context.Background(), "tmux", "list-panes", "-t", "="+session, "-F", "#{pane_id}").CombinedOutput()
@@ -163,6 +167,7 @@ func sendTmuxLine(t *testing.T, target, line string) {
 	}
 }
 
+//nolint:errcheck // Diagnostic capture is intentionally best effort.
 func capturePaneBestEffort(target string) string {
 	pane, _ := exec.CommandContext(context.Background(), "tmux", "capture-pane", "-p", "-S", "-200", "-t", target).CombinedOutput()
 	return string(pane)
@@ -208,6 +213,7 @@ func readSessionStartIDs(t *testing.T, path string) []string {
 	return ids
 }
 
+//nolint:errcheck // Failure artifacts are best effort.
 func waitForPaneText(t *testing.T, target, want string, timeout time.Duration, artifacts, captureName string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

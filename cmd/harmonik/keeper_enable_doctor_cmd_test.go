@@ -791,7 +791,7 @@ func TestKeeperDoctor_RuntimeProvenanceMatchesIntendedBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = lock.Release() }()
+	defer releaseKeeperDoctorTestLock(t, lock)
 	exe, err := exec.LookPath("harmonik")
 	if err != nil {
 		t.Skip("harmonik is not on PATH")
@@ -824,9 +824,9 @@ func TestKeeperDoctor_RuntimeProvenanceRejectsDifferentBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = lock.Release() }()
+	defer releaseKeeperDoctorTestLock(t, lock)
 	other := filepath.Join(t.TempDir(), "harmonik-old")
-	if err := os.WriteFile(other, []byte("old keeper"), 0o700); err != nil {
+	if err := os.WriteFile(other, []byte("old keeper"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	digest, err := keeper.FileSHA256(other)
@@ -853,7 +853,7 @@ func TestKeeperDoctor_RuntimeProvenanceRejectsStaleRecordPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = lock.Release() }()
+	defer releaseKeeperDoctorTestLock(t, lock)
 	exe, err := exec.LookPath("harmonik")
 	if err != nil {
 		t.Skip("harmonik is not on PATH")
@@ -888,7 +888,7 @@ func TestKeeperDoctor_RuntimeProvenanceRejectsIncompleteRecord(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = lock.Release() }()
+			defer releaseKeeperDoctorTestLock(t, lock)
 			exe, err := exec.LookPath("harmonik")
 			if err != nil {
 				t.Skip("harmonik is not on PATH")
@@ -926,6 +926,13 @@ func TestKeeperDoctor_RuntimeProvenanceRejectsIncompleteRecord(t *testing.T) {
 				t.Fatalf("missing %s was not red:\n%s", field, out.String())
 			}
 		})
+	}
+}
+
+func releaseKeeperDoctorTestLock(t *testing.T, lock *keeper.Lock) {
+	t.Helper()
+	if err := lock.Release(); err != nil {
+		t.Errorf("release keeper lock: %v", err)
 	}
 }
 

@@ -184,10 +184,6 @@ const (
 	outcomeParkedOperator cycleOutcome = "cycle_parked{operator_turn_recent}"
 )
 
-func isCompletion(o cycleOutcome) bool {
-	return o == outcomeComplete
-}
-
 func parkReason(t *testing.T, a keeper.Action) string {
 	t.Helper()
 	var p core.SessionKeeperCycleParkedPayload

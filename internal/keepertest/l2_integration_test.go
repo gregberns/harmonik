@@ -227,14 +227,6 @@ func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.Fau
 	}
 }
 
-func wantDegradedClears(cfg *keeper.CyclerConfig) int {
-	k := int((cfg.ClearConfirmBackstop + cfg.ClearSettle - 1) / cfg.ClearSettle)
-	if cfg.ClearConfirmRetries < k {
-		return cfg.ClearConfirmRetries
-	}
-	return k
-}
-
 func journalPhases(js []keeper.CycleJournal) []string {
 	out := make([]string, 0, len(js))
 	for _, j := range js {

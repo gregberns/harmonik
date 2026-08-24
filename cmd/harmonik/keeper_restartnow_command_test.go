@@ -14,7 +14,7 @@ import (
 
 const commandRestartSID = "11111111-1111-4111-8111-111111111111"
 
-func prepareRestartNowCommand(t *testing.T, project, agent string, withLock bool) *keeper.Lock {
+func prepareRestartNowCommand(t *testing.T, project, agent string, withLock bool) {
 	t.Helper()
 	dir := filepath.Join(project, ".harmonik", "keeper")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -34,16 +34,20 @@ func prepareRestartNowCommand(t *testing.T, project, agent string, withLock bool
 		t.Fatal(err)
 	}
 	if !withLock {
-		return nil
+		return
 	}
 	lock, err := keeper.AcquireLock(project, agent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = lock.Release() })
-	return lock
+	t.Cleanup(func() {
+		if err := lock.Release(); err != nil {
+			t.Errorf("release keeper lock: %v", err)
+		}
+	})
 }
 
+//nolint:gosec // Test reads its own temporary event log.
 func readRestartNowCommandEvents(t *testing.T, project string) []core.Event {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(project, ".harmonik", core.EventsJSONLPath))
@@ -81,6 +85,35 @@ func bytesLines(raw []byte) [][]byte {
 		lines = append(lines, raw[start:])
 	}
 	return lines
+}
+
+func TestRunKeeperRestartNow_PostStartReleaseFailureStillEmitsAcceptedEvent(t *testing.T) {
+	project := t.TempDir()
+	agent := "captain"
+	prepareRestartNowCommand(t, project, agent, true)
+
+	originalStart := startKeeperRestartDriverFn
+	originalRelease := releaseKeeperRestartDriverProcess
+	t.Cleanup(func() {
+		startKeeperRestartDriverFn = originalStart
+		releaseKeeperRestartDriverProcess = originalRelease
+	})
+	releaseKeeperRestartDriverProcess = func(*os.Process) error { return errors.New("release failed after start") }
+	startKeeperRestartDriverFn = func(_, _, _, _, _ string) error {
+		logFile, err := os.CreateTemp(t.TempDir(), "restart-driver-log")
+		if err != nil {
+			return err
+		}
+		finishKeeperRestartDriverStart(&os.Process{Pid: 99999}, logFile, logFile.Name())
+		return nil
+	}
+
+	if code := runKeeperRestartNow([]string{"--project", project, "--agent", agent, "--tmux", "%1"}); code != 0 {
+		t.Fatalf("restart-now exit = %d; want accepted start", code)
+	}
+	if events := readRestartNowCommandEvents(t, project); len(events) != 1 {
+		t.Fatalf("accepted events = %d; want 1 after post-start release failure", len(events))
+	}
 }
 
 func TestRunKeeperRestartNow_EmitsAcceptedEventAfterDriverStarts(t *testing.T) {

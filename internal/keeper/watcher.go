@@ -1006,6 +1006,8 @@ func NewWatcher(cfg WatcherConfig, emitter Emitter) *Watcher {
 
 // Run starts the watcher loop. It returns when ctx is cancelled (returning
 // ctx.Err()) or on a fatal internal error. Run is intended to be called once.
+//
+//nolint:gocognit,cyclop,funlen // Existing watcher orchestration is tracked for later extraction.
 func (w *Watcher) Run(ctx context.Context) error {
 	var (
 		warnArmed = true

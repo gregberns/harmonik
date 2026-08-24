@@ -147,6 +147,7 @@ EXAMPLES
   harmonik worker enable gb-mbp --json
 `
 
+//nolint:gocognit,cyclop,funlen // The command router keeps the complete CLI dispatch table in one place.
 func run() int {
 	if len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		harmonikUsage()

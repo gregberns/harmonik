@@ -58,6 +58,7 @@ type RestartNowConfig struct {
 	LiveKeeperPresentFn func(projectDir, agent string) bool
 }
 
+// RestartDriveConfig contains the detached restart driver's validated inputs.
 type RestartDriveConfig struct {
 	RestartNowConfig
 	PreviousSessionID string
@@ -67,6 +68,7 @@ type RestartDriveConfig struct {
 	ResetPendingInput func(context.Context, string) error
 }
 
+// ValidateRestartNow checks authority and returns the current primary session ID.
 func ValidateRestartNow(ctx context.Context, cfg RestartNowConfig, log *slog.Logger) (string, error) {
 	if cfg.TmuxTarget == "" {
 		return "", fmt.Errorf("keeper: restart-now: no tmux target resolved for agent %q", cfg.AgentName)
@@ -94,6 +96,7 @@ func ValidateRestartNow(ctx context.Context, cfg RestartNowConfig, log *slog.Log
 	return cf.SessionID, nil
 }
 
+// EmitRestartNowAccepted records a validated request after the driver starts.
 func EmitRestartNowAccepted(ctx context.Context, emitter Emitter, agent, sessionID, nonce string) error {
 	if emitter == nil {
 		return nil
@@ -112,6 +115,9 @@ func EmitRestartNowAccepted(ctx context.Context, emitter Emitter, agent, session
 	return nil
 }
 
+// DriveRestartAfterReturn performs one clear and waits for observed session turnover.
+//
+//nolint:gocognit,cyclop // Ordered IO and observation branches are safety-significant.
 func DriveRestartAfterReturn(ctx context.Context, cfg RestartDriveConfig) error {
 	clock := cfg.Clock
 	if clock == nil {
@@ -168,12 +174,12 @@ func DriveRestartAfterReturn(ctx context.Context, cfg RestartDriveConfig) error 
 
 func checkHandoffExists(ctx context.Context, cfg RestartNowConfig, log *slog.Logger) error {
 	handoffPath := handoffFilePathForAgent(cfg.ProjectDir, cfg.AgentName)
-	raw, readErr := os.ReadFile(handoffPath)
+	raw, readErr := os.ReadFile(handoffPath) //nolint:gosec // The validated agent selects its project-local handoff path.
 	if readErr != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "handoff_missing", "path", handoffPath, "err", readErr)
 		return fmt.Errorf("keeper: restart-now: handoff %q missing for agent %q (write /session-handoff first): %w", handoffPath, cfg.AgentName, readErr)
 	}
-	if len(strings.TrimSpace(string(raw))) == 0 {
+	if strings.TrimSpace(string(raw)) == "" {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "handoff_empty", "path", handoffPath)
 		return fmt.Errorf("keeper: restart-now: handoff %q is empty for agent %q (write /session-handoff first)", handoffPath, cfg.AgentName)
 	}

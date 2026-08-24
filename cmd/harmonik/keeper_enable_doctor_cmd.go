@@ -497,6 +497,7 @@ func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
 	return runKeeperDoctor(cfg, stdout, stderr)
 }
 
+//nolint:gocognit,cyclop,funlen // A linear report keeps every check visible and independent.
 func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	type checkResult struct {
 		name    string
@@ -530,7 +531,12 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if lookErr != nil {
 			check("binary", false, "harmonik not found on PATH — reinstall or add to PATH")
 		} else {
-			intendedExecutable, _ = filepath.EvalSymlinks(exe)
+			var resolveErr error
+			intendedExecutable, resolveErr = filepath.EvalSymlinks(exe)
+			if resolveErr != nil {
+				check("binary", false, fmt.Sprintf("cannot resolve harmonik binary %q: %v", exe, resolveErr))
+				intendedExecutable = ""
+			}
 			info, statErr := os.Stat(exe)
 			if statErr != nil {
 				check("binary", false, fmt.Sprintf("cannot stat harmonik binary %q: %v", exe, statErr))
@@ -548,61 +554,53 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	settings, readErr := readGlobalSettings(cfg.settingsPath)
 	settingsPresent := readErr == nil
 
-	{
-		if !settingsPresent {
-			check("statusLine", false, fmt.Sprintf("settings.json not found at %s — run: harmonik keeper enable %s ...", cfg.settingsPath, cfg.agentName))
+	if !settingsPresent {
+		check("statusLine", false, fmt.Sprintf("settings.json not found at %s — run: harmonik keeper enable %s ...", cfg.settingsPath, cfg.agentName))
+	} else {
+		cmd := getStatusLineCommand(settings)
+		if !strings.Contains(cmd, "keeper-statusline.sh") {
+			check("statusLine", false, fmt.Sprintf("keeper-statusline.sh not found in statusLine.command — run: harmonik keeper enable %s ...", cfg.agentName))
 		} else {
-			cmd := getStatusLineCommand(settings)
-			if !strings.Contains(cmd, "keeper-statusline.sh") {
-				check("statusLine", false, fmt.Sprintf("keeper-statusline.sh not found in statusLine.command — run: harmonik keeper enable %s ...", cfg.agentName))
-			} else {
-				check("statusLine", true, "keeper-statusline.sh wired")
-				if !statusLineTypeIsCommand(settings) {
-					check("statusLine.type", false, `statusLine missing "type":"command" — Claude Code will reject settings.json; run: harmonik keeper enable to normalize`)
-				}
-				if strings.Contains(cmd, "HARMONIK_AGENT=") && !strings.Contains(cmd, "HARMONIK_AGENT=${") {
-					check("statusLine.agent_pollution", false, "statusLine.command has a literal HARMONIK_AGENT= that overrides all sessions' env var (ctx pollution, hk-67k) — run: harmonik keeper enable to normalize")
-				}
+			check("statusLine", true, "keeper-statusline.sh wired")
+			if !statusLineTypeIsCommand(settings) {
+				check("statusLine.type", false, `statusLine missing "type":"command" — Claude Code will reject settings.json; run: harmonik keeper enable to normalize`)
+			}
+			if strings.Contains(cmd, "HARMONIK_AGENT=") && !strings.Contains(cmd, "HARMONIK_AGENT=${") {
+				check("statusLine.agent_pollution", false, "statusLine.command has a literal HARMONIK_AGENT= that overrides all sessions' env var (ctx pollution, hk-67k) — run: harmonik keeper enable to normalize")
 			}
 		}
 	}
 
-	{
-		if !settingsPresent {
-			check("Stop hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	if !settingsPresent {
+		check("Stop hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	} else {
+		found, command := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
+		if !found || command == "" {
+			check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, command := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
-			if !found || command == "" {
-				check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
-			} else {
-				check("Stop hook", true, "keeper-stop-hook.sh wired")
-			}
+			check("Stop hook", true, "keeper-stop-hook.sh wired")
 		}
 	}
 
-	{
-		if !settingsPresent {
-			check("PreCompact hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	if !settingsPresent {
+		check("PreCompact hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	} else {
+		found, command := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
+		if !found || command == "" {
+			check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, command := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
-			if !found || command == "" {
-				check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
-			} else {
-				check("PreCompact hook", true, "keeper-precompact-hook.sh wired")
-			}
+			check("PreCompact hook", true, "keeper-precompact-hook.sh wired")
 		}
 	}
 
-	{
-		if !settingsPresent {
-			check("SessionStart hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	if !settingsPresent {
+		check("SessionStart hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+	} else {
+		found, command := findHookForScript(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir)
+		if !found || command == "" {
+			check("SessionStart hook", false, "keeper-sessionstart-hook.sh not found in hooks.SessionStart for this project — single-writer .sid channel will be absent; run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, command := findHookForScript(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir)
-			if !found || command == "" {
-				check("SessionStart hook", false, "keeper-sessionstart-hook.sh not found in hooks.SessionStart for this project — single-writer .sid channel will be absent; run: harmonik keeper enable "+cfg.agentName+" ...")
-			} else {
-				check("SessionStart hook", true, "keeper-sessionstart-hook.sh wired (single-writer .sid channel)")
-			}
+			check("SessionStart hook", true, "keeper-sessionstart-hook.sh wired (single-writer .sid channel)")
 		}
 	}
 
@@ -702,20 +700,22 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			check("runtime-provenance", false, fmt.Sprintf("runtime record PID %d does not own the live keeper lock (owner PID %d)", record.PID, lockPID))
 		default:
 			actualDigest, digestErr := keeper.FileSHA256(record.Executable)
-			if digestErr != nil {
+			switch {
+			case digestErr != nil:
 				check("runtime-provenance", false, fmt.Sprintf("cannot digest live keeper executable %q: %v", record.Executable, digestErr))
-			} else if actualDigest != record.ExecutableSHA256 {
+			case actualDigest != record.ExecutableSHA256:
 				check("runtime-provenance", false, "live keeper executable changed after startup — restart it")
-			} else if intendedExecutable != "" {
+			case intendedExecutable != "":
 				intendedDigest, intendedErr := keeper.FileSHA256(intendedExecutable)
-				if intendedErr != nil {
+				switch {
+				case intendedErr != nil:
 					check("runtime-provenance", false, fmt.Sprintf("cannot digest intended binary %q: %v", intendedExecutable, intendedErr))
-				} else if intendedDigest != record.ExecutableSHA256 {
+				case intendedDigest != record.ExecutableSHA256:
 					check("runtime-provenance", false, fmt.Sprintf("live keeper PID %d runs %s (%s), not intended %s (%s)", record.PID, record.Executable, record.ExecutableSHA256[:12], intendedExecutable, intendedDigest[:12]))
-				} else {
+				default:
 					check("runtime-provenance", true, fmt.Sprintf("PID %d target=%q binary=%s commit=%s config=%s", record.PID, record.TmuxTarget, record.ExecutableSHA256[:12], record.Commit, record.ConfigSHA256[:12]))
 				}
-			} else {
+			default:
 				check("runtime-provenance", false, "cannot resolve intended harmonik binary on PATH")
 			}
 		}
@@ -733,26 +733,26 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			paneFn = tmuxPaneExists
 		}
 		target := resolveFn(cfg.projectDir, cfg.agentName)
-		if target == "" {
+		switch target {
+		case "":
 			check("tmux-pane", true, "agent session not live — pane check not applicable")
-		} else {
+		default:
 			ok, paneErr := paneFn(target)
-			if paneErr != nil {
+			switch {
+			case paneErr != nil:
 				check("tmux-pane", false, fmt.Sprintf("pane check failed for %q: %v", target, paneErr))
-			} else if !ok {
+			case !ok:
 				check("tmux-pane", false, fmt.Sprintf("pane %q not found — keeper inject-target is unreachable; verify the keeper was launched with a braced tmux target (${session}:agent, not $session:agent — zsh :a modifier silently rewrites unbraced form; hk-5266t)", target))
-			} else {
+			default:
 				check("tmux-pane", true, fmt.Sprintf("pane %q is live", target))
 			}
 		}
 	}
 
-	{
-		if os.Getenv("ANTHROPIC_API_KEY") != "" {
-			check("api-key-risk", false, "ANTHROPIC_API_KEY is set in environment — keeper-launched claude will bill the API credit pool, not the subscription. Unset it or use 'env -u ANTHROPIC_API_KEY harmonik keeper ...'")
-		} else {
-			check("api-key-risk", true, "ANTHROPIC_API_KEY not set in environment (good)")
-		}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		check("api-key-risk", false, "ANTHROPIC_API_KEY is set in environment — keeper-launched claude will bill the API credit pool, not the subscription. Unset it or use 'env -u ANTHROPIC_API_KEY harmonik keeper ...'")
+	} else {
+		check("api-key-risk", true, "ANTHROPIC_API_KEY not set in environment (good)")
 	}
 
 	{

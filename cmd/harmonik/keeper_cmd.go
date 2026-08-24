@@ -162,6 +162,7 @@ func buildKeeperCycleDeps(
 	return deps
 }
 
+//nolint:gocognit,cyclop,funlen // CLI composition keeps flag precedence visible in one place.
 func runKeeperSubcommand(args []string) int {
 	fs := flag.NewFlagSet("keeper", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -391,7 +392,11 @@ func runKeeperSubcommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper: write runtime identity: %v\n", recordErr)
 		return 1
 	}
-	defer func() { _ = keeper.RemoveRuntimeRecord(projectDir, agentFlag, os.Getpid()) }()
+	defer func() {
+		if removeErr := keeper.RemoveRuntimeRecord(projectDir, agentFlag, os.Getpid()); removeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: remove runtime identity", "err", removeErr)
+		}
+	}()
 
 	effWarn, effAct, effForce := keeper.EffectiveBandTokens(
 		resolvedWarnAbs, resolvedActAbs, resolvedForceActAbs,
@@ -720,7 +725,10 @@ func runKeeperRestartNow(args []string) int {
 	return 0
 }
 
-var startKeeperRestartDriverFn = startKeeperRestartDriver
+var (
+	startKeeperRestartDriverFn        = startKeeperRestartDriver
+	releaseKeeperRestartDriverProcess = func(process *os.Process) error { return process.Release() }
+)
 
 func startKeeperRestartDriver(projectDir, agent, target, previousSID, nonce string) error {
 	exe, err := os.Executable()
@@ -728,21 +736,35 @@ func startKeeperRestartDriver(projectDir, agent, target, previousSID, nonce stri
 		return err
 	}
 	logPath := filepath.Join(projectDir, ".harmonik", "keeper", agent+".restart-now.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // Path is scoped to the validated project and agent.
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "keeper", "restart-driver", "--project", projectDir, "--agent", agent, "--tmux", target, "--previous-sid", previousSID, "--nonce", nonce) //nolint:gosec // Values are argv, not a shell command.
+	cmd := exec.CommandContext(context.Background(), exe, "keeper", "restart-driver", "--project", projectDir, "--agent", agent, "--tmux", target, "--previous-sid", previousSID, "--nonce", nonce) //nolint:gosec // Values are argv, not a shell command. The detached process must outlive the request context.
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
+		if closeErr := logFile.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
 		return err
 	}
-	_ = cmd.Process.Release()
-	return logFile.Close()
+	finishKeeperRestartDriverStart(cmd.Process, logFile, logPath)
+	return nil
+}
+
+func finishKeeperRestartDriverStart(process *os.Process, logFile *os.File, logPath string) {
+	if err := releaseKeeperRestartDriverProcess(process); err != nil {
+		// Start succeeded. The driver can already clear the pane, so this request
+		// is accepted even when parent-side ownership cleanup fails. Reporting a
+		// start failure here would invite a second driver and a second clear.
+		slog.WarnContext(context.Background(), "keeper: release detached restart driver", "err", err, "pid", process.Pid)
+	}
+	if err := logFile.Close(); err != nil {
+		slog.WarnContext(context.Background(), "keeper: close detached restart driver log", "err", err, "path", logPath)
+	}
 }
 
 func runKeeperRestartDriver(args []string) int {

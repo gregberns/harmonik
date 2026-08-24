@@ -102,6 +102,7 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 	t.Logf("L3: one-cycle tmux smoke GREEN — one /clear, observed turnover, and later brief in pane %s", sessName)
 }
 
+//nolint:gosec,errcheck // Opt-in test runs fixed tmux argv with test-owned values.
 func TestL3_ExternalTurnoverDuringGraceSendsNoDriverClear(t *testing.T) {
 	skipUnlessKeeperLive(t)
 	if _, err := exec.LookPath("tmux"); err != nil {

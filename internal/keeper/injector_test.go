@@ -11,6 +11,7 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
+//nolint:gosec,errcheck // Real tmux commands use test-owned names and best-effort cleanup.
 func TestResetTmuxInput_RemovesQueuedClear(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
@@ -20,7 +21,7 @@ func TestResetTmuxInput_RemovesQueuedClear(t *testing.T) {
 	if out, err := start.CombinedOutput(); err != nil {
 		t.Fatalf("start tmux: %v: %s", err, out)
 	}
-	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", session).Run() })
+	t.Cleanup(func() { _ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", session).Run() })
 
 	if out, err := exec.CommandContext(t.Context(), "tmux", "send-keys", "-t", session, "-l", "/clear").CombinedOutput(); err != nil {
 		t.Fatalf("queue clear: %v: %s", err, out)

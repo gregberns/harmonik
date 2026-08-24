@@ -5,10 +5,8 @@ package keeper_test
 import "testing"
 
 // TestKeeperConformanceCorpus_Integration covers the L-twin tier of the acceptance
-// corpus: the three scenarios that require a real tmux session.
+// corpus: the scenarios that require a real tmux session.
 func TestKeeperConformanceCorpus_Integration(t *testing.T) {
-	t.Run("corpus/1/restartnow-b4-integration", TestSmoke_RestartNow_Integration)
-
 	t.Run("corpus/2/sid-rebind-anti-loop",
 		TestIntegration_TwinSidRebind_AntiLoopGateHolds)
 

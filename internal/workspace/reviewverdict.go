@@ -17,28 +17,17 @@ import (
 // ReviewVerdict is the typed struct returned by ReadReviewVerdict.
 // Fields map verbatim to the agent-reviewer JSON schema v1 per
 // workspace-model.md §4.7.WM-027a and event-model.md §8.1a.3.
-//
-// Schema v1 fields:
-//   - SchemaVersion: MUST equal ReviewVerdictSchemaVersion (1).
-//   - Verdict:       MUST be one of "APPROVE", "REQUEST_CHANGES", "BLOCK".
-//   - Flags:         String array; MAY be empty.
-//   - Notes:         Free text; MUST be non-empty per agent-reviewer skill contract.
 type ReviewVerdict struct {
-	// SchemaVersion is the integer schema version of the agent-reviewer JSON
-	// verdict schema. MUST equal ReviewVerdictSchemaVersion (1).
+	// MUST equal ReviewVerdictSchemaVersion (1).
 	SchemaVersion int `json:"schema_version"`
 
-	// Verdict is the reviewer's decision. MUST be one of the values declared
-	// by ReviewVerdictValue: APPROVE, REQUEST_CHANGES, BLOCK.
+	// MUST be one of APPROVE, REQUEST_CHANGES, BLOCK.
 	Verdict string `json:"verdict"`
 
-	// Flags is the list of issue tags from the agent-reviewer schema v1.
-	// MAY be empty (nil and [] are both valid); a nil JSON value is treated
-	// as an empty slice.
+	// MAY be empty; a nil JSON value is treated as an empty slice.
 	Flags []string `json:"flags"`
 
-	// Notes is the free-text reviewer rationale. MUST be non-empty per the
-	// agent-reviewer skill contract (1–3 sentences per §8.1a.3).
+	// MUST be non-empty per the agent-reviewer skill contract.
 	Notes string `json:"notes"`
 }
 
@@ -65,12 +54,9 @@ const (
 // went red) and NO_COMMIT (HEAD did not advance), both delivered through the
 // same reviewer-feedback file the implementer-resume reads.
 //
-// It exists so that a document cannot claim a review that did not happen
-// (hk-2f3v4). The observed harm is specific: a codex implementer read
-// `verdict: GATE_FAIL` under a "Reviewer feedback" heading, concluded a reviewer
-// had asked for the change, and spent three passes acting on that. Deriving the
-// answer from the verdict rather than from a caller-supplied flag means a new
-// daemon-produced feedback path cannot forget to declare itself.
+// Derive this from the verdict, never from a caller-supplied flag: a new
+// daemon-produced feedback path cannot then forget to declare itself and let a
+// document claim a review that did not happen (hk-2f3v4).
 func VerdictCameFromAReviewer(verdict string) bool {
 	switch verdict {
 	case ReviewVerdictApprove, ReviewVerdictRequestChanges, ReviewVerdictBlock:
@@ -83,14 +69,7 @@ func VerdictCameFromAReviewer(verdict string) bool {
 // ErrMalformed is returned by ReadReviewVerdict when the verdict file at
 // ${workspace_path}/.harmonik/review.json is present but fails schema
 // validation. Callers that need to distinguish malformed from absent files
-// use errors.Is(err, ErrMalformed).
-//
-// Conditions that produce ErrMalformed (per WM-027a and event-model §8.1a.3):
-//   - JSON parse failure.
-//   - schema_version field absent, zero, or not equal to ReviewVerdictSchemaVersion.
-//   - verdict field absent or not in {APPROVE, REQUEST_CHANGES, BLOCK}.
-//   - flags field absent (null token maps to empty slice; missing key is rejected).
-//   - notes field absent or empty.
+// use errors.Is(err, ErrMalformed). parseReviewVerdict states the conditions.
 var ErrMalformed = errors.New("workspace: review verdict ErrMalformed")
 
 // ErrRemoteTransport is returned by the runner-routed readers (ReadReviewVerdictVia,
@@ -119,14 +98,9 @@ func ReviewVerdictPath(workspacePath string) string {
 // ReadReviewVerdict reads and validates the reviewer verdict file at
 // ${workspace_path}/.harmonik/review.json against the agent-reviewer JSON
 // schema v1 (workspace-model.md §4.7.WM-027a; event-model.md §8.1a.3).
+// parseReviewVerdict states the validation rules.
 //
-// Validation rules:
-//   - schema_version MUST equal ReviewVerdictSchemaVersion (1).
-//   - verdict MUST be one of "APPROVE", "REQUEST_CHANGES", "BLOCK".
-//   - flags MUST be present (null is treated as empty slice; missing key is malformed).
-//   - notes MUST be non-empty.
-//
-// Returns:
+// This is the canonical return contract for every reader in this file:
 //   - (*ReviewVerdict, nil) when the file is present and valid.
 //   - (nil, ErrMalformed) (wrapping ErrMalformed) for any schema violation.
 //   - (nil, nil) when the file does not exist — the caller interprets absence
@@ -166,13 +140,8 @@ func ReadReviewVerdict(workspacePath string) (*ReviewVerdict, error) {
 // malformed verdict still returns ErrMalformed after the retry budget is spent.
 // The local path does NOT retry. Beads: hk-clrts, hk-l489f.
 //
-// Return contract matches ReadReviewVerdict:
-//   - (*ReviewVerdict, nil) when the file is present and valid.
-//   - (nil, ErrMalformed) (wrapping) for any schema violation.
-//   - (nil, nil) when the file does not exist (cat exits non-zero on the worker),
-//     interpreted by the caller as the inconclusive condition per WM-027a §(e).
-//
-// Bead: hk-f3u6o.
+// Return contract is ReadReviewVerdict's; absent means cat exited non-zero on
+// the worker. Bead: hk-f3u6o.
 func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, workspacePath string) (*ReviewVerdict, error) {
 	if runner == nil || runnerIsLocalFS(runner) {
 		return ReadReviewVerdict(workspacePath)
@@ -203,22 +172,14 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 // ReadReviewVerdictVia (bead hk-1hgjr — the local twin of the remote hk-qts7r
 // fix).
 //
-// Motivation: the finalize read reads the reviewer's
-// box-A-local worktree with a nil runner. If the daemon reads review.json at the
-// instant the reviewer's claude is still flushing / has not yet made the write
-// durable, os.ReadFile observes a truncated file and parseReviewVerdict returns
-// ErrMalformed — and the plain ReadReviewVerdict does NOT retry, so the run
-// false-fails fast. This retrying reader closes that gap for the finalize read.
+// Motivation: the finalize read uses a nil runner against the reviewer's
+// box-A-local worktree. Read it while the reviewer's claude is still flushing
+// and os.ReadFile sees a truncated file, so the non-retrying ReadReviewVerdict
+// false-fails the run fast. This reader closes that gap.
 //
-// Contract (mirrors ReadReviewVerdict / ReadReviewVerdictVia):
-//   - (*ReviewVerdict, nil) when the file is present and valid — a clean parse
-//     short-circuits immediately (no retry, no added latency).
-//   - (nil, nil) when the file is absent — short-circuits immediately per
-//     WM-027a §(e).
-//   - (nil, ErrMalformed) (wrapping) ONLY after the retry budget is spent, so a
-//     genuinely-malformed verdict still fails (no false positives — just bounded
-//     extra latency).
-//   - (nil, ctx.Err()) if ctx is cancelled during an inter-attempt wait.
+// Return contract is ReadReviewVerdict's, plus: present-and-valid and absent
+// both short-circuit with no added latency, ErrMalformed surfaces ONLY once the
+// retry budget is spent, and ctx.Err() surfaces on cancellation mid-wait.
 //
 // This does NOT change ReadReviewVerdict or the ReadReviewVerdictVia nil/local
 // branch — those stay byte-identical no-retry (NFR7); the retry is opt-in via
@@ -267,21 +228,12 @@ func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*Review
 // WriteReviewVerdictAtomic writes verdict to the canonical review-verdict path
 // ${workspace_path}/.harmonik/review.json using encoding/json (not hand-rolled
 // string construction) and the same atomic-write discipline as
-// WriteLeaseLockAtomic:
+// WriteLeaseLockAtomic.
 //
-//  1. json.Marshal verdict — this is the fix for hk-9w79a: a reviewer agent
-//     hand-typing raw JSON text into a Write-tool call can emit an invalid
-//     escape (e.g. a backtick-containing code snippet in Notes gets a stray
-//     "\`" backslash-escape, which is not a legal JSON escape) whenever the
-//     free-text Notes field contains a backtick. encoding/json.Marshal escapes
-//     only the characters JSON actually requires (", \, control chars) and
-//     leaves backtick unescaped, so a backtick in Notes can never produce
-//     invalid JSON.
-//  2. Write the marshaled bytes to a sibling temp file, fsync it.
-//  3. rename(2) the temp file over the target (POSIX-atomic within one fs).
-//  4. Best-effort fsync of the parent directory.
-//
-// Callers should prefer this over writing review.json by hand. The
+// An agent MUST NOT hand-write this JSON (hk-9w79a): hand-typing it into a
+// Write-tool call emits a stray "\`" escape whenever the free-text Notes holds
+// a backtick, and that is not legal JSON. json.Marshal escapes only what JSON
+// requires, so a backtick in Notes can never produce an invalid file. The
 // write-review-verdict CLI subcommand is the reviewer-facing entry point.
 func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) error {
 	if verdict.Flags == nil {
@@ -392,68 +344,4 @@ func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
 	}
 
 	return &v, nil
-}
-
-// ReviewVerdictArchivePath returns the canonical path for an archived reviewer
-// verdict file per workspace-model.md §4.7.WM-027a §(c):
-//
-//	${workspace_path}/.harmonik/review.iter-<N>.json
-//
-// N is the 1-indexed ordinal of the just-completed iteration (iteration cap = 3
-// per execution-model.md §4.3). The caller MUST pass the absolute worktree path.
-func ReviewVerdictArchivePath(workspacePath string, iterationN int) string {
-	return filepath.Join(workspacePath, ".harmonik", fmt.Sprintf("review.iter-%d.json", iterationN))
-}
-
-// ArchiveVerdict renames the current reviewer verdict file
-// ${workspace_path}/.harmonik/review.json to
-// ${workspace_path}/.harmonik/review.iter-<N>.json, where N is iterationN.
-//
-// This implements the daemon-side archive step in workspace-model.md
-// §4.7.WM-027a §(c): before launching iteration N+1's reviewer, the daemon
-// MUST archive the prior review.json by renaming it to review.iter-<N>.json.
-//
-// The rename uses os.Rename (POSIX-atomic within one filesystem) followed by a
-// best-effort fsync of the parent directory per the WM-026 discipline.
-//
-// Returns:
-//   - nil on success.
-//   - ErrNotFound (wrapped) when the source review.json does not exist.
-//   - an error (wrapping ErrNotFound) when the destination review.iter-<N>.json
-//     already exists — double-archive at the same N is a caller error.
-//   - a wrapped I/O error for any other filesystem failure.
-func ArchiveVerdict(workspacePath string, iterationN int) error {
-	src := ReviewVerdictPath(workspacePath)
-	dst := ReviewVerdictArchivePath(workspacePath, iterationN)
-
-	if _, err := os.Stat(src); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: review.json absent at %q", ErrNotFound, src)
-		}
-		return fmt.Errorf("workspace: ArchiveVerdict: Stat source %q: %w", src, err)
-	}
-
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: destination already exists at %q (double-archive at iteration %d)", dst, iterationN)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("workspace: ArchiveVerdict: Stat destination %q: %w", dst, err)
-	}
-
-	if err := os.Rename(src, dst); err != nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: Rename %q → %q: %w", src, dst, err)
-	}
-
-	dir := filepath.Dir(src)
-	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
-	dirFD, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: Open dir %q for fsync: %w", dir, err)
-	}
-	syncErr := dirFD.Sync()
-	closeErr := dirFD.Close()
-	if syncErr != nil || closeErr != nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
-	}
-
-	return nil
 }

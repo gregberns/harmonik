@@ -164,6 +164,13 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 	}
 }
 
+// residualDeltaCommitMessage is the message CommitResidualDelta commits. Named
+// so the commit-message gate test reads what production writes — see
+// stripRunContextCommitMessage for why that matters.
+func residualDeltaCommitMessage(runID core.RunID) string {
+	return fmt.Sprintf("chore: residual iteration delta [%s]\n\nTrivial: true", runID.String())
+}
+
 // CommitResidualDelta commits any UNCOMMITTED change that survives
 // DiscardDirtyChurn onto the run-branch, immediately before the pre-merge
 // `git rebase main`.
@@ -249,12 +256,8 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return
 	}
 
-	commitMsg := fmt.Sprintf(
-		"chore: residual iteration delta [%s]\n\nTrivial: true",
-		runID.String(),
-	)
 	//nolint:gosec // G204: fixed git binary; commit message is daemon-generated from a typed RunID and a constant template.
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", residualDeltaCommitMessage(runID))
 	commitCmd.Dir = wtPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git commit: %v\n%s", err, out)

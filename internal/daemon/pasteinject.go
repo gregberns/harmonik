@@ -839,7 +839,7 @@ const reviewerKickoffSeed = "Read .harmonik/review-target.md in this worktree" +
 	" and produce your verdict exactly as instructed there.\n"
 
 func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
-	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
+	reviewFile := workspace.ReviewTargetPath(wtPath)
 	if err := statTaskFileVia(ctx, runner, reviewFile); err != nil {
 		reason := fmt.Sprintf("reviewer: %v", err)
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)

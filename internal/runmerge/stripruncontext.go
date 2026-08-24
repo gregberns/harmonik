@@ -18,6 +18,18 @@ import (
 // duplicated literal would silently fork the strip from the write.
 const RunContextDirPrefix = ".harmonik/run-context"
 
+// stripRunContextCommitMessage is the message StripRunContextFromMerge commits.
+//
+// It is named rather than written inline so the commit-message gate test can
+// read the string PRODUCTION writes. The test used to hold its own copy, which
+// meant the daemon could change how it spells the `Trivial: true` exemption and
+// the test would keep passing against the old spelling.
+const stripRunContextCommitMessage = "chore: strip run-context from merge (hk-4je)\n\n" +
+	"Remove .harmonik/run-context/** that was force-committed by CHB-023 for\n" +
+	"crash-recovery (EM-031). The files remain valid on the run-branch reflog;\n" +
+	"they must not land on the merge target.\n" +
+	"Trivial: true"
+
 // StripRunContextFromMerge removes any .harmonik/run-context/** paths from the
 // run-branch index and commits the removal, so they cannot land on the merge
 // target via the subsequent fast-forward update-ref.
@@ -60,12 +72,7 @@ func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git rm --cached -r: %w\ngit output: %s", rmErr, out)
 	}
 
-	commitMsg := "chore: strip run-context from merge (hk-4je)\n\n" +
-		"Remove .harmonik/run-context/** that was force-committed by CHB-023 for\n" +
-		"crash-recovery (EM-031). The files remain valid on the run-branch reflog;\n" +
-		"they must not land on the merge target.\n" +
-		"Trivial: true"
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", stripRunContextCommitMessage)
 	commitCmd.Dir = wtPath
 	if out, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
 		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git commit: %w\ngit output: %s", commitErr, out)

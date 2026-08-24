@@ -68,8 +68,6 @@ func TestFeedbackContent_RealReviewerVerdictIsUnchanged(t *testing.T) {
 		Verdict:        ReviewVerdictRequestChanges,
 		Flags:          []string{"test-gap"},
 		Notes:          "Add a test for the empty case.",
-		DiffHash:       "abc123",
-		DiffLines:      42,
 	})
 
 	if !strings.HasPrefix(got, "# Reviewer feedback — iteration 2\n\n") {
@@ -78,7 +76,7 @@ func TestFeedbackContent_RealReviewerVerdictIsUnchanged(t *testing.T) {
 	if strings.Contains(got, "NO REVIEWER READ YOUR CHANGE") {
 		t.Fatalf("a real reviewer verdict carries the no-reviewer disclaimer:\n%s", got)
 	}
-	for _, want := range []string{"verdict: REQUEST_CHANGES", "- test-gap", "Add a test for the empty case.", "diff_hash: abc123", "diff_lines: 42"} {
+	for _, want := range []string{"verdict: REQUEST_CHANGES", "- test-gap", "Add a test for the empty case."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("reviewer feedback is missing %q:\n%s", want, got)
 		}

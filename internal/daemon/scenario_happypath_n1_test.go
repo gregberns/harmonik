@@ -209,6 +209,9 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	realBrPath := scenarioN1BrPath(t)
 
 	projectDir, jsonlPath := scenarioN1ProjectDir(t)
+	// This test never calls RunConcurrentMerge, so it needs its own hook: it has
+	// reached run_failed in a merge gate and printed no reason at all.
+	scenariotest.ReportRunFailures(t, jsonlPath)
 	scenarioN1GitRepo(t, projectDir)
 
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
@@ -219,17 +222,11 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	twinWrapper := scenarioN1TwinWrapperScript(t, twinPath)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
-	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
-	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
-		t.Fatalf("scenarioN1: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
-	}
-	t.Cleanup(func() {
-		if hadClaudeCfg {
-			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
-		} else {
-			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
-		}
-	})
+	// t.Setenv does the save-and-restore this test used to hand-roll, and it
+	// checks the errors the hand-rolled version discarded. It refuses a parallel
+	// test; this one is not parallel, and RunConcurrentMerge already sets the
+	// same variable this way.
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath)
 
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()

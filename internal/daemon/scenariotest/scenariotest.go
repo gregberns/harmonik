@@ -38,6 +38,11 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
+// UndecodableEventType is the Type given to a JSONL line that will not parse.
+// The line is kept rather than dropped: a daemon killed mid-write truncates its
+// last line, and that is the line carrying the reason.
+const UndecodableEventType = "<undecodable>"
+
 // CapturedEvent is one JSONL envelope line decoded to the fields relevant for
 // scenario assertions (type, run_id, raw payload).
 type CapturedEvent struct {
@@ -242,7 +247,7 @@ func readAllEvents(t *testing.T, jsonlPath string) []CapturedEvent {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		t.Fatalf("AssertEventSequence: open %s: %v", jsonlPath, err)
+		t.Fatalf("readAllEvents: open %s: %v", jsonlPath, err)
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
@@ -260,9 +265,14 @@ func readAllEvents(t *testing.T, jsonlPath string) []CapturedEvent {
 			Type  string `json:"type"`
 			RunID string `json:"run_id"`
 		}
-		if decErr := json.Unmarshal([]byte(line), &env); decErr == nil {
-			out = append(out, CapturedEvent{Type: env.Type, RunID: env.RunID, Raw: line})
+		if decErr := json.Unmarshal([]byte(line), &env); decErr != nil {
+			// Keep it. A daemon killed mid-write leaves a truncated final
+			// line, and that line is the one that says why the run died.
+			// Dropping it here is invisible to every caller downstream.
+			out = append(out, CapturedEvent{Type: UndecodableEventType, Raw: line})
+			continue
 		}
+		out = append(out, CapturedEvent{Type: env.Type, RunID: env.RunID, Raw: line})
 	}
 	return out
 }

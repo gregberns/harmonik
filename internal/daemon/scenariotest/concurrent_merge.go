@@ -123,27 +123,7 @@ type ConcurrentMergeResult struct {
 func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMergeResult {
 	t.Helper()
 
-	if cfg.N < 1 {
-		t.Fatalf("RunConcurrentMerge: N must be >= 1, got %d", cfg.N)
-	}
-	if cfg.Boot == nil {
-		t.Fatal("RunConcurrentMerge: Boot func is required (binds daemon.StartForTesting)")
-	}
-	if cfg.TwinScenario == "" {
-		t.Fatal("RunConcurrentMerge: TwinScenario is required")
-	}
-	prefix := cfg.BeadPrefix
-	if prefix == "" {
-		prefix = "rcm"
-	}
-	agentReadyTimeout := cfg.AgentReadyTimeout
-	if agentReadyTimeout == 0 {
-		agentReadyTimeout = 5 * time.Second
-	}
-	terminalBudget := cfg.TerminalBudget
-	if terminalBudget == 0 {
-		terminalBudget = time.Duration(cfg.N)*agentReadyTimeout + 60*time.Second
-	}
+	cfg = cfg.checkedWithDefaults(t)
 
 	twinPath, ok := TwinBinaryPath()
 	if !ok {
@@ -152,10 +132,13 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	realBrPath := rcmBrPath(t)
 
 	projectDir, jsonlPath := rcmProjectDir(t)
+	// Registered before the run starts so a red assertion below prints the
+	// reason the daemon gave, while its temp dir still exists.
+	ReportRunFailures(t, jsonlPath)
 	rcmGitRepo(t, projectDir)
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := rcmBrWrapperScript(t, realBrPath, dbPath)
-	beadIDs := rcmInitBrWithBeads(t, realBrPath, projectDir, brWrapper, prefix, cfg.N)
+	beadIDs := rcmInitBrWithBeads(t, realBrPath, projectDir, brWrapper, cfg.BeadPrefix, cfg.N)
 	t.Logf("RunConcurrentMerge: N=%d beads=%v scenario=%q", cfg.N, beadIDs, cfg.TwinScenario)
 
 	beads := make([]core.BeadID, len(beadIDs))
@@ -171,11 +154,7 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 
 	WriteReviewLoopWorkflowDot(t, projectDir)
 
-	claudeConfigPath := cfg.ClaudeConfigPath
-	if claudeConfigPath == "" {
-		claudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
-	}
-	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath)
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", cfg.ClaudeConfigPath)
 
 	daemonCfg := daemon.Config{
 		ProjectDir:            projectDir,
@@ -187,7 +166,7 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
 		SkipRestartBackoff:    true,
-		AgentReadyTimeout:     agentReadyTimeout,
+		AgentReadyTimeout:     cfg.AgentReadyTimeout,
 		LogWriter:             rcmLogWriter{t: t},
 		// dot, carrying the review gate this fixture has always run under.
 		//
@@ -217,7 +196,7 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 
 	startDone := cfg.Boot(loopCtx, daemonCfg)
 
-	MustCompleteWithin(t, jsonlPath, "", nil, terminalBudget, func() {
+	MustCompleteWithin(t, jsonlPath, "", nil, cfg.TerminalBudget, func() {
 		for {
 			nDone := rcmEventCount(t, jsonlPath, string(core.EventTypeRunCompleted)) +
 				rcmEventCount(t, jsonlPath, string(core.EventTypeRunFailed))
@@ -258,29 +237,68 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		res.MaxConcurrent, res.Completed, res.Failed, res.Stale, res.LaunchStall, res.ClosedBeads, cfg.N)
 
 	if cfg.ExpectAllComplete {
-		if res.Completed < cfg.N {
-			t.Errorf("RunConcurrentMerge: %d/%d runs reached run_completed; want all N "+
-				"(a shortfall is the hk-37giq concurrent-dispatch wedge signature)", res.Completed, cfg.N)
-		}
-		if res.Stale > 0 {
-			t.Errorf("RunConcurrentMerge: %d terminal run_stale event(s); want 0 "+
-				"(run_stale is the launch-wedge terminal signature)", res.Stale)
-		}
-		if res.LaunchStall > 0 {
-			t.Errorf("RunConcurrentMerge: %d launch_stall_detected event(s); want 0 "+
-				"(launch_stall_detected is the per-run-tap starve signature)", res.LaunchStall)
-		}
-		if res.ClosedBeads < cfg.N {
-			t.Errorf("RunConcurrentMerge: %d/%d beads closed in br; want all N", res.ClosedBeads, cfg.N)
-		}
-		AssertEventCausality(t, jsonlPath,
-			"run_started",
-			[]string{"run_completed", "run_failed", "run_cancelled"},
-			terminalBudget,
-		)
+		assertAllRunsComplete(t, cfg, res, jsonlPath)
 	}
 
 	return res
+}
+
+// checkedWithDefaults refuses a config that cannot produce a meaningful run and
+// fills the optional fields. Returning a completed copy keeps one name per value:
+// the body reads cfg.BeadPrefix rather than carrying a second local that shadows
+// the field it defaults.
+func (cfg ConcurrentMergeConfig) checkedWithDefaults(t *testing.T) ConcurrentMergeConfig {
+	t.Helper()
+	if cfg.N < 1 {
+		t.Fatalf("RunConcurrentMerge: N must be >= 1, got %d", cfg.N)
+	}
+	if cfg.Boot == nil {
+		t.Fatal("RunConcurrentMerge: Boot func is required (binds daemon.StartForTesting)")
+	}
+	if cfg.TwinScenario == "" {
+		t.Fatal("RunConcurrentMerge: TwinScenario is required")
+	}
+	if cfg.BeadPrefix == "" {
+		cfg.BeadPrefix = "rcm"
+	}
+	if cfg.AgentReadyTimeout == 0 {
+		cfg.AgentReadyTimeout = 5 * time.Second
+	}
+	if cfg.TerminalBudget == 0 {
+		cfg.TerminalBudget = time.Duration(cfg.N)*cfg.AgentReadyTimeout + 60*time.Second
+	}
+	if cfg.ClaudeConfigPath == "" {
+		cfg.ClaudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
+	}
+	return cfg
+}
+
+// assertAllRunsComplete holds the properties a caller asserts by setting
+// ExpectAllComplete. It is separate so the shape of a run stays readable in
+// RunConcurrentMerge and so the assertions can be read as one list.
+func assertAllRunsComplete(t *testing.T, cfg ConcurrentMergeConfig, res ConcurrentMergeResult, jsonlPath string) {
+	t.Helper()
+	if res.Completed < cfg.N {
+		t.Errorf("RunConcurrentMerge: %d/%d runs reached run_completed; want all N "+
+			"(%d run(s) short — the cause is in the failure detail printed below, "+
+			"not necessarily a dispatch wedge)", res.Completed, cfg.N, cfg.N-res.Completed)
+	}
+	if res.Stale > 0 {
+		t.Errorf("RunConcurrentMerge: %d terminal run_stale event(s); want 0 "+
+			"(run_stale is the launch-wedge terminal signature)", res.Stale)
+	}
+	if res.LaunchStall > 0 {
+		t.Errorf("RunConcurrentMerge: %d launch_stall_detected event(s); want 0 "+
+			"(launch_stall_detected is the per-run-tap starve signature)", res.LaunchStall)
+	}
+	if res.ClosedBeads < cfg.N {
+		t.Errorf("RunConcurrentMerge: %d/%d beads closed in br; want all N", res.ClosedBeads, cfg.N)
+	}
+	AssertEventCausality(t, jsonlPath,
+		"run_started",
+		[]string{"run_completed", "run_failed", "run_cancelled"},
+		cfg.TerminalBudget,
+	)
 }
 
 type rcmLogWriter struct{ t *testing.T }

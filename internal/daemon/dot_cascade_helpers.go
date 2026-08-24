@@ -528,15 +528,6 @@ func nodeIsReviewer(node *dot.Node) bool {
 	return node.HandlerRef == "claude-reviewer"
 }
 
-func graphHasReviewerNode(nodesByID map[string]*dot.Node) bool {
-	for _, n := range nodesByID {
-		if nodeIsReviewer(n) {
-			return true
-		}
-	}
-	return false
-}
-
 func verdictSeverity(verdict string) int {
 	switch verdict {
 	case workspace.ReviewVerdictApprove:

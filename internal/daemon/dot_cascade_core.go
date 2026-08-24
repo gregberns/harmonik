@@ -489,21 +489,16 @@ func driveDotWorkflow(
 			}
 
 		case decision.Failed:
-			if decision.CompletionReason == "cap_hit" && currentNodeID == "commit_gate" && !graphHasReviewerNode(nodesByID) {
-				if salvageHead, salvageErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); salvageErr == nil &&
-					salvageHead != "" && salvageHead != parentSHA {
-					return dotWorkflowResult{
-						success: true,
-						summary: "dot: commit_gate cap-hit salvaged — committed tip present; auto-advancing to merge (hk-1vlz F42)",
-					}
-				}
-			}
 			needsAttention := true
 			summary := fmt.Sprintf("dot: cascade failed at node %q: class=%s reason=%s",
 				currentNodeID, decision.FailureClass, decision.FailureReason)
 			if decision.CompletionReason == "cap_hit" {
 				summary = fmt.Sprintf("dot: traversal cap hit at node %q (%s)",
 					currentNodeID, decision.FailureReason)
+				if committedHead, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); headErr == nil &&
+					committedHead != "" && committedHead != parentSHA {
+					summary += fmt.Sprintf("; committed worktree HEAD: %s", committedHead)
+				}
 			}
 			return dotWorkflowResult{
 				success:        false,

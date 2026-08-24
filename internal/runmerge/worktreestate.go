@@ -211,20 +211,35 @@ func residualDeltaCommitMessage(runID core.RunID) string {
 // old behavior) is the actual bug; capturing it is correct.
 //
 // It is a no-op when no non-churn change remains after churn cleanup (so it
-// never manufactures an empty commit). Errors are best-effort/non-fatal in the
-// same style as DiscardDirtyChurn: a failure leaves the residual delta in place
-// and the subsequent rebase surfaces the real "unstaged changes" failure rather
-// than masking it.
+// never manufactures an empty commit).
+//
+// It returns an error, and the caller must stop the merge on it. This step is
+// NOT best-effort like its two neighbours, because of what the first of its two
+// callers does next. In prepareInitialMerge the step after this one is
+// CleanUntrackedFiles, which runs `git clean -fd`: when this step fails to save
+// an authored untracked file, that next step deletes exactly the file this one
+// failed to save. The rebase then succeeds, the merge succeeds, and the work is
+// gone with nothing red anywhere. A step whose neighbour destroys what it
+// failed to save has to be able to fail the merge.
+//
+// The other caller, prepareRebase, goes straight to the rebase and deletes
+// nothing. It stops on the error too, but for a smaller reason: a failed save
+// leaves the worktree dirty, so the rebase fails anyway and names a conflict
+// that is not the cause. Stopping here reports the cause instead.
+//
+// A failed `git status` counts the same way and is reported the same way. It
+// reads here exactly like a clean worktree, so a worktree that cannot say what
+// it holds must not be treated as one that holds nothing worth saving.
 //
 // Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
-// fix (hk-cmry defect #3).
-func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
+// fix (hk-cmry defect #3); the error return (hk-33u5r).
+func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) error {
 	statusOut, statusErr := gitprobe.Output(ctx, wtPath, "status", "--porcelain")
 	if statusErr != nil {
-		// A failed status reads exactly like a clean worktree here. Say which one
-		// it was, or a dropped residual delta leaves no trace at all.
-		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git status --porcelain: %v\n", statusErr)
-		return
+		// A failed status reads exactly like a clean worktree here, and the step
+		// after this one deletes untracked files. An unreadable worktree has to
+		// stop the merge.
+		return fmt.Errorf("git status --porcelain in %s: %w", wtPath, statusErr)
 	}
 
 	var residual bool
@@ -244,7 +259,7 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		break
 	}
 	if !residual {
-		return // no genuine residual delta — do not create an empty commit
+		return nil // no genuine residual delta — do not create an empty commit
 	}
 
 	// Staging sets the index to an exact state, so a stopped child can run again.
@@ -254,8 +269,7 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		":(exclude).harmonik",
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git add -A: %v\n%s", err, out)
-		return
+		return fmt.Errorf("git add -A in %s: %w\n%s", wtPath, err, strings.TrimRight(string(out), "\n"))
 	}
 
 	// A commit does not mean the same thing twice, so it does not go through the
@@ -268,8 +282,9 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return commitCmd.CombinedOutput()
 	})
 	if commitErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: CommitResidualDelta: git commit: %v\n%s", commitErr, commitOut)
+		return fmt.Errorf("git commit in %s: %w\n%s", wtPath, commitErr, strings.TrimRight(string(commitOut), "\n"))
 	}
+	return nil
 }
 
 // CleanUntrackedFiles removes untracked non-gitignored files and directories

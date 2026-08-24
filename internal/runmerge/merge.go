@@ -266,7 +266,25 @@ func resolveMergeTips(ctx context.Context, projectDir, runBranch, targetBranch, 
 func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip, mainTip *string) *Outcome {
 	if _, statErr := os.Stat(wtPath); statErr == nil {
 		DiscardDirtyChurn(ctx, wtPath)
-		CommitResidualDelta(ctx, wtPath, runID)
+		// The step after this one deletes untracked files, so a save that failed
+		// has to stop the merge here. Let it through and `git clean -fd` removes
+		// exactly the authored files the save did not capture. Refs hk-33u5r.
+		//
+		// The reason does not promise the work can be recovered. Whether the run
+		// worktree still exists when a person reads this is decided elsewhere, by
+		// the run's own teardown, and for most harnesses it is already gone. What
+		// the merge can promise is that it did not do the deleting and that the
+		// bead comes back for another run.
+		if residualErr := CommitResidualDelta(ctx, wtPath, runID); residualErr != nil {
+			return &Outcome{
+				Success: false,
+				Reason: fmt.Sprintf(
+					"residual_delta_commit_failed: could not save uncommitted work in the run worktree,"+
+						" so the merge stopped rather than clean it away; the bead reopens for another run."+
+						" The work is only recoverable if the worktree outlived its run: %v",
+					residualErr),
+			}
+		}
 		CleanUntrackedFiles(ctx, wtPath)
 
 		if out, rebaseErr := rebaseOntoTarget(ctx, wtPath, targetBranch); rebaseErr != nil {
@@ -613,7 +631,16 @@ func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.Ru
 
 	if _, statErr := os.Stat(wtPath); statErr == nil {
 		DiscardDirtyChurn(ctx, wtPath)
-		CommitResidualDelta(ctx, wtPath, runID)
+		if residualErr := CommitResidualDelta(ctx, wtPath, runID); residualErr != nil {
+			return &Outcome{
+				Success: false,
+				Reason: fmt.Sprintf(
+					"residual_delta_commit_failed (attempt %d): could not save uncommitted work in the run worktree;"+
+						" the bead reopens for another run. The work is only recoverable if the worktree"+
+						" outlived its run: %v",
+					pushAttempt, residualErr),
+			}
+		}
 		if out, rebaseErr := rebaseOntoTarget(ctx, wtPath, targetBranch); rebaseErr != nil {
 			gitRebaseAbort(ctx, wtPath)
 			return &Outcome{

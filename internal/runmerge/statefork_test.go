@@ -68,7 +68,11 @@ func TestCommitResidualDelta_CommitStoppedAfterItLandedDoesNotCommitTwice(t *tes
 	subject := strings.SplitN(residualDeltaCommitMessage(runID), "\n", 2)[0]
 	countPath := stopGitOnceOn(t, "commit", gitStubAnyArgs, "after")
 
-	CommitResidualDelta(context.Background(), dir, runID)
+	// A commit that landed before the signal is not a failure, and reporting one
+	// would fail a merge over work that is safely committed.
+	if err := CommitResidualDelta(context.Background(), dir, runID); err != nil {
+		t.Fatalf("a commit stopped AFTER it landed must not report a failure: %v", err)
+	}
 
 	if got := stateForkSubjectCount(t, dir, subject); got != 1 {
 		t.Errorf("the worktree holds %d residual-delta commits; want exactly 1", got)
@@ -88,7 +92,9 @@ func TestCommitResidualDelta_CommitStoppedBeforeItRanStillLandsTheDelta(t *testi
 	subject := strings.SplitN(residualDeltaCommitMessage(runID), "\n", 2)[0]
 	countPath := stopGitOnceOn(t, "commit", gitStubAnyArgs, "before")
 
-	CommitResidualDelta(context.Background(), dir, runID)
+	if err := CommitResidualDelta(context.Background(), dir, runID); err != nil {
+		t.Fatalf("the second attempt landed the delta, so no failure is due: %v", err)
+	}
 
 	if got := stateForkSubjectCount(t, dir, subject); got != 1 {
 		t.Fatalf("the worktree holds %d residual-delta commits; want exactly 1", got)

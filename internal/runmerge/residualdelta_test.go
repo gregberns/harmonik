@@ -22,6 +22,18 @@ func newResidualRunID(t *testing.T) core.RunID {
 	return core.RunID(id)
 }
 
+// commitResidualDeltaOK runs the residual-delta commit on a path that must
+// succeed, and stops the test when it does not. The commit reports a failure
+// now (hk-33u5r) because the step after it deletes untracked files, so a test
+// that dropped the error would go green on a worktree whose work was never
+// saved. The failing paths have their own tests below.
+func commitResidualDeltaOK(t *testing.T, wtPath string, runID core.RunID) {
+	t.Helper()
+	if err := runmerge.CommitResidualDelta(context.Background(), wtPath, runID); err != nil {
+		t.Fatalf("CommitResidualDelta(%s): %v", wtPath, err)
+	}
+}
+
 // TestCommitResidualDelta_CommitsTrackedDeletionAndAllowsRebase reproduces the
 // hk-rljho scenario: a run worktree with an UNCOMMITTED tracked deletion (the
 // kind a review-loop iteration leaves behind) reaches the pre-rebase step.
@@ -45,7 +57,7 @@ func TestCommitResidualDelta_CommitsTrackedDeletionAndAllowsRebase(t *testing.T)
 	}
 
 	runID := newResidualRunID(t)
-	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
+	commitResidualDeltaOK(t, wtPath, runID)
 
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after commitResidualDelta: expected clean worktree; got:\n%s", status)
@@ -77,7 +89,7 @@ func TestCommitResidualDelta_NoOpOnCleanWorktree(t *testing.T) {
 
 	headBefore := dirtyLedgerGit(t, wtPath, "rev-parse", "HEAD")
 
-	runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	commitResidualDeltaOK(t, wtPath, newResidualRunID(t))
 
 	headAfter := dirtyLedgerGit(t, wtPath, "rev-parse", "HEAD")
 	if headBefore != headAfter {
@@ -106,7 +118,7 @@ func TestCommitResidualDelta_GitignoredUntrackedNotSwept(t *testing.T) {
 
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
-	runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	commitResidualDeltaOK(t, wtPath, newResidualRunID(t))
 
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
 	if !strings.Contains(committed, "code.txt") {
@@ -146,7 +158,7 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
-	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
+	commitResidualDeltaOK(t, wtPath, runID)
 
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
 
@@ -188,7 +200,7 @@ func TestCommitResidualDelta_CapturesUntrackedNewFile(t *testing.T) {
 	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
-	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
+	commitResidualDeltaOK(t, wtPath, runID)
 
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Fatalf("after commitResidualDelta: expected clean worktree (new file captured); got:\n%s", status)
@@ -212,5 +224,115 @@ func TestCommitResidualDelta_CapturesUntrackedNewFile(t *testing.T) {
 	}
 	if files := dirtyLedgerGit(t, wtPath, "ls-files", "new_source.go"); files == "" {
 		t.Errorf("new_source.go not preserved through rebase; ls-files is empty")
+	}
+}
+
+// residualGit runs git under the CALLER's context. The merge hands its own
+// context to the queue callback, so a fixture that reached for t.Context()
+// there would run git outside the merge it is meant to be inside.
+func residualGit(ctx context.Context, t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s (dir=%s): %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return strings.TrimRight(string(out), "\n")
+}
+
+// lockGitIndex makes the next `git add` in wtPath fail the way a real one does:
+// index.lock already exists, so git refuses to write the index. It is the
+// cheapest honest way to fail the staging step — no stub, no fake git, the real
+// program reporting a real error.
+func lockGitIndex(ctx context.Context, t *testing.T, wtPath string) {
+	t.Helper()
+	gitDir := residualGit(ctx, t, wtPath, "rev-parse", "--absolute-git-dir")
+	writeFile(t, gitDir+"/index.lock", "")
+}
+
+// TestCommitResidualDelta_StagingFailureReportsAnError is the hk-33u5r
+// regression at the level of the helper itself.
+//
+// The step exists to save authored files that never got their own commit, and
+// the step that runs next is `git clean -fd`. When staging fails, the files are
+// not saved — so the helper HAS to say so, or the caller cleans away exactly
+// what this step failed to keep. Before the fix it wrote one line to stderr and
+// returned nothing, which the caller could not read.
+//
+// RED→GREEN: this test does not compile against the old void signature, and
+// fails against any version that swallows the staging failure.
+func TestCommitResidualDelta_StagingFailureReportsAnError(t *testing.T) {
+	t.Parallel()
+
+	wtPath := dirtyLedgerSetup(t)
+
+	writeFile(t, wtPath+"/new_source.go", "package green\n\n// authored, never committed\n")
+
+	lockGitIndex(t.Context(), t, wtPath)
+
+	err := runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	if err == nil {
+		t.Fatalf("staging failed and the authored file is unsaved; CommitResidualDelta returned no error")
+	}
+	if !strings.Contains(err.Error(), "git add") {
+		t.Errorf("the error must name the step that failed; got: %v", err)
+	}
+
+	if _, statErr := os.Stat(wtPath + "/new_source.go"); statErr != nil {
+		t.Errorf("the authored file must still be on disk after a failed save: %v", statErr)
+	}
+}
+
+// TestCommitResidualDelta_UnreadableStatusReportsAnError covers the half that
+// is easiest to get wrong. A failed `git status` reads here exactly like a
+// clean worktree: both produce "nothing to save". Treat them the same and a
+// worktree that could not say what it holds is cleaned as if it held nothing.
+func TestCommitResidualDelta_UnreadableStatusReportsAnError(t *testing.T) {
+	t.Parallel()
+
+	notARepo := t.TempDir()
+	writeFile(t, notARepo+"/new_source.go", "package green\n")
+
+	err := runmerge.CommitResidualDelta(context.Background(), notARepo, newResidualRunID(t))
+	if err == nil {
+		t.Fatalf("a worktree that cannot report its state must not be read as an empty one")
+	}
+	if !strings.Contains(err.Error(), "git status") {
+		t.Errorf("the error must name the step that failed; got: %v", err)
+	}
+}
+
+// TestCommitResidualDelta_FailedCommitReportsAnError closes the last of the
+// three exits. Staging can succeed and the commit still fail — a hook that
+// refuses it, a full disk, a broken object store. The staged work survives the
+// clean in that case, because a staged file is not untracked, but the merge
+// must still stop: the rebase that follows would report a confusing
+// "unstaged changes" for a cause that has a name.
+func TestCommitResidualDelta_FailedCommitReportsAnError(t *testing.T) {
+	t.Parallel()
+
+	wtPath := dirtyLedgerSetup(t)
+
+	hooks := t.TempDir()
+	writeFile(t, hooks+"/pre-commit", "#!/bin/sh\nexit 1\n")
+	//nolint:gosec // G302: a git hook that is not executable never runs, so this test would measure nothing.
+	if err := os.Chmod(hooks+"/pre-commit", 0o700); err != nil {
+		t.Fatalf("chmod pre-commit: %v", err)
+	}
+	dirtyLedgerGit(t, wtPath, "config", "core.hooksPath", hooks)
+
+	writeFile(t, wtPath+"/new_source.go", "package green\n\n// authored, never committed\n")
+
+	err := runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	if err == nil {
+		t.Fatalf("the commit was refused and nothing was saved; CommitResidualDelta returned no error")
+	}
+	if !strings.Contains(err.Error(), "git commit") {
+		t.Errorf("the error must name the step that failed; got: %v", err)
+	}
+
+	if _, statErr := os.Stat(wtPath + "/new_source.go"); statErr != nil {
+		t.Errorf("the authored file must still be on disk after a failed commit: %v", statErr)
 	}
 }

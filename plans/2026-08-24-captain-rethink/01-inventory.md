@@ -132,6 +132,51 @@ the whole captain corpus saves 19,000. Cutting it to four pages of roughly 12 KB
 about 14,000. That is worth doing and it is not where the remaining bulk is. **Say so
 rather than letting the plan imply otherwise.**
 
+## 2b. Formatting — the path hypothesis, tested and mostly refuted
+
+The idea was that path-heavy markdown tokenizes badly, so presenting paths as a tree with
+a shared prefix factored out would be cheaper. It was measured against the live tokenizer,
+same 53 path-and-description pairs in nine presentations. The control — an empty payload —
+came out at exactly 0 tokens on six of six runs, and every repeated payload reproduced to
+the token, so these are point measurements of a deterministic tokenizer rather than samples.
+
+**Paths are not what makes this corpus dense.** The whole 72 KB contains only 62 mentions of
+a path with two or more slashes, worth about 1,100 tokens — four per cent. Only 16 of those
+are repeat mentions, so factoring shared prefixes has about 200 tokens to play for. A tree
+beat the same list unfactored by 70 tokens on 53 entries: **1.3 tokens per entry.** The
+indentation itself is free. It is not a lever.
+
+**What is actually dense is code-formatted text.** The 228 backticked spans in `AGENTS.md`
+are 16.9 % of its bytes and 22 % of its tokens, and cost **exactly twice** what the same
+byte count of prose costs. Commands, flags, identifiers, error codes — not directory names.
+
+**A backtick costs 0.95 tokens**, confirmed three independent ways. The corpus holds 1,306
+of them, so about 1,245 tokens, 4.6 %. Bold markers cost 1.0 token each, 416 in total.
+
+**Total available from every formatting change combined: about 1,660 tokens of 27,270 —
+6.1 %.** Not worth a blanket rule against the readability cost.
+
+**The one change worth making** is narrower: stop backticking things that are not code. A
+large share of those 228 spans are bare skill names and plain nouns — assessor, captain,
+lane, main, queue, boot, crew. Each pair costs about two tokens and buys no disambiguation.
+That is a few hundred tokens at no cost to a reader, where stripping ticks from genuine
+paths would save 1,245 and hurt.
+
+### One measured fact that changes the governance step
+
+**Bytes are the wrong unit for a size budget.** An em dash costs two extra bytes and
+**zero** extra tokens — `runbook — boot order` and `runbook - boot order` measure the same.
+A backtick costs one byte and one token. So a byte budget punishes punctuation that is free
+and ignores markup that is not. **The size check in Step 8 should count tokens or lines, not
+bytes**, or it will push authors toward exactly the wrong edits.
+
+Two other small findings: a table costs 3.8 % more than the same content as bullets, and a
+bead identifier costs about seven tokens more than an English handle of the same length —
+but only six such mentions exist corpus-wide, so keep discouraging them for readability
+rather than for budget.
+
+---
+
 ## 3. Duplication — 25 rules stated in two or more places
 
 Within the roughly 66 KB the captain deliberately loads, restated rules account for an

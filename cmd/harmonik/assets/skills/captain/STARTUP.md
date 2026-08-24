@@ -111,7 +111,12 @@ is the reference for what those commands are. Two things it cannot tell you:
 - **Exit 17 from any daemon RPC means the daemon is DOWN** → Step 2.1. `queue status`
   printing "(no queue active)" is up-but-idle, not down.
 - **A paused queue is not a healthy queue.** `harmonik queue list --json` sweeps every
-  named queue; `up` is not `dispatching`. Resume with `harmonik queue resume --queue <name>`.
+  named queue; `up` is not `dispatching`. Read the `status` field. `paused-by-drain` is an
+  operator drain and `harmonik queue resume --queue <name>` clears it. `paused-by-failure`
+  is a queue a failed bead stopped, and only `harmonik queue recover --queue <name>`
+  restarts it. Resume aimed at a failure-parked queue is refused and the refusal names the
+  right verb, so you cannot get this wrong silently. Mechanism, and what recovery refuses:
+  the **harmonik-dispatch** skill, § Restart a queue that stopped.
 
 Build the live-state table from the digest, one row per registered crew — in `crew list`?
 in `comms who`? tmux window alive? epic (`br show <epic> --format json` → assignee)?
@@ -271,7 +276,10 @@ posts a comms message that reaches the first watcher. Read the map once
 (`jq '.checks' .harmonik/ops-monitor/latest.json`) and act on flagged items only:
 
 - **daemon-up** → rebuild and restart the daemon.
-- **paused-queues** → surface and resume.
+- **paused-queues** → surface, then restart with `harmonik queue recover --queue <name>`.
+  Green here means nothing: the check fires only when the owning crew is online, and it
+  guesses the crew name by stripping a trailing `-q` from the queue name, so it misses the
+  common cases. Sweep `queue list --json` yourself.
 - **crew-fresh** → capture-pane the named crew, nudge or reconcile. It misses both silent
   wedge shapes (`SKILL.md` §6), so it is a trigger, not a guarantee.
 - **review-gate** → a completed run has no reviewer verdict, so review was bypassed.

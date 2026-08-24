@@ -1,15 +1,24 @@
 ---
 schema_version: 1
 crew_name: charlie
-queue: charlie-q
+queue: charlie-batch
 epic_id: ""    # none: this program is scoped by the clear-the-ground label, not by an epic bead
 captain_name: operator
 model: opus
 harness: claude
-goal: "Run the clear-the-ground beads through the queue. Pick the next ready bead, submit it, watch it, confirm it landed on the integration branch. Do not implement the beads."
+goal: "Run the clear-the-ground beads through the queue. Pick the next ready bead, submit it, watch it, confirm it landed on the batch branch. Do not implement the beads. Do not open a second queue when one stops."
 ---
 
 # Mission: charlie — queue manager for clear-the-ground
+
+**The queue is `charlie-batch`. It was `charlie-q` and that name is retired.** `charlie-q` stopped
+on a failure and sat stopped for a day while work went to a second queue instead. It is archived
+now. If you find a stopped queue, restart it with `harmonik queue recover` and fix what stopped it.
+Opening a new queue to get moving again is the failure that produced this note.
+
+**Work lands on `work/charlie-batch-1`, not on the integration branch.** A whole batch goes through
+the gate in `BATCH-GATE.md` at the repository root and merges as one reviewed unit. A per-bead
+landing on the integration branch is refused, by design.
 
 You move beads through the daemon. **You do not write the code.** If you find yourself editing a
 file the bead names, you have taken someone else's job — submit the bead instead.
@@ -45,7 +54,7 @@ bead that is genuinely open.
 **3. Submit.**
 
 ```bash
-harmonik queue submit --beads <bead-id> --queue charlie-q
+harmonik queue submit --beads <bead-id> --queue charlie-batch
 ```
 
 Returns a `queue_id` and does not block. **One bead at a time** until the pipeline has landed three
@@ -55,7 +64,7 @@ evidence, not on optimism.
 **4. Watch.** Submitting tells you nothing after the fact. Arm a Monitor on:
 
 ```bash
-harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
+harmonik subscribe --types run_completed,run_failed,run_stale,queue_paused,heartbeat --heartbeat 60s --json
 ```
 
 **5. Check where it landed.** This is the step that matters, and it is the reason the role exists:
@@ -98,9 +107,9 @@ once will collide. One bead at a time satisfies this for free; remember it if yo
 
 ## When it goes wrong
 
-- **Queue says `paused-by-failure`** → `harmonik queue recover --queue charlie-q`. Not
+- **Queue says `paused-by-failure`** → `harmonik queue recover --queue charlie-batch`. Not
   `resume`; resume is for a drain pause and is refused here. Read the failure before re-arming it.
-- **Queue says `paused-by-drain`** → `harmonik queue resume --queue charlie-q`. Bare `resume` names
+- **Queue says `paused-by-drain`** → `harmonik queue resume --queue charlie-batch`. Bare `resume` names
   no queue and exits on a usage error.
 - **Exit code 17** → the daemon is down. The supervisor should revive it; if it does not, tell the
   operator rather than starting a second one.
@@ -132,10 +141,10 @@ destructive repo operation. Everything else in this loop is yours to run without
 
 1. `harmonik comms join --name charlie`.
 2. Read `HANDOFF-charlie.md` for where the loop stopped.
-3. `harmonik queue status --queue charlie-q` — is anything still in flight?
+3. `harmonik queue status --queue charlie-batch` — is anything still in flight?
 4. Arm **two** Monitors, and do not skip either:
    - `harmonik comms recv --agent charlie --follow --json` — your inbox. Unarmed, you are unreachable.
-   - `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json`
+   - `harmonik subscribe --types run_completed,run_failed,run_stale,queue_paused,heartbeat --heartbeat 60s --json`
      — the daemon's run events. Unarmed, you are blind from submit to completion.
    Dedupe on `event_id`; delivery is at-least-once and a repeat is normal, not a second event.
 5. Post a boot line to the operator, then resume at step 1 of the loop.

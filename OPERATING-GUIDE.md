@@ -148,12 +148,14 @@ normal, not a failure.
 
 ```bash
 harmonik subscribe \
-  --types run_completed,run_failed,run_stale,heartbeat \
+  --types run_completed,run_failed,run_stale,queue_paused,heartbeat \
   --heartbeat 60s
 ```
 
 This attaches to the running daemon and prints one line per event (JSON). A completed task prints
-`run_completed`; a failure prints `run_failed` with a `failure_class` (e.g. `no_commit`). The
+`run_completed`; a failure prints `run_failed` with a `failure_class` (e.g. `no_commit`). A
+`queue_paused` line says the queue itself stopped, not one task — restart it with
+`harmonik queue recover <name>`. The
 `--heartbeat 60s` means you'll see a tick every minute even when nothing else is happening, so you
 know the stream is still alive. One subscribe sees every task, no matter who submitted it.
 

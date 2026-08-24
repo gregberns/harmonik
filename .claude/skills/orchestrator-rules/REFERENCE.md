@@ -39,10 +39,11 @@ A `run_stale` during legitimate slow recovery is not a wedge.
 
 **Principle: from submit to completion you are blind unless something is watching, so watch the event stream rather than polling the beads.**
 
-Use `harmonik subscribe` in a Monitor tool call. The **harmonik-dispatch** skill owns the exact command line, including the type list and the heartbeat flag. Three things about it belong here:
+Use `harmonik subscribe` in a Monitor tool call. The **harmonik-dispatch** skill owns the exact command line, including the type list and the heartbeat flag. Four things about it belong here:
 
 - **Filter by event TYPE, not `bead_id`.** `run_completed` is keyed by `run_id` only, so grepping a subscribe stream by `bead_id` silently drops completions.
-- **Fallback**, only if subscribe is unavailable: `tail -F .harmonik/events/events.jsonl | grep -E "run_completed|run_failed|run_stale|merge_conflict|reviewer_verdict"`. There is no `daemon.log` and no per-run output file to tail.
+- **Fallback**, only if subscribe is unavailable: `tail -F .harmonik/events/events.jsonl | grep -E "run_completed|run_failed|run_stale|queue_paused|merge_conflict|reviewer_verdict"`. There is no `daemon.log` and no per-run output file to tail.
+- **Keep `queue_paused` in whichever list you use.** Every other type reports one run. `queue_paused` reports that the queue itself stopped. It arrives once and then the queue is silent, so a watcher without it reads a stopped queue as an idle one. What to do about one: the **harmonik-dispatch** skill, § Restart a queue that stopped.
 - **Captain exception.** Run-level subscribe is for an orchestrator watching its OWN submitted batches. A booted captain arms only its two watchers — the comms feed and `epic_completed`, per its operating doc — because run-level telemetry is the crews' to watch. Subscribing the captain to it is the context-burn pattern the two-watcher rule exists to prevent.
 
 `subscribe` attaches to the running daemon, so ONE Monitor sees every bead the daemon dispatches whichever agent submitted it. Re-arm it if it hits the Monitor timeout.
@@ -120,6 +121,8 @@ When a submitted batch returns failures (a group reaches complete-with-failures,
 **Read to route, delegate to solve.** The main thread exists to dispatch, and its context window is the scarcest resource in the fleet. Reading enough to know who should fix a thing is part of dispatching. Open the stack trace, the event trace, and the one file the error names. What burns the main thread is the second and third file, the reproduction you run yourself, the fix you start drafting. Treat "I am opening my third file" as the signal to stop, file a bead, hand a sub-agent what you have already learned, and go back to dispatching.
 
 **Fail fast and loud.** When the system says something already exists or is already claimed — a name or queue collision, a lock, a duplicate — that is INFORMATION. Stop and diagnose. Never auto-rename or auto-retry around it. A crew-start collision almost always means the lane is already staffed, and relaunching under a new name double-staffs the epic.
+
+**A stopped queue is the inverse trap, and the harder one.** Learn which refusals exist, because the missing one is the point. A submit is refused with `queue_already_active` (`-32010`) when the named queue is `active` or `paused-by-drain`. An append is refused with `queue_not_advancing` (`-32012`) when the queue is `paused-by-failure` or `paused-by-drain`. A submit to a queue at `paused-by-failure` is NOT refused. `Validate` in `internal/queue/validation.go` excludes that status from `-32010` deliberately. So a lane a failed bead stopped meets no closed door at all: the submit is accepted, a fresh queue starts, and the parked failed items are left behind. Nothing tells you. Read the `status` field from `harmonik queue list --json` rather than waiting for an error, and restart the queue you own — the **harmonik-dispatch** skill, § Restart a queue that stopped.
 
 ## Environment facts
 

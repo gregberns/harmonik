@@ -188,13 +188,14 @@ is the normal path.
 
 ```bash
 harmonik subscribe \
-  --types run_completed,run_failed,run_stale,heartbeat \
+  --types run_completed,run_failed,run_stale,queue_paused,heartbeat \
   --heartbeat 60s \
   --json
 ```
 
 Each completed bead prints a `run_completed` event. Failures print `run_failed` with a
-`failure_class` field (e.g. `no_commit`, `context_cancelled`).
+`failure_class` field (e.g. `no_commit`, `context_cancelled`). A `queue_paused` event says the
+queue itself stopped, not one bead — restart it with `harmonik queue recover <name>`.
 
 ---
 

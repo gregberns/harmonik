@@ -31,11 +31,14 @@ grep "019eae67" .harmonik/events/events.jsonl
 jq 'select(.run_id == "<full-run-id>")' $HARMONIK_PROJECT/.harmonik/events/events.jsonl
 
 # RIGHT — live and filtered:
-harmonik subscribe --json --types run_completed,run_failed,run_stale,launch_stall_detected
+harmonik subscribe --json --types run_completed,run_failed,run_stale,queue_paused,launch_stall_detected
 ```
 
 An event may carry `run_id` under a nested key, or not at the top level at all.
-Substring grep silently drops those. `jq select()` matches the whole object.
+Substring grep silently drops those. `jq select()` matches the whole object. The
+same applies to `queue_paused`: its cause is at `.payload.reason`, not at the top
+level. A blocker that turns out to be a queue stopped at `paused-by-failure` is
+not a fan-out — restart it per the **harmonik-dispatch** skill and move on.
 
 ## The protocol
 

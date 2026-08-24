@@ -80,12 +80,17 @@ tmux new-session -d -s harmonik-daemon \
    you are blind from submit to completion.
 
    ```bash
-   harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat \
+   harmonik subscribe --types run_completed,run_failed,run_stale,queue_paused,heartbeat \
                       --heartbeat 60s --json
    ```
 
    It attaches to the running daemon, so one Monitor sees every bead whichever
    agent submitted it. Re-arm it if it hits the Monitor timeout.
+
+   **Keep `queue_paused` in the type list.** It is the one event that says the
+   QUEUE stopped rather than one bead. A queue that stops emits it once and then
+   goes silent, so a watcher without it reads a stopped queue as a quiet one.
+   See § Restart a queue that stopped.
 
 6. **Stay active while the daemon works.** Append the next batch with `harmonik
    queue append [--queue-id <uuid>] <group-index> <bead-id ...>`, drain untriaged
@@ -170,11 +175,67 @@ concurrent claude sessions across both modes small.
 
 ## Failure handling
 
-A `run_failed` on the stream: read the failure class from `events.jsonl`
-(`no_commit`, `context_cancelled`, and so on), then classify the bead.
+**A `run_failed` usually stops the whole queue, not one bead.** The group lands at
+`complete-with-failures` when every item in it is terminal and at least one
+failed. The queue then goes to `paused-by-failure`. Later groups stay pending and
+nothing else dispatches until someone recovers it. So read the first `run_failed`
+as "my lane is about to stop", not "one bead needs a retry".
+
+The stream says so once, and then goes quiet. `advanceActive`, reached through
+`AdvanceGroup` in `internal/queue/state.go`, builds a `queue_group_completed`
+intent and then a `queue_paused` intent. `decideFailedGroupCompletion` in
+`internal/queue/group_completion_decision.go` applies the `active` →
+`paused-by-failure` transition. The daemon persists first and then emits both, in
+`internal/daemon/group_completion_shell.go`. The pause cause sits at
+`.payload.reason` in the envelope, not at the top level, so filter on
+`.payload.reason == "group_failure"`.
+
+Read the failure class from `events.jsonl` (`no_commit`, `context_cancelled`, and
+so on), then classify the bead.
 
 - **Transient** (network, lock contention) — re-submit the single bead.
 - **A genuine bug in the bead's work** — fix-up sub-agent on the worktree branch.
 - **A bug in harmonik itself** — sub-agent this one bead, and file a bug bead.
 - **The same bead failed twice this session** — stop. Dispatch an investigator
   before any further re-dispatch, and never a third attempt without one.
+
+### Restart a queue that stopped
+
+**This section owns the explanation.** Other documents give the instruction and
+point here. Put a new fact about queue recovery here, not there.
+
+`harmonik queue list --json` prints a `status` for every named queue.
+`paused-by-failure` is the stopped one.
+
+```bash
+harmonik queue recover --queue <name>     # a bare name also works
+```
+
+`recover` re-arms every item whose status is `failed`, flips the group that
+reached `complete-with-failures` back to `active`, sets the queue back to
+`active`, and asks the dispatcher to wake. An item held at
+`deferred-for-ledger-dep` stays held until its blocker completes. **Success does
+not mean anything has dispatched** — what `RecoverFailed` in
+`internal/queuewiring/recovery.go` promises is that the queue change and its
+receipt are durable. Read `queue list` again to confirm the queue moved.
+
+**`harmonik queue resume` cannot do this.** Resume clears an operator drain pause
+only. A resume aimed at a failure-parked queue is refused, and the refusal names
+the verb you want: "resume releases a drain pause only; run `harmonik queue
+recover <name>` to re-arm the failed items" (`ResumeRefusedError` in
+`internal/queue`). So the wrong verb teaches you the right one — you do not have
+to carry this rule in your head.
+
+**Leave the failed bead open.** Recovery reads the ledger for every failed item
+before it touches the queue, and refuses with `recovery_bead_not_open` (`-32033`)
+when any of those beads is not `open`. A tidy-up `br close` therefore locks the
+queue shut.
+
+**Submitting around a stopped queue is not a fix, and nothing will stop you.**
+A submit under a new name always succeeds. So does a submit under the stopped
+queue's OWN name: `Validate` in `internal/queue/validation.go` excludes
+`paused-by-failure` from the `queue_already_active` refusal on purpose, and
+`TestValidate_ResubmitToPausedByFailureName` pins that. Either way you get a
+fresh queue and no error, the failed items are never re-armed, and the beads that
+stopped the lane stay unworked with nobody watching them. `recover` is the verb
+that re-arms them.

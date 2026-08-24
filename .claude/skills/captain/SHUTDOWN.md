@@ -275,11 +275,29 @@ harmonik comms leave
    `active_runs` that will be orphaned. Wait out a mid-merge bead or an active
    reviewer, or record it as a risk in HANDOFF.md.
 
-3. **PINs recorded** in HANDOFF.md §Open, with exact unblock steps.
+3. **No queue stopped:** `harmonik queue list --json` shows no queue whose
+   `status` is `paused-by-failure`. Nothing else will tell you. Check 2 misses it
+   because a stopped queue has no `active_runs`, so it passes green while
+   dispatching nothing. Ops-monitor misses it because its `paused-queues` check
+   fires only when the owning crew is online. And the queue itself emits nothing
+   after the pause, so it crosses the session boundary in silence. That is how a
+   lane sits dead for a day. Sweep it yourself before you leave:
 
-4. **Banked commits** either deployed or listed in HANDOFF.md with SHA and verdict.
+```bash
+harmonik queue list --json | jq -r '.queues[] | select(.status == "paused-by-failure") | .name'
+# any name printed → harmonik queue recover --queue <name>
+```
 
-5. **No zombie crew records** — every registry record has a matching live agent:
+   Recovery refuses if a failed bead was closed in the meantime — the
+   **harmonik-dispatch** skill, § Restart a queue that stopped. If you choose to
+   leave a queue parked, name it in HANDOFF.md with the reason and the recover
+   command.
+
+4. **PINs recorded** in HANDOFF.md §Open, with exact unblock steps.
+
+5. **Banked commits** either deployed or listed in HANDOFF.md with SHA and verdict.
+
+6. **No zombie crew records** — every registry record has a matching live agent:
 
 ```bash
 comm -23 \
@@ -288,7 +306,7 @@ comm -23 \
 # Any name printed = unresolved zombie — reconcile before exiting
 ```
 
-6. **`.harmonik/context/captain-lanes.md` is current** — it is what STARTUP.md
+7. **`.harmonik/context/captain-lanes.md` is current** — it is what STARTUP.md
    Step 0b reads.
 
 ---

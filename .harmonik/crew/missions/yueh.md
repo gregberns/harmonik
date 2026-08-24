@@ -8,8 +8,14 @@ goal: |
   Lane bead hk-7l1w8 (label codename:comms-test-harness), ~20/27 done. Systematic
   context-cancel implementation across the comms test-harness — NOT heavy-diff work.
 
-  DISPATCH (your OWN queue yueh2-q — NOTE: the old yueh-q is paused-by-failure, use yueh2-q;
-  never main), file-disjoint, the codename:comms-test-harness ready set:
+  DISPATCH to your OWN queue yueh2-q; never main. yueh-q is parked at paused-by-failure from
+  an earlier bead. Restart it rather than leave it: `harmonik queue recover --queue yueh-q`.
+  A bead that fails on yueh2-q stops that queue the same way — watch for queue_paused on your
+  subscribe stream, read `harmonik queue list --json`, and recover the queue you own. Opening
+  a third queue is not a fix. Mechanism, and what recovery refuses: the harmonik-dispatch
+  skill, "Restart a queue that stopped".
+
+  The work, file-disjoint, the codename:comms-test-harness ready set:
   - Implement context-cancel in the remaining comms-test-harness beads (the lane bead lists
     the sub-set: n0wb0 x2, x8fc6, vm8ym, mpel5, etc.). These are systematic, mechanical,
     file-disjoint edits to the comms test files.

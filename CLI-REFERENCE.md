@@ -222,7 +222,8 @@ harmonik handler status --type claude-code --format json
 | `status` | Show current queue state and bead statuses | yes |
 | `list` | List all active queues with status and worker counts | yes |
 | `pause` | Pause a named queue | yes |
-| `resume` | Resume a paused named queue | yes |
+| `resume` | Resume a named queue paused by an operator drain. Refuses a queue at `paused-by-failure` and names `recover` in the refusal. | yes |
+| `recover` | **Restart a named queue parked at `paused-by-failure`.** Re-arms every failed item, reopens the group that failed, and returns the queue to `active`. Takes `<name>` or `--queue <name>`. Refuses unless every failed item's bead is still `open`. | yes |
 | `dry-run` | Validate a submission without executing | yes |
 | `cancel` | Archive a stale `queue.json` (e.g. left by a killed daemon) | **no** |
 | `set-concurrency <n>` | **Set the daemon's concurrent-dispatch ceiling live.** `n` must be an integer ≥ 1. | yes |
@@ -244,6 +245,7 @@ harmonik queue status
 harmonik queue list
 harmonik queue pause investigate
 harmonik queue resume investigate
+harmonik queue recover investigate    # or: --queue investigate
 harmonik queue cancel
 harmonik queue set-concurrency 4      # → "max_concurrent: 4 → 4"
 ```

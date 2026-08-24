@@ -147,9 +147,24 @@ not recover on its own, and the crew is gone until someone notices.
    captain. A `br close` from you breaks that chain. A bead you fixed by hand and
    submitted to no queue is the other case — see § What you must not do.
 
-5. **On each completion**, post a status and submit the next batch. On a
-   failure, classify it: re-submit once if it looks transient; if the same bead
-   fails twice, stop and report `--topic error` to the captain rather than
+5. **On each completion**, post a status and submit the next batch.
+
+   **A failed bead usually stops your whole queue, not just that bead.** The
+   daemon parks the queue at `paused-by-failure` and emits `queue_paused` once.
+   After that your queue dispatches nothing and emits nothing, so a stopped queue
+   and an idle one look the same from outside.
+
+   ```bash
+   harmonik queue list --json               # read the `status` for your queue
+   harmonik queue recover --queue <queue>   # re-arm the failed items, wake dispatch
+   ```
+
+   `harmonik queue resume` will NOT restart a failure-parked queue. Why, what
+   recovery refuses, and why a tidy-up `br close` locks the queue shut: the
+   **harmonik-dispatch** skill, § Restart a queue that stopped.
+
+   Then classify the failure: re-submit once if it looks transient; if the same
+   bead fails twice, stop and report `--topic error` to the captain rather than
    dispatching it a third time.
 
 6. **When the epic's ready beads run out**, post a drain status and idle on the
@@ -199,9 +214,14 @@ mechanism. On the way back up:
 2. Re-read your mission, or re-derive `{queue, epic_id}` from the epic whose
    `assignee` is your name.
 3. Re-`join` comms.
+4. Check your queue is still moving — `harmonik queue list --json`, and read the
+   `status` for your queue.
 
-No in-flight work is lost: your named queue keeps draining on the daemon
-independent of your session.
+Your queue lives on the daemon, not in your session, so a restart on its own
+loses no in-flight work. That is not the same as the queue still running. A bead
+that failed while you were down parks it at `paused-by-failure`, and it stays
+parked and silent until someone runs `harmonik queue recover`. Step 4 is how you
+tell the two apart.
 
 You cannot verify your own restart — the `/clear` wipes your context before the
 keeper's ACK line could reach you. The captain verifies it for you. What you CAN
@@ -227,6 +247,11 @@ out — tell the captain over comms rather than assuming the keeper will save yo
   by hand and never submitted is the other case: close it, because nothing else
   will — `harmonik reconcile` only closes beads whose commit carries a
   `Harmonik-Bead-ID:` trailer, and a hand commit never carries one.
+- Submit around your own stopped queue. A submit under a new name always
+  succeeds, and so does one under the stopped queue's own name, so this
+  workaround never announces itself as wrong. It leaves your real queue parked,
+  its failed beads unworked, and nobody watching them. Restart the queue you own
+  with `harmonik queue recover --queue <queue>` and tell the captain.
 - Spawn Agent-tool sub-agents for your epic's work. Use the queue.
 - Parse non-JSON `comms` or `br` output.
 - Re-dispatch the same bead a third time without reporting to the captain.

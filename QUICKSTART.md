@@ -70,10 +70,12 @@ harmonik queue submit --queue myqueue --beads hk-a,hk-b
 Submit returns immediately and does **not** block. Stream events to watch progress:
 
 ```bash
-harmonik subscribe --types run_completed,run_failed
+harmonik subscribe --types run_completed,run_failed,queue_paused
 ```
 
 Output is one JSON object per line (NDJSON) by default. You'll see a `run_completed` event when the bead finishes, or `run_failed` (with a `failure_class` field) if something went wrong. Press Ctrl-C to stop watching.
+
+Keep `queue_paused` in that list. A failed bead usually stops the whole queue, not just that bead — the queue goes to `paused-by-failure`, and after `queue_paused` it emits nothing and dispatches nothing, so a stopped queue looks like an idle one. Restart it with `harmonik queue recover <name>`.
 
 ## 6. What success looks like
 

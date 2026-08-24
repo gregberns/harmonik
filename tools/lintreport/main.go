@@ -1,98 +1,87 @@
-// Command lintreport turns golangci-lint JSON into a short report, judged
-// against an explicit list of findings the tree is allowed to still have.
-//
-// The tree carries a large backlog. Gating on zero findings would block every
-// change for months, and gating on a COUNT hides what is being tolerated: a
-// count goes down when someone silences a finding just as readily as when
-// someone fixes one. So the allow list names each tolerated pair explicitly,
-// one line per file and linter:
-//
-//	internal/daemon/workloop.go	errcheck
-//
-// A finding whose pair is on the list is tolerated and reported as a remainder.
-// A finding whose pair is NOT on the list fails the build. Clean a file, delete
-// its line, and the file can never regress. That is the whole mechanism.
-//
-// The unit is file-and-linter on purpose. Line numbers rot within days, so an
-// allow list keyed by line would churn on every unrelated edit. A count per file
-// would drift for the same reason. File-and-linter is stable under editing and
-// still small enough to remove one piece at a time.
-//
-// Every run prints what is being ignored, including a clean run, so that
-// "no new lint findings" can never be misread as "this tree is clean".
-//
-// Usage:
-//
-//	golangci-lint run --output.json.path=lint.json ...
-//	lintreport -allow tools/lintreport/allow.txt lint.json
+// Command lintreport judges golangci-lint JSON against an explicit list of
+// findings the tree is allowed to retain.
 package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-type report struct {
-	Issues []struct {
-		FromLinter string `json:"FromLinter"`
-		Text       string `json:"Text"`
-		Pos        struct {
-			Filename string `json:"Filename"`
-			Line     int    `json:"Line"`
-		} `json:"Pos"`
-	} `json:"Issues"`
+type issue struct {
+	FromLinter string `json:"FromLinter"`
+	Text       string `json:"Text"`
+	Pos        struct {
+		Filename string `json:"Filename"`
+		Line     int    `json:"Line"`
+	} `json:"Pos"`
 }
 
+type report struct {
+	Issues []issue `json:"Issues"`
+}
+
+// key identifies a finding by its content. It intentionally contains no path
+// or package: moving unchanged code across a package boundary must not mint a
+// new exemption.
 type key struct {
-	file   string
+	digest string
 	linter string
+}
+
+type finding struct {
+	message  string
+	location string
 }
 
 func main() {
 	allowPath := flag.String("allow", "", "path to the allow list")
-	write := flag.Bool("write", false, "rewrite the allow list from the current findings (use once, to seed it)")
+	write := flag.Bool("write", false, "rewrite the allow list from the current findings")
 	flag.Parse()
-
-	if flag.NArg() != 1 {
+	if flag.NArg() != 1 || *allowPath == "" {
 		fmt.Fprintln(os.Stderr, "usage: lintreport -allow <file> [-write] <golangci-lint.json>")
 		os.Exit(2)
 	}
-	if *allowPath == "" {
-		fmt.Fprintln(os.Stderr, "lintreport: -allow is required")
-		os.Exit(2)
-	}
-
 	findings, err := readFindings(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lintreport:", err)
 		os.Exit(2)
 	}
-
 	if *write {
 		if err := writeAllow(*allowPath, findings); err != nil {
 			fmt.Fprintln(os.Stderr, "lintreport:", err)
 			os.Exit(2)
 		}
-		fmt.Printf("wrote %d allowed pairs to %s\n", len(findings), *allowPath)
+		fmt.Printf("wrote %d allowed findings to %s\n", len(findings), *allowPath)
 		return
 	}
-
 	allow, err := readAllow(*allowPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lintreport:", err)
 		os.Exit(2)
 	}
-	os.Exit(judge(os.Stdout, findings, allow))
+	verdict, err := judge(os.Stdout, findings, allow)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lintreport:", err)
+		os.Exit(2)
+	}
+	os.Exit(verdict)
 }
 
-func readFindings(path string) (map[key][]string, error) {
-	raw, err := os.ReadFile(path)
+func readFindings(path string) (map[key][]finding, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- the CLI argument is the report to inspect.
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +89,130 @@ func readFindings(path string) (map[key][]string, error) {
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	out := map[key][]string{}
+	out := map[key][]finding{}
+	parsed := map[string]*sourceFile{}
 	for _, iss := range r.Issues {
-		k := key{file: filepath.ToSlash(iss.Pos.Filename), linter: iss.FromLinter}
-		out[k] = append(out[k], fmt.Sprintf("%s:%d: %s", k.file, iss.Pos.Line, iss.Text))
+		name := filepath.Clean(iss.Pos.Filename)
+		sf, ok := parsed[name]
+		if !ok {
+			sf, err = parseSource(name)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s:%d: %w", name, iss.Pos.Line, err)
+			}
+			parsed[name] = sf
+		}
+		body, symbol, err := sf.enclosing(iss.Pos.Line)
+		if err != nil {
+			return nil, fmt.Errorf("normalize %s:%d: %w", name, iss.Pos.Line, err)
+		}
+		digest := findingDigest(iss.FromLinter, iss.Text, body)
+		k := key{digest: digest, linter: iss.FromLinter}
+		loc := fmt.Sprintf("%s:%d %s", filepath.ToSlash(name), iss.Pos.Line, symbol)
+		out[k] = append(out[k], finding{message: fmt.Sprintf("%s: %s", loc, iss.Text), location: loc})
 	}
 	return out, nil
+}
+
+type sourceFile struct {
+	fset *token.FileSet
+	file *ast.File
+	raw  []byte
+}
+
+func parseSource(path string) (*sourceFile, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- the linter supplies the source path.
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, raw, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	return &sourceFile{fset: fset, file: f, raw: raw}, nil
+}
+
+func (s *sourceFile) enclosing(line int) (body []byte, symbol string, err error) {
+	var best ast.Node
+	ast.Inspect(s.file, func(n ast.Node) bool {
+		if n == nil {
+			return true
+		}
+		start, end := s.fset.Position(n.Pos()).Line, s.fset.Position(n.End()).Line
+		if start <= line && line <= end && identityNode(n) {
+			if best == nil || n.End()-n.Pos() < best.End()-best.Pos() {
+				best = n
+			}
+		}
+		return true
+	})
+	if best == nil { // Package comments and malformed positions use the whole file sans package name.
+		var b bytes.Buffer
+		for _, d := range s.file.Decls {
+			if err := format.Node(&b, s.fset, d); err != nil {
+				return nil, "", err
+			}
+		}
+		return b.Bytes(), "file scope", nil
+	}
+	var b bytes.Buffer
+	if err := format.Node(&b, s.fset, best); err != nil {
+		return nil, "", err
+	}
+	return b.Bytes(), nodeName(best), nil
+}
+
+func identityNode(n ast.Node) bool {
+	switch n.(type) {
+	case *ast.FuncDecl, *ast.GenDecl, *ast.TypeSpec, *ast.ValueSpec, *ast.ImportSpec:
+		return true
+	default:
+		return false
+	}
+}
+
+func nodeName(n ast.Node) string {
+	switch x := n.(type) {
+	case *ast.FuncDecl:
+		if x.Recv != nil && len(x.Recv.List) > 0 {
+			return exprName(x.Recv.List[0].Type) + "." + x.Name.Name
+		}
+		return x.Name.Name
+	case *ast.TypeSpec:
+		return x.Name.Name
+	case *ast.ValueSpec:
+		if len(x.Names) > 0 {
+			return x.Names[0].Name
+		}
+	case *ast.ImportSpec:
+		return "import " + x.Path.Value
+	case *ast.GenDecl:
+		return x.Tok.String()
+	}
+	return "file scope"
+}
+
+func exprName(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return exprName(x.X)
+	case *ast.IndexExpr:
+		return exprName(x.X)
+	case *ast.IndexListExpr:
+		return exprName(x.X)
+	default:
+		return "receiver"
+	}
+}
+
+func findingDigest(linter, text string, body []byte) string {
+	normalizedText := strings.Join(strings.Fields(text), " ")
+	h := sha256.New()
+	_, _ = h.Write([]byte(linter + "\x00" + normalizedText + "\x00"))
+	_, _ = h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func readAllow(path string) (map[key]bool, error) {
@@ -114,107 +221,103 @@ func readAllow(path string) (map[key]bool, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-
 	allow := map[key]bool{}
 	sc := bufio.NewScanner(f)
 	for n := 1; sc.Scan(); n++ {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := strings.TrimSpace(strings.SplitN(sc.Text(), "#", 2)[0])
+		if line == "" {
 			continue
 		}
 		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("%s line %d: want '<file> <linter>', got %q", path, n, line)
+		if len(parts) != 2 || len(parts[0]) != sha256.Size*2 {
+			return nil, fmt.Errorf("%s line %d: want '<sha256> <linter>', got %q", path, n, line)
 		}
-		allow[key{file: parts[0], linter: parts[1]}] = true
+		if _, err := hex.DecodeString(parts[0]); err != nil {
+			return nil, fmt.Errorf("%s line %d: invalid digest", path, n)
+		}
+		allow[key{digest: parts[0], linter: parts[1]}] = true
 	}
 	return allow, sc.Err()
 }
 
-func writeAllow(path string, findings map[key][]string) error {
+func writeAllow(path string, findings map[key][]finding) error {
 	keys := sortedKeys(findings)
 	var b strings.Builder
 	b.WriteString("# Lint findings this tree is allowed to still have.\n")
-	b.WriteString("# One line per file and linter. Clean a file, then delete its line.\n")
+	b.WriteString("# One line per content identity and linter. Location comments are only aids.\n")
 	b.WriteString("# A finding NOT on this list fails the build.\n")
 	b.WriteString("# Seeded from the tree as it stood when the gate was introduced.\n\n")
 	for _, k := range keys {
-		fmt.Fprintf(&b, "%s\t%s\n", k.file, k.linter)
+		fmt.Fprintf(&b, "%s\t%s\t# %s\n", k.digest, k.linter, findings[k][0].location)
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-func judge(out *os.File, findings map[key][]string, allow map[key]bool) int {
-	var newPairs []key
+func judge(out *os.File, findings map[key][]finding, allow map[key]bool) (int, error) {
+	newKeys := make([]key, 0, len(findings))
+	stale := make([]key, 0, len(allow))
 	tolerated := 0
 	byLinter := map[string]int{}
-	byPackage := map[string]int{}
-
 	for _, k := range sortedKeys(findings) {
 		if allow[k] {
 			tolerated += len(findings[k])
 			byLinter[k.linter] += len(findings[k])
-			byPackage[filepath.Dir(k.file)] += len(findings[k])
 			continue
 		}
-		newPairs = append(newPairs, k)
+		newKeys = append(newKeys, k)
 	}
-
-	for _, k := range newPairs {
-		fmt.Fprintf(out, "\n=== NOT ALLOWED  %s  [%s]\n", k.file, k.linter)
-		for _, msg := range findings[k] {
-			fmt.Fprintf(out, "  %s\n", msg)
+	var b strings.Builder
+	for _, k := range newKeys {
+		b.WriteString(fmt.Sprintf("\n=== NOT ALLOWED  %s  [%s]\n", k.digest, k.linter))
+		for _, f := range findings[k] {
+			b.WriteString("  " + f.message + "\n")
 		}
 	}
-
-	var stale []key
 	for k := range allow {
-		if _, still := findings[k]; !still {
+		if _, ok := findings[k]; !ok {
 			stale = append(stale, k)
 		}
 	}
+	sortKeys(stale)
 	if len(stale) > 0 {
-		sort.Slice(stale, func(i, j int) bool { return stale[i].file < stale[j].file })
-		fmt.Fprintf(out, "\n%d allow-list entries are now clean — delete these lines:\n", len(stale))
+		b.WriteString(fmt.Sprintf("\n%d allow-list entries are now clean — delete these lines:\n", len(stale)))
 		for _, k := range stale {
-			fmt.Fprintf(out, "  %s\t%s\n", k.file, k.linter)
+			b.WriteString("  " + k.digest + "\t" + k.linter + "\n")
 		}
 	}
-
-	fmt.Fprintf(out, "\nIGNORED — findings the allow list tolerates today\n")
-	fmt.Fprintf(out, "  %d findings across %d file/linter pairs\n", tolerated, len(allow)-len(stale))
-	fmt.Fprintf(out, "  by package:\n")
-	for _, p := range sortedCounts(byPackage) {
-		fmt.Fprintf(out, "    %5d  %s\n", byPackage[p], p)
-	}
-	fmt.Fprintf(out, "  by linter:\n")
+	b.WriteString(fmt.Sprintf("\nIGNORED — findings the allow list tolerates today\n  %d findings across %d identities\n  by linter:\n", tolerated, len(allow)-len(stale)))
 	for _, l := range sortedCounts(byLinter) {
-		fmt.Fprintf(out, "    %5d  %s\n", byLinter[l], l)
+		b.WriteString(fmt.Sprintf("    %5d  %s\n", byLinter[l], l))
 	}
-	fmt.Fprintf(out, "  NOTE: .golangci.yml also excludes whole paths and rules before a finding\n")
-	fmt.Fprintf(out, "        ever reaches this tool. This list cannot show those. Read the\n")
-	fmt.Fprintf(out, "        exclusions section there to see the second layer.\n")
-
-	if len(newPairs) == 0 {
-		fmt.Fprintln(out, "\nno new lint findings")
-		return 0
+	verdict := 1
+	if len(newKeys) == 0 {
+		b.WriteString("\nno new lint findings\n")
+		verdict = 0
+	} else {
+		b.WriteString(fmt.Sprintf("\nFAIL: %d finding identities are not on the allow list\n", len(newKeys)))
 	}
-	fmt.Fprintf(out, "\nFAIL: %d file/linter pairs are not on the allow list\n", len(newPairs))
-	return 1
+	if _, err := out.WriteString(b.String()); err != nil {
+		return 2, err
+	}
+	return verdict, nil
 }
 
-func sortedKeys(m map[key][]string) []key {
+func sortedKeys(m map[key][]finding) []key {
 	out := make([]key, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
+	sortKeys(out)
+	return out
+}
+
+func sortKeys(out []key) {
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].file != out[j].file {
-			return out[i].file < out[j].file
+		if out[i].digest != out[j].digest {
+			return out[i].digest < out[j].digest
 		}
 		return out[i].linter < out[j].linter
 	})
-	return out
 }
 
 func sortedCounts(m map[string]int) []string {

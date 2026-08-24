@@ -14,10 +14,10 @@
 # changed". And it never says WHERE the debt sits, so it gives a reader no way
 # to aim.
 #
-# The allow list at tools/lintreport/allow.txt names each tolerated pair of file
-# and linter on its own line. A finding whose pair is listed is grandfathered. A
-# finding whose pair is NOT listed fails the build. Clean a file, delete its
-# line, and that file can never regress. tools/lintreport owns the judging and
+# The allow list names each tolerated finding by a hash of its linter, message,
+# and enclosing syntax. A location comment keeps the list useful to readers but
+# is not part of the identity. Moving unchanged code does not change the hash.
+# tools/lintreport owns the judging and
 # the reporting; this file owns reaching a verdict safely and owns nothing else.
 #
 # WHY FILE-AND-LINTER AND NOT FILE-AND-LINE. Line numbers rot within days. A

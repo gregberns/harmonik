@@ -89,6 +89,11 @@ issue() { # file linter
     printf '{"FromLinter":"%s","Text":"fake finding","Pos":{"Filename":"%s","Line":1}}' "$2" "$1"
 }
 
+seed_allow() { # allow-path source-file linter
+    printf '{"Issues":[%s]}' "$(issue "$2" "$3")" >"$work/seed.json"
+    go run ./tools/lintreport -allow "$1" -write "$work/seed.json" >/dev/null || exit 1
+}
+
 # run_subject <allow-list-path> — runs the real script against the fake linter.
 run_subject() {
     TOOLS_DIR="$work/tools" LINT_ALLOW_LIST="$1" \
@@ -102,7 +107,7 @@ run_subject() {
 # and gets deleted, which is how the whole-tree linter came to watch nothing.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-1"
+seed_allow "$work/allow-1" internal/daemon/workloop.go errcheck
 FAKE_ISSUES="[$(issue internal/daemon/workloop.go errcheck)]" run_subject "$work/allow-1"
 status=$?
 if [ "$status" -eq 0 ]; then
@@ -118,8 +123,8 @@ fi
 # The whole point. If this case ever passes, the gate is a decoration.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-2"
-FAKE_ISSUES="[$(issue internal/queue/admit.go gosec)]" run_subject "$work/allow-2"
+seed_allow "$work/allow-2" internal/daemon/workloop.go errcheck
+FAKE_ISSUES="[$(issue internal/queue/append.go gosec)]" run_subject "$work/allow-2"
 status=$?
 if [ "$status" -eq 1 ]; then
     pass "a finding outside the allow list fails the build"
@@ -135,7 +140,7 @@ fi
 # already tolerates one linter quietly start failing another.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-3"
+seed_allow "$work/allow-3" internal/daemon/workloop.go errcheck
 FAKE_ISSUES="[$(issue internal/daemon/workloop.go gosec)]" run_subject "$work/allow-3"
 status=$?
 if [ "$status" -eq 1 ]; then
@@ -152,7 +157,7 @@ fi
 # that only looks at the report sees no findings and calls it green.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-4"
+seed_allow "$work/allow-4" internal/daemon/workloop.go errcheck
 FAKE_ISSUES="[]" FAKE_EXIT=3 run_subject "$work/allow-4"
 status=$?
 if [ "$status" -eq 2 ]; then
@@ -166,7 +171,7 @@ fi
 # CASE 5 — an empty report is a failure, not a clean tree.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-5"
+seed_allow "$work/allow-5" internal/daemon/workloop.go errcheck
 FAKE_EMPTY=1 run_subject "$work/allow-5"
 status=$?
 if [ "$status" -eq 2 ]; then
@@ -186,7 +191,7 @@ fi
 # produced by a broken build is worse than no gate.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-6"
+seed_allow "$work/allow-6" internal/daemon/workloop.go errcheck
 FAKE_ISSUES="[$(issue internal/daemon/broken.go typecheck)]" run_subject "$work/allow-6"
 status=$?
 if [ "$status" -eq 2 ]; then
@@ -213,7 +218,7 @@ fi
 # CASE 8 — a missing linter is a failure, not a clean tree.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-8"
+seed_allow "$work/allow-8" internal/daemon/workloop.go errcheck
 TOOLS_DIR="$work/no-such-tools" LINT_ALLOW_LIST="$work/allow-8" \
     scripts/lint-allow.sh >"$work/out" 2>&1
 status=$?
@@ -265,7 +270,7 @@ fi
 # invisible again.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-printf 'internal/daemon/workloop.go\terrcheck\n' >"$work/allow-10"
+seed_allow "$work/allow-10" internal/daemon/workloop.go errcheck
 FAKE_ISSUES="[$(issue internal/daemon/workloop.go errcheck)]" run_subject "$work/allow-10"
 if grep -q 'IGNORED' "$work/out"; then
     pass "a passing run still prints what it is tolerating"

@@ -1,578 +1,967 @@
 # Lint findings this tree is allowed to still have.
-# One line per file and linter. Clean a file, then delete its line.
+# One line per content identity and linter. Location comments are only aids.
 # A finding NOT on this list fails the build.
 # Seeded from the tree as it stood when the gate was introduced.
 
-cmd/harmonik-twin-claude/main.go	gocognit
-cmd/harmonik-twin-claude/scenarios.go	funlen
-cmd/harmonik-twin-claude/scriptdriver.go	gocognit
-cmd/harmonik-twin-session/main_test.go	gosec
-cmd/harmonik-twin-session/main.go	errchkjson
-cmd/harmonik/agent.go	cyclop
-cmd/harmonik/asset_reconcile.go	cyclop
-cmd/harmonik/asset_reconcile.go	gosec
-cmd/harmonik/asset_skew.go	gocognit
-cmd/harmonik/beadsmerge.go	gocritic
-cmd/harmonik/branch_reap_cmd.go	gocognit
-cmd/harmonik/captain_respawn.go	gocognit
-cmd/harmonik/captain.go	gocognit
-cmd/harmonik/captain.go	gosec
-cmd/harmonik/captain.go	unparam
-cmd/harmonik/comms.go	gocognit
-cmd/harmonik/comms.go	gosec
-cmd/harmonik/confirm_verdict_test.go	errcheck
-cmd/harmonik/confirm_verdict_test.go	gosec
-cmd/harmonik/confirm_verdict_test.go	noctx
-cmd/harmonik/confirm_verdict.go	gocritic
-cmd/harmonik/crew.go	cyclop
-cmd/harmonik/crew.go	gocognit
-cmd/harmonik/crew.go	gocritic
-cmd/harmonik/dashboard_cmd.go	cyclop
-cmd/harmonik/dashboard_cmd.go	gocognit
-cmd/harmonik/decisions_coverage_test.go	gocritic
-cmd/harmonik/decisions_k4.go	cyclop
-cmd/harmonik/decisions_k4.go	gocognit
-cmd/harmonik/decisions.go	cyclop
-cmd/harmonik/decisions.go	gocognit
-cmd/harmonik/decisions.go	gocritic
-cmd/harmonik/digest.go	gocognit
-cmd/harmonik/digest/watch.go	gocognit
-cmd/harmonik/eval_cmd.go	gocognit
-cmd/harmonik/eval_cmd.go	gosec
-cmd/harmonik/eval_cmd.go	unparam
-cmd/harmonik/eval_collect_hk_eval_harness_collector_test.go	gosec
-cmd/harmonik/eval_metrics_cmd.go	gocognit
-cmd/harmonik/eval_metrics_feeders_k5bxl_test.go	gosec
-cmd/harmonik/eval_report_cmd.go	gocognit
-cmd/harmonik/graph.go	gocognit
-cmd/harmonik/greenlight_cmd.go	cyclop
-cmd/harmonik/handler_test.go	gosec
-cmd/harmonik/handler.go	gocognit
-cmd/harmonik/harness.go	gocognit
-cmd/harmonik/harness.go	gosec
-cmd/harmonik/init_cmd.go	gocognit
-cmd/harmonik/keeper_cmd.go	gocognit
-cmd/harmonik/keeper_cmd.go	gocritic
-cmd/harmonik/keeper_enable_doctor_cmd_test.go	gosec
-cmd/harmonik/keeper_enable_doctor_cmd_test.go	unparam
-cmd/harmonik/keeper_enable_doctor_cmd.go	gocognit
-cmd/harmonik/keeper_enable_doctor_cmd.go	gocritic
-cmd/harmonik/keeper_enable_doctor_cmd.go	gosec
-cmd/harmonik/main.go	gocognit
-cmd/harmonik/migrate_rc_prefix_cmd.go	gocognit
-cmd/harmonik/ops_monitor_cmd.go	gosec
-cmd/harmonik/promote_cmd.go	cyclop
-cmd/harmonik/promote_cmd.go	gocognit
-cmd/harmonik/reconcile_coverage_test.go	prealloc
-cmd/harmonik/reconcile.go	gocognit
-cmd/harmonik/release_cmd.go	cyclop
-cmd/harmonik/remote_control_prefix_cmd_coverage_test.go	errcheck
-cmd/harmonik/resolve_pi_config.go	gosec
-cmd/harmonik/run_via_daemon.go	gocognit
-cmd/harmonik/run_via_daemon.go	gocritic
-cmd/harmonik/run.go	gocognit
-cmd/harmonik/schedule_cmd_coverage_test.go	errcheck
-cmd/harmonik/schedule.go	gocognit
-cmd/harmonik/schedule.go	gocritic
-cmd/harmonik/sentinel_cmd.go	cyclop
-cmd/harmonik/sentinel_cmd.go	gocognit
-cmd/harmonik/sleepwake_cmd_coverage_test.go	errcheck
-cmd/harmonik/sleepwake_cmd_coverage_test.go	gocritic
-cmd/harmonik/sleepwake_cmd_coverage_test.go	noctx
-cmd/harmonik/sleepwake.go	cyclop
-cmd/harmonik/sleepwake.go	gocognit
-cmd/harmonik/sleepwake.go	gocritic
-cmd/harmonik/smoke_logic_test.go	gosec
-cmd/harmonik/smoke.go	gocognit
-cmd/harmonik/smoke.go	unparam
-cmd/harmonik/start.go	gocognit
-cmd/harmonik/state_cmd.go	gocognit
-cmd/harmonik/subscribe.go	gocognit
-cmd/harmonik/subscribe.go	gosec
-cmd/harmonik/supervise_cmd.go	cyclop
-cmd/harmonik/supervise/assetskew.go	gocognit
-cmd/harmonik/supervise/config.go	gocognit
-cmd/harmonik/supervise/coverage_drain_test.go	errcheck
-cmd/harmonik/supervise/coverage_drain_test.go	noctx
-cmd/harmonik/supervise/logs.go	gocognit
-cmd/harmonik/supervise/loopstatus.go	gocognit
-cmd/harmonik/supervise/pause.go	gocognit
-cmd/harmonik/supervise/pause.go	gocritic
-cmd/harmonik/supervise/ps.go	gocognit
-cmd/harmonik/supervise/reap.go	gocognit
-cmd/harmonik/supervise/restart.go	gocognit
-cmd/harmonik/supervise/shim.go	gocognit
-cmd/harmonik/supervise/start.go	gocognit
-cmd/harmonik/supervise/status.go	gocognit
-cmd/harmonik/supervise/stop.go	gocognit
-cmd/harmonik/sync_assets_cmd.go	gocognit
-cmd/harmonik/testsupport_daemon_test.go	errcheck
-cmd/harmonik/testsupport_daemon_test.go	gosec
-cmd/harmonik/testsupport_daemon_test.go	noctx
-cmd/harmonik/usage_cmd_coverage_test.go	errcheck
-cmd/harmonik/usage_cmd.go	gocognit
-cmd/harmonik/veto_verdict.go	cyclop
-cmd/harmonik/write_review_verdict_cmd_test.go	gosec
-cmd/harmonik/write_review_verdict_cmd.go	cyclop
-evaltasks/eval-bugfix-rate-limiter/limiter_test.go	gocritic
-evaltasks/eval-bugfix-rate-limiter/limiter.go	revive
-evaltasks/eval-cli-kv/kvcli.go	errcheck
-evaltasks/eval-cli-kv/kvcli.go	gosec
-evaltasks/eval-lru-cache/lru.go	errcheck
-evaltasks/eval-lru-ttl/lru_ttl.go	errcheck
-evaltasks/eval-refactor-storage/report.go	revive
-evaltasks/eval-refactor-storage/store_test.go	gosec
-evaltasks/eval-string-reverse/reverse.go	revive
-internal/apptap/tap_test.go	unparam
-internal/apptap/tap.go	gosec
-internal/branching/branching.go	gocognit
-internal/branching/branching.go	gosec
-internal/brcli/adapter_test.go	unused
-internal/brcli/breakage_test.go	prealloc
-internal/brcli/dblockretry.go	gocognit
-internal/brcli/ready.go	gocognit
-internal/brcli/show_test.go	gocritic
-internal/brcli/show.go	gocognit
-internal/brcli/stderrcap_test.go	unparam
-internal/codexdigitaltwin/twin.go	cyclop
-internal/codexdriver/session.go	contextcheck
-internal/codexreactor/reactor_test.go	gosec
-internal/codexreactor/reactor_test.go	prealloc
-internal/codexreactor/reactor.go	cyclop
-internal/codexreactor/reactor.go	revive
-internal/core/agentevents_hqwn59.go	revive
-internal/core/budgetcounterstate_hka8bg25.go	unused
-internal/core/budgetexhaustion_rc018_test.go	gocritic
-internal/core/budgetexhaustion_rc018.go	gosec
-internal/core/cpregistry_hka8bg2.go	exhaustive
-internal/core/cpregistry_hka8bg2.go	gocritic
-internal/core/crashrecovery_rc031_test.go	forbidigo
-internal/core/detectorharness_rc010_test.go	forbidigo
-internal/core/detectorharness_rc010_test.go	unused
-internal/core/edgecascade_em042.go	forbidigo
-internal/core/edgecascade.go	gocognit
-internal/core/edgecascade.go	gosec
-internal/core/errorcategory_test.go	unused
-internal/core/eventidgen_stress_test.go	gocritic
-internal/core/eventidghwm_test.go	gosec
-internal/core/eventidghwm.go	unconvert
-internal/core/eventpayloads_hqwn59_prop_helpers_test.go	unused
-internal/core/eventreg_hqwn59.go	forbidigo
-internal/core/intentlogentry_test.go	prealloc
-internal/core/kindpayload.go	cyclop
-internal/core/node_test.go	gocritic
-internal/core/node.go	cyclop
-internal/core/policydocument.go	depguard
-internal/core/policydocument.go	unused
-internal/core/policyengine_test.go	unparam
-internal/core/policyexprevaluator.go	depguard
-internal/core/proptest_uuid_helpers_test.go	unparam
-internal/core/redaction_prop_test.go	gocritic
-internal/core/redaction_prop_test.go	unparam
-internal/core/s02registrar_hka8bg45.go	gocognit
-internal/core/schemachangekind_hqwn39.go	unused
-internal/core/subsystemregistry_hqwn44_test.go	gocritic
-internal/core/trailers_test.go	exhaustive
-internal/core/transition.go	cyclop
-internal/core/verdictretrycap_rc026a.go	gocritic
-internal/core/workflow.go	cyclop
-internal/core/workflowid.go	revive
-internal/crewrun/idlereap.go	unused
-internal/daemon/agent_message_test.go	copyloopvar
-internal/daemon/agent_message_test.go	errcheck
-internal/daemon/agent_message_test.go	gosec
-internal/daemon/agent_message_test.go	unconvert
-internal/daemon/bandwidthtuner_test.go	errcheck
-internal/daemon/bandwidthtuner_test.go	gosec
-internal/daemon/bandwidthtuner_test.go	unparam
-internal/daemon/bandwidthtuner.go	gocritic
-internal/daemon/bandwidthtuner.go	nilerr
-internal/daemon/bootstate.go	cyclop
-internal/daemon/bootstate.go	gocognit
-internal/daemon/bootworkloop.go	gocognit
-internal/daemon/bootworkloop.go	gocritic
-internal/daemon/branching.go	contextcheck
-internal/daemon/branching.go	gosec
-internal/daemon/branching.go	prealloc
-internal/daemon/branching.go	unparam
-internal/daemon/brhistoryrotate.go	funlen
-internal/daemon/chbinv002_qo96c_test.go	errcheck
-internal/daemon/chbinv002_qo96c_test.go	gosec
-internal/daemon/claudelaunchspec_fixture_test.go	gosec
-internal/daemon/claudelaunchspec_fixture_test.go	unused
-internal/daemon/claudeworktreesweep.go	gocognit
-internal/daemon/claudeworktreesweep.go	gocritic
-internal/daemon/claudeworktreesweep.go	gosec
-internal/daemon/commscursor_test.go	gocritic
-internal/daemon/commscursor.go	gocognit
-internal/daemon/commsrecvhandler_nnwaa_test.go	errcheck
-internal/daemon/commsrecvhandler_nnwaa_test.go	gocritic
-internal/daemon/commsrecvhandler_nnwaa_test.go	gosec
-internal/daemon/commsrecvhandler_nnwaa.go	contextcheck
-internal/daemon/commsrecvhandler_nnwaa.go	gocognit
-internal/daemon/commsrecvhandler_nnwaa.go	prealloc
-internal/daemon/concurrencycontroller.go	gosec
-internal/daemon/crewstart.go	contextcheck
-internal/daemon/crewstart.go	gocognit
-internal/daemon/crewstart.go	gocritic
-internal/daemon/daemon_branchprotection_sul12_test.go	unused
-internal/daemon/daemon_test.go	errcheck
-internal/daemon/daemon.go	containedctx
-internal/daemon/daemon.go	contextcheck
-internal/daemon/daemon.go	gocognit
-internal/daemon/dashboardgate_test.go	gosec
-internal/daemon/dashboardgather_throughput_test.go	gocritic
-internal/daemon/dashboardgather_throughput_test.go	gosec
-internal/daemon/dashboardgather.go	contextcheck
-internal/daemon/dashboardgather.go	gocognit
-internal/daemon/dashboardgather.go	prealloc
-internal/daemon/decision_block_ev043a.go	gocritic
-internal/daemon/decisionsprojection_test.go	forbidigo
-internal/daemon/decisionsprojection_test.go	gocritic
-internal/daemon/decisionsprojection_test.go	gosec
-internal/daemon/detectorbarrier_rc020b_test.go	forbidigo
-internal/daemon/detectorbarrier_rc020b.go	forbidigo
-internal/daemon/diskcheck_hksxlb.go	gosec
-internal/daemon/diskcheck_hksxlb.go	prealloc
-internal/daemon/dot_cascade_core.go	gocognit
-internal/daemon/dot_cascade_helpers.go	gocritic
-internal/daemon/dot_cascade_helpers.go	gosec
-internal/daemon/dot_cascade_helpers.go	unused
-internal/daemon/dot_cascade_tool_injection_security_test.go	gosec
-internal/daemon/dot_gate.go	cyclop
-internal/daemon/dot_gate.go	gocognit
-internal/daemon/dot_gate.go	gosec
-internal/daemon/dot_postexit_fixture_test.go	containedctx
-internal/daemon/dot_postexit_fixture_test.go	exhaustive
-internal/daemon/draindetect_test.go	gosec
-internal/daemon/draindetect.go	gocognit
-internal/daemon/draindetect.go	revive
-internal/daemon/draindetect.go	unused
-internal/daemon/eagerfill_em063_test.go	gocritic
-internal/daemon/eagerfill_em063_test.go	gosec
-internal/daemon/eagerfill_em063_test.go	unparam
-internal/daemon/eagerfill_em063.go	exhaustive
-internal/daemon/eagerfill_em063.go	gocognit
-internal/daemon/followup_ledger_ac1_test.go	gosec
-internal/daemon/followup_ledger_ac1.go	gosec
-internal/daemon/handlerpause_9hwbw_test.go	unparam
-internal/daemon/handlerpause_account_lhxzc_test.go	errcheck
-internal/daemon/handlerpause_account_lhxzc_test.go	gosec
-internal/daemon/handlerpause_persist_m0k0a_test.go	errcheck
-internal/daemon/handlerpause_persist_m0k0a_test.go	gosec
-internal/daemon/handlerpause_persist_m0k0a.go	gocognit
-internal/daemon/handlerpause_policy_37zy8.go	unused
-internal/daemon/handlerpause_scenario_6f1uj_test.go	forbidigo
-internal/daemon/handlerpause_scenario_6f1uj_test.go	nilerr
-internal/daemon/handlerpause_sigusr1_bdvae_test.go	nilerr
-internal/daemon/harnessregistry_test.go	gosec
-internal/daemon/harnessregistry.go	funlen
-internal/daemon/harnessregistry.go	unconvert
-internal/daemon/harnessresolve_test.go	copyloopvar
-internal/daemon/hk_lfrub_dot_node_model_leak_test.go	copyloopvar
-internal/daemon/hk_lfrub_dot_pi_launch_e2e_test.go	gosec
-internal/daemon/hk_pkugu_pi_launch_e2e_test.go	gosec
-internal/daemon/hk_pkugu_pi_launch_e2e_test.go	unparam
-internal/daemon/hk_pkugu_pi_model_leak_test.go	copyloopvar
-internal/daemon/hk_ytzj2_default_harness_wiring_test.go	copyloopvar
-internal/daemon/mergetomain_hkftyvo_test.go	errcheck
-internal/daemon/mergetomain_hkftyvo_test.go	errorlint
-internal/daemon/mergetomain_hkftyvo_test.go	gosec
-internal/daemon/mergetomain_hkftyvo_test.go	unparam
-internal/daemon/mergetomain_hkftyvo_test.go	unused
-internal/daemon/mergetomain_stripruncontext_hk4je_test.go	errcheck
-internal/daemon/mergetomain_stripruncontext_hk4je_test.go	errorlint
-internal/daemon/mergetomain_stripruncontext_hk4je_test.go	gosec
-internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go	copyloopvar
-internal/daemon/moderesolve_test.go	copyloopvar
-internal/daemon/noautopull_em066_em067_test.go	errcheck
-internal/daemon/notifystream_test.go	errcheck
-internal/daemon/notifystream.go	nilerr
-internal/daemon/operatorpause_ry8q1_test.go	copyloopvar
-internal/daemon/orphansweep.go	contextcheck
-internal/daemon/orphansweep.go	gocognit
-internal/daemon/orphansweep.go	gocritic
-internal/daemon/orphansweep.go	unparam
-internal/daemon/pasteinject_resume_reseed_test.go	gocritic
-internal/daemon/pasteinject_resume_reseed_test.go	unparam
-internal/daemon/pasteinject.go	contextcheck
-internal/daemon/pasteinject.go	errorlint
-internal/daemon/pasteinject.go	gocognit
-internal/daemon/pasteinject.go	gocritic
-internal/daemon/pasteinject.go	gosec
-internal/daemon/pasteinject.go	unused
-internal/daemon/perqueuespendmeter_tigaf11.go	nilerr
-internal/daemon/pi_dgx_reasoning_test.go	gosec
-internal/daemon/pi_no_tier3_leak_test.go	gosec
-internal/daemon/pi_profile_resolve_test.go	copyloopvar
-internal/daemon/pi_toolcalls_per_provider_test.go	gosec
-internal/daemon/pi_unknown_profile_refuse_test.go	errcheck
-internal/daemon/queueonlyposture_test.go	gocritic
-internal/daemon/quiesce_test.go	gosec
-internal/daemon/quiesce_test.go	unparam
-internal/daemon/quiesce.go	contextcheck
-internal/daemon/quiesce.go	gocognit
-internal/daemon/quiesce.go	gocritic
-internal/daemon/quiesce.go	nilerr
-internal/daemon/quiesce.go	revive
-internal/daemon/reconciliationcadence_rc020a_classb_test.go	revive
-internal/daemon/reconciliationcadence_rc020a_classb_test.go	unparam
-internal/daemon/remote_substrate_b11_test.go	copyloopvar
-internal/daemon/remote_substrate_b11_test.go	gosec
-internal/daemon/restartbackoff.go	gocritic
-internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
-internal/daemon/run_session_adoption.go	gocognit
-internal/daemon/runfailed_bead_reset_s20z_test.go	errcheck
-internal/daemon/runfailed_bead_reset_s20z_test.go	revive
-internal/daemon/runinflightreconcile_hkr73qr.go	gocognit
-internal/daemon/runregistry_test.go	gocritic
-internal/daemon/runsupport.go	gocritic
-internal/daemon/sandboxgate.go	gocritic
-internal/daemon/sandboxgate.go	gosec
-internal/daemon/sandboxprofile.go	gocritic
-internal/daemon/sandboxprofile.go	revive
-internal/daemon/scenario_failing_implementer_test.go	errcheck
-internal/daemon/scenario_failing_implementer_test.go	gosec
-internal/daemon/scenario_happypath_n1_test.go	errcheck
-internal/daemon/scenario_happypath_n1_test.go	gosec
-internal/daemon/scenario_happypath_n1_test.go	unused
-internal/daemon/scenario_orphan_sweep_queue_owned_tutqk_test.go	errcheck
-internal/daemon/scenario_orphan_sweep_queue_owned_tutqk_test.go	unused
-internal/daemon/scenario_reap_a31od_test.go	errcheck
-internal/daemon/scenario_reap_a31od_test.go	gosec
-internal/daemon/scenariotest/concurrent_merge.go	gocognit
-internal/daemon/scenariotest/concurrent_merge.go	gosec
-internal/daemon/scenariotest/scenariotest.go	gocognit
-internal/daemon/scenariotest/scenariotest.go	gosec
-internal/daemon/scheduler.go	gocritic
-internal/daemon/scheduletick_test.go	errcheck
-internal/daemon/scheduletick.go	contextcheck
-internal/daemon/scheduletick.go	noctx
-internal/daemon/smoke_test.go	gosec
-internal/daemon/socket_operatorpause_ry8q1_test.go	errcheck
-internal/daemon/socket_operatorpause_ry8q1_test.go	gocritic
-internal/daemon/socket_operatorpause_ry8q1_test.go	unparam
-internal/daemon/socket_queue_test.go	copyloopvar
-internal/daemon/socket_queue_test.go	gocritic
-internal/daemon/spendmeter_hkk3f8g.go	nilerr
-internal/daemon/spendmeter_hkk3f8g.go	revive
-internal/daemon/srt_pi_egress_e2e_test.go	errcheck
-internal/daemon/srt_pi_egress_e2e_test.go	gosec
-internal/daemon/stalewatch_wkzlc_test.go	nilerr
-internal/daemon/stalewatch.go	gocognit
-internal/daemon/stalewatch.go	unparam
-internal/daemon/standardgraph_sync_test.go	gocritic
-internal/daemon/standardgraph_sync_test.go	gosec
-internal/daemon/standardgraph.go	forbidigo
-internal/daemon/statedisk.go	exhaustive
-internal/daemon/stategather.go	exhaustive
-internal/daemon/statetypes.go	revive
-internal/daemon/sub_workflow_runner_hkoe6_test.go	errcheck
-internal/daemon/sub_workflow_runner_hkoe6_test.go	exhaustive
-internal/daemon/sub_workflow_runner_hkoe6_test.go	gosec
-internal/daemon/sub_workflow_runner_hkoe6_test.go	unparam
-internal/daemon/sub_workflow_runner_hkoe6_test.go	unused
-internal/daemon/sub_workflow_runner.go	funlen
-internal/daemon/subscribe_test.go	copyloopvar
-internal/daemon/subscribe_test.go	errcheck
-internal/daemon/subscribe_test.go	gocritic
-internal/daemon/subscribe_test.go	gosec
-internal/daemon/subscribe.go	contextcheck
-internal/daemon/subscribe.go	gocognit
-internal/daemon/subscribe.go	gocritic
-internal/daemon/subscribe.go	unused
-internal/daemon/survive_shutdown_run_resources_test.go	unparam
-internal/daemon/survive_shutdown_run_resources_test.go	unused
-internal/daemon/t2_scenarios_test.go	errcheck
-internal/daemon/t2_scenarios_test.go	gocritic
-internal/daemon/t2_scenarios_test.go	gosec
-internal/daemon/t2_scenarios_test.go	unused
-internal/daemon/t3_exploratory_test.go	errcheck
-internal/daemon/t3_exploratory_test.go	gocritic
-internal/daemon/t3_exploratory_test.go	gosec
-internal/daemon/t3_exploratory_test.go	unused
-internal/daemon/t4_exploratory_test.go	gocritic
-internal/daemon/t4_exploratory_test.go	revive
-internal/daemon/t4_exploratory_test.go	unused
-internal/daemon/t6_scale_shape_test.go	gocritic
-internal/daemon/t6_scale_shape_test.go	gosec
-internal/daemon/t6_scale_shape_test.go	unused
-internal/daemon/testhelpers_adapterregistry_test.go	errcheck
-internal/daemon/tmuxsubstrate_nosession_hkyaj_test.go	errcheck
-internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go	errcheck
-internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go	prealloc
-internal/daemon/tmuxsubstrate.go	forbidigo
-internal/daemon/tmuxsubstrate.go	gocognit
-internal/daemon/tmuxsubstrate.go	gocritic
-internal/daemon/tmuxsubstrate.go	unused
-internal/daemon/verdictexecutor_rc025a_test.go	errcheck
-internal/daemon/verdictexecutor_rc025a_test.go	gosec
-internal/daemon/verdictexecutor_rc025a.go	gocognit
-internal/daemon/verdictexecutor_rc025a.go	gosec
-internal/daemon/walcheckpoint.go	nilerr
-internal/daemon/walcheckpoint.go	unparam
-internal/daemon/walcheckpoint.go	unused
-internal/daemon/workloop_fidelity_fixture_wl01_test.go	unused
-internal/daemon/workloop_handlerpause_qxtbq_test.go	errcheck
-internal/daemon/workloop_hc056_reopen_test.go	errcheck
-internal/daemon/workloop_operatorpause_ry8q1_test.go	errcheck
-internal/daemon/workloop_precommit_factory_test.go	errorlint
-internal/daemon/workloop_precommit_factory_test.go	gocritic
-internal/daemon/workloop_precommit_factory_test.go	gosec
-internal/daemon/workloop_qcancel_ppt32_test.go	errcheck
-internal/daemon/workloop_test.go	errcheck
-internal/daemon/workloop_test.go	gosec
-internal/daemon/workloop.go	contextcheck
-internal/daemon/workloop.go	gocritic
-internal/daemon/workloop.go	nakedret
-internal/daemon/workloop.go	unused
-internal/daemon/z8ekfixtures_test.go	unused
-internal/dashboard/types.go	revive
-internal/digest/builder.go	funlen
-internal/digest/builder.go	gocognit
-internal/digest/sentinelconfig.go	gocognit
-internal/digest/types.go	revive
-internal/eventbus/busimpl_test.go	forbidigo
-internal/eventbus/busimpl.go	gocognit
-internal/eventbus/jsonlwriter.go	gocognit
-internal/goalstate/store.go	gosec
-internal/handler/claudehandler_chb006_024.go	gosec
-internal/handler/gate_dispatch.go	nilerr
-internal/handler/handler.go	forbidigo
-internal/handlercontract/adapterregistry_hc012.go	forbidigo
-internal/handlercontract/harnessregistry.go	forbidigo
-internal/handlercontract/launchspec_hc006.go	gocognit
-internal/handlercontract/lifecycle/types.go	revive
-internal/handlercontract/watcher_hc011.go	forbidigo
-internal/handlercontract/watcher_hc011.go	gocognit
-internal/harness/claude/launchspec.go	gocognit
-internal/harness/codex/walguard.go	gocognit
-internal/harness/codex/walguard.go	gosec
-internal/harness/pi/billingguard.go	gosec
-internal/harness/pi/launchspec.go	gocognit
-internal/harness/pi/launchspec.go	gosec
-internal/harness/pi/ndjsonparser.go	gocognit
-internal/hookrelay/hookrelay_test.go	unparam
-internal/hookrelay/hookrelay.go	gocognit
-internal/hooksystem/dispatcher.go	forbidigo
-internal/keeper/awaitack.go	gocognit
-internal/keeper/awaitack.go	gosec
-internal/keeper/cycle.go	gocognit
-internal/keeper/heartbeat.go	gocognit
-internal/keeper/tmuxresolve.go	gocognit
-internal/keeper/watcher.go	cyclop
-internal/keeper/watcher.go	gocognit
-internal/keeper/watcher.go	gocritic
-internal/lifecycle/agentwatcherreap.go	cyclop
-internal/lifecycle/agentwatcherreap.go	gocognit
-internal/lifecycle/clifixture_test.go	unused
-internal/lifecycle/orphansweep.go	gocognit
-internal/lifecycle/orphansweep.go	gosec
-internal/lifecycle/orphansweepbeads.go	gocognit
-internal/lifecycle/orphansweepbr.go	gocognit
-internal/lifecycle/pidfile.go	gocognit
-internal/lifecycle/startup_pl005_qm002.go	gocognit
-internal/lifecycle/startupstate_plinv003.go	forbidigo
-internal/lifecycle/testfixture_test.go	unused
-internal/lifecycle/tmux/orphanwindow.go	gocognit
-internal/lifecycle/tmux/runner.go	gosec
-internal/lifecycle/tmux/subcommand.go	gocognit
-internal/lifecycle/verdictretrycap_rc026a.go	gosec
-internal/presence/presence.go	gocognit
-internal/projectconfig/projectconfig.go	cyclop
-internal/projectconfig/projectconfig.go	gocognit
-internal/projectconfig/projectconfig.go	noctx
-internal/projectconfig/projectconfig.go	unused
-internal/queue/append.go	gocognit
-internal/queue/cli/cancel.go	gocognit
-internal/queue/cli/dryrun.go	cyclop
-internal/queue/cli/helpers.go	cyclop
-internal/queue/cli/submit.go	cyclop
-internal/queue/persistence.go	unused
-internal/queue/rpc.go	gocognit
-internal/queue/rpc.go	revive
-internal/queue/state.go	gocognit
-internal/queue/transaction_recovery_test.go	gocritic
-internal/queue/transaction_recovery_test.go	gosec
-internal/queue/transaction_store.go	revive
-internal/queue/transaction.go	cyclop
-internal/queue/transaction.go	gosec
-internal/queue/types.go	revive
-internal/queue/validation.go	gocognit
-internal/queue/validation.go	revive
-internal/queuewiring/store_failed_recovery_test.go	gocritic
-internal/queuewiring/store_failed_recovery_test.go	gosec
-internal/queuewiring/store.go	gocognit
-internal/release/manifest.go	revive
-internal/runloop/dispatchsegment.go	revive
-internal/runloop/reviewerharness_hkiv748.go	revive
-internal/runloop/runshell.go	revive
-internal/runloop/scenariogate_test.go	gosec
-internal/runloop/scenariogate_test.go	testifylint
-internal/runloop/scenariogate.go	gosec
-internal/runloop/scenariogate.go	unused
-internal/runloop/waitsocketgrace.go	revive
-internal/runmerge/fixture_test.go	gosec
-internal/runmerge/fixture_test.go	unused
-internal/runmerge/fmtgate.go	gosec
-internal/runmerge/integrationartifacts_test.go	gosec
-internal/runmerge/merge.go	gosec
-internal/runmerge/reviewtrailers.go	gosec
-internal/runmerge/worktree.go	contextcheck
-internal/scenario/fixturebootstrap.go	revive
-internal/scenario/fixtureroot.go	revive
-internal/scenario/orchdrive.go	contextcheck
-internal/scenario/postsuiteleaksensor.go	nilerr
-internal/scenario/resultemit.go	revive
-internal/scenario/scenariofile.go	revive
-internal/scenario/scenarioresult.go	revive
-internal/schedule/store_test.go	gosec
-internal/sentinel/signals_test.go	gosec
-internal/sessiondata/sessiondata.go	gocognit
-internal/supervise/daemon_watchdog.go	gocognit
-internal/supervise/supervisor_watchdog_test.go	gosec
-internal/supervise/supervisor_watchdog.go	gocognit
-internal/supervise/supervisor.go	gocognit
-internal/supervise/supervisor.go	gosec
-internal/transport/tunnel/tunnel.go	gocritic
-internal/usage/usage.go	gocognit
-internal/watch/escalation_we3_test.go	gosec
-internal/watch/escalation_we3_test.go	unparam
-internal/watch/ledger_we2_test.go	gosec
-internal/watch/ledger_we2_test.go	unparam
-internal/watch/ledger.go	gosec
-internal/watch/ledger.go	revive
-internal/workers/breach.go	forbidigo
-internal/workers/health.go	forbidigo
-internal/workers/offline.go	forbidigo
-internal/workers/report_poll.go	gocognit
-internal/workers/telemetry.go	forbidigo
-internal/workers/telemetry.go	gocognit
-internal/workers/tunnelfailed.go	forbidigo
-internal/workers/workers.go	gosec
-internal/workflow/context_updates.go	cyclop
-internal/workflow/dot/parser.go	gocognit
-internal/workflow/dot/validator.go	gocognit
-internal/workflow/params_graph.go	gocognit
-internal/workflow/params_graph.go	prealloc
-internal/workflow/sub_workflow_hk_n51yp_test.go	forbidigo
-internal/workspace/claudetrust_wm040b.go	forbidigo
-internal/workspace/claudetrust_wm040b.go	gocognit
-internal/workspace/conflictresolution_wm024_test.go	forbidigo
-internal/workspace/createworktree.go	gocognit
-internal/workspace/diffhash.go	gosec
-internal/workspace/errors.go	cyclop
-internal/workspace/leaselock.go	revive
-internal/workspace/lookupworkspace.go	revive
-internal/workspace/orphansweep.go	contextcheck
-internal/workspace/remotematerialize.go	contextcheck
-internal/workspace/workspace.go	revive
-scripts/queue-status-writer-ratchet.go	forbidigo
-scripts/queue-status-writer-ratchet.go	gocognit
-test/twins/fail-immediately/main.go	unused
-tools/lintreport/main.go	errcheck
-tools/lintreport/main.go	gosec
-tools/lintreport/main.go	prealloc
-tools/testreport/main.go	errcheck
-tools/testreport/main.go	gocritic
-tools/testreport/main.go	prealloc
+000ac20d46a56df7e9fa05cdef5964c4a5ec5867e8c153388c049424fa10e43f	gocritic	# internal/daemon/pasteinject.go:186 probeLivenessOrSSHFail
+00128d6adee519d7be28622d08f1551315464289e14169d6a6bd7534470c1a01	gocognit	# cmd/harmonik/migrate_rc_prefix_cmd.go:22 runMigrateRCPrefix
+002a6a6a40aeec126b7ffc5d7fe0e2bb5b8f73153b88b7e6f9bbf4c19a8267e3	gosec	# internal/queue/transaction_recovery_test.go:253 TestRecoverFailedReplaceIntent_ExactReceiptCleansIntent
+004bf505aaafa79c4f2dd212d31bdabf03bc311b6f06bb0062d4530b3b3952fa	gosec	# internal/daemon/scenario_reap_a31od_test.go:88 reapScenInitBrWithInProgress
+0053d65350e1a9cbc7685c26e71685f818b505753cae9eb84b036efeeb13f88d	contextcheck	# internal/runmerge/worktree.go:30 RemoveWorktree
+00606db5f7b677598ff83e145b48621a63495a9605e410b4dd9bb3e598dad89d	gosec	# cmd/harmonik/write_review_verdict_cmd_test.go:167 TestWriteReviewVerdict_BlockValid
+00e0d1ff8cddff2a6bbf72b68cc50cbea3e6b218fe195681047ab0b6ff9824fc	errcheck	# internal/daemon/subscribe_test.go:384 subscribeTestDial
+00ff73fc3ae867bd662be69bc48d16fe66476b6515f69c98511b34992f84d882	errcheck	# internal/daemon/subscribe_test.go:709 TestSubscribeHub_CapacityExceeded
+01813b446973858784233321018df52aaacdbf70ec1e126da8f1cda1f621e794	gosec	# internal/daemon/bandwidthtuner_test.go:96 TestBandwidthTuner_tick_FullHeadroom
+01cbc5e03fb7ef39df387d12b26fa689d5474d8dfb95070398801583b8f9c731	gocognit	# cmd/harmonik/supervise/stop.go:27 RunStop
+01dd4025be6f886a1db48f87234a23edbe8e4aeca8e05143873112a6fa619e0f	errcheck	# internal/daemon/subscribe_test.go:361 subscribeTestStartSocketHub
+01f4efa48e7a9cc3006c73b0ee657b1d0bc60c73ae92e63491557fbe57ce3a6b	revive	# internal/queue/types.go:527 QueueStatusResponse
+022d7602f6c7a8c20b1ab4b93e1ec30834e753b35a5c97d1c1e79240975d478d	errcheck	# internal/daemon/notifystream_test.go:166 TestNotifyStream_StateCleanupAfterCompletion
+02a9cdc6b78d008a9881408cf7ccc6474aa6da8e1d75e9e13dc28d174e5c2448	errcheck	# cmd/harmonik/testsupport_daemon_test.go:27 newProjectFixture
+033f8e0848894d909b7bb2f3d7bbc0fc65c81630e7bb951efc9a2360a469bb33	gocognit	# internal/daemon/commscursor.go:87 CursorStore.Advance
+03428858cf7a61fc0e3c21a016179f74f60743bdfdf6fa9176fc9996b9f89f8f	gocognit	# internal/queue/validation.go:261 Validate
+03cc95eb19e6c9d4bf5246318a67014fc0024cb10a760951dc152cbda2baecef	errcheck	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:210 TestSpawnStagger_ZeroDisablesStagger
+03dc66998e34275d16de572bc486b787ed141effa1b52ed9a6d82ea9adf16a55	cyclop	# cmd/harmonik/promote_cmd.go:154 parsePromoteFlags
+0431cb38fde64124cc6d202bfd727ae9926f30840aa3adfcc676f095021de233	gocritic	# cmd/harmonik/beadsmerge.go:178 mergeBeadRows
+0475db0267c3c789b811cb088da20c5a9689496e581ec47e5ec62db10725e131	forbidigo	# internal/eventbus/busimpl_test.go:960 TestBusImplWithSink_ObserverPanicRecordedToSink
+0495a1402c9639ce2a4cfe5cffec23c30e16e9d2038725f749b42a4c9b48686f	gocritic	# internal/daemon/eagerfill_em063_test.go:216 runSimpleCmd
+04cf2297f377dd80137bac89ad350b81af3e165009133b43487d53040df11ddc	gocognit	# internal/workflow/dot/validator.go:368 checkCycleBounds
+04fc369ea862acba105980fe57b8badd65178e071eba262b5cbd6cd49a7c1fec	unused	# internal/runloop/scenariogate.go:221 changedFilesSince
+0506e80bebf89cbb622495ad68ec88fc5ee747a4a446613c6383a371c9698ccc	unused	# internal/brcli/adapter_test.go:28 brcliFixtureEchoArgsBinary
+059fc8528e753394259afb6ddcb6a335166e930d170bbd9d878fd4b1b2eae719	errcheck	# internal/daemon/mergetomain_stripruncontext_hk4je_test.go:121 TestStripRunContext_NeverLandsOnMain
+0640e076a097fe0f4f4a3cf9279b95b4f417a0f2e3213a207ba02a9250268f7f	gosec	# internal/daemon/dot_gate.go:426 readGateVerdict
+064a74721596764282b3c3e747a03536b1a4ca77e8efc0299b6f5a8509e3022f	forbidigo	# internal/lifecycle/startupstate_plinv003.go:89 StartupState.AssertOrphanSweepComplete
+06803016808f61b47382fc65d2783514eda99a4e568ff3068a9e9c08b35a769d	gocognit	# internal/daemon/tmuxsubstrate.go:1731 perRunSubstrate.SpawnWindow
+0699ac9167d589dae7e2b748f41dd2574f710cb2993673588c16606d6fa96c06	gocognit	# internal/daemon/draindetect.go:206 DrainDetector.GatherDrainFacts
+06ced531560ccc092a52ba2bbf2e4523bb95a01119297c4553132e11d483ce05	gosec	# internal/daemon/remote_substrate_b11_test.go:59 exitCodeCmdFunc
+07008795b3f81bd94c888c918cf3c797766c06c4cfe89828324e3d2b0cb5fb48	gocognit	# internal/branching/branching.go:142 parse
+073ee6691a6fd8d1a716bc6a3b3b266212019b730935a69419fbc56b0f6ac7e4	gosec	# internal/supervise/supervisor_watchdog_test.go:239 TestSupervisorWatchdog_ReviveCounterResets
+075f46853d30106a46543e0a42455a145082dbd61aab8933fc97e0d4bd48e667	cyclop	# internal/lifecycle/agentwatcherreap.go:64 matchesAgentFollowWatcher
+078d6aaba50154fb9184b00628a6132da57d1c09a984e539dfe5ed9af539e671	unused	# internal/daemon/workloop.go:769 emitImplPresence
+07ca1686a6f7468eeffcbb8e4f12c63fbac825a4ab7f25904d755a0d34988468	unconvert	# internal/daemon/agent_message_test.go:290 TestMatchAgentMessage_NonAgentMessageBypass
+082bed8adfe5f5a03c09529a10452b8954a02388307aa1b50ce47ae8dcbd166e	errcheck	# internal/daemon/sub_workflow_runner_hkoe6_test.go:505 TestSubWorkflowRunner_SingleRunID
+085b5728f924619a2ccc66d52b0735cabaaddad37f4a5b24340350244e2b4fa1	gosec	# internal/daemon/subscribe_test.go:632 TestSubscribe_ReplayEmptyLog
+08fb5e1b1ca896b4cfb3d81249ffedf5e0f8d9d22b43b189977e092cd8ae889a	unused	# internal/daemon/survive_shutdown_run_resources_test.go:88 surviveRunAdapter.killsReachingTmux
+09023eada6f43bd8660c4de085a10c82c98403f997e8a1222607c80635c63597	errcheck	# internal/daemon/scheduletick_test.go:26 fakeCrewStarter.HandleCrewStart
+0916547832a7401350e075c30e382030e9a342f567ddd1ebc5d660cdb69d19b5	gocognit	# cmd/harmonik/comms.go:1736 runCommsRecvWait
+094409e59bec643bb6f70450f8a1cfac61ffa8347e2855cfee663ad3d07bd259	unused	# internal/daemon/pasteinject.go:940 worktreeActivityFingerprint
+0948a406cb5d17aa195f27f16144f56f100ca034f41b5ed992f422363065fe09	nilerr	# internal/daemon/notifystream.go:143 NotifyStreamConsumer.handleRunCompleted
+094e7144859a9c5ed48c5b0c454bc749ad47fdee942e780b302dd59639c1a4da	gocognit	# cmd/harmonik/decisions.go:50 runDecisionsRaiseSubcommand
+0981d886bf4033e11ddf50dc41119f3bfdb9b84ebdaf766a51047e1c7df63f8e	unparam	# internal/apptap/tap_test.go:38 tapFixtureRunTap
+09cb5737a222b57c4935027162e0512b8a6235bb8f2568193b07fc633527a627	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:94 TestCommsRecv_DirectedMessage
+0a5cdb3d48495ebd54250de40aabf4c6dd485f80a1681b5a49a5c9c4787320bb	gocognit	# internal/harness/claude/launchspec.go:43 BuildLaunchSpec
+0a74596b557e9de890a8382f063b196f5b7a89675bd7ad3364c27919d4dd6819	errorlint	# internal/daemon/mergetomain_hkftyvo_test.go:232 mergeToMainCommittingFactory
+0a7c8663e67196eeb9b351d40af2111fe1570d75a9e0dc18774d51b2c6b6f170	gocognit	# cmd/harmonik/supervise/pause.go:84 sendOperatorOp
+0a820b3b75e9601df5cb7dd1729956753f6f8b6812488fd873ae8ae49751cd4a	gocognit	# cmd/harmonik/comms.go:509 runCommsLogSubcommand
+0ae7fe36d111df0530f4c19c73b1731f5a421863fba2c5b1ff3598fed01d8be4	gosec	# internal/watch/ledger_we2_test.go:72 readCursorFile
+0b55523f213a0be2a5b04c77296148e555f1e8c3d6ed5ca2fa4d299cb6716051	unparam	# internal/daemon/bandwidthtuner_test.go:23 writeTestJSONL
+0bd1bde8bf0a1cbef66fbb86f8561d2b78233c7d142085e0c533a3584cdfadda	prealloc	# internal/daemon/diskcheck_hksxlb.go:63 stalePaths
+0bf1602d8ac1fdb66808ad24c0fad882512a6a8c106278047998fd05eb710112	gosec	# internal/daemon/pasteinject.go:1018 ReadReviewerBudgetSentinel
+0bfafa794259aefb46d7bf86b91cb0be4180cd7886959f232bf124eb4cfa98a7	gocognit	# internal/lifecycle/orphansweep.go:281 SweepOrphanHandlers
+0ce9f7885cc478b7215e67f4c4271f289012ea36b10f16839af16aa9e41d5869	errcheck	# cmd/harmonik/confirm_verdict_test.go:20 startFakeVerdictDaemon
+0d0bc0ff3b1a6008df5da9f5af0ee0cf00c3eb8683d80d848b108ba6d3cc46c8	gocognit	# internal/daemon/stalewatch.go:644 StaleWatcher.checkRun
+0d1fcd79526eea31d03b39ff41be0af6481793aef0958be10c9b41999ea9c09b	errcheck	# internal/daemon/subscribe_test.go:621 TestSubscribe_ReplayEmptyLog
+0d2bc940e74497b12f41083fc789cc8ec32f00ec5147d68ac4aaeef7714b20d3	gosec	# internal/daemon/draindetect_test.go:583 TestGatherDrainFacts_WorktreePathsPopulated
+0d514c1c9437a4a7e6f304a6141c11950649056a4b0546e197159c5c899eb0c8	copyloopvar	# internal/daemon/hk_lfrub_dot_node_model_leak_test.go:64 TestDotNodeModelLeak_NoPinInheritsRunLevel
+0de0d1ecccd670a82a50fefe3305f8db5ef7fea9e23926983fb1beaaf5aad33c	errcheck	# tools/testreport/main.go:90 run
+0df8c9a66268e4ff1b15fef3f608d75511643402ccd53b5b068abc2c77c1eace	errcheck	# evaltasks/eval-cli-kv/kvcli.go:110 cmdGet
+0e3721a9690626161523c366b3ddd4364e579cd421ed10be128ca3c2c651cf31	errcheck	# internal/daemon/tmuxsubstrate_nosession_hkyaj_test.go:198 TestNoSession_SlotReleasedOnHardFail
+0ebd8b667d28405f745751ac6e6e52842a50a040a62178222105105519b3cd76	errcheck	# internal/daemon/workloop_operatorpause_ry8q1_test.go:79 TestOperatorPause_BrReadyPath_HoldOnPaused
+0ef80f8a09230f6bea211b9f39d334d3e35edba27737775e3aaaa1f177be6975	revive	# internal/core/agentevents_hqwn59.go:761 LivenessHaltPayload.Valid
+0f155202e7c1f6fa70e8987518f4f88dcd28e7d15f5f12f80206ecd184485161	cyclop	# cmd/harmonik/release_cmd.go:85 parseReleaseFlags
+0f49d6044a4845a5cc7963d30856fd9a161a640d23256eee7214504c1fa41418	gocritic	# internal/daemon/standardgraph_sync_test.go:88 TestNoReviewBeadDotEmbedValidAndInSync
+0f6cf9e841a7bc12d40eb8455c9c3d031195e45847267ba2134caf55cad2d349	nilerr	# internal/daemon/notifystream.go:119 NotifyStreamConsumer.handleRunStarted
+0fbfbb5858424d6d7f5eae452c0d505ba6787dd4c52066629dc04ede91607897	unused	# internal/core/eventpayloads_hqwn59_prop_helpers_test.go:63 allAgentRateLimitStatuses
+10430f7bab50a203cc6656cb898e4dd046473b389fefafb3cae2acb86e918666	unused	# internal/runmerge/fixture_test.go:87 discardingEmitter.EmitWithRunID
+104a5305baeb0d32dd1f6b5c8b67d7919c5cff92599c18dcf5f4ce518c6bdbd1	errcheck	# internal/daemon/scenario_reap_a31od_test.go:282 TestScenario_Reap_BootOrphanSweepCounts
+10802de0371dbc25a4f91c27566101d894fd8d2988290519773fb27b962998dd	revive	# internal/release/manifest.go:33 ReleaseEntry
+10ade760a37e14f49b6d7e927939deba68385ef40dbfbec09d63b3665341e162	errcheck	# internal/daemon/notifystream_test.go:53 TestNotifyStream_SuccessWithCommit
+1116d6f2a9a4e003b8c36d0a4b44d7a32216ed0ae901590bc5bbce2c8b413704	gocritic	# cmd/harmonik/sleepwake.go:289 sendSleepWakeRequest
+11222ed65f9e0fb536ca6cf2b01cee5590f41e17888f8a84372c6adf2496476e	forbidigo	# internal/core/detectorharness_rc010_test.go:516 TestRC020b_PanicSuspendedDetectorResultsInFallThrough
+1159378aa781106aeeb34d332d6627f3bebc9f6589ec450be35075fc70f563fd	gosec	# internal/daemon/branching.go:395 squashLanding
+1177876f0b051ece359c22e8e149c28ca949ac1c8cdcc3e7c5152dc7d6c0d266	prealloc	# internal/core/intentlogentry_test.go:440 entries
+11b4e9f43d8526fb938ccb1779048ace6279eac184b2345620b0b20b95606845	gocognit	# internal/eventbus/jsonlwriter.go:363 Filter
+11d7fdb8d8586dcba3fd3f77d7fc5a41a0a7440f71bdb087c5f40bde4dfaa9f0	revive	# internal/core/agentevents_hqwn59.go:770 StaleOpenBeadDetectedPayload.Valid
+1253f684ec607e3cdbe797cf3872acf15b21164aa2089d9c0d94a978c50655a0	nilerr	# internal/daemon/stalewatch_wkzlc_test.go:341 TestStaleWatch_LastEventTypeTracked
+12c850accca74d51ad56bf29e71896bee84a0297610820e2f6098742f8e66ba9	unused	# internal/daemon/workloop_fidelity_fixture_wl01_test.go:49 wl01DuplicateSingleOwnerEffect
+12d14ecfbd9cddda3198a16760a5639afd03637030e103d2a4cf1eda516f5bbc	unparam	# internal/daemon/pasteinject_resume_reseed_test.go:45 prrRecorder.counts
+12ed41dff4224b9feba89287a2e32cac1a4d0633e55432a64e730662238a15b0	gocritic	# cmd/harmonik/decisions_coverage_test.go:29 TestDecisionsResolvePaths
+132b101681a57559c1cb47b95e73cb3bf46ab9f28c22745bc05caa91da27ec71	gocritic	# internal/core/subsystemregistry_hqwn44_test.go:120 TestSubsystemRegistry
+13bd3591cd113f7f7516e0ff676e2a33a7cfbad147502494311381d1a509de1f	testifylint	# internal/runloop/scenariogate_test.go:32 killedExitError
+13d39f16793a88f384f5368ad8683d942a8fdef479de94fb5b1729280d27ab35	gocognit	# internal/eventbus/busimpl.go:346 busImpl.Emit
+14b9aea6fa3cc5d4bff1b72475bc5012bcc483e032a7893c0171cf395c48dea3	gocognit	# internal/brcli/ready.go:92 Adapter.readyWithArgs
+15722e6f4754b8bc2733b7b1e3c0267a47ea551b0a9baa3dd0f2640788275eca	gosec	# internal/daemon/quiesce_test.go:507 TestReconcileOrphanedMarkersFailsafeWakes
+159ddf4779bf6dc87d290d8a258dbcdef1732739a7895cb789964e26459984a6	revive	# internal/daemon/runfailed_bead_reset_s20z_test.go:49 newRfs20zLedger_s20z
+15a4ce4b32d9cb55eb0d74dd8bdbac6daf65f7a88eef316ed5146d552c3e3162	gocognit	# internal/workspace/claudetrust_wm040b.go:205 ensureWorktreeTrustAt
+168f41fb3bb0bdce2284d4bff87b73e97736d3981c682905f4877073eae78b3c	nilerr	# internal/daemon/bandwidthtuner.go:74 bandwidthTunerBackstop.handle
+1740d238fd937da36993f0df09626d492984af79fa91e4211e2e86e6808126cf	nilerr	# internal/daemon/perqueuespendmeter_tigaf11.go:97 PerQueueSpendMeter.handleBudgetAccrual
+17975b4eab9fdd25c994b2002d2d9f389fea6e2295d82fba2081e28fac662aa2	containedctx	# internal/daemon/dot_postexit_fixture_test.go:110 dotFixtureOpts
+17dd4993e0e8fc097115d1784ab2d37cdbb71ec84635dfe97f7ea46238f3235e	cyclop	# internal/queue/transaction.go:866 validateFailedRecoveryReceiptBinding
+18a5debc4616228e61778b35dfcbc5734638832ac847fd541b6e42d52cf99712	gosec	# internal/daemon/mergetomain_stripruncontext_hk4je_test.go:44 stripRunCtxWorktreeFactory
+192421fef13dc4c48451c0836245bfcd8287824ebcb2ea123afcf3ef2814412e	gocognit	# internal/digest/builder.go:265 buildPendingDecisions
+1975d4466f386c4a835655324be1a17d6d837f7f78f79c564fbb8bae836d7965	forbidigo	# internal/hooksystem/dispatcher.go:104 Dispatcher.WithCognition
+1a42399a1b5e34835434e06afaa84d73d41c2b10689cc0cf55cf469ce93869c6	errcheck	# internal/daemon/noautopull_em066_em067_test.go:92 TestScenario_NoAutoPull_ZeroRunsStarted_EM066
+1aaa557cfab7f76798d57c530e4394aad74ecbc449e6e51cbfeeb2b88047a0a2	forbidigo	# internal/handlercontract/harnessregistry.go:56 HarnessRegistry.Register
+1abfa110804433082735a18476cf4dd2389295331fda4f98cd5825f0d01c4a57	errcheck	# cmd/harmonik/confirm_verdict_test.go:43 startFakeVerdictDaemon
+1ae3d56092b56f7d2f9b66814fbd3e0de70cd84e40ae95effc9ef6c531618d53	unused	# internal/core/budgetcounterstate_hka8bg25.go:81 budgetCounterState.CheckDispatch
+1ae6a1284c76569f780d2bb8bf72daaa3d88afac8e3415549591677b6aef10e6	errcheck	# internal/daemon/scenario_orphan_sweep_queue_owned_tutqk_test.go:181 TestScenario_OrphanSweep_QueueOwnedBeadReset
+1af9820673ae22561dacea29c6491b9462a8c7267a43a53f5194bbd073a30dd1	unused	# internal/lifecycle/clifixture_test.go:10 cliFixtureSentinelErr.Error
+1b768e0d879381e196429d1bbae105ebe017fa1bc44ad6ae81a722460efef627	unused	# internal/daemon/workloop_fidelity_fixture_wl01_test.go:23 wl01Trace.snapshot
+1bdf6bc264c013c3381abc4a8da6232c980d4744994855120e9f64a2da65491d	cyclop	# cmd/harmonik/greenlight_cmd.go:14 runGreenlightSubcommand
+1c389a97aca2df80f963b9a679a001e797d1134ce03cf87e6f6781744d50633b	revive	# internal/queue/types.go:506 QueueStatusRequest
+1c4fb405aee4bc9891b7de24a95e084f483de54b935e93713fc0372e474c4294	gocognit	# cmd/harmonik/dashboard_cmd.go:125 printDashboardHuman
+1c7a183206e3f43f62530f6612569fb5a534ad51038d968724c0d0b91886a9a3	errcheck	# internal/daemon/agent_message_test.go:274 TestMatchAgentMessage_NonAgentMessageBypass
+1cb829ed4ded510db04f48f70bebc66bd56d2df4045bbe2839e6e3e1c2251611	unused	# internal/core/errorcategory_test.go:8 errorCategoryFixture
+1d0b72b17dc707787e13d331987515dd28cd26353e60a955cc136a1cf4a7de79	gocognit	# internal/lifecycle/startup_pl005_qm002.go:645 reapOrphanWorktreesFromArchives
+1d2d0f04095babc4712b4b7e5a7a2e1f52edb4b6c6f1cfa30f1db0dc05373dcb	contextcheck	# internal/daemon/workloop.go:332 beadRunOne
+1d56db5d8bde51fb3071afc45c2120ab651d87f81236ca12ed4170b1d63ba562	errcheck	# internal/daemon/workloop_test.go:906 TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency
+1d66fd85a4c942776bdac5251f6932dd51bc742dbe8a515610a99dede1ec0429	errcheck	# internal/daemon/bandwidthtuner_test.go:306 TestBandwidthTunerBackstop_EndToEndBusDelivery
+1dc292f5d3b929b814b027d07b304113577a23a09c36f5bd9c33c5075a1278c4	errcheck	# internal/daemon/notifystream_test.go:140 TestNotifyStream_MergeStatusPendingIgnored
+1ddbce41bd319a657e0291126d85ab2fa879c911aacd3f7f2db6048b3d047ef3	gocritic	# internal/daemon/commscursor_test.go:20 orderedV7Pair
+1de58c2df1b2d3e54847c1bff42cc511b3ef16ad570d5f2ba801b59c147c8203	nilerr	# internal/daemon/walcheckpoint.go:63 runWALCheckpointPreflight
+1e291a6764a9aeed875c52cd30b1acd5db47fd6036db94ea2280dd3c5dca848d	cyclop	# internal/queue/transaction.go:501 prepareReplacementWithIDs
+1f6c51872711cb5e3901b4a4fad4e8529a421bc205d481a0963b76c47d2b1302	unused	# internal/daemon/t4_exploratory_test.go:626 orderRecorder
+1f95069fb43aa14310096f97f7b97eecc8e4978c9c5e125046b76e029d938d1f	nilerr	# internal/daemon/notifystream.go:130 NotifyStreamConsumer.handleMergeStatus
+200f438e0f3eeacadb8d59b01a4ff0e925331efbfbf565807ee6c2b2100f5d35	errcheck	# evaltasks/eval-cli-kv/kvcli.go:128 cmdDel
+20393ade49915efb3a13ce54bb8d99d350bb3af36f51787093fa075a250b2d8a	cyclop	# internal/core/transition.go:161 Transition.Valid
+206e658a2e0ef3c6f764dd51b795f6b19aefb7ea3fbecc7fadb9926064d49d06	unparam	# internal/daemon/sub_workflow_runner_hkoe6_test.go:60 swWriteDotFile
+20d13a32f6ffcae09536f518d24cdca35a6ead5812f93f53944fc00ea79d16ec	gocognit	# internal/daemon/dot_gate.go:520 pasteInjectQuitOnGateFile
+212ac17ee48bdb2c7acf1619e5ce6f0ef28904c5f31b8bd8f1681733b51cc698	errcheck	# tools/testreport/main.go:153 report
+2132520202a4c14386ac1cf6798c9df97973f4e97e44f1eef981953aff59f969	gosec	# internal/daemon/pi_dgx_reasoning_test.go:131 TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON
+2165102197862338f5e6cd0bece6f672c9a2ae5d28d6935cd309e92fe4550b84	gocognit	# internal/eventbus/busimpl.go:969 busImpl.checkSyncAcyclicity
+21b2963a17d2ee42c22cb1076e4cc766b3e214f1f0e3ae5cd4e8b5b62e79ef81	gosec	# internal/daemon/claudeworktreesweep.go:167 SweepClaudeWorktrees
+227471d9978b1e2c95851edeadeea71ab9fd8030b0742a533096b9f497fd0b28	gosec	# internal/daemon/bandwidthtuner_test.go:26 writeTestJSONL
+227a7b3ed2446e155d4421efc47f29790254dc82679035dd3d91a8553a070a19	gocognit	# internal/eventbus/busimpl.go:1202 replayAndDetectTrunc
+229873b7535171af6c9545de108ffa77e4e0e8c9957cdc010936a9d91d52cc83	errcheck	# internal/daemon/notifystream_test.go:75 TestNotifyStream_SuccessNoCommit
+229bce67ac0e9103840b42e5cc72f21c9a8fcfb4118b674130e29b423c35d95c	errcheck	# internal/daemon/socket_operatorpause_ry8q1_test.go:36 socketOpSend
+22b796b04b2fcabc80c36771914db72b23124171472f1c8f687bce923860c2e1	contextcheck	# internal/daemon/quiesce.go:656 QuiesceArbiter.HandleDaemonSleep
+22c30f854471ea62817a614ab13b693554bb4038ab855446377a5dd869a00eb6	gocognit	# internal/lifecycle/agentwatcherreap.go:122 ReapPriorAgentFollowWatchers
+22f545feeb5e99e90d04dcd7b4e59899347548f0c320b786a26529b99c55c38a	gocognit	# cmd/harmonik/supervise/ps.go:48 RunPs
+231d506122f48dd5909ba02618769c483cba88f69efe13824c2375ad61fc4020	gocognit	# internal/sessiondata/sessiondata.go:155 Collect
+2340671190f6a2badbf3fec92106b893cde84b30d52dd474da569c1c552d6684	errcheck	# internal/daemon/subscribe_test.go:492 TestSubscribe_ReplaySinceEventID
+24431afaad5c65109fe4a9bd06ea1cdd81c4c55d4572dc5d461c785eb29c5ed6	gocognit	# internal/keeper/tmuxresolve.go:200 recentTranscriptTurn
+2508b903c9cb44c8132df82543907c23cafdb0cb6a0dba47eeff4a76b6d5b28a	gocritic	# internal/daemon/t4_exploratory_test.go:585 TestT4_ConcurrentLoops
+251fd543b0f06eb0b7b91a04ecf0890531db3503fe2e61d9c831b9c241d98b6e	contextcheck	# internal/workspace/remotematerialize.go:475 PrepareIsolatedClaudeConfigDirVia
+2541ea9be81ae7f231613c4a51a4237ec74d66f1d36445304172deafbcea42a6	gosec	# internal/daemon/sub_workflow_runner_hkoe6_test.go:63 swWriteDotFile
+256d93e23be159ee69e8b42a9ae2cdf7d72def5176644beae62239062ab870fe	forbidigo	# internal/core/detectorharness_rc010_test.go:463 TestRC020b_PanicRecoveryFallsThroughToNextDetector
+25848b416f64e404ba10d5f74ca07f737fe59735b4349210ddb07c1aad09f18c	errcheck	# cmd/harmonik/supervise/coverage_drain_test.go:218 shortSocket
+259db346ef600d544b3ca529ba1215f51bfa1c65eefd8afa2998b7eabda8e9b5	unparam	# internal/daemon/branching.go:385 squashLanding
+25c406e0c05a6363e4c0c43f95271417c1ed31250f0e5ffbfe7e572d91e33fd0	gocognit	# internal/core/edgecascade.go:92 SelectNextEdge
+261c96cadda5f41fe8d24a0c3a7f0625db2624757b02686c2bb981943eec3d56	errcheck	# internal/daemon/pi_unknown_profile_refuse_test.go:65 hkppsNoLaunchSealedAdapterRegistry
+262f745bca751af57756edb1f1e3e35e33a2824b3df375e5023eea3b64248851	unparam	# internal/daemon/socket_operatorpause_ry8q1_test.go:12 socketOpFixtureStartListenerFull
+26368959b996f69d42acaf7fdde105a4a23321e0626926301e4f45bea60ce251	gocognit	# internal/daemon/handlerpause_persist_m0k0a.go:236 snapshotsToDisk
+26c55e1c787dc436cdd47a91949e92c92241539e89e7fd0515a033e40877aa20	gocritic	# internal/daemon/runsupport.go:47 computeDiffHash
+26f00a25fa990ab906c38ebb1f08ebd76133e9cbf05f84a52a18f2de914717e4	errcheck	# internal/daemon/bandwidthtuner_test.go:237 TestBandwidthTunerBackstop_ClearedIgnored
+277e3678df3a6ff7732ffebbb0856138bdf8ffe2ebfb6880c396ef7ed6029dfc	gosec	# internal/daemon/handlerpause_persist_m0k0a_test.go:273 TestHandlerPausePersist_LiveHandlerNotSeeded
+278e524f96f2c8736fdab636e08a704a3589d3cc16415d1dbebf87fa388031ba	unused	# internal/lifecycle/testfixture_test.go:190 plFixtureIsPidLive
+27ce4be6b96e3d164150549e4e6778bbcc8d27232cd9c7b97ec9417e894355d0	gosec	# internal/daemon/eagerfill_em063_test.go:726 TestStagedBeadGenerator_MultiBeadSameClass_DifferentLedgerKeys
+27d052795cbd81d942e24b6ff694b9708c82ac4bbbafc9aa382a0e57c45d1cc3	unused	# internal/daemon/t3_exploratory_test.go:125 t3FixtureMarkBeadReady
+289e334cffa0cdb712ecb4660ce04607aa62d493efd9197fae9aab9a9b70d2c5	unused	# internal/crewrun/idlereap.go:225 CrewIdleReaper.reap
+29188702ef8f1e98819282b4098530efbb2ff3559e5206e5ece81f5cf66788f9	revive	# internal/queue/types.go:492 QueueAppendResponse
+292b5b39a7a3073f1a4903d245909b49b9858a31be56ecd95a3f102e21a79b89	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:946 updateHookCommand
+2959936d2eea91b1833a13e8b2c82a24d45f33f61a3cf4c92c28335fb4914549	errcheck	# internal/daemon/agent_message_test.go:201 TestMatchAgentMessage_SharedTable
+2a2cdb83d3008f93f2557a15fa7bca37870a0d7a357d4d33dac8a10b52b86142	gocognit	# internal/daemon/quiesce.go:236 QuiesceArbiter.reconcileOrphanedMarkers
+2a459310bcc04a4d50f3595718948b960d253c99a70fffb6f1ef2df4c56911fd	gocognit	# internal/supervise/supervisor.go:194 Supervisor.Run
+2a51ab88d6ac9b9a23604cb408693c7d794e877cec16275c1f9216b6aa5e2c3b	revive	# internal/daemon/spendmeter_hkk3f8g.go:35 DaemonSpendMeter
+2aae152185085520721d2d759dd486c6b28633a3bae9241e6e4fb8c62a252a21	gocritic	# internal/daemon/t3_exploratory_test.go:599 TestT3_SignalBeforeHandlerLaunch
+2af06c1875815abaea18ee18f8c80b66f5ede1cfe158eafe8c0858182b6f0872	gosec	# internal/daemon/verdictexecutor_rc025a_test.go:34 ve025aGitInit
+2b1625c66f4766f7183c96e7b0e454c84afbedc51c3efd288e14aaafbf326116	gocritic	# internal/daemon/dot_cascade_helpers.go:658 incrementCapIfBounded
+2b72d55a3855ce10060f244f38e4c5b7b18aa0901977608e0bc629da4edb4da9	gosec	# internal/daemon/scenario_happypath_n1_test.go:66 scenarioN1GitRepo
+2bddfc6804c87240c6e1f76d25f113bd0768eebd602021001c7db847691fa34f	forbidigo	# internal/daemon/decisionsprojection_test.go:16 dprojEvent
+2be3fde21a722713a6b051113a74e9be6dcf0507d3d585d0f8b3661d567f1a9c	unused	# internal/daemon/pasteinject.go:144 commandMatchesLiveAgentVia
+2c40671798e9670d5d266161dee5fadba281dd0ce8265b3773d2838e32d8ae39	errcheck	# internal/daemon/agent_message_test.go:126 TestMatchAgentMessage_SharedTable
+2c97e660264731951a7f81bec91030bf62d63d6b0b385316cc9392e2fb52efc1	gosec	# evaltasks/eval-cli-kv/kvcli.go:62 loadStore
+2c9d796463ca02eefd3fab78b1e644e292f1d2acfe2fbe7fd28449654f430ce9	forbidigo	# internal/daemon/tmuxsubstrate.go:735 NewTmuxSubstrate
+2ce1d540561686779825ef6462e84c6e7ed5505806ad76d88401af4f8ae2688f	revive	# internal/digest/types.go:59 DigestJSON
+2d32032d131102251b0a647de92d95d5e4f3eb61dce9a68abf65bbcdd39f3805	gocognit	# cmd/harmonik/sync_assets_cmd.go:373 applyManagedRegion
+2d5956097ff4ca190a8ffeec58dd4a42043e1b442203682c2143cbce6f006a12	gocritic	# internal/daemon/scheduler.go:1219 scheduleAwareIdleWait
+2db19bcd2764516b6a8840296e00898c7e681c158d52708f9c9af93641edfde4	errcheck	# evaltasks/eval-cli-kv/kvcli.go:90 cmdSet
+2dd7f281d5810b3979b3ae1aa72b55bdab7496016fa25557088ab070b737990b	gocognit	# cmd/harmonik/supervise/start.go:45 RunStart
+2e08d0179169f50bd8ba732a17e0ccdd31c1157058802876aac4c2d4d921b216	revive	# internal/queue/transaction_store.go:14 QueueSnapshot
+2e1f1f4651711fa2ba7cb4116c75ec6ae33dd0a2e12d744c9a90641b0d767bb5	gosec	# cmd/harmonik-twin-session/main_test.go:28 readHandoff
+2ed3126351550600297cb3f2cc930cc1e28ec5e3312e3c58f71d41222a0d9e3a	gosec	# internal/daemon/verdictexecutor_rc025a.go:260 commitVerdictExecuted
+2ef50214ebbf7679b3b6add6d72c3e958a6b1eff7b6c180ee1bf476556e63e06	errcheck	# internal/daemon/scenario_failing_implementer_test.go:266 TestScenario_FailingImplementer_RunFailed
+2ef6e16de8b91d92a6a9840474704db8167f6cf3f1bad4de790e779b0c17cfee	gosec	# internal/daemon/claudelaunchspec_fixture_test.go:12 claudeLaunchSpecFixtureWorkspace
+2f026dc3418d19203c2b073a15bf976c721172b5c51b56ec83ecf4cede3a7a10	gosec	# internal/runloop/scenariogate.go:229 changedFilesSinceVia
+2f1341a8da3f29a0b188ae5e305b2ab7543ec134ec69c8678111aeb3e7795903	prealloc	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:201 sessions
+2fdd49c3c5e17cfedb91c2a7bec8025c199e5d1b7d0e6da813411f57d1d6b63d	gocritic	# internal/daemon/t3_exploratory_test.go:209 TestT3_DoubleInvocation
+307b0ec016cc0505d2c16c2bd6fc7043eaf69447e4d9bb69294a4eb55e0470b0	errcheck	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:165 TestSpawnStagger_ContextCancelDuringStagger
+309b4c9db8ad108b116502fc6c75bcbff31c79b063bae40d47a0568438f12076	errcheck	# internal/daemon/mergetomain_hkftyvo_test.go:278 mergeToMainPayloadReason
+30aebce69cd04a81222702a1290e80892762419ef2fd25b2fce929552eeebed1	cyclop	# internal/workspace/errors.go:197 Class
+311eefc6408aacb996ef9bb7e6e3d49f13c71b63c02022efa402f4e1e284449d	errcheck	# internal/daemon/notifystream_test.go:100 TestNotifyStream_Failure
+31390074c3e9814a81cdb3a49f9d7ac1c7ec9944e5f915546bdb819eab34da96	gocritic	# evaltasks/eval-bugfix-rate-limiter/limiter_test.go:25 cap
+3188d7a221001de76334830b2139b92a9384ad2747219e70fa38ac38e1572eb6	gosec	# internal/daemon/dashboardgather_throughput_test.go:60 writeLanesJSON
+319e4a037d9c2b173b4b391b1b443b1d85af3ffaeb6934185bcf79e66c0c91bb	errcheck	# internal/daemon/mergetomain_hkftyvo_test.go:602 TestMergeToMain_NonFFReopen
+320d1bb5c8a2a9580606f3ced9a38e180948600b5face42699df9a41e03c3329	gocritic	# internal/daemon/scheduler.go:1426 evaluateGroupAdvanceWithOutcome
+322718b1abeca1223aaf6c162e3e20efd349a288ad60b2f55d2881c430dd3ac4	contextcheck	# internal/daemon/subscribe.go:253 SubscribeHub.HandleSubscribe
+327292fa4b2607407c1ce4fda1a90b42ace5b5e8d161a1583211e3be42102584	gosec	# internal/daemon/hk_lfrub_dot_pi_launch_e2e_test.go:72 TestHkLfrubDotPiLaunchPath_PinScopedOut_RoutesToOrnith
+32b9e323aa4401320f2aeb815423f3a55e4d8ce46fad2d0432d5048a41304575	gocritic	# cmd/harmonik/keeper_cmd.go:496 resolveKeeperAgent
+32d3d719d2bb51edb564dd6cbdfbe3f273770f3423d5593e3700f6ade8043755	nakedret	# internal/daemon/workloop.go:389 beadRunOne
+3304807d0fc3f2d888949766556b8e9b0f329fe55a0b765bd3039aa7702fa311	gocognit	# cmd/harmonik/start.go:44 runStartWith
+33064edff571769e52040a95e524f16e110f8dddc2dfcbf953c9a951271f4ea9	gocognit	# internal/harness/pi/launchspec.go:178 BuildLaunchSpec
+331cbecaf0b487dfa241124519feeb1903d06acc6abfd7bb0ebc9b362a8ade5f	unconvert	# internal/core/eventidghwm.go:97 maxInt64
+3332cac17336615da1ea858f499074492cd51577e233af41c218198ba3dfb2a9	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:273 TestCommsRecv_NonAgentMessageEventsSkipped
+3334711bfe6f2b7285b301280aa2c2d2d50e0b3521e57f9b429782c6413d4a7e	gocognit	# cmd/harmonik/reconcile.go:49 runReconcileSubcommandIO
+33df6491ca03104ca1c6bc959aab818e48498d28474b17bdb0df480b022e7798	gocritic	# cmd/harmonik/confirm_verdict.go:161 sendVerdictOverrideRequest
+3464bdbf8b92a02db1c3af6c258feb15efd4b28ee0ae0d0464276a0e290931c5	unused	# internal/lifecycle/clifixture_test.go:12 errCLIFixtureNtmUnavailable
+34757f0c6e4607fe0bf59b2f639ef7ed4953ab978d3d2da272272c59212461c9	unused	# internal/daemon/workloop_fidelity_fixture_wl01_test.go:64 wl01AssertTrace
+347dcefbe77c24c03f0b7a1c0926dcf3024aa1df9aa6bf41112c7598545ccf51	noctx	# cmd/harmonik/supervise/coverage_drain_test.go:245 TestSendOperatorOp_Acked
+3497a9637b0d29b50c6d436dd05399a86a8c9334ab943fd92a98783f5c9c4d31	forbidigo	# internal/workflow/sub_workflow_hk_n51yp_test.go:24 subwfFixturePin
+34b455f033e25dec7476cd2722f4a0f9b7aa3ec0299d209cd55d354a3dc82605	gocognit	# scripts/queue-status-writer-ratchet.go:52 main
+35bb525c1867f43f92c3efb11327f7194bdf59db79da0b875958d740efb51ef9	errcheck	# internal/daemon/subscribe_test.go:546 TestSubscribe_ReplayTypeFilter
+35d4dcaf6906bc928cd4b369dd8d02d7f2e4658b8d8309adf1c9dd7f1e3e226e	gocognit	# cmd/harmonik-twin-claude/scriptdriver.go:221 runScript
+365ba63ce09ffdc27a59f5b0e348607a552bf8e527b951edcb03969601cd0d97	gocognit	# internal/eventbus/busimpl.go:621 busImpl.EmitAgentPresence
+369df80b8419478124e0fde66adca618d42805efe04b9f436ace93b31f30008c	gocognit	# cmd/harmonik/sentinel_cmd.go:41 runSentinelEmitTrip
+3712761a7bf7c6739b1ebd54d7a0fde5ecd2be954ac1803d1c95e297a457afe0	depguard	# internal/core/policyexprevaluator.go:9 import "github.com/expr-lang/expr"
+37314f129df53c5dc1c82f9876151037c406988aae7d0a8a3c76dc479d761a6e	gocognit	# internal/keeper/watcher.go:693 WatcherConfig.applyDefaults
+373f74d2894698a40ce371d4c63716b30caf03f5998c1c4b701633868a6518c9	cyclop	# internal/keeper/watcher.go:1462 Watcher.maybeLivePaneRecover
+374d45e46d55df8ac0a372e3caa115de1cda569bf7221f023ec865043a9b15e0	gocognit	# internal/daemon/dot_cascade_core.go:29 driveDotWorkflow
+376c7927f5584278e46494e2403fa2ef550b9fffdc02d93b86ccd952dcf37ff6	forbidigo	# internal/core/crashrecovery_rc031_test.go:394 TestRC031_CrashInsideVerdictExecutor_PanicSafetyPattern
+378b73e3b8835b4919cea9616cf13cd4c08f8edb1739c10cdda73bfad88cf351	gosec	# internal/branching/branching.go:132 Load
+37e55bf337f0ab7f11664dffc037aba0533efc83e5a3ecef59d79ecfa1395f45	gosec	# cmd/harmonik/subscribe.go:379 touchSubscribeHeartbeatFile
+38181b1c8a23725334db5536a346473a0f622e75a9394448f4c92ef1a6a6dd42	gocognit	# cmd/harmonik/sync_assets_cmd.go:439 applyContentOwned
+38385b581c43122df2a6b2b779c5dc5c848d4f1e7f365d6c1d5a1c467322f9f9	unused	# internal/crewrun/idlereap.go:74 CrewIdleReaper
+385435d7f8679ae2c9e5c7f5e5d6a75d0b0a881d8dba28dddea1a818941e6bb5	funlen	# internal/digest/builder.go:59 Build
+3868b0e36f228b340ad9a23e10fbcb5899df42a51512907527c4518299f82391	unused	# internal/daemon/z8ekfixtures_test.go:33 decodeBase64FromScript
+38d60c1fdaf4585ea4e870431626e4e52983d0ed9d593a233b219cb3d6d2b50c	errcheck	# internal/daemon/t2_scenarios_test.go:560 TestT2_RunFailedEventContainsExitCode
+38f79e5ab04b9bacbac01f56cc43f1efb073b471e34a6cd709cbeeefcd00e3f6	gocognit	# internal/lifecycle/startup_pl005_qm002.go:428 reconcileThreeWay
+39006c517c44c5be1cdeec7e24b394444f267b6ce62ab3630f4d6adbf1fcb095	gosec	# internal/daemon/diskcheck_hksxlb.go:100 runWorktreeReclaim
+390da4fa75ade1def5761fa1fcf652259fd9231a1e5c10c4f2f6b4d4c1e9ade9	revive	# internal/scenario/fixtureroot.go:55 ScenarioProjectRoot
+396be917e02237c62554c6e33d811f2a8cf437cf2d2d43b2204ab4cf97291822	errcheck	# internal/daemon/daemon_test.go:134 TestDaemonStart_PidfileBlocksSecondInvocation
+3973deb59762e5e3c16578fe228fe9049cf06fcd748d2021edf7b91b1dcd8da1	unused	# internal/daemon/dot_cascade_helpers.go:743 graphVersionOr
+39f0d3b809d558ac490a5bb0af640b54eb1c1c10be7a63788f1c4d97fa28979f	copyloopvar	# internal/daemon/agent_message_test.go:112 TestMatchAgentMessage_SharedTable
+3acbda1af2758aea7222d0d050130a67bd0e0f211b5eb28fd9b5e127c9d39cc5	gocognit	# internal/workers/telemetry.go:248 parseWorkerReport
+3ad83303dd34e46363e8b6987d0bc13f9bc9a30382c7c9820f510021c1625cc1	unparam	# internal/daemon/reconciliationcadence_rc020a_classb_test.go:58 classBStubEmitter.count
+3b333655a34dfed130125a666cd20c3a6657bc4a6f9e54d5b4893f2e191241ba	unused	# internal/runmerge/fixture_test.go:85 discardingEmitter.Emit
+3b51afec0a096352449e32f94630b20900e7cbc64090774c97a4276d74e5a87e	contextcheck	# internal/workspace/orphansweep.go:187 RemoveStaleWorktrees
+3bb4170711ae0013aebe991f3564d2f09a3d2b7f7b53d4565bb46963412ff273	gosec	# cmd/harmonik/eval_collect_hk_eval_harness_collector_test.go:391 TestRunEvalCollect_EndToEnd
+3c060cdac27d72a2def87f18c9b356a11d10602ccbc0d414b1b622cbd6e66965	gocognit	# internal/daemon/pasteinject.go:1066 pasteInjectQuitOnReviewFile
+3c5d792ae2fa90a114f658696fdbb408bd152a0f88a9b29df2fbf2278b3292f6	gosec	# cmd/harmonik/smoke_logic_test.go:268 initGitRepoWithBeadCommit
+3cea79f7f38c1ee573efb7f3d5e53ffe15090ee78b2402a9f63262d8ad831932	errcheck	# internal/daemon/noautopull_em066_em067_test.go:155 TestScenario_AutoPull_BrReadyFallbackFires_EM066
+3d56502b75e57adbf030e5a85b82cf07295bb8c716aefa1de47efa123c93586b	unused	# internal/daemon/daemon_branchprotection_sul12_test.go:14 branchProtectionFixtureDir
+3d5a8721e609384b3b300ea5d36d98bf4cc516594efd191562402b28ae6161ae	errcheck	# internal/daemon/notifystream_test.go:162 TestNotifyStream_StateCleanupAfterCompletion
+3d63cbc5336cc5a7e38718086c0d38e31e2308ad966575f4e9f372575023c409	gocognit	# internal/workers/report_poll.go:144 breachSweep
+3d8304f69d88fab50b0d29bf9a444e48bf32761606095c825a04f7a46e76bc19	revive	# evaltasks/eval-string-reverse/reverse.go:3 Reverse
+3d8b4abec8383670125fb5ec2f805e22462174f40da5292a97c6fec859b805c3	gocognit	# internal/daemon/quiesce.go:454 QuiesceArbiter.handleQueueSubmit
+3db6a7f514e957c4617de8cdd7d8666b58d152c1bc15efa48f6edf653e69348d	gocognit	# internal/daemon/claudeworktreesweep.go:89 SweepClaudeWorktrees
+3eb47d98f273115223ad237f508f9af6c3f82945fc05d5ae0193b6e18edec847	gocognit	# cmd/harmonik/supervise/logs.go:23 RunLogs
+3ed9a2a3d131aa8f9e1bcdbc3b45d5a5e123f08f5262cc55a761cd3b06b1c3c3	errcheck	# cmd/harmonik/testsupport_daemon_test.go:76 replyOnce
+3edd2771ed66a4afc3ec35df3e7af16ca8a19a98c8f83ca3f438ae51d8d36dbb	gosec	# internal/daemon/agent_message_test.go:170 TestMatchAgentMessage_SharedTable
+400fb726e666a5b99cc65ef4f60178f92d341433686d006c12b5b5fbea05abb4	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:64 TestCommsRecv_EmptyLog
+41d64b949230c18e774f39e28a731eb96ff102baba3e5191e6e2e650d126d93c	gosec	# internal/daemon/scenario_failing_implementer_test.go:94 failImplGitRepo
+421a3be6540f8d6edc54d64b33f2a2fa76b2417063086dc0e41b2f0c7a49ccfb	revive	# internal/dashboard/types.go:26 DashboardState
+4270eb33d903f202594fe2555de7438db2c4ae58eb961511ead5e121dd9e64d4	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:135 shortProjectDir
+42f1def77c0e88171afe69912f802039ce434f10b6e486b873a31bedfb0c0ac7	gocognit	# internal/daemon/run_session_adoption.go:81 adoptDeadRunSessions
+42fe6bf13f20b4e4c3c80738d20d675bd330a0df5a3eee76fc967d7a3e23f196	copyloopvar	# internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go:85 TestResolveWorkflow_SingleLabelEmitsReviewBypassed
+43039c2e33bb73f297541413309d13b3e590d3a68fb8f46b256c59d4b6fc5765	gosec	# internal/daemon/bandwidthtuner_test.go:220 TestBandwidthTunerBackstop_ClearedIgnored
+4389600b458091a62352977332df4eb65f81421bbf542ea328ac16ecae05d570	gosec	# cmd/harmonik/asset_reconcile.go:101 ReadLock
+442831e36ce64668e4cdd7b34a401b031d2adcd8de45482cde53aa44c6e39c42	gosec	# evaltasks/eval-refactor-storage/store_test.go:67 TestStoreDecoupled
+44b53845c9de442f91f7b3fef7701300165f80ff2bffe23333cf268442bf03d6	gocognit	# internal/queue/rpc.go:1041 HandlerAdapter.HandleQueueSubmit
+450079b886538a1bfcc5e6f9c46054a99d6df0481e67c6aded202e4ddec50e34	errcheck	# internal/daemon/notifystream_test.go:50 TestNotifyStream_SuccessWithCommit
+450b199192a3e800dd77925e261891f15eaaeca4b49e40b428a041d44f761e26	contextcheck	# internal/workspace/remotematerialize.go:225 EnsureWorktreeTrustVia
+456ddc868238c8da007812d443bfed8c4d9170869b39ce48da998bf5b8c34b65	gosec	# internal/daemon/t6_scale_shape_test.go:523 TestT6_LargeWorktreeBase
+461e22652078be77ec86c54c9accdc476d360096383b59abcc839dbda7a25cc6	gocognit	# internal/digest/sentinelconfig.go:313 parseSentinelConfig
+462e11d52076a5eb7f32b0e14e41bb73ed4cb35d2badf8f5b89bd8b55eee96bf	gocognit	# internal/workspace/createworktree.go:96 CreateWorktree
+4654518fabe4827cf3ccbe26d828ae66e2e715b933b73ec1ace8550f87d164fa	contextcheck	# internal/daemon/crewstart.go:217 crewHandlerImpl.HandleCrewStart
+468e2e784f315c5a5f64c473881ce05c6d04108acd2a610abebbce33236cfeea	gocritic	# internal/daemon/t3_exploratory_test.go:23 t3FixtureProjectDir
+46ac90b6cf35c0fb77fe4fe74cb4fd18e2351981a3eb7d3ffa5045477d94a72b	cyclop	# cmd/harmonik/agent.go:44 resolveAgentBriefArgs
+46cb56b92e269e5f8a7c121ba036d9c64585b3a83ac688fab290f9c85d014088	funlen	# internal/daemon/harnessregistry.go:125 buildCodexRoutedLaunchSpec
+474614e876abc0e4c6588d29f05941d5a7ffd48c73a33003344f9b868aab7e37	errcheck	# internal/daemon/mergetomain_hkftyvo_test.go:268 mergeToMainPayloadKind
+47e1d529cb0fc76a455f7be7123de88b251a94c0adae014a6e9baef36c06ec3a	gocognit	# cmd/harmonik/keeper_cmd.go:161 runKeeperSubcommand
+485aa878e14edbe47d3a8a500f90d9399a15e72da1228591bf43aa43edc110e8	forbidigo	# internal/daemon/detectorbarrier_rc020b.go:57 NewDetectorBarrier
+490076d5059b075dbee416f003017f48781c3727a8f7f8d3464e535aeada0b56	cyclop	# cmd/harmonik/supervise_cmd.go:10 runSuperviseSubcommand
+492fd28601d881ffe524b0eae9558a6c05d42fdf5db9b8c36b02fa6a29fb38b3	gocritic	# internal/keeper/watcher.go:938 Watcher
+499faee1dab916771c614a33bae090ebf721167d306007059ce8db1a9efb3647	revive	# internal/queue/types.go:630 QueueListResponse
+4a8cab7839838398c1df05491a764d720f22faba6f9620e23db7fd5b29abc0b9	revive	# internal/scenario/scenarioresult.go:67 ScenarioResult
+4a8ea9bca29c1082c3e5b999770290440cd277d3adfc88768ce2eee17445578b	errcheck	# internal/daemon/scenario_orphan_sweep_queue_owned_tutqk_test.go:183 TestScenario_OrphanSweep_QueueOwnedBeadReset
+4b0991e09d5cfe781419a03d623fefa1e867ef90b8e4d29074919c1c95237b7d	forbidigo	# internal/daemon/handlerpause_scenario_6f1uj_test.go:85 TestScenario_HandlerPause_EventTripsPolicy
+4b16d35389b46d9cef27a5004472abed305d532e42aa24c10961f8404d5c7974	forbidigo	# internal/handlercontract/adapterregistry_hc012.go:136 AdapterRegistry.RegisteredTypes
+4b454950ae8ef46124632b09087434f71731835d6a0ffa2ea07a7c9eaf782039	gocognit	# cmd/harmonik/smoke.go:310 smokeWatchSignals
+4bce85e8a3329a5d4d459e287ed0ee3b24269f46e8bdfd10ac16cff2973a2f32	gocognit	# cmd/harmonik/schedule.go:243 runScheduleList
+4c917d571afd805f913795508aa6fd6ca3a0b9191afe746a6099ff5a372040d4	errcheck	# internal/daemon/scenario_happypath_n1_test.go:230 TestScenario_HappyPath_N1
+4c98ab6d023a624b89eac82e6adb6e4864b137a97ab850a1fc26b64f82212408	cyclop	# internal/queue/transaction.go:715 DecodeCompletionReceipt
+4ca5fe0965754056cd083c95a295647a9bd14adbdf861a8d0af9db323f2fb109	cyclop	# cmd/harmonik/decisions_k4.go:294 runDecisionsAnswerSubcommand
+4cc22cd08c36cdf9b557f1be41c9b99387b61a2e8150f0399bab8d544cf01362	errcheck	# evaltasks/eval-cli-kv/kvcli.go:120 cmdDel
+4cffad525e6271a5889062c68fbe7a211598051d4cb3ca7e218c7b070e5a297b	gocognit	# internal/daemon/handlerpause_persist_m0k0a.go:165 LoadHandlerPauseState
+4d0e7f1d6ca2c2059eb0bd1221c56a20df63fe571a7e9e5adede5ba98ca32829	unused	# internal/core/budgetcounterstate_hka8bg25.go:89 budgetCounterState.RehydrateAccrual
+4d2180478f1839e8f869cef7378ff634b0b4122bb3a12ee709d90fe3c5714d2c	gosec	# tools/lintreport/main.go:219 readAllow
+4d26e232bbafca2b675b1d80df1c3da192781e40c32c087c243a9298b02e28fe	unused	# internal/daemon/survive_shutdown_run_resources_test.go:82 surviveRunAdapter.killsOnALiveContext
+4d82772992d3447327eec6a73c8e7e31e4289a0aea0db9420441e2380c61177a	gocognit	# cmd/harmonik/harness.go:107 runHarnessWithSigs
+4daadedd3e34bfaca7b7db09f4e96de30704b38d050fb61ea6f7bd96d4b506cc	errcheck	# internal/daemon/scheduletick_test.go:339 TestScheduleTick_CommandOverlapSkip
+4de02b40edf1be73bff2a74c24be8b80353ffb568d4c474f6ecb2b4894e6c3fe	errcheck	# evaltasks/eval-cli-kv/kvcli.go:144 cmdList
+4de43851970739392ed7d096c280f89361645e816b93ddde999198482faa204a	unused	# internal/core/budgetcounterstate_hka8bg25.go:3 budgetCounterState
+4e305a7905c17b7f380a12c401c861f3e2c59094d76d752a4d0f2aaa402ff8ae	gosec	# internal/daemon/mergetomain_hkftyvo_test.go:307 TestMergeToMain_SuccessPath
+4e685ec382ea64794b6d6fe91cb8af164da25928a217de511cfd2387340cd42d	gosec	# internal/daemon/dot_cascade_helpers.go:165 runAutoStatusInspection
+4e6ecc2e7d6dac5f7c278c1e452dc01273e2b7e7cb69e3305d54a400da06131f	gosec	# internal/sentinel/signals_test.go:51 appendEvent
+4e866ce5c5f8aa7f2ea1508f658ef3cfceadc1a0a3328356cb52850fbbeb0754	revive	# internal/runloop/waitsocketgrace.go:26 file scope
+4e98fb03048c93d3bb0ab5dbaa3245d959b4e989dd00b591b3b9d703c79251b4	unconvert	# internal/daemon/harnessregistry.go:117 pinnedHarnessLaunchSpecBuilder
+4eaadcb1a78e998e0fd6ea075fd9611f65607f02ba7a96989bca13238aef5a01	gosec	# internal/daemon/hk_pkugu_pi_launch_e2e_test.go:127 TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault
+4ed681b806bcfd02f0c932aa79c3c03fc371b9bd8822b714e09b162ad0e684c7	unused	# internal/daemon/sub_workflow_runner_hkoe6_test.go:48 swTestParentGraph
+4f6f486efa0a172f36dfbd245e89dfba09e27534e1c8ef87fa2905a88eb5ff81	gosec	# internal/daemon/bandwidthtuner_test.go:252 TestBandwidthTunerBackstop_ZeroRetryAfter
+4fc9b703ab0423888a4d3cfccb4669378226aafbc43e1cf8bad77221855ea080	gosec	# tools/lintreport/main.go:253 writeAllow
+504c7a543380e196ff68d02f5da6b8a5b6cbc94277ab43a49fe7906e341bcf5d	unused	# internal/daemon/subscribe.go:165 SubscribeHub
+5100a30e4b54fce491a86896200b018b33e29f02aec7db9a6dadac912ed4628d	gocritic	# cmd/harmonik/decisions_coverage_test.go:9 dcovRC
+5108ce0544c3e4af93c2dc3d9b99ffc97f166970549d72ab3bf1789839c8977a	forbidigo	# internal/daemon/detectorbarrier_rc020b_test.go:137 TestRC020b_DetectorBarrier_SuspendedDetectorSkipped
+513a3773a648f8706f5d325da8d4b303bf022c6da17b6b3ef848cd2c1bd6bff4	gocognit	# internal/keeper/heartbeat.go:42 deriveContextTokens
+518bc8ce6c8affe593c96103d88ef2f61c92394b05931899d2a437f53cfd28e3	gocritic	# internal/daemon/socket_queue_test.go:46 socketQueueFixtureStartListenerWithQH
+51afd626f3379f52e797b5d0e8a2508aa421d78b59891f3c48c336a32eba66f4	gosec	# internal/daemon/t2_scenarios_test.go:286 TestT2_MalformedNDJSON
+51d89817eb7e10f3a237937db4d35992678d1f6c7c6a0c9efd3d94f259e0726b	revive	# internal/runloop/dispatchsegment.go:26 file scope
+51e645c577a8358e9476d2106dd87690a21f9c31f69450a75e9d2eaaa32d4581	forbidigo	# scripts/queue-status-writer-ratchet.go:67 main
+51ecb5aca7a03810a1910e561fc49583930a7898558214ceda895e8fd919f7bb	gosec	# internal/daemon/subscribe_test.go:464 TestSubscribe_ReplaySinceEventID
+51fa53ed91598fb4ad5379553ac49a5d52add186de1d8bdc4dda7d961d333739	errcheck	# internal/daemon/handlerpause_persist_m0k0a_test.go:175 TestHandlerPausePersist_ForwardIncompatSchema
+524c004cb1a217692ac2599b22abee1d100631ff59420d83d9ffdebf870a9fac	gosec	# internal/daemon/eagerfill_em063_test.go:269 writeTestFile
+524e586212b7818d181035092cd0ed00f7e11788948231a6bac3b5fc978a48f1	cyclop	# internal/workflow/context_updates.go:150 jsonValueType
+534789c26ba19813fab6b14b76588312f760c70c22b35630f112bc1209f6c8d9	gosec	# internal/schedule/store_test.go:128 TestStore_AtomicWrite_NoTempLeftBehind
+5354813d6b1c1481adeeffc82e405f2e8cf631f802b83d93171b83e1dd944f89	gocritic	# cmd/harmonik/keeper_enable_doctor_cmd.go:703 runKeeperDoctor
+53733792a82b046d402e4a30923d384ed5793b313cde33206398830893c70ef2	errcheck	# internal/daemon/workloop_test.go:748 TestWorkLoop_CloseBeadError_EmitsRunFailed
+5377b5980d8be0c68608b63e396ff78590e6d36750a344ff8b1a229ee196991e	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:175 runKeeperEnable
+53acce4c568a1c1eae01cefc6c71d18c29dcafdae0c3c94875249db67dbf58aa	gosec	# internal/daemon/bandwidthtuner_test.go:111 TestBandwidthTuner_tick_HalfUsed
+53e2a34fb301febd9b947fba2f3525919f779f78f261a937671b9830fb4197c9	unparam	# cmd/harmonik/smoke.go:541 smokeCheckCommitOnBranch
+53e74252d0b1247eea128fb701c2e84c03e06b2d755526569fc3de5408101f4a	unparam	# internal/core/redaction_prop_test.go:25 genPayload
+543c9772364cae3ec30d42849b6c6f234ed035cbf07bb7669e714bc53fd313ea	gosec	# internal/daemon/draindetect_test.go:132 TestGenuineDrain_FailedArchiveFileIsStuck
+545f9a82009ff59577cadcf99cd49b41a80f2d2847b3b84fce1007f5463f175a	errcheck	# internal/daemon/srt_pi_egress_e2e_test.go:25 egressStubModelServer
+54842245536ed5a732e6b7ce8976c4ec29586f681f4c6fa28371ac9cfb95442f	gocritic	# internal/core/budgetexhaustion_rc018_test.go:125 rc018FallbackFixture
+548d01b19f139730182631c975d8f90a9c91e74ad67b5689c1e45f204a2b769d	gocritic	# cmd/harmonik/schedule.go:46 resolveScheduleStore
+54a7d9a7e45294d01b7f157fa9f133529def93403fb766a5c6325dd2554b53ec	gosec	# internal/harness/pi/launchspec.go:160 resolvePiAPIKeyValue
+54da484d0afcb6e50654792c0efa05c5538d4b87181a55dc7e3d7d74bb070aa3	gosec	# internal/daemon/eagerfill_em063_test.go:266 writeTestFile
+55022ea8ffec2d045087e3544d4307ac18854d6c1a2585c3e9cb529c9b44a1be	nilerr	# internal/daemon/notifystream.go:172 NotifyStreamConsumer.handleRunFailed
+551ad77a3ec929c5d0deff3526ff93bd8b4a6d1d0ebdfa5905caf36f630f4ada	gocognit	# cmd/harmonik/sync_assets_cmd.go:92 runSyncAssets
+5552f22b28f00bc5107a9d29606232221a5c059b9a31209004f70ea03dfed808	unused	# internal/daemon/t6_scale_shape_test.go:164 t6PollJSONLContains
+55d6790415709e4211d94a6d11f42f5bfa25050681b5a3e024d2c5984751b984	gocognit	# internal/harness/codex/walguard.go:47 cleanCodexStaleWAL
+565d31eb99c6ef25cf31825183a25c3ca67625818751110c180452b5c8607375	unparam	# internal/daemon/handlerpause_9hwbw_test.go:169 TestHandlerPauseController_ConcurrentPauseSerializes
+568192060f0b8e520c757a568cc9f80ac5d672bfe29900b6f3675b0fa03fa078	nilerr	# internal/daemon/reviewgateanomaly_hktnmjy.go:108 ReviewGateAnomalyWatcher.handleBeadClosed
+568cb1eae1c172a7cc755b77a794535fa0bc114f7c469a463b6cb650bc0ec178	errcheck	# internal/daemon/subscribe_test.go:354 subscribeTestStartSocketHub
+56c5b60ff48943ddde68f6f16582265ebb2cb37acb9cae7e3c0168c6df256faf	gocognit	# cmd/harmonik/supervise/reap.go:32 RunReap
+56d70f7b455e4205f97fcf11b2bf54c919c80941ce5b533f5545403e5f4b62a5	gosec	# internal/daemon/verdictexecutor_rc025a_test.go:405 TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit
+57012747b46361492d0336e64a2b66c59a62add035e97d480516922070e561dc	cyclop	# internal/projectconfig/projectconfig.go:1095 parseProjectConfig
+573cf2e9d3fa7d65b62291da7a4a45df20df4ddcf5e6fea36b183d8e33086808	cyclop	# cmd/harmonik/write_review_verdict_cmd.go:35 runWriteReviewVerdictSubcommand
+577da33ff9037670b962c53c909a9fc42ee280903482a63c9cc0ced4033a36ca	revive	# internal/runloop/waitsocketgrace.go:14 file scope
+57c8d470b4ed461ccaf87be69026f570818c01abd366eca460b651b621b47c35	gosec	# internal/daemon/eagerfill_em063_test.go:380 TestStagedBeadGenerator_CreatesBead
+57e88d2bd16d24cec73d34e695a6bba386ebd55fa28b2163fdc7914e6252b8c5	forbidigo	# internal/handlercontract/adapterregistry_hc012.go:65 AdapterRegistry.Register
+58388099a40aa9cf4b82199996a91cfc92be8094fecd30dd12cded2cc769de89	gocognit	# internal/daemon/scenariotest/scenariotest.go:89 CaptureEventStream
+584e50bd5671b49db84244fb58a14f68cb0a700c6c2c43655e6947a3b4625110	gocognit	# cmd/harmonik/supervise/shim.go:141 runWithSupervisor
+585b8228ed5774476804a9c3dfa8f957d4fa6d9e1f06690f58667fa0909368b6	forbidigo	# internal/handlercontract/harnessregistry.go:138 HarnessRegistry.Sealed
+58bc94d091d731009ee47bcb4aa4a99db4138df15fe6a39604ee7bb0b3c02e5a	gocognit	# cmd/harmonik/eval_report_cmd.go:59 runEvalReport
+591d5769ab10b0a6ddbb64254c3d5d902f0d597cb2b17dfdb4460d2ff3715459	gosec	# internal/daemon/handlerpause_persist_m0k0a_test.go:177 TestHandlerPausePersist_ForwardIncompatSchema
+59204855c43777225c50eadea11b7966c700dadac8ea686b9bf6ecf8fa7e4f04	unparam	# internal/daemon/survive_shutdown_run_resources_test.go:181 surviveRunLedger.beadSettled
+59542f26007acc8a450bc6e47bd09eac4aff9547722ec1958b40eb31e2118595	unparam	# internal/brcli/stderrcap_test.go:76 runWithStderrCap
+59ba7d42c770b41ea38e8aab4de1394612187b2d0309e0ecd80a3441c40c23a5	gocognit	# internal/queue/append.go:38 AppendItems
+59f8219516742228172d899feee60d865e4de14224949cede4c42d5b71e10f32	gocritic	# cmd/harmonik/decisions.go:447 decisionsDialOp
+5a803f97f57dafdf50c4d1e53305addd654c999b47f2a555f1e3d8f6ebd48df4	gocritic	# internal/daemon/t2_scenarios_test.go:24 t2FixtureProjectDir
+5add4b04e69bb2413db77ce5a2d541eba0ff0c6e08d35059b9da157961859364	errcheck	# internal/daemon/agent_message_test.go:299 TestMatchAgentMessage_NonAgentMessageBypass
+5b3cce209f39074a677575a06aa9ea46cfb89881d2380e4e9610b5e68c93cf21	errcheck	# tools/testreport/main.go:85 run
+5b9a47b121266d2d499ed04bea4a5d4da7a42dae8742c80e59a04b775fb40beb	gosec	# internal/daemon/sandboxgate.go:125 verifySandboxEngaged
+5c6a4c951c3a638e0870b008bd1ee0e0910d8a836440867c63fe7b79bc28f535	unused	# internal/daemon/scenario_happypath_n1_test.go:157 scenarioN1PollRunTerminal
+5c9b634bb6a913740cbb3797a8b830908b4face7f92d13108c928dea424cc237	forbidigo	# internal/daemon/detectorbarrier_rc020b_test.go:278 TestRC020b_DetectorBarrier_NilEmitterDoesNotPanic
+5ceeaeefb55376aeceebdf37cd6b5a5111dd034a21147c6bd6d1b6c22fbbb662	errcheck	# internal/daemon/mergetomain_hkftyvo_test.go:343 TestMergeToMain_SuccessPath
+5cf41474e5e586fb49e1f76abcd8cb831cbae174374c2bdbb9f44bdc13e9da91	contextcheck	# internal/daemon/daemon.go:834 startWithHooks
+5d45e50308317419770b8fd679a0e7561ffb3860477d1a3e8eda5c89b99e44f6	gocognit	# internal/daemon/crewstart.go:472 crewHandlerImpl.HandleCrewStop
+5dc7cf87a21201658e4d30cd88c7f4179fdf3d3392bd1c5052550298972fbabf	gocritic	# internal/daemon/workloop.go:650 resolveHEAD
+5dff8d516fb0cac69c5bc7af0e6aac4582e7b82eb3edcec78a4cffbe333d99d5	errcheck	# internal/daemon/subscribe_test.go:634 TestSubscribe_ReplayEmptyLog
+5ec38f382da6fbc95bddae5f700713d7f81f18735f16533346930bf058b86ebf	forbidigo	# internal/workers/telemetry.go:62 init
+5eccc56dd30788dfbd9cc91fde8d2532a2069e1aea76e9d31642f8ff1ae7d97b	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:309 TestCommsRecv_NoCursorStore
+5f085d899d35bb2c570d7cd80887ec111c18a52753b7f1434d4d14aa4101d4bb	unused	# internal/runmerge/fixture_test.go:83 discardingEmitter
+5f625891ee662d45786580e571d3751e060c027a8ce7b2c36a358d1c72b27e44	gocognit	# internal/daemon/verdictexecutor_rc025a.go:80 ExecuteVerdict
+5f6be9de039eb62606c7213220d248eb772a0ced82fcbdbdd9ef48fc9d829433	gosec	# cmd/harmonik/smoke_logic_test.go:89 smokeWriteBranchYAML
+5fc5a24075700125fee419db3c10c77527cc4f39bbfc94756892b38d29386d5c	revive	# internal/scenario/fixturebootstrap.go:22 ScenarioWorkspacePath
+60123696e418cf39b95acdf8be79f4984dba17aa13f231767c9140040a9107e9	gocritic	# internal/core/node_test.go:90 TestNodeValid_AllNodeTypes
+6095c0cdc70022a4f29ae13e574ad03a57153f6acab9e221b3c7ea4ef436474c	gocognit	# cmd/harmonik/schedule.go:102 runScheduleAdd
+60a7175b6201a9325d9ca854fff8baf4cf75af1b9d8c8a41d37439e9f928ed7a	depguard	# internal/core/policyexprevaluator.go:10 import "github.com/expr-lang/expr/vm"
+60b198f06626965dd56b1dd93b003233606016b2d45666d88aec8c983c15cc2f	nilerr	# internal/handler/gate_dispatch.go:120 DispatchGateNode
+60ebdad065d2394c011bba2b37a27bcd3b6ee9a145eb21442af119cae63e3e19	forbidigo	# internal/workspace/claudetrust_wm040b.go:75 defaultClaudeGlobalConfigPath
+618a1e50ff11dde2039048a48ea5f18949358bdea7c8521eef2148adb212c1ef	gosec	# internal/runmerge/reviewtrailers.go:71 AppendReviewTrailersToHEAD
+6203addda9169c9724a3c3d383ce8640cf8582baa6a99d871811993643794b07	gocognit	# internal/lifecycle/tmux/orphanwindow.go:34 SweepOrphanTmuxWindows
+62ab649398d052166cc7da0de050083256969854a228d020d0b4558875c69b2a	gocritic	# internal/daemon/runregistry_test.go:23 runregistryFixtureHandle
+62daf55b8ae48c46b61753b68c2df94ac11b46d2584694d3f5c52ea8667c6b0a	cyclop	# cmd/harmonik/sleepwake.go:24 runSleepSubcommand
+63d5ac13c58fadaedb720006dda32c3a23e69f3ab77b9d353f014aba33708a43	funlen	# internal/daemon/brhistoryrotate.go:23 runBrHistoryRotationPreflight
+63fcc7a1d6822a92aafbe7ca7bb2e8a978911a880d5cbc9e305d01e55ca1fed0	gocritic	# internal/daemon/subscribe_test.go:669 cap
+63fe17a2b91d0e877a8aa1622bce20ece7479d47147525e876d8f73f3c1e39ac	revive	# internal/runloop/runshell.go:53 file scope
+64745d2e3d2100cc8b54b89dddf5c3fc4f94826421b645fc541db6cd9ab4c062	gosec	# internal/daemon/dot_cascade_tool_injection_security_test.go:27 loadInjectionToolNode
+64b063ba686267095c4e4813aa0337914af51757bb8b07ad1e99ca06788266a4	gosec	# internal/daemon/handlerpause_account_lhxzc_test.go:224 TestAccountPause_V1BackwardsCompat
+64bb1fe3f85ed11e7d44567478e8bc2c869d13bd3657e652348f6ce0a130cbdf	gocritic	# internal/daemon/claudeworktreesweep.go:221 claudeWorktreeNameValid
+64f43ba58c86b51aa2b4db5dc272fcb8d6f15b5e0135b99689949b801d4f1636	errcheck	# internal/daemon/notifystream_test.go:97 TestNotifyStream_Failure
+6523a3cbe203b3bfdfb22fa98221b42d4efc52d1feb5adca9804e5e173473542	errcheck	# internal/daemon/mergetomain_hkftyvo_test.go:426 TestMergeToMain_SuccessPath
+6547a1069377f171b856de369aceaf4144964e07772e3350e78d466110c46c58	errcheck	# internal/daemon/agent_message_test.go:275 TestMatchAgentMessage_NonAgentMessageBypass
+655bd8b4bf08e5e3d5f6488ce6194741604a5f5287adf0aaa5e8b8e7e2282382	revive	# internal/runloop/runshell.go:68 file scope
+658693837ebe6e3bd320b9a1a0684d1aae5326c4580e6974697617f080843db9	errcheck	# internal/daemon/scheduletick_test.go:340 TestScheduleTick_CommandOverlapSkip
+65a9f04f28ba45852fdb0fc141e6b96eb7012f6cd065524138fe579637403176	gosec	# internal/daemon/bandwidthtuner_test.go:191 TestBandwidthTunerBackstop_ForwardsNotify
+66c351ae77b399eb6b5484206557f9f449a33b8a5dc599193c73771b108a672b	unused	# internal/core/budgetcounterstate_hka8bg25.go:12 newBudgetCounterState
+66f20c37e5b7d263b56696a59e211f41d6380ddac27ea21627b125f11d2dd777	gosec	# internal/lifecycle/orphansweep.go:873 fsyncDirBestEffort
+675acf1ab8a5c5b405df6d27edda2be09c6ca3b3d3f230dd0465e108ded908a5	revive	# internal/daemon/statetypes.go:11 ActivityProcessing
+67ea19370ced5a1dd14ff5124c684b17550abb1c34aef099f1edb9a218e09b33	gosec	# cmd/harmonik/harness.go:267 runHarnessWithSigs
+67f84f720d7841d77a420d7c77eb7805d977038d76cba9d3ba231fb57ba86934	copyloopvar	# internal/daemon/operatorpause_ry8q1_test.go:138 TestOperatorPauseController_ConcurrentPauseSerializes
+6813bdb57758d5f25dfe5f501b8a9df40559d37517dcf7479c6efd1b6dacab80	gosec	# internal/daemon/followup_ledger_ac1.go:19 loadFollowUpLedger
+6820627ddc17bba0121e1ef8aa42645a65ea7d142328e78a797210d0e735be21	gosec	# cmd/harmonik/write_review_verdict_cmd_test.go:42 TestWriteReviewVerdict_ApproveHappyPath
+683d178bf4d1e8fa460ede8c12913fb39f0c1116c4eb21739003f5696b855c6c	gocognit	# cmd/harmonik/promote_cmd.go:71 runPromoteSubcommand
+684fac0b6b6ae88ee68b0a8a5262209831b3526c758cf93f898e54c1fb67e3d6	contextcheck	# internal/daemon/workloop.go:551 beadRunOne
+685620bf0ede8323ea39885779fa178d2b3c10bc413476b8c9a5f199f7151730	gocritic	# cmd/harmonik/supervise/pause.go:98 sendOperatorOp
+689b2a84f38630406f7f66d9ddb074bbeba35d9ce073992b43ab8fa924d5b5ce	gocognit	# internal/daemon/dashboardgather.go:163 DashboardBuilder.readThroughput
+689df8cb12c30b8e17e2ada7f79ede98cf899f079dd6fbfa8cd34f9eb9977665	gosec	# internal/daemon/followup_ledger_ac1_test.go:84 TestLoadFollowUpLedger_SkipsMalformedLines
+689fee4e27c036755e374b9a8c1a65b6eae8a941ece6e500a5ba2a79d0ea71e3	gosec	# internal/daemon/handlerpause_account_lhxzc_test.go:173 TestAccountPause_PersistRoundTrip
+6924ef603ddaeebb9f78f91f620f63c8ad039bbdb752a9562ea2ad9e4014de4a	gosec	# internal/daemon/bandwidthtuner_test.go:337 TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner
+6ad9f56124fafad495dabecd8e1e3acbdc9210bbb8065ddc77510a49bd74c92e	gocognit	# internal/brcli/show.go:77 Adapter.ShowBead
+6ae8ed858cbcad5b4f7a90993dcd1b52665afa28d8f1dac2a46bf363685f9180	nilerr	# internal/daemon/stalewatch_wkzlc_test.go:38 staleFixtureNewBus
+6b0c619e5d75f0cc5cd9683b23e6cbaa0a16944b67cd2adb1dc11f3b4ef4a0f8	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:254 TestSendSleepWakeRequest
+6b0d6f36938c0bc41c5d0cc5157047bb51d8165a3b5d576eda98a3a9279f33f6	contextcheck	# internal/daemon/scheduletick.go:103 fireScheduledJobIfDue
+6b147fbcfb8e142ca4fcc9c1ad184c9422a3d1d101557d6c38a6d94693d1fab2	gosec	# internal/daemon/remote_substrate_b11_test.go:38 TestRSB11_IsSSHConnectionFailure_OtherExits
+6b781a6d8ebce512e40237fcb670be4b8ef9901fc125ed5ba4dc2fb35fea7807	gocritic	# cmd/harmonik/keeper_enable_doctor_cmd.go:304 runKeeperEnable
+6c120115402320bdcfb682e0d65a1e258a70be690bc964cc22317c583f36a8c3	errorlint	# internal/daemon/pasteinject.go:1294 statTaskFileVia
+6cd875f8291d94ababb7232214292b091bcb780565a27b41bc87b1aa55ea17b2	gosec	# internal/daemon/standardgraph_sync_test.go:84 TestNoReviewBeadDotEmbedValidAndInSync
+6d02ce6c2b08b77974b396ad23f773b7a7ded457ca5f166caf2353d8b37d6149	errcheck	# tools/lintreport/main.go:223 readAllow
+6d31bd130a6f420256943eb75536e05b7b82799b82f5c4f942badcc389644a17	revive	# internal/queue/types.go:683 QueueCancelResponse
+6d536daa556f4f941088b5f178865f0699c6a7e3b7889542026ea98c592b8af2	gocognit	# cmd/harmonik/decisions_k4.go:177 runDecisionsListOrShowParsed
+6de96b00709b74da60a5ee4870e5aa31060829cdbf5d89b786273bd29016661f	errcheck	# internal/daemon/testhelpers_adapterregistry_test.go:26 NewSealedAdapterRegistryForTest
+6e0303fd30c75bf0ab4f0c22c75bd8fbb5e2542019970f4f4e7f13443a5ba776	gocognit	# internal/lifecycle/startup_pl005_qm002.go:715 reconcileQueueTerminalState
+6e0f33f63fe8fdec8fbe1c78fc958005dbbfaed9466149d11d444e7d33a1dd42	gocognit	# internal/brcli/dblockretry.go:116 Adapter.runWithDBLockedRetryTimeoutKills
+6e23c103a5aed93f5f6fbf042c403c706c62fae6ceb699082351ee4c4b9b22c2	errcheck	# internal/daemon/verdictexecutor_rc025a_test.go:410 TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit
+6e3bd30dd6f5cf06e43e281d54a024d15b10031a1a399041d03b18d5b89d4286	revive	# internal/queue/validation.go:15 QueueValidationReason
+6e6759218fc4a2b2bbc0e73122c5dee587a509142a501a0719533c110bdbff45	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:215 TestSendSleepWakeRequest
+6eba51da14c52384c099d8a32810881d2744054e358ee8e9c4ff30fc52bd7e53	gosec	# cmd/harmonik/ops_monitor_cmd.go:234 runOpsMonitorInstall
+6f12e1e3630ee68c1d950a521127e649d22f6825d943069add2e1b1690091dd6	revive	# internal/scenario/scenariofile.go:145 ScenarioFile
+6f5276359ed6ee934fc6cf0cfe1d33e09fec666d75b517016b3ba0a194cb89fe	gocognit	# internal/keeper/watcher.go:1009 Watcher.Run
+6f6e8a6b9f8034e6de711f89f973102532b44cffc91be49086a3daa9e03e1978	gosec	# internal/daemon/followup_ledger_ac1.go:58 appendFollowUpLedger
+6ff454bb66f6a225bdc748f8ebae9833964401d8b73cc8cf81fe632a36d5354d	forbidigo	# internal/core/eventreg_hqwn59.go:296 mustRegister
+702ee8d75bad32811827feac02c32cce1ebf415cfcec78cf40fdcd4f9a2a1054	funlen	# cmd/harmonik-twin-claude/scenarios.go:280 scenarioRateLimit
+704265ba90e3c77af9e4f36db2b40a6b98917fda8ce985d46bac02db5d858d3f	errcheck	# internal/daemon/t2_scenarios_test.go:375 TestT2_ExitZeroNoSignal
+7063f7385a3785f05a5f55c72b224ec9580be08afe5502dfedd99a1c8442e4d1	cyclop	# internal/queue/cli/submit.go:44 RunQueueSubmit
+70b73efe497f0677475148b05306ecd9ecdf3c187920c28757f7fe2b25bf13b1	gosec	# internal/daemon/pi_toolcalls_per_provider_test.go:178 TestPiToolcallsPerProvider_TwoBeadsSameRegistry
+7147d523e8d24cf69c6f977a3c476350e0be08d769402a4475464647296a0c89	gocritic	# internal/daemon/sandboxprofile.go:208 GenerateSandboxProfile
+71722d9a500166635cbd01057bd93272f03f0f91f9f3acf7eb75d720087b056f	cyclop	# internal/queue/cli/dryrun.go:46 RunQueueDryRun
+720094cae8bfe95f063702636aff610ef5f674064ca35077fb667664438eac36	gosec	# internal/daemon/pasteinject.go:996 writeReviewerBudgetSentinel
+724db4d42b72bad84c5ef202d313a45d4b87fd233b3c7dd64611ec94f1a1ada3	unused	# internal/daemon/workloop_fidelity_fixture_wl01_test.go:29 wl01SingleOwnerEffects
+727f51eed0119afcb647d1d630b03ed824daee4eb60bca4bd6b67845ea1fb911	contextcheck	# internal/daemon/quiesce.go:731 QuiesceArbiter.wakeAllSessions
+72bf637d7c255b43673612781156f54fb6b8f7a373309a8da77efe451a4ab31e	errcheck	# internal/daemon/scenario_happypath_n1_test.go:228 TestScenario_HappyPath_N1
+734863a13c6d57397a068eab9216cebdb7ea3f18e3d9d8354471ca284da22fc8	gocognit	# cmd/harmonik/digest.go:163 printHumanDigest
+73ce77666da2392a7372cf791ac02970d254565cc74a7f00b6db862a83e90528	cyclop	# internal/daemon/bootstate.go:189 bootState.wireWatchersAndObservers
+73ecea2b22ffcc3a23ff4b00b1112deb52a81d1a9f60ac9f2c4251cceff252a5	gosec	# internal/daemon/eagerfill_em063_test.go:284 writeFakeBrScript
+7431feb92de5bc1a15059903b71a8468ef80fb0ff1a4cb8b70dd076341b13217	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:498 runKeeperDoctor
+74ab23d2c0b33cd2a2b222ec065a9f7fada832455daf03148435b9ccde4a56dc	gocognit	# internal/daemon/runinflightreconcile_hkr73qr.go:19 reconcileOrphanedRunsOnResume
+754ca683755ccde1ddbd6305fd738e66686171190151589c4d0d28221e88cb19	gocritic	# internal/daemon/scheduler.go:1387 propagateFailedDependents
+757f8ef5aa60382c7a3cf8a491a3ab82c15ddbd8950acdef8ae8acb162e5ba97	gocognit	# internal/workflow/dot/parser.go:353 dotParser.parseBody
+75c17f2c1ede228033e1453912d3ea073a4f112dfe12ba8d1156941ca9bef02a	gosec	# internal/daemon/dashboardgate_test.go:14 writeGateFile
+764cc09ed1d04eeadfc19d2423dc8e5af2b0f5f4d52f5da7467625d51f15f351	contextcheck	# internal/daemon/daemon.go:822 startWithHooks
+7680bc491d3d1503bb427dec64aba1e9079b31ef207fab0d8524285c0c0764a0	contextcheck	# internal/daemon/subscribe.go:327 SubscribeHub.HandleSubscribe
+76964fbadd9a57fba952acd594fd62966fdfc3a50ae9ffbf14b47e1630e0d351	gocognit	# internal/daemon/commsrecvhandler_nnwaa.go:127 commsSendHandlerImpl.HandleCommsRecv
+76d165b8502bd4779d0b6c4368a283a8950bd56cc39570b2d7bbacdc9fcc12dc	revive	# internal/core/workflowid.go:82 WorkflowSelectionEmbeddedDefault
+76fa724dd56d63cd6320c51a0e83a7bd9ac8d47990ce2131881a76c1dbd986f1	errchkjson	# cmd/harmonik-twin-session/main.go:302 marshalStatusJSON
+7727509bc4b7a6bb50f99d7acbe12b915719143d70ad7733ea1e64659280c186	gosec	# internal/daemon/workloop_test.go:59 workloopFixtureGitRepo
+77435f685af887ecc2e9476bff4b91e86638d49753274439e89e48b3ddf93fe7	errcheck	# evaltasks/eval-cli-kv/kvcli.go:105 cmdGet
+779d8694d5d573429ad7007f93365b87b1139b5ddebdc6dceceda4442dd80025	funlen	# internal/daemon/sub_workflow_runner.go:161 dotSubWorkflowRunner.Run
+77c3e573fc74fef6aa539805b0518e59d390e4fd7402a4c4f240e266082398b6	unused	# internal/daemon/handlerpause_policy_37zy8.go:207 runEntry
+77c5b8fbc2b712ec30dc18163c0f5daec7581e020f6402332d48b2da9b828972	copyloopvar	# internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go:169 TestResolveWorkflow_DotDefaultPreservesNonSingleLabels
+77d82c539eabdd64fbf0195a6d02d49aa30b81a33e984a5c2cc862e4ce600a9b	unused	# internal/core/budgetcounterstate_hka8bg25.go:40 budgetCounterState.Accrue
+7805a2999f73ecacf1cb88e0e407f559c30c76c3dca227b9f38da4815575f7e4	contextcheck	# internal/daemon/dashboardgather.go:66 DashboardBuilder.Build
+781d78f9c9a04426e0762b8d48df70b09366e38f4f39a133c6ee754ca831b7c1	gocognit	# internal/lifecycle/orphansweep.go:449 GCRetiredIntentsWithRedrive
+783bc79ed38ed3ae4781da512753ec0b8540cbc63c19801598222dadbb753a8e	gosec	# cmd/harmonik/keeper_enable_doctor_cmd.go:804 writeGlobalSettings
+78db85b351e508afa677d245f13c011f9db3becc5ad88c27780f8039dd3fc87a	revive	# internal/runloop/runshell.go:362 file scope
+798a876ac706c095c667eb0dd40429c5301ed4abb5e2346ccb3f23736b10712b	gocognit	# cmd/harmonik/init_cmd.go:629 provisionContextTiers
+79bb7f07576cfd765b731102d41ed57f5416e398891b3e1bdafba4ed11957595	unparam	# internal/daemon/hk_pkugu_pi_launch_e2e_test.go:18 hkpkuguE2EArgFlagValue
+79bbffb9a8923c9f5a425a69581510e00c7c74ebb37addae7abafd11f487bacb	gocritic	# internal/daemon/bootworkloop.go:181 newCoordinatorReapPort
+7a6c49e22268221ef40774ae396208ede53ab606822caa0f62f655eba3614f38	errcheck	# internal/daemon/scenario_failing_implementer_test.go:268 TestScenario_FailingImplementer_RunFailed
+7a98d5bb94b54a2a30ccecaf8485a5e52517ee0d34b485bbe636b8b35db6e422	errcheck	# internal/daemon/bandwidthtuner_test.go:404 TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner
+7b4a756556ee6cf2b3739a856738bf2baf38f143cffc049646749c5905130488	unused	# internal/daemon/claudelaunchspec_fixture_test.go:9 claudeLaunchSpecFixtureWorkspace
+7b909b36d99eabcc43f347c018e7b0830193da244c5f0e05a49ecacf4314b2db	gosec	# internal/daemon/scenariotest/concurrent_merge.go:341 rcmGitRepo
+7bcd08176aee758d8898c33f2458c302390fd33ad72d960f42b208551f5839a0	unused	# internal/core/policydocument.go:215 requiredSections
+7c16b34ec797c4d4d342f6a20079ba0fbed7ff37311d1ed77200f262d90e2343	gocognit	# internal/queue/state.go:283 ReevaluateDeferred
+7c6f1b006dc8f8bcb3e92a46367d229872191eb476777ed8afdf93fc37e36c90	errcheck	# evaltasks/eval-lru-ttl/lru_ttl.go:56 Cache.Put
+7c762414b105f9a25fc93c16d03912a4828fb9149d13fd6dd3c3cc0cb90847a4	gosec	# cmd/harmonik/captain.go:166 buildCaptainTmuxCmd
+7c891b0ebf2e9da64c4cd59f1ad1525fe4321ef0ef9df2f9f3e566644a27d78a	gocognit	# cmd/harmonik/handler.go:685 printHandlerTextEntry
+7c8be78e78fa74884324caac5c395b28cb080b3162ac90e0597bb56cab59d297	gosec	# internal/harness/pi/billingguard.go:41 piAuthIndicatesPersistentCredential
+7cdacde6beb7eca484ce3dd1d3e559ce27ce6aefa5b7bc29185481c25b918cc6	gosec	# cmd/harmonik/confirm_verdict_test.go:22 startFakeVerdictDaemon
+7d447cc777d1bd0175f63e42d5e848172d90ab81135465b3ffd7879d200708b6	gosec	# internal/daemon/verdictexecutor_rc025a.go:233 commitVerdictEmitted
+7d783dd63d660f6af94127cf38b221b0ae9eec1e1927ba6d2ba60980ef71382f	gosec	# internal/daemon/quiesce_test.go:512 TestReconcileOrphanedMarkersFailsafeWakes
+7da06f931078061acb8217c7857fc99473e9808117de4abb3ae6231b0d8d647a	gosec	# internal/daemon/commsrecvhandler_nnwaa_test.go:37 writeTestEvent
+7e7af931803361b56cbfab0e45d98bfbd58c576bc836c81b4dcfec29f587006d	forbidigo	# internal/eventbus/busimpl_test.go:1010 TestBusImplWithSink_NilSinkDoesNotPanicOnObserverPanic
+7fbdc484f50fb7b49f20942fbfd669414d74b965a0dd252d639841f0c54a5318	gocritic	# internal/daemon/pasteinject.go:161 hasAnyDirectChildOrSSHFail
+7fe858b8d0b267756eff0aee370cfc77ebb0be252a8dfa5b0d34b243a1eefe88	gocognit	# cmd/harmonik/eval_cmd.go:281 evalReadEvents
+8027e98833b9578ff472791c644c569f51779f206ce4328e228cf93ac925415e	gocritic	# cmd/harmonik/sleepwake_cmd_coverage_test.go:43 TestResolveSleepWakeSock
+802fa4bf15b6e84061f25700421c36bb0059a480a13a87fc72181315a41db222	cyclop	# internal/core/node.go:128 Node.Valid
+80a44220ad99fc2595b08e48df5a1cc3760636433b393ee5ccee8332d41fa66c	errcheck	# evaltasks/eval-lru-cache/lru.go:42 LRU.Put
+80eb412b9c6e76c8b01a0aa8717d77ca57a2861125cc5a82f174bded3d1f8540	revive	# internal/scenario/fixturebootstrap.go:125 ScenarioWorktreeRootOverride
+8161568b25e1dbc738ee22c9d8a2b4994f771a02d62de012903d40ec78cdf70a	unparam	# internal/daemon/stalewatch.go:1005 StaleWatcher.emitSilentHangTransition
+81859565ca6a3d3a0176bcaf79a01a05460b72b26078cd23aff307242a1cda03	noctx	# internal/projectconfig/projectconfig.go:1505 parseKeeperBlock
+820da47a08bbf5482fad47ee7fb2a8fba06c3927394bf29743bd1c9c1516d4fd	copyloopvar	# internal/daemon/hk_ytzj2_default_harness_wiring_test.go:29 TestDefaultHarnessWiring_FieldCarriedThroughDeps
+8278705e2ad7f0f77f689423efbf642c0fae869a9f23d88cf9292072174cf8aa	gosec	# internal/daemon/draindetect_test.go:76 emptyTestProjectDir
+82a047261c1bafacc34add4d292d361414bc3ff0379b7630c4fe8f29e7109500	unused	# internal/daemon/tmuxsubstrate.go:1362 runSessionSpawner
+82c9c60ace36936dcceeb8be913968ec8bba2fd548a44ac277dee02a459c15ea	gosec	# internal/daemon/subscribe_test.go:525 TestSubscribe_ReplaySinceEventID
+834314e0e086d7ce1610783f4b58a121ace4723b9aedee5796deefeca6e42d15	revive	# internal/daemon/sandboxprofile.go:176 GenerateSandboxProfile
+835b427d7883859c5a162a17fff69b14d32ea46a5729db2f2a11fff349554f80	gosec	# internal/daemon/branching.go:428 cherryPickLanding
+8391fde7e1434a45522e62f21009d9d8d660ce0a7cb748f8be64dc303bd7119c	errcheck	# evaltasks/eval-cli-kv/kvcli.go:56 Run
+83e3ee1d6f5ef35c3526b56a66944dc7d2efb54b5fe045fe983ff3fbd45f503e	gosec	# internal/runmerge/integrationartifacts_test.go:122 TestCleanUntrackedFiles_NoOpOnCleanWorktree
+83e9047687ac8837346f0c5182be3eea7074560d9561c213c1cacca44b0d8327	gosec	# internal/daemon/bandwidthtuner_test.go:379 TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner
+83f3bd46c8b28b9afe9c7982ace0c33267b5b6ee99525e8301ca6b1c3cb43a24	cyclop	# cmd/harmonik/crew.go:61 resolveCrewStartArgs
+83fe2b49da6f115511d1fdc3d382b456a6b5bfd65bd8e63452a24a2047ff2120	cyclop	# internal/daemon/dot_gate.go:164 executeCognitionGate
+8492c8734fd0c05a7526c7a82b1102bf0281971c228b03cc458c7ae00e99efdc	forbidigo	# internal/core/edgecascade_em042.go:120 DispatchEdge
+84c1ee063c26bcc624d25e024701a7033d779d04c996fc5eac58fdf474318bc9	gocritic	# internal/daemon/t6_scale_shape_test.go:631 min
+84f8c2d8dc867e7083e6f9ad00bd4fdf9c35a217a678353d373203049ba926df	gocritic	# internal/daemon/sandboxprofile.go:220 GenerateSandboxProfile
+85386c059543cd52f1f87e674845719095e50dda245000279566219889985ca4	errcheck	# internal/daemon/chbinv002_qo96c_test.go:211 TestCHBINV002_SessionContainsExactlyOneTerminalEvent
+85aa025bb7a709c3325b9f88a22837fb62716d5631307f28671473877f3839aa	errcheck	# internal/daemon/notifystream_test.go:143 TestNotifyStream_MergeStatusPendingIgnored
+85d480e40d611f34249a8654a3938c92796e9eb693d950c1b90c09f961a725b0	prealloc	# internal/workflow/params_graph.go:164 verbatim
+85e82d0febdf28c92d909fb4cc2d3c0767a86e02d915509ed92ba0ef2aed7fc5	gocognit	# internal/keeper/awaitack.go:65 AwaitAck
+85f174472dd4f04f393da69fb62873dd9e6333b9f8410e3d7947509c4f078d7d	gocritic	# internal/queue/transaction_recovery_test.go:145 TestWriteReplacement_FailedRecoveryWritesBoundReceipt
+869a80b9d7a0e6348d315035ce42ee910c277d240eccd3eda912b007e6c9b9fa	exhaustive	# internal/daemon/stategather.go:189 LiveStateBuilder.buildQueues
+86a7ccd5b318cdf85eabb21be2fec4ea56362ec5f27ccf8fc4b5c77d7290dd06	errcheck	# internal/daemon/t3_exploratory_test.go:523 TestT3_StaleWorktreeOrphanSweep
+86b66e2b1f58de3627d5742ef25d69b6c6faf430451922e4ff026593a6372e33	forbidigo	# internal/workers/offline.go:32 init
+86f843b3f3e47231221eb3f581b3c77607c8761dbb17ed45fe07863d1a57321c	nilerr	# internal/daemon/handlerpause_sigusr1_bdvae_test.go:39 srSetup
+873880800dbd5a7df0defdd41869b76c2f23e3617163dd55723e5728b19652c3	gocognit	# cmd/harmonik/main.go:150 run
+8777f36a1d6deabb2718365002d1494d3a3a9e75a42a230aa6e8d844d11a6421	revive	# internal/handlercontract/lifecycle/types.go:16 LifecycleState
+87f0d6abcf9ef9b81090d1d1853a598cc05071112373f7320e1438cb0f7e1f47	gocognit	# internal/eventbus/jsonlwriter.go:290 ScanAfter
+87fb73f69c2eb5968c295e2791c2d7bbfdf101502083db4167bf1c484ad68e89	errcheck	# internal/daemon/t2_scenarios_test.go:159 TestT2_NonZeroExit
+87ffd4cac5cb47b32fd11f3ed2b99a5f12a8045041f2938bb825dddc4c181eb1	gocognit	# cmd/harmonik/comms.go:1440 runCommsRecvFollowIO
+881ebd98bf7d684c0e62096e4ab193480d081503b0169f5f995985964096c4c8	gocritic	# internal/daemon/orphansweep.go:476 removeStaleSentinel
+889eec0073e5172425c882185f0a4dcde894d40fc13d2f402e5fb1e00faffe15	gocritic	# internal/daemon/t3_exploratory_test.go:514 TestT3_StaleWorktreeOrphanSweep
+88ca74977818796818f081b39bf988ef394dbe03b402453f94ba9311e84887d3	gosec	# internal/daemon/dashboardgather_throughput_test.go:36 TestReadThroughput_EmptyFile
+8a22eec708d10c8747b83ce6e4f2b2e5beba0da349ef1303b09af486445f33af	gocognit	# cmd/harmonik/handler.go:491 runHandlerStatus
+8a338ec14fa7391877b4ab428f0f0ac52891ba2e3cef3ae619d4274b8e233639	errcheck	# internal/daemon/subscribe_test.go:542 TestSubscribe_ReplayTypeFilter
+8a7637574777ead79a0a936e8a73a0c71f7c15e493d25601a57e48fc8a4fe967	cyclop	# cmd/harmonik/veto_verdict.go:81 runVetoVerdictSubcommand
+8a86d389e56778089acf4ac57382b489a77c828538825cdbf40d88de6b90e5db	gocognit	# cmd/harmonik/supervise/assetskew.go:133 maybeAutoApply
+8a953112381054dbd71c7e825b046f45151fab03c4850216e116e7bd5c1d7ae7	gocognit	# internal/presence/presence.go:157 ComputeRegistry
+8b07067913081206d990cfe192621f7b87142eb9a042ebe147367d88ac212d42	revive	# internal/core/agentevents_hqwn59.go:756 LivenessHaltPayload
+8b339d26f24cb6a2eb828e05d2db233397331933a2a306b8518b495c470c8adb	gosec	# internal/daemon/dashboardgather_throughput_test.go:63 writeLanesJSON
+8b49f96b0a5dac80b90faf7d319069d99cd3e84465ad67b22a4a62af9a93d64d	errcheck	# cmd/harmonik/supervise/coverage_drain_test.go:260 TestSendOperatorOp_Acked
+8b533f3566bca5a7c20125ee16815d1a02e3f1ca4237537c67bc9668e13ad98c	revive	# internal/workspace/leaselock.go:194 WorkspaceLocalEventsPath
+8b5feb57b3c8e53ce6aff719c646e3b26f0ce65ab9011d10b43dc964390577d4	gosec	# internal/daemon/scenariotest/scenariotest.go:557 WriteReviewLoopWorkflowDot
+8bc5662b7eae3c4ba325be4fafe670adbf9a1ec06260c683a62f75ba8cd120d4	unused	# internal/crewrun/idlereap.go:212 CrewIdleReaper.crewIsPersistent
+8c118d9dbf97ea4006657e27800261eeca27e3a2ee5471bc0e1410395b1c1195	containedctx	# internal/daemon/daemon.go:324 Config
+8ca61c7ce31fd9ffa389e9a4c3b494f6700e1744a3586b8fe89d099828b71643	gosec	# cmd/harmonik/ops_monitor_cmd.go:331 runOpsMonitorStatus
+8cc23fd7ada351b851ca3c7647f3b8327a684df2be7da04a6d112d6d19aa9920	gocognit	# cmd/harmonik/init_cmd.go:528 provisionSkills
+8d10162a8fffd4686c6c8fc51fa1ac48be95b69fdfb63ab66a72e66709b03fe0	errcheck	# internal/daemon/agent_message_test.go:300 TestMatchAgentMessage_NonAgentMessageBypass
+8d4db30fb1d04ad6fd8e330cc5c0ea903b5378d86059c1a538740f59dc8dc41d	revive	# internal/queue/types.go:594 QueueSummary
+8e061187e725f88eec9ae7d3ce8feea22bb8de02b209f9c9621cf884eb0ed748	gosec	# cmd/harmonik/write_review_verdict_cmd_test.go:73 TestWriteReviewVerdict_FlagsParsedTrimmedAndCompacted
+8e26cad200efc3d72ddda91054e1a63f06f022d1f60ba83128f595900519087f	gocognit	# internal/workflow/dot/parser.go:580 buildNode
+8ea95bd6b76c36a40d0640c82705c580b3d86d6ff995ee66bf788efea6d91a8e	revive	# evaltasks/eval-string-reverse/reverse.go:1 file scope
+8eac202cddecd0154f1828f412f732d38a3cb8cd7deb5436ec71908c3fce8b3d	gocognit	# cmd/harmonik/harness.go:640 harnessDiscoverScenarios
+8ec15719f00da1c45ad04c830fc5aca197aa930ff30351e74a0127473a203b7a	gosec	# internal/daemon/eagerfill_em063_test.go:293 writeFakeBrArgScript
+8f32acbd2b2545eddb49d8b05b6c800dc43d3f9261314d3adf8026baa63e191a	cyclop	# internal/codexdigitaltwin/twin.go:129 frameToEvent
+8f9b3d5307ed5fb3a688a91418916cefa530ac9feba345826de0d250b021cf34	contextcheck	# internal/daemon/workloop.go:604 productionWorktreeFactory
+8ff2e3b0690675de0c4dcab46ab0103c2f383b0a851079f59ddf27ab611333ef	revive	# internal/workspace/lookupworkspace.go:19 WorkspaceRef
+8ffc0966e66ac5607a2d8891262e033a674b7266231dee5fd1d3a73ee9517f8c	cyclop	# internal/core/kindpayload.go:39 KindPayload.ValidForKind
+9002a8ed448d603ce23a910919d9683f78f3b6e1b4a4466ea7835856ce2a07f3	unconvert	# internal/daemon/agent_message_test.go:192 TestMatchAgentMessage_SharedTable
+9034a2571612db2098a958957c69e8f279304883df147c126cb2bb7f51924a90	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:238 TestSendSleepWakeRequest
+9055037ec296a5e3b69438375e322e4015e5c39c72e0369f6d017e503cd9e42d	gosec	# internal/daemon/chbinv002_qo96c_test.go:65 chbInv002FixtureProjectDir
+906155b0bab4b6445f9b26d3dc722298280e7b0c60d57a48c1088693369643c7	gocognit	# internal/eventbus/busimpl.go:1122 busImpl.DeadLetterReplay
+9061a612f7babcb72472f9a3e61bfa8d5b43d5ae662b9afcabef011170542031	gosec	# cmd/harmonik/testsupport_daemon_test.go:28 newProjectFixture
+9067772c9a0c3139d392e5e09c631bb7d2ac72ce2257c1234d33625c22a3c257	gocognit	# cmd/harmonik/digest/watch.go:67 renderWatchFrame
+91bf612ff640347e68f7d85147f511d84a7b6e4b3df22e95703b2ed51ea46b83	unparam	# internal/daemon/eagerfill_em063_test.go:274 writePhase2Config
+9207e375ea52535f6c07af78a823b5c42e22dcf561c4e1d6def1e1d63c5f51f2	errcheck	# internal/daemon/subscribe_test.go:565 TestSubscribe_ReplayTypeFilter
+92437d6449f12b98b74eb1258341cf4fee9e3dfefee643a7c8115fb7f6880e48	contextcheck	# internal/daemon/commsrecvhandler_nnwaa.go:195 commsSendHandlerImpl.HandleCommsRecv
+9277b4e9c1209d11a7253b22ee7f040004e00cc142f7e5079d43926f00b57b04	errcheck	# internal/daemon/tmuxsubstrate_nosession_hkyaj_test.go:185 TestNoSession_SlotReleasedOnHardFail
+92cde6d9493f22ff27d7e86dae5e0102b150970e4e0d62bae443ec168adc8204	errcheck	# internal/daemon/subscribe_test.go:323 TestSubscribeHub_HeartbeatActiveRunsFromRegistry
+9304454884aa28f32ab1839013dd8ca68ae1f537aa2260b56bf4bc7b03792f2c	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:895 findHookForScript
+931dfc24343d10658dfa74337b8d3de804d2ae56cded715b10a4c134c9efd0fe	forbidigo	# internal/daemon/detectorbarrier_rc020b_test.go:224 TestRC020b_DetectorBarrier_FallThroughToNextDetector
+9324a46d9d4af2d74b7512e8b8db5b82ae1112f99ecea3578fc99d908d68135c	gosec	# internal/lifecycle/verdictretrycap_rc026a.go:85 WriteVerdictAttemptAtomic
+9348dd6e3735474dc59d01eded164ff6344f2ea567412d065ed28c2f91bfcecf	errcheck	# cmd/harmonik/remote_control_prefix_cmd_coverage_test.go:31 captureRCPrefixIO
+935b1238ead7862be090ba1cf9facc128d005eb32651903ede94514dd59f6569	errcheck	# internal/daemon/t2_scenarios_test.go:486 TestT2_ProcessGroupCleanup
+938879afbc38f4cfe3e12f9817175d333ec2dc395a5ccc77faee0e68e95f7cc8	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:209 TestCommsRecv_FromFilter
+9445991fd3ff6ef0395b3371855b7baab632af87f9dd978b9662fcef93a8e8de	cyclop	# cmd/harmonik/asset_reconcile.go:190 Reconcile
+945767c1c6fe621b89c0dbb0f7047960bd6d57a6325a5c8d9c46e13e5d16820f	gocognit	# internal/daemon/scenariotest/concurrent_merge.go:123 RunConcurrentMerge
+946d651e55e3943e0dc90fb11c28d4619858acd0ed0427b79110af0ca4b5f427	gocognit	# internal/daemon/eagerfill_em063.go:259 stagedBeadGeneratorEvalWithPort
+9473220c0abee3871931856692b135123542eeacf585977f6e3a0e91f76c847f	gocritic	# internal/daemon/commsrecvhandler_nnwaa_test.go:16 writeTestEvent
+94a1593f81177b3eb40b11fba48a5b28ca23645b5b8863ed8f6f133179651528	gocritic	# internal/daemon/pasteinject_resume_reseed_test.go:77 prrGitRepoWithCommit
+950772be714b5c15958c23d110d7ddcffe7586514a6fe157f373ef909e0f2ced	gosec	# internal/daemon/pi_no_tier3_leak_test.go:226 TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered
+953fb0236146c63de44909f3fcffc2f4ec506311552a0c2b3f56999b5e8a88f1	unused	# internal/crewrun/idlereap.go:179 CrewIdleReaper.checkCrew
+956657a7f214f052b127a79e8adc17895fdb036aff7edc939840d1e252194b3d	unused	# internal/crewrun/idlereap.go:219 CrewIdleReaper.clearCandidate
+958a54f9d7e7315272e5e41e32285635829778671ece40ea2c6707ba3331c795	gocognit	# cmd/harmonik/run_via_daemon.go:270 viaWatchGroupCompletion
+95befd3ff1392f2865b0d59bc0304f757e58ca973f13c00772323b210092da0c	gosec	# internal/daemon/pasteinject.go:128 commandMatchesLiveAgent
+961437df4423040b76dee3b934f7f45ec6302b38fa629f227c29678d9d7a340e	errcheck	# internal/daemon/t3_exploratory_test.go:277 TestT3_SIGINTMidRun
+9668f2897682634469b47f73f193b11c834e0946a5d0ed9c7b3845df9e448e5c	gocognit	# cmd/harmonik/comms.go:1092 runCommsRecvSubcommand
+96af9655c5a146bbf94a001314a7926ba3b0380a29bbabd4f19ac8d587e46003	errcheck	# internal/daemon/runfailed_bead_reset_s20z_test.go:144 TestRunFailed_BeadResetToOpen_s20z
+97783e366fb0d90c8df2e9876dffcf37da759b8123430ebe5bbabffea1802d0f	gosec	# internal/daemon/srt_pi_egress_e2e_test.go:79 runWrappedCurl
+97c98dd6d1ec37de1e0752d157083cc94c51c23451aec811c33e6857e7a8c044	gocritic	# cmd/harmonik/run_via_daemon.go:426 viaSendRequest
+97ed7b47dfcc33a1cea4fbfc0a8dc79d743a14354b102fa0b9aad5e1d7facdc3	forbidigo	# internal/daemon/detectorbarrier_rc020b_test.go:174 TestRC020b_DetectorBarrier_PanicEventEmitted
+9804ac282ffa0b695a55b7ac8fcbcf7037c5516869e539d35e2842272f3a7360	gocognit	# internal/daemon/dot_cascade_core.go:525 dispatchDotAgenticNode
+985fdca75c1dfbfaaaa3016215151a6573a1d3a3701c64a6dfd8c2dbf42878eb	errcheck	# internal/daemon/subscribe_test.go:258 TestSubscribeHub_DispatchFanOut
+9873b1d68573e4e2968ca7e6751a431a4169bc0298694bcddbac0878b77701b0	gosec	# internal/queue/transaction_recovery_test.go:287 TestRecoverFailedReplaceIntent_ConflictingReceiptRefusesWithoutMutation
+98c1eac1bc52d533a8d86ae2f9648cb739475a2cf7cd2cbc3c23ab82e9b95c3f	forbidigo	# internal/workers/tunnelfailed.go:31 init
+98de48f1887db3f0ebfe2502c9c2885bed1cc7a09e4c08d310169564cdf1f7a9	gosec	# internal/codexreactor/reactor_test.go:31 runScenario
+9921412dad1b973d86f61fed76df8557f1f45af9f7862ae3cdeda49c935d6a34	exhaustive	# internal/daemon/dot_postexit_fixture_test.go:328 runDotFixtureBead
+998d1a3598bf92ad7a7fdfdfba44edfe6eb8fe8c3e888d2d12c6e205f82cc164	gosec	# internal/daemon/pasteinject.go:1000 writeReviewerBudgetSentinel
+99c5ad88a65359fabd1072157a48c2a1e160014351f1e233ffb5d8d8f388c12e	gocognit	# internal/hookrelay/hookrelay.go:299 buildStopMessage
+9acf320516195a4f7f32e2861f6424c04e827adf53fb094ce098de644e525ccc	gosec	# cmd/harmonik/eval_cmd.go:282 evalReadEvents
+9ae4197021bc5c988f361eb94447eb46002820b90ce7834109ec10e15a568c9c	forbidigo	# internal/handlercontract/harnessregistry.go:101 HarnessRegistry.ForAgent
+9b546a652179154e2827191473190a93d0b84101c230ed0fea4b30537b08dc01	gosec	# internal/runloop/scenariogate.go:282 isScenarioTouchingVia
+9bda849b167b9d2f21e4d16534677cf11c0a73771b267f03efe7a907b8d31103	errcheck	# cmd/harmonik/supervise/coverage_drain_test.go:294 TestSendOperatorOp_DaemonError
+9bf7fb434063fb6c57c4e75776ee567eaa0f3f13b17b3916dc61338cabacfea4	gosec	# cmd/harmonik/eval_cmd.go:480 evalReadPiModel
+9c2755e624c5055e7891b766e45111a57639bb1f9e6a15325628e7ec34ca82e9	copyloopvar	# internal/daemon/harnessresolve_test.go:314 TestResolveHarnessEmitsHarnessSelected
+9c7c2f3f0c443d780ed09f95b237ad0afc507a80049f768fb1c1485fa45fd777	contextcheck	# internal/codexdriver/session.go:611 codexSession.closeInputAction
+9cf3d3ccb8327639ba9ecfbc9501e2ed1af82d6d7526e839488debf5c4d44914	prealloc	# internal/brcli/breakage_test.go:77 violations
+9d0ad7a91c795f0c45980ea985306e6f27dcf69c076dfde35396bba308bd97b5	gocognit	# internal/workflow/dot/parser.go:485 buildGraph
+9d3e65adda80012ae1041968bc5a04b9ab47f5f374cc8246ba537bec7476e82b	gosec	# cmd/harmonik/keeper_enable_doctor_cmd_test.go:336 TestKeeperEnable_HandoffStubIdempotent
+9da5b60cb91cae73a240ab2d1466a920be035fba0186faaba495a668958d3505	unparam	# internal/apptap/tap_test.go:27 tapFixtureRunDirect
+9de784d03da73ef2c19a060e3aa454af9b200017ed8a8b504e912aa1c85c3b77	forbidigo	# internal/workspace/conflictresolution_wm024_test.go:142 wm024FixtureWorkflowID
+9ea3dd3ac79eb329f9bafe5fa5b4eb3589e8d4732adc2ff2f6960de225f9bffb	gocritic	# internal/core/redaction_prop_test.go:176 TestProp_RedactionMiddleware_UnmatchedValuePassesThrough
+9eaf3ccc90942199be5f0837ab0c65f2eb02356ba36373ef11a2aa88f8458678	nilerr	# internal/scenario/postsuiteleaksensor.go:147 checkLeakedLeases
+9edd59ab730f60f82dd68101b4e9e0befebfc92227b9e0fc3d1e6db9b7dc3d59	gocognit	# internal/keeper/tmuxresolve.go:280 isRealTranscriptTurn
+9ef427bf657d48ae1db275ecb6c50f6c7d60bdc53a20a1a5fdee6a477bfad484	gosec	# internal/harness/codex/walguard.go:210 fileHasOpenHandle
+9f2bd596c4fd5b7b23fbd305f253ab65e711cf03f5fcde123278f0106426ae37	forbidigo	# internal/core/eventreg_hqwn59.go:302 mustRegisterAtVersion
+9f5cf64956128067fc5165bbd7fa00f4772b38228ef42ef9dde4efa5c5940cc0	testifylint	# internal/runloop/scenariogate_test.go:20 exitErrorWithCode
+9f84a196ff89a7bc4161f06cca41219d90ed4dee6664d094fc64960102d8329d	copyloopvar	# internal/daemon/socket_queue_test.go:82 TestSocketListener_QueueMethodsRegistered
+9fad813a20e40f1f1eec113679995f9fa4b4f65cb652ddc61fafe587ac2dc3c0	gocognit	# internal/daemon/orphansweep.go:626 probeCrewRegistrySessions
+9fcd2b18d5a92108845c54b899c3e39b9903fd994b2d794b9cb0a7036d8e62e4	contextcheck	# internal/daemon/branching.go:83 resolveBranchingFrom
+9fea77c2a7393ce71939ad3e88dfbfeb220e7bde10d0d1213b99131bda286820	gocognit	# internal/lifecycle/orphansweep.go:665 SweepStaleReconciliationLocks
+9ff9f91343c5e2f5d82bd8739ababefe16bd23dd45a0493cecbf582c62d5c744	gosec	# internal/daemon/quiesce_test.go:456 TestReconcileOrphanedMarkers
+a0151c9cbda9b22210d4197a902b273e38600ebbb31ca0d47be677be5a7e8087	gosec	# internal/daemon/concurrencycontroller.go:50 ConcurrencyController.Set
+a05d9cd34a58142aff37a32ae4b45742c1c471e3a79f07f6692e44e01526c5d4	contextcheck	# internal/daemon/pasteinject.go:570 pasteInjectQuitOnCommit
+a0845fb77b6aad9f431df23341fc55ec2e0d8562c341236c6b544ca3606e4a32	gosec	# internal/runloop/scenariogate_test.go:234 TestIsScenarioTouching_BuildTag
+a0fba78fe1d82907af81202b6c2de1c0e18f7bb2a31c40cbfcad59a310a40a19	gocognit	# internal/projectconfig/projectconfig.go:1352 parseKeeperBlock
+a10756784234bce2349696206229533a322cb70c1240eb6560da0a6063b54bc1	gocritic	# tools/testreport/main.go:75 run
+a12db9cc1042b90b9e4331d9681b67d70b64cb04c2af6c6fcb552840645c8ba3	gocognit	# internal/sessiondata/sessiondata.go:504 readTranscript
+a17a3f1df94ee58675711447f95438ef4e8ef3342add6e94f2ef89d7823f311a	cyclop	# cmd/harmonik/crew.go:284 runCrewStopSubcommand
+a1a9dbeb9c916c5b893975376d3110e519bc9f6f4bfbefc098439f7da04839ad	gocognit	# cmd/harmonik/init_cmd.go:678 ensureClaudeMDSymlink
+a1c6c1cb1aba3bc02ef105f71a0aebd7aa39a3921771eec81d0ed5aa750498a8	unused	# internal/runmerge/fixture_test.go:38 mergeToMainFixtureProjectDir
+a1d8a9324c35c6a643c86d39555b887591720d5715f2c16d91849a1a4276cb92	errcheck	# internal/daemon/t2_scenarios_test.go:230 TestT2_SIGKILLDuringRun
+a21a275cc8bbafa66b89a2d34ad3291148053973110ac48fd9ebccab5d6fb29d	gocognit	# internal/queuewiring/store.go:528 QueueStore.Transact
+a2e4512ace35e911f063159e8b48cd728800866d7c675b25bfdf7ba2d16bade6	contextcheck	# internal/daemon/scheduletick.go:173 doFireAction
+a2e77d0666d7b72c5dc14f7b689efc2f6c894baa1b345cf64337de2f122eb0a1	unused	# internal/daemon/draindetect.go:433 unsure
+a31bdbf41ded93deeec0a859e5a87d6706c0726754495d65dd88ac9de2ac9f85	gocognit	# internal/handlercontract/watcher_hc011.go:459 Watcher.readLoop
+a356b5ecc15cdd42860d0fffc4852f131e3e5f839a0fc61676c7f55b710813de	errchkjson	# cmd/harmonik-twin-session/main.go:287 marshalStatusJSON
+a3aef07231d395614dbe9d59652d9bc9427445ab99c9eb5b1f2b91e38f42c573	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:333 TestCommsRecv_CursorSurvivesDaemonRestart
+a492c6eb8208596bf1ad9caaa7ecaa9511b37b983514f79fdf0928dc213d5cf2	gosec	# cmd/harmonik/smoke_logic_test.go:277 initGitRepoWithBeadCommit
+a4ec3d5df3bb12b509ec860e788cf5c2607cf05d12ac9f842d6bcc343bdfcf39	noctx	# internal/daemon/scheduletick.go:189 fireCommandAction
+a52623de46c39ef9ad5e81edd968f64f7c6cf8f4d473ddd22070f2f41efb9fcf	gocritic	# internal/daemon/quiesce.go:530 QuiesceArbiter.executeWake
+a564a22444e686c706a8c02f063c32d02e23385ff0878ce907d7d077d33421c4	errcheck	# internal/daemon/notifystream_test.go:78 TestNotifyStream_SuccessNoCommit
+a5746f8e160d9c52943e793b4968e8d892915100c241b76696f2be441957bd47	prealloc	# tools/testreport/main.go:145 failed
+a5e3cfc7b2e008be5fe136e491b7754b491991df860660bcb626c5c01a816d3d	unused	# internal/daemon/mergetomain_hkftyvo_test.go:70 mergeToMainFixtureAdvanceMain
+a5edb474ba7668f888876a05c97343d9c1735e53b5393dce20d8ce96d230161a	revive	# internal/scenario/scenarioresult.go:10 ScenarioVerdict
+a66da73603e3ed8298356ecd3b17de228b060f138f2fbbab502bdd57eb13f544	gosec	# internal/daemon/handlerpause_persist_m0k0a_test.go:154 TestHandlerPausePersist_FileUnparseable
+a694fe4b71e37fcdc26840afc0e384acb3fc45cf9000b2af738927d553284b34	gocognit	# internal/usage/usage.go:681 PrintSummary
+a6d045001ed00c9c5b92c37b6098e5e0ec361dbd67a09715c46bf414249b314c	forbidigo	# internal/workers/health.go:39 init
+a79aa7e96ecd06c160ea0dae7462ff8a1d80052d1d1d63b61490abf533b9437b	gocognit	# cmd/harmonik/comms.go:56 runCommsSendSubcommand
+a7fe19d4740af5270bfb887e4a3bb8653c41ea09923478bbb7aa2f3093f9bd2e	gosec	# internal/runloop/scenariogate_test.go:255 TestAffectedScenarioPkgs
+a8ce966fe3cafb61e94cd4c75c086d23adc288eca4c5e7ae24fd0db83ef8ee73	errcheck	# internal/daemon/workloop_qcancel_ppt32_test.go:179 TestQueueCancel_AlreadyTerminal_NoOp
+a8de56c015d03bfcafebc149d2ee64c4c0dd1e71355c2c6cf3277cdb356c7c28	gosec	# internal/keeper/awaitack.go:174 CaptureTmuxPane
+a9047a039e8b46527e6078774e2a8b9b772036a38a4084ea79a3b95c637e3c38	gocognit	# cmd/harmonik/handler.go:207 runHandlerResume
+a975c3e0f45cce01ae00c24222d8707f034963d6d471ff601d51fa4f4be6c6e6	cyclop	# internal/queue/transaction.go:385 writeReplacement
+a99d322b643924e7fcf2602fd3578524d7c7d5233544f67b7b44553ba10b0bf6	gocognit	# cmd/harmonik/comms.go:753 runCommsPresenceSubcommand
+a9a4f9d1172829fb62d65f3fe5064cdf9ac8f46b51b619acaa89cc0e41d29387	errcheck	# internal/daemon/workloop_hc056_reopen_test.go:176 TestWorkLoop_HC056Timeout_ReopenAndRepickup
+a9a523e230760c8bbfa45836d63fd322a5c5e3a952c5eee41cec78e4378d0129	gocognit	# internal/eventbus/busimpl.go:535 busImpl.EmitAgentMessage
+a9f508105d8d3665f1c351efba79f143829ceabfe112b16e20a88b396383a7a0	gosec	# internal/core/eventidghwm_test.go:22 hwmFixtureMakeID
+aa4ae338e4ddcc3431ff4d9b473ef28c4169a02cb70544b5d2665a57db0c06d8	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:297 TestCommsRecv_MissingAgent
+aa92f9390b0f45b7820fc440b7b2af7793db41a3818c41356f247f40e3fd28b7	unused	# internal/projectconfig/projectconfig.go:223 keeperBlockAbsent
+ac7e9d59b253f0015feb868e61138ce748b7963cb51696c87ec6560eaf85ac90	contextcheck	# internal/daemon/scheduletick.go:82 runScheduleTick
+aca021d3e4080b344137d0f671b5f6667e48694aed4f7a7f618295cec3d1d5ac	gosec	# internal/daemon/t6_scale_shape_test.go:41 t6FixtureDir
+acdb26151a0e6d413f92c4aecaed0f9ea34b8615dcfcbecb0b51d361c8d72481	gocognit	# internal/daemon/dot_gate.go:452 pasteInjectCognitionGate
+ad184ad2b42b1de6d61a2edecc644e66df52f35e514a7a6061fa0e4c6c9679ae	unused	# internal/daemon/t3_exploratory_test.go:95 t3FixtureFastHandlerScript
+ad1eea1566d76e43f6176a51dc993034122d700efc1bf90b53b72be51c86a879	gosec	# internal/daemon/harnessregistry_test.go:23 harnessRegistryFixtureWorkspace
+ad233741677fce480a52d4089cbd9aa71ea93fa2e92e7ecdf24b320b063e683a	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:127 TestCommsRecv_BroadcastDelivered
+adf3ebc8cc70e157f3cd31aec95c3d60aeafe81da0a09eea432fd130bd81b3ad	unused	# internal/core/detectorharness_rc010_test.go:490 detectorResult
+aeb50e01cc38df24e3159eedbda0e1e93f77fa2564f940f422bd5ebbbb39d25c	errcheck	# cmd/harmonik/schedule_cmd_coverage_test.go:28 captureSchedIO
+aec2ae96eac78c1b13130e8b611dd85233d9f80b5a7a7e34e7894a8d57455520	gosec	# cmd/harmonik/eval_collect_hk_eval_harness_collector_test.go:464 TestRunEvalCollect_SkipsNonEvalRuns
+aed565df682594fc5bd869ba36b189d704d48377f00fcd95b2e138792f1ac7e5	contextcheck	# internal/scenario/orchdrive.go:156 DriveOrchestration
+af1c60195830404055d77e66615cf082d7f42acbeb27c125b2e70da7a8e11f77	gosec	# internal/daemon/concurrencycontroller.go:35 NewConcurrencyController
+af2b5a5a10622d145bda4e27447ceef92bf5adf18d2e392c4d9b473c1cae9c6a	gosec	# internal/daemon/standardgraph_sync_test.go:61 TestStandardBeadDotEmbedValidAndInSync
+afb1b382db75ccccad8f067a646ab884317e7fc87efad8dffaa04b081b17a67e	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:237 TestSendSleepWakeRequest
+afc725f2ac6f0ca22a7ec0b1e7b565946e7074b834677ced4ba7591c8ceff30e	copyloopvar	# internal/daemon/subscribe_test.go:774 TestSubscribeHub_HeartbeatClampBoundaries
+afccdfe36c2fa72df50fbd84f7fc730fbefb39695d712b92b5a8ec532e5b3bd4	gosec	# internal/daemon/eagerfill_em063_test.go:682 TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys
+afe89b8ad130ae41b5ab6eac59696b1ff697a878e0e7ba186bb4bcdfc15ea442	gocritic	# internal/daemon/t6_scale_shape_test.go:605 TestT6_ConcurrentBeadCreate
+b078fccdaaeb149f64dda7f124837d0944a0db9920d2b26a6b70d8f861f6d986	gosec	# cmd/harmonik/harness.go:809 harnessApplyFixtureFiles
+b0887814258ea064cdbc7eaa63d901eec22f58c98ee3369f7b7e9a3944b92e97	revive	# internal/queue/types.go:721 QueueDryRunRequest
+b0cb94517c640a2742aebe89cefa7a0207985c5f18caac61998fc9fbbaa7c06d	errcheck	# internal/daemon/subscribe_test.go:408 TestSubscribe_RejectsMalformedSinceEventID
+b0d99518ad1829454f4b9803d927cc931b851cd43c012effaaab4ce832ef8a66	gosec	# internal/queue/transaction_recovery_test.go:204 TestRecoverFailedReplaceIntent_InstallsMissingReceiptThenCleansIntent
+b0ecce84c4efc0fa3c28ae5d2b00f0c434120a6a309f90ca52b287721bd979a9	gosec	# internal/queuewiring/store_failed_recovery_test.go:69 TestTransact_FailedRecoveryWritesReceiptBeforeInstall
+b12648aa5bca1b63abbea710e156d902545124b9097eb62c1cd0a6867feb9e29	errcheck	# internal/daemon/verdictexecutor_rc025a_test.go:323 TestExecuteVerdict_LockReleasedOnError
+b176c83e0b2d040ef3ec4c0f102ebcca78592a3dfb2d62f1aefc6bc98f0b9627	gosec	# internal/daemon/t3_exploratory_test.go:56 t3FixtureGitRepo
+b1d8162a1a8bb789743b63664a17a6f84c1c4d301d56d36079c01639432720fd	unparam	# internal/watch/escalation_we3_test.go:22 escalationFixtureDir
+b21869720cbd694a38a1a86401bff317aaffe8fc41296e8d636a01d73e4fcb8b	gocognit	# cmd/harmonik/supervise/shim.go:36 RunShim
+b25cd615bccb4db458f84eafb128787b4ad3746e5a037594e3188d9754b88be2	errcheck	# evaltasks/eval-cli-kv/kvcli.go:29 Run
+b2e154b0867fb2762b5eda073bbeceec76087c6c630b77693a9f5744db428bf3	gocognit	# internal/queue/cli/cancel.go:33 RunQueueCancel
+b2e627e2848e4d80a96e42d4ed7d1da9010d8b53b25ddee4dfbd1b77c75b184e	gocritic	# internal/daemon/pasteinject.go:169 commandMatchesLiveAgentOrSSHFail
+b31990ac696381a935ed49e9bf8d8fc95839c31213899284d55ca100a1516ee8	gosec	# internal/daemon/mergetomain_stripruncontext_hk4je_test.go:86 TestStripRunContext_NeverLandsOnMain
+b356f410c22de6f92a855008263ae0c22677ad05dc4e434df5201008dbb10492	gocritic	# cmd/harmonik/keeper_enable_doctor_cmd.go:547 runKeeperDoctor
+b378692bb7ed43ac0389ff3953a22b097d4e758ff0b91897e830bb2133082e64	cyclop	# cmd/harmonik/decisions.go:226 runDecisionsWithdrawSubcommand
+b4083b1e85635ef2830409892fb2243a9e95b52d5cec19a934add84b75726882	errcheck	# internal/daemon/srt_pi_egress_e2e_test.go:140 nonLoopbackStubModelServer
+b45fca4305e2c2a405ab7f76d45cc9c43ec302a037ecef8c066e066d5ce41930	exhaustive	# internal/core/cpregistry_hka8bg2.go:91 MapRegistry.Register
+b4a2f620a54be688451f74137815f3aa2a61b84ae1fc6ea22c75716c0e4d56bd	errcheck	# internal/daemon/scenario_reap_a31od_test.go:280 TestScenario_Reap_BootOrphanSweepCounts
+b4dfad41180093c5a20e46ecb4217bd5169fb99798febfe60253d7ce4c63c3aa	errcheck	# internal/daemon/agent_message_test.go:236 TestMatchAgentMessage_NonAgentMessageBypass
+b4feaaa07823c050cbc3cabc0b72cbe037313038dea3c381a25de0366b2673fe	gosec	# internal/daemon/hk_pkugu_pi_launch_e2e_test.go:195 TestPkuguClaudeLaunchPath_ModelUnchanged
+b512441ee6daf4d02100cff784d25abeaf826747f428062c112177a2eac521d3	forbidigo	# internal/handlercontract/watcher_hc011.go:404 SpawnWatcher
+b532236cf617eed7b4e26de8e185d6bcf2aa0189a2d93c2caff1c5a6ddb3bd5c	gocognit	# cmd/harmonik/subscribe.go:229 runSubscribeFollowIO
+b548fe434893a16c5ec1e94a92d8c338a2a1ad59565710e6af95cc2d4e01751e	gocognit	# cmd/harmonik/init_cmd.go:216 runDoctorChecks
+b667ee24d8081a171d85fc3bda72a694b063c033843b3cce7d7b1bf6b9c6030a	gocognit	# cmd/harmonik/captain_respawn.go:56 runCaptainRespawn
+b77c0b15d4ce54eb4fdf1cb04f7a7662bda7556f9b2ecf96a2ddf28f1e262455	gocritic	# cmd/harmonik/decisions.go:508 decisionsArmSubscribe
+b7ed96ee9b58cf43f9a1adb21e575612250b190627338849d67e5c269d87424f	gosec	# internal/daemon/mergetomain_hkftyvo_test.go:61 mergeToMainFixtureHeadSHA
+b7f9c6aff08112085f39f899ba7108a5c17008df9fa5610180148d6044c17706	errcheck	# cmd/harmonik/usage_cmd_coverage_test.go:32 captureUsageIO
+b92271bbb6f2d54af7c8432afde6e09ab2577c99ddf008b8fbde7e2efb713655	gosec	# internal/daemon/smoke_test.go:55 smokeFixtureGitRepo
+b9515626d94478874ec8ec74fdf0e0c13de509623eb08cc8e89fab46de814ed3	revive	# internal/queue/types.go:408 QueueSubmitRequest
+b9659de68ddcdc7ff471d0c93ac1d4176b4d252cf55164393a83aa706206a7ea	gosec	# internal/workers/workers.go:248 Load
+b99d3f234e568deb4d6ff72deb184820fdc8c2fa4f7e023a3e94c2c3a8964864	revive	# internal/queue/types.go:456 QueueSubmitResponse
+b9ba7e60e815ac3c3f237ffd59afc9dc051bb69ec4072321ce75f48423b6fd23	gocognit	# cmd/harmonik/state_cmd.go:105 printStateHuman
+ba34b53619bf72ce6ad5a6a4907fd97cbfb448347394a42aaa24088a42da373d	nilerr	# internal/daemon/handlerpause_scenario_6f1uj_test.go:75 TestScenario_HandlerPause_EventTripsPolicy
+ba5262141176cfcd22d227dfd01f61b9fe9584229d7d114fb795e067f447cdd4	noctx	# cmd/harmonik/testsupport_daemon_test.go:42 startFakeDaemon
+ba5bc56514bf63ebf820fbeaa90bda0c6c21e3effbdd351aa01677cf6ef386f9	gocritic	# cmd/harmonik/run_via_daemon.go:438 viaSendRequest
+ba65bdc3dde5f869ed071a07de2a586c5b9470466ac2f46d4a72b6ec7c8d6745	gosec	# internal/runloop/scenariogate_test.go:17 exitErrorWithCode
+baab0a91a1964ac570d911e7f81e0bf7637d0389572b49261f0b91054b4545a0	gosec	# cmd/harmonik/eval_metrics_feeders_k5bxl_test.go:226 runMetricsGit
+bb20a28ca90290b06a1a046f67c9d1c5c5daeebe4c72ba87d7012f04f6ec4fac	errcheck	# tools/testreport/main.go:155 report
+bceaea8dcf73ff6436aa58bae453dccefe124070a638144b059ba0c1b4edbb01	gocognit	# cmd/harmonik/supervise/loopstatus.go:110 WriteLoopStatusAtomic
+bd3e55cae359f1b0f8f0135829beaa0da91cfdee9adccd3fc794689e0477e357	gocognit	# internal/sessiondata/sessiondata.go:409 buildRunEventData
+bdbdee1a6ae54ff112e3f8af3ccfd4480d8564485595fd2d765d3f6cd78521ca	gosec	# internal/daemon/quiesce_test.go:462 TestReconcileOrphanedMarkers
+bde90a6a0b05dde176251d85c688cfdc10c34192e0d4138a44da86e59bb40252	gocognit	# internal/lifecycle/pidfile.go:90 AcquirePidfile
+bdf95e0bf19e594af414bb99ef217d328b7e7f2ee5b521deb9614cec88495cd7	gocognit	# cmd/harmonik/sync_assets_cmd.go:255 applyPlan
+be0fba910b5dfead97d8e57ab66a4f515fcb21d7e184b1501021b3bb8010f2c7	gosec	# internal/daemon/quiesce_test.go:663 TestSleepMarkerBackwardCompatDefaults
+be32c734af9a22335240aa70a07ec00b531d8038f573d73d21f244554c2b17b8	errcheck	# internal/daemon/workloop_qcancel_ppt32_test.go:103 TestQueueShutdown_PersistsRestartDrain
+be5cc9d96f47a51e8b98926160c730d7e8c6ef93a9d818d56d2c71631298d38d	revive	# internal/workspace/workspace.go:226 WorkspaceIDFromRunID
+bec7936830fe82cb3225d35caabb4759e2deec035d01e5bab4ec7eaac32d58ea	forbidigo	# internal/workers/breach.go:67 init
+bee53e4cb549746a848fb3d222e0d8963994d73574c890b685f36d7dd45abb7c	errcheck	# internal/daemon/handlerpause_persist_m0k0a_test.go:271 TestHandlerPausePersist_LiveHandlerNotSeeded
+bf54053276b19837ffe0a789c7697713e93fcd671c3ac4ffbbbf43d8272c369e	errcheck	# internal/daemon/notifystream_test.go:118 TestNotifyStream_FailureNoBeadID
+bf94f940a249d2e5f2ee4e9555df036bd7a250c47897686bc26b613a37bf6f54	gocognit	# cmd/harmonik/supervise/status.go:54 RunStatus
+bfc689608f3f9104058bfe65074b353ca8905daa06558b4ac517acd47fa8089c	gocognit	# cmd/harmonik/promote_cmd.go:283 runPromotePush
+bff185560fe49360d97e162f594ff8b964add855cd99c9b7387679cac6dacb76	forbidigo	# internal/daemon/detectorbarrier_rc020b_test.go:105 TestRC020b_DetectorBarrier_PanicSuspendsDetector
+c046a2efdb9533de5856f2ebf01350b708edcd5d581755152c010f835fb50d01	unparam	# internal/daemon/orphansweep.go:367 probeCoordinatorSentinel
+c06064cd5d78f6e40896d8269a62ad342ff6181081109d8e07bdb160bf213fa0	errcheck	# evaltasks/eval-cli-kv/kvcli.go:98 cmdSet
+c06490bfa4b736d912d057645100fbb7a9b2e4f441e9bb9080f388d1c07e99c5	forbidigo	# internal/handler/handler.go:229 NewHandler
+c08ea57ac2184567e55c8299399a65f29580c4855e7a15ad4e53c01e1f6b9459	prealloc	# internal/daemon/commsrecvhandler_nnwaa.go:166 messages
+c0989467d028d27e3a40344b5da64a3eea179f6ce8c55fed369c921f89652ca8	errcheck	# internal/daemon/notifystream_test.go:47 TestNotifyStream_SuccessWithCommit
+c107b30dbde6d737fbcf01c40ea174ff11f5bc007fc167b8184f14cb081a22d0	gocognit	# cmd/harmonik/usage_cmd.go:56 runUsageSubcommand
+c15d93407dd49ea124bd855550792ba7cdc01d1fe719f1e14fb5191c727b4bd2	gocognit	# internal/daemon/crewstart.go:145 crewHandlerImpl.HandleCrewStart
+c19528fe3966ff292954f5d8a0b461dcb00e6127737b2a6aadd9b5303609a07d	errcheck	# internal/daemon/subscribe_test.go:847 TestSubscribeHub_SlowFastMultiSubscriberAsymmetry
+c1e53d1200be5449231236dbeefa61fdd1cad210cd7077fe3cdac8af36407821	gosec	# internal/watch/ledger.go:100 NewLedger
+c241554c14706594a802a02ea8343813d546055a600c97567bf7203fbf2af990	gosec	# internal/runloop/scenariogate_test.go:256 TestAffectedScenarioPkgs
+c26b905e70e5f9efcc7f53c04f7ded27cbb6ada651460c2b9c33f73ac3b8f906	revive	# internal/daemon/runfailed_bead_reset_s20z_test.go:30 rfs20zLedger_s20z
+c27644fdb9b99af9971f1f970e0b56920b60500feee324680afcf60e200133c9	copyloopvar	# internal/daemon/moderesolve_test.go:158 TestResolveWorkflowModePrecedence
+c2bee2273314f21d742938e73383d118f9f38a886c5367737ceab60efb4e8b97	gosec	# internal/daemon/eagerfill_em063_test.go:413 TestStagedBeadGenerator_AppliesNeedsGreenlightLabel
+c2eb5085eb671f5eed7d59a8252bee2abf9a1aa8685f34a01c99679e4b592aae	contextcheck	# internal/daemon/orphansweep.go:902 RunOrphanSweep
+c31d9b870606ea25c7c11caeb17414f6281a0a0b3887c3495487271cb20d20d6	errcheck	# internal/daemon/bandwidthtuner_test.go:362 TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner
+c4369beb07a71eb07fc07b8032dcff142ea3675d1b5e09d3b016f81e1e513dae	errcheck	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:101 TestSpawnStagger_SecondSpawnWaitsForInterval
+c47042e702c2d9d1e247113ebe53e4fe31ae3aa3ad6afd401bab23f57a87f7c1	noctx	# cmd/harmonik/confirm_verdict_test.go:26 startFakeVerdictDaemon
+c477db41ec1e279a54020b7810b81f69cc43cc4a2408186a50b8a16af924fc85	errcheck	# cmd/harmonik/supervise/coverage_drain_test.go:261 TestSendOperatorOp_Acked
+c49cdd2bcf6efeb0bdfe533fa619ade0f982d45828fd6b588202caf6f744627e	errorlint	# internal/daemon/workloop_precommit_factory_test.go:37 workloopFixturePreCommitWorktreeFactory
+c4d422dbadbc43251d2e32b4a7dd22710ef7e25f0faaa1837c65e1c20a977a19	revive	# internal/codexreactor/reactor.go:44 EventTypeTurnCompleted
+c572c92f8b4ee49048642add0f1101521e27108c80070af1c8602cb3f3099017	gocognit	# internal/lifecycle/tmux/subcommand.go:51 RunTmuxStart
+c57dbf2892b849a71356250757c618c0b63eaa84adc64c3e76b6c4b1592ecc92	cyclop	# cmd/harmonik/crew.go:168 runCrewStartCoreWith
+c580d40c2e9e8bde3155433ae00dc193697b75c83aeff4dd6b2541b7592239e1	gocritic	# internal/daemon/crewstart.go:118 NewCrewHandler
+c58354322b2c8d86c53b4eb74f8c277bebc7a7300be621364c44e4da04f10f43	nilerr	# internal/daemon/quiesce.go:510 QuiesceArbiter.handleAgentMessage
+c5d62e35fe05d4154c62f15760305d238f95425d845d70a157c1b615e098a388	copyloopvar	# internal/daemon/hk_pkugu_pi_model_leak_test.go:40 TestPiModelLeak_QuietResolutionMatchesResolveHarness
+c5e628e30efa6d0a0997b9ba22b7ca57b0f881fc6ecc23cd74be5e5d3914d503	gosec	# internal/daemon/pi_dgx_reasoning_test.go:20 hkppsDgxAPIKeyEnv
+c5f4edc53c0aed955fb3b00b410dd52f3c6ba8461de6008cda545f160ddf5753	gocognit	# internal/daemon/daemon.go:821 startWithHooks
+c5fd41414c99c5acaf13cedb285ae75d2d1918dd34b6dd21531fb98fcdb3ca32	gosec	# internal/daemon/dashboardgather_throughput_test.go:33 TestReadThroughput_EmptyFile
+c65cad37b8f8e62b4b3d1441ca41b95c669fe261a744a6af2e58091c18fe4014	gocritic	# internal/transport/tunnel/tunnel.go:247 BuildArgs
+c6a20d26e7abcd8b5fca87a5cd93a138f8ef04752ef42532252fb528832358a9	gosec	# internal/daemon/eagerfill_em063_test.go:439 TestStagedBeadGenerator_AtMostOnce
+c6e30bb3319b33254d48d66cbc05aef3fcfb897eef904689574701037f457850	revive	# internal/queue/types.go:654 QueueSetConcurrencyResponse
+c6eca5196ad37d51c0dbd4b8d688302aab79f058f3d9d764b771186511196971	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:236 TestSendSleepWakeRequest
+c73345894b3503532a15a79e9deaa8ee151cf88c5966fd290581e30cd3b7c107	gocritic	# internal/queuewiring/store_failed_recovery_test.go:73 TestTransact_FailedRecoveryWritesReceiptBeforeInstall
+c77d4c53d9f024c57bc67a0e0b41071f882942352dc10c5a29065ca4943cb48d	gocritic	# internal/daemon/dashboardgather_throughput_test.go:57 writeLanesJSON
+c798131edb385147ac70ac68384c5c32ea235c1ac7750d83e3c5de4283e2003d	gocritic	# internal/brcli/show_test.go:13 showBeadFixtureVerifyBrSchemaMismatch
+c7a6f80d9f508e640eba26f3ac97d8ebf54b803a6732421607ed581107b45606	gocritic	# internal/daemon/claudeworktreesweep.go:236 claudeWorktreeListRegisteredAndLocked
+c7b4aaf0ffab3b820a41ea66504683e977de3076c34141e7ca1edcbbaa4316e4	unused	# internal/lifecycle/clifixture_test.go:14 errCLIFixtureOrchestratorAgentUnavailable
+c849c3af4c1ab073535156be55653653d75e45e9ac646a2d664709431cc85bb6	gocognit	# internal/eventbus/busimpl.go:719 busImpl.EmitTyped
+c8bd25480bf83f71305c7a594ac481f1a35dd526eeee6dc6b65f635fe7d9ee30	gocognit	# internal/daemon/bootworkloop.go:33 bootState.launchWorkLoop
+c90e81104813afe4833511449daddbad7af0a407dd6fe26e09f80851b43ea7f4	gocognit	# cmd/harmonik/sleepwake.go:91 runWakeSubcommand
+c9791270854558db042b6c75b9b1c62a6d128d43596d0befa6c33c5b8b84fe9d	errcheck	# internal/daemon/handlerpause_account_lhxzc_test.go:182 TestAccountPause_PersistRoundTrip
+c9f88f3d30c7bb45cdd1811b440b3863947d588e340d0031f1c4562c75fb503f	gosec	# internal/handler/claudehandler_chb006_024.go:190 credentialDenyListPrefix
+ca132311321f405435985fe5992fbf2841375fdc0a17786a73b49423adf2736c	gocritic	# internal/core/cpregistry_hka8bg2.go:109 MapRegistry.Register
+ca30d69d28383d45dbef32b86e02d5699268e626f7b70cce68d0153c86f61f6d	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:393 parseKeeperDoctorArgs
+cb570794451be70f94e16198e0ab00c26ddd82be7d616e3dcff37945c4d827a0	cyclop	# cmd/harmonik/agent.go:87 runAgentBrief
+cb7b03f30a86f09401d24dea99cef6740a4c1cfd611edb63ac608275b5a3f731	gocritic	# internal/daemon/workloop.go:589 productionWorktreeFactory
+cbbe5bfd4c34c86cab597a67224df7867e7766e1836eb830ab649cc7f35460f7	unused	# internal/daemon/pasteinject.go:123 hasAnyDirectChildVia
+cbda41ea9ac15fe34346b351dc5b5b714c1d1e12234b3f3963c668b66f8f81e9	gosec	# internal/lifecycle/tmux/runner.go:116 SSHRunner.Command
+cc5dfe977f5898be8647ae03621fa66f98cb3bc13dcd49705ef5994026164305	errcheck	# internal/daemon/t2_scenarios_test.go:630 TestT2_WorktreeLeftAfterFailure
+cc6892ea42bb2673a635ae9899c0b7888f98ca1f25e95b30404abbaa39e0c081	gosec	# cmd/harmonik/resolve_pi_config.go:211 resolvePiAPIKeyFile
+cc93c31e68e8fda2d3a88254606c070b6396b7b02310a719648b999d3da76fe4	unparam	# cmd/harmonik/eval_cmd.go:395 evalBuildRecord
+ccd4bb34d222307eaefa73e1a6d91d42b216a8bac85ad5335e29ac45feefc459	gocritic	# cmd/harmonik/crew.go:456 crewDialAndSend
+cd21da789d47ac0cd7d609e272ce483cf9bafd6b09fa847eca11ea0628960d38	gocognit	# internal/workflow/dot/parser.go:93 tokenize
+cdac1593b9a601e52c35f206b30d59760cd1fd0e64c57639913b06c0c0fb19cd	errcheck	# internal/daemon/subscribe_test.go:563 TestSubscribe_ReplayTypeFilter
+cdb707d7d287a6932e8cff6789205dfaa2dfa9f252d74d653d9cc07e35fe7d55	gocognit	# cmd/harmonik/asset_skew.go:14 init
+cdcae48cc9729015be348f55a9fe35ad1874930681fd4c15bb04c52b2a07ea41	errcheck	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:95 TestSpawnStagger_SecondSpawnWaitsForInterval
+ce0821c634e3b9d9eb99d09d25dbe7f458f8e0bfa96dcf51a8963d9f8835174c	revive	# internal/queue/types.go:672 QueueCancelRequest
+ce0b8f69bb4c7fd08a78a4478b36bd4367c8f0ba1233e89bbec9d8460826d2bc	gocognit	# cmd/harmonik/supervise/config.go:129 WriteConfigAtomic
+ce16007d0967c086e314e120543b3ef4d29e6cc979ac16af84eb2b3b3be5831d	prealloc	# cmd/harmonik/reconcile_coverage_test.go:71 qItems
+ce4a72bcde33bd779001ffbfef01828502f3b2cf20fec3630af904c16b8804c3	copyloopvar	# internal/daemon/remote_substrate_b11_test.go:35 TestRSB11_IsSSHConnectionFailure_OtherExits
+cebb777ba4c8c1735d8250f81339de7cb02b738f593bca99585c1b0e95467bd6	gosec	# internal/daemon/eagerfill_em063_test.go:551 stagedBeadGitFixture
+cf4ee878210d67ba89084cff1a188ce7ee11f00d334b9282e860d44e0c5ea405	gocritic	# internal/daemon/orphansweep.go:776 RunOrphanSweep
+cfcc2418df2f48d28656d31f4545bd4ff63509097acf4acbdca96d623598b196	gosec	# internal/daemon/quiesce_test.go:668 TestSleepMarkerBackwardCompatDefaults
+d00b0d211d3383a31a82c89c15c03b37460bde05adafca5a544cdb35bc772f8b	gosec	# internal/runmerge/fmtgate.go:155 readGoModule
+d067c32702f652a457206c9773f1ed1f963876500c996cff34ad9b822930b7cf	gosec	# internal/daemon/bandwidthtuner_test.go:135 TestBandwidthTuner_tick_CeilingExhausted
+d071b45387f805d30b684b6f11b464364a1f1b4c50e31649e34827994935e0ed	errorlint	# internal/daemon/mergetomain_stripruncontext_hk4je_test.go:42 stripRunCtxWorktreeFactory
+d0cc7bbd65b30aec43c5527314ad39e31950fbd0375a03acfab5afa26454e4e1	gosec	# internal/daemon/t2_scenarios_test.go:35 t2FixtureProjectDir
+d0d2c01844bf966ff256a451879600c608d2b51543e08cc4bde08f67d1559d87	errcheck	# internal/daemon/socket_operatorpause_ry8q1_test.go:19 socketOpFixtureStartListenerFull
+d0e9932cf84ab1b0ad6e1c83314734d4bbf9dc8e18d20ef1df11ddd647c36733	gocritic	# internal/daemon/t2_scenarios_test.go:589 TestT2_RunFailedEventContainsExitCode
+d13a68353cd6e634d76b3f726fd101f6b64ff9f28e3423c98f5f50d2c782621c	gosec	# internal/goalstate/store.go:19 Read
+d1785b0b367d54f0918cd4a5519f883adee9489f489aa66afd6fabbfd059cc5b	gocognit	# internal/daemon/bootstate.go:119 bootState.wireSpendAndQueueConsumers
+d1ae211bb724e34f5d40bf882cd560db5d97ab55b12f04dcdf17f57e15f14ccf	exhaustive	# internal/daemon/statedisk.go:93 diskQueues
+d1bbfe7401861f72fc10a487f06953a1de3a80f7d115446e30fdd7e66ef76c35	errcheck	# internal/daemon/testhelpers_adapterregistry_test.go:61 NewCodexSealedAdapterRegistryForTest
+d1d7787b7cb292469657cf72e79ed7142c44dac075c906a70f2746bc8caf89ba	gocognit	# internal/lifecycle/orphansweepbeads.go:480 SweepStaleInProgressBeads
+d1f5a079e85778eb43099423823d34214c8c9b46d66538c46b44899b9b5d7b6b	revive	# internal/runloop/runshell.go:17 file scope
+d2225087aca83448623b4f27512f83f5252ae5f9a14251951c15e06660c6c051	forbidigo	# internal/handlercontract/harnessregistry.go:123 HarnessRegistry.RegisteredTypes
+d29c2e70616c2ac6bb2610918c9aae3875791bc7aa75d30e972c76af1649f778	gocognit	# cmd/harmonik/supervise/restart.go:21 RunRestart
+d3bf7bdff99050fbfce7a3746b43a80ebca1d1ae25fafc97502f168565b88077	gocognit	# internal/workflow/dot/validator.go:262 checkWellFormedness
+d3d0fb8acd16495fb4302a9fcf1c00efc80228e3e76bd4c3cc8b23dfa8a4cb81	errcheck	# tools/testreport/main.go:206 reportNotRun
+d425fda7945d77d97f7a27c4772708cbe55fcc7047e115e05da6cd148a6a2d25	unused	# internal/core/schemachangekind_hqwn39.go:147 allSchemaChangeKinds
+d45f9e0744c26e1bb0e7c203a32c343ecbf47ae291cd60d8998ef729d1acfde8	gocognit	# internal/lifecycle/startup_pl005_qm002.go:321 reconcileDispatchedItems
+d47bd15e36011649b385ecd6207c33b74c16fb201900a1807c0ec98b648ef04c	errcheck	# internal/daemon/testhelpers_adapterregistry_test.go:41 NewEmptySealedAdapterRegistryForTest
+d4c0a7b81f65523ebcae8b7e44154c0fe55d2828b39b081f35dd00f3111c8181	errcheck	# internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go:137 TestSpawnStagger_FirstSpawnNotDelayed
+d4cef557526c146b30aa3e7cb0b3adf28b8a0a2480df3b477b0753bbfd5624ba	gocognit	# cmd/harmonik/subscribe.go:24 runSubscribeSubcommand
+d4da0b42fdb7982233a16e86b8736d2d20aa1cba606210aa76a5953ae4629911	revive	# evaltasks/eval-refactor-storage/report.go:1 file scope
+d4f236b06a40b35c8376bab4ed9d51b15daef9d44ccf3d1b9d6c05bd99e9d2db	nilerr	# internal/daemon/spendmeter_hkk3f8g.go:156 DaemonSpendMeter.handleBudgetAccrual
+d510bdd6ac1a2d2a6974097305e1556a377373535698ea80632e0f5beb1dfc5e	prealloc	# internal/daemon/dashboardgather.go:134 out
+d5523c9d1590aea3c0975cca517617c103b373263684562fa40340002cd830a0	unused	# internal/crewrun/idlereap.go:153 CrewIdleReaper.scan
+d57adaf0e064be3cfaf375d5343fdebb15b2f8164ae96a6244ba7bb168a5ee50	gocritic	# internal/daemon/socket_operatorpause_ry8q1_test.go:34 socketOpSend
+d598b56c2306d44200485fb27f3af726da8246162ff6dcc36f679253af7b5941	gosec	# internal/runloop/scenariogate.go:109 runScenarioGateOnceVia
+d7706772ce5323a0263a5fbce9f69ff17f9ae8ec88afdff99d86aafc920c1864	funlen	# cmd/harmonik-twin-claude/scenarios.go:71 scenarioSingleHappyPath
+d79a3095e103aac02cbbff992c3e50878ff16540ec9f6035fb32868f0980e382	cyclop	# cmd/harmonik/dashboard_cmd.go:22 runDashboardSubcommand
+d89d35c2fc9c6f4c2c5922758d8fbd47729277ec67e2989a48228e692d391522	gosec	# internal/apptap/tap.go:98 Tap.Run
+d8a0131fe28827207984c7f1d283a72772d58d1b96b5d83a558198e052c5858b	revive	# internal/runloop/reviewerharness_hkiv748.go:11 file scope
+d8ae338554b3206c4dd0d83220c2812a6aac6ac457b1444f1f1240fe2abb6843	unparam	# internal/daemon/mergetomain_hkftyvo_test.go:59 mergeToMainFixtureHeadSHA
+d8b0a0667c1aa2a53529a5b673679016e2549da20eedbd4fae37efb1cc82afa9	gocognit	# internal/daemon/orphansweep.go:727 RunOrphanSweep
+d90ee019e84bd7fb6705d91e27fbdf698c0ca7ba3b6080337ff75655f369946e	revive	# internal/watch/ledger.go:36 WatchDigest
+d9392de1556c6220aba827fa0e6d012d1452a3427faff9f3512f1be09c549d75	gosec	# internal/core/budgetexhaustion_rc018.go:23 BudgetExhaustionStepWaitForWatcher
+d9512c18058c12d09a141cda9f9cfdbaacab61d55a9fbaed4ef9ed77ee5c1ab8	revive	# internal/daemon/runfailed_bead_reset_s20z_test.go:91 rfs20zLedger_s20z.getReopenCount_s20z
+d964fcff8831107336802071f299d44b70c140b7e9e47f1825ad3d12ed05c7b7	errcheck	# cmd/harmonik/supervise/coverage_drain_test.go:293 TestSendOperatorOp_DaemonError
+d9c2ccc55e9644d3488561580f0a7b766ccef9ac94ab8230f835c0cbe5360749	revive	# internal/daemon/reconciliationcadence_rc020a_classb_test.go:260 require_noPanic
+d9c5952bee28938e24fda6fa1a8f580d6ebd9b9300520ce2ef716f3d4771dcb2	gocognit	# internal/lifecycle/orphansweepbr.go:100 SweepOrphanBr
+d9e8461274ddfb9a81befd2c66f43afe254f0dbc826de4c432c374e32f919042	revive	# internal/daemon/quiesce.go:64 SleepLevelAbandon
+da320cee80588cf08e5aa04cd745f109e878638829a850b1c78827cb3c13f401	errcheck	# cmd/harmonik/confirm_verdict_test.go:42 startFakeVerdictDaemon
+da7e71a756e62e948840b5bc4365ebae81615f96f6e905c7c5c0b68393a82c3a	exhaustive	# internal/daemon/sub_workflow_runner_hkoe6_test.go:305 TestSubWorkflowRunner_EventsCarryParentRunID
+dac22909ee27af32277e5f1c060763e17b75f4442a8c907d04ce39c0efa2dfb4	gocognit	# cmd/harmonik/graph.go:49 runGraphValidate
+dae57597264518cc2ab496e37e9c8b4f97ca72e4d4de9522ed1332be3d31ee5a	gocognit	# internal/core/s02registrar_hka8bg45.go:123 S02Registrar.RegisterFromDocument
+daff70674ab65d14ed75adf36927890956dd9c02c69c8ec14ff09c13eff049d0	revive	# evaltasks/eval-bugfix-rate-limiter/limiter.go:1 file scope
+db03bb88c0811dc5dccaefaafc33ccf0c22a74eacdc2ef7e4f7c61eeee2620d4	revive	# internal/runloop/reviewerharness_hkiv748.go:70 file scope
+db18c9650b115063aa929f78cf73c8a77a5ed1478b344409ed2b1da23e9b8d59	gocognit	# cmd/harmonik/digest.go:22 runDigestSubcommand
+db36af958ca8481280dcf912c6e215b1d0f9c1d1b883b87508e96e86a4b98cee	unused	# internal/daemon/pasteinject.go:836 reviewerSeedMaxLen
+db6e6e9d4192779e6d73830e9acc970779ca3c379f35474c0ebf4f338fb0cb6b	unused	# internal/lifecycle/clifixture_test.go:16 cliFixtureErrToExitCode
+db9b8ed285c3d5473841acb16360454149183ea1074096517bf9b2b561fa5d04	gosec	# internal/queue/transaction_recovery_test.go:137 TestWriteReplacement_FailedRecoveryWritesBoundReceipt
+dbd7fac7242f3766c3c51efaae4f7ce0865dff24600acc46015ae95d93399f6e	gosec	# internal/daemon/decisionsprojection_test.go:62 dprojBuildEventsFile
+dbe6007265b471d61478c94ee3401d0988afb6c9fac57582744e78773a00ee2b	unconvert	# internal/daemon/harnessregistry.go:94 routedLaunchSpecBuilder
+dcbd3e73565c2ea96705ba1b04d3ecee6ab8877487e126e034a5afcff15d6526	errcheck	# internal/daemon/workloop_test.go:596 TestWorkLoop_TwoConcurrentBeads
+dce09a1339bc8e0e453fffc55610afdb7ba09178f96f4a9386ee2f455d2e9b06	revive	# internal/runloop/dispatchsegment.go:19 file scope
+dcefe544c25e935b6dc7556e4865eb1bc7c65e62735c2e97030b95df272bfad1	unused	# internal/daemon/t6_scale_shape_test.go:145 t6BeadStatus
+dd1715f324df5e5f782b44eb5572b11b430795f33ee3cfd91a3650a9854aeaed	errcheck	# internal/daemon/noautopull_em066_em067_test.go:227 TestScenario_BrReadyOperatorPauseGate_EM067
+dd6a96b60f39c62c6f604bd1b34f4e2f25aee01cf8d5ea5041de06ed041722b9	gocritic	# internal/daemon/decision_block_ev043a.go:114 DecisionBlocker.Acknowledge
+dd8269f792fa7d0916356ff2096602a761f49b7b98af659f75f715e439e9e1a3	revive	# internal/scenario/resultemit.go:45 ScenarioResultPath
+ddc44ca19acc2a5757485d063dd48109d938f2d675527a12a69b4ad9ebbed3f4	cyclop	# internal/core/workflow.go:118 Workflow.Valid
+de963b3c3f0eb18443c0aa46208f56abe883b6544429f8c21b6e46184f353059	gocognit	# internal/daemon/tmuxsubstrate.go:2202 tmuxSubstrateSession.runWait
+dec88d5b68e7973af40d6796069a4466f099afae7e7d70222c0799c7cf8680f5	gocognit	# internal/eventbus/jsonlwriter.go:126 JSONLWriter.drain
+dec9146432199f2d085ac0f5f863849bce35e53478a7f94b11e9ea0108c15ff6	errcheck	# internal/daemon/subscribe_test.go:586 TestSubscribe_ReplayTypeFilter
+ded834f73e638697f504f641618c597c85800c05067dad23593d6b5f1719d5bf	gosec	# internal/daemon/dot_cascade_helpers.go:237 dispatchDotToolNode
+df71d9d4c2d3ff027de77f7c62cd89e7627910ed59fc5e59c6c587db0193ccbd	gocognit	# scripts/queue-status-writer-ratchet.go:125 measure
+df77936172723c04ac0258b4639604622a02c1fab3ee65d40ef2425cd0dc395e	gocognit	# cmd/harmonik-twin-claude/main.go:74 run
+dfe275178220269c763924c22e676f9ef260ac5d4e050a9b6d2d4ed823923ef1	unused	# internal/lifecycle/testfixture_test.go:35 plFixtureEventuallyTrue
+dfeb24d1610561fcf10ae53250e4bb9381d0081e1a610ab7686af55f1f37236c	unparam	# internal/watch/ledger_we2_test.go:18 ledgerFixtureDir
+e0385e095507cc0f65e14048b2ee8515d83285060c9f30848fda158c08c7dd5a	gocritic	# internal/daemon/dot_cascade_helpers.go:249 dispatchDotToolNode
+e12ee11c88f0e6e0eccd1142552a47bc2b0b353a578264c4139829a223b66319	noctx	# cmd/harmonik/supervise/coverage_drain_test.go:278 TestSendOperatorOp_DaemonError
+e16a41f55e9eeef700be94dc17caf66f2f958898d1cbb2c03de6a7db52e419f7	noctx	# cmd/harmonik/sleepwake_cmd_coverage_test.go:223 TestSendSleepWakeRequest
+e1748311cc35c0e24487e8da14774755b258e0e90f7c82b085ea6eee47d901ef	gosec	# internal/daemon/workloop_precommit_factory_test.go:20 workloopFixturePreCommitWorktreeFactory
+e1d4a6c349e93db772f76a650b63de018323073d1bb83aa572c2a4c39b025c96	gocognit	# cmd/harmonik/comms.go:926 runCommsWhoSubcommand
+e1f43d6031e4198cbc9e8bbe093550f0af2c891670383e43a159d60a21dd148a	cyclop	# cmd/harmonik/sentinel_cmd.go:157 runSentinelRecordHalt
+e21612647ae7dd06d1ea23a393868bbceb50d3e46496998c015c06e072fff6b4	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:390 TestCommsRecv_SharedMatchPredicateParity
+e2246665d0c29e4a4da96d516b051d3db6954bf5869608d10924decf11591646	errcheck	# internal/daemon/subscribe_test.go:441 TestSubscribe_ReplaySinceEventID
+e254006527724bb1a840ac27976089efd23899bcfdfe67094d93721c6353f5ef	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:242 TestCommsRecv_TopicFilter
+e26c6d641394fa94000b6ef3ddcc759bd794d935f2729a08390672189fc3ce64	gosec	# internal/supervise/supervisor.go:458 backoffWithJitter
+e29055c4a3a23c869cacd190c06f1ff6880c545c6ca07d59b2f0165fdfd5abba	gosec	# internal/daemon/bandwidthtuner_test.go:417 TestBandwidthTuner_NotifyRateLimit_SnapsToOne
+e2cf16194cad9a009de845a9395f5fdf8909ee62bf133cc1ea2de7e02299664d	gosec	# internal/queue/transaction.go:1046 ReadFailedRecoveryReceipt
+e329119921965ce6acc7c87f15e87e3ef9b5c4ca69ec14eff567d38b7c41452a	gocognit	# cmd/harmonik/keeper_enable_doctor_cmd.go:47 parseKeeperEnableArgs
+e32b74eafad795770c9bc97355616205c015ecc39c8b4db3e0019e2cc4695917	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:157 TestCommsRecv_CursorAdvancedAfterRead
+e360b7eb23b25a454f96daa7fa82f1cffcd99d1fcc8a35ce40368a24e184cc8a	gocritic	# internal/daemon/workloop_precommit_factory_test.go:14 workloopFixturePreCommitWorktreeFactory
+e3b7c6540c48623fac4f137270847ddb913781ff26ea47b853cd64ccc03ce9ab	revive	# internal/core/workflowid.go:69 ReviewPolicyReviewed
+e3ca6c62380c4a3028182bfd73f54f6e266b0fe77585d7ed2c303b5e2141cbd1	gocognit	# cmd/harmonik/eval_cmd.go:114 runEvalCollect
+e3d22a9cca5d9845c647af1c037609c202b2ccd20c62c8a6c9f720898405a73a	errcheck	# internal/daemon/workloop_test.go:319 TestWorkLoop_DispatchClosesBead
+e3da64d3e4ce52acc25a0c19b66a56884e5faf32cc5710aaeb7bada6a95d8c3c	gocognit	# cmd/harmonik/branch_reap_cmd.go:15 runBranchReapSubcommand
+e430c3cffabdb4b96e7bf1ce4a459c9b3aee3505c67b4cf40f5ea2dd8d71b133	cyclop	# internal/codexreactor/reactor.go:182 Reactor.Step
+e47780c771f67855f213d30fed56c9703225061c68dab65a0a9b88a5a7539854	forbidigo	# internal/handlercontract/adapterregistry_hc012.go:111 AdapterRegistry.ForAgent
+e4d215894da4679ddc36898f37ba4ab68bf93fe3752ab3b26bca4133154af6f7	forbidigo	# internal/daemon/standardgraph.go:26 mustEmbeddedWorkflowDescriptor
+e4efbbc8cbe6bbdd32a92b6ee91f9c2fb36037ee59227bc843e2e0f0fa280e50	exhaustive	# internal/daemon/eagerfill_em063.go:166 buildInQueueSet
+e5753da34fa3c06618daf12714b2f596c084898d06bbe662946ea34fb06265b8	unparam	# internal/hookrelay/hookrelay_test.go:153 hookRelayFixtureListenAndRespond
+e5e4026a9f4cefc1f1eb5f3db634544a01c40f426bf723e53e6057cb64af9370	gocognit	# internal/hookrelay/hookrelay.go:501 sendToSocket
+e5f2f37da2eab1e38f51b5b6e0814a1f87593c52218590b334fdf24ad779d627	gosec	# internal/daemon/bandwidthtuner_test.go:57 TestTranscriptTokensUsed_SumsWindow
+e68cd2e721e5195c67ba5feb9151299d32603693c50a44abff323833be71b6d6	unparam	# internal/daemon/quiesce_test.go:32 capturedNudge.awaitNudge
+e68ce23736623bac72be8a8830d5932bb5d5b40ae79382cab3b80295d2797f14	gosec	# cmd/harmonik/confirm_verdict_test.go:117 TestSendVerdictOverride_DaemonNotRunning
+e690b022eed56606ea4e20bd87dac645deaf9e903d916a227a80a95bc3a123c1	gocritic	# internal/daemon/bandwidthtuner.go:278 scanJSONLFile
+e6dcb8bb2fbba345f3acb029bf391eb48f7499c055b4b51f345444693ffcaf8c	errcheck	# evaltasks/eval-lru-cache/lru.go:35 LRU.Get
+e7a102a4fe380a5e1a6a8fb7975da7b94430fd8088e94f0a6d6077ea081e4ff9	gocognit	# cmd/harmonik/asset_skew.go:209 CheckAssetSkew
+e7a9c69c6b3d444936fbdf1abce103dd889c5b44f06f37b73beaf75232f7a9d3	errcheck	# internal/daemon/t3_exploratory_test.go:373 TestT3_SIGTERMMidRun
+e7bb39699ef39c0080de2366778078ca3489e4656dfa67374b4f877dc2ab3632	errcheck	# internal/daemon/tmuxsubstrate_nosession_hkyaj_test.go:122 TestNoSession_RecoverySucceeds
+e853bebdc5aeb05bd12b1e54cf19c6b28dd11a40e6a49d793b000aacb13fd343	gosec	# internal/daemon/mergetomain_stripruncontext_hk4je_test.go:38 stripRunCtxWorktreeFactory
+e86857335962359bd85520e717106d8bdd2ae22b004165f482378ccabeea6936	errcheck	# internal/daemon/notifystream_test.go:142 TestNotifyStream_MergeStatusPendingIgnored
+e878e5e2cf1e94a372a541b97fdef8c8f93e83fe16dc79cfea29f089d7cb60cc	gocognit	# cmd/harmonik/eval_metrics_cmd.go:60 runEvalMetrics
+e87a56c862130a11bda429e1f83f8697f1051ecc6a432e239e418bb9d4e7d82a	cyclop	# internal/queue/cli/helpers.go:18 parseQueueFlagsExtra
+e8e240b7548c5693203d83f3e0b6ce1a246770f85e6bd4f4093595f405d50796	revive	# internal/queue/types.go:646 QueueSetConcurrencyRequest
+e957c2a10944fe6e38a017d7f02cfce867cf78217978d123d1f58c95dbb11843	errcheck	# internal/daemon/workloop_qcancel_ppt32_test.go:267 TestQueueShutdown_NamedQueuePersistsRestartDrain
+e97e710f1ae346a708c6d82ba8e4fd2688d750ffd86aa88e6dd72b0da03371e8	copyloopvar	# internal/daemon/harnessresolve_test.go:189 TestResolveHarnessPrecedence
+e99fe60d7eabb1cbbd2d5246521a301b7e8fc786d5eee036ad88db503e8b93cc	gocognit	# internal/keeper/cycle.go:217 CyclerConfig.applyDefaults
+e9a39f2af06c14422fad5718073bb210fc0beb40c7ff1745e65a5a0111279a2d	errcheck	# internal/daemon/workloop_handlerpause_qxtbq_test.go:243 TestScenario_WorkLoop_HandlerFatalTripsGate
+e9ceb41e0c44e1043151c8d8c056070e13ab7eee7d04e5616b54ae4391d1567e	unused	# internal/lifecycle/clifixture_test.go:8 cliFixtureSentinelErr
+e9d79a90d9a5831d49d6860d103efa4f38584db2e19433c00ec0a79b00f407c2	unused	# internal/runmerge/fixture_test.go:52 mergeToMainFixtureHeadSHA
+e9e9ecc54381fc9a9677fd1cfe82a3091e66b5d524f64bc7c49f7ae7b5190f5e	revive	# internal/daemon/t4_exploratory_test.go:768 writeTestFile
+ea0c8f343fd78e1ad50df37464b2aa3d75501150f611c677c660014937650894	gocritic	# internal/daemon/decisionsprojection_test.go:221 TestDecisionsProjection_Pure_NoDaemonNoSocket
+ea3f4f7024fa2a36552009070962add8b17acdcd1cb4f14327cfb85cd43ce80c	gocritic	# internal/daemon/orphansweep.go:452 readSupervisorPID
+ea45e3cbaebf4af869786c5fb874257068a9a21d7fe264231013a981b4c58b06	errcheck	# internal/daemon/subscribe_test.go:174 TestSubscribeHub_HeartbeatTimerFiresOnIdle
+ea9cf92268737f92b1b8a3b599c44069900afc6528845ba8a6a52494c42a0434	gocognit	# internal/supervise/daemon_watchdog.go:134 DaemonWatchdog.Run
+eb09b5de8686dacc6668ad62528169909180a6be0cccc0ad167c917a85c09958	gocognit	# internal/supervise/supervisor_watchdog.go:83 SupervisorWatchdog.Run
+eb26dfb75aca0088b465fca871d44a0f59cd3c36e6f840e7ea825a65e27ed16f	gosec	# internal/watch/escalation_we3_test.go:41 readDigestFile
+eb2f2db8150480e6738e62c3632835365779ee39d46433fd02024cc536fe495a	gocognit	# internal/harness/pi/ndjsonparser.go:179 piSessionIDInterceptor.checkBuffer
+ebd57861a21912fec8473eb4670e25e35b19b9ce47fbf5a408a3adc3ef79542d	revive	# internal/queue/types.go:41 QueueStatus
+ebea35253f1ac9fcf95723022b569abcb216eca089d4aa7efc1201f3841017c9	gocognit	# internal/daemon/pasteinject.go:255 pasteInjectQuitOnCommit
+ec5b7c2c137245d244240371c4e14566ca6af3eb1ccbb7583d83af5f8258170d	gosec	# cmd/harmonik/handler_test.go:703 TestHandlerResume_AtomicWrite_TempDirUnwritable
+ecaf3aa39ab7a165b9685529fb5e1446fb905e24e281f0a40ca7e85bd28c5a1a	gocritic	# internal/core/verdictretrycap_rc026a.go:101 CheckVerdictRetryCap
+ed1c7aa4389dd6db396147def56e65fef6bbbc4e52c963c0fd357832fb33a319	gosec	# internal/daemon/verdictexecutor_rc025a.go:206 commitVerdictEmitted
+eded7b23c96e984055cf4f4bd7537da87ed714c1fc19ed60c76934a9f2e3afd7	gocognit	# internal/handlercontract/launchspec_hc006.go:176 LaunchSpec.Valid
+ee1039bd099f390e662da9069c0b93fb54c7541068b8d64c7465321fb6dfcf7b	gosec	# internal/runmerge/merge.go:143 RunBranchToTarget
+ee28aab47ac22f65b5a30c32b85846a3c1fa830d4058a965c3064a6c424fb3f1	errcheck	# internal/daemon/commsrecvhandler_nnwaa_test.go:427 TestCommsRecv_MessagesSliceNotNull
+ee2f44fef266aeff91307028835d8730244284ac964a222ea7132ee1e6835200	revive	# internal/queue/types.go:753 QueueDryRunResponse
+ee9d71889be56c28c9a711453f480ae6e9c203815b9cdd8096cd51d926af4e5b	unused	# test/twins/fail-immediately/main.go:26 commitHash
+eea78265ec5a1f21581442cef3000287ac9c2a7f53188ae56d9eb948fa2ce94c	errcheck	# internal/daemon/workloop_test.go:398 TestWorkLoop_FailedHandlerReopensBead
+eee2a86e9696c18bfda7ec215855e6e4bab3f40d87c5d0f8d48006a3d8767187	revive	# internal/core/agentevents_hqwn59.go:765 StaleOpenBeadDetectedPayload
+ef106d5d958489ef0847f961a9445c0427ed43cd0812a893573e5832402b117c	forbidigo	# internal/handlercontract/adapterregistry_hc012.go:154 AdapterRegistry.Sealed
+ef40a47c89e2cb0bab633ec5dd3d02761a7a2ce09034a6d662459b32ead18637	gocognit	# cmd/harmonik/captain.go:238 runCaptainLaunchWithOps
+ef4d2ad6b5b1ed477b53343542760abf99c299c7591b7ccf2cdad40f802aaef4	prealloc	# internal/daemon/branching.go:180 contentLines
+ef7b96c1706caa7c3a0cadddbd4e3b16f993624ad8894bc390deeee8a6493f53	errcheck	# internal/daemon/verdictexecutor_rc025a_test.go:178 TestExecuteVerdict_MalformedVerdict_RoutesToFallback
+efa560910383a5ddeb09e2502a189ec050798560ac08fa20e32123ce8b738d1d	gocognit	# cmd/harmonik/sync_assets_cmd.go:775 commitSync
+efcc56abbd1ef3873802d541e70ed1d51cf8713c891fb1b9b1dcb2b652c613bc	gocognit	# internal/eventbus/busimpl.go:438 busImpl.EmitWithRunID
+efe2a127a2c1e912c8535ba5bd4ec7a1c373ccce23f41d18a40fb579f08e44fd	unconvert	# internal/daemon/harnessregistry.go:147 buildCodexRoutedLaunchSpec
+f011637a94aa3597e36ab70ec5f7008d547c6beec51eb5034c4c42aac60de083	gosec	# internal/daemon/decisionsprojection_test.go:66 dprojBuildEventsFile
+f08e7ca7be1a17868a96c8b6fc5d339ae3bb7b9feff6f791285484d3e92369ec	errcheck	# internal/daemon/handlerpause_account_lhxzc_test.go:223 TestAccountPause_V1BackwardsCompat
+f09cdfd7c7b31e99da0837e82140865f251a8fcfd2890b0dfc2e16ec7cdc2f92	forbidigo	# scripts/queue-status-writer-ratchet.go:122 main
+f0ba6940b7c9765df6c84fcfe665372e2ab36af35dfdc69dfcb0c75e6b17e9c5	gosec	# internal/workspace/diffhash.go:33 ComputeDiffHash
+f0ca488d957eb011e2740904ab86aa28bb20aeedb661e5819ab3d2b68ac81ed9	unused	# internal/daemon/t6_scale_shape_test.go:176 t6JSONLContains
+f147dbca7d9a68910d7833cab11dd4aa9b066f17b8dda09f68d095e9277ce5eb	unparam	# internal/core/policyengine_test.go:5 noopPolicyFixture
+f1a469da498bd30b500c2202bf90405381d8519ec41bbd60cec0339c24c412a8	unused	# internal/queue/persistence.go:536 fsyncDir
+f1ff9131061aeaa50c47a64b7da44c7fa5e9efee374cec7e90ddf9e161ea3b4b	gocritic	# internal/daemon/standardgraph_sync_test.go:65 TestStandardBeadDotEmbedValidAndInSync
+f32b96b40a8e4917df2d1b4562409c013925a15bd3739d6cf517d6e2d3c2d18a	gosec	# internal/daemon/t2_scenarios_test.go:50 t2FixtureProjectDir
+f3696b2fa5322b209f5e56385c8c9f024435279cb10fc0bd1758d8c4bf66c3d0	gosec	# internal/daemon/mergetomain_hkftyvo_test.go:235 mergeToMainCommittingFactory
+f3c467b5f804a1ff505ad49abbb87c14d1f0c8078a6564dc5b1ae4040dc13a26	gocritic	# internal/daemon/decision_block_ev043a.go:84 DecisionBlocker.AddQueueBlock
+f3e5b9b5f86a470883d2a184e01a66014dd9de1e518989f68e8b9fcd6f788b47	gocognit	# cmd/harmonik/crew.go:355 runCrewListSubcommand
+f3e88dcb7e046b4bbd9fc04005635d2dc8bad26b1db34ead0fc14c7ba5d6922c	gosec	# internal/daemon/pasteinject.go:899 worktreeDiffLineCount
+f48406310c7e7c9e431012b44723cdd6a72535e97d55550eaf15b5b186fa10eb	depguard	# internal/core/policydocument.go:8 import "gopkg.in/yaml.v3"
+f4851ffa59262e750cc8ead7538439ac9ff27d0391d3d03a526d1ca66ab09f41	gocognit	# internal/daemon/subscribe.go:238 SubscribeHub.HandleSubscribe
+f4981b719b680f07af83283b3b0486e701fcee6cf5a2bb44efe120c5fd46dc8e	unused	# internal/daemon/scenario_orphan_sweep_queue_owned_tutqk_test.go:138 sweepQOPollOrphanSweepCompleted
+f551ecaef68afd7bcae8e8891ac8f68ef13d4e30cb6c688ab3f7a4c04bc62c4b	gocognit	# internal/usage/usage.go:216 RunAnalysis
+f5a014c9f5653a7914eea5cfb12ffd71e304a116986bf2ec635304ea4f07d6fc	gocritic	# internal/daemon/tmuxsubstrate.go:1690 tmuxSubstrate.StopCrewSession
+f5a3f74584f0c85e79cbd18f94d0aea83ee5e04fbd6c74e4f8499a093c0127da	revive	# internal/runloop/waitsocketgrace.go:57 file scope
+f5c2e4ae7f49f7c5bfb3319330180963683f917ab0fccd2faa6f8c50393c8a5e	gocritic	# internal/daemon/queueonlyposture_test.go:57 qpostLoadConfig
+f62795ca7305c17f7910d0a9baae4fcbd727f1a5992574e4617091c7442a26ca	gocritic	# internal/daemon/subscribe.go:83 realNewTimer
+f64fee5e2cd673d3d93baf67d0edc25143c296021ee0d8e977779b4f0d8110d1	copyloopvar	# internal/daemon/socket_queue_test.go:130 TestSocketListener_QueueMethodsNilHandler
+f65f3faab7868365aba2ae25bf5f185a5ec35829c479d9972f6efeba62bd2377	errcheck	# internal/daemon/notifystream_test.go:164 TestNotifyStream_StateCleanupAfterCompletion
+f6c5af2b0d7531187e2ad606896416144be67da1f0c8d27e0ae33d076c7c1976	gosec	# internal/core/edgecascade.go:159 SelectNextEdge
+f6e703e9f922608639df5f3ae5776e7558c20ca69953a6cc93a67dd8d120d85c	gosec	# internal/daemon/pasteinject.go:120 hasAnyDirectChild
+f745e98c1d3f02d64d4553b8e9b6d174f98ee983da3120d27a0a63221f650b29	copyloopvar	# internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go:48 TestResolveWorkflow_SingleLabelOverridesDotDefault
+f769872241ee5055dec623b04d480933a14e6adb89e143955e84daf42faf6ac2	revive	# internal/daemon/runfailed_bead_reset_s20z_test.go:16 rfs20zProjectDir_s20z
+f7751904c87f66bf8748d2f6eaa8df6cab4f84532c9ca9c1bdf410af61cf26aa	errcheck	# cmd/harmonik/sleepwake_cmd_coverage_test.go:31 captureSleepWakeIO
+f78c64e10f21a1037472d3efa7802e7177c10fb2e28f47b924fa8ce76e230edf	gocognit	# cmd/harmonik/init_cmd.go:23 runInit
+f7b39974a04d057a501fa32d0f3210a68253007d7e64d91688d362abaf54910c	revive	# internal/queue/types.go:469 QueueAppendRequest
+f7fb5cacc80050c03b5a8e1569fbf0250c7d04067e36c730af0d558d88564130	errcheck	# cmd/harmonik/confirm_verdict_test.go:40 startFakeVerdictDaemon
+f809cc77e3791f0c5bd21ff9a35e4ce9f306d343f1cccb94ab23990f3dbc0ed7	revive	# internal/daemon/runfailed_bead_reset_s20z_test.go:97 rfs20zLedger_s20z.getClaimCount_s20z
+f88e46be458cec6e3fdd0c045c534af81e7b3e70b97f6a1f70bc2057dad69580	revive	# internal/daemon/draindetect.go:136 DrainStateDrained
+f911f7ddb79aabaa7fed1114a309ffcad55897e1b7502d9c808c2cde4b15a114	unparam	# cmd/harmonik/keeper_enable_doctor_cmd_test.go:434 makeDoctorCfg
+f94fdd8ab2599ea033a6eaf277713ac3c19745754b3ca71e851823a0ed0b28e1	unparam	# internal/core/proptest_uuid_helpers_test.go:22 drawValidAgentType
+f979d4a41e9c1e7d6b916cd84e5728b3ffc28add395280a8397c5ccb378f5148	exhaustive	# internal/core/trailers_test.go:296 TestEM017_RequiredSetConformance
+fa0079e8a0645a3e38c7cb2f9046c66469e147fdef122a082527836dc905f9b2	unparam	# internal/daemon/walcheckpoint.go:24 runWALCheckpointPreflight
+fb84f9aeb9e2179ee5261fcc86306da6c4365c458b8dfd7e236b60e4ce3f060e	gosec	# internal/daemon/verdictexecutor_rc025a_test.go:400 TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit
+fbafb56f4139e17188c06467ae45bc458131dd4d0d4948718c4daa7309c1d1f7	gosec	# internal/runloop/scenariogate_test.go:235 TestIsScenarioTouching_BuildTag
+fbf143e40e2bb5b323305d82ad68b67290c47f893b75d54e7d9f7643c90af14a	gocritic	# internal/daemon/restartbackoff.go:89 applyBootBackoff
+fc1ce475531eee2f56a7c0b84167f2d015f3ff739de6019db66953c16100e3dd	errcheck	# tools/testreport/main.go:164 report
+fc317a056009e283966fff3ba2f4fab175595d38f4465c001efa73a906ee536f	gocognit	# cmd/harmonik/run.go:45 runBeadSubcommandIO
+fc7283f8f2325dd65c359333330572e0c115fcea5ebd6c3a1c1828846e460cc2	cyclop	# cmd/harmonik/decisions_k4.go:137 runDecisionsListOrShow
+fca7215f12fb123e0553791288d4958b14b65969205fa93db510e8007a4697c5	gocritic	# internal/core/eventidgen_stress_test.go:26 uuidv7FixtureSortAndDedup
+fd0e33a0222125c1e38889a6de2656ae4676642a503011efa41093cd640cf05d	copyloopvar	# internal/daemon/pi_profile_resolve_test.go:202 TestHasSingleModelLabel
+fd217391f725e9d59f6ee26ea14d7322a90e7ca541f89b59211f3db5be7e0d68	unused	# internal/daemon/survive_shutdown_run_resources_test.go:329 surviveRunDrive
+fd9125e29983ae2b5db3154e87b4dcea546d59e6ab48136cd8600490e3941e0a	unparam	# cmd/harmonik/captain.go:226 captainTmuxSessionName
+fe1df2eaf0664d59c6fef7e6220d1aa720b619ef22c09b9729c623f866ad2a4d	gocognit	# cmd/harmonik/smoke.go:38 runSmoke
+fe298fc1333fd00571744e98dff3a9f41ae8f152b036467af5f79560f0982885	errcheck	# evaltasks/eval-cli-kv/kvcli.go:135 cmdList
+fe9a327e1c1834e36449bf73a17525560f62ea62baf6ae1a71a49b15ed3fa358	gocritic	# internal/daemon/restartbackoff.go:113 computeRestartBackoffDelay
+fec9ef117eb24d609212bdec0202428c46bf7f6b8280d64b32a69ca21fca2a28	unused	# internal/daemon/t2_scenarios_test.go:57 t2WorktreePath
+fed24c98cfbd38c275aa80221b8ecf6f271d941be8fa496fd295fffa4d63b2c0	gosec	# cmd/harmonik/comms.go:370 commsInjectTmuxPane
+fed4c434d149cdccb6392fe8527c54da2655d4b94beb77b20143540fdaa90717	gosec	# internal/daemon/bandwidthtuner_test.go:283 TestBandwidthTunerBackstop_EndToEndBusDelivery
+feeecef9e4911ada8d66dc10837f22c07e313951a6fd6bc4b66ed3272ce24f21	prealloc	# internal/codexreactor/reactor_test.go:329 got
+ff01c837323249221e5babd79bf6118cdaf1b2d01e65a6cda942272f1abfd2bc	errcheck	# internal/daemon/agent_message_test.go:202 TestMatchAgentMessage_SharedTable
+ff3e662a18c80a461001a2f5083d53694a669f0787ee2acac125fd3daaeb4dd1	gocognit	# internal/workflow/params_graph.go:147 substituteGraphParams
+ff7b4cc0922488a98bd32b5be546d353804a022e56e8f9b8a5a493074353da2c	gosec	# internal/daemon/dashboardgate_test.go:17 writeGateFile
+ff9cb2415a711ebacc4757f4712ebdd0a12fbb9f12d4a8b5e57931f53676b36c	revive	# internal/queue/rpc.go:31 QueueSetter
+ffd47dfe164f0fe784c21c0f2ce6245c9c984104f37bf1f9da6b355bf3f677c1	unused	# internal/daemon/walcheckpoint.go:15 walCheckpointResult

@@ -41,7 +41,7 @@ fixture() {
     git -C "$dir" init --quiet
     git -C "$dir" config user.email test@example.com
     git -C "$dir" config user.name test
-    printf '# a comment line\n\nalpha.go\terrcheck\nbeta.go\tcyclop\n' >"$dir/tools/allow.txt"
+    printf '# a comment line\n\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\n' >"$dir/tools/allow.txt"
     git -C "$dir" add tools/allow.txt
     git -C "$dir" commit --quiet -m seed
     printf 'x\n' >"$dir/other.txt"
@@ -77,10 +77,10 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fixture "$work/dirty"
-printf 'gamma.go\tfunlen\n' >>"$work/dirty/tools/allow.txt"
+printf 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\tfunlen\n' >>"$work/dirty/tools/allow.txt"
 run_subject "$work/dirty"
 status=$?
-if [ "$status" -eq 1 ] && grep -q 'gamma.go' "$work/out"; then
+if [ "$status" -eq 1 ] && grep -q 'cccccccc' "$work/out"; then
     pass "an uncommitted new pair fails and is named"
 else
     fail "an uncommitted new pair did not fail (exit $status, wanted 1)"
@@ -95,12 +95,12 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fixture "$work/committed"
-printf 'gamma.go\tfunlen\n' >>"$work/committed/tools/allow.txt"
+printf 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\tfunlen\n' >>"$work/committed/tools/allow.txt"
 git -C "$work/committed" add tools/allow.txt
 git -C "$work/committed" commit --quiet -m 'tolerate one more'
 run_subject "$work/committed"
 status=$?
-if [ "$status" -eq 1 ] && grep -q 'gamma.go' "$work/out"; then
+if [ "$status" -eq 1 ] && grep -q 'cccccccc' "$work/out"; then
     pass "a committed new pair fails and is named"
 else
     fail "a committed new pair did not fail (exit $status, wanted 1)"
@@ -112,7 +112,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fixture "$work/shorter"
-printf '# a comment line\nalpha.go\terrcheck\n' >"$work/shorter/tools/allow.txt"
+printf '# a comment line\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\n' >"$work/shorter/tools/allow.txt"
 if run_subject "$work/shorter"; then
     pass "removing a pair passes"
 else
@@ -128,7 +128,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fixture "$work/reordered"
-printf 'beta.go\tcyclop\n# another comment\nalpha.go\terrcheck\n' >"$work/reordered/tools/allow.txt"
+printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tcyclop\n# another comment\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\n' >"$work/reordered/tools/allow.txt"
 if run_subject "$work/reordered"; then
     pass "reordering and re-commenting pass"
 else
@@ -162,7 +162,7 @@ fi
 assertions=$((assertions + 1))
 fixture "$work/merge"
 git -C "$work/merge" checkout --quiet -b side
-printf '# a comment line\nalpha.go\terrcheck\n' >"$work/merge/tools/allow.txt"
+printf '# a comment line\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\terrcheck\n' >"$work/merge/tools/allow.txt"
 git -C "$work/merge" commit --quiet -am 'clean beta'
 git -C "$work/merge" checkout --quiet -
 # The branch we merge INTO must move too, or git fast-forwards and no merge
@@ -210,13 +210,13 @@ assertions=$((assertions + 1))
 fixture "$work/cleaned-then-grown"
 printf '# every pair has been cleaned\n' >"$work/cleaned-then-grown/tools/allow.txt"
 git -C "$work/cleaned-then-grown" commit --quiet -am 'clean the list'
-printf 'gamma.go\tfunlen\n' >>"$work/cleaned-then-grown/tools/allow.txt"
+printf 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\tfunlen\n' >>"$work/cleaned-then-grown/tools/allow.txt"
 # COMMITTED, so this case reaches the SECOND window. Left uncommitted it would
 # be caught by the working-tree window and never exercise the empty base at all.
 git -C "$work/cleaned-then-grown" commit --quiet -am 'tolerate one more'
 run_subject "$work/cleaned-then-grown"
 status=$?
-if [ "$status" -eq 1 ] && grep -q 'gamma.go' "$work/out"; then
+if [ "$status" -eq 1 ] && grep -q 'cccccccc' "$work/out"; then
     pass "a pair added to an empty list still fails"
 else
     fail "a pair added to an empty list did not fail (exit $status, wanted 1)"
@@ -224,7 +224,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CASE 10 — the ratchet is actually wired into the inner loop.
+# CASE 10 — the override cannot point the parser at executable product code.
+# A shell script can contain two-field lines by accident; treating it as an
+# allow list turns a configuration mistake into a false pass.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+fixture "$work/non-list"
+printf '#!/usr/bin/env bash\n' >"$work/non-list/not-an-allow-list.sh"
+( cd "$work/non-list" && LINT_ALLOW_LIST=not-an-allow-list.sh "$subject" ) >"$work/out" 2>&1
+status=$?
+if [ "$status" -eq 2 ] && grep -q '\.txt allow list' "$work/out"; then
+    pass "the override refuses a non-list shell script"
+else
+    fail "the override accepted product code as an allow list (exit $status, wanted 2)"
+    cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 11 — the ratchet is actually wired into the inner loop.
 #
 # Every case above is worthless if the step never runs. `make -n` expands the
 # real step list, so a comment naming the script cannot satisfy this.

@@ -3,15 +3,15 @@
 #
 # THE PROBLEM THIS SOLVES. `make fast` now ends with the whole-tree lint judge
 # (scripts/lint-allow.sh). That judge fails on a finding whose file-and-linter
-# pair is not in tools/lintreport/allow.txt. There is one repair that turns that
+# identity is not in tools/lintreport/allow.txt. There is one repair that turns that
 # red into a green in ten seconds and leaves the defect in the tree: append the
-# pair to the allow list. Every occurrence of hk-dp69a named that repair as the
+# identity to the allow list. Every occurrence of hk-dp69a named that repair as the
 # tempting one, and the judge itself can only ask people not to do it.
 #
-# This step makes the promise mechanical. It compares the pairs in the allow
-# list against the pairs the same list held before, and it fails when a pair
+# This step makes the promise mechanical. It compares the finding identities in
+# the list against the identities the same list held before, and it fails when one
 # appears that was not there. It does not care about line numbers, comments,
-# order, or the number of lines. It cares about the SET of tolerated pairs.
+# order, or the number of lines. It cares about the tolerated identity set.
 #
 # THE TWO WINDOWS, and why both are needed.
 #
@@ -84,6 +84,11 @@ die() {
 [ -f "$allow" ] || die "no allow list at $allow.
   A missing list is not an empty list, and a gate that shrugs at a missing step
   has not produced a verdict."
+case "$allow" in
+    /*|../*|*/../*) die "LINT_ALLOW_LIST must name a repository-relative path" ;;
+    *.txt) ;;
+    *) die "LINT_ALLOW_LIST must name a .txt allow list, not executable product code" ;;
+esac
 
 # pairs <file> — the tolerated set, with comments, blank lines and order removed.
 #
@@ -93,14 +98,38 @@ die() {
 # would have read as "could not read the list" and failed the build from inside
 # gate-static. sed exits 0 whether it deletes a line or not.
 pairs() {
-    sed -e 's/#.*$//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$1" |
-        sort -u
+    awk '
+        { sub(/#.*/, ""); sub(/[[:space:]]+$/, "") }
+        /^[[:space:]]*$/ { next }
+        length($1) != 64 || $1 !~ /^[0-9a-f]+$/ || NF != 2 { bad=1; next }
+        { print $1 "\t" $2 }
+        END { if (bad) exit 2 }
+    ' "$1" | sort -u
+}
+
+is_legacy() {
+    sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' "$1" |
+        awk 'NF == 2 && (length($1) != 64 || $1 !~ /^[0-9a-f]+$/) { found=1 } END { exit !found }'
+}
+
+# Project content identities back to the legacy path/linter groups during the
+# one format transition. A new identity passes only when its location comment
+# names a group the old list already tolerated.
+legacy_pairs() {
+    awk '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {
+            if (NF < 4 || $3 != "#") { bad=1; next }
+            path=$4; sub(/:[0-9]+$/, "", path); print path "\t" $2; next
+        }
+        NF == 2 { print $1 "\t" $2; next }
+        { bad=1 }
+        END { if (bad) exit 2 }
+    ' "$1" | sort -u
 }
 
 work=$(mktemp -d) || die "could not create a temporary directory"
 trap 'rm -rf "$work"' EXIT
-
-pairs "$allow" >"$work/now" || die "could not read $allow"
 
 # ---------------------------------------------------------------------------
 # Window 1 — the working tree against HEAD.
@@ -109,7 +138,13 @@ git show "HEAD:$allow" >"$work/head-raw" 2>/dev/null || die \
     "could not read $allow at HEAD.
   Either the list is untracked or this checkout has no HEAD. Both leave the
   question unanswered, and an unanswered ratchet is a failure, not a pass."
-pairs "$work/head-raw" >"$work/head" || die "could not read $allow as it stands at HEAD."
+if is_legacy "$work/head-raw"; then
+    legacy_pairs "$allow" >"$work/now" || die "could not verify the legacy-list migration in $allow"
+    legacy_pairs "$work/head-raw" >"$work/head" || die "could not read the legacy list at HEAD"
+else
+    pairs "$allow" >"$work/now" || die "could not read $allow"
+    pairs "$work/head-raw" >"$work/head" || die "could not read $allow as it stands at HEAD."
+fi
 
 added_uncommitted=$(comm -23 "$work/now" "$work/head")
 if [ -n "$added_uncommitted" ]; then
@@ -136,6 +171,7 @@ parents=$(git rev-parse 'HEAD^@' 2>/dev/null)
 
 : >"$work/parents"
 base_found=0
+legacy_parent=0
 for parent in $parents; do
     # A parent that does not carry the list tolerated nothing on that side of
     # the history, so it contributes nothing to the union. A parent that
@@ -143,12 +179,23 @@ for parent in $parents; do
     # so the two cases are tracked apart.
     if git cat-file -e "$parent:$allow" 2>/dev/null; then
         base_found=1
-        git show "$parent:$allow" >"$work/parent-raw" || die \
+        git show "$parent:$allow" >"$work/parent-$parent" || die \
             "could not read $allow at $parent."
-        pairs "$work/parent-raw" >>"$work/parents" || die \
-            "could not read $allow as it stands at $parent."
+        if is_legacy "$work/parent-$parent"; then legacy_parent=1; fi
     fi
 done
+if [ "$legacy_parent" -eq 1 ]; then
+    legacy_pairs "$work/head-raw" >"$work/head" || die "could not verify the committed legacy-list migration"
+    for parent in $parents; do
+        [ -f "$work/parent-$parent" ] || continue
+        legacy_pairs "$work/parent-$parent" >>"$work/parents" || die "could not read $allow as it stands at $parent"
+    done
+else
+    for parent in $parents; do
+        [ -f "$work/parent-$parent" ] || continue
+        pairs "$work/parent-$parent" >>"$work/parents" || die "could not read $allow as it stands at $parent"
+    done
+fi
 sort -u "$work/parents" -o "$work/parents"
 
 if [ "$base_found" -eq 0 ]; then

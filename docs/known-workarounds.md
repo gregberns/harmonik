@@ -256,7 +256,7 @@ Five hard-won operational failures, relocated here from the retired AGENT_OPERAT
 
 **Fix:**
 - Attach a bead to its kerf work via the `codename:<name>` **label**, not an epic dependency.
-- Example: `br label add hk-abc codename:productization` (not `br dep add hk-abc hk-epic`).
+- Example: `br label add hk-abc -l codename:productization` (not `br dep add hk-abc hk-epic`).
 - To diagnose: `br show <id>` — look for `blocked_by` entries listing an open bead.
 
 ### Gotcha 4 — $TMUX REQUIRED

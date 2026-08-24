@@ -179,7 +179,7 @@ Two separate things, both operator-raised.
   **Overlaps W8, checked 2026-08-23 evening.** Charlie's branch edits this same file, but only to
   swap a script path in the `APPROVE` paragraph; it does not touch the comment rule. So this is real
   work, it is not already done, and the two edits sit in different parts of the file. Whichever lands
-  second resolves the overlap. This task is dispatched on `charlie-q`.
+  second resolves the overlap. This task is dispatched on `charlie-batch`.
 - **W7.2 — Check it is any good, and check it travels.** The operator's concern: other projects will
   need their own reviewer, so harmonik's protocols must not be baked into it. Report which parts are
   general review judgement and which are harmonik-specific, and whether the split is clean enough
@@ -229,7 +229,7 @@ file that branch also edits; see W7.1 for why that is safe.
 ## Staffing
 
 **Corrected 2026-08-23 evening: the queue is in use.** Charlie now runs as a queue manager and is
-dispatching these issues through `charlie-q`. Tasks must therefore be self-contained enough for an
+dispatching these issues through `charlie-batch`. Tasks must therefore be self-contained enough for an
 implementer that reads the task file and nothing else. If a task file is ambiguous, that is a defect
 in the task file, not a question for the implementer.
 

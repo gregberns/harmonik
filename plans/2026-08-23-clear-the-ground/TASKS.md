@@ -22,17 +22,19 @@ branch only, `dead-shell-sweep` and `run-goroutine-supervisor` are on `work/char
 
 | # | Task | P | Workstream | Bead | Why it is first |
 |---|---|---|---|---|---|
-| 1 | [`review-trailer-never-stamped`](tasks/review-trailer-never-stamped.md) | **P0** | W7 | `hk-pipeline-commits-claim-unreviewed-wgk5x` | **Every commit this pipeline produces claims no reviewer was reached, and one almost always was.** 176 commits carry the false trailer; zero carry the shape the stamp would leave, so it has never once run. Third time filed. Read the traps — the last attempt was blocked for reversing every commit message body, and this one probably cannot be proved through the pipeline. |
-| 2 | [`runregistry-extract`](tasks/runregistry-extract.md) | P1 | W2 | `hk-runregistry-extract-l8w1u` | **Highest leverage on the list.** Two further rows unblock the moment it lands, and its own dependency is already in. |
-| 3 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
-| 4 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
-| 5 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
-| 6 | [`reviewer-portability-review`](tasks/reviewer-portability-review.md) | P1 | W7 | `hk-reviewer-portability-review-9fbjm` | Same dependency, also landed. Small. |
+| 1 | [`review-trailer-never-stamped`](tasks/review-trailer-never-stamped.md) | **P0** | W7 | `hk-pipeline-commits-claim-unreviewed-wgk5x` | **Every commit this pipeline produces claims no reviewer was reached, and one almost always was.** 176 commits carry the false trailer; zero carry the shape the stamp would leave, so it has never once run. Third time filed. Read the traps — the last attempt was blocked for reversing every commit message body. **Reproduced end to end on 2026-08-24:** run `01a03538` returned two APPROVE verdicts and the commit it landed says nobody reviewed it. Done-when 2 through 6 are in-repo tests and are routable now; only done-when 1 waits on a redeploy. |
+| 2 | [`subprocess-smoke-accepts-crash`](tasks/subprocess-smoke-accepts-crash.md) | **P0** | W0 | `hk-subprocess-smoke-accepts-crash-n9e3v` | **The only test in the merge decision that boots the real binary passes when the implementer crashes.** Reproduced on demand: the test goes green on `run_failed … sub_reason=claude_crashed exit=1`. It reads the log as TEXT, so a failure summary that quotes `run_completed` satisfies it, and it correlates on no run id, so a terminal event from any other run satisfies it too. **Read the scope note** — accepting `run_failed` was a documented design choice, not an oversight, so "assert `run_completed`" is NOT the fix and would need product surface that does not exist. |
+| 3 | [`runregistry-extract`](tasks/runregistry-extract.md) | P1 | W2 | `hk-runregistry-extract-l8w1u` | **Highest leverage on the list.** Two further rows unblock the moment it lands, and its own dependency is already in. |
+| 4 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
+| 5 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
+| 6 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
 | 7 | [`keeper-watcher-test-forks-tmux`](tasks/keeper-watcher-test-forks-tmux.md) | P1 | W5 | `hk-keeper-watcher-test-forks-tmux-dqiku` | **Turned the batch gate red on 2026-08-24 while the branch was green.** Four of the sixteen keeper watcher tests fork real `tmux` subprocesses on every 10 ms tick inside a 150 ms budget, so the gate measures machine load rather than the code. Independent of everything else. |
 | 8 | [`run-verb-table`](tasks/run-verb-table.md) | P1 | W2 | `hk-run-verb-table-sfvx7` | The command-line tool picks its verb with 55 sequential if-statements in one 774-line function. Touches `cmd/harmonik/main.go` only, so it is outside the run-machine single-owner rule below. |
 | 9 | [`runbead-extract-decisions`](tasks/runbead-extract-decisions.md) | P1 | W2 | `hk-runbead-extract-decisions-4wj2g` | Same shape, `cmd/harmonik/run.go`. Also outside the single-owner rule. |
+| 10 | [`ops-monitor-never-flags-a-stopped-queue`](tasks/ops-monitor-never-flags-a-stopped-queue.md) | P1 | W7 | `hk-ops-monitor-never-flags-a-stopped-queue-nb2zv` | **The health check that is supposed to catch a stopped queue needs the crew ONLINE to fire, which is exactly when nobody is watching.** It also guesses the crew name by stripping a trailing `-q`, so `charlie-batch` never matches, and `main` is on its own suppression list while its header claims to cover `main`. Neither queue in the 2026-08-24 incident would ever have been flagged. Independent of everything else. |
+| 11 | [`red-gate-merges-without-reviewer`](tasks/red-gate-merges-without-reviewer.md) | P1 | W7 | `hk-red-gate-merges-without-reviewer-uhboc` | **A RED commit gate merges anyway when the graph declares no reviewer node.** The defect reproduces in 15 seconds with a test already in the tree — `TestDeterministicGateFail_TellsTheImplementerToFixTheFailure` drives the real cascade over a reviewer-less graph with an always-red gate and gets `Success:true`; it passes today only because it logs the result and asserts nothing. The salvage also returns success with an EMPTY terminal node, which contradicts a normative spec, so this is spec alignment rather than a judgment call. **Load-time validation is the wrong fix** — reviewer-less graphs are legal and shipped; the file says why. Touches `dot_cascade_core.go`, which no live run holds. |
 
-**Nine rows, plus the thirteen linter rows below.** One review-gate repair that outranks everything
+**Eleven rows, plus the thirteen linter rows below.** Two review-gate repairs that outrank everything
 else on the list, one structural change, one test repair, two command-line splits, the rest
 measurement, governance and review.
 
@@ -69,13 +71,14 @@ it.
 
 | Task | Bead | Where |
 |---|---|---|
-| [`run-machine-second-wave`](tasks/run-machine-second-wave.md) | `hk-run-machine-second-wave-8hurm` | Dispatched on `charlie-batch`, live worktree holding `workloop.go`, `agentlaunch.go`, `dot_cascade_core.go`. |
+| [`lint-burn-gosec`](tasks/lint-burn-gosec.md) | `hk-lint-burn-gosec-ywauz` | Dispatched on `charlie-batch`, bead `in_progress`. It gates `errcheck` and `gocritic`, so neither of those may be fed until it lands. |
 
 ## Held — do not feed these yet
 
 | Task | Bead | Why held |
 |---|---|---|
 | [`core-split-by-cluster`](tasks/core-split-by-cluster.md) | `hk-core-split-by-cluster-ee833` | **Failed twice and stopped `charlie-q`.** Two attempts are stranded on run branches, neither merged, each touching 330+ files against a task file that says one package per landing. A reviewer also found spec-bearing doc comment cut from `internal/queue/resume.go` during the move. The task file is being rewritten to name one starting package and to forbid comment edits inside a move. Do not re-feed until that lands. |
+| [`run-machine-second-wave`](tasks/run-machine-second-wave.md) | `hk-run-machine-second-wave-8hurm` | **Blocked by the review gate, correctly, and the fault is the task file's.** The implementer met "under complexity 30" by renaming four functions, moving each body verbatim behind an inline `//nolint:funlen,gocognit,cyclop`, and leaving a pass-through wrapper under the old name. A body moved verbatim cannot change complexity. **Do not quote that run's complexity figures** — they match no command in this repo; `gocognit` on the current tree reports `driveDotWorkflow` 205, `beadRunOne` 129, `runWorkLoop` 505. Rule 3 below now forbids the manoeuvre. Do not re-feed until the task file and the bead body agree and both carry rule 3. |
 | [`runenv-narrow-inputs`](tasks/runenv-narrow-inputs.md) | `hk-runenv-narrow-inputs-1z88x` | Dependency landed, but the single-owner rule below covers the whole W2 run-machine chain and `run-machine-second-wave` holds those files right now. Free the moment it finishes. |
 
 ## Blocked — waiting on something real
@@ -98,6 +101,7 @@ Verified 2026-08-24 with `git log <branch> --grep "<bead-id>"`. All beads closed
 | `workloop-name-the-state` | closed | `bb066d18f` | both |
 | `cli-structure-assessment` | closed | `32beb52ec` | both |
 | `crew-cleanup-skill` | closed | `4c4e08efc` | **alpha only** |
+| `reviewer-portability-review` | closed | `296c759d3` | **batch only** |
 | `dead-shell-sweep` | closed | `1b0da6fe3` | **batch only** |
 | `lint-ratchet-mutation-proof` | closed | `16e946d28`, `0fa5698d6`, `8cbac5127` | both |
 | `workloop-extract-pure-decisions` | closed | `d9cb8e209` | both |
@@ -138,8 +142,8 @@ what keeps the runway above zero.
 | 1 | The three complexity linters — `gocognit` 186, `cyclop` 38, `funlen` 6, so **230 findings, a quarter of the list, that no row owns** | Not written, and deliberately last. Every one of them is a symptom of a function that the extraction workstream is already splitting, so writing these files before those land would produce work that the extractions redo. Write them when the run-machine and command-line splits are in. |
 | 6 | Shell to Go — six task files written 2026-08-24 | **WRITTEN, NOT LISTED. Needs an operator ruling first.** PLAN.md does not describe a shell-to-Go workstream at all; W6 there is the crew-cleanup skill. The only mandate anywhere was a single line in an earlier revision of THIS file, which is not an authority. Three of the six convert gates that `make fast` / `make core` / `make full` depend on, so this is not a free change. |
 | — | Follow-on packages for `core-split-by-cluster`, one per package after the first | Not started; depends on the rewrite of that task file |
-| 5 | **The one test that boots the real binary accepts a crash as a pass** (`hk-subprocess-smoke-accepts-crash-n9e3v`, P0) | Not written. Found 2026-08-24 by running the batch gate for real. The Makefile's own comment says this is the only test that boots the real binary, and it grades a crashed implementer green. This is the sharpest evidence yet that `make full` can be green while the software does not work. |
-| 5 | **A red commit gate merges when the workflow graph has no reviewer node** (`hk-red-gate-merges-without-reviewer-uhboc`, P1) | Not written. Found the same way. The production graph has a review node, so we are fail-closed today — but by accident of topology rather than by design. |
+| 3 | **The one test that boots the real binary accepts a crash as a pass** (`hk-subprocess-smoke-accepts-crash-n9e3v`, P0) | **Written, reviewed, and on the ready list above.** Writing it corrected the record: accepting a crashed run was a documented design choice from the originating commit, not an oversight, so the fix is a judge that decodes the events and correlates on run id — not an assertion that the run completed. |
+| 3 | **A red commit gate merges when the workflow graph has no reviewer node** (`hk-red-gate-merges-without-reviewer-uhboc`, P1) | **Written, reviewed, and on the ready list above.** Writing it sharpened the record: all five tracked graphs that declare a `commit_gate` also declare a reviewer, so the unsafe branch is unreachable from every graph in this repo. The topology guard is also not an original design choice — it was added with no reviewer check at all, then narrowed after three confirmed production merges of unreviewed work, which argues for removing it rather than narrowing it a third time. |
 
 ### Deletion candidates the dead-shell sweep missed
 

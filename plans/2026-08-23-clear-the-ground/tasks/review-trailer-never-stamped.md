@@ -32,6 +32,16 @@ stamp has never once executed on a real pipeline run.**
 This is the third time the finding has been filed. Two earlier records said the same thing and both
 were closed without the behaviour changing.
 
+**Reproduced end to end on a fresh commit, 2026-08-24.** Run
+`01a03538-b4c5-7979-83af-5ceb786f9d41` produced two `reviewer_verdict` events, both APPROVE, at
+19:34:13Z and 19:35:06Z. The commit it landed, `296c759d3` on `work/charlie-batch-1`, reads
+`Reviewed-By: none` with a `NOT_REVIEWED` verdict, and it carries exactly one `Reviewed-By:` line,
+so the amend did not even append beside the placeholder. It did not run at all.
+
+This single run is better evidence than the 176-commit count. The count leaves room to argue those
+runs never reached a reviewer. This leaves none: same run, same minutes, reviewer approved twice,
+commit says nobody reviewed it.
+
 ## Why it never fires
 
 Three separate defects sit in a line. All three were confirmed against the current branch.
@@ -80,15 +90,25 @@ fork-safety wrapper around the commit call. Read the branch if it helps; do not 
 **The reversal bug is not on the current tree.** The trailer writer here is plain concatenation and
 reorders nothing. Do not go looking for a reversal to fix.
 
-**You cannot test this through the pipeline.** The daemon binary that would run a dispatched attempt
-was built on 2026-08-15 and is many commits behind. Any run dispatched to prove the fix is judged by
-a pipeline carrying the very defect. Prove it with a test in the repository instead, and expect this
-task to need a hand landing rather than a dispatched one.
+**You cannot prove the FIX through the pipeline, but you CAN reproduce the DEFECT through it.**
+No running daemon can carry a fix that has not landed and been redeployed. That is true of every
+daemon-behaviour fix at any build age, so it is not a property of this one and it is not a reason to
+hand-land the code. To reproduce the defect on demand: dispatch any bead, wait for a
+`reviewer_verdict` event with APPROVE, then read the commit the run landed. Run
+`01a03538-b4c5-7979-83af-5ceb786f9d41` is the worked example (see Problem above).
+
+What follows is a split, not a hand landing. Done-when 2 through 6 are in-repo tests. A dispatched
+implementer writes them and the commit gate runs them in the worktree, so they are routable today.
+Only done-when 1 needs the fixed daemon to be running, which is a redeploy step AFTER the batch
+merges. Carry done-when 1 as an explicit post-redeploy verification and do not let it block the
+rest.
 
 ## Done when
 
-1. A commit produced by a pipeline run whose reviewer returned APPROVE carries that reviewer's name
-   and that verdict. Not a placeholder.
+1. **(Post-redeploy — does not block the landing.)** A commit produced by a pipeline run whose
+   reviewer returned APPROVE carries that reviewer's name and that verdict. Not a placeholder.
+   Verify this after the batch merges and the daemon is redeployed, not during the run that writes
+   the fix.
 2. A test pins the ordinary path, not the salvage path. There is already a scenario test that drives
    implementer → APPROVE → terminal close and that holds the exported approve-verdict field but
    asserts only which terminal node was reached. Assert the verdict is present. This one assertion

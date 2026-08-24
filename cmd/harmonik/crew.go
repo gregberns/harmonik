@@ -557,7 +557,7 @@ FLAGS
                     yet supported" and this command exits non-zero — there is no
                     silent fallback to claude. Codex and Pi still implement at
                     the BEAD level, which is a different mechanism: label the
-                    bead harness:codex ("br label <id> add harness:codex").
+                    bead harness:codex ("br label add <id> -l harness:codex").
                     Highest-precedence tier of the crew-scoped harness resolver
                     (flag > mission harness: front-matter > per-crew config >
                     default "claude") for the day that substrate lands.
@@ -573,7 +573,7 @@ EXAMPLES
   harmonik crew start alpha                                  # queue defaults to alpha-q, no mission
   harmonik crew start alpha --mission /tmp/alpha-handoff.md  # queue defaults to alpha-q
   harmonik crew start beta  --queue beta-q  --mission /tmp/beta-handoff.md
-  br label hk-abc12 add harness:codex                        # put a BEAD on codex; crews stay on claude
+  br label add hk-abc12 -l harness:codex                     # put a BEAD on codex; crews stay on claude
 `)
 }
 

@@ -153,6 +153,43 @@ func TestHoldingDispatch_FalseWhenMarkerAbsent(t *testing.T) {
 	}
 }
 
+func TestHoldingDispatch_ForgottenMarkerExpires(t *testing.T) {
+	projectDir := t.TempDir()
+	agent := "stale-dispatch"
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(keeperDir, agent+".dispatching")
+	old := time.Now().Add(-keeper.DefaultDispatchTTL - time.Minute)
+	if err := os.WriteFile(path, []byte(old.UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if keeper.HoldingDispatch(projectDir, agent) {
+		t.Fatal("forgotten dispatch marker remained a permanent veto")
+	}
+}
+
+func TestHoldingDispatch_CorruptOldMarkerUsesModificationTimeLease(t *testing.T) {
+	projectDir := t.TempDir()
+	agent := "corrupt-dispatch"
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(keeperDir, agent+".dispatching")
+	if err := os.WriteFile(path, []byte("corrupt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-keeper.DefaultDispatchTTL - time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if keeper.HoldingDispatch(projectDir, agent) {
+		t.Fatal("corrupt old dispatch marker remained a permanent veto")
+	}
+}
+
 // TestSetDispatching_CreatesMarker verifies that SetDispatching creates the
 // .dispatching file and that HoldingDispatch subsequently returns true.
 func TestSetDispatching_CreatesMarker(t *testing.T) {

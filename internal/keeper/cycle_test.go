@@ -469,7 +469,6 @@ func TestCycler_Gating(t *testing.T) {
 // TestCycler_NoRefireWithinSameSessionID verifies the anti-loop suppression:
 // a second MaybeRun call with the same session_id must not re-fire the cycle.
 func TestCycler_NoRefireWithinSameSessionID(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
 	t.Parallel()
 
 	const (
@@ -675,7 +674,6 @@ func TestCycler_ManagedGuardInsideMaybeRun(t *testing.T) {
 // spec: after a cycle completes, the Cycler stays suppressed until BOTH a new
 // session_id is observed AND pct has been seen below WarnPct on that session.
 func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
 	t.Parallel()
 
 	const (
@@ -987,13 +985,13 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 // truncated (clearing any stale nonce) before the nonce poll begins, so a
 // pre-crash leftover cannot pre-satisfy the new cycle's poll.
 func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
 	t.Parallel()
 
 	const (
 		agent      = "truncate-agent"
 		newCycleID = "cyc-truncate-new"
-		sid        = "sess-truncate"
+		sid        = "11111111-1111-4111-8111-111111111111"
+		newSID     = "22222222-2222-4222-8222-222222222222"
 	)
 	newNonce := "<!-- KEEPER:" + newCycleID + " -->"
 
@@ -1027,9 +1025,7 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
 
-	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
-	}
+	noopGauge := gaugeReturnsNewSIDAfter(1, sid, newSID)
 	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return newCycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: truncateFn, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
@@ -1453,84 +1449,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 	}
 	if gotSessionID != "" {
 		t.Errorf("managed-session port session_id = %q; want empty string (timeout path)", gotSessionID)
-	}
-}
-
-// TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct verifies that when
-// lastFiredSID matches the current session_id but the context has dropped below
-// WarnPct (real /clear happened; ClearSettle timed out so SID didn't change),
-// the anti-loop state is reset so the keeper can re-arm on subsequent ticks.
-// (Refs: hk-uxu)
-func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
-	t.Parallel()
-
-	const (
-		agent   = "escape-hatch-agent"
-		cycleID = "cyc-escape-001"
-		sid     = "sess-persistent"
-	)
-
-	em := &keeper.RecordingEmitter{}
-	spy := &cycleSpyInjector{}
-	jc := &journalCapture{}
-
-	nonce := "<!-- KEEPER:" + cycleID + " -->"
-	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce present immediately
-
-	gaugePct := 95.0
-	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		return &keeper.CtxFile{Pct: gaugePct, SessionID: sid}, time.Now(), nil
-	}
-	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
-		return "/tmp/HANDOFF-" + a + ".md"
-	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
-	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     t.TempDir(),
-		TmuxTarget:     "fake-pane",
-		ActPct:         90.0,
-		WarnPct:        80.0,
-		HandoffTimeout: 500 * time.Millisecond,
-		ClearSettle:    20 * time.Millisecond,
-		PollInterval:   5 * time.Millisecond,
-	}
-
-	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
-
-	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
-	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
-		t.Fatalf("MaybeRun (step 1): %v", err)
-	}
-	want1 := 1
-	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
-		t.Errorf("after step 1: cycle_complete events = %d; want %d", got, want1)
-	}
-
-	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
-		t.Fatalf("MaybeRun (step 2): %v", err)
-	}
-	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
-		t.Errorf("after step 2: cycle_complete events = %d; want %d (anti-loop suppressed)", got, want1)
-	}
-
-	gaugePct = 70.0
-	lowCF := &keeper.CtxFile{Pct: 70.0, SessionID: sid}
-	if err := cycler.MaybeRun(context.Background(), lowCF); err != nil {
-		t.Fatalf("MaybeRun (step 3): %v", err)
-	}
-	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
-		t.Errorf("after step 3: cycle_complete events = %d; want %d (below ActPct)", got, want1)
-	}
-
-	gaugePct = 95.0
-	cf2 := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
-	if err := cycler.MaybeRun(context.Background(), cf2); err != nil {
-		t.Fatalf("MaybeRun (step 4): %v", err)
-	}
-	want4 := 2
-	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want4 {
-		t.Errorf("after step 4: cycle_complete events = %d; want %d (escape hatch should allow re-fire)", got, want4)
 	}
 }
 

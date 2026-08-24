@@ -75,22 +75,25 @@ func CrispIdle(projectDir, agent string) bool {
 	return ctxMtime.Sub(idleMtime) <= crispIdleTolerance
 }
 
-// HoldingDispatch reports whether the agent has in-flight queue work that the
-// session-keeper cycle must defer around. It checks for the presence of the
-// .dispatching marker file.
-//
-// FAIL-CLOSED: any stat error other than ErrNotExist (e.g. permission denied,
-// I/O error) is treated as HoldingDispatch = true so the cycle never clobbers
-// an uncertain state.
+// HoldingDispatch reports a live dispatch lease. A forgotten marker expires,
+// so it cannot silence the keeper forever. A corrupt body falls back to the
+// file modification time. Unexpected file errors still fail closed.
 func HoldingDispatch(projectDir, agent string) bool {
-	_, err := os.Stat(dispatchingMarkerPath(projectDir, agent))
-	if err == nil {
-		return true
-	}
+	path := dispatchingMarkerPath(projectDir, agent)
+	st, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return false
 	}
-	return true // fail-closed on unexpected error
+	if err != nil {
+		return true
+	}
+	//nolint:gosec // G304: path is derived from projectDir and validated agent use sites
+	raw, readErr := os.ReadFile(path)
+	startedAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(string(raw)))
+	if readErr != nil || parseErr != nil {
+		startedAt = st.ModTime()
+	}
+	return time.Since(startedAt) <= DefaultDispatchTTL
 }
 
 // SetDispatching writes the .dispatching marker for the given agent, recording

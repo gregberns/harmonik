@@ -666,13 +666,18 @@ func runKeeperRestartNow(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)
 		return 1
 	}
-	if err := startKeeperRestartDriver(projectDir, agent, tmuxTarget, previousSID, nonce); err != nil {
+	if err := startKeeperRestartDriverFn(projectDir, agent, tmuxTarget, previousSID, nonce); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: start detached driver: %v\n", err)
 		return 1
+	}
+	if err := keeper.EmitRestartNowAccepted(context.Background(), cfg.Emitter, agent, previousSID, nonce); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: accepted but audit event failed: %v\n", err)
 	}
 	fmt.Printf("keeper restart-now: agent=%q nonce=%s accepted; detached driver will clear once and brief after session turnover in %q\n", agent, nonce, tmuxTarget)
 	return 0
 }
+
+var startKeeperRestartDriverFn = startKeeperRestartDriver
 
 func startKeeperRestartDriver(projectDir, agent, target, previousSID, nonce string) error {
 	exe, err := os.Executable()

@@ -11,5 +11,12 @@ func TestKeeperConformance(t *testing.T) {
 	t.Run("floor/live-watcher-lock-held", TestLiveKeeperPresent_LockHeld)
 	t.Run("floor/live-watcher-no-lockfile", TestLiveKeeperPresent_NoLockfile)
 	t.Run("floor/operator-attached-warn-only", TestSelectWarnText_OperatorAttached_SuppressesActionable)
-	t.Run("corpus/1/restartnow-b4-fake-tmux", TestRestartNow_CrewAgent_AccCorpus1_B4)
+	t.Run("corpus/1/restartnow-b4-fake-tmux", func(t *testing.T) {
+		dir := t.TempDir()
+		crewSession := HarmonikCrewSessionName(dir, "admiral")
+		got := ResolveTmuxTarget(dir, "admiral", "", func(name string) bool { return name == crewSession })
+		if want := crewSession + ":agent"; got != want {
+			t.Fatalf("resolved target = %q, want %q", got, want)
+		}
+	})
 }

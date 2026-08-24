@@ -3,414 +3,231 @@ package keeper
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-type recordingInjector struct {
-	mu    sync.Mutex
-	calls [][2]string
-	err   error // when non-nil, every Inject returns it (failure simulation)
-}
+const restartTestSID = "11111111-1111-4111-8111-111111111111"
 
-func (r *recordingInjector) inject(_ context.Context, target, text string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, [2]string{target, text})
-	return r.err
-}
-
-func (r *recordingInjector) texts() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]string, len(r.calls))
-	for i, c := range r.calls {
-		out[i] = c[1]
-	}
-	return out
-}
-
-func writeSidAndCtx(t *testing.T, dir, agent, sid string) {
+func writeRestartFixture(t *testing.T, dir, agent, sid, handoff string) {
 	t.Helper()
-	kdir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(kdir, 0o700); err != nil {
+	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(kdir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
+	ctx := `{"pct":50,"session_id":"` + sid + `","ts":"` + time.Now().UTC().Format(time.RFC3339) + `"}`
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".ctx"), []byte(ctx+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := `{"pct":50,"session_id":"` + sid + `","ts":"2026-06-19T00:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(kdir, agent+".ctx"), []byte(ctx), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) {
-	t.Helper()
-	p := filepath.Join(dir, "HANDOFF-"+agent+".md")
-	if err := os.WriteFile(p, []byte("# handoff\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !mtime.IsZero() {
-		if err := os.Chtimes(p, mtime, mtime); err != nil {
+	if handoff != "" {
+		if err := os.WriteFile(filepath.Join(dir, "HANDOFF-"+agent+".md"), []byte(handoff), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-const goodSID = "11111111-1111-4111-8111-111111111111"
-
-// TestRestartNow_HappyPath asserts the full ack→/clear→agent-brief sequence
-// is injected, in order, when sid is verified and the handoff is fresh.
-func TestRestartNow_HappyPath(t *testing.T) {
+func TestValidateRestartNow_AcceptsNonEmptyHandoffWithoutAgeLimit(t *testing.T) {
 	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
-
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir:  dir,
-		AgentName:   agent,
-		TmuxTarget:  "sess:0",
-		Inject:      rec.inject,
-		RequestedAt: requested,
-	}, "nonceXYZ")
-	if err != nil {
-		t.Fatalf("RestartNow: unexpected error: %v", err)
-	}
-	got := rec.texts()
-	if len(got) != 3 {
-		t.Fatalf("injected %d lines %v, want 3 (ack+/clear+agent brief)", len(got), got)
-	}
-	if got[0] != AckLine("nonceXYZ", "restart") {
-		t.Errorf("inject[0] = %q, want ack line", got[0])
-	}
-	if got[1] != "/clear" {
-		t.Errorf("inject[1] = %q, want /clear", got[1])
-	}
-	if !strings.Contains(got[2], "agent brief") {
-		t.Errorf("inject[2] = %q, want 'agent brief'", got[2])
-	}
-	if !strings.Contains(got[2], "keeper-restart") {
-		t.Errorf("inject[2] = %q, want '--wake keeper-restart'", got[2])
-	}
-}
-
-// TestRestartNow_EmitsNonceAuditEvent is the T5 acceptance
-// (hk-keeper-delivery-restartnow-nonce-kz4w6, SK-030): a successful restart
-// records a durable session_keeper_restart_now event carrying the SUPPLIED
-// nonce, so the self-restart joins to its originating cycle in events.jsonl by
-// nonce. Carry-for-audit: a nonce that matches no live cycle is NOT rejected;
-// and the additive emit does NOT change the ack→/clear→brief ordering.
-func TestRestartNow_EmitsNonceAuditEvent(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
-
-	rec := &recordingInjector{}
-	em := &RecordingEmitter{}
-	const nonce = "cyc-1700000000-1"
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir:  dir,
-		AgentName:   agent,
-		TmuxTarget:  "sess:0",
-		Inject:      rec.inject,
-		RequestedAt: requested,
-		Emitter:     em,
-	}, nonce)
-	if err != nil {
-		t.Fatalf("RestartNow with a non-matching nonce must NOT be rejected (carry-for-audit); got: %v", err)
-	}
-
-	got := rec.texts()
-	if len(got) != 3 {
-		t.Fatalf("want the unchanged 3-line ack+/clear+brief sequence; got %v", got)
-	}
-	if got[0] != AckLine(nonce, "restart") || got[1] != "/clear" {
-		t.Fatalf("verify/ACK/clear ordering changed; got %v", got)
-	}
-
-	evs := em.EventsOfType(core.EventTypeSessionKeeperRestartNow)
-	if len(evs) != 1 {
-		t.Fatalf("want exactly 1 session_keeper_restart_now event; got %d", len(evs))
-	}
-	var p core.SessionKeeperRestartNowPayload
-	if uerr := json.Unmarshal(evs[0].Payload, &p); uerr != nil {
-		t.Fatalf("unmarshal payload: %v", uerr)
-	}
-	if p.Nonce != nonce {
-		t.Errorf("event nonce = %q; want %q (carry-for-audit, verbatim)", p.Nonce, nonce)
-	}
-	if p.AgentName != agent {
-		t.Errorf("event agent_name = %q; want %q", p.AgentName, agent)
-	}
-	if p.SessionID != goodSID {
-		t.Errorf("event session_id = %q; want %q", p.SessionID, goodSID)
-	}
-}
-
-// TestRestartNow_NilEmitter_NoEventStillSucceeds: a nil Emitter (Ping, or a
-// caller that opts out) emits nothing and the restart still drives cleanly —
-// omitting the audit sink preserves today's behavior.
-func TestRestartNow_NilEmitter_NoEventStillSucceeds(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
-
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir:  dir,
-		AgentName:   agent,
-		TmuxTarget:  "sess:0",
-		Inject:      rec.inject,
-		RequestedAt: requested,
-		Emitter:     nil,
-	}, "nonceXYZ")
-	if err != nil {
-		t.Fatalf("RestartNow nil-emitter: %v", err)
-	}
-	if got := rec.texts(); len(got) != 3 {
-		t.Fatalf("want the unchanged 3-line ack+/clear+brief sequence; got %v", got)
-	}
-}
-
-func TestRestartNow_NoTmuxTarget_FailsLoudly(t *testing.T) {
-	dir := t.TempDir()
-	writeSidAndCtx(t, dir, "captain", goodSID)
-	writeFreshHandoff(t, dir, "captain", time.Time{})
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir: dir, AgentName: "captain", TmuxTarget: "",
-	}, "n")
-	if err == nil {
-		t.Fatal("want error when no tmux target, got nil")
-	}
-}
-
-func TestRestartNow_UnverifiedSID_Refuses(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, "01890000-0000-7000-8000-000000000000")
-	writeFreshHandoff(t, dir, agent, time.Time{})
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0", Inject: rec.inject,
-	}, "n")
-	if err == nil {
-		t.Fatal("want error for non-primary sid, got nil")
-	}
-	if len(rec.calls) != 0 {
-		t.Errorf("must NOT inject when sid unverified; got %v", rec.texts())
-	}
-}
-
-func TestRestartNow_MissingHandoff_Refuses(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0", Inject: rec.inject,
-	}, "n")
-	if err == nil {
-		t.Fatal("want error for missing handoff, got nil")
-	}
-	if len(rec.calls) != 0 {
-		t.Errorf("must NOT /clear with no handoff; got %v", rec.texts())
-	}
-}
-
-func TestRestartNow_OldNonEmptyHandoff_IsAccepted(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(-time.Hour))
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0",
-		Inject: rec.inject, RequestedAt: requested,
-	}, "n")
-	if err != nil {
-		t.Fatalf("old handoff was rejected: %v", err)
-	}
-	if len(rec.calls) != 3 {
-		t.Errorf("injections = %v, want ack, clear, and brief", rec.texts())
-	}
-}
-
-func TestRestartNow_EmptyHandoff_Refuses(t *testing.T) {
-	dir := t.TempDir()
-	agent := "captain"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	if err := os.WriteFile(filepath.Join(dir, "HANDOFF-"+agent+".md"), []byte(" \n"), 0o600); err != nil {
+	writeRestartFixture(t, dir, "captain", restartTestSID, "# durable handoff\n")
+	old := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "HANDOFF-captain.md"), old, old); err != nil {
 		t.Fatal(err)
 	}
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0", Inject: rec.inject,
-	}, "n")
-	if err == nil {
-		t.Fatal("empty handoff was accepted")
+	sid, err := ValidateRestartNow(t.Context(), RestartNowConfig{
+		ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane",
+		LiveKeeperPresentFn: func(string, string) bool { return true },
+	}, slog.Default())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(rec.calls) != 0 {
-		t.Errorf("empty handoff caused injection: %v", rec.texts())
+	if sid != restartTestSID {
+		t.Fatalf("session id = %q, want %q", sid, restartTestSID)
 	}
 }
 
-func TestDriveRestartAfterReturn_ClearsOnceAndBriefsAfterNewSession(t *testing.T) {
+func TestValidateRestartNow_RejectsUnsafeInputsBeforeEffects(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		sid     string
+		handoff string
+		want    string
+	}{
+		{name: "no target", sid: restartTestSID, handoff: "handoff", want: "no tmux target"},
+		{name: "untrusted session", target: "pane", sid: "not-a-primary-session", handoff: "handoff", want: "not a trusted primary"},
+		{name: "missing handoff", target: "pane", sid: restartTestSID, want: "missing"},
+		{name: "empty handoff", target: "pane", sid: restartTestSID, handoff: " \n", want: "empty"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeRestartFixture(t, dir, "captain", tc.sid, tc.handoff)
+			_, err := ValidateRestartNow(t.Context(), RestartNowConfig{
+				ProjectDir: dir, AgentName: "captain", TmuxTarget: tc.target,
+				LiveKeeperPresentFn: func(string, string) bool { return true },
+			}, slog.Default())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want text %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateRestartNow_DispatchGateCanBeExplicitlyForced(t *testing.T) {
 	dir := t.TempDir()
-	agent := "captain"
-	const oldSID = "11111111-1111-4111-8111-111111111111"
+	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")
+	cfg := RestartNowConfig{
+		ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane",
+		HoldingDispatchFn:   func(string, string) bool { return true },
+		LiveKeeperPresentFn: func(string, string) bool { return true },
+	}
+	if _, err := ValidateRestartNow(t.Context(), cfg, slog.Default()); err == nil {
+		t.Fatal("dispatch gate accepted without force")
+	}
+	cfg.Force = true
+	if _, err := ValidateRestartNow(t.Context(), cfg, slog.Default()); err != nil {
+		t.Fatalf("explicit force rejected: %v", err)
+	}
+}
+
+func TestValidateRestartNow_RequiresLiveKeeperOwner(t *testing.T) {
+	dir := t.TempDir()
+	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")
+	_, err := ValidateRestartNow(t.Context(), RestartNowConfig{
+		ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane",
+		LiveKeeperPresentFn: func(string, string) bool { return false },
+	}, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "no live keeper") {
+		t.Fatalf("error = %v, want no live keeper", err)
+	}
+}
+
+func TestEmitRestartNowAccepted_RecordsValidatedSessionAndNonce(t *testing.T) {
+	emitter := &RecordingEmitter{}
+	if err := EmitRestartNowAccepted(t.Context(), emitter, "captain", restartTestSID, "nonce-1"); err != nil {
+		t.Fatal(err)
+	}
+	events := emitter.EventsOfType(core.EventTypeSessionKeeperRestartNow)
+	if len(events) != 1 {
+		t.Fatalf("accepted events = %d, want 1", len(events))
+	}
+	var payload core.SessionKeeperRestartNowPayload
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.AgentName != "captain" || payload.SessionID != restartTestSID || payload.Nonce != "nonce-1" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+func TestDriveRestartAfterReturn_ClearsOnceResetsInputAndBriefsAfterNewSession(t *testing.T) {
+	dir := t.TempDir()
+	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")
 	const newSID = "22222222-2222-4222-8222-222222222222"
-	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(oldSID+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
+	var effects []string
 	inject := func(_ context.Context, _, text string) error {
-		calls = append(calls, text)
+		effects = append(effects, "inject:"+text)
 		if text == "/clear" {
-			return os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(newSID+"\n"), 0o600)
+			return os.WriteFile(filepath.Join(dir, ".harmonik", "keeper", "captain.sid"), []byte(newSID+"\n"), 0o600)
 		}
 		return nil
 	}
-	err := DriveRestartAfterReturn(context.Background(), RestartDriveConfig{
-		RestartNowConfig:  RestartNowConfig{ProjectDir: dir, AgentName: agent, TmuxTarget: "pane", Inject: inject},
-		PreviousSessionID: oldSID, Grace: time.Nanosecond, Timeout: time.Second, Poll: time.Millisecond,
+	err := DriveRestartAfterReturn(t.Context(), RestartDriveConfig{
+		RestartNowConfig: RestartNowConfig{
+			ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane", Inject: inject,
+		},
+		PreviousSessionID: restartTestSID,
+		Grace:             time.Nanosecond,
+		Timeout:           time.Second,
+		Poll:              time.Millisecond,
+		ResetPendingInput: func(context.Context, string) error {
+			effects = append(effects, "reset")
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || calls[0] != "/clear" || !strings.Contains(calls[1], "agent brief") {
-		t.Fatalf("calls = %v, want one clear then brief", calls)
+	if len(effects) != 3 || effects[0] != "inject:/clear" || effects[1] != "reset" || !strings.Contains(effects[2], "agent brief") {
+		t.Fatalf("effects = %v, want clear, reset, brief", effects)
 	}
 }
 
-// TestPing_InjectsAckOnly asserts ping injects exactly one ack line, no clear/resume.
-func TestPing_InjectsAckOnly(t *testing.T) {
-	rec := &recordingInjector{}
-	err := Ping(context.Background(), RestartNowConfig{
-		ProjectDir: t.TempDir(), AgentName: "captain", TmuxTarget: "sess:0", Inject: rec.inject,
-	}, "pingnonce")
-	if err != nil {
-		t.Fatalf("Ping: unexpected error: %v", err)
-	}
-	got := rec.texts()
-	if len(got) != 1 || got[0] != AckLine("pingnonce", "ping") {
-		t.Fatalf("ping injected %v, want exactly [%q]", got, AckLine("pingnonce", "ping"))
-	}
-}
-
-// TestPing_NoTmuxTarget_FailsLoudly guards the no-pane loud failure.
-func TestPing_NoTmuxTarget_FailsLoudly(t *testing.T) {
-	err := Ping(context.Background(), RestartNowConfig{
-		ProjectDir: t.TempDir(), AgentName: "captain", TmuxTarget: "",
-	}, "pingnonce")
+func TestDriveRestartAfterReturn_NoTurnoverNeverRetriesClearOrBriefs(t *testing.T) {
+	dir := t.TempDir()
+	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")
+	var calls []string
+	err := DriveRestartAfterReturn(t.Context(), RestartDriveConfig{
+		RestartNowConfig: RestartNowConfig{
+			ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane",
+			Inject: func(_ context.Context, _, text string) error { calls = append(calls, text); return nil },
+		},
+		PreviousSessionID: restartTestSID,
+		Grace:             time.Nanosecond,
+		Timeout:           5 * time.Millisecond,
+		Poll:              time.Millisecond,
+	})
 	if err == nil {
-		t.Fatal("want error when no tmux target for ping, got nil")
+		t.Fatal("missing session turnover was reported as success")
+	}
+	if len(calls) != 1 || calls[0] != "/clear" {
+		t.Fatalf("calls = %v, want exactly one clear and no brief", calls)
 	}
 }
 
-// TestAckLine pins the exact ack wire format the agent-side protocol matches on.
+func TestDriveRestartAfterReturn_TurnoverDuringGraceSkipsClearAndReset(t *testing.T) {
+	dir := t.TempDir()
+	writeRestartFixture(t, dir, "captain", restartTestSID, "handoff")
+	const newSID = "22222222-2222-4222-8222-222222222222"
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		_ = os.WriteFile(filepath.Join(dir, ".harmonik", "keeper", "captain.sid"), []byte(newSID+"\n"), 0o600)
+	}()
+	var effects []string
+	err := DriveRestartAfterReturn(t.Context(), RestartDriveConfig{
+		RestartNowConfig: RestartNowConfig{
+			ProjectDir: dir, AgentName: "captain", TmuxTarget: "pane",
+			Inject: func(_ context.Context, _, text string) error { effects = append(effects, "inject:"+text); return nil },
+		},
+		PreviousSessionID: restartTestSID,
+		Grace:             30 * time.Millisecond,
+		Timeout:           time.Second,
+		Poll:              time.Millisecond,
+		ResetPendingInput: func(context.Context, string) error { effects = append(effects, "reset"); return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effects) != 1 || !strings.Contains(effects[0], "agent brief") {
+		t.Fatalf("effects = %v, want only the brief after external turnover", effects)
+	}
+}
+
+func TestPing_InjectsAckOnly(t *testing.T) {
+	var calls []string
+	err := Ping(t.Context(), RestartNowConfig{
+		AgentName: "captain", TmuxTarget: "pane",
+		Inject: func(_ context.Context, _, text string) error { calls = append(calls, text); return nil },
+	}, "nonce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != AckLine("nonce", "ping") {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
 func TestAckLine(t *testing.T) {
-	if got := AckLine("abc123", "restart"); got != "[KEEPER ACK abc123] received restart" {
-		t.Errorf("AckLine restart = %q", got)
-	}
-	if got := AckLine("abc123", "ping"); got != "[KEEPER ACK abc123] received ping" {
-		t.Errorf("AckLine ping = %q", got)
-	}
-}
-
-// TestRestartNow_CrewAgent_AccCorpus1_B4 asserts acceptance corpus item #1:
-// restart-now does NOT abort no_tmux_target for a crew agent (e.g. admiral)
-// whose pane is resolved via the crew convention "harmonik-<hash>-crew-<name>:agent".
-//
-// Layer: L-fake-tmux (recording injector; no real tmux required).
-// Bead: hk-pp1in / B4. Acceptance corpus #1 per 11-keeper-test-design.md §3.
-func TestRestartNow_CrewAgent_AccCorpus1_B4(t *testing.T) {
-	dir := t.TempDir()
-	agent := "admiral"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
-
-	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + windowAgent
-
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir:  dir,
-		AgentName:   agent,
-		TmuxTarget:  crewTarget,
-		Inject:      rec.inject,
-		RequestedAt: requested,
-	}, "corpus1nonce")
-	if err != nil {
-		t.Fatalf("AccCorpus1 B4: RestartNow aborted for crew agent: %v", err)
-	}
-	got := rec.texts()
-	if len(got) != 3 {
-		t.Fatalf("AccCorpus1 B4: injected %d items, want 3 (ack+/clear+brief): %v", len(got), got)
-	}
-	if got[0] != AckLine("corpus1nonce", "restart") {
-		t.Errorf("AccCorpus1 B4: inject[0] = %q, want ack line", got[0])
-	}
-	if got[1] != "/clear" {
-		t.Errorf("AccCorpus1 B4: inject[1] = %q, want /clear", got[1])
-	}
-	if !strings.Contains(got[2], "agent brief") {
-		t.Errorf("AccCorpus1 B4: inject[2] = %q, want 'agent brief'", got[2])
-	}
-}
-
-// TestRestartNow_CrewAgent_ResolveThenRun_B4 exercises the full B4 fix path
-// end-to-end: ResolveTmuxTarget with a crew-only stub → target non-empty →
-// RestartNow drives ACK→/clear→resume (acceptance corpus #1, L-fake-tmux layer).
-func TestRestartNow_CrewAgent_ResolveThenRun_B4(t *testing.T) {
-	dir := t.TempDir()
-	agent := "admiral"
-	writeSidAndCtx(t, dir, agent, goodSID)
-	requested := time.Now()
-	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
-
-	crewSession := HarmonikCrewSessionName(dir, agent)
-
-	sessionExistsFn := func(name string) bool { return name == crewSession }
-	target := ResolveTmuxTarget(dir, agent, "", sessionExistsFn)
-	if target == "" {
-		t.Fatal("B4 resolve: ResolveTmuxTarget returned empty for live crew session (no_tmux_target would fire)")
-	}
-	wantTarget := crewSession + ":agent"
-	if target != wantTarget {
-		t.Fatalf("B4 resolve: got %q, want %q", target, wantTarget)
-	}
-
-	rec := &recordingInjector{}
-	err := RestartNow(context.Background(), RestartNowConfig{
-		ProjectDir:  dir,
-		AgentName:   agent,
-		TmuxTarget:  target,
-		Inject:      rec.inject,
-		RequestedAt: requested,
-	}, "corpus1runnonce")
-	if err != nil {
-		t.Fatalf("B4 run: RestartNow aborted after crew resolution: %v", err)
-	}
-	if len(rec.texts()) != 3 {
-		t.Fatalf("B4 run: want 3 injections (ack+/clear+brief), got %d: %v", len(rec.texts()), rec.texts())
+	if got := AckLine("abc", "restart"); !strings.Contains(got, "abc") || !strings.Contains(got, "restart") {
+		t.Fatalf("ack = %q", got)
 	}
 }

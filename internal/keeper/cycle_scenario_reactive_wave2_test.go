@@ -241,7 +241,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 // S1→S2 flip is CAUSED by /clear (not faked), and the suppression/re-arm is
 // exercised against the real post-clear session identity.
 func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fixture does not provide a reliable second session-turnover observation")
 	t.Parallel()
 
 	const (
@@ -254,7 +253,9 @@ func TestKeeperCycle_AntiLoopReArm(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
+	const s3 = "33333333-3333-4333-8333-333333333333"
+	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/).
+		withClearSequence(s2, s3)
 
 	cycler := newReactiveCycler(
 		agent, t.TempDir(), cycleID, rs, em, jc, &managedBinding,

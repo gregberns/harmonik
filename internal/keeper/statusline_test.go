@@ -475,3 +475,48 @@ func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {
 		t.Errorf("ctx file was created but should have been skipped when pct is absent")
 	}
 }
+
+func TestKeeperStatuslineScript_LinkedWorktreeWritesPrimaryProjectGauge(t *testing.T) {
+	for _, tool := range []string{"bash", "jq", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available; skipping linked-worktree script test", tool)
+		}
+	}
+
+	primary := filepath.Join(t.TempDir(), "primary")
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.MkdirAll(primary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", primary}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=keeper-test", "GIT_AUTHOR_EMAIL=keeper@test.invalid", "GIT_COMMITTER_NAME=keeper-test", "GIT_COMMITTER_EMAIL=keeper@test.invalid")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-q")
+	if err := os.WriteFile(filepath.Join(primary, "seed"), []byte("seed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "seed")
+	runGit("commit", "-q", "-m", "seed")
+	runGit("worktree", "add", "-q", "-b", "linked-test", linked)
+
+	cmd := exec.CommandContext(t.Context(), "bash", repoScriptPath(t))
+	cmd.Dir = linked
+	cmd.Env = append(os.Environ(), "HARMONIK_PROJECT=", "HARMONIK_AGENT=linked-agent")
+	cmd.Stdin = strings.NewReader(`{"session_id":"linked-session","context_window":{"used_percentage":42}}`)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	primaryGauge := filepath.Join(primary, ".harmonik", "keeper", "linked-agent.ctx")
+	if _, err := os.Stat(primaryGauge); err != nil {
+		t.Fatalf("primary project gauge not created at %q: %v", primaryGauge, err)
+	}
+	if _, err := os.Stat(filepath.Join(linked, ".harmonik", "keeper", "linked-agent.ctx")); !os.IsNotExist(err) {
+		t.Fatalf("status line wrote gauge in linked worktree; stat err = %v", err)
+	}
+}

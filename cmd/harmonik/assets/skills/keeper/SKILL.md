@@ -114,21 +114,16 @@ misconfigured `.managed` marker can `/clear` a working session.
 
 ### restart-now and await-ack
 
-`restart-now` on **yourself** is synchronous and self-verifying: the one call
-resolves the pane, injects the ACK, and drives the `/clear` and resume before it
-returns. Fire it and read the exit code — you do not need an external watcher,
-and you could not be one anyway, since the `/clear` wipes your context before
-your own ACK could reach you.
+`restart-now` validates the current session and its non-empty handoff. It then
+starts a detached driver and returns. The return lets the active tool call end.
+The driver sends one `/clear`, waits until the SessionStart hook reports a new
+session ID, removes input left at the new prompt, and then sends the resume
+brief. It does not retry `/clear`.
 
-`restart-now` on a **crew** needs an external observer, and that is the captain:
-fire `restart-now --agent <crew>`, capture the printed nonce, then run `await-ack
---agent <crew> --kind restart --timeout 30s`. The captain's process survives the
-crew's `/clear`.
-
-On an ACK timeout the caller owns the escalation — the binary sends no comms, on
-purpose, so nothing bakes in a wrong `--from`. Alert the operator and investigate:
-a timeout means the keeper may be dead, watching the wrong pane, or unable to
-verify the session id.
+Read the command exit code and the printed nonce. A zero exit means the driver
+was accepted. It does not mean that session turnover finished. The driver writes
+its result to `.harmonik/keeper/<agent>.restart-now.log`. A missing turnover is a
+visible failure. Investigate it as a pane, hook, or session-lifecycle fault.
 
 ### set-dispatching, and hold
 

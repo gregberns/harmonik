@@ -26,7 +26,8 @@
 #   does automatically via HARMONIK_AGENT=<name> in the crew env.
 #
 # Environment
-#   HARMONIK_PROJECT   Absolute path to the project root (fallback: $PWD).
+#   HARMONIK_PROJECT   Absolute path to the project root. When absent, a Git
+#                      worktree resolves through its shared Git directory.
 #   HARMONIK_AGENT     Agent name to namespace the .ctx file (fallback: "default").
 #   HARMONIK_KEEPER_AGENT  Backward-compat alias for HARMONIK_AGENT (checked second),
 #                      matching the stop/precompact/sessionstart hooks.
@@ -68,7 +69,24 @@ fi
 case "${AGENT}" in
     */*|*..*) echo "keeper-statusline: refusing unsafe agent name: ${AGENT}" >&2; exit 1 ;;
 esac
-PROJECT="${HARMONIK_PROJECT:-${PWD}}"
+if [ -n "${HARMONIK_PROJECT:-}" ]; then
+    PROJECT="${HARMONIK_PROJECT}"
+else
+    # A keeper can watch an agent whose PWD is a linked worktree while its
+    # state belongs to the primary project. The shared Git directory is the
+    # stable link between them. Outside Git, preserve the historical PWD
+    # fallback.
+    COMMON_GIT_DIR="$(git -C "${PWD}" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "${COMMON_GIT_DIR}" ]; then
+        case "${COMMON_GIT_DIR}" in
+            /*) : ;;
+            *) COMMON_GIT_DIR="${PWD}/${COMMON_GIT_DIR}" ;;
+        esac
+        PROJECT="$(cd "${COMMON_GIT_DIR}/.." 2>/dev/null && pwd -P || printf '%s' "${PWD}")"
+    else
+        PROJECT="${PWD}"
+    fi
+fi
 # HARMONIK_KEEPER_WINDOW_SIZE: optional explicit override for window_size when
 # Claude Code omits context_window_size (e.g. [1m] models). Must be a positive integer.
 KEEPER_WINDOW_SIZE_OVERRIDE="${HARMONIK_KEEPER_WINDOW_SIZE:-0}"

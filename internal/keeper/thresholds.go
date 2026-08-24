@@ -173,6 +173,11 @@ const (
 	// misses). Configurable via the keeper config block (cadence.hold_ttl). Refs: hk-9waz.
 	DefaultHoldTTL = 45 * time.Minute
 
+	// DefaultDispatchTTL bounds a forgotten dispatch marker. The handoff and
+	// Stop checks still guard the destructive tail after this advisory lease
+	// expires.
+	DefaultDispatchTTL = 45 * time.Minute
+
 	// DefaultDeriveCacheTTL is the WatcherConfig heartbeat derive-cache TTL: how
 	// long a successful transcript token-count is reused before the JSONL is
 	// re-scanned. Combined with the tail-window scan (deriveContextTailBytes) this

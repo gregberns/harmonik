@@ -25,6 +25,8 @@ type reactiveSession struct {
 	// seedSID / clearedSID are the before/after session ids (S1 -> S2).
 	seedSID    string // S1
 	clearedSID string // S2 (UUIDv4; never a UUIDv7)
+	clearSIDs  []string
+	clearCount int
 
 	// Reaction toggles (scenario knobs).
 	writeNonce  bool // /session-handoff writes the nonce into handoffBody when true
@@ -94,7 +96,12 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 		}
 	case text == "/clear":
 		rs.clearedSeen = true
-		if rs.flipOnClear && rs.gauge.SessionID != rs.clearedSID {
+		nextSID := rs.clearedSID
+		if rs.clearCount < len(rs.clearSIDs) {
+			nextSID = rs.clearSIDs[rs.clearCount]
+		}
+		rs.clearCount++
+		if rs.flipOnClear && rs.gauge.SessionID != nextSID {
 			if rs.clearDelay > 0 {
 				if !rs.clearDelayScheduled {
 					rs.clearDelayScheduled = true
@@ -103,8 +110,8 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 						time.Sleep(delay)
 						rs.mu.Lock()
 						defer rs.mu.Unlock()
-						if rs.gauge.SessionID != rs.clearedSID {
-							rs.gauge.SessionID = rs.clearedSID
+						if rs.gauge.SessionID != nextSID {
+							rs.gauge.SessionID = nextSID
 							rs.gauge.Pct = 8.0
 							rs.gauge.Tokens = 12_000
 							if rs.sidFlipCause == "" {
@@ -114,7 +121,7 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 					}()
 				}
 			} else {
-				rs.gauge.SessionID = rs.clearedSID
+				rs.gauge.SessionID = nextSID
 				rs.gauge.Pct = 8.0
 				rs.gauge.Tokens = 12_000
 			}
@@ -204,6 +211,13 @@ func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	rs.clearDelay = d
+	return rs
+}
+
+func (rs *reactiveSession) withClearSequence(sids ...string) *reactiveSession {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.clearSIDs = append([]string(nil), sids...)
 	return rs
 }
 

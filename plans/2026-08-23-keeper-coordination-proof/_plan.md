@@ -339,3 +339,44 @@ The first slice is deliberately narrow:
 5. Make stale dispatch blocking visible while the durable accepted-request path is built.
 
 This slice produces evidence before it changes the restart transaction.
+
+## Execution status — 2026-08-24
+
+The first safe vertical is complete on the kilo branch.
+
+- The automatic cycle sends one `/clear`. It now requires observed session turnover before it sends
+  the resume brief or records completion.
+- The explicit command validates the request and starts a detached driver. The old synchronous
+  three-injection coordinator and its tests are deleted.
+- The detached driver sends one `/clear`. It waits for a new session ID. It resets input that its
+  clear can leave queued after an external clear wins the race. It then sends the brief.
+- The detached driver checks the session ID after its grace period and before its clear. If an
+  external clear already changed the session, it sends no clear and does not reset unrelated input.
+- `restart-now` requires a live keeper lock owner before it starts the driver.
+- A clear that cannot be confirmed ends as `clear_unconfirmed` plus
+  `cycle_aborted{reason=clear_unconfirmed}`. It sends no brief.
+- `restart-now` accepts any non-empty handoff. Handoff age is not authority.
+- The status line resolves a linked worktree through the shared Git directory when
+  `HARMONIK_PROJECT` is absent. This keeps the gauge in the primary project.
+- The hard ceiling evaluates every fresh gauge. A healthy managed binding no longer makes the
+  backstop unreachable.
+- A forgotten dispatch marker expires after its lease. It cannot silence the keeper forever.
+- Absolute NOTICE and WARN bands remain active on a 1M-token window. Percentage is a fallback when
+  the gauge has no token count.
+- The obsolete production-unreachable `RestartNow` function is deleted. The reachability gate is
+  green.
+- The seven fixtures that assumed completion without session turnover no longer count as green.
+  Six now model observed turnover. The obsolete same-session completion claim is deleted.
+
+The following checks are green on this branch:
+
+- keeper package and command tests
+- `make test-keeper-l012`
+- `make test-keeper-live`
+- `make test-keeper-live-claude`
+- the production reachability gate
+
+`make fast` and `make full` remain blocked before keeper tests by
+`scripts/agent-reviewer-prompt-parity-test.sh`. That script uses `mapfile`, which macOS Bash 3 does
+not provide. Alpha owns the cross-platform build-gate fix. Rebase that fix before the final merge
+decision, then run both gates.

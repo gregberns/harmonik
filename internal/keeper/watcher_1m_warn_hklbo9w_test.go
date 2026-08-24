@@ -9,18 +9,10 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// TestWatcher_LargeWindow_NoWarnBelowWarnPct is the RED test for hk-lbo9w.
-//
-// A 1M-window session at tokens=200001/pct=20 must emit ZERO session_keeper_warn.
-// The abs-token gate (defaultWarnAbsTokens=200k) resolves to 200k on a 1M window
-// (min(200k,700k)=200k). With the BUGGY gate:
-//
-//	200001 < 200000 → false → belowWarnThreshold=false → warn fires at pct=20.
-//
-// With the FIX (pct<WarnPct is a necessary condition):
-//
-//	20 < 80 → true → belowWarnThreshold=true → no warn.
-func TestWatcher_LargeWindow_NoWarnBelowWarnPct(t *testing.T) {
+// TestWatcher_LargeWindow_WarnsAtAbsoluteBand proves that the configured token
+// band remains meaningful on a 1M window. Percentage is a fallback when the
+// gauge has no token count. It does not mute the absolute notice band.
+func TestWatcher_LargeWindow_WarnsAtAbsoluteBand(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -44,8 +36,8 @@ func TestWatcher_LargeWindow_NoWarnBelowWarnPct(t *testing.T) {
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
-	if len(warns) != 0 {
-		t.Errorf("hk-lbo9w: want 0 session_keeper_warn at pct=20 < warn_pct=80 on 1M window (tokens=200001); got %d — abs gate fired without pct guard", len(warns))
+	if len(warns) != 1 {
+		t.Errorf("want 1 session_keeper_warn at the absolute band on a 1M window; got %d", len(warns))
 	}
 }
 

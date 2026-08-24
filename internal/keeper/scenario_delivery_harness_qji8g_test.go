@@ -214,13 +214,13 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 // re-check. Validates T8 (SK-035); companion to the operatorActiveSince unit in
 // scenario_delivery_qji8g_test.go.
 func TestScenario_ClientActivityMidWait_DoesNotHideHandoff_qji8g(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
 	t.Parallel()
 
 	const (
 		agent   = "qji8g-midwait-agent"
 		cycleID = "cyc-qji8g-midwait-001"
 		sid     = "sess-qji8g-midwait"
+		newSID  = "sess-qji8g-midwait-next"
 	)
 
 	em := &keeper.RecordingEmitter{}
@@ -232,9 +232,7 @@ func TestScenario_ClientActivityMidWait_DoesNotHideHandoff_qji8g(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	alwaysNonce := func(string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
-	gauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
-	}
+	gauge := gaugeReturnsNewSIDAfter(1, sid, newSID)
 
 	cycler := newAttachTestCycler(agent, t.TempDir(), cycleID, em, spy, jc, alwaysNonce, gauge, attachFn)
 

@@ -55,7 +55,9 @@ This spec defines the normative contract for the harmonik **session-keeper resta
 - **Step reactor** — the pure function `Step(state, event) → (state, [action])` mirroring the codex reactor, into which the cycle is refactored; all IO is the imperative shell's. (see §7)
 - **model-done** — the signal that the model's *turn* reached an await-input boundary after the handoff was written (not merely that the handoff file content landed); the precondition for `/clear`. (see §4.5)
 - **InCycle suppression** — the shell's parking of all non-cycle tick processing while the reactor is off-`Idle`, reproducing the synchronous-block freeze of the pre-rebuild watcher. (see §4.7)
-- **terminal outcome** — one of `cycle_complete`, `cycle_aborted`, or the degraded-completion `clear_unconfirmed` (which is not itself a terminal — the brief still fires). (see §8)
+- **terminal outcome** — `cycle_complete` for confirmed turnover, `clear_unconfirmed` for a failed
+  turnover, or `cycle_parked` while a request waits for authority. A failed turnover never receives
+  a resume brief. (see §8)
 
 ## 4. Normative requirements
 
@@ -551,23 +553,17 @@ The success terminal — reached at `Briefing → Complete`. The brief is inject
 
 ### 8.2 cycle_aborted
 
-`cycle_aborted` is RETIRED for emission. It recorded a structural or effect failure after restart
-authority existed, and the `handoff_timeout` abort was its only live producer. A missing or late
-handoff is pending work and not a failure (SK-025), so that producer is gone and nothing replaced
-it. The type stays registered so old event logs still decode. New keepers MUST NOT emit it. A
-consumer MUST NOT read its absence as a missing terminal.
+`cycle_aborted` no longer classifies a missing or late handoff. That condition is pending work
+(SK-025). The keeper emits `cycle_aborted{reason=clear_unconfirmed}` beside the failed-turnover
+terminal so older consumers receive a visible failure signal. It MUST NOT emit `cycle_complete` for
+that cycle.
 
 The journal phase `aborted` is a different thing and it stays live. Crash recovery writes it, with
 reason `crash_before_clear`, when a cycle journal is found at phase `opened`, `handoff_injected`, or
 `confirmed`. That close-out writes the journal and emits no event.
 
-**A gap this retirement exposes, recorded rather than hidden.** SK-015, SK-INV-005 and §8.3 all name
-a `restart_failed`-class emission as the escape hatch for an authorized restart that cannot reach a
-terminal. No code emits such an event, and none ever did — `cycle_aborted` was doing that job in
-practice. So an authorized restart that fails structurally now has no recordable outcome, and the
-only thing that sees it is SR9 reporting an unterminated cycle. Either give the escape hatch a
-producer or take the promise out of SK-015, SK-INV-005 and §8.3. Do not leave the spec naming an
-event the system cannot emit.
+`cycle_aborted{reason=clear_unconfirmed}` is the current `restart_failed`-class emission named by
+SK-015 and SK-INV-005. The type stays registered so old event logs still decode.
 
 ### 8.3 clear_unconfirmed (failed restart)
 

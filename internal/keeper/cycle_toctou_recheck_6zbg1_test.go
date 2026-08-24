@@ -4,20 +4,19 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
 func TestCycler_ClientActivityDuringWait_DoesNotHideWrittenHandoff(t *testing.T) {
-	t.Skip("keeper-coordination-proof: fake never reports session turnover but asserts cycle completion; replace with an observation-aware fixture")
 	t.Parallel()
 
 	const (
 		agent   = "toctou-agent"
 		cycleID = "cyc-toctou-6zbg1"
 		sid     = "sess-toctou"
+		newSID  = "sess-toctou-next"
 	)
 
 	em := &keeper.RecordingEmitter{}
@@ -29,9 +28,7 @@ func TestCycler_ClientActivityDuringWait_DoesNotHideWrittenHandoff(t *testing.T)
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	alwaysNonce := func(string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
-	gauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
-	}
+	gauge := gaugeReturnsNewSIDAfter(1, sid, newSID)
 
 	cycler := newAttachTestCycler(agent, t.TempDir(), cycleID, em, spy, jc, alwaysNonce, gauge, attachFn)
 

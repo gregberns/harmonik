@@ -478,16 +478,10 @@ func TestHardCeiling_RestartMode_NilFnDegradesToAlarm(t *testing.T) {
 	}
 }
 
-// TestHardCeiling_NormalPath_NeverActsOnCeiling is the CRITICAL double-fire guard
-// (hk-z8d0): on the NORMAL (non-foreign, SID-matched) fresh-gauge path the
-// hard-ceiling restart fn must NEVER be called AND no ceiling alarm is emitted —
-// force_act at the act/force cycle already restarts there, so a ceiling
-// auto-restart/alarm would double-fire. The hard-ceiling gate lives ONLY inside
-// the foreign_session branch (which the matched gauge never enters), so a
-// SID-MATCHED gauge above the ceiling must reach the cycler path, never the
-// ceiling gate. We wire a HardCeilingRestartFn spy in restart mode and drive the
-// gauge above the ceiling on a SID-MATCHED gauge; the spy must stay at zero.
-func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
+// TestHardCeiling_NormalPath_UsesBackstopBeforeCycle proves that a healthy
+// managed binding cannot make the hard ceiling unreachable. Restart mode owns
+// the tick at this threshold.
+func TestHardCeiling_NormalPath_UsesBackstopBeforeCycle(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -519,15 +513,13 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 		PollInterval: 5 * time.Millisecond,
 		IdleQuiesce:  1 * time.Millisecond,
 		Staleness:    120 * time.Second,
-		// SID is matched on every tick — the NORMAL (non-foreign) path. The
-		// foreign_session branch (the ONLY site of the ceiling gate) is never entered.
+		// SID is matched on every tick. This is the path that failed live when
+		// the backstop existed only inside foreign-session handling.
 		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-managed", nil },
 		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
 		ReadSidFn: func(_, _ string) (string, time.Time, error) {
 			return "sess-managed", time.Time{}, nil
 		},
-		// Restart mode + a wired ceiling fn: if the gate erroneously evaluated the
-		// ceiling on the normal path, this spy WOULD be called.
 		HardCeilingMode:      keeper.HardCeilingModeRestart,
 		HardCeilingRestartFn: ceilSpy.restart,
 		HardCeilingCooldown:  10 * time.Second,
@@ -535,11 +527,11 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	if n := ceilSpy.count(); n != 0 {
-		t.Errorf("double-fire guard: hard-ceiling restart fn called %d times on the NORMAL path; want 0 (force_act owns the restart there)", n)
+	if n := ceilSpy.count(); n != 1 {
+		t.Errorf("hard-ceiling restart fn called %d times on the managed path; want 1", n)
 	}
-	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) != 0 {
-		t.Errorf("normal path: want 0 session_keeper_hard_ceiling events (alarm is foreign-path-only); got %d", len(ceilEvents))
+	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) != 1 {
+		t.Errorf("managed path: want 1 session_keeper_hard_ceiling event; got %d", len(ceilEvents))
 	}
 }
 

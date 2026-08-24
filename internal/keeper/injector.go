@@ -246,6 +246,18 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 	return nil
 }
 
+// ResetTmuxInput removes text that is queued at the prompt in tmuxTarget.
+// A restart transaction uses it after session turnover and before it submits
+// the resume brief. This prevents a clear that lost a race with an external
+// clear from running in the new session.
+func ResetTmuxInput(ctx context.Context, tmuxTarget string) error {
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", tmuxTarget, "C-u", "Escape")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("keeper: tmux reset pending input: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // InjectWrapUpWarning delivers the wrap-up-warning prompt into the tmux pane
 // identified by tmuxTarget using the bracketed-paste mechanism.
 //

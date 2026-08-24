@@ -814,14 +814,14 @@ func (c *WatcherConfig) applyDefaults() {
 
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Pct < c.WarnPct || cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
+		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
 }
 
 func (c *WatcherConfig) belowActThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Pct < c.ActPct || cf.Tokens < minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, cf.WindowSize)
+		return cf.Tokens < minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.ActPct
 }
@@ -1113,6 +1113,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 
+			if w.maybeHandleHardCeiling(ctx, ctxFile, &hardCeilingLastAt) {
+				continue
+			}
+
 			if managedSID, managedErr := w.cfg.ReadManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName); managedErr != nil {
 				slog.WarnContext(ctx, "keeper: read managed session_id", "err", managedErr)
 			} else if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
@@ -1142,32 +1146,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 							"blind_seconds", blindSeconds)
 						w.emitBlind(ctx, managedSID, ctxFile.SessionID, blindSeconds)
 						w.blindAlarmFired = true
-					}
-
-					if w.cfg.HardCeilingMode != HardCeilingModeOff &&
-						ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens {
-						wantRestart := w.cfg.HardCeilingMode == HardCeilingModeRestart &&
-							w.cfg.HardCeilingRestartFn != nil
-						if wantRestart {
-							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
-								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
-									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
-								w.emitHardCeiling(ctx, ctxFile.Tokens)
-								_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
-								hardCeilingLastAt = w.cfg.Clock.Now()
-							} else {
-								slog.DebugContext(ctx, "keeper: hard ceiling hit but cooldown active; skipping restart",
-									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
-							}
-						} else {
-							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
-								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): alarm only",
-									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens,
-									"mode", w.cfg.HardCeilingMode.String())
-								w.emitHardCeiling(ctx, ctxFile.Tokens)
-								hardCeilingLastAt = w.cfg.Clock.Now()
-							}
-						}
 					}
 
 					continue
@@ -1314,6 +1292,30 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// maybeHandleHardCeiling evaluates every fresh gauge. It returns true only
+// when restart mode invoked the restart effect, so the same tick cannot also
+// start the normal cycle and cause a second restart.
+func (w *Watcher) maybeHandleHardCeiling(ctx context.Context, cf *CtxFile, lastAt *time.Time) bool {
+	if w.cfg.HardCeilingMode == HardCeilingModeOff || cf.Tokens <= 0 || cf.Tokens < w.cfg.HardCeilingTokens {
+		return false
+	}
+	if !lastAt.IsZero() && w.cfg.Clock.Since(*lastAt) < w.cfg.HardCeilingCooldown {
+		return false
+	}
+	*lastAt = w.cfg.Clock.Now()
+	w.emitHardCeiling(ctx, cf.Tokens)
+	if w.cfg.HardCeilingMode == HardCeilingModeRestart && w.cfg.HardCeilingRestartFn != nil {
+		slog.WarnContext(ctx, "keeper: hard ceiling hit: forcing restart",
+			"agent", w.cfg.AgentName, "tokens", cf.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
+		_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // event records the attempted restart
+		return true
+	}
+	slog.WarnContext(ctx, "keeper: hard ceiling hit: alarm only",
+		"agent", w.cfg.AgentName, "tokens", cf.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens,
+		"mode", w.cfg.HardCeilingMode.String())
+	return false
 }
 
 func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *time.Time) {

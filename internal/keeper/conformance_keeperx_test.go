@@ -11,7 +11,7 @@ func TestKeeperConformanceCorpus(t *testing.T) {
 
 	t.Run("floor/hard-ceiling-sid-independent",
 		TestHardCeiling_FiresAbove280K_DespiteForeignSession)
-	t.Run("floor/pct-inert-warn-1m", TestWatcher_LargeWindow_NoWarnBelowWarnPct)
+	t.Run("floor/absolute-warn-1m", TestWatcher_LargeWindow_WarnsAtAbsoluteBand)
 
 	t.Run("corpus/1/resolve-tmux-b4", TestResolveTmuxTarget_CrewNaming_B4)
 	t.Run("corpus/3/hkvpnp-no-truncate", TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout)

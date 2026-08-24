@@ -28,8 +28,9 @@ func l3KillSession(name string) {
 	_ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", "="+name).Run() //nolint:errcheck,gosec // G204: test-local name; best-effort teardown
 }
 
-// TestL3_OneCycleTmuxSmoke is the keeper pre-deploy live smoke: a real tmux
-// pane receives the full scripted restart-cycle injection sequence.
+// TestL3_OneCycleTmuxSmoke is the keeper pre-deploy live smoke. A real tmux
+// pane receives one clear. The driver observes session turnover, resets any
+// queued input, and only then submits the resume brief.
 func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 	skipUnlessKeeperLive(t)
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -65,14 +66,26 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	nonce := fmt.Sprintf("l3-smoke-%d", os.Getpid())
-	if err := keeper.RestartNow(ctx, keeper.RestartNowConfig{
-		ProjectDir:  project,
-		AgentName:   agent,
-		TmuxTarget:  sessName,
-		RequestedAt: time.Now(),
-	}, nonce); err != nil {
-		t.Fatalf("L3: RestartNow (live injection): %v", err)
+	const newSID = "bbbbcccc-dddd-4eee-8fff-aaaaaaaaaaaa"
+	inject := func(ctx context.Context, target, text string) error {
+		if err := keeper.InjectText(ctx, target, text); err != nil {
+			return err
+		}
+		if text == "/clear" {
+			return os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(newSID+"\n"), 0o600)
+		}
+		return nil
+	}
+	if err := keeper.DriveRestartAfterReturn(ctx, keeper.RestartDriveConfig{
+		RestartNowConfig: keeper.RestartNowConfig{
+			ProjectDir: project, AgentName: agent, TmuxTarget: sessName, Inject: inject,
+		},
+		PreviousSessionID: primarySID,
+		Grace:             time.Millisecond,
+		Timeout:           10 * time.Second,
+		Poll:              10 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("L3: detached restart driver: %v", err)
 	}
 
 	pane, err := exec.CommandContext(context.Background(), "tmux", "capture-pane", "-p", "-t", sessName).CombinedOutput() //nolint:gosec // G204: test-local session name
@@ -80,14 +93,64 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 		t.Fatalf("L3: capture-pane: %v (%s)", err, pane)
 	}
 	captured := string(pane)
-	if !strings.Contains(captured, nonce) {
-		t.Errorf("L3: pane does not show the ACK nonce %q:\n%s", nonce, captured)
-	}
 	if !strings.Contains(captured, "/clear") {
 		t.Errorf("L3: pane does not show the injected /clear:\n%s", captured)
 	}
 	if !strings.Contains(captured, "agent brief") {
 		t.Errorf("L3: pane does not show the injected agent brief:\n%s", captured)
 	}
-	t.Logf("L3: one-cycle tmux smoke GREEN — ACK/nonce, /clear, brief all landed in pane %s", sessName)
+	t.Logf("L3: one-cycle tmux smoke GREEN — one /clear, observed turnover, and later brief in pane %s", sessName)
+}
+
+func TestL3_ExternalTurnoverDuringGraceSendsNoDriverClear(t *testing.T) {
+	skipUnlessKeeperLive(t)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatalf("L3: KEEPER_LIVE=1 but tmux not found on PATH: %v", err)
+	}
+
+	sessName := l3SessionName() + "-external"
+	t.Cleanup(func() { l3KillSession(sessName) })
+	if out, err := exec.CommandContext(t.Context(), "tmux", "new-session", "-d", "-s", sessName, "bash", "--norc").CombinedOutput(); err != nil {
+		t.Fatalf("L3: tmux new-session: %v (%s)", err, out)
+	}
+
+	project := t.TempDir()
+	agent := "keeper-l3-external"
+	const oldSID = "11111111-1111-4111-8111-111111111111"
+	const newSID = "22222222-2222-4222-8222-222222222222"
+	keeperDir := filepath.Join(project, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(oldSID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(newSID+"\n"), 0o600)
+	}()
+
+	if err := keeper.DriveRestartAfterReturn(t.Context(), keeper.RestartDriveConfig{
+		RestartNowConfig: keeper.RestartNowConfig{
+			ProjectDir: project, AgentName: agent, TmuxTarget: sessName,
+		},
+		PreviousSessionID: oldSID,
+		Grace:             100 * time.Millisecond,
+		Timeout:           10 * time.Second,
+		Poll:              10 * time.Millisecond,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pane, err := exec.CommandContext(t.Context(), "tmux", "capture-pane", "-p", "-t", sessName).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := string(pane)
+	if strings.Contains(captured, "/clear") {
+		t.Fatalf("driver submitted a clear after external turnover:\n%s", captured)
+	}
+	if !strings.Contains(captured, "agent brief") {
+		t.Fatalf("driver did not brief the new session:\n%s", captured)
+	}
 }

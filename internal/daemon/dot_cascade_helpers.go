@@ -120,9 +120,10 @@ type dotWorkflowResult struct {
 	// as advisory-RC and re-queued (hk-whru3).
 	advisoryRC bool
 
-	// approveVerdict carries the APPROVE verdict when the cascade succeeded via
-	// the explicit reviewer-APPROVE path (hk-8ps7q). Nil when success was via a
-	// non-reviewer terminal node, advisory-RC advisory-only, or cap-hit salvage.
+	// approveVerdict carries the APPROVE verdict when the cascade reaches a
+	// successful terminal or the approved-and-done salvage path. Nil when no
+	// reviewer approved the work, the verdict cannot be read, or salvage did not
+	// follow an approval.
 	// The caller (workloop.go) uses this to stamp Reviewed-By / Review-Verdict
 	// trailers on the HEAD commit before merging, mirroring the review-loop path
 	// (hk-tnui).

@@ -258,8 +258,8 @@ func TestAppendReviewTrailers_AmendStoppedAfterItLandedReportsSuccess(t *testing
 	initTestRepoDyim(t, dir)
 	calls := stopGitOnceOn(t, "commit", "--amend", "after")
 
-	if err := AppendReviewTrailersToHEAD(context.Background(), dir, approveVerdictFixture()); err != nil {
-		t.Fatalf("AppendReviewTrailersToHEAD = %v; want success for an amend that landed", err)
+	if err := ReplaceReviewTrailersOnHEAD(context.Background(), dir, approveVerdictFixture()); err != nil {
+		t.Fatalf("ReplaceReviewTrailersOnHEAD = %v; want success for an amend that landed", err)
 	}
 	if got := stubCalls(t, calls); got != 1 {
 		t.Errorf("the amend ran %d times; want 1 — a commit already rewritten must not be rewritten again", got)
@@ -280,8 +280,8 @@ func TestAppendReviewTrailers_AmendStoppedBeforeItRanRunsAgain(t *testing.T) {
 	initTestRepoDyim(t, dir)
 	calls := stopGitOnceOn(t, "commit", "--amend", "before")
 
-	if err := AppendReviewTrailersToHEAD(context.Background(), dir, approveVerdictFixture()); err != nil {
-		t.Fatalf("AppendReviewTrailersToHEAD = %v; want the amend to survive one stopped git", err)
+	if err := ReplaceReviewTrailersOnHEAD(context.Background(), dir, approveVerdictFixture()); err != nil {
+		t.Fatalf("ReplaceReviewTrailersOnHEAD = %v; want the amend to survive one stopped git", err)
 	}
 	if got := stubCalls(t, calls); got != 2 {
 		t.Errorf("the amend ran %d times; want 2 — the stopped run rewrote nothing", got)

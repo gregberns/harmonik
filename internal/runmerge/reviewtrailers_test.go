@@ -33,7 +33,7 @@ func initTestRepoDyim(t *testing.T, dir string) {
 		t.Fatalf("initTestRepoDyim: WriteFile: %v", err)
 	}
 	run("add", "work.txt")
-	run("commit", "-m", "feat: agent work\n\nRefs: hk-test")
+	run("commit", "-m", "feat: agent work\n\nKeep this body in this exact order.\nIt has two lines.\n\nRefs: hk-test\nReviewed-By: none\nReview-Verdict: {\"schema_version\":1,\"verdict\":\"NOT_REVIEWED\",\"flags\":[\"no-reviewer-reached\"],\"notes\":\"No reviewer was reached.\"}")
 }
 
 func headCommitMsgDyim(t *testing.T, dir string) string {
@@ -47,11 +47,11 @@ func headCommitMsgDyim(t *testing.T, dir string) string {
 	return string(out)
 }
 
-// TestAppendReviewTrailersToHEAD_AddsTrailers_dyim verifies that the
+// TestReplaceReviewTrailersOnHEAD_AddsTrailers_dyim verifies that the
 // Reviewed-By: and Review-Verdict: trailers are present in the HEAD commit
-// message after a successful call to AppendReviewTrailersToHEAD with an
+// message after a successful call to ReplaceReviewTrailersOnHEAD with an
 // APPROVE verdict.
-func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
+func TestReplaceReviewTrailersOnHEAD_AddsTrailers_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -65,11 +65,18 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("AppendReviewTrailersToHEAD: %v", err)
+	if err := ReplaceReviewTrailersOnHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("ReplaceReviewTrailersOnHEAD: %v", err)
 	}
 
 	msg := headCommitMsgDyim(t, dir)
+	wantPreserved := "feat: agent work\n\nKeep this body in this exact order.\nIt has two lines.\n\nRefs: hk-test\n"
+	if !strings.HasPrefix(msg, wantPreserved) {
+		t.Errorf("subject or body changed during trailer replacement; got:\n%s", msg)
+	}
+	if got := strings.Count(msg, "Reviewed-By:"); got != 1 {
+		t.Errorf("commit message carries %d Reviewed-By lines, want 1; got:\n%s", got, msg)
+	}
 
 	if !strings.Contains(msg, "Reviewed-By: "+reviewedByTrailerValue) {
 		t.Errorf("commit message missing Reviewed-By trailer; got:\n%s", msg)
@@ -104,9 +111,9 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 	}
 }
 
-// TestAppendReviewTrailersToHEAD_Idempotent_dyim verifies that calling
-// AppendReviewTrailersToHEAD twice does not duplicate the trailers.
-func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
+// TestReplaceReviewTrailersOnHEAD_Idempotent_dyim verifies that calling
+// ReplaceReviewTrailersOnHEAD twice does not duplicate the trailers.
+func TestReplaceReviewTrailersOnHEAD_Idempotent_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -120,11 +127,11 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("first AppendReviewTrailersToHEAD: %v", err)
+	if err := ReplaceReviewTrailersOnHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("first ReplaceReviewTrailersOnHEAD: %v", err)
 	}
-	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("second AppendReviewTrailersToHEAD: %v", err)
+	if err := ReplaceReviewTrailersOnHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("second ReplaceReviewTrailersOnHEAD: %v", err)
 	}
 
 	msg := headCommitMsgDyim(t, dir)
@@ -135,9 +142,9 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 	}
 }
 
-// TestAppendReviewTrailersToHEAD_NilVerdict_dyim verifies that a nil verdict
+// TestReplaceReviewTrailersOnHEAD_NilVerdict_dyim verifies that a nil verdict
 // is a safe no-op.
-func TestAppendReviewTrailersToHEAD_NilVerdict_dyim(t *testing.T) {
+func TestReplaceReviewTrailersOnHEAD_NilVerdict_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -146,8 +153,8 @@ func TestAppendReviewTrailersToHEAD_NilVerdict_dyim(t *testing.T) {
 	msgBefore := headCommitMsgDyim(t, dir)
 
 	ctx := context.Background()
-	if err := AppendReviewTrailersToHEAD(ctx, dir, nil); err != nil {
-		t.Fatalf("AppendReviewTrailersToHEAD(nil): %v", err)
+	if err := ReplaceReviewTrailersOnHEAD(ctx, dir, nil); err != nil {
+		t.Fatalf("ReplaceReviewTrailersOnHEAD(nil): %v", err)
 	}
 
 	msgAfter := headCommitMsgDyim(t, dir)

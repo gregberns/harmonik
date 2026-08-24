@@ -1,3 +1,4 @@
+//nolint:contextcheck,nakedret // existing orchestration file; contexts and named results encode run lifecycles
 package daemon
 
 import (
@@ -496,8 +497,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			if dotResult.approveVerdict == nil || rbc != nil {
 				return
 			}
-			if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
+			if amendErr := runmerge.ReplaceReviewTrailersOnHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.ReplaceReviewTrailersOnHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
 					retry, beadID, amendErr)
 			}
 		},

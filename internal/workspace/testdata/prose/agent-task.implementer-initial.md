@@ -57,9 +57,9 @@ The `Review-Verdict:` JSON MUST be on ONE line.
 The body MUST also hold a `Refs:` line that names the bead. The commit-message gate never reads that line — the daemon does.
 Your work counts as done only when BOTH of these are true: this worktree's HEAD has advanced past where it started, and the new commit carries that `Refs:` line. If HEAD does not advance, the workflow sends this task back to you.
 That line is also what ties the commit to the bead, so a later reconciliation can match the two.
-NEVER write a verdict of APPROVE. You did not review your own work. Record the honest form below.
+NEVER write a verdict of APPROVE. You did not review your own work. The pipeline replaces the provisional review lines below with the real reviewer's verdict after review. If no reviewer is reached, these lines remain as the settled, honest absent-reviewer record.
 
-Copy the lines between the two fence lines below. Do NOT copy the fence lines. Write your own subject line and your own sentence, and keep the `Refs:` line, the `Reviewed-By:` line and the `Review-Verdict:` line exactly as they are:
+Copy the lines between the two fence lines below. Do NOT copy the fence lines. Write your own subject line and your own sentence, and keep the provisional `Refs:`, `Reviewed-By:`, and `Review-Verdict:` lines exactly as they are:
 
 ```
 docs(workspace): remove the stale mode note from the Terminal comment

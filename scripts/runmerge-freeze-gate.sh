@@ -61,7 +61,7 @@ for sym in mergeRunBranchToMain RunBranchToTarget inlineMergeSubmit InlineSubmit
            snapshotUntrackedFiles SnapshotUntrackedFiles \
            parsePorcelainPaths ParsePorcelainPaths filterIgnoredPaths \
            stripRunContextFromMerge StripRunContextFromMerge \
-           appendReviewTrailersToHEAD AppendReviewTrailersToHEAD \
+           appendReviewTrailersToHEAD ReplaceReviewTrailersOnHEAD \
            removeWorktree RemoveWorktree gitRevParse \
            resolveMergeTips prepareInitialMerge prepareRebase gitRebaseAbort \
            runMergeBuildGate runMergeFmtGate runMergeFmtCheck runFmtPassesOnce \

@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
+//nolint:gocognit,cyclop,funlen // graph traversal remains one state machine; split only at a real state boundary
 func driveDotWorkflow(
 	ctx context.Context,
 	env runloop.RunEnv,
@@ -471,11 +472,20 @@ func driveDotWorkflow(
 			if why != "" {
 				summary += ": " + why
 			}
+			var approveVerdict *workspace.ReviewVerdict
+			if success && priorVerdict == workspace.ReviewVerdictApprove {
+				// The normal APPROVE path reaches its terminal immediately. Carry
+				// the verdict to the merge spine so it can replace the implementer's
+				// provisional review trailers before the commit lands.
+				//nolint:errcheck // non-fatal: merge may proceed when the verdict file cannot be read
+				approveVerdict, _ = readDotReviewVerdictRetry(ctx, runner, wtPath)
+			}
 			return dotWorkflowResult{
 				success:        success,
 				terminalNodeID: currentNodeID,
 				needsAttention: !success,
 				summary:        summary,
+				approveVerdict: approveVerdict,
 			}
 
 		case decision.Failed:

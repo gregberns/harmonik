@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -502,6 +504,7 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		message string
 	}
 	var results []checkResult
+	var intendedExecutable string
 
 	check := func(name string, ok bool, msg string) {
 		results = append(results, checkResult{name: name, ok: ok, message: msg})
@@ -527,6 +530,7 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if lookErr != nil {
 			check("binary", false, "harmonik not found on PATH — reinstall or add to PATH")
 		} else {
+			intendedExecutable, _ = filepath.EvalSymlinks(exe)
 			info, statErr := os.Stat(exe)
 			if statErr != nil {
 				check("binary", false, fmt.Sprintf("cannot stat harmonik binary %q: %v", exe, statErr))
@@ -684,6 +688,39 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
 	}
 
+	if watcherLive {
+		record, recordErr := keeper.ReadRuntimeRecord(cfg.projectDir, cfg.agentName)
+		lockPID, lockPIDErr := keeper.ReadLockPID(cfg.projectDir, cfg.agentName)
+		switch {
+		case lockPIDErr != nil:
+			check("runtime-provenance", false, fmt.Sprintf("cannot read live keeper lock owner: %v", lockPIDErr))
+		case recordErr != nil:
+			check("runtime-provenance", false, fmt.Sprintf("live keeper has no readable runtime identity: %v — restart it with the intended binary", recordErr))
+		case record.PID <= 0 || record.Executable == "" || !validSHA256(record.ExecutableSHA256) || !validSHA256(record.ConfigSHA256) || record.Commit == "" || record.StartedAt.IsZero():
+			check("runtime-provenance", false, "live keeper runtime identity is incomplete — restart it")
+		case record.PID != lockPID:
+			check("runtime-provenance", false, fmt.Sprintf("runtime record PID %d does not own the live keeper lock (owner PID %d)", record.PID, lockPID))
+		default:
+			actualDigest, digestErr := keeper.FileSHA256(record.Executable)
+			if digestErr != nil {
+				check("runtime-provenance", false, fmt.Sprintf("cannot digest live keeper executable %q: %v", record.Executable, digestErr))
+			} else if actualDigest != record.ExecutableSHA256 {
+				check("runtime-provenance", false, "live keeper executable changed after startup — restart it")
+			} else if intendedExecutable != "" {
+				intendedDigest, intendedErr := keeper.FileSHA256(intendedExecutable)
+				if intendedErr != nil {
+					check("runtime-provenance", false, fmt.Sprintf("cannot digest intended binary %q: %v", intendedExecutable, intendedErr))
+				} else if intendedDigest != record.ExecutableSHA256 {
+					check("runtime-provenance", false, fmt.Sprintf("live keeper PID %d runs %s (%s), not intended %s (%s)", record.PID, record.Executable, record.ExecutableSHA256[:12], intendedExecutable, intendedDigest[:12]))
+				} else {
+					check("runtime-provenance", true, fmt.Sprintf("PID %d target=%q binary=%s commit=%s config=%s", record.PID, record.TmuxTarget, record.ExecutableSHA256[:12], record.Commit, record.ConfigSHA256[:12]))
+				}
+			} else {
+				check("runtime-provenance", false, "cannot resolve intended harmonik binary on PATH")
+			}
+		}
+	}
+
 	{
 		resolveFn := cfg.resolveTargetFn
 		if resolveFn == nil {
@@ -697,11 +734,11 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 		target := resolveFn(cfg.projectDir, cfg.agentName)
 		if target == "" {
-			check("tmux-pane", true, "agent session not live — pane check skipped")
+			check("tmux-pane", true, "agent session not live — pane check not applicable")
 		} else {
 			ok, paneErr := paneFn(target)
 			if paneErr != nil {
-				check("tmux-pane", true, fmt.Sprintf("pane check skipped (%v)", paneErr))
+				check("tmux-pane", false, fmt.Sprintf("pane check failed for %q: %v", target, paneErr))
 			} else if !ok {
 				check("tmux-pane", false, fmt.Sprintf("pane %q not found — keeper inject-target is unreachable; verify the keeper was launched with a braced tmux target (${session}:agent, not $session:agent — zsh :a modifier silently rewrites unbraced form; hk-5266t)", target))
 			} else {
@@ -769,6 +806,14 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 1
+}
+
+func validSHA256(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func runKeeperDoctorAtBoot(projectDir, agentName, settingsPath string) {
@@ -1198,6 +1243,10 @@ CHECKS (all read-only; no filesystem mutations)
   managed        .harmonik/keeper/<agent>.managed present AND a watcher is running
                  (the marker alone is consent, not liveness — RED without a watcher)
   live-watcher   live keeper process holds the flock (watcher is actually running)
+  runtime-provenance
+                 live lock owner and executable digest match the runtime record and
+                 intended harmonik binary on PATH; target and config digest are shown
+  tmux-pane      resolved target exists; probe errors are failures, not green skips
   api-key-risk   ANTHROPIC_API_KEY not set in environment
 
 EXIT CODES

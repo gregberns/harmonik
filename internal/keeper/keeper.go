@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -143,6 +144,24 @@ func LiveKeeperPresent(projectDir, agent string) bool {
 	}
 	_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // probe cleanup
 	return false
+}
+
+// ReadLockPID reads the PID written by the process that acquired the keeper lock.
+// Callers use LiveKeeperPresent separately when they need proof that the lock is held.
+func ReadLockPID(projectDir, agent string) (int, error) {
+	if err := validateAgent(agent); err != nil {
+		return 0, err
+	}
+	path := filepath.Join(projectDir, ".harmonik", "keeper", agent+".lock")
+	raw, err := os.ReadFile(path) //nolint:gosec // validated agent and caller-selected project
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("keeper: invalid lock PID %q", strings.TrimSpace(string(raw)))
+	}
+	return pid, nil
 }
 
 // IsManaged reports whether the opt-in marker

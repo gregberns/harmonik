@@ -7,10 +7,10 @@ spec-id: session-keeper
 requirement-prefix: SK   # reserve in specs/_registry.yaml at landing (same commit as this spec)
 status: draft
 spec-shape: requirements-first
-version: 0.3.1
+version: 0.3.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-15
+last-updated: 2026-08-24
 depends-on:
   - replay-substrate
   - event-model
@@ -278,6 +278,22 @@ Tags: observability
 The gate ladder (order and predicates), the threshold math (routed through the existing `minAbsOrPctCeil` ceiling function), and the operator-pinned warn/act bands MUST be preserved unchanged. This spec re-expresses the existing logic behind ports and a state machine; it MUST NOT alter band values or gate order. The bands are owned by [operator-nfr.md §4.13 ON-059] and are HARD-NO on change without operator direction.
 
 Tags: mechanism
+
+#### SK-029 — A live keeper records and proves its runtime identity
+
+After it owns the agent lock, a keeper MUST write an atomic runtime record for that lock owner. The
+record MUST include the PID, resolved tmux target, executable path and SHA-256 digest, build commit,
+effective-config SHA-256 digest, and start time. A clean shutdown MUST remove only the record whose
+PID matches the exiting process.
+
+`keeper doctor` MUST require the record PID to match the PID in the live lock file. It MUST compare
+the recorded executable digest with both the file named by the record and the intended `harmonik`
+binary on `PATH`. It reports the target and config digest for audit. It does not claim that the
+current config matches that recorded digest. A missing record, an incomplete record, a changed file,
+or a PID or digest mismatch MUST be a failed check while the keeper lock is live. A tmux probe error
+MUST also be a failed check. The doctor MUST NOT report an unproved IO boundary as green.
+
+Tags: safety, mechanism
 
 #### SK-017 — Reproduce-the-freeze via InCycle suppression
 

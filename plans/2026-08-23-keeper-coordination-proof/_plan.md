@@ -367,6 +367,12 @@ The first safe vertical is complete on the kilo branch.
   green.
 - The seven fixtures that assumed completion without session turnover no longer count as green.
   Six now model observed turnover. The obsolete same-session completion claim is deleted.
+- Each live keeper writes an atomic runtime identity after it acquires the agent lock. The record
+  contains its PID, target, executable path and digest, commit, effective-config digest, and start
+  time. Clean shutdown removes only the exiting PID's record.
+- Doctor matches the runtime-record PID to the live lock owner. It verifies the recorded executable
+  digest against both the recorded path and the intended `harmonik` binary on `PATH`. Malformed or
+  incomplete identity data is red. A tmux probe error is also red.
 
 The following checks are green on this branch:
 

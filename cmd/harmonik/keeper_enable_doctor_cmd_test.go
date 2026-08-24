@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/keeper"
 )
 
 func makeScriptsDir(t *testing.T) string {
@@ -778,6 +781,151 @@ func TestKeeperDoctor_LiveWatcherPresentIsGreen(t *testing.T) {
 	}
 	if strings.Contains(out, "✗ live-watcher") {
 		t.Errorf("live-watcher must not be red when watcher is present: %s", out)
+	}
+}
+
+func TestKeeperDoctor_RuntimeProvenanceMatchesIntendedBinary(t *testing.T) {
+	cfg, cleanup := makeDoctorCfg(t, "runtime-match")
+	defer cleanup()
+	lock, err := keeper.AcquireLock(cfg.projectDir, cfg.agentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+	exe, err := exec.LookPath("harmonik")
+	if err != nil {
+		t.Skip("harmonik is not on PATH")
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := keeper.FileSHA256(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keeper.WriteRuntimeRecord(cfg.projectDir, cfg.agentName, keeper.RuntimeRecord{
+		PID: os.Getpid(), Executable: exe, ExecutableSHA256: digest, ConfigSHA256: strings.Repeat("a", 64),
+		Commit: "test-commit", StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	runKeeperDoctor(cfg, &out, &out)
+	if !strings.Contains(out.String(), "✓ runtime-provenance") {
+		t.Fatalf("matching runtime identity was not green:\n%s", out.String())
+	}
+}
+
+func TestKeeperDoctor_RuntimeProvenanceRejectsDifferentBinary(t *testing.T) {
+	cfg, cleanup := makeDoctorCfg(t, "runtime-drift")
+	defer cleanup()
+	lock, err := keeper.AcquireLock(cfg.projectDir, cfg.agentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+	other := filepath.Join(t.TempDir(), "harmonik-old")
+	if err := os.WriteFile(other, []byte("old keeper"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := keeper.FileSHA256(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keeper.WriteRuntimeRecord(cfg.projectDir, cfg.agentName, keeper.RuntimeRecord{
+		PID: os.Getpid(), Executable: other, ExecutableSHA256: digest, ConfigSHA256: strings.Repeat("b", 64),
+		Commit: "test-commit", StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	runKeeperDoctor(cfg, &out, &out)
+	if !strings.Contains(out.String(), "✗ runtime-provenance") || !strings.Contains(out.String(), "not intended") {
+		t.Fatalf("binary drift was not red:\n%s", out.String())
+	}
+}
+
+func TestKeeperDoctor_RuntimeProvenanceRejectsStaleRecordPID(t *testing.T) {
+	cfg, cleanup := makeDoctorCfg(t, "runtime-stale-pid")
+	defer cleanup()
+	lock, err := keeper.AcquireLock(cfg.projectDir, cfg.agentName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+	exe, err := exec.LookPath("harmonik")
+	if err != nil {
+		t.Skip("harmonik is not on PATH")
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := keeper.FileSHA256(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keeper.WriteRuntimeRecord(cfg.projectDir, cfg.agentName, keeper.RuntimeRecord{
+		PID: os.Getpid() + 1, Executable: exe, ExecutableSHA256: digest,
+		ConfigSHA256: strings.Repeat("c", 64), Commit: "test-commit", StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	runKeeperDoctor(cfg, &out, &out)
+	if !strings.Contains(out.String(), "runtime record PID") || !strings.Contains(out.String(), "does not own") {
+		t.Fatalf("stale runtime PID was not red:\n%s", out.String())
+	}
+}
+
+func TestKeeperDoctor_RuntimeProvenanceRejectsIncompleteRecord(t *testing.T) {
+	for _, field := range []string{"commit", "started_at", "config_digest_short", "config_digest_non_hex", "executable_digest_short"} {
+		t.Run(field, func(t *testing.T) {
+			cfg, cleanup := makeDoctorCfg(t, "runtime-incomplete-"+field)
+			defer cleanup()
+			lock, err := keeper.AcquireLock(cfg.projectDir, cfg.agentName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = lock.Release() }()
+			exe, err := exec.LookPath("harmonik")
+			if err != nil {
+				t.Skip("harmonik is not on PATH")
+			}
+			exe, err = filepath.EvalSymlinks(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest, err := keeper.FileSHA256(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := keeper.RuntimeRecord{
+				PID: os.Getpid(), Executable: exe, ExecutableSHA256: digest,
+				ConfigSHA256: strings.Repeat("d", 64), Commit: "test-commit", StartedAt: time.Now().UTC(),
+			}
+			switch field {
+			case "commit":
+				record.Commit = ""
+			case "started_at":
+				record.StartedAt = time.Time{}
+			case "config_digest_short":
+				record.ConfigSHA256 = "x"
+			case "config_digest_non_hex":
+				record.ConfigSHA256 = strings.Repeat("z", 64)
+			case "executable_digest_short":
+				record.ExecutableSHA256 = "x"
+			}
+			if err := keeper.WriteRuntimeRecord(cfg.projectDir, cfg.agentName, record); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			runKeeperDoctor(cfg, &out, &out)
+			if !strings.Contains(out.String(), "runtime identity is incomplete") {
+				t.Fatalf("missing %s was not red:\n%s", field, out.String())
+			}
+		})
 	}
 }
 

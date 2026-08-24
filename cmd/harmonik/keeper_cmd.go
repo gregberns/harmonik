@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -349,6 +352,46 @@ func runKeeperSubcommand(args []string) int {
 	if resolvedTmux != "" && resolvedTmux != tmuxFlag {
 		fmt.Fprintf(os.Stderr, "keeper: auto-resolved tmux target from convention: %q\n", resolvedTmux)
 	}
+
+	executable, exeErr := os.Executable()
+	if exeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: resolve executable: %v\n", exeErr)
+		return 1
+	}
+	executable, exeErr = filepath.EvalSymlinks(executable)
+	if exeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: resolve executable symlinks: %v\n", exeErr)
+		return 1
+	}
+	executableDigest, digestErr := keeper.FileSHA256(executable)
+	if digestErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: digest executable: %v\n", digestErr)
+		return 1
+	}
+	configBytes, marshalErr := json.Marshal(struct {
+		Resolved ResolvedKeeperConfig
+		Params   keeperBuildParams
+	}{resolved, keeperBuildParams{
+		AgentName: agentFlag, ProjectDir: projectDir, ResolvedTmux: resolvedTmux,
+		WindowSize: windowSizeFlag, WarnOnly: warnOnlyFlag, RespawnCmd: respawnCmdFlag,
+		ForceRestart: forceRestartFlag, WarnPctRaw: warnPctFlag, ActPctRaw: actPctFlag,
+		KeeperCfg: keeperCfg,
+	}})
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: encode effective config: %v\n", marshalErr)
+		return 1
+	}
+	configSum := sha256.Sum256(configBytes)
+	runtimeRecord := keeper.RuntimeRecord{
+		PID: os.Getpid(), Executable: executable, ExecutableSHA256: executableDigest,
+		Commit: resolvedCommitHash(), TmuxTarget: resolvedTmux,
+		ConfigSHA256: hex.EncodeToString(configSum[:]), StartedAt: time.Now().UTC(),
+	}
+	if recordErr := keeper.WriteRuntimeRecord(projectDir, agentFlag, runtimeRecord); recordErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: write runtime identity: %v\n", recordErr)
+		return 1
+	}
+	defer func() { _ = keeper.RemoveRuntimeRecord(projectDir, agentFlag, os.Getpid()) }()
 
 	effWarn, effAct, effForce := keeper.EffectiveBandTokens(
 		resolvedWarnAbs, resolvedActAbs, resolvedForceActAbs,

@@ -10,41 +10,41 @@
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived here.
 # Pre-freeze lane history: .harmonik/archive/2026-07-12-freeze-and-carve/ (not boot-read).
 
-## CURRENT TRUTH 2026-07-22 — FLEET DISPATCHING (inline mode), RELEASE/REBUILD IN PROGRESS.
+## CURRENT TRUTH 2026-08-24 — daemon UP and dispatching; work batches before it merges.
 
-> The 2026-07-12 freeze was LIFTED long ago; the fleet has dispatched for ~10 days since.
-> This block replaces the superseded freeze text (pre-freeze history archived at
-> `.harmonik/archive/2026-07-12-freeze-and-carve/`, not boot-read). 7 sessions up and
-> working: captain + admiral (oversight) + crews india, juliet, kilo, lima, mike, assessor.
-> INLINE MODE — crews implement in in-crew subagents; daemon queue-dispatch is OFF until
-> the tmux-input fix hk-9hvr0 deploys. A major release is mid-flight: 31 landed commits are
-> NOT yet running — the prod daemon is stuck on eb2b4f1a (since 09:03Z 2026-07-22); a gated
-> redeploy (daemon-20260722-02) is being prepared: admiral gates via the assessor, captain
-> drives, no swap until admiral clears.
+> Replaces the 2026-07-22 block, which was six weeks stale: it described an inline mode
+> with the daemon queue OFF and named five crews (india, juliet, kilo, lima, mike) that are
+> registered but long offline. Superseded text is deleted, not archived here — git holds it.
+> Verified from `scripts/captain-boot-digest.sh`, `harmonik queue status`, and the live
+> mission files, not carried forward from the previous block.
+
+The daemon dispatches real beads. Work lands on `work/charlie-batch-1`, and only a batch
+that passes the gate in `BATCH-GATE.md` merges into `work/alpha-integration-merge`.
+
+**The two branch keys behave differently, and the difference points the dangerous way.**
+`lands_on` is re-read per run — `internal/daemon/branching.go` `resolveBranchingFrom` calls
+`branching.LoadCached`, which invalidates on the file's mtime — so an edit takes effect on
+the very next run with no restart. `protect_branches` is boot-pinned: `daemon.Start` reads
+it once through `bootconfig.Resolve`, so an edit to it IS inert until the daemon restarts.
+Confirm the live values with the `daemon_config` event, which prints them.
 
 ### Lanes (live)
-- codex-first (hk-tckw3, india) — Step-2 GO/NO-GO gated on the rebuild.
-- flake initiative (hk-f8o5u, juliet) — both arms discharged; root cause = leaked
-  test-daemon cache-wipe artifact; hk-gjbpp is the fix; clean re-measure post-rebuild.
-- sandbox (hk-scaj0, lima) — hk-guapd/dqo9u/bzydx/quoka/s13ee landed; hk-rhhig/mp37h/155gs remain.
-- process-group-provenance (kilo) — kerf pass-5 spec-draft in review.
-- daemon-reliability + the release batch — the rebuild is the culmination.
+- **alpha** — plans the `plans/2026-08-23-clear-the-ground/` program. Writes and ranks the
+  task files; does not implement. Its product is that charlie always has ready work.
+- **charlie** — runs those beads through the queue and confirms each lands on the batch
+  branch. Does not implement, and does not open a second queue.
+- **bravo** — the queue, `internal/core`, and everything outside the daemon package, through
+  the delete-and-rewrite program.
+- **admiral, assessor** — registered; oversight.
+- **india, juliet, kilo, lima, mike** — registered but offline for weeks. Reconcile or
+  deregister them; do not read them as staffed lanes. Note that the one open epic,
+  `hk-scaj0` (uniform sandbox across harnesses), is still assigned to lima — so it reads
+  as staffed and is not. Reassign it or clear the assignee before anyone trusts that field.
 
-**On ratification**, the first work is STEP-0 (resume-hang + noChange false-close +
-honest-probe re-land), which runs **OUT-OF-PIPELINE** (direct agent + human-reviewed
-merge), followed by M1 (delete test-theater) concurrently. See PLAN.md for per-move
-scope, DoD (the Acceptance Oracle), and the in-pipeline-vs-out-of-pipeline call.
-
-### Carried-forward defects (must survive into the carve; parked, not lost)
-- **Resume-hang / QA-execution-gate** — implementer relaunch-on-gate-fail hangs silently
-  (~5/5 recent runs). PLAN STEP-0a. Correlates with the QA-execution-gate (~0adb6551).
-- **noChange-subsumption false-close** — the daemon closed `hk-2hfyt` on a bead-ID
-  MENTION in an unrelated docs commit (32dc13f7), fix ABSENT. PLAN STEP-0b. Do NOT trust
-  that closed status.
-- **honest-probe still live** — the gb-mbp fleet-down probe bug behind false-closed
-  `hk-2hfyt`; `createworktree.go` has only a partial HEAD probe. PLAN STEP-0c
-  (re-land under a clean bead ID; gb-mbp stays DISABLED until it lands + re-validates).
+### Carried-forward defects
+Live defects are beads, not entries in this file. Read the ledger.
 
 ### Open operator decisions
-- **PLAN.md ratification** — 7 open questions in the plan; **Q1 is the crux: the
-  Acceptance Oracle / standard of proof** for "a fix is real." Everything waits on this.
+- **The captain rethink** — `plans/2026-08-24-captain-rethink/` is cutting the captain's
+  instruction corpus and reworking what the captain is responsible for. Step 3 of that plan
+  needs the operator.

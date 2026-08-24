@@ -1,6 +1,35 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-12T21:00:00Z",
-  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate. Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. 2026-07-12: FLEET TORN DOWN under the freeze-and-carve clean slate (direction-log ~18:00Z) — no lanes are staffed; execution is frozen pending ratification of plans/2026-07-12-codebase-census/PLAN.md. Re-seed this array only when lanes are re-stood on ratification (STEP-0 first, out-of-pipeline). Pre-freeze 6-lane snapshot: .harmonik/archive/2026-07-12-freeze-and-carve/lanes.json.",
-  "lanes": []
+  "updated": "2026-08-24T20:40:00Z",
+  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate. Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. 2026-08-24: re-seeded. The array had been empty since the 2026-07-12 freeze-and-carve teardown, and stayed empty through six weeks of live dispatch, so every reader saw 'no lanes staffed' while three crews worked. The lanes below are the live ones, verified from the crew registry and the mission files. INVARIANT DRIFT, recorded rather than worked around: this file says an epic_id of null REQUIRES a non-null gate. Three live lanes have neither \u2014 their unit of work is a program directory, not an epic, which is a shape the invariant did not anticipate. Inventing a gate to satisfy the rule would state that these lanes are held, which is false. The invariant's PURPOSE still holds: the ops-monitor counts only lanes with a non-null epic_id, so an epic-less lane still cannot fire the stall wake. The 'requires a gate' clause was a mechanism for that purpose and is now redundant. Fix the clause or drop it; do not fix the data. One consequence of re-seeding, worth knowing before it surprises someone: the ops-monitor's staffing-starvation check (Check 9) could never fire while this array was empty, and now it can. The sandbox lane is a live candidate. It is quiet today because hk-scaj0 has no ready children, but when one appears and the fleet idles, the monitor will push an IMMEDIATE wake naming that lane.",
+  "lanes": [
+    {
+      "lane": "alpha",
+      "epic_id": null,
+      "status": "active",
+      "gate": null,
+      "note": "Plans the clear-the-ground program: writes and ranks task files so charlie always has ready work. No epic; the program directory is the unit."
+    },
+    {
+      "lane": "charlie",
+      "epic_id": null,
+      "status": "active",
+      "gate": null,
+      "note": "Runs the clear-the-ground beads through the charlie-batch queue onto work/charlie-batch-1. No epic; the program directory is the unit."
+    },
+    {
+      "lane": "bravo",
+      "epic_id": null,
+      "status": "active",
+      "gate": null,
+      "note": "Queue, internal/core, and everything outside the daemon package, through the delete-and-rewrite program."
+    },
+    {
+      "lane": "sandbox",
+      "epic_id": "hk-scaj0",
+      "status": "parked",
+      "gate": null,
+      "note": "Uniform harmonik-level sandbox across all harnesses. Open epic, and NOT staffed despite reading as staffed: its assignee is lima, which has been offline for weeks. Reassign or clear the assignee before anyone trusts that field."
+    }
+  ]
 }

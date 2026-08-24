@@ -13,71 +13,26 @@
 > Pre-freeze sequencing history (14 superseded entries: 5-lane priority, remote worktree,
 > pi redeploy, codex option-B, QA-gate, v0.5.0 cut) is preserved in git history + the
 > snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. Struck 2026-07-12 by the
-> admiral audit under the retention/anti-rot rule — all superseded by the pivot below.
+> admiral audit under the retention/anti-rot rule. What superseded them was itself struck
+> on 2026-08-24 as lapsed; see the note under the heading below.
 
-## 2026-07-13 ~ (post-panel) — operator: PARK the generative-system framing; codebase-overhaul is the line · expires: 2026-07-15T00:00:00Z
-WHAT: Operator decided the "generative-system" meta-approach (principles/metabolism/emergence) needs to
-      be approached DIFFERENTLY and is NOT moving forward now. Its concrete engineering FINDINGS are kept
-      as inputs to the codebase overhaul. All exploration docs relocated under the census they came from:
-      plans/2026-07-12-codebase-census/generative-system-exploration/ (docs 1–4 + CAPTURE + CHARTER-draft).
-WHY:  the emergent-systems/simulation framing was adversarially found to be mostly yak-shaving (doc 2);
-      the VALUABLE residue is ordinary strong engineering — a stable event/port substrate, record→replay,
-      property-tested invariants, and replay-vs-frozen-baseline measurement (doc 4). That belongs to the
-      codebase overhaul, not a separate "system" project.
-ORDER: next is a LARGER codebase-overhaul PLAN that decides REWRITE-vs-REFACTOR per section (STEP-0
-      pipeline fixes, M1 test-theater, M2 agent-input, M3 run-lifecycle god-fn, M4 remote), tuned in
-      before dispatch. Start small (panel pick: session-restart vertical, resume-hang = its first property
-      test) but the per-section rewrite/refactor call is the open work. Measurement standard: replay +
-      fault-injection vs baseline (.harmonik/events/baseline-2026-07-13/; 54% run-completion, 84% restart,
-      347 clear-unconfirmed). Codex substrate template already built (internal/apptap|codexwire|codexreactor).
-RETURN-PATH: supersedes the ~23:35Z generative-system reframe below (that entry retained as record).
-      Freeze still HOLDS; keeper HELD. Next session: draft the overhaul plan; await operator ratification.
+## No live direction change.
 
-## 2026-07-12 ~23:35Z — operator+admiral: REFRAME — the goal is a generative SYSTEM, not the tool; carve is downstream · expires: 2026-07-14T00:00:00Z
-WHAT: Operator confirmed ("Yes") a reframe of the whole project. We are not building a tool; we are
-      building a complex ADAPTIVE SYSTEM (principles + a self-pruning metabolism + agents that reason
-      from principles) that BUILDS the tool as the encoding of the system's own attributes. Three hard
-      problems named: (1) principles not structure — kerf gives a track, no compass (a 2300-line fn
-      lived the whole life, no agent ever flagged it); (2) alignment across ~1000 varied sessions is
-      EMERGENT like ants/flocks — shared principles + signals, a gradient not a rail; (3) stay stable
-      AND improve WITHOUT accreting — promote only what generalizes, prune/fold by default, cap the
-      count, selection not authorship. Recursion: the builder must run on the same principles it encodes.
-WHY:  the treadmill is not a code problem, it's a BUILDER problem — the process that built harmonik
-      carries no principles, so it produced (and could not reject) an unmaintainable system. Fixing the
-      artifact without fixing the generative system just regenerates slop.
-ORDER: freeze still HOLDS; nothing dispatches. The real STEP-0 is now the CHARTER (the few load-bearing
-      principles + the metabolism that keeps them few/live/self-pruning). The freeze-and-carve carve
-      (STEP-0/M1–M4, plans/2026-07-12-codebase-census/) is DOWNSTREAM — the first thing the system
-      produces and proves itself on, not the north star. PLAN.md v2's "Acceptance Oracle" (Q1) is
-      SUPERSEDED (wrong question: "is a fix real"); its residue folds into principle-space.
-RETURN-PATH: capture DONE (plans/2026-07-12-generative-system/CAPTURE.md). NEXT: operator+admiral talk
-      next steps, then draft the charter. Do NOT re-stand any lane; do NOT dispatch the carve until the
-      charter exists and the operator lifts the freeze.
+Every entry was struck on 2026-08-24 by the captain-rethink session, NOT by an admiral
+audit, because every one had lapsed. The four entries here
+described a 2026-07-12 freeze-and-carve pivot and a generative-system reframe, and each
+carried an `expires:` of 2026-07-14 or 2026-07-15 — six weeks past. This file's own rule is
+that an expired entry lapses to the standing autonomous posture and gets struck, and none had
+been. Reading them as live sequencing intent was the failure they caused: they describe a
+frozen fleet that has been dispatching for weeks.
 
-## 2026-07-12 ~20:5xZ — operator+admiral: PLAN-FIRST resolved → clean slate executed; PLAN.md v2 awaiting ratification · expires: 2026-07-14T00:00:00Z
-WHAT: the 18:00Z pivot's a/b/c offer is RESOLVED — operator chose PLAN-FIRST + a clean slate.
-      Executed: fleet torn down (all crews down, run worktrees reaped, 267 beads closed, ~2GB history
-      cleared; captain+admiral up). Admiral authored + independently review-hardened the full carve
-      program: plans/2026-07-12-codebase-census/PLAN.md v2 (STEP-0 → M1 → M2 → M3 → M4, with the
-      Acceptance Oracle standard-of-proof). Initiative/lane trackers archived + cleared to the
-      frozen state.
-WHY:  no dispatch until the plan is ratified — the daemon run pipeline itself is untrustworthy
-      (resume-hang + false-close), so STEP-0 must repair it OUT-OF-PIPELINE before any carve work flows.
-ORDER: everything stays FROZEN. On operator ratification: settle PLAN Q1 (the Acceptance Oracle) →
-      captain re-stands FRESH agents, STEP-0 first (resume-hang + noChange false-close + honest-probe
-      re-land, all out-of-pipeline) → M1 (delete test-theater) concurrent → M2/M3/M4 kerf-first.
-RETURN-PATH: AWAITING operator ratification of PLAN.md v2 (7 open questions; Q1 = standard of proof is
-      the crux). Do NOT re-stand any pre-freeze lane; the carve program is the single front line.
+Striking is the non-authoritative half of this file's two-branch rule. Re-confirming a
+lapsed entry revives a hold and is the admiral's alone; striking one only records what the
+unconditional `ON EXPIRY the DEFAULT is LAPSE` rule had already done to it on 2026-07-15.
+The admiral has not booted since 2026-07-22, and these entries had already made a captain
+read a frozen fleet. Audit this exception on the next admiral boot.
 
-## 2026-07-12 ~18:00Z — operator (via admiral): STRATEGIC PIVOT → FREEZE-AND-CARVE; fleet QUIESCED · expires: 2026-07-14T00:00:00Z
-WHAT: Operator voiced a deep architectural concern ("everything keeps breaking, remote poorly
-      architected, don't know what's real, can't build the system with itself, so much slop,
-      mutexes=bugs") → authorized a codebase CENSUS (10 Fable assessors + 10 adversarial challengers
-      + synthesis; every verdict UPHELD). Report: plans/2026-07-12-codebase-census/REPORT.md.
-WHY:  the treadmill (43% of 20-day commits are hardening; 80% land in the 55k-LOC daemon god-package)
-      is architectural, not review-debt. Domain logic is SOUND; the two ack-free IO boundaries (tmux
-      paste-inject + remote SSH) + the god-package + no-single-writer are the root. Verdict: KEEP the
-      proven core (queue model, lifecycle sweeps, harness axes, ~466 regression tests), REBUILD
-      daemon-workloop core + remote + tmux-input, SIMPLIFY the rest, DELETE ~50k LOC of test-theater.
-RETURN-PATH: superseded by the ~20:5xZ entry above (plan-first + clean slate executed). Retained here
-      as the root direction change of record.
+Git history holds the struck text.
+
+**An empty log means what it says: no direction change is holding anything.** Act on the
+standing posture.

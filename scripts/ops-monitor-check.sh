@@ -461,8 +461,13 @@ fi
 #     EXPIRED (gate.expires < now == absent; LAPSE→autonomous default, Part 1b), AND
 #   - `br ready --parent <epic_id> --limit 0 --json` returns >=1 ready bead.
 # "KNOWN" = present in the index (a fact read from a file), NOT "in the live kerf-next
-# feed right now." Lanes with epic_id:null contribute ZERO (the index invariant
-# guarantees an epic-less lane carries a gate, so it can never fire the wake).
+# feed right now." Lanes with epic_id:null contribute ZERO — and the REASON changed on
+# 2026-08-24, so do not trust the old one. It used to be "the index invariant guarantees
+# an epic-less lane carries a gate." That invariant no longer holds: three live lanes have
+# neither an epic nor a gate, because their unit of work is a program directory rather
+# than an epic, and lanes.json records that drift rather than inventing gates to hide it.
+# The conclusion survives for a simpler reason that does not depend on the invariant at
+# all: the filter below is `select(.epic_id != null)`, which is gate-independent.
 #
 # The first matching lane's name + epic + ready-count are passed into the python
 # analysis, which AND-combines them with program_drained (== idle_fleet, Check 6)

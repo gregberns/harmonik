@@ -87,6 +87,20 @@ func darwinCollectorScript(repoPath string) string {
 		`echo "vmstat<<$(vm_stat)"`,
 		`echo "swap=$(sysctl -n vm.swapusage)"`,
 		`echo "disk=$(df -m '` + repoPath + `' | tail -1)"`,
+		// This line searches for text that the line ITSELF contains, because the
+		// whole collector body is one `sh -c` argument. It counts correctly
+		// anyway: macOS pgrep hides the caller's own ancestors, and from this
+		// position the shell is an ancestor. Measured — with a decoy process
+		// carrying that argv it returns 1, not 2.
+		//
+		// So this is correct by ARRANGEMENT, not by design, and a rearrangement
+		// breaks it silently. The same pattern as the FIRST command of an
+		// `sh -c` pipeline DOES match the parent shell. Do not move it, and do
+		// not copy the shape to a new call site. scripts/run-full.sh hit this
+		// and wrote down the durable fix: exclude your own invocation by PID SET
+		// — the process, its ancestors, and its process group — never by
+		// matching command-line text. The linux sibling below does NOT get the
+		// ancestor-hiding behaviour; see hk-50cp2.
 		`echo "claude=$(pgrep -f 'claude --session-id' | wc -l | tr -d ' ')"`,
 		// worktree_leak detection (WR4): count `git worktree list` entries on the
 		// worker repo. The `^worktree ` porcelain prefix is one line per worktree

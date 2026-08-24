@@ -181,14 +181,17 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 
 # test-subprocess: WS2.4 non-docker subprocess daemon-boot smoke. Execs the real
 # built harmonik binary as a separate process, waits for the daemon unix socket,
-# submits one bead via the CLI, and asserts a terminal run outcome. Billing-free
+# submits one bead via the CLI, and asserts that its implement node dispatches
+# before that same run fails structurally. Billing-free
 # (dispatch routed to the generic twin via the codexdriver substrate; no real
 # agent, no tmux, no network). Dedicated `subprocess` build tag isolates it from
 # the default build/test (it is NOT part of -tags=scenario). Budget: 5 minutes.
+# no test in make full proves a bead can go from queue submit to a closed bead through the real binary
+# because the real binary's only substrate injection is --codex-binary with HARMONIK_SUBSTRATE=codexdriver, and no binary in the tree speaks the Codex app-server protocol.
 # Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS2.4.
 .PHONY: test-subprocess
 test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
-	scripts/go-test-must-match.sh go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
+	scripts/go-test-must-match.sh go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBoot_SubmitReachesAgentThenFailsStructurally
 
 # core-loop-lt: WS4-5 FORCED, single-entry LT-leg command. THE assessor's live-verify
 # gate — drives the real task-processing loop on a scratch daemon across the core-loop
@@ -1340,8 +1343,11 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow
 	# test-subprocess is the ONLY test that boots the real binary as a process:
-	# it waits for the socket, submits through the real CLI, and asserts a
-	# terminal event. Everything else calls daemon.Start in-process, so a
+	# it waits for the socket, submits through the real CLI, and asserts that its
+	# implement node dispatches before that same run fails structurally.
+	# no test in make full proves a bead can go from queue submit to a closed bead through the real binary
+	# because the real binary's only substrate injection is --codex-binary with HARMONIK_SUBSTRATE=codexdriver, and no binary in the tree speaks the Codex app-server protocol.
+	# Everything else calls daemon.Start in-process, so a
 	# regression in the boot path a real operator takes had nothing standing in
 	# front of it. It runs in about 11 seconds against a scenario tier that costs
 	# 8 minutes, and the tag keeps it out of the default build.

@@ -12,18 +12,21 @@ import (
 	"time"
 )
 
-// TestSubprocessDaemonBootSmoke is the WS2.4 non-docker smoke.
-func TestSubprocessDaemonBootSmoke(t *testing.T) {
+// TestSubprocessDaemonBoot_SubmitReachesAgentThenFailsStructurally proves that
+// the real binary boots, accepts a command-line submit, and dispatches the
+// implement node. It proves nothing about an agent doing work: the generic twin
+// cannot speak the Codex app-server protocol that the driver speaks.
+func TestSubprocessDaemonBoot_SubmitReachesAgentThenFailsStructurally(t *testing.T) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
-		t.Skipf("go toolchain required: %v", err)
+		t.Fatalf("go toolchain required: %v", err)
 	}
 	brPath, err := exec.LookPath("br")
 	if err != nil {
-		t.Skip("br required for subprocess boot smoke (not on PATH)")
+		t.Fatal("br required for subprocess boot smoke (not on PATH)")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git required for subprocess boot smoke (not on PATH)")
+		t.Fatal("git required for subprocess boot smoke (not on PATH)")
 	}
 
 	moduleRoot := subprocessSmokeModuleRoot(t, goTool)
@@ -80,9 +83,35 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 		t.Fatalf("queue submit failed: %v\n%s", err, out)
 	}
 
-	if !subprocessSmokeWaitTerminal(t, jsonlPath, 90*time.Second) {
-		t.Fatalf("no terminal run event (run_completed/run_failed/bead_closed) within 90s\n"+
-			"jsonl=%s\ndaemon output:\n%s", jsonlPath, daemonOut.String())
+	deadline := time.Now().Add(90 * time.Second)
+	var run subprocessSmokeRun
+	for time.Now().Before(deadline) {
+		//nolint:gosec // G304: jsonlPath is under a t-owned /tmp dir; not user input.
+		data, readErr := os.ReadFile(jsonlPath)
+		if readErr == nil {
+			run, err = scanSubprocessSmokeEvents(data, beadID)
+			if err != nil {
+				t.Fatalf("scan subprocess events: %v", err)
+			}
+			if run.Terminal != "" {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !run.Nodes["implement"] {
+		t.Fatalf("submitted run %q did not dispatch the implement node", run.RunID)
+	}
+	if run.Terminal == "" {
+		t.Fatalf("no terminal event for submitted run %q within 90s\njsonl=%s\ndaemon output:\n%s",
+			run.RunID, jsonlPath, daemonOut.String())
+	}
+	if run.Terminal == "run_completed" {
+		t.Fatalf("terminal outcome = %q; expected outcome is now wrong and must be re-decided, not widened", run.Terminal)
+	}
+	if run.Terminal != "run_failed" || run.Success || !strings.Contains(run.Summary, "class=structural") {
+		t.Fatalf("terminal outcome = %q success=%t summary=%q; want run_failed, false, and class=structural",
+			run.Terminal, run.Success, run.Summary)
 	}
 }
 
@@ -207,27 +236,6 @@ func subprocessSmokeWaitForSocket(t *testing.T, sockPath string, budget time.Dur
 			}
 		}
 		time.Sleep(5 * time.Millisecond)
-	}
-	return false
-}
-
-func subprocessSmokeWaitTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
-		//nolint:gosec // G304: jsonlPath is under a t-owned /tmp dir; not user input.
-		data, err := os.ReadFile(jsonlPath)
-		if err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if strings.Contains(line, "run_completed") ||
-					strings.Contains(line, "run_failed") ||
-					strings.Contains(line, "bead_closed") {
-					t.Logf("terminal event observed: %s", strings.TrimSpace(line))
-					return true
-				}
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	return false
 }

@@ -1,0 +1,2 @@
+{"type":"run_started","payload":{"bead_id":"sub-fixture","run_id":"run-failed"}}
+{"type":"run_failed","payload":{"run_id":"run-failed","success":false,"summary":"expected run_completed but agent crashed"}}

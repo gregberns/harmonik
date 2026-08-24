@@ -231,7 +231,7 @@ func TestRestartNow_MissingHandoff_Refuses(t *testing.T) {
 	}
 }
 
-func TestRestartNow_StaleHandoff_Refuses(t *testing.T) {
+func TestRestartNow_OldNonEmptyHandoff_IsAccepted(t *testing.T) {
 	dir := t.TempDir()
 	agent := "captain"
 	writeSidAndCtx(t, dir, agent, goodSID)
@@ -242,11 +242,62 @@ func TestRestartNow_StaleHandoff_Refuses(t *testing.T) {
 		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0",
 		Inject: rec.inject, RequestedAt: requested,
 	}, "n")
+	if err != nil {
+		t.Fatalf("old handoff was rejected: %v", err)
+	}
+	if len(rec.calls) != 3 {
+		t.Errorf("injections = %v, want ack, clear, and brief", rec.texts())
+	}
+}
+
+func TestRestartNow_EmptyHandoff_Refuses(t *testing.T) {
+	dir := t.TempDir()
+	agent := "captain"
+	writeSidAndCtx(t, dir, agent, goodSID)
+	if err := os.WriteFile(filepath.Join(dir, "HANDOFF-"+agent+".md"), []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recordingInjector{}
+	err := RestartNow(context.Background(), RestartNowConfig{
+		ProjectDir: dir, AgentName: agent, TmuxTarget: "sess:0", Inject: rec.inject,
+	}, "n")
 	if err == nil {
-		t.Fatal("want error for stale handoff, got nil")
+		t.Fatal("empty handoff was accepted")
 	}
 	if len(rec.calls) != 0 {
-		t.Errorf("must NOT /clear with stale handoff; got %v", rec.texts())
+		t.Errorf("empty handoff caused injection: %v", rec.texts())
+	}
+}
+
+func TestDriveRestartAfterReturn_ClearsOnceAndBriefsAfterNewSession(t *testing.T) {
+	dir := t.TempDir()
+	agent := "captain"
+	const oldSID = "11111111-1111-4111-8111-111111111111"
+	const newSID = "22222222-2222-4222-8222-222222222222"
+	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(oldSID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	inject := func(_ context.Context, _, text string) error {
+		calls = append(calls, text)
+		if text == "/clear" {
+			return os.WriteFile(filepath.Join(keeperDir, agent+".sid"), []byte(newSID+"\n"), 0o600)
+		}
+		return nil
+	}
+	err := DriveRestartAfterReturn(context.Background(), RestartDriveConfig{
+		RestartNowConfig:  RestartNowConfig{ProjectDir: dir, AgentName: agent, TmuxTarget: "pane", Inject: inject},
+		PreviousSessionID: oldSID, Grace: time.Nanosecond, Timeout: time.Second, Poll: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0] != "/clear" || !strings.Contains(calls[1], "agent brief") {
+		t.Fatalf("calls = %v, want one clear then brief", calls)
 	}
 }
 

@@ -461,6 +461,8 @@ EXIT CODES
 				return runKeeperDoctorSubcommand(subArgs[1:])
 			case "restart-now":
 				return runKeeperRestartNow(subArgs[1:])
+			case "restart-driver":
+				return runKeeperRestartDriver(subArgs[1:])
 			case "ping":
 				return runKeeperPing(subArgs[1:])
 			case "await-ack":

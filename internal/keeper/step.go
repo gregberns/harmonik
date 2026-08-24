@@ -377,22 +377,16 @@ func stepClearing(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Acti
 }
 
 func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	// A submitted /clear can remain queued while the agent finishes its turn.
+	// Re-submitting it cannot distinguish a dropped command from a queued one.
+	// Each retry becomes another destructive command that runs after the pane
+	// drains. Count observations without sending another command. The initial
+	// submission in stepEnterClearing is the only clear attempt for this cycle.
+	s.ClearAttempt++
 	if s.ClearAttempt >= cfg.ClearConfirmRetries {
 		return stepClearUnconfirmed(cfg, s, ev)
 	}
-	s.ClearAttempt++
-	var actions []Action
-	if cfg.TmuxTarget != "" {
-		gaugeDropped := ev.CF != nil && cfg.belowActThreshold(ev.CF)
-		if !gaugeDropped {
-			if clearAct, ok := injectClearAction(&s); ok {
-				actions = append(actions, clearAct,
-					emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
-			}
-		}
-	}
-	actions = append(actions, Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle})
-	return s, actions
+	return s, []Action{{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle}}
 }
 
 // stepIdleGaugeTick is the MaybeRun 11-gate ladder (SK-011): a pure predicate
@@ -751,11 +745,25 @@ func injectClearAction(s *CycleState) (Action, bool) {
 func stepClearUnconfirmed(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
 	actions := []Action{
 		emitClearUnconfirmedAction(cfg, s.CycleID, s.EntryCF.SessionID),
+		emitCycleAbortedAction(cfg, s.CycleID, s.EntryCF.SessionID, "clear_unconfirmed"),
 		{Kind: ActSetManagedSession, SID: ""},
 		{Kind: ActCancelTimer, Timer: TimerClearSettle},
 		{Kind: ActCancelTimer, Timer: TimerClearBackstop},
 	}
-	return stepBriefing(cfg, s, ev, "", actions)
+	failed := journalAction(&s, "aborted", ev.At)
+	failed.Journal.Reason = "clear_unconfirmed"
+	actions = append(actions, failed)
+
+	// The target session is unknown. A brief sent now can land before a queued
+	// /clear and be erased by it. End visibly without a brief or cycle_complete.
+	s.LastFiredSID = s.EntryCF.SessionID
+	s.SeenLowPctAfterLastFire = false
+	s.LastFireWasAbort = false
+	s.ConsecutiveHandoffTimeouts = 0
+	s.BootGraceFirstArmAt = time.Time{}
+	s.Phase = PhaseIdle
+	s.LastTerminal = "failed"
+	return s, actions
 }
 
 func stepBriefing(cfg *CyclerConfig, s CycleState, ev Event, newSID string, actions []Action) (CycleState, []Action) {
@@ -844,6 +852,16 @@ func emitCycleParkedAction(cfg *CyclerConfig, cycleID, sessionID, reason string)
 		Reason:    reason,
 	})
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleParked, Payload: raw}
+}
+
+func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
+	raw := mustMarshalPayload(core.SessionKeeperCycleAbortedPayload{
+		AgentName: cfg.AgentName,
+		CycleID:   cycleID,
+		SessionID: sessionID,
+		Reason:    reason,
+	})
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleAborted, Payload: raw}
 }
 
 func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {

@@ -393,10 +393,9 @@ func TestStep_FullHappyPath_ThroughAwaitModelDone(t *testing.T) {
 	}
 }
 
-// TestStep_ClearBackstop_Unconfirmed proves the Clearing backstop edge:
-// TimerFired(clear_backstop) emits clear_unconfirmed + clears the managed
-// binding, and the brief STILL fires (degraded completion, SK §8.3 — not a
-// terminal by itself).
+// TestStep_ClearBackstop_Unconfirmed proves that an unknown target session is
+// a failed restart. The keeper clears its binding, but it does not inject a
+// brief or claim cycle completion before it observes session turnover.
 func TestStep_ClearBackstop_Unconfirmed(t *testing.T) {
 	t.Parallel()
 	cfg := stepTestConfig()
@@ -409,28 +408,30 @@ func TestStep_ClearBackstop_Unconfirmed(t *testing.T) {
 
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: "cyc-step-007", At: at.Add(cfg.ClearConfirmBackstop)})
 	assertKinds(t, actions, []ActionKind{
-		ActEmit, ActSetManagedSession, ActCancelTimer, ActCancelTimer,
-		ActInjectBrief, ActWriteJournal, ActWriteJournal, ActEmit,
+		ActEmit, ActEmit, ActSetManagedSession, ActCancelTimer, ActCancelTimer,
+		ActWriteJournal,
 	})
 	if actions[0].Type != core.EventTypeSessionKeeperClearUnconfirmed {
 		t.Fatalf("emit[0] = %v; want clear_unconfirmed", actions[0].Type)
 	}
-	if actions[1].SID != "" {
-		t.Fatalf("managed rebind = %q; want \"\" (cleared for .sid rebind)", actions[1].SID)
+	if actions[1].Type != core.EventTypeSessionKeeperCycleAborted {
+		t.Fatalf("emit[1] = %v; want cycle_aborted", actions[1].Type)
 	}
-	if st := m.State(); st.Phase != PhaseIdle || st.LastTerminal != "complete" {
-		t.Fatalf("state = %v/%v; want Idle/complete (degraded completion)", st.Phase, st.LastTerminal)
+	if actions[2].SID != "" {
+		t.Fatalf("managed rebind = %q; want \"\" (cleared for .sid rebind)", actions[2].SID)
+	}
+	if st := m.State(); st.Phase != PhaseIdle || st.LastTerminal != "failed" {
+		t.Fatalf("state = %v/%v; want Idle/failed", st.Phase, st.LastTerminal)
 	}
 }
 
-// TestStep_ClearSettle_RetriesThenExhausts proves the hk-vdqe2 settle-retry
-// discipline: each TimerFired(clear_settle) with retries left re-injects
-// /clear and re-arms; once ClearConfirmRetries windows have elapsed the
-// unconfirmed path fires.
-func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
+// TestStep_ClearSettle_ObservesWithoutResubmitting proves that a queued clear
+// cannot become a clear storm. Settle ticks only re-arm observation. The
+// independent backstop ends the restart if no new session appears.
+func TestStep_ClearSettle_ObservesWithoutResubmitting(t *testing.T) {
 	t.Parallel()
 	cfg := stepTestConfig()
-	cfg.ClearConfirmRetries = 3
+	cfg.ClearConfirmRetries = 5
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
@@ -438,23 +439,13 @@ func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-008", At: at})
 	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-008", SessionID: "sess-1", Source: "idle_marker", At: at})
 
-	for i := 0; i < 2; i++ {
+	for range 3 {
 		actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
-		assertKinds(t, actions, []ActionKind{ActInjectClear, ActEmit, ActArmTimer})
-		if actions[1].Type != core.EventTypeSessionKeeperClearSent {
-			t.Fatalf("re-inject emit = %v; want clear_sent", actions[1].Type)
-		}
-		var cs core.SessionKeeperClearSentPayload
-		if err := json.Unmarshal(actions[1].Payload, &cs); err != nil {
-			t.Fatalf("unmarshal clear_sent: %v", err)
-		}
-		if cs.Attempt != i+2 {
-			t.Fatalf("clear_sent attempt = %d; want %d", cs.Attempt, i+2)
-		}
+		assertKinds(t, actions, []ActionKind{ActArmTimer})
 	}
-	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
+	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: "cyc-step-008", At: at})
 	if actions[0].Kind != ActEmit || actions[0].Type != core.EventTypeSessionKeeperClearUnconfirmed {
-		t.Fatalf("exhausted settle action[0] = %+v; want Emit(clear_unconfirmed)", actions[0])
+		t.Fatalf("backstop action[0] = %+v; want Emit(clear_unconfirmed)", actions[0])
 	}
 	if st := m.State(); st.Phase != PhaseIdle {
 		t.Fatalf("phase = %v; want Idle", st.Phase)

@@ -328,9 +328,8 @@ func TestL0_FreshnessRecoveryTable(t *testing.T) {
 	}
 }
 
-// TestL0_ClearUnconfirmedBackstopTable is the degraded terminal: the clear
-// backstop fires with no SID flip → clear_unconfirmed + cycle_complete
-// (NOT an abort; SK §8.3), and the managed binding is cleared.
+// TestL0_ClearUnconfirmedBackstopTable proves that a missing session change
+// ends as a visible failed restart. The managed binding is cleared.
 func TestL0_ClearUnconfirmedBackstopTable(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig("l0-degraded")
@@ -344,8 +343,9 @@ func TestL0_ClearUnconfirmedBackstopTable(t *testing.T) {
 
 	types := emittedTypes(actions)
 	if countType(types, core.EventTypeSessionKeeperClearUnconfirmed) != 1 ||
-		countType(types, core.EventTypeSessionKeeperCycleComplete) != 1 {
-		t.Fatalf("want clear_unconfirmed + cycle_complete, got %v", types)
+		countType(types, core.EventTypeSessionKeeperCycleAborted) != 1 ||
+		countType(types, core.EventTypeSessionKeeperCycleComplete) != 0 {
+		t.Fatalf("want clear_unconfirmed and cycle_aborted without cycle_complete, got %v", types)
 	}
 	managedCleared := false
 	for _, a := range actions {
@@ -356,15 +356,14 @@ func TestL0_ClearUnconfirmedBackstopTable(t *testing.T) {
 	if !managedCleared {
 		t.Fatal("managed binding not cleared on the unconfirmed path")
 	}
-	if st := cyc.State(); st.LastTerminal != "complete" {
-		t.Fatalf("LastTerminal = %q, want complete (degraded completion is NOT an abort)", st.LastTerminal)
+	if st := cyc.State(); st.LastTerminal != "failed" {
+		t.Fatalf("LastTerminal = %q, want failed", st.LastTerminal)
 	}
 }
 
-// TestL0_SettleRetryTable is the hk-vdqe2 hard gate purely: each settle-window
-// expiry defensively re-injects /clear with an incremented clear_sent attempt
-// until retries exhaust, then the cycle degrades to clear_unconfirmed.
-func TestL0_SettleRetryTable(t *testing.T) {
+// TestL0_SettleObservationNeverResubmitsClear proves that repeated settle
+// observations cannot queue repeated destructive commands.
+func TestL0_SettleObservationNeverResubmitsClear(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig("l0-settle")
 	cfg.ClearConfirmRetries = 3
@@ -374,7 +373,7 @@ func TestL0_SettleRetryTable(t *testing.T) {
 		{Kind: keeper.EvModelDone, CycleID: "cyc-l0-settle", SessionID: "sid-s", Source: "idle_marker", At: l0Base.Add(time.Second)},
 		{Kind: keeper.EvTimerFired, Timer: keeper.TimerClearSettle, CycleID: "cyc-l0-settle", At: l0Base.Add(11 * time.Second)},
 		{Kind: keeper.EvTimerFired, Timer: keeper.TimerClearSettle, CycleID: "cyc-l0-settle", At: l0Base.Add(21 * time.Second)},
-		{Kind: keeper.EvTimerFired, Timer: keeper.TimerClearSettle, CycleID: "cyc-l0-settle", At: l0Base.Add(31 * time.Second)},
+		{Kind: keeper.EvTimerFired, Timer: keeper.TimerClearBackstop, CycleID: "cyc-l0-settle", At: l0Base.Add(31 * time.Second)},
 	}
 	actions, cyc := runSynthetic(t, cfg, events)
 
@@ -392,16 +391,17 @@ func TestL0_SettleRetryTable(t *testing.T) {
 			attempts = append(attempts, p.Attempt)
 		}
 	}
-	if clears != 3 {
-		t.Fatalf("InjectClear count = %d, want 3 (1 entry + 2 defensive re-injects)", clears)
+	if clears != 1 {
+		t.Fatalf("InjectClear count = %d, want 1", clears)
 	}
-	if len(attempts) != 3 || attempts[0] != 1 || attempts[1] != 2 || attempts[2] != 3 {
-		t.Fatalf("clear_sent attempts = %v, want [1 2 3]", attempts)
+	if len(attempts) != 1 || attempts[0] != 1 {
+		t.Fatalf("clear_sent attempts = %v, want [1]", attempts)
 	}
 	types := emittedTypes(actions)
 	if countType(types, core.EventTypeSessionKeeperClearUnconfirmed) != 1 ||
-		countType(types, core.EventTypeSessionKeeperCycleComplete) != 1 {
-		t.Fatalf("want clear_unconfirmed + cycle_complete after retries exhaust, got %v", types)
+		countType(types, core.EventTypeSessionKeeperCycleAborted) != 1 ||
+		countType(types, core.EventTypeSessionKeeperCycleComplete) != 0 {
+		t.Fatalf("want clear_unconfirmed and cycle_aborted without cycle_complete, got %v", types)
 	}
 	if cyc.InCycle() {
 		t.Fatal("InCycle after retries-exhausted terminal")

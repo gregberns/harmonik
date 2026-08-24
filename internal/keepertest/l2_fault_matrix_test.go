@@ -33,7 +33,7 @@ func strippedStimulusLen(t *testing.T, sum keepertwin.CycleSummary) int {
 	return len(stripPreScheduledTimers(events))
 }
 
-var closedJournalPhases = map[string]bool{"complete": true, "pending": true, "parked": true}
+var closedJournalPhases = map[string]bool{"complete": true, "pending": true, "parked": true, "aborted": true}
 
 // TestKeeperReplay_FaultMatrix is the T12 matrix. The name matches the §7
 // metric-8 recompute command (`go test -run 'TestKeeperReplay_Fault' …`).
@@ -85,9 +85,9 @@ func TestKeeperReplay_FaultMatrix(t *testing.T) {
 					}
 					authorized := countType(types, core.EventTypeSessionKeeperHandoffWritten) > 0
 					switch {
-					case authorized && !isCompletion(ending):
+					case authorized && ending != outcomeComplete && ending != outcomeClearUnconfirmed:
 						t.Fatalf("ending = %s after restart authority (handoff_written); "+
-							"an authorized restart owes a completion (SK-INV-005) (%v)", ending, types)
+							"want completion or a visible unconfirmed-clear failure (%v)", ending, types)
 					case !authorized && ending != outcomeParkedPending:
 						t.Fatalf("ending = %s with no restart authority; the only legitimate "+
 							"ending before handoff_written is %s (SK-025) (%v)",

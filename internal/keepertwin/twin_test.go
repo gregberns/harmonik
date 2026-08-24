@@ -152,15 +152,14 @@ func TestTwinRoundTrip_TerminalPerStratum(t *testing.T) {
 		wantParked bool
 	}{
 		{stratum: keepertwin.StratumCleanComplete, wantComplete: true},
-		{stratum: keepertwin.StratumDegradedComplete, wantComplete: true, wantUnconfirmed: true},
+		{stratum: keepertwin.StratumDegradedComplete, wantUnconfirmed: true},
 		// The 79 recorded handoff-timeout cycles. The OLD keeper terminated
 		// them; the NEW one parks them (see synthesizer.go, the
 		// abort_handoff_timeout row).
 		{stratum: keepertwin.StratumAbortHandoffTimeout, wantParked: true},
 		// The 1 recorded unterminated cycle: NEW must terminate within bound —
-		// the clear_backstop converts the old wedge into a degraded completion
-		// (SR9 fix; required divergence per measurement-design §4).
-		{stratum: keepertwin.StratumUnterminated, wantComplete: true, wantUnconfirmed: true},
+		// the clear_backstop converts the old wedge into a visible failed restart.
+		{stratum: keepertwin.StratumUnterminated, wantUnconfirmed: true},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.stratum), func(t *testing.T) {

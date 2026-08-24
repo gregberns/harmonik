@@ -78,8 +78,9 @@ type SessionKeeperCycleCompletePayload struct {
 // SessionKeeperCycleAbortedPayload is the payload for
 // session_keeper_cycle_aborted (event-model.md §8.16.5).
 //
-// Emitted when the cycle aborts without issuing /clear because the handoff
-// nonce confirmation timed out. The session is left untouched.
+// Emitted when a cycle ends without a confirmed restart. A handoff timeout
+// leaves the session untouched. A clear-unconfirmed failure means one clear
+// was sent but no new session was observed.
 //
 // Durability class: O (ordinary — operator attention required).
 // Refs: hk-22i70.
@@ -90,7 +91,8 @@ type SessionKeeperCycleAbortedPayload struct {
 	CycleID string `json:"cycle_id"`
 	// SessionID is the gauge session_id at the time the cycle was attempted.
 	SessionID string `json:"session_id,omitempty"`
-	// Reason describes why the cycle aborted. Values: "handoff_timeout".
+	// Reason describes why the cycle aborted.
+	// Values: "handoff_timeout" | "clear_unconfirmed".
 	Reason string `json:"reason"`
 }
 
@@ -107,7 +109,7 @@ type SessionKeeperCycleParkedPayload struct {
 // session_keeper_clear_unconfirmed (event-model.md §8.16.6).
 //
 // Emitted (best-effort) when the post-/clear settle wait elapses without
-// observing a new session_id in the gauge. The cycle continues regardless.
+// observing a new session_id in the gauge. The cycle fails without a brief.
 //
 // Durability class: O (ordinary — observability).
 // Refs: hk-22i70.

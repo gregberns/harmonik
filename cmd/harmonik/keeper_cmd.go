@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -610,6 +611,7 @@ func runKeeperRelease(args []string) int {
 
 func runKeeperRestartNow(args []string) int {
 	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper restart-now")
+	tmuxFlag := fs.String("tmux", "", "explicit tmux pane target; use the live keeper target when it does not follow the project naming convention")
 	nonceFlag := fs.String("nonce", "",
 		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
 			"session_keeper_restart_now event; carry-for-audit, never validated (default: rn-<ms> timestamp)")
@@ -642,14 +644,14 @@ func runKeeperRestartNow(args []string) int {
 	}
 	projectDir = absRN
 
-	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
+	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, *tmuxFlag, nil)
 
 	requestedAt := time.Now().UTC()
 	nonce := *nonceFlag
 	if nonce == "" {
 		nonce = restartNowNonce(requestedAt)
 	}
-	err := keeper.RestartNow(context.Background(), keeper.RestartNowConfig{
+	cfg := keeper.RestartNowConfig{
 		ProjectDir:  projectDir,
 		AgentName:   agent,
 		TmuxTarget:  tmuxTarget,
@@ -658,13 +660,62 @@ func runKeeperRestartNow(args []string) int {
 		// Durable audit record carrying the nonce (SK-030). FileEmitter appends to
 		// <projectDir>/.harmonik/events/events.jsonl.
 		Emitter: keeper.NewFileEmitter(projectDir),
-	}, nonce)
+	}
+	previousSID, err := keeper.ValidateRestartNow(context.Background(), cfg, slog.Default())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)
 		return 1
 	}
-	fmt.Printf("keeper restart-now: agent=%q nonce=%s restart driven (ack + /clear + agent brief --wake keeper-restart injected into %q)\n",
-		agent, nonce, tmuxTarget)
+	if err := startKeeperRestartDriver(projectDir, agent, tmuxTarget, previousSID, nonce); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: start detached driver: %v\n", err)
+		return 1
+	}
+	fmt.Printf("keeper restart-now: agent=%q nonce=%s accepted; detached driver will clear once and brief after session turnover in %q\n", agent, nonce, tmuxTarget)
+	return 0
+}
+
+func startKeeperRestartDriver(projectDir, agent, target, previousSID, nonce string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	logPath := filepath.Join(projectDir, ".harmonik", "keeper", agent+".restart-now.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "keeper", "restart-driver", "--project", projectDir, "--agent", agent, "--tmux", target, "--previous-sid", previousSID, "--nonce", nonce) //nolint:gosec // Values are argv, not a shell command.
+	cmd.Stdin = nil
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	_ = cmd.Process.Release()
+	return logFile.Close()
+}
+
+func runKeeperRestartDriver(args []string) int {
+	fs := flag.NewFlagSet("keeper restart-driver", flag.ContinueOnError)
+	project := fs.String("project", "", "")
+	agent := fs.String("agent", "", "")
+	target := fs.String("tmux", "", "")
+	previousSID := fs.String("previous-sid", "", "")
+	nonce := fs.String("nonce", "", "")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	err := keeper.DriveRestartAfterReturn(context.Background(), keeper.RestartDriveConfig{
+		RestartNowConfig:  keeper.RestartNowConfig{ProjectDir: *project, AgentName: *agent, TmuxTarget: *target},
+		PreviousSessionID: *previousSID,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "keeper restart-driver nonce=%s: %v\n", *nonce, err)
+		return 1
+	}
+	fmt.Printf("keeper restart-driver nonce=%s: session changed and brief submitted\n", *nonce)
 	return 0
 }
 
@@ -814,15 +865,14 @@ VERBS
   hold               Suspend the ACT/restart cutoff while co-working (session-id-keyed +
                      timer backstop; auto-reverts on restart; WARN still fires).
   release            Clear the hold; resume normal keeper behavior. Idempotent.
-  restart-now        Agent/captain-initiated SYNCHRONOUS clear→resume (hk-5da7).
-                     Verifies the session id (lowercase UUIDv4), checks HANDOFF-<agent>.md
-                     exists and is fresh (written within 10 min — run /session-handoff
-                     first), then injects an ACK line, /clear, and /session-resume into
-                     the agent's pane — all in THIS process, no marker, no watcher poll.
+  restart-now        Agent/captain-initiated detached clear→resume (hk-5da7).
+                     Verifies the session id and a non-empty HANDOFF-<agent>.md.
+                     It starts a detached driver and returns so the active tool call can
+                     end. The driver sends /clear once, waits for a new SessionStart ID,
+                     and then injects /session-resume into the new session.
                      FAILS LOUDLY (non-zero exit + logged reason) on no pane, an
-                     unverifiable session id, or a missing/stale handoff. The injected
-                     '[KEEPER ACK <nonce>] received restart' line lets a watcher verify
-                     receipt. Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).
+                     unverifiable session id, or a missing or empty handoff.
+                     Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).
   ping               Liveness check: inject ONLY '[KEEPER ACK <nonce>] received ping'
                      into the agent's pane (no /clear, no resume). --nonce sets the
                      verifiability token (default: timestamp). Refs: hk-5da7.

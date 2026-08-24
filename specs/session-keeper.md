@@ -331,9 +331,12 @@ For every cycle `c`, `session_keeper_model_done(c)` MUST be emitted before `sess
 
 Tags: mechanism
 
-#### SK-INV-003 — SR6: brief only after new-session confirmed, else clear_unconfirmed
+#### SK-INV-003 — SR6: brief only after new-session confirmed
 
-For every cycle `c` that reaches `Briefing`, exactly one of the following MUST hold, and it MUST precede `cycle_complete(c)`: either `session_keeper_new_session_up(c)` was emitted (the confirmed path), or `clear_unconfirmed(c)` was emitted (the backstop-exhaustion degraded path). Both MUST NOT be emitted for the same cycle, and neither MUST be absent.
+For every cycle `c` that reaches `Briefing`, `session_keeper_new_session_up(c)` MUST be emitted first.
+`clear_unconfirmed(c)` is a failed restart. It MUST NOT enter `Briefing`, inject a resume brief, or
+emit `cycle_complete(c)`. A queued `/clear` can execute after the backstop. A brief sent before session
+turnover can therefore be erased by the late clear.
 
 Tags: mechanism
 
@@ -478,8 +481,8 @@ States: `Idle`, `RequestPending`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing
 |---|---|---|---|
 | `handoff_observation_wake` | implementation policy | synchronous handoff observation | marked ⇒ `AwaitModelDone`; no marker ⇒ park observation while the request remains pending |
 | `model_done_timeout` | ~60s (< `ClearConfirmBackstop`) | `AwaitModelDone` | ⇒ `Clearing`, `degraded:true` |
-| `clear_settle` | `ClearSettle` = 10s | `Clearing` (re-armed per retry) | retries left ⇒ re-`InjectClear` + re-arm; else fall to backstop |
-| `clear_backstop` | `ClearConfirmBackstop` = 150s | `Clearing` (once) | ⇒ `Briefing` via `clear_unconfirmed` |
+| `clear_settle` | `ClearSettle` = 10s | `Clearing` | poll for session turnover and re-arm without another `/clear` |
+| `clear_backstop` | `ClearConfirmBackstop` = 150s | `Clearing` (once) | ⇒ failed terminal via `clear_unconfirmed`; no brief |
 
 **Idle**
 
@@ -512,8 +515,8 @@ States: `Idle`, `RequestPending`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing
 | Event | Guard | To | Actions |
 |---|---|---|---|
 | `SessionChanged` | newSID ≠ prevSID | `Briefing` | `Emit(new_session_up{prev, new})`, `SetManagedSession(newSID)`, `CancelTimer(clear_settle)`, `CancelTimer(clear_backstop)` |
-| `TimerFired(clear_settle)` | retries left | `Clearing` | `InjectClear` (defensive), `Emit(clear_sent{attempt:n})`, re-`ArmTimer(clear_settle)` |
-| `TimerFired(clear_backstop)` | — | `Briefing` | `Emit(clear_unconfirmed)`, `SetManagedSession("")`, `CancelTimer(clear_settle)` |
+| `TimerFired(clear_settle)` | — | `Clearing` | re-`ArmTimer(clear_settle)`; do not submit another `/clear` |
+| `TimerFired(clear_backstop)` | — | failed terminal | `Emit(clear_unconfirmed)`, `SetManagedSession("")`, `CancelTimer(clear_settle)`; no brief and no `cycle_complete` |
 
 **Briefing** (immediate, no external event)
 
@@ -566,9 +569,12 @@ only thing that sees it is SR9 reporting an unterminated cycle. Either give the 
 producer or take the promise out of SK-015, SK-INV-005 and §8.3. Do not leave the spec naming an
 event the system cannot emit.
 
-### 8.3 clear_unconfirmed (degraded-completion)
+### 8.3 clear_unconfirmed (failed restart)
 
-`clear_unconfirmed(c)` is the `Clearing` backstop-exhaustion outcome. It is NOT a terminal by itself: the brief still fires and the cycle still records `cycle_complete(c)`. It is the degraded-completion mode SR6 (SK-INV-003) tracks and aims to reduce; the baseline is 347/427 = 81% degraded-completion, which SK-019 forbids from increasing. A `restart_failed`-class emission is the SR9 escape hatch when even the degraded path cannot complete within the bounded window.
+`clear_unconfirmed(c)` is the `Clearing` backstop-exhaustion terminal. The keeper does not know which
+session would receive the next input. It MUST NOT inject the brief or record `cycle_complete(c)`.
+Historical logs contain 347 cycles that recorded completion after this event. Replay keeps those logs
+readable. It does not treat that unsafe historical outcome as the current success oracle.
 
 ### 8.4 cycle_parked
 

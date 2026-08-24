@@ -75,7 +75,7 @@ func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) cycleOutcome {
 	case keepertwin.StratumCleanComplete:
 		return outcomeComplete
 	case keepertwin.StratumDegradedComplete:
-		return outcomeDegradedComplete
+		return outcomeClearUnconfirmed
 	case keepertwin.StratumAbortHandoffTimeout:
 		return outcomeParkedPending
 	case keepertwin.StratumUnterminated:
@@ -83,7 +83,7 @@ func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) cycleOutcome {
 			t.Fatalf("unexpected unterminated cycle %s (baseline pins exactly one: %s)",
 				sum.CKey, knownUnterminatedCKey)
 		}
-		return outcomeDegradedComplete
+		return outcomeClearUnconfirmed
 	default:
 		t.Fatalf("unknown stratum %q", stratum)
 		return ""
@@ -111,7 +111,7 @@ func TestL1_GoldenOutcomes(t *testing.T) {
 
 	want := map[cycleOutcome]int{
 		outcomeComplete:         80,
-		outcomeDegradedComplete: 348,
+		outcomeClearUnconfirmed: 348,
 		outcomeParkedPending:    79,
 	}
 	if len(got) != len(want) {

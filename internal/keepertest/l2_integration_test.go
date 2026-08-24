@@ -177,22 +177,14 @@ func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.Fau
 	}
 
 	nextTimer := func() (keeper.TimerKind, time.Time, bool) {
-		settleDL, hasSettle := timers[keeper.TimerClearSettle]
 		var bestK keeper.TimerKind
 		var bestT time.Time
 		found := false
 		for k, dl := range timers {
-			eff := dl
-			if k == keeper.TimerClearBackstop && hasSettle {
-				if dl.After(settleDL) {
-					continue // not yet elapsed at this window's end; settle handles it
-				}
-				eff = settleDL
-			}
 			switch {
-			case !found || eff.Before(bestT):
-				bestK, bestT, found = k, eff, true
-			case eff.Equal(bestT) && k == keeper.TimerClearBackstop:
+			case !found || dl.Before(bestT):
+				bestK, bestT, found = k, dl, true
+			case dl.Equal(bestT) && k == keeper.TimerClearBackstop:
 				bestK = k // backstop-first at the boundary
 			}
 		}
@@ -296,20 +288,19 @@ func TestL2_CleanCompleteEffects(t *testing.T) {
 	}
 }
 
-// TestL2_DegradedCompleteEffects drives the degraded stratum and asserts the
-// LIVE-FAITHFUL interior counts the flat replay cannot see: the hk-vdqe2
-// defensive re-inject ladder (attempts 1..15 with defaults), then
-// clear_unconfirmed + brief + complete, with the managed binding cleared.
-func TestL2_DegradedCompleteEffects(t *testing.T) {
+// TestL2_UnconfirmedClearFailsWithoutResubmission drives the recorded degraded
+// stratum through the safer contract. One clear is attempted. A missing
+// session change fails the restart without a brief or a completion claim.
+func TestL2_UnconfirmedClearFailsWithoutResubmission(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumDegradedComplete]
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
-	assertOutcome(t, sink.Emits, sum.CKey, outcomeDegradedComplete)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeClearUnconfirmed)
 
-	want := wantDegradedClears(testConfig(sum.AgentName))
+	want := 1
 	if sink.Clears != want {
-		t.Errorf("clears = %d, want %d (entry + defensive settle re-injects)", sink.Clears, want)
+		t.Errorf("clears = %d, want %d (a missing observation must not resubmit clear)", sink.Clears, want)
 	}
 	attempts := sink.clearAttempts(t)
 	if len(attempts) != want {
@@ -320,8 +311,8 @@ func TestL2_DegradedCompleteEffects(t *testing.T) {
 			t.Fatalf("clear_sent attempts = %v, want 1..%d monotonically", attempts, want)
 		}
 	}
-	if sink.Briefs != 1 {
-		t.Errorf("briefs = %d, want 1 (degraded completion still briefs)", sink.Briefs)
+	if sink.Briefs != 0 {
+		t.Errorf("briefs = %d, want 0 before a new session is observed", sink.Briefs)
 	}
 	if len(sink.ManagedWrites) != 1 || sink.ManagedWrites[0] != "" {
 		t.Errorf("managed writes = %v, want [\"\"] (binding cleared on unconfirmed)", sink.ManagedWrites)
@@ -366,8 +357,8 @@ func TestL2_MissingHandoffSuspendsEffects(t *testing.T) {
 
 // TestL2_UnterminatedCycleFixedEffects drives the ONE recorded unterminated
 // cycle through the discrete harness: the NEW reactor's armed clear_backstop
-// MUST convert the old wedge into a bounded degraded completion (the SR9 fix
-// — the required divergence, asserted at the ports level).
+// MUST convert the old wedge into a bounded visible failure. It must not
+// invent a successful session turnover.
 func TestL2_UnterminatedCycleFixedEffects(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumUnterminated]
@@ -376,9 +367,9 @@ func TestL2_UnterminatedCycleFixedEffects(t *testing.T) {
 	}
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
-	assertOutcome(t, sink.Emits, sum.CKey, outcomeDegradedComplete)
-	if sink.Briefs != 1 {
-		t.Errorf("briefs = %d, want 1 (the fixed cycle still resumes the agent)", sink.Briefs)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeClearUnconfirmed)
+	if sink.Briefs != 0 {
+		t.Errorf("briefs = %d, want 0 before a new session is observed", sink.Briefs)
 	}
 }
 
@@ -406,8 +397,8 @@ func TestL2_FaultSmoke(t *testing.T) {
 		{
 			name:        "drop_after_nonce",
 			fault:       keepertwin.FaultConfig{Mode: keepertwin.FaultDropAfter, EventN: 2},
-			wantOutcome: outcomeDegradedComplete,
-			wantClears:  wantDegradedClears(testConfig(clean.AgentName)),
+			wantOutcome: outcomeClearUnconfirmed,
+			wantClears:  1,
 		},
 		{
 			name:          "stall_before_nonce",

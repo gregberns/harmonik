@@ -135,23 +135,24 @@ The destructive tail starts only from one of these authorities:
 
 Both paths use the same clear, session-change, and brief steps.
 
-### `restart-now` is an accepted intent, not a blind input burst
+### `restart-now` returns before a detached driver clears
 
 `restart-now` must:
 
 1. resolve the project and agent
 2. verify a non-empty handoff for the current session
 3. verify that a live keeper owns the agent lock
-4. atomically write a request with request ID, session ID, and handoff identity
-5. wait for positive watcher acceptance or fail with a non-zero exit
-6. return so the agent can finish its turn.
+4. start a detached restart driver with the old session ID and exact pane target
+5. return so the tool call can end and the agent can stop.
 
-The watcher then waits for the later Stop and enters the common destructive tail. There is no agent
-receipt-readiness conversation. The command is one explicit signal. The existing marked-handoff plus
-Stop path remains valid when the command is not run.
+The detached driver gives the active turn a short grace period. It submits `/clear` once. It then
+waits for the SessionStart channel to report a different session ID. It submits the resume brief only
+after that observation. It fails visibly if session turnover does not occur. It does not submit a
+second clear.
 
-The request is durable across watcher restart. A request for a different session ID is inert and emits
-an error event.
+The existing marked-handoff plus Stop path remains valid when the command is not run. There is no
+receipt-readiness-handoff-clear conversation. The explicit command is one signal and one detached
+transaction. Operator activity gates do not block this explicit path.
 
 ### Message delivery is independent of operator avoidance
 

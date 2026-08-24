@@ -638,6 +638,12 @@ test-keeper-l012:  ## Keeper replay L0/L1/L2 gate (KEEPER_LIVE=0; corpus-driven)
 test-keeper-live:  ## Keeper L3 live gate (KEEPER_LIVE=1 required; one-cycle tmux smoke)
 	KEEPER_LIVE=1 scripts/go-test-must-match.sh go test -timeout 180s -count=1 -run TestL3_ ./internal/keepertest/...
 
+# test-keeper-live-claude starts a real Claude Code TUI in tmux. It consumes a
+# small amount of model capacity. The test keeps pane and hook artifacts.
+.PHONY: test-keeper-live-claude
+test-keeper-live-claude:  ## Keeper real-Claude clear ordering scenario (opt-in)
+	KEEPER_LIVE_CLAUDE=1 scripts/go-test-must-match.sh go test -v -timeout 240s -count=1 -run TestL4_RealClaude ./internal/keepertest/...
+
 # ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------

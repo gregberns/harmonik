@@ -54,6 +54,16 @@ func waitForScenarioEffectCount(t *testing.T, ports *RecordingPorts, want string
 	t.Fatalf("timed out waiting for %d effect(s) containing %q; got %v", count, want, ports.EffectsSnapshot())
 }
 
+func countScenarioEffectsContaining(effects []string, want string) int {
+	found := 0
+	for _, effect := range effects {
+		if strings.Contains(effect, want) {
+			found++
+		}
+	}
+	return found
+}
+
 func TestScenarioRequiresReasonsForGateOptOuts(t *testing.T) {
 	s := NewScenario(productionLikePolicy())
 	for name, disable := range map[string]func(string) error{
@@ -229,7 +239,9 @@ func TestScenarioSuccessfulCycleRecordsOrderedEffects(t *testing.T) {
 
 	s.Ports().Gauge = &keeper.CtxFile{Pct: 90, SessionID: "11111111-1111-4111-8111-111111111111"}
 	s.Clock().Advance(policy.ClearSettle)
-	waitForScenarioEffectCount(t, s.Ports(), "inject:/clear", 2)
+	if got := countScenarioEffectsContaining(s.Ports().EffectsSnapshot(), "inject:/clear"); got != 1 {
+		t.Fatalf("clear attempts = %d, want 1 after settle observation: %v", got, s.Ports().EffectsSnapshot())
+	}
 	s.Ports().Gauge = &keeper.CtxFile{Pct: 2, SessionID: "22222222-2222-4222-8222-222222222222"}
 	time.Sleep(time.Millisecond)
 	var cycleErr error

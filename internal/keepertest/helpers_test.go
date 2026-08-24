@@ -170,10 +170,10 @@ type cycleOutcome string
 
 const (
 	outcomeComplete cycleOutcome = "cycle_complete"
-	// outcomeDegradedComplete is the §8.3 degraded terminal: the clear
-	// backstop expired without a session change, and the cycle completes
-	// anyway. Still exactly one terminal.
-	outcomeDegradedComplete cycleOutcome = "cycle_complete+clear_unconfirmed"
+	// outcomeClearUnconfirmed is a terminal failed restart. The keeper sent
+	// one clear, but it did not observe a new session. It must not send a brief
+	// or claim completion.
+	outcomeClearUnconfirmed cycleOutcome = "cycle_aborted{clear_unconfirmed}"
 	// outcomeParkedPending is the §8.4 SUSPENSION: the observation window
 	// closed before a marked handoff arrived. The request stays live and the
 	// SAME cycle id can resume and complete later (SK-025).
@@ -185,7 +185,7 @@ const (
 )
 
 func isCompletion(o cycleOutcome) bool {
-	return o == outcomeComplete || o == outcomeDegradedComplete
+	return o == outcomeComplete
 }
 
 func parkReason(t *testing.T, a keeper.Action) string {
@@ -207,21 +207,15 @@ func parkReason(t *testing.T, a keeper.Action) string {
 func cycleEndings(t *testing.T, actions []keeper.Action) []cycleOutcome {
 	t.Helper()
 	var out []cycleOutcome
-	unconfirmed := false
 	for _, a := range actions {
 		if a.Kind != keeper.ActEmit {
 			continue
 		}
 		switch a.Type {
 		case core.EventTypeSessionKeeperClearUnconfirmed:
-			unconfirmed = true
+			// This is the diagnostic observation. cycle_aborted is the terminal.
 		case core.EventTypeSessionKeeperCycleComplete:
-			if unconfirmed {
-				out = append(out, outcomeDegradedComplete)
-			} else {
-				out = append(out, outcomeComplete)
-			}
-			unconfirmed = false
+			out = append(out, outcomeComplete)
 		case core.EventTypeSessionKeeperCycleParked:
 			out = append(out, cycleOutcome("cycle_parked{"+parkReason(t, a)+"}"))
 		case core.EventTypeSessionKeeperCycleAborted:

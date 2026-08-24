@@ -93,7 +93,7 @@ func RunHarness(args []string, stdout, stderr io.Writer) int {
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
-	return RunHarnessWithSigs(args, stdout, stderr, sigCh)
+	return runHarnessWithSigs(args, stdout, stderr, sigCh)
 }
 
 func harnessWritef(w io.Writer, format string, args ...any) error {
@@ -101,8 +101,7 @@ func harnessWritef(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-// RunHarnessWithSigs executes the scenario harness with an injected signal source.
-func RunHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os.Signal) int {
+func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os.Signal) int {
 	fset := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	var usageWriteErr error
@@ -203,7 +202,7 @@ func RunHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		return harnessExitInternalError
 	}
 
-	twinSearchPaths := ResolveTwinSearchPaths(twinSearchPath, os.Getenv("HARMONIK_TWIN_SEARCH_PATH"), cwd)
+	twinSearchPaths := resolveTwinSearchPaths(twinSearchPath, os.Getenv("HARMONIK_TWIN_SEARCH_PATH"), cwd)
 	if verboseFlag {
 		if err := harnessWritef(stderr, "harness: twin-search-paths: %v\n", twinSearchPaths); err != nil {
 			return harnessExitInternalError
@@ -324,7 +323,7 @@ func RunHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		default:
 		}
 
-		resolvedBinary, handlerArgs, resolveErr := ResolveTwinBinary(
+		resolvedBinary, handlerArgs, resolveErr := resolveTwinBinary(
 			sf.AgentOverrides, twinSearchPaths)
 		if resolveErr != nil {
 			result := earlyErrorResult(scenarioName, scenarioSource, startedAt,
@@ -380,7 +379,7 @@ func RunHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		absEvLogPath := EventLogPath(projectRoot)
 		workspacePath := ScenarioWorkspacePath(fixtureRoot, scenarioName)
 
-		if fileErr := ApplyFixtureFiles(projectRoot, sf.FixtureSetup.Files); fileErr != nil {
+		if fileErr := applyFixtureFiles(projectRoot, sf.FixtureSetup.Files); fileErr != nil {
 			tdParams := TeardownParams{
 				ScenarioName:  scenarioName,
 				WorkspacePath: workspacePath,
@@ -403,7 +402,7 @@ func RunHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			continue
 		}
 
-		workflowMode, dotErr := ApplyWorkflowDOT(projectRoot, cwd, sf)
+		workflowMode, dotErr := applyWorkflowDOT(projectRoot, cwd, sf)
 		if dotErr != nil {
 			tdParams := TeardownParams{
 				ScenarioName:  scenarioName,
@@ -740,8 +739,7 @@ func DiscoverScenarios(
 	return scenarios, loadErrs
 }
 
-// ResolveTwinSearchPaths applies flag, environment, and default precedence.
-func ResolveTwinSearchPaths(flagValue, envValue, cwd string) []string {
+func resolveTwinSearchPaths(flagValue, envValue, cwd string) []string {
 	if flagValue != "" {
 		return []string{flagValue}
 	}
@@ -763,8 +761,7 @@ func MatrixCellCount(matrix map[string][]string) int {
 	return cells
 }
 
-// ResolveTwinBinary resolves the first deterministic agent override to a binary.
-func ResolveTwinBinary(
+func resolveTwinBinary(
 	overrides map[string]AgentOverride,
 	searchPaths []string,
 ) (binary string, args []string, err error) {
@@ -802,8 +799,7 @@ func ResolveTwinBinary(
 		binaryName, searchPaths)
 }
 
-// ApplyFixtureFiles writes a scenario's declared seed files into its project.
-func ApplyFixtureFiles(projectRoot string, files map[string]FileSeed) error {
+func applyFixtureFiles(projectRoot string, files map[string]FileSeed) error {
 	for relPath, seed := range files {
 		if !filepath.IsLocal(relPath) {
 			return fmt.Errorf("fixture file path %q must be repository-relative", relPath)
@@ -841,8 +837,7 @@ func ApplyFixtureFiles(projectRoot string, files map[string]FileSeed) error {
 	return nil
 }
 
-// ApplyWorkflowDOT resolves and installs a scenario's DOT workflow.
-func ApplyWorkflowDOT(
+func applyWorkflowDOT(
 	projectRoot, cwd string,
 	sf ScenarioFile,
 ) (core.WorkflowMode, error) {

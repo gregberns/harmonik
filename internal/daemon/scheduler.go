@@ -74,6 +74,7 @@ type loopCollaborators struct {
 	capacity        capacityPort
 	queueSurface    queueSurfacePort
 	dispatchGates   dispatchGatesPort
+	queueIdleWait   func(queueIdleSnapshot) queueIdleWait
 }
 
 type workLoopInput struct {
@@ -190,6 +191,25 @@ type queueSelection struct {
 	queueLocalOnly      bool           // mirrors Queue.LocalOnly — skip SelectWorker when true
 	queueWorkerTarget   string         // mirrors Queue.WorkerTarget — pin to named worker when non-empty
 	queueDefaultHarness core.AgentType // mirrors Queue.DefaultHarness — tier-2 harness default
+}
+
+type queueIdleSnapshot struct {
+	HasDeferredItems bool
+	HasSkippedBeads  bool
+}
+
+type queueIdleWait uint8
+
+const (
+	queueIdleScheduleAware queueIdleWait = iota
+	queueIdlePoll
+)
+
+func decideQueueIdleWait(snapshot queueIdleSnapshot) queueIdleWait {
+	if snapshot.HasDeferredItems || snapshot.HasSkippedBeads {
+		return queueIdlePoll
+	}
+	return queueIdleScheduleAware
 }
 
 func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
@@ -317,7 +337,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	return nil
 }
 
-//nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
+//nolint:gocognit,cyclop,funlen // Decisions leave this effect shell one proven extraction at a time.
 func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCollaborators, noAutoPull bool) error {
 	baseEnv := input.baseEnv
 	basePorts := input.basePorts
@@ -333,6 +353,10 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 	capacity := collaborators.capacity
 	queueSurface := collaborators.queueSurface
 	dispatchGates := collaborators.dispatchGates
+	queueIdleWaitDecision := collaborators.queueIdleWait
+	if queueIdleWaitDecision == nil {
+		queueIdleWaitDecision = decideQueueIdleWait
+	}
 
 	if mergeQueue == nil {
 		mergeQueue = mergeq.New(nil)
@@ -540,11 +564,15 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 				lq.Done()
 				if !ok {
 					if loadedQueueCount > 0 {
-						if hasDeferredItems || len(skipBeads) > 0 {
+						switch queueIdleWaitDecision(queueIdleSnapshot{
+							HasDeferredItems: hasDeferredItems,
+							HasSkippedBeads:  len(skipBeads) > 0,
+						}) {
+						case queueIdlePoll:
 							if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
-						} else {
+						case queueIdleScheduleAware:
 							if sleepErr := scheduleAwareIdleWait(dispatchCtx, collaborators.schedule, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}

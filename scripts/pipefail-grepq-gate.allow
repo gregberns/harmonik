@@ -19,14 +19,3 @@
 # One real exemption: grep must reach a line terminator before it can conclude,
 # so a producer that emits ONE unbroken line never orphans itself, at any size.
 # Treat that as an implementation detail of this grep, not as a licence.
-
-# ── plans/2026-07-17-assessor-daemon-campaign/runs/*/scenarios/preflight-4A.sh ──
-# Frozen artifacts of three completed assessment runs. Rewriting them would make
-# the record disagree with what was actually executed, which is worse than the
-# hazard. The hazard is not live either: the producer is `echo` over the tmux
-# session list, measured at 110 bytes, and it would take roughly two thousand
-# open sessions to reach the pipe buffer. If these ever become live scripts
-# again rather than a record, fix them and delete these three entries.
-plans/2026-07-17-assessor-daemon-campaign/runs/baseline-35e4b3b9/scenarios/preflight-4A.sh::" $allsess "
-plans/2026-07-17-assessor-daemon-campaign/runs/baseline-599f80ab/scenarios/preflight-4A.sh::" $allsess "
-plans/2026-07-17-assessor-daemon-campaign/runs/exploratory-2d308836/scenarios/preflight-4A.sh::" $allsess "

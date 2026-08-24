@@ -746,8 +746,8 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 # internal/daemon imports eight other packages. Measured 2026-08-03 on this
 # box: whole-repo `go test -short -count=1 ./...` costs about 13 seconds more
 # than internal/daemon alone. The scoping bought 13 seconds and paid for it
-# with the ability to see. scripts/scenario-gate.sh, which implemented it, is
-# deleted: it had five ways to approve work that never passed (compile failure,
+# with the ability to see. The deleted delta-scoped gate had five ways to
+# approve work that never passed (compile failure,
 # timeout, signal kill, unrecognized exit code, and a retry that allowed when
 # the second run passed) against one way to block.
 #

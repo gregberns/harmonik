@@ -80,11 +80,23 @@ Make a stopped queue visible whether or not its crew is online.
    asserts on its OUTPUT, it greps no source text, and it already holds a paused-queue case
    (`Test 3: paused-queue (non-inert crew online)`). Extend it; do not start a new harness.
 
-   **Read its header checklist before you change anything.** Two entries there record the defective
-   behaviour as the expected behaviour — `paused-queue -> immediate signal (non-inert crew online)`
-   and `inert-queue suppression (main queue paused -> no alert)`. The suite pins the bug as correct,
-   so a fix makes those cases fail. That is the fix working. Update them to state the new rule
-   rather than deleting them, and say in the commit body which expectation changed and why.
+   **ONE existing case must go red, and one must stay green. Do not confuse them.**
+
+   `Test 8 — inert-queue suppression (main queue paused -> no alert)` pins the bug as correct. Its
+   fixture is queue `main` paused-by-failure, and it asserts the alert does NOT fire, that
+   `immediate_signals` is empty, and that no comms went out. Removing `main` from
+   `INERT_SUPPRESS_JSON` breaks all three. **That is the fix working.** Update that case to state
+   the new rule rather than deleting it, and say in the commit body which expectation changed and why.
+
+   `Test 3 — paused-queue (non-inert crew online)` must STAY GREEN. Its fixture is `myagent-q`
+   paused with crew `myagent` online, and it asserts the alert DOES fire. A fix that fires
+   regardless of crew state leaves it passing. **Do not "update" Test 3 to match a failure.** It
+   remains the regression guard for the crew-online path, and weakening it would trade one blind
+   spot for another. Its header parenthetical reads like a precondition when it only describes the
+   fixture; rewording that line is the most it needs.
+
+   No case anywhere in that 2,848-line harness covers a paused queue with the crew OFFLINE, which is
+   exactly why the first defect was never caught. Yours is the first.
 
    Separately, four Go tests DO assert on this script's source text — `strings.Contains(raw,
    "_dedup_key")` and similar, in `cmd/harmonik/watch_escalation_we_soak2_test.go` and

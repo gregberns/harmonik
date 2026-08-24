@@ -29,9 +29,12 @@ func b3Config(projectDir, agent string, recoverFn func(context.Context, string) 
 		ResolveTmuxTargetFn: func(_, _ string) string {
 			return b3ResolvedTarget
 		},
-		OperatorAttachedFn: func(_ string) bool { return false },
-		LiveRecoverFn:      recoverFn,
-		InjectFn:           func(_ context.Context, _ string) error { return nil },
+		OperatorAttachedFn:   func(_ string) bool { return false },
+		LiveRecoverFn:        recoverFn,
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 	}
 }
 

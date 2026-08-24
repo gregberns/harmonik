@@ -68,6 +68,14 @@ type spyInjector struct {
 	calls int
 }
 
+func stubWatcherInjectors(cfg *keeper.WatcherConfig, warn func(context.Context, string) error) {
+	cfg.InjectFn = warn
+	stubText := func(context.Context, string, string) error { return nil }
+	cfg.SelfHintInjectFn = stubText
+	cfg.MessageInjectFn = stubText
+	cfg.DashboardNagInjectFn = stubText
+}
+
 func (s *spyInjector) inject(_ context.Context, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -357,8 +365,8 @@ func TestWatcher_InjectDeliveredAfterQuiescence(t *testing.T) {
 		IdleQuiesce:  idleQuiesce,
 		Staleness:    120 * time.Second,
 		TmuxTarget:   "fake-pane", // non-empty → injection enabled
-		InjectFn:     spy.inject,
 	}
+	stubWatcherInjectors(&cfg, spy.inject)
 
 	writeCtxFile(t, projectDir, agent, 85.0, "sess-inject")
 
@@ -683,7 +691,7 @@ func TestWatcher_AcceptsManagedSession(t *testing.T) {
 // command is executed once the gauge has been absent for at least RespawnGrace
 // and the pane-idle check returns true.
 // Refs: hk-3w2.
-func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
+func TestWatcher_RespawnFiredWhenGaugeAbsentAndPaneIdle(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -704,9 +712,8 @@ func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
 		TmuxTarget: "dummy-pane",
 		// Pane is always idle in this test.
 		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
-		// Spy InjectFn to suppress real tmux calls on warn.
-		InjectFn: func(_ context.Context, _ string) error { return nil },
 	}
+	stubWatcherInjectors(&cfg, func(context.Context, string) error { return nil })
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
@@ -754,8 +761,8 @@ func TestWatcher_RespawnSkippedWhenPaneNotIdle(t *testing.T) {
 		TmuxTarget:   "dummy-pane",
 		// Pane is NOT idle — agent is still running.
 		IsPaneIdleFn: func(_ context.Context, _ string) bool { return false },
-		InjectFn:     func(_ context.Context, _ string) error { return nil },
 	}
+	stubWatcherInjectors(&cfg, func(context.Context, string) error { return nil })
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
@@ -791,8 +798,8 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 		RespawnCmd:      "true",
 		TmuxTarget:      "dummy-pane",
 		IsPaneIdleFn:    func(_ context.Context, _ string) bool { return true },
-		InjectFn:        func(_ context.Context, _ string) error { return nil },
 	}
+	stubWatcherInjectors(&cfg, func(context.Context, string) error { return nil })
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {

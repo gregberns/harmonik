@@ -38,6 +38,21 @@ watch the run, and read `harness_selected` / `model_selected` in the event strea
 to confirm which harness actually took it. Do not trust the intent; confirm the
 event.
 
+**The beads you submit must be work worth doing.** A bead whose whole deliverable
+is text — a comment corrected, a doc claim fixed, prose tightened, a README edited
+— does not count and must not be dispatched. The operator read twenty such commits
+and said there was almost nothing of value in them, and that judgement is correct.
+Submit beads that repair something that is broken or build something that does not
+exist yet. "Correct a false comment" became the default unit of work here because
+it always succeeds, which is the reason it is the wrong one.
+
+**Start the daemon from a build you know is good, and do not redeploy for its own
+sake.** The running daemon is the binary at `/Users/gb/go/bin/harmonik`; a
+redeploy is worth doing when the new build is MEASURED better, not when it is
+merely newer. If the daemon is already up on a good build, leave it alone and go
+submit work. Getting beads onto the box outranks getting the newest commit onto
+the box.
+
 **Priority order, until the Pi path is reliable:**
 
 1. Anything that stops a bead from running on Pi against the box, or that makes it
@@ -144,7 +159,9 @@ stale; the handoff and LANES.md are maintained.
 `internal/transport/tunnel/**`, `internal/harness/shared/**`,
 `specs/run-state-machine.md`, `specs/execution-model.md`, and
 `DECOMPOSITION-MAP.md`. You work the main checkout `/Users/gb/github/harmonik` on
-`phase1-session-restart-substrate`, commit there directly, and merge bravo in.
+the shared integration branch, commit there directly, and merge bravo in. The
+branch name in this file has gone stale twice — run `git branch --show-current`
+and believe that. It was `work/alpha-integration-merge` on 2026-08-15.
 
 **`internal/core` is bravo's and you do not edit it.** It is one compile unit that
 58 of 103 packages depend on. The same rule that keeps bravo out of

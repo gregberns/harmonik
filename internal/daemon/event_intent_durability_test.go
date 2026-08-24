@@ -319,7 +319,11 @@ func TestEagerRefillStaleQueueIdentityDoesNotMutateReplacement(t *testing.T) {
 		eagerRefillEval(t.Context(), port)
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
+	// The full gate runs this subprocess while every package is active. Process
+	// startup can exceed three seconds on a loaded macOS host. The fixture still
+	// blocks on the release file, so a larger harness deadline does not weaken the
+	// stale-identity assertion.
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, err := os.Stat(readyPath); err == nil {
 			break
@@ -336,7 +340,7 @@ func TestEagerRefillStaleQueueIdentityDoesNotMutateReplacement(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("eager refill did not return after queue replacement")
 	}
 

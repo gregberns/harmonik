@@ -1,8 +1,5 @@
-<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/orchestrator-rules/REFERENCE.md (Go //go:embed).
-     The copy at .claude/skills/orchestrator-rules/REFERENCE.md is GENERATED OUTPUT — `harmonik sync-assets`
-     overwrites it from the embed and there is NO reverse sync, so an edit made only there silently
-     drifts and is eventually reverted. Edit the cmd/harmonik/assets/ copy, then mirror it
-     byte-for-byte into .claude/skills/ in the SAME commit. -->
+<!-- Generated from cmd/harmonik/assets/skills/orchestrator-rules/REFERENCE.md
+     Edit there and mirror in the same commit; scripts/skill-mirror-check.sh fails on drift. -->
 
 <!-- TIER: B (behavioral contract — changes only on a deliberate rule change)
      LOADED BY: on demand, from SKILL.md. Not part of the boot load.

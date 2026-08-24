@@ -5,11 +5,8 @@ description: >
   and wakes the captain only on genuine decisions, never on a clock.
 ---
 
-<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/watch/SKILL.md (Go //go:embed).
-     The copy at .claude/skills/watch/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
-     overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. Edit the cmd/harmonik/assets/
-     copy, then mirror it byte-for-byte into .claude/skills/ in the SAME commit. -->
+<!-- Generated from cmd/harmonik/assets/skills/watch/SKILL.md
+     Edit there and mirror in the same commit; scripts/skill-mirror-check.sh fails on drift. -->
 
 # Watch operating context
 

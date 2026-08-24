@@ -10,12 +10,8 @@ description: >
   map, the keeper WARN and lean-resume paths, the healthy-fleet checklist, and park/wake.
 ---
 
-<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/captain/STARTUP.md (Go //go:embed).
-     The copy at .claude/skills/captain/STARTUP.md is GENERATED OUTPUT — `harmonik sync-assets`
-     overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. To change this skill:
-     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
-     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+<!-- Generated from cmd/harmonik/assets/skills/captain/STARTUP.md
+     Edit there and mirror in the same commit; scripts/skill-mirror-check.sh fails on drift. -->
 
 # Captain boot runbook
 

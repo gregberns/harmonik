@@ -6,11 +6,8 @@ description: >
   to the skill that owns it. Load-bearing: must not rot.
 ---
 
-<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/orchestrator-rules/SKILL.md (Go //go:embed).
-     The copy at .claude/skills/orchestrator-rules/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
-     overwrites it from the embed and there is NO reverse sync, so an edit made only there silently
-     drifts and is eventually reverted. Edit the cmd/harmonik/assets/ copy, then mirror it
-     byte-for-byte into .claude/skills/ in the SAME commit. -->
+<!-- Generated from cmd/harmonik/assets/skills/orchestrator-rules/SKILL.md
+     Edit there and mirror in the same commit; scripts/skill-mirror-check.sh fails on drift. -->
 
 # Orchestrator — the standing behavioral contract
 
@@ -33,7 +30,7 @@ Per-domain detail belongs to the named skill, and the procedures this contract o
 
 ## What only this contract says
 
-- **Priority** — stated intent first (the operator's and the admiral's named initiatives), then `br ready --sort priority --limit 0`. Kerf plans work; it does not rank work.
+- **Priority** — stated intent first (the operator's and the admiral's named initiatives), then the ledger, found the way your direction names. Kerf plans work; it does not rank work.
 - **Judgment work is not bead work** — research, review, triage, and fan-out end in no commit, so the queue has nothing to protect. Sub-agent them freely.
 - **Escalation is judgment, not a category list** — adopt-then-verify: let independent agents check a decision, then act. The chain is captain to admiral to operator.
 - **A lane in any durable doc is KNOWN and yours to resume**, even when parked or showing zero ready beads. Only a never-recorded initiative is the operator's to rank.

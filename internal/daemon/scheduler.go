@@ -91,6 +91,7 @@ type workLoopInput struct {
 
 type workLoopState struct {
 	wg                        sync.WaitGroup
+	runs                      *runSupervisor
 	effectiveMax              int
 	claimSem                  chan struct{}
 	lastSeenPauseEpoch        int
@@ -104,6 +105,11 @@ type workLoopState struct {
 	readyPathAttempts         map[core.BeadID]int
 	queuePreClaimShowAttempts map[queuePreClaimAttemptKey]int
 	crossQueueCollisions      map[queuePreClaimAttemptKey]crossQueueCollisionState
+}
+
+func (s *workLoopState) wait() {
+	s.runs.Wait()
+	s.wg.Wait()
 }
 
 func newLedgerRepairPort(adapter beadLedger, projectDir string) ledgerRepairPort {
@@ -367,6 +373,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 	basePorts.Merge = newMergePort(mergeQueue)
 
 	state := workLoopState{effectiveMax: capacity.maxConcurrent}
+	state.runs = newRunSupervisor(runRegistry)
 	if state.effectiveMax <= 0 {
 		state.effectiveMax = 1
 	}
@@ -387,7 +394,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 	exitClean := func() error { //nolint:unparam // pre-existing: Seam A moved this code out of workloop.go unchanged
 		drainDone := make(chan struct{})
 		go func() {
-			state.wg.Wait()
+			state.wait()
 			close(drainDone)
 		}()
 		select {
@@ -472,7 +479,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 			WorkerHasFreeSlot: handles.Workers != nil && handles.Workers.HasFreeSlot(),
 		})
 		if tickAdmitErr != nil {
-			state.wg.Wait()
+			state.wait()
 			return fmt.Errorf("daemon: workloop: tick admission: %w", tickAdmitErr)
 		}
 		if !tickVerdict.Admitted {
@@ -623,7 +630,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 					SentinelBlocked: state.maintenance.sentinelBlocksDispatch(dispatchGates),
 				})
 				if preLookupErr != nil {
-					state.wg.Wait()
+					state.wait()
 					return fmt.Errorf("daemon: workloop: before-lookup admission (queue path): %w", preLookupErr)
 				}
 				if !preLookupVerdict.Admitted {
@@ -764,7 +771,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 					BeadLabels:       preClaimRecord.Labels,
 				})
 				if afterLookupErr != nil {
-					state.wg.Wait()
+					state.wait()
 					return fmt.Errorf("daemon: workloop: after-lookup admission (queue path): %w", afterLookupErr)
 				}
 				if !afterLookupVerdict.Admitted {
@@ -784,7 +791,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 					QueueLocalOnly: capturedQueueLocalOnly,
 				})
 				if beforeStampErr != nil {
-					state.wg.Wait()
+					state.wait()
 					return fmt.Errorf("daemon: workloop: before-stamp admission (queue path): %w", beforeStampErr)
 				}
 				if !beforeStampVerdict.Admitted {
@@ -800,7 +807,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 				{
 					runUUID, uuidErr := uuid.NewV7()
 					if uuidErr != nil {
-						state.wg.Wait()
+						state.wait()
 						return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 					}
 					reservedRunID = core.RunID(runUUID)
@@ -961,7 +968,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 				SentinelBlocked: state.maintenance.sentinelBlocksDispatch(dispatchGates),
 			})
 			if readyPreLookupErr != nil {
-				state.wg.Wait()
+				state.wait()
 				return fmt.Errorf("daemon: workloop: before-lookup admission (br-ready path): %w", readyPreLookupErr)
 			}
 			if !readyPreLookupVerdict.Admitted {
@@ -980,7 +987,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 		if !runIDReserved {
 			runUUID, uuidErr := uuid.NewV7()
 			if uuidErr != nil {
-				state.wg.Wait()
+				state.wait()
 				return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 			}
 			runID = core.RunID(runUUID)
@@ -1116,7 +1123,6 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 		capturedWorkerTarget := capturedQueueWorkerTarget
 		capturedDefaultHarness := capturedQueueDefaultHarness
 
-		runCtx, runCancel := context.WithCancel(ctx)
 		dispatchedHandle := &RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
@@ -1133,9 +1139,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 			QueueItemIndex:  capturedItemIndex,
 			Labels:          beadRecord.Labels,
 			StartedAt:       time.Now(),
-			Cancel:          runCancel,
 		}
-		runRegistry.Register(runID, dispatchedHandle)
 
 		var preSelectedWorker *workers.Worker
 		if !capturedLocalOnly && handles.Workers != nil {
@@ -1152,25 +1156,22 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 			dispatchedHandle.Remote.Store(true)
 		}
 
-		state.wg.Add(1)
 		env := runEnvWithDispatch(baseEnv, runID, beadRecord, capturedQueueName, capturedQueueID,
 			capturedQueueGroupIdx, capturedItemIndex, capturedWorkflow,
 			capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness)
 		rp, runHandles := buildRunBundles(basePorts, handles, env, launchBuilder)
-		go runDispatchedBead(runCtx, ctx, env, rp, runHandles, state.completionPort, capturedCtx,
-			preSelectedWorker, isLocalDispatch, &state.wg, runCancel)
+		state.runs.Start(ctx, runID, dispatchedHandle, func(runCtx context.Context) bool {
+			return beadRunOne(runCtx, env, rp, runHandles, capturedCtx, preSelectedWorker, isLocalDispatch)
+		}, func(result runTerminalResult) {
+			completeDispatchedBead(ctx, env, state.completionPort, result)
+		})
 	}
 }
 
-func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp runloop.RunPorts,
-	handles runloop.SharedHandles, completion runCompletionPort, extraContext string,
-	preSelectedWorker *workers.Worker, localSlotHeld bool, wg *sync.WaitGroup, runCancel context.CancelFunc,
+func completeDispatchedBead(daemonCtx context.Context, env runloop.RunEnv, completion runCompletionPort,
+	result runTerminalResult,
 ) {
-	defer wg.Done()
-	defer runCancel()
-	defer completion.runRegistry.Unregister(env.RunID)
-
-	runOK := beadRunOne(runCtx, env, rp, handles, extraContext, preSelectedWorker, localSlotHeld)
+	runOK := result.succeeded
 	completionCtx := daemonCtx
 	if runOK && daemonCtx.Err() != nil {
 		var cancelCompletion context.CancelFunc

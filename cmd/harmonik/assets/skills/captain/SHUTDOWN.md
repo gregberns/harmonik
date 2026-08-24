@@ -1,3 +1,13 @@
+---
+name: captain-shutdown
+description: >
+  The captain's session-end runbook — the counterpart to the boot runbook. Lands
+  in-flight work, updates the tier files (captain-lanes.md and the direction log),
+  writes HANDOFF-captain.md, and leaves the next captain a verified state rather than a
+  claim. Also carries the verified-manual-cherry-pick bypass, the one case where the
+  captain may close a bead itself.
+---
+
 <!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/captain/SHUTDOWN.md (Go //go:embed).
      The copy at .claude/skills/captain/SHUTDOWN.md is GENERATED OUTPUT — `harmonik sync-assets`
      overwrites it from the embed and there is NO reverse sync, so an edit made
@@ -5,130 +15,100 @@
      edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
      .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
 
-# Captain Shutdown Instructions (fleet handoff runbook)
+# Captain Shutdown (fleet handoff runbook)
 
-> **Run this at every clean session end, before any extended break, or when the
-> operator signals a consolidation.** This is the symmetric counterpart to
-> [`STARTUP.md`](STARTUP.md) — boot builds the fleet, shutdown lands work cleanly
-> and leaves the next captain a verified starting point.
->
-> Codename glossary: **captain** = this session, the orchestrator. **crew** =
-> a long-lived `claude --remote-control` session owning one epic + one named queue.
-> **daemon** = the persistent Go dispatcher. **lane** = one initiative = one epic =
-> one crew. **banked commit** = a reviewed worktree-authored commit on a
-> `worktree-agent-*` / `bank/*` branch awaiting cherry-pick. **PIN** = an
-> operator-gated item the captain cannot resolve alone; must be recorded durably.
+Run this at a clean session end, before an extended break, or when the operator
+signals a consolidation. It is the counterpart to [`STARTUP.md`](STARTUP.md):
+boot builds the fleet, shutdown lands work and leaves the next captain a verified
+starting point.
 
 ---
 
-## When to wind down vs. hand off vs. leave running
-
-Choose one of three postures **before executing any step below**:
+## Pick a posture first
 
 | Situation | Posture |
 |---|---|
 | Operator ending the session; all lanes drained or cleanly blocked | **Full shutdown**: stand down complete-lane crews, deploy banked commits, write HANDOFF.md, `comms leave`. |
-| Operator leaving for a break; active lanes still in flight | **Hand off**: record state in HANDOFF.md + crew missions, do NOT stop healthy crews; daemon keeps draining. The next captain runs STARTUP.md. |
-| Context approaching limit (~80–90%); fleet still healthy | **Captain-initiated restart (ON-059)**: do NOT stop crews manually AND do NOT exit your own session. At a clean idle point (no in-flight dispatch/merge/crew-spawn): write `HANDOFF-captain.md` with the KEEPER nonce, run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, stop typing. The keeper fires the cycle on its next tick. Skip to Step 5 (state capture). On resume: re-drain comms + re-ground via STARTUP.md Steps 2–6 — do NOT snapshot live queue/daemon state in the handoff body (STARTUP.md re-derives it). |
+| Operator leaving for a break; active lanes still in flight | **Hand off**: record state in HANDOFF.md + crew missions, leave healthy crews running; the daemon keeps draining. The next captain runs STARTUP.md. |
+| Context filling; fleet still healthy | **Captain-initiated restart**: do not stop crews and do not exit your own session. At a clean idle point write `HANDOFF-captain.md` with the KEEPER nonce, run `harmonik keeper restart-now --agent captain`, keep the turn open, and stop typing. The keeper drives the cycle. Skip to Step 5. |
 
-> **The daemon almost always keeps running.** The daemon process is supervisor-managed
-> and independent of your session. Only crews need explicit stand-down for complete
-> lanes.
->
-> **Do not stop a crew that is ACTIVELY WORKING.** Stopping it throws away the
-> in-flight turn, and killing a crew's work is the SKILL.md §8 case that surfaces to
-> the operator. But "actively working" is a PANE-TRUTH finding, not a lane-status
-> one: capture the pane and look for an advancing spinner or an empty `❯ ` input
-> box. A lane can read live and in-flight on paper while its crew is dead or wedged
-> — that is a ZOMBIE, and reconciling it (`harmonik crew stop <name>`, then
-> re-establish the lane) is routine and autonomous (STARTUP.md Step 3). Look at the
-> pane before you decide which of the two you have.
+The daemon is supervisor-managed and independent of your session — it keeps
+running. Only crews need an explicit stand-down.
+
+Do not stop a crew that is actively working: stopping it throws away the in-flight
+turn. "Actively working" is a pane finding, not a lane-status one — capture the
+pane and look for an advancing spinner or an empty `❯ ` input box. A lane can read
+live on paper while its crew is dead or wedged; that is a zombie, and reconciling
+it (`harmonik crew stop <name>`, then re-establish the lane) is routine
+(STARTUP.md Step 3).
 
 ---
 
-## Step 1 — Drain pending messages and confirm live state
-
-Before touching anything, catch up:
+## Step 1 — Drain messages and confirm live state
 
 ```bash
-# Drain any unread messages (bounded — quit after backlog)
 harmonik comms recv --follow --json | head -60
 
-# Re-verify fleet state (same as STARTUP.md Step 2, abbreviated)
 harmonik comms who --json
 harmonik crew list --json
 harmonik queue status --json
-git -C $HARMONIK_PROJECT log --oneline -3   # confirm the integration branch is current
+git -C $HARMONIK_PROJECT log --oneline -3
 ```
 
-Note any crew messages received that require action (bead banked, lane complete,
-error) before proceeding. Attribute run events via `br show <epic_id> --format json`
-→ `.assignee` (never guess).
+Act on any crew message that needs it (bead banked, lane complete, error) before
+proceeding. Attribute run events via `br show <epic_id> --format json` → `.assignee`.
 
 ---
 
 ## Step 2 — Deploy banked commits (before standing down any crew)
 
 Any commit on a `worktree-agent-*` or `bank/*` branch that passed review but has
-not reached the integration branch must be deployed **before** the session ends. A
-stood-down crew cannot re-bank or re-review, so deploy now.
+not reached the integration branch must be deployed before the session ends. A
+stood-down crew cannot re-bank or re-review.
 
-**Deploy to the integration branch. Never to `main`.** Read the branch name from
-`.harmonik/branching.yaml`, key `defaults.lands_on`. The commands below use
-`$TARGET` for it. The captain does not push `main`.
+Deploy to the integration branch, never to `main`. Read the branch name from
+`.harmonik/branching.yaml`, key `defaults.lands_on`. A human moves it into `main`
+later with `harmonik promote --pr --from "$TARGET" --target main`.
 
-A human moves the integration branch into `main` later with one pull request. That
-command is `harmonik promote --pr --from "$TARGET" --target main`. Pass both flags.
-`promote --pr` reads its base from `defaults.lands_on` and its head from `--from`,
-whose default is the literal name `integration`, so a bare `harmonik promote --pr`
-does not aim at `main`.
-
-**Timing: deploy only in a TRUE lull (0 reviewers active, 0 in-flight merges)** —
-the deploy itself is routine self-authorized work; the lull is only so an in-flight
-bead isn't stranded.
+Deploy in a lull (no active reviewers, no in-flight merges) so nothing in flight
+is stranded.
 
 ```bash
-# List banked branches
 git -C $HARMONIK_PROJECT branch --list 'bank/*' 'worktree-agent-*'
-
-# Confirm lull: no active reviewer panes
-harmonik subscribe --types heartbeat --heartbeat 1s --json | head -1
-harmonik queue status --json    # check "active_runs" count
+harmonik queue status --json    # check "active_runs"
 ```
 
-### Temp-worktree cherry-pick SOP (bypass-SOP, used when the daemon is live):
+### Temp-worktree cherry-pick
 
 ```bash
 # 0. Resolve the integration branch — never hard-code it.
-#    Strip an inline comment and any quotes, the way cmd/harmonik/smoke.go does.
 TARGET=$(awk -F'lands_on:' '/^ *lands_on:/{sub(/#.*/,"",$2); gsub(/["'"'"'[:space:]]/,"",$2); print $2; exit}' \
   "$HARMONIK_PROJECT/.harmonik/branching.yaml" 2>/dev/null)
 test -n "$TARGET" || { echo "no lands_on in branching.yaml — STOP, ask the operator"; exit 1; }
 test "$TARGET" != "main" || { echo "lands_on is main — STOP, ask the operator"; exit 1; }
 
-# 1. Fetch and create a detached deploy worktree off the integration branch
+# 1. Detached deploy worktree off the integration branch
 git -C $HARMONIK_PROJECT fetch origin "$TARGET"
 git worktree add --detach /tmp/cap-deploy "origin/$TARGET"
 
-# 2. Cherry-pick reviewed SHAs in order (oldest first)
+# 2. Cherry-pick reviewed SHAs, oldest first
 git -C /tmp/cap-deploy cherry-pick <sha1> <sha2> ...
 
 # 3. Merged-tree gate
 go build ./... && go vet ./internal/daemon/... && go vet ./internal/queue/...
 
-# 4. Announce before push (crews need to know the integration branch is advancing)
+# 4. Announce before push — crews need to know the branch is advancing.
+#    --from is your verified lane identity, not a hardcoded "captain".
 harmonik comms send --from "$HARMONIK_AGENT" --broadcast --topic announce -- \
   "DEPLOY: cherry-picking <shas> to $TARGET — brief push window"
-# --from = your verified lane identity ($HARMONIK_AGENT), NOT a hardcoded "captain"
-# (an uncommissioned --from captain freezes the fleet — STARTUP.md Step 0 identity guard).
 
-# 5. Push and ff-update the local integration branch (CRITICAL — skipping wedges the daemon)
+# 5. Push, then fast-forward the local integration branch. Skipping the ff leaves
+#    the daemon's local branch behind origin and its next merge push is rejected.
 git -C /tmp/cap-deploy push origin "HEAD:$TARGET"
 git -C $HARMONIK_PROJECT merge --ff-only "origin/$TARGET"
 
-# 6. Verify no divergence
+# 6. Verify no divergence — all three must agree
 git -C $HARMONIK_PROJECT rev-parse "$TARGET" HEAD "origin/$TARGET"
-#    All three must agree.
 
 # 7. Clean up
 git worktree remove --force /tmp/cap-deploy
@@ -137,27 +117,21 @@ git worktree remove --force /tmp/cap-deploy
 br close <bead_id> --reason "Manually deployed: <sha> on $TARGET (bypass-SOP)"
 ```
 
-> **TIMING — don't redeploy the daemon mid-run** (while a bead is merging or a
-> reviewer is active): it strands the in-flight bead. The redeploy is your own call;
-> just wait for a true lull so nothing in flight is lost. After restarting (supervisor
-> auto-revives), wait out the supervisor restart backoff (~30s–1m) before considering
-> it down.
-
 ---
 
 ## Step 3 — Stand down complete-lane crews
 
-Only stand down crews whose lane is **fully complete** — every dispatchable bead
-closed, no banked commits outstanding, no open operator-decision blocking the lane.
+Stand down only crews whose lane is fully complete: every dispatchable bead
+closed, no banked commits outstanding, no open operator decision blocking the
+lane. A blocked-but-live crew holds state and can self-resume when the block
+clears — leave it up, give it a PIN (Step 4), and keep it in the handoff.
 
 ```bash
-# For each complete-lane crew:
-
-# a) Announce the stand-down so peers don't send it work mid-stop
+# a) Announce so peers don't send work mid-stop
 harmonik comms send --from "$HARMONIK_AGENT" --to <crew> --topic status -- \
   "Lane complete — standing you down cleanly. Mission file persists for respawn."
 
-# b) Stop the crew (removes registry record + pane; mission file is preserved)
+# b) Stop the crew (removes registry record + pane)
 harmonik crew stop <crew>
 
 # c) Confirm it left the bus
@@ -165,110 +139,55 @@ harmonik comms who --json    # <crew> should be absent
 harmonik crew list --json    # no registry record for <crew>
 ```
 
-> **Do NOT stand down a crew whose lane is blocked (OAuth, operator decision, etc.).**
-> A blocked-but-live crew means the lane holds state and can self-resume the moment
-> the block clears. Stand down only lanes that are DONE. Blocked lanes get a PIN
-> (Step 4) and remain in the handoff.
-
-> **Mission files persist across `crew stop`.** `.harmonik/crew/missions/<crew>.md`
-> is NOT deleted by `crew stop`. The next captain can respawn the crew with the same
-> mission file via `harmonik crew start <crew> --queue <crew>-q --mission ...`.
+`crew stop` does not delete `.harmonik/crew/missions/<crew>.md`. The next captain
+respawns the crew with the same mission file via
+`harmonik crew start <crew> --queue <crew>-q --mission ...`.
 
 ---
 
 ## Step 4 — Record PINs for operator-gated work
 
-A **PIN** is an item the captain cannot resolve alone — it needs an operator action
-(OAuth scope grant, next-phase initiative ranking, a risky op like session-keeper
-arming) before work can resume.
+A PIN is an item the captain cannot resolve alone — it needs an operator action
+before work resumes. Record each one in HANDOFF.md §Open/next with enough for the
+next captain to act the moment the operator does: what the operator must do, what
+it blocks, the exact unblock commands, and why it can't be done autonomously.
 
-### What to record
-
-For each PIN, capture ALL of the following (in HANDOFF.md §Open/next — see Step 5):
-
-```
-⚠️ OPERATOR ACTION: <plain-English description of what the operator must do>
-  Blocks:         <bead IDs or lane names that unblock on this action>
-  Unblock steps:  <exact commands the captain runs the moment the operator acts>
-  Context:        <why this can't be done autonomously — 1 sentence>
-```
-
-### Examples from a real session (2026-06-10 fleet consolidation)
-
-**OAuth workflow scope:**
 ```
 ⚠️ OPERATOR ACTION: run `gh auth refresh -s workflow`
-  Blocks: chani release.yml (hk-jdesv, hk-o4j13), liet ci.yml (hk-jzepv), stilgar hk-4mten
-  Unblock steps: after re-auth, redeploy daemon (go install + supervisor restart) so
-                 the running process picks up the new credential; then re-queue blocked beads.
-  Context: the daemon's git credential is cached at startup; a scope grant does NOT
-           take effect in the running process — daemon restart is required.
+  Blocks:         <bead IDs or lane names>
+  Unblock steps:  redeploy the daemon so the running process picks up the new
+                  credential, then re-queue the blocked beads
+  Context:        the daemon caches its git credential at startup, so a scope
+                  grant does not reach the running process
 ```
 
-**Next-phase initiative ranking:**
-```
-⚠️ OPERATOR ACTION: rank the next phase (standard-bead-dot vs. flywheel smoke vs. pilot)
-  Blocks: all lanes after chani/liet complete their current epics
-  Unblock steps: captain receives operator decision → re-task crews to new epics
-  Context: standard-bead-dot is the top KNOWN candidate in the backlog, but it is a
-           NEW initiative carried by no durable doc and no ledger row — cannot rank
-           autonomously (SKILL.md §8).
-```
-
-**Session-keeper arming:**
-```
-⚠️ OPERATOR ACTION: wire session-keeper hooks + decide full-cycle vs. warn-only
-  Blocks: context-flood toil (crew reseeds require manual captain intervention)
-  Unblock steps: `harmonik keeper enable --agent <crew> --project ... --scripts-dir ... --tmux <handle>`
-                 then `harmonik keeper doctor --agent <crew>` (must pass all checks). (keeper verbs are flag-only — hk-nbft)
-  Context: `.managed` markers already exist for all crews — Phase-2 (destructive /clear
-           cycle) ACTIVATES the moment hooks are wired; don't arm full-cycle unsupervised
-           on a live crew. The captain cannot wire hooks in its own session without risk.
-```
-
-### Session-keeper safety note (LOAD-BEARING)
-
-Do NOT arm session-keeper full-cycle (`--act-pct 90`) on a live crew without operator
-awareness. The `.managed` marker makes the watcher immediately Phase-2-live (it will
-`/clear` the crew mid-dispatch if the threshold is crossed). Warn-only is safe
-(rename `<crew>.managed` → `<crew>.managed.disabled` before starting the watcher).
-File a PIN; the operator decides whether to proceed.
+Session-keeper arming is operator-gated: a `.managed` marker makes the watcher
+immediately live, so it can `/clear` a crew mid-dispatch. Do not arm full-cycle on
+a live crew without the operator; warn-only is safe (rename `<crew>.managed` →
+`<crew>.managed.disabled` before starting the watcher).
 
 ---
 
-## Step 5 — State capture (before writing HANDOFF.md)
+## Step 5 — State capture
 
-Update durable artifacts so the next captain starts clean:
+### 5a — Update `.harmonik/context/captain-lanes.md`
 
-### 5a — Update the live lane roadmap (`.harmonik/context/captain-lanes.md`)
+STARTUP.md Step 0b reads this file at boot without running ground-truth, so it
+must reflect reality at shutdown, not the prior session's state. Do not write a
+point-in-time lane table back into SKILL.md §A — that holds the durable lane model
+only.
 
-**Write the SINGLE source of record — the tier-2 file `.harmonik/context/captain-lanes.md`
-(M9/hk-039z), NOT SKILL.md §A.** STARTUP.md Step 0b READS captain-lanes.md at boot;
-keeping the lane state there (and only there) is what prevents the drift between two
-snapshots. SKILL.md §A now holds only the durable lane MODEL — do NOT write a
-point-in-time table back into it. Update captain-lanes.md to match shutdown state:
-
-- `active_lanes` table → stood-down crews removed/struck; remaining crews → current
-  epic, queue, model, status, blocker if any.
-- `parked` / `operator_initiatives` / `pipeline` → update with any new beads filed or
+- `active_lanes` → stood-down crews removed; remaining crews get current epic,
+  queue, model, status, blocker.
+- `parked` / `operator_initiatives` / `pipeline` → any new beads filed or
   priorities shifted.
-
-> captain-lanes.md is the one doc the captain reads at boot without running
-> ground-truth (Step 0b) — it must reflect reality, not the prior session's state.
 
 ### 5b — Refresh crew mission files
 
-For each crew that is NOT being stood down, refresh its mission file with current
-state so a keeper restart re-hydrates correctly:
-
-```
-.harmonik/crew/missions/<crew>.md   (tracked in git — commit the refresh;
-                                     write via Write tool)
-```
-
-The YAML frontmatter is the machine contract (`schema_version, crew_name, queue,
-epic_id, goal, captain_name`). The free-text body is the crew's working context —
-update it with current ordered beads, any caveats, and the next action.
+For each crew still running, refresh `.harmonik/crew/missions/<crew>.md` so a
+keeper restart re-hydrates correctly. The YAML frontmatter is the machine
+contract; the body is the crew's working context — current ordered beads,
+caveats, next action.
 
 ### 5c — Record banked branches
 
@@ -276,24 +195,21 @@ update it with current ordered beads, any caveats, and the next action.
 git -C $HARMONIK_PROJECT branch --list 'bank/*' 'worktree-agent-*'
 ```
 
-Any remaining banked branches (not yet deployed) must be listed in HANDOFF.md with
-their SHA and the review verdict so the next captain can deploy them.
+List any branch not yet deployed in HANDOFF.md with its SHA and review verdict.
 
-### 5d — Clear staged debris (if safe)
+### 5d — Clear staged debris
 
 If `git -C $HARMONIK_PROJECT status` shows staged changes in the main working
-tree (e.g., leftover from a same-package bead merge), verify provenance before
-clearing:
+tree, check provenance before clearing:
 
 ```bash
 git -C $HARMONIK_PROJECT diff --cached --stat
-# Confirm: are these removals of a specific bead's code, or wanted changes?
 ```
 
-If confirmed debris (leftover from a merge conflict resolution, not wanted):
+If it is debris, restore surgically. Do not use `git reset --hard` — it destroys
+untracked files such as `.beads/`.
 
 ```bash
-# Surgical restore — do NOT use git reset --hard (preserves untracked files like .beads/)
 git -C $HARMONIK_PROJECT restore --staged internal/queue/cancel.go  # example
 git -C $HARMONIK_PROJECT checkout -- internal/queue/cancel.go
 ```
@@ -301,8 +217,6 @@ git -C $HARMONIK_PROJECT checkout -- internal/queue/cancel.go
 ---
 
 ## Step 6 — Write HANDOFF.md
-
-Write HANDOFF.md using the **captain handoff format** (tiered model):
 
 ```markdown
 <!-- PP-TRIAL:v2 <date> <branch> — CAPTAIN handoff. <1-line fleet status>.
@@ -318,150 +232,72 @@ Write HANDOFF.md using the **captain handoff format** (tiered model):
 
 # STATE (<timestamp>)
 Daemon UP/DOWN, --workflow-mode <mode>, -c<N>, supervisor-managed (pid <N>).
-integration branch == origin in sync (or: local is at <sha>, origin at <sha> — divergence noted).
+integration branch in sync with origin (or note the divergence).
 <N> crews live.
 
 ## Lanes (one line per crew)
-- **<crew>**: <status 1 line> → <next action>
+- **<crew>**: <status> → <next action>
 
 # Open / next
-0. ⚠️ OPERATOR ACTIONs (list PINs verbatim from Step 4)
+0. ⚠️ OPERATOR ACTIONs (PINs from Step 4)
 1. <next-captain priorities in order>
-
-# Deploy procedure
-<only include if it changed this session; otherwise reference STARTUP.md>
 
 # Translations
 <every bead ID, codename, and jargon term in the body, one line each>
 ```
 
-**Format discipline:**
-- Body ≤ 50 lines (fleet state belongs in crew mission files, not here).
-- Per-crew state = one line each in the Lanes section.
-- Translations: every `hk-xxxxx`, codename, and abbreviation that appears in the body.
-- Never embed live claims about daemon state that STARTUP.md will re-measure anyway;
-  note the state at write-time but flag it as stale input (STARTUP.md Step 2 wins).
+Keep it short — detailed fleet state belongs in the crew mission files. Anything
+you write about live daemon or queue state is a stale input; STARTUP.md Step 2
+re-measures it and wins.
 
 ---
 
-## Step 7 — Leave the bus and final checks
+## Step 7 — Leave the bus
 
 ```bash
-# Signal departure to any agents still online
 harmonik comms send --from "$HARMONIK_AGENT" --broadcast --topic status -- \
   "Captain session ending. Fleet state in HANDOFF.md. Daemon up; crews <list> live."
 
-# Leave the bus
 harmonik comms leave
 ```
 
 ---
 
-## Fleet-safe-to-leave glance check
+## Safe-to-leave glance check
 
-Run this final check before the session exits. All six must hold:
-
-1. **Daemon up:** `harmonik queue status` exits 0 (not 17). If the daemon is down,
-   restarting it is your own routine call — just don't fight the supervisor's
-   auto-revive: check whether the supervisor is actively reviving it (restart-backoff
-   can delay socket-bind ~30s–1m); if it is, let it win. If the supervisor is
-   confirmed dead, restart the daemon yourself (see STARTUP.md §2.1). Note the state
-   in HANDOFF.md either way.
+1. **Daemon up:** `harmonik queue status` exits 0 (not 17). If it is down, check
+   whether the supervisor is already reviving it — restart backoff can delay
+   socket-bind for a minute or so — and let the supervisor win if it is. If the
+   supervisor is dead, restart the daemon yourself (STARTUP.md §2.1). Note the
+   state in HANDOFF.md either way.
 
 2. **No stranded in-flight beads:** `harmonik queue status --json` shows no
-   `active_runs` that will be orphaned. If a bead is mid-merge or a reviewer is
-   active, wait for completion before exiting (or note it explicitly as a risk in
-   HANDOFF.md).
+   `active_runs` that will be orphaned. Wait out a mid-merge bead or an active
+   reviewer, or record it as a risk in HANDOFF.md.
 
-3. **PINs recorded:** every operator-gated item has a PIN entry in HANDOFF.md §Open
-   with exact unblock steps. No implicit "the operator will know what to do."
+3. **PINs recorded** in HANDOFF.md §Open, with exact unblock steps.
 
-4. **Banked commits deployed or recorded:** `git branch --list 'bank/*' 'worktree-agent-*'`
-   is either empty (all deployed) or each remaining branch is listed in HANDOFF.md
-   with its SHA and review verdict.
+4. **Banked commits** either deployed or listed in HANDOFF.md with SHA and verdict.
 
-5. **Crews healthy or cleanly stood down:** `harmonik crew list --json` shows only
-   records for crews that are (a) online in `comms who` (healthy) or (b) were
-   cleanly stood down this step (not in `crew list` and not in `comms who`). No
-   zombie/ghost records.
-
-6. **`.harmonik/context/captain-lanes.md` is current (M9/hk-039z):** the lane table
-   there matches actual state (stood-down lanes removed/struck; blocked lanes show
-   their blocker; next-phase candidates listed). This is the file STARTUP.md Step 0b
-   reads — NOT SKILL.md §A, which now holds only the durable lane model.
+5. **No zombie crew records** — every registry record has a matching live agent:
 
 ```bash
-# Quick one-liner for check #5 (registered-but-offline = zombie remaining)
 comm -23 \
   <(harmonik crew list --json | jq -r '.name' | sort) \
   <(harmonik comms who --json | jq -r '.agent' | sort)
-# Any name printed = unresolved zombie/ghost — reconcile before exiting
+# Any name printed = unresolved zombie — reconcile before exiting
 ```
 
----
-
-## Load-bearing gotchas (surfaced from the 2026-06-10 session)
-
-- **`gh auth refresh` does NOT take effect in the running daemon.** The daemon caches
-  its git credential at startup. After any OAuth scope re-auth, the daemon MUST be
-  restarted (supervisor auto-revives; wait for socket-bind ~30–60s before assuming
-  it is down). Verify the new scope is live by re-running the blocked bead as a
-  canary.
-
-- **Timing: don't redeploy the daemon while a bead is in-flight.** A mid-merge or
-  mid-review daemon restart strands the run (the daemon loses the pane handle; bead
-  fails at `run_stale`). Redeploy is routine self-authorized work — just do it in a
-  true lull (0 `active_runs` in `queue status --json`) so nothing in flight is lost.
-
-- **The ff-after-push step is load-bearing for captain cherry-pick deploys.** After
-  pushing banked commits out-of-band, run `git -C <repo> merge --ff-only origin/$TARGET`
-  to advance the daemon's local integration branch. Skipping this leaves the daemon's
-  local branch behind origin → every subsequent daemon merge push is rejected as non-ff
-  → daemon wedge (hk-svieq, `b4858a3c` now auto-recovers, but the ff step is cheaper).
-
-- **Don't arm session-keeper full-cycle unsupervised.** `.managed` markers make
-  the watcher immediately Phase-2-live. The operator must confirm full-cycle vs.
-  warn-only before hooks are wired (see Step 4, PIN example).
-
-- **The captain MUST NOT exit or stop its own session on a keeper context-warning.** The captain's
-  keeper injects a specific warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."* Follow that procedure exactly (see
-  STARTUP.md "On-WARN procedure"). A captain that obeys `/quit` exits permanently —
-  there is no supervised respawn wrapper. Launch via `harmonik start captain`
-  (native; alias `harmonik captain`; NO env var, NO script path — `--project`
-  defaults to cwd) so the session has a stable `--session-id` (the keeper rebinds
-  to this). The old `~/.claude/captain-tools/captain-launch.sh` is RETIRED in favor
-  of this command. A bare `claude --remote-control
-  captain` with no `--session-id` cannot be cycled and is the historical
-  dead-captain bug. **`restart-now` does not WIDEN the band** — it bypasses only the
-  act-pct idle gate. The operator HARD-NO is on WIDENING only; LOWERING the band to
-  restart earlier (the current 200k/215k band) is operator-directed (M1/M4-hk-039z).
-  Arm the keeper with `--warn-abs-tokens 200000 --act-abs-tokens 215000` and nothing
-  else. STARTUP.md Step 6 "Keeper arming" is the one place that states the band and
-  what the pct flags actually do; read it there rather than restating a number.
-
-- **`gh auth` workflow scope requires the `workflow` scope specifically** — it is NOT
-  included in the default `repo` scope. Beads touching `.github/workflows/` will
-  push-reject silently without it regardless of other scopes granted.
-
-- **Staged debris in the main working tree does not block daemon merges.** The daemon
-  merges from worktrees (not the main tree's index), so staged-but-uncommitted changes
-  in the main tree are latent-harmless for the daemon. However, they can conflict with
-  captain cherry-pick deploys that touch the same files — clear them surgically with
-  `git restore --staged` before deploying any bead in the same package.
+6. **`.harmonik/context/captain-lanes.md` is current** — it is what STARTUP.md
+   Step 0b reads.
 
 ---
 
 ## References
 
-- `.claude/skills/captain/STARTUP.md` — the boot counterpart to this file.
-- `.claude/skills/captain/SKILL.md` — §0 autonomy bright-line; §8 surface-and-await
-  (incl. the single sanctioned `br close` exception); §A lane MODEL. Live lane state
-  is in `.harmonik/context/captain-lanes.md` (update in Step 5a), NOT SKILL.md §A.
-- `docs/retro/2026-06-10/A5-formalize-process.md` — tiered handoff model that
-  motivated this doc (§3.3 captain handoff rules, tiered-handoff table).
-- `specs/crew-handoff-schema.md` — six-field mission handoff contract.
-- `.claude/skills/agent-comms/SKILL.md` — comms CLI surface + N3 dedupe requirement.
-- `.claude/skills/beads-cli/SKILL.md` — write discipline (captain MUST NOT issue
-  terminal transitions). The ONE sanctioned `br close` exception and its
-  exception-to-the-exception (promote cherry-picks lack the reconcile trailer →
-  do NOT raw-close) are stated authoritatively in **SKILL.md §8** (M7/hk-039z).
+- `.claude/skills/captain/STARTUP.md` — the boot counterpart, and the owner of the
+  on-WARN procedure and the crew process-liveness sweep. The keeper's bands and config
+  live in the `keeper` skill.
+- `.claude/skills/captain/SKILL.md` — autonomy bright-line, surface-and-await, the
+  lane model.
+- `specs/crew-handoff-schema.md` — mission handoff contract.

@@ -84,14 +84,21 @@ br sync --flush-only  # Export DB to JSONL
 - **Priority:** P0=critical, P1=high, P2=medium, P3=low, P4=backlog — numbers 0-4, not words.
 - **Types:** task, bug, feature, epic, chore, docs, question.
 - **Dependencies:** issues can block other issues; `br ready` shows only unblocked work.
-- **Write discipline:** agents MUST NOT issue terminal-transition writes — the daemon owns those.
-  See the `beads-cli` skill and `beads-integration.md` §4.4.
+- **Write discipline:** the predicate is **did you submit this bead to a queue?** — not "is it
+  dispatched", which you cannot observe. On a bead you submitted, agents MUST NOT issue
+  terminal-transition writes: the daemon owns those, `queue submit` refuses a bead already pre-set
+  to `in_progress` (`bead_already_dispatched`, `-32015`, exit 1), and a hand `br close` from a
+  worktree leaks to the parent repo before code lands. A bead you worked by hand is closed by
+  whoever worked it, because nothing else will — `harmonik reconcile` closes only beads whose
+  commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. See the
+  `beads-cli` skill and `beads-integration.md` §4.4.
 
 Loop for hand-run work: `br ready --sort priority --limit 0` to find the work →
 `br update <id> --status=in_progress` to claim → implement → `br close <id>` →
-`br sync --flush-only` at session end. This loop is for a lane whose mission file grants it the
-claim and the close in writing. Everywhere else the daemon owns both, and you must not race it by
-reading live state to decide.
+`br sync --flush-only` at session end. This is the loop for work you run yourself and submit to no
+queue. Once you submit a bead to a queue, both ends of that loop become the daemon's. One warning
+about the claim step: claim a bead and then neither submit it nor work it through, and nothing
+reports anything — no run exists for any watcher or sweep to notice.
 
 ## Session protocol
 
@@ -105,20 +112,22 @@ git push
 
 ### Commit-message validation
 
-Required policy, agent-enforced rather than hook-enforced (git hooks are retired; the `/check` flow
-runs `scripts/validate-commit-msg.sh`). It enforces:
+Required policy, agent-enforced rather than hook-enforced (git hooks are retired; `make full` runs
+`scripts/commit-msg-gate.sh`, which calls `harmonik commit-msg validate` over the commit just made).
+It reads the review trailers and nothing else — the subject shape, the closed type set and the
+72-character ceiling went out with the shell validator on 2026-08-23. It enforces:
 
-1. A Conventional-Commits subject from a **closed** type set — `feat fix refactor test docs chore
-   spec build perf`. No `ci`, `revert`, or `style`.
-2. Subject ≤72 chars, no trailing period.
-3. On every **non-trivial** commit, both a `Reviewed-By:` trailer and a `Review-Verdict:` trailer
+1. On every **non-trivial** commit, both a `Reviewed-By:` trailer and a `Review-Verdict:` trailer
    whose value is well-formed JSON with `schema_version: 1` and a `verdict` of `APPROVE` /
    `REQUEST_CHANGES` (agent-reviewer) or `CLEAN` / `DRIFT_MINOR` / `DRIFT_MAJOR`
    (agent-config-reviewer). A `BLOCK` verdict is rejected outright — fix the code, don't commit it.
+2. An `APPROVE` or `CLEAN` must name a reviewer this repo ships and carry `flags`; a `NOT_REVIEWED`
+   must name none; and no verdict may be self-authored.
 
 Because those trailers are multi-line-ish and JSON-quoted, write the message to a file and use
-`git commit -F`. The only bypasses are a literal `Trivial: true` trailer (typos and whitespace only)
-and merge / `fixup!` / `squash!` subjects. `--no-verify` is forbidden.
+`git commit -F`. Check the file first with `harmonik commit-msg validate <file>`. The only bypasses
+are a literal `Trivial: true` trailer (typos and whitespace only), merge / `fixup!` / `squash!`
+subjects, and GitHub's synthetic pull-request merge commit. `--no-verify` is forbidden.
 
 ### Validate after committing
 

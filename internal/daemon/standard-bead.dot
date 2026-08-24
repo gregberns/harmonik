@@ -43,8 +43,10 @@
 //     `make fast` and `make full` call gate-static. The single difference is
 //     `script-tests`, the self-tests for the shell scripts the gates depend on:
 //     gate-static-product does not run them. So the per-bead gate still RUNS
-//     secret-scan.sh, commit-msg-gate.sh and lint-changed.sh, but it no longer
-//     runs the tests that prove those scripts refuse what they exist to refuse.
+//     secret-scan.sh and lint-changed.sh, but it no longer runs the tests that
+//     prove those scripts refuse what they exist to refuse. commit-msg-gate.sh
+//     left this list on 2026-08-23: it runs in `make full` alone now, so the
+//     per-bead gate does not read a commit message at all.
 //     That proof now lives only in `fast`, `full` and CI. Read it as a real
 //     reduction: scripts/gate-fails-closed-test.sh exists because secret-scan.sh
 //     had no caller for twenty days AND was admitting a key when a test was

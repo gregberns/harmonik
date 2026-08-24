@@ -381,10 +381,71 @@ wiring_case gate-static 'scripts/secret-scan.sh --head-only' \
 wiring_case full 'scripts/secret-scan.sh --range' \
     'the merge decision must read every line this branch adds, including whatever arrived by merge'
 
-# The commit-message tip check, for the same reason: it is the only place a bad
-# message or a fabricated review trailer fails a build.
-wiring_case gate-static 'scripts/commit-msg-gate.sh --head-only' \
-    'a fabricated review trailer on the commit just made must fail the inner loop'
+# The commit-message tip check, in the MERGE DECISION and not in the inner loop.
+#
+# THIS EXPECTATION WAS CHANGED ON 2026-08-23, and the old one is written out here
+# because a wiring assertion that quietly moves is worth nothing. It used to read
+# `wiring_case gate-static`, and it was right for as long as the inner loop was
+# where a bad message died. Operator call: checking the shape of a commit message
+# does not earn a place in `make fast`. Measured before the move, on one box:
+# 0.5s for the check, plus 42s and 56s for the two self-tests that came with it
+# through script-tests.
+#
+# What did NOT change is that the check still has to be wired somewhere and still
+# has to be able to fail. The single sentence worth keeping — a commit that
+# CLAIMS a review names a reviewer this repo has — is a merge-time question, so
+# the assertion follows it to `full` rather than being deleted. Deleting it is
+# the move this whole file exists to catch: `scripts/secret-scan.sh` went twenty
+# days with no caller at all.
+wiring_case full 'scripts/commit-msg-gate.sh --head-only' \
+    'a fabricated review trailer must fail the merge decision'
+
+# THE RULES MOVED INTO GO ON 2026-08-23, so the wiring assertion follows them.
+# scripts/validate-commit-msg.sh and its 2,283-line self-test are deleted;
+# internal/commitmsg holds the rules and `harmonik commit-msg validate` is the
+# seam the gate above calls. Two things therefore have to stay wired, and this
+# file is the only place that says so: the Go tests that stand in for the
+# deleted shell self-test, and the build that produces the binary the gate runs.
+# Without the second the gate would build its own copy per invocation, which
+# works but pays a relink fifteen times over.
+wiring_case full 'go test -count=1 ./internal/commitmsg/' \
+    'the rules the gate enforces must be tested by the merge decision'
+#
+# THE NEEDLE NAMES THE OUTPUT PATH, not just `go build -o`, and that is the whole
+# point of it. `make -n full` prints a SECOND `go build -o` — the one that builds
+# tools/testreport inside RUN_TESTS_AND_REPORT — so a bare `go build -o` needle
+# stays green with the validator build deleted. It would have asserted nothing.
+# `/commit-msg-validator ./cmd/harmonik` appears on the build line and nowhere
+# else: the only other mention of that path is the
+# `COMMIT_MSG_VALIDATOR=<path> scripts/...` prefix, which is not followed by
+# `./cmd/harmonik`. Mutation-proved on 2026-08-23 — comment out the build line
+# in commit-msg-check and this case goes red.
+wiring_case full '/commit-msg-validator ./cmd/harmonik' \
+    'the merge decision must build the validator the commit-message gate runs'
+
+# The gate self-test SURVIVED the move, and it is not the same kind of file as
+# the one that went. It tests the WRAPPER — the grandfather ratchet, the
+# advisory demotion, the merge-tip selection, the announced cap, the
+# empty-scope fail-closed — which is git-ranging logic no Go test touches.
+wiring_case full 'scripts/commit-msg-gate-test.sh' \
+    'the gate wrapper git-ranging must be proved to fail closed'
+
+# And it must NOT come back to the inner loop by accident. gate-static is what
+# `fast` and `full` share, so a step put back there lands in both and the 98
+# seconds return with nothing reporting it.
+assertions=$((assertions + 1))
+inner_steps=$(HARMONIK_GATE_SELFTEST=1 make -n gate-static 2>/dev/null)
+if [ -z "$inner_steps" ]; then
+    fail "wiring: 'make -n gate-static' produced nothing, so nothing was checked"
+elif runs_command "$inner_steps" 'scripts/commit-msg-gate.sh --head-only'; then
+    fail "wiring: the commit-message check is back in 'make gate-static'; it belongs to 'full' alone"
+elif runs_command "$inner_steps" 'go test -count=1 ./internal/commitmsg/'; then
+    fail "wiring: the commit-message rule tests are back in the inner loop; they belong to 'full' alone"
+elif runs_command "$inner_steps" 'scripts/commit-msg-gate-test.sh'; then
+    fail "wiring: commit-msg-gate-test.sh is back in the inner loop; it belongs to 'full' alone"
+else
+    pass "wiring: no commit-message step runs in 'make gate-static', so the inner loop stays out of it"
+fi
 
 # END TO END, against what `make -n` really prints rather than a synthetic list.
 # Take the real gate-static expansion, comment out the credential scan in the

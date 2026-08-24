@@ -1,0 +1,23 @@
+{{if fromReviewer .Verdict -}}
+# Reviewer feedback — iteration {{.PriorIteration}}
+{{else -}}
+# Workflow feedback — iteration {{.PriorIteration}}
+
+NO REVIEWER READ YOUR CHANGE. The harmonik daemon wrote this file because the
+workflow routed the work back to you. It uses the reviewer-feedback name only
+because that is the name your resume instruction reads. Nobody has judged the
+change itself yet.
+{{end}}
+verdict: {{.Verdict}}
+
+flags:
+
+{{if .Flags -}}
+{{range .Flags}}- {{.}}
+{{end -}}
+{{else -}}
+(none)
+{{end}}
+## Notes
+
+{{ensureNL .Notes -}}

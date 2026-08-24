@@ -909,7 +909,6 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 .PHONY: script-tests
 script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
-	scripts/validate-commit-msg-test.sh
 	scripts/agent-reviewer-run-test.sh
 	scripts/agent-reviewer-prompt-parity-test.sh
 	scripts/with-lane-gocache-test.sh
@@ -926,7 +925,6 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/changed-func-coverage-test.sh
 	scripts/queue-daemon-count-test.sh
 	scripts/required-check-name-gate-test.sh
-	scripts/commit-msg-gate-test.sh
 	scripts/secret-scan-test.sh
 	scripts/pipefail-grepq-gate-test.sh
 	scripts/comment-only-commit-gate-test.sh
@@ -987,10 +985,12 @@ gate-static:  ## Shared static half of fast and full: script self-tests, format,
 # WHAT THE SPLIT COSTS, stated plainly, because an earlier version of this
 # comment claimed it cost nothing. `make core` is the only gate the per-bead
 # path runs on its own, and it now runs the gate scripts WITHOUT running the
-# tests that prove those scripts fail closed. secret-scan.sh, commit-msg-gate.sh
-# and lint-changed.sh all still execute here; what no longer executes on this
-# path is the proof that they still refuse what they exist to refuse. That proof
-# now lives only in `fast`, `full` and CI.
+# tests that prove those scripts fail closed. secret-scan.sh and lint-changed.sh
+# still execute here; what no longer executes on this path is the proof that they
+# still refuse what they exist to refuse. That proof now lives only in `fast`,
+# `full` and CI. commit-msg-gate.sh is not on this list any more: since
+# 2026-08-23 it runs in `full` alone, so the per-bead gate does not check a
+# commit message at all. See the commit-msg-check target.
 #
 # Read that as a real reduction, not a technicality:
 # scripts/gate-fails-closed-test.sh exists because secret-scan.sh had no caller
@@ -1009,21 +1009,18 @@ gate-static-product:  ## Static half without the script self-tests (what `make c
 		echo "      the toolchain itself will hang instead of failing. brew install coreutils."; \
 	fi
 	$(MAKE) fmt-check
-	# The commit just made must carry a well-formed message and honest review
-	# trailers. About a tenth of a second. This is the only place a bad message
-	# CAN fail a build, and the only moment failing is fair: the commit is
-	# yours, it is the tip, and amending it costs nothing.
+	# NO COMMIT-MESSAGE CHECK HERE, ON PURPOSE. It used to run at this line and
+	# it is now in `full` only, under the commit-msg-check target. Operator
+	# call, 2026-08-23: policing the shape of a commit message is not worth a
+	# place in the inner loop. The one part with a job — knowing that a commit
+	# which claims a review names a reviewer this repo has — is a merge-time
+	# question, and `full` is the merge decision.
 	#
-	# READ "CAN" AS THE WHOLE OF THE CLAIM. --head-only demotes itself to advice
-	# and exits 0 whenever the history does not descend from the message
-	# baseline named in that script, and that baseline is not an ancestor of
-	# main. So on main a bad message fails NOWHERE: this call goes advisory and
-	# the ledger call in `full` never fails by design. An earlier version of
-	# this comment said "the ONLY place a bad message fails a build" flatly,
-	# which reads as a guarantee that only holds on a branch that descends from
-	# the baseline. Bead hk-commit-msg-gate-advisory-on-main-ap068 is the record.
-	scripts/commit-msg-gate.sh --head-only
-	# The same moment, for credentials. --head-only, NOT the default index scope.
+	# The saving is the point and it was measured, not guessed: 0.5s for the
+	# check itself, and 98s for the two self-tests that came with it through
+	# script-tests. Do not put any of the three back here.
+	#
+	# For credentials, the tip check stays. --head-only, NOT the default index scope.
 	# The gates run after the commit is made, when the ordinary flow leaves
 	# nothing staged, so the index scope here would read whatever a developer
 	# happened to leave behind rather than the change under test. Not a
@@ -1225,6 +1222,94 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 	$(call RUN_TESTS_AND_REPORT,make gate-test-report-probe,./internal/sentinel,-short)
 
 # ---------------------------------------------------------------------------
+# commit-msg-check — the whole of commit-message checking, and it runs in
+# `full` ALONE.
+#
+# WHY IT IS NOT IN THE INNER LOOP. Operator call, 2026-08-23: checking the shape
+# of a commit message is not worth a place in `make fast`. Measured on one box
+# the day it moved, and the numbers are why the call is easy: the check itself
+# costs 0.5s, and the two self-tests that rode into `fast` with it through
+# script-tests cost 42s and 56s. Ninety-eight seconds of every inner loop went
+# on proving that a commit-message linter still lints.
+#
+# WHAT SURVIVED THE CUT, and it is one sentence: a commit that CLAIMS a review
+# must name a reviewer this repo has. That is worth keeping and it is a
+# merge-time question, so it is here, in the merge decision, and nowhere else.
+# The format half — the type set, the 72-character ceiling, the trailing period,
+# the scope charset — policed form rather than honesty and is GONE, along with
+# the 667-line shell validator that carried it.
+#
+# WHERE THE RULES LIVE NOW. internal/commitmsg, a pure Go package: no file read,
+# no git call, no clock, so every rule is decided by a table test rather than by
+# a shell fixture. `harmonik commit-msg validate <file>` is the seam that reads
+# the two things a pure function cannot — the reviewer names this repo tracks at
+# HEAD, and the cleanup mode git will apply — and the gate below calls it.
+#
+# SO THE 2,283-LINE SHELL SELF-TEST IS GONE and `go test ./internal/commitmsg/`
+# stands in its place. That is not a swap of one test suite for another of equal
+# weight: the Go suite runs in well under a second where the shell one cost 42,
+# and it tests the rules directly instead of through a subprocess.
+#
+# scripts/commit-msg-gate-test.sh STAYS, and it is not the same kind of file. It
+# tests the WRAPPER — the grandfather ratchet, the advisory demotion off the
+# baseline, the merge-tip selection, the announced cap, the empty-scope
+# fail-closed — which is git-ranging logic that no Go test touches and that this
+# change did not alter. Deleting a passing test of surviving logic to shorten a
+# target is not a saving.
+#
+# The binary is built ONCE here and handed to both callers through
+# COMMIT_MSG_VALIDATOR. The gate builds its own when that is unset, so it still
+# works when run by hand; what this avoids is the self-test paying a relink on
+# each of the fourteen times it drives the gate.
+#
+# --head-only, NOT the range. Measured on this branch the day it was removed,
+# the range walk read 236 commits, took 47 seconds, named 109 rejections and
+# still exited 0, because it could not fail — ADVISORY=1 is
+# set unconditionally on that path. It was a report nobody acted on, printed
+# every merge decision, and this repo already collects a gate that cannot fail
+# as the defect.
+#
+# WHAT THE TIP CHECK ACTUALLY COVERS, because an earlier version of this comment
+# said "every commit still gets read" and that is not true. --head-only reads
+# `git rev-parse HEAD` and nothing else. CI runs on `push: branches: ["**"]`,
+# and one push of N commits is ONE CI run, so the tip of that push is read and
+# the N-1 commits under it are never read at all. Push a commit at a time and
+# every commit is judged; push a branch of ten and nine go unread. This is the
+# same gap docs/methodology/TESTING.md already records for the credential scan,
+# under bead hk-254ea; the message check now shares it.
+#
+# Locally the reach is SMALLER than it was, not the same. gate-static-product
+# used to run --head-only over the commit just made on every `make fast` and
+# every `make core`. Nothing checks a message on those paths now. The trade is
+# 98 seconds off every inner loop against a message check that only happens at
+# the merge decision and only over the tip. It was taken with those numbers in
+# hand; it is not a free move.
+#
+# ON A PULL REQUEST THIS CHECK IS A NO-OP, AND THAT IS CORRECT. `actions/
+# checkout` puts `refs/pull/N/merge` in the worktree, so HEAD is a merge commit
+# GitHub's machinery wrote, that belongs to no branch, that no author sees and
+# that no command amends. internal/commitmsg recognises exactly that message —
+# the word Merge, two 40-character object names, and no body — and stands
+# aside. Held to the trailer rules instead, it fails for a
+# trailer that cannot be added, and NO pull request goes green — for any change,
+# ever. The commits under the merge were each judged on their own push.
+# ---------------------------------------------------------------------------
+COMMIT_MSG_VALIDATOR := $(TOOLS_DIR)/commit-msg-validator
+
+.PHONY: commit-msg-check
+commit-msg-check:  ## Merge-decision only: a commit claiming a review must name a real reviewer
+	@mkdir -p $(TOOLS_DIR)
+	go build -o $(COMMIT_MSG_VALIDATOR) ./cmd/harmonik
+	go test -count=1 ./internal/commitmsg/
+	# A SECOND INVOCATION, and the split is not cosmetic. `-run` applies to every
+	# package named on the same command line, so folding these two together made
+	# the line above report "[no tests to run]" for the package that holds all
+	# 163 of them — a target that claimed to run the rules and ran none.
+	go test -count=1 -run 'CommitMsg|CommitTemplate|Prose' ./cmd/harmonik/ ./internal/workspace/
+	COMMIT_MSG_VALIDATOR=$(COMMIT_MSG_VALIDATOR) scripts/commit-msg-gate-test.sh
+	COMMIT_MSG_VALIDATOR=$(COMMIT_MSG_VALIDATOR) scripts/commit-msg-gate.sh --head-only
+
+# ---------------------------------------------------------------------------
 # make full — the merge decision.
 #
 # No scoping. No retry. No fail-open. `go test -short -count=1 ./...` is a
@@ -1235,28 +1320,12 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 .PHONY: full
 full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
-	# The ledger: every commit from the grandfather baseline forward, named and
-	# counted. It REPORTS and never fails. Everything in that range is already
-	# written and most of it arrived by merge, and amending a commit another
-	# lane can see is what this project refuses outright — so there is no legal
-	# repair for a bad message in there. A gate that refuses what cannot be
-	# fixed gets deleted, not obeyed. gate-static above is where enforcement is
-	# MEANT to live — and on main it does not, because --head-only goes advisory
-	# off the message baseline and this ledger call never fails by design, so on
-	# main neither mode blocks anything. An earlier version of this line said
-	# "gate-static above is the enforcement" without that qualifier. Bead
-	# hk-commit-msg-gate-advisory-on-main-ap068 is the record.
-	scripts/commit-msg-gate.sh
-	# The credential scan, and this one FAILS. NOT the same span as the message
-	# ledger above: the two scripts name different baselines. The credential
-	# baseline is the older of the two, so the message ledger's span nests
-	# INSIDE this one (measured 2026-08-12) and this one is by far the wider.
-	# Exact commit counts are not quoted here because they move with every
-	# commit. This one fails where the ledger only reports, because a bad
+	$(MAKE) commit-msg-check
+	# The credential scan, and this one FAILS over the whole range. A bad
 	# message on a merged commit has no legal repair and a leaked key has one —
 	# rotate it, and take the value out of the tree before the merge lands — so
-	# refusing here is a demand that can be met. About 5 to 6 seconds over the
-	# two hundred thousand-odd added lines this branch carries.
+	# refusing over the range is a demand that can be met. About 5 to 6 seconds
+	# over the two hundred thousand-odd added lines this branch carries.
 	scripts/secret-scan.sh --range
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
@@ -1567,14 +1636,18 @@ review-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQ
 # Fresh-clone setup: make bootstrap  (installs tools)
 #
 # NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`) was
-# removed — validation runs from the two gate targets, not from a
+# removed — validation runs from the gate targets, not from a
 # pre-commit/pre-push/commit-msg hook. gate-static calls
-# scripts/commit-msg-gate.sh --head-only and scripts/secret-scan.sh --head-only
-# over the commit just made. `make full` adds scripts/commit-msg-gate.sh with no
-# argument (the message ledger, which reports and never fails) and
-# scripts/secret-scan.sh --range (which fails on a finding).
-# scripts/validate-commit-msg.sh stays callable on a message file, and
-# scripts/secret-scan.sh stays callable with no argument, which reads the index.
+# scripts/secret-scan.sh --head-only over the commit just made, and `make full`
+# adds scripts/secret-scan.sh --range (which fails on a finding).
+# The commit-message check is NOT in the inner loop: `make full` alone calls
+# scripts/commit-msg-gate.sh --head-only, through the commit-msg-check target.
+# The message-ledger mode (no argument) is no longer wired anywhere — it read
+# 236 commits, took 47 seconds, reported 109 rejections and exited 0 regardless.
+# To check a message BEFORE you commit it, run
+# `harmonik commit-msg validate <file>` — the rules live in internal/commitmsg
+# and that command is the seam the gate above calls. scripts/secret-scan.sh
+# stays callable with no argument, which reads the index.
 # ---------------------------------------------------------------------------
 .PHONY: tools
 tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, deadcode)

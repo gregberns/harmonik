@@ -81,7 +81,11 @@ once will collide. One bead at a time satisfies this for free; remember it if yo
 ## Rules that are not negotiable
 
 - **Never `br close`, never set `in_progress`.** The daemon owns terminal transitions. A bead you
-  pre-set to `in_progress` silently stops being dispatchable and nothing reports the error.
+  pre-set to `in_progress` is refused by `queue submit` with `bead_already_dispatched`
+  (JSON-RPC `-32015`, exit 1), so the work never reaches the queue at all. A bead you fixed by hand
+  and submitted to no queue is the other case: close that one yourself, because nothing else will —
+  `harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a
+  hand commit never carries one.
 - **Never run `br` from a worktree.** It writes to a ghost ledger and exits 0.
 - **Never redeploy the daemon binary.** The running one is the 15 Aug build and it is signed off.
   Newer is not better here.

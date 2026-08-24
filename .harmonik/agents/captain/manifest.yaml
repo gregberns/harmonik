@@ -9,14 +9,24 @@ identity:
   soul: soul.md
   parent_intent: admiral
 
+# The brief emits ONE LINE per entry below — a name, a description, and an absolute path.
+# It never inlines a body, whatever `presence` says. Only soul.md and operating.md (pulled in
+# by the `role:` key above) arrive as text. So this list is the captain's pointer index: the
+# description each line shows comes from the target's YAML frontmatter `description:` for a
+# doc, or its first prose line for a skill. A target with neither shows a bare path, which is
+# a pointer that names nothing — give it a frontmatter description instead of adding it here.
+#
+# Boot-path (STARTUP.md Step 1 says to read these three now):
 context:
   - { ref: boot,                                         as: skill,       presence: injected }
-  - { ref: roles/captain/operating.md,                    as: instruction, presence: injected }
-  - { ref: agent-comms,                                  as: skill,       presence: injected }
+  - { ref: .claude/skills/captain/STARTUP.md,            as: doc,         presence: retrieved }
+  - { ref: .claude/skills/captain/SKILL.md,              as: doc,         presence: retrieved }
+  - { ref: .claude/skills/orchestrator-rules/SKILL.md,   as: doc,         presence: retrieved }
+  # On demand — read in full before first use of the surface, not at boot:
+  - { ref: .claude/skills/captain/SHUTDOWN.md,           as: doc,         presence: retrieved }
+  - { ref: agent-comms,                                  as: skill,       presence: retrieved }
   - { ref: harmonik-dispatch,                            as: skill,       presence: retrieved }
   - { ref: beads-cli,                                    as: skill,       presence: retrieved }
-  - { ref: .claude/skills/orchestrator-rules/SKILL.md,   as: doc,         presence: retrieved }
-  - { ref: docs/orchestration-protocol-v2.md,            as: doc,         presence: retrieved }
 
 triggers:
   - { id: comms,        source: comms, enabled: true }

@@ -187,7 +187,7 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 // on-disk mission. That path does NOT flow through resolveCrewStartArgs — a keeper
 // cycles a crew via /clear + /session-resume on the same session_id, and the crew
 // re-reads .harmonik/crew/missions/<name>.md in its own boot sequence
-// (crew-launch § Self-restart). This test pins the on-disk-default path contract
+// (crew-launch § Restart via the keeper). This test pins the on-disk-default path contract
 // that the restart path depends on, proving the two paths are distinct:
 //   - fresh start (resolveCrewStartArgs) → never this path
 //   - restart re-hydration               → exactly this path

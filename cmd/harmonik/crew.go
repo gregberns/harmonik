@@ -550,12 +550,17 @@ FLAGS
                     stale mission. With no --mission the crew starts WITHOUT a
                     mission (commission it later over comms). A keeper RESTART is
                     a separate path and DOES re-read the on-disk mission.
-  --harness <type>  Crew orchestrator harness override (e.g. "codex"). OPTIONAL.
+  --harness <type>  Crew orchestrator harness override. OPTIONAL, and today the
+                    only value that starts a crew is "claude". Leave it unset.
+                    Any other value is a harness whose crew-orchestrator
+                    substrate is not wired yet: the daemon refuses it with "not
+                    yet supported" and this command exits non-zero — there is no
+                    silent fallback to claude. Codex and Pi still implement at
+                    the BEAD level, which is a different mechanism: label the
+                    bead harness:codex ("br label <id> add harness:codex").
                     Highest-precedence tier of the crew-scoped harness resolver
                     (flag > mission harness: front-matter > per-crew config >
-                    default "claude"). A harness whose substrate isn't wired
-                    yet is rejected with an explicit error — no silent
-                    fallback to claude.
+                    default "claude") for the day that substrate lands.
   --socket PATH     Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR     Project directory (default: cwd).
 
@@ -568,7 +573,7 @@ EXAMPLES
   harmonik crew start alpha                                  # queue defaults to alpha-q, no mission
   harmonik crew start alpha --mission /tmp/alpha-handoff.md  # queue defaults to alpha-q
   harmonik crew start beta  --queue beta-q  --mission /tmp/beta-handoff.md
-  harmonik crew start gamma --harness codex                  # crew harness override
+  br label hk-abc12 add harness:codex                        # put a BEAD on codex; crews stay on claude
 `)
 }
 

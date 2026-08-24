@@ -21,14 +21,17 @@ Drain to empty, then idle — do NOT pick up other work.
 All in the keeper subsystem — a disjoint file-set from the other crews.
 
 ## How you work (INLINE — the daemon worktree-dispatch is currently broken; do NOT `queue submit`)
-For each bead: `br show <id>` → reproduce → root-cause → fix in the main working tree → **independent
-review** (spawn a reviewer sub-agent; captain gates) → commit **explicit paths only** (NEVER `git add -A`/`.`,
-bare `git commit`, `git reset`, or `commit --amend` — shared-index race). Reference the bead id in the
-commit subject. Whoever runs the work owns the terminal transitions, and here that is the captain, not
-you. Do not set `in_progress` and do not close. A pre-set status makes the bead undispatchable, and the
-run then goes nowhere with no error. A close you make by hand leaves the ledger out of step with the run
-state, so the completion event never fires. A crew closes its own beads only when its mission file
-grants it in writing, and this file does not.
+For each bead: `br show <id>` → reproduce → root-cause → fix in the main working tree →
+**independent review** (spawn a reviewer sub-agent; captain gates) → commit **explicit paths only**
+(NEVER `git add -A`/`.`, bare `git commit`, `git reset`, or `commit --amend` — shared-index race).
+Reference the bead id in the commit subject. Whoever runs the work owns the terminal transitions,
+and here that is the captain, not you. Do not set `in_progress` and do not close. A pre-set status
+makes `queue submit` refuse the bead (`bead_already_dispatched`, `-32015`, exit 1), so the work
+never reaches the queue. A close you make by hand leaves the ledger out of step with the run state,
+so the completion event never fires. A bead you work by hand and submit to no queue is the other
+case, and it needs no grant: close that one yourself, because nothing else will — `harmonik
+reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit
+never carries one.
 
 ## On boot
 0. `harmonik agent brief`.

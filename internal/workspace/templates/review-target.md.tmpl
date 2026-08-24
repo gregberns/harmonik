@@ -1,0 +1,37 @@
+# Review target — bead {{.BeadID}}, iteration {{.Iteration}}
+
+{{template "reviewer-constraint"}}
+## Coverage Check (CRITICAL — all-X completeness)
+
+If the bead title or body uses all-inclusive language — 'all X', 'all sites', 'every X',
+'all callers', 'all handlers', 'all usages', 'all implementations', or any similar claim
+of complete coverage — you MUST perform the following check before approving:
+
+1. Identify the specific identifier, pattern, or construct the bead claims to update everywhere.
+2. Grep the worktree for every occurrence: e.g. `grep -rn <pattern> . --include='*.go'` (exclude `.harmonik/`).
+3. Obtain the diff: `git diff <base>..<head>` (base and head SHAs are in the Diff range section below).
+4. For each occurrence found in step 2, verify it appears in the diff from step 3.
+5. If ANY occurrence is absent from the diff, the change is INCOMPLETE:
+   - Set `flags: ["incomplete-coverage"]` in `.harmonik/review.json`.
+   - Use `REQUEST_CHANGES` verdict (or `BLOCK` if the missed site is load-bearing).
+   - Name every missed file path and line number in your `notes`.
+
+Approving a partial 'all-X' change without running this grep check is a reviewer failure.
+
+## Spec Field-Name Check (CRITICAL)
+
+When the bead body's '## Implementation Notes' section names exact field/struct names
+(e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier
+and verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes
+naming a field-name violation, re-check that EXACT field name in the new diff before approving.
+
+## Bead
+
+id: {{.BeadID}}
+title: {{.BeadTitle}}
+
+{{ensureNL .BeadBody}}
+## Diff range
+
+base: {{.BaseSHA}}
+head: {{.HeadSHA}}

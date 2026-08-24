@@ -75,6 +75,7 @@ SUBCOMMANDS
   comms            Agent-to-agent messaging bus (send/recv/who/log/join/leave)
   crew             Captain & crew session management (start/stop/list)
   reconcile        Close in_progress beads whose implementation has merged
+  commit-msg       Check what a commit message CLAIMS about its review ("commit-msg validate <file>")
   confirm-verdict  NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
   veto-verdict     NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
   graph            Workflow graph utilities (validate, etc.)

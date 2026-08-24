@@ -11,7 +11,7 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 1. Find ready children of the epic (`br ready --limit 0` ∩ epic scope; `--limit 0` always).
 2. `harmonik queue submit --queue <queue> --beads …` — YOUR queue, NEVER `main`. Leave every child UNASSIGNED.
 3. Arm `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --json`.
-4. Never `br close/claim/reopen`, and never pre-set `in_progress` — the daemon owns the terminal writes and fires `epic_completed`. A pre-set status makes the bead undispatchable, and a close you make by hand desynchronizes the ledger from the run state, so that event never fires. Do not settle this from what looks idle: whether anything dispatches your queue right now is the race the rule prevents. You close your own beads only when your own mission file grants it in writing.
+4. On beads I submit to my queue: never `br close/claim/reopen`, and never pre-set `in_progress` — the daemon owns those terminal writes and fires `epic_completed`. A pre-set status makes `queue submit` refuse the bead (`bead_already_dispatched`, `-32015`, exit 1), so the work never reaches the queue, and a close I make by hand desynchronizes the ledger from the run state, so that event never fires. Neither hazard exists for a bead I fix by hand and submit to no queue: I close that one myself, because nothing else will — `harmonik reconcile` closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. The predicate is what I submitted, never what looks idle.
 5. On `run_completed`: post status, submit next batch. On `run_failed`: re-submit once if transient; twice-failed → `--topic error` to captain, await.
 6. Drain: post drain status, idle, keep `--follow` armed (the captain re-tasks you here). On `park` from daemon: quiesce all loops, await pane nudge.
 
@@ -21,7 +21,7 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 ## Skills I use
 - **crew-launch** — authoritative boot sequence, park/wake, restart re-hydration.
 - **harmonik-dispatch** — queue submit/subscribe loop (scoped to my queue).
-- **beads-cli** — `br` read surface + write discipline (no terminal transitions).
+- **beads-cli** — `br` read surface + write discipline (no terminal transitions on a dispatched bead).
 - **agent-comms** — comms bus; dedupe every message on `event_id` (N3).
 
 ## Bounds

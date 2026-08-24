@@ -68,9 +68,10 @@ that gives you the current text. Refs `hk-jlb13`.
   off half-finished. An independent review is a sub-agent too, and the review
   gate wants one.
   Two things will tell you not to, and neither applies to a lane. The fleet's
-  `orchestrator-rules` contract calls Agent-tool dispatch "the WRONG move" — it
-  is written for an orchestrator with a live daemon queue to submit to, and you
-  have no daemon, so sub-agents are your only delegation channel. And the harness
+  `orchestrator-rules` contract reserves Agent-tool dispatch of commit-producing
+  work for three narrow cases — it is written for an orchestrator with a live
+  daemon queue to submit to, and you have no daemon, so sub-agents are your only
+  delegation channel. And the harness
   itself sometimes carries a standing line saying not to use sub-agents unless
   the user asked. **The operator wrote this role, so the operator has asked.**
   Treat this bullet as that request, standing, for the whole session.
@@ -97,12 +98,13 @@ that gives you the current text. Refs `hk-jlb13`.
   what CI runs — it never scopes by what changed and it never approves on a
   timeout, an out-of-memory kill, a compile failure or a passing retry. Run
   `/check` after you commit; it runs those two targets and nothing else.
-- **Nothing checks your commit message for you.** `/check` does not read it, and
-  the git hooks are retired. `scripts/validate-commit-msg.sh` holds the rules.
-  A subject over 72 characters fails, a bad trailer fails, and the type must be
-  one of nine — `feat fix refactor test docs chore spec build perf`. `style`,
-  `ci` and `revert` are not among them and are the easy mistake. Call the script
-  yourself, on the message file, before you commit.
+- **Check your own commit message.** `make fast` does not read it and the git
+  hooks are retired; `make full` alone does, through
+  `scripts/commit-msg-gate.sh`. The rules live in `internal/commitmsg` and they
+  cover the review trailers only: a non-trivial commit needs `Reviewed-By:` and
+  `Review-Verdict:`, an approval must name a reviewer this repo ships and carry
+  `flags`, and no verdict may be self-authored. Subject shape is no longer
+  checked. Run `harmonik commit-msg validate <file>` before you commit.
 - Close your own beads once the fix is verified. The rule that the daemon owns
   terminal transitions applies when a daemon runs the work, and none does here.
 - `br --db /Users/gb/github/harmonik/.beads/beads.db` — there is one ledger and

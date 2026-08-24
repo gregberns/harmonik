@@ -106,7 +106,7 @@ The design, as it was written: the `CONSTITUTION.md` at repo root lists immutabl
 
 ### Commit style
 
-- **Subject ≤72 chars, imperative mood.** `orchestrator: add edge cascade`.
+- **Subject ≤72 chars, imperative mood.** `orchestrator: add edge cascade`. **House style, and no gate reads it.** The subject rules went out with the shell validator on 2026-08-23: the type set, the 72-character ceiling, the trailing period and the scope charset are checked by nothing now. `internal/commitmsg` judges the review trailers and nothing else. Write the subject this way because the next reader needs it, not because a build will stop you.
 - **Body** is optional for trivial changes; required when a decision or trade-off was made. Body cites the spec section driving the change (`per execution-model §2.1c`).
 - **Co-author trailer** mandatory for agent-written commits: `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` (or the active model's trailer). Humans MAY omit.
 - **Fixture refreshes** (testing.md §Fixture conventions) diff the fixture in the commit body and name the trigger (e.g., "claude-code wire format changed at 2026-05-02 capture").
@@ -120,7 +120,7 @@ The design, as it was written: the `CONSTITUTION.md` at repo root lists immutabl
 ### Commit creation
 
 - **No per-change pull requests** (per `build-practices.md`). The agent reviewer is the gate on the way to the integration branch. Per-change pull requests return when the product has real users or multiple human contributors.
-- **Commit message** follows Conventional Commits per `build-practices.md §Commit conventions`. Subject rules unchanged; non-trivial commits include a body with Why / What / Spec alignment / Test plan / Risk sections (same information previously required in PR bodies).
+- **Commit message** follows Conventional Commits per `build-practices.md §Commit conventions`. The subject rules are unenforced house style since 2026-08-23 — see §Commit style above; non-trivial commits include a body with Why / What / Spec alignment / Test plan / Risk sections (same information previously required in PR bodies).
 - **Required trailers**: `Refs:` (bead-id or kerf-codename) for tracked work items; `Co-Authored-By:` for agent-assisted commits; on every non-trivial commit:
   - `Reviewed-By: agent-reviewer` (presence marker)
   - `Review-Verdict: {"verdict": "APPROVE|REQUEST_CHANGES", "flags": [...], "notes": "..."}` (structured JSON; see `build-practices.md §Commit conventions`)

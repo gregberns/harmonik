@@ -588,7 +588,6 @@ darwin/arm64 github.com/gregberns/harmonik/internal/workflow.ValidateAndApplyCon
 darwin/arm64 github.com/gregberns/harmonik/internal/workflow.ValidateSubWorkflowAcyclicity
 darwin/arm64 github.com/gregberns/harmonik/internal/workflow.emitJSON
 darwin/arm64 github.com/gregberns/harmonik/internal/workflow.jsonValueType
-darwin/arm64 github.com/gregberns/harmonik/internal/workspace.ArchiveVerdict
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.BuildConflictEscalationPayload
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.BuildConflictResolverLaunchSpec
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.CaptureWIP
@@ -614,7 +613,6 @@ darwin/arm64 github.com/gregberns/harmonik/internal/workspace.MergeNodeDispatch.
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.MergeNodeKind.Valid
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.MissingGitignoreEntries
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.ParseGitVersion
-darwin/arm64 github.com/gregberns/harmonik/internal/workspace.ReviewVerdictArchivePath
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.ReviewerWorktreePath
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.SetImplementerHandlerRefAtMergePending
 darwin/arm64 github.com/gregberns/harmonik/internal/workspace.SetInterruptStateToNone
@@ -1212,7 +1210,6 @@ linux/amd64 github.com/gregberns/harmonik/internal/workflow.ValidateAndApplyCont
 linux/amd64 github.com/gregberns/harmonik/internal/workflow.ValidateSubWorkflowAcyclicity
 linux/amd64 github.com/gregberns/harmonik/internal/workflow.emitJSON
 linux/amd64 github.com/gregberns/harmonik/internal/workflow.jsonValueType
-linux/amd64 github.com/gregberns/harmonik/internal/workspace.ArchiveVerdict
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.BuildConflictEscalationPayload
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.BuildConflictResolverLaunchSpec
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.CaptureWIP
@@ -1238,7 +1235,6 @@ linux/amd64 github.com/gregberns/harmonik/internal/workspace.MergeNodeDispatch.V
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.MergeNodeKind.Valid
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.MissingGitignoreEntries
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.ParseGitVersion
-linux/amd64 github.com/gregberns/harmonik/internal/workspace.ReviewVerdictArchivePath
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.ReviewerWorktreePath
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.SetImplementerHandlerRefAtMergePending
 linux/amd64 github.com/gregberns/harmonik/internal/workspace.SetInterruptStateToNone

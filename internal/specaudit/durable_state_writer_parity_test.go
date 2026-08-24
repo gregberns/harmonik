@@ -52,7 +52,6 @@ var knownUnwiredWriters = map[string]string{
 
 	"cmd/harmonik/supervise.WriteLoopStatusAtomic":         "harmonik supervise status never reports loop status or pause reason, so a budget-exhausted loop looks healthy",
 	"internal/crew.UpdateSessionID":                        "a crew's recorded session id is frozen at spawn, so after a keeper restart the registry points at a dead session",
-	"internal/workspace.ArchiveVerdict":                    "review.iter-N.json is never written, while every implementer-resume brief tells the agent to read it",
 	"internal/workspace.CreateSessionLogDir":               "the per-session log directory is never created, so the WM-016 must-pre-exist ordering gate never runs",
 	"internal/workspace.WriteSessionMetadataSidecarAtomic": "harmonik.meta.json is never written, so merge-time implementer identification has no input",
 	"internal/workspace.WriteLeaseReleasedMarker":          "the workspace-local events log is never written, so the crash-recovery ordering its comment mandates has no participants",

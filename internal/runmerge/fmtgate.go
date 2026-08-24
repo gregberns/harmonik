@@ -123,6 +123,13 @@ func fmtGciPass(ctx context.Context, buildDir, gciBin, mod string, canAutoFmt bo
 	return true, nil
 }
 
+// fmtGateCommitMessage is the message commitFmtChanges commits. Named so the
+// commit-message gate test reads what production writes — see
+// stripRunContextCommitMessage for why that matters.
+func fmtGateCommitMessage(beadID core.BeadID) string {
+	return fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
+}
+
 func commitFmtChanges(ctx context.Context, buildDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *Outcome, newRunTip string) {
 	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
 	addCmd.Dir = buildDir
@@ -131,8 +138,7 @@ func commitFmtChanges(ctx context.Context, buildDir string, runID core.RunID, be
 		return &Outcome{Success: false, Reason: "merge_fmt_failed (git add): " + addErr.Error()}, ""
 	}
 
-	commitMsg := fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", fmtGateCommitMessage(beadID)) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 	commitCmd.Dir = buildDir
 	if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
 		emitMergeBuildFailed(ctx, bus, runID, beadID, commitErr, commitOut)

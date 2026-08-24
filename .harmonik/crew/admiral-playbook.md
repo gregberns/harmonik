@@ -25,7 +25,7 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
 > 2. **Directing a resume of a KNOWN parked/drained lane is YOUR call, not a §8
 >    escalation.** A lane recorded in any durable doc or ever ranked is KNOWN even when
 >    parked; only a NEVER-recorded initiative is the operator's to rank. Canonical
->    definition: orchestrator-rules §Autonomy (one definition, pointed-to — do not
+>    definition: orchestrator-rules `REFERENCE.md` §Autonomy (one definition, pointed-to — do not
 >    re-derive it here).
 
 ## The high-value modes (do these first, every audit)

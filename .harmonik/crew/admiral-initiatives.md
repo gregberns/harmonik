@@ -606,7 +606,7 @@
 > deploy ships without new end-to-end tests, added that deploy, that reproduce the changed
 > behavior on a real launch path IN ISOLATION from the live daemon (never test on the primary
 > daemon; green units are not the gate). Enforce every deploy. Canonical: orchestrator-rules
-> §"PRE-DEPLOY END-TO-END TEST GATE" + `docs/daemon-redeploy.md` GATE 0.
+> hard rule 8, the pre-deploy end-to-end gate, + `docs/daemon-redeploy.md` GATE 0.
 
 > **STANDING RULE (operator, restated 2026-07-22) — THE ASSESSOR VALIDATES ALL RELEASES.**
 > No exceptions. A **daemon binary swap is a release**, and so is a merge to the target

@@ -1,604 +1,191 @@
 ---
 name: keeper
 description: >
-  Agent-facing operating contract for the harmonik session-keeper — the
-  per-orchestrator / per-crew context-fill watcher that gauges a long-lived
-  Claude session's context usage and, when it fills, drives an
-  intent-preserving handoff → /clear → /session-resume cycle BEFORE the pane
-  overflows and stops accepting keystrokes. Load this when you run (or manage)
-  any keeper-watched session — captain, crew, flywheel, orchestrator. Covers:
-  the three checkpoint bands and their REAL default values, the command
-  surface (enable / doctor / set-dispatching / clear-dispatching / the watcher
-  itself), crew-restart re-hydration, and verifying gauge + watcher liveness with
-  `keeper doctor` (use `live-watcher` check — confirms a running keeper, not just a
-  fresh gauge file). Load-bearing: must not rot. Composes with crew-launch
-  (§ Self-restart via the keeper) and captain (§10 restart continuity).
-
-sources:
-  - cmd/harmonik/keeper_cmd.go
-  - cmd/harmonik/keeper_enable_doctor_cmd.go
-  - cmd/harmonik/keeper_dispatching_cmd_hkrc51s_test.go
-  - cmd/harmonik/keeper_enable_doctor_cmd_test.go
-  - internal/keeper/cycle.go
-  - internal/keeper/watcher.go
-  - docs/known-workarounds.md
-  - docs/captain-restart.md
-  - .claude/skills/crew-launch/SKILL.md
-  - .claude/skills/captain/SKILL.md
+  The per-session context-fill watcher: what it does to a session when the
+  context window fills, and the `harmonik keeper` command surface.
+  Load-bearing: must not rot.
 ---
 
 <!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/keeper/SKILL.md (Go //go:embed).
      The copy at .claude/skills/keeper/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
      overwrites it from the embed and there is NO reverse sync, so an edit made
-     only there silently drifts and is eventually reverted. To change this skill:
-     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
-     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+     only there silently drifts and is eventually reverted. Edit the cmd/harmonik/assets/
+     copy, then mirror it byte-for-byte into .claude/skills/ in the SAME commit. -->
 
 # Keeper operating context
 
-The **keeper** is harmonik's per-session **context-fill watcher**. One keeper
-process supervises one long-lived Claude session (a captain, a crew, the
-flywheel, an orchestrator). It reads how full that session's context window is
-each turn and, before the window overflows (a full pane stops accepting
-keystrokes), it performs an **intent-preserving reset cycle**: write a handoff,
-`/clear`, then `/session-resume` the SAME session so the agent wakes up fresh
-with its work intact.
+The **keeper** watches one long-lived Claude session — a captain, a crew, an
+orchestrator — and resets it before its context window overflows. A full pane
+stops accepting keystrokes, so the reset has to happen early. The cycle is:
+write a handoff, `/clear`, then `/session-resume` the SAME session, so the agent
+wakes fresh with its work intact.
 
-You interact with the keeper in three roles:
+**The safety invariant is that the keeper never `/clear`s without a confirmed
+handoff nonce.** Every gate below exists to protect it.
 
-1. **As a managed session** — you keep working; the keeper owns the reset cycle.
-2. **As an operator/captain wiring it up** — `keeper enable` / `keeper doctor`.
-3. **As a dispatcher** — `keeper set-dispatching` / `clear-dispatching` to defer
-   the reset while a queue batch is in flight.
+Nothing fires unless `.harmonik/keeper/<agent>.managed` exists. Without that
+marker the keeper logs a no-op and exits 0. Creating it needs
+`--yes-destructive`.
 
----
+## § How the bands work
 
-## § What the keeper is / when it fires
+A statusLine hook writes the session's token count to
+`.harmonik/keeper/<agent>.ctx` each turn. A watcher polls it and crosses three
+bands: a **notice**, a **warn**, and an **act** gate that runs the reset cycle.
+Above all of them sits a hard ceiling that forces a restart even when the
+keeper's session-id binding is wrong, so a mis-bound keeper cannot let a pane
+overflow.
 
-Each turn, the keeper's **statusLine hook** (`keeper-statusline.sh`) writes
-`.harmonik/keeper/<agent>.ctx` with the session's `pct`, absolute `tokens`, and
-`session_id`. A **watcher** loop polls that gauge every ~5s
-(`internal/keeper/thresholds.go` `DefaultPollInterval`) and crosses one of two
-checkpoint bands:
+Two things about the numbers:
 
-- **NOTICE** — the keeper sends early continuity guidance. The agent keeps working.
-- **WARN** — the keeper asks the agent to reach a durable checkpoint soon.
-  It injects the prompt into the tmux pane when `--tmux` is set.
-- **HARD** — the session reached the automatic action band. When the safety gates pass,
-  the keeper runs the **reset cycle** (`Cycler.MaybeRun`): scrub the
-  handoff → inject `/session-handoff` → **poll for the handoff nonce** → ONLY
-  THEN `/clear` → `/session-resume <agent>`. The invariant — *never `/clear`
-  without a confirmed handoff nonce* — is what makes the cycle safe
-  (`docs/captain-restart.md`).
+- **Every value is operator-set.** harmonik applies no runtime default. An unset
+  required key makes the keeper refuse to start with one aggregated error naming
+  every missing key. Generate a complete block with `harmonik keeper config
+  --example >> .harmonik/config.yaml`, then tune it. Precedence is CLI flag, then
+  `config.yaml`, then refuse to start. Threshold changes need a keeper restart.
+- **Read the numbers from `internal/keeper/thresholds.go`, never from prose.**
+  The band has been retuned more than once, and every copy of it in a doc has
+  gone stale.
 
-The whole thing is **`.managed`-gated**: if `.harmonik/keeper/<agent>.managed`
-is absent, the keeper logs a no-op and exits 0 (passive mode — no reset cycle
-ever fires). Creating `.managed` requires explicit destructive consent (see
-§ keeper enable).
+The effective gate is `min(absTokens, pctCeil × windowSize)`
+(`minAbsOrPctCeil`). That is deliberate: one band then works on a 200k window and
+on a 1M window without a re-tune, and on a 1M-window model the absolute cap is
+what fires.
 
----
+**`--warn-pct` / `--act-pct` are tighten-only.** They feed in as the pct-ceil, so
+they can only move a gate earlier. A value looser than the resolved ceil is
+rejected and the keeper refuses to start. Older runbooks suggest `--warn-pct 80`
+/ `--act-pct 90`; both are looser than the defaults and both hard-fail. To move
+the band, use `--warn-abs-tokens` / `--act-abs-tokens`.
 
-## § The three checkpoint bands — REAL values from code
+## § What you do at each band
 
-> **Operator-required config (no built-in runtime defaults).** harmonik does NOT
-> apply a baked-in number for any keeper value when you launch `harmonik keeper`.
-> EVERY value must be set by the operator — in the `.harmonik/config.yaml` `keeper:`
-> block, or (for the flag-backed ones) via its CLI flag. If a required value is
-> unset, the keeper **REFUSES TO START** with ONE aggregated error listing every
-> missing key. Generate a complete starting block with
-> **`harmonik keeper config --example`** (the same block `harmonik init` writes),
-> paste it into `.harmonik/config.yaml`, then tune the numbers. The numbers in the
-> table below are the **suggested** values that command ships — they are NOT a silent
-> runtime fallback. (The internal-library `applyDefaults` still fills these for
-> programmatic/test construction, but the operator-facing path routes through
-> `ResolveKeeperConfig`, which imposes none.)
+| crossing | the keeper does | you do |
+|---|---|---|
+| **notice** | sends early continuity guidance | keep working; shape state so a fresh session could resume it |
+| **warn** | asks for a durable checkpoint | bring the current unit to a checkpoint; captains run `restart-now` when ready |
+| **act** | starts the handoff request once the safety gates pass | finish the handoff |
+| **hard ceiling** | forces handoff and restart regardless of session-id binding | nothing — it is the last-resort backstop |
 
-The keeper evaluates **both** an absolute-token threshold and a
-percent-of-window threshold and uses **whichever is smaller** — i.e. the
-effective threshold is `min(absTokens, pctCeil * windowSize)`
-(`internal/keeper/thresholds.go` `minAbsOrPctCeil`, reached via
-`CyclerConfig.actThreshold` / `warnThreshold`). This is deliberate so the same values
-work on a 200k window (the pct-ceil wins, ~170k) and a 1M window (the abs cap
-wins, 215k) — preventing a `90%` gate from firing only at ~900k tokens
-(Refs: hk-cl74g). The suggested band below is the TA1 retune (hk-8hr1): warn=200K /
-act=215K, operator-authorized 2026-06-17 to restart EARLIER and cap cache-read
-token spend.
+The act path holds off while an operator is attached to the pane, and a real
+user turn during the handoff wait parks the cycle before the `/clear`.
 
-| gate | authoritative symbol (`internal/keeper/thresholds.go`) | pct-ceil symbol | indicative value |
-|---|---|---|---|
-| **NOTICE** | `DefaultWarnAbsTokens` | `DefaultWarnPctCeil` | ~170k abs, ceil ~0.70 |
-| **WARN** | `DefaultActAbsTokens` | `DefaultActPctCeil` | ~200k abs, ceil ~0.85 |
-| **HARD** | `DefaultActAbsTokens` + `DefaultForceActAbsOffset` | act ceil + the force-act ceil offset | ~220k abs, ceil ~0.95 |
-| **HARD-CEILING** (SID-independent trip-wire) | `HardCeilingAbsTokens` (alias of `DefaultHardCeilingTokens`) | — | ~280k abs |
-| window fallback | the fallback window size applied by `WatcherConfig.applyDefaults` (`watcher.go`), overridable with `--window-size` | — | ~200k |
+**On a warn, refresh your `HANDOFF-<agent>.md` and keep working.** Read that file
+before you Write it — it already exists, and the Write tool refuses a file the
+current session has not read, which after a `/clear` is every file.
 
-> **The Go file is the source of truth, not this table.** Every value above is a compiled
-> constant in `internal/keeper/thresholds.go`, and `thresholds_test.go` pins it. The
-> indicative column exists so you can reason about the shape of the band — it is not a
-> figure to quote. When an exact number matters (writing a runbook, filing a bead, judging
-> how close a session is to a gate), read the symbol. Prose that copies a constant goes
-> stale the first time the constant is retuned, and this band has been retuned more than
-> once already. `harmonik keeper config --example` prints the current values as YAML you
-> can paste.
+**Never exit or `/quit` your own session on a warn.** The keeper owns the
+clear-and-resume cycle. Self-terminating ends the session for good; there is no
+supervised respawn path.
 
-- **The pct-CEIL and the raw pct GATE are two different things — do not conflate them.**
-  The pct-ceil (`DefaultWarnPctCeil` / `DefaultActPctCeil`) is always live: it is the
-  second half of `min(abs, ceil × window)`, and on a small window it is the half that
-  fires. The raw pct gate (`CyclerConfig.WarnPct` / `ActPct`) is a fallback, reached only
-  when the gauge emits no absolute token count (`CtxFile.Tokens == 0` or
-  `WindowSize == 0`) — an older Claude Code. See `cycle.go` `belowActThreshold` and
-  `watcher.go` `belowWarnThreshold`. (Symbols, not line numbers: those files move
-  constantly — grep the symbol name.)
-- **On a [1m]-window model the absolute cap is what fires**, because the abs value is
-  smaller than the ceil applied to a 1M window. That is the whole point of the `min`
-  formula: one band works on a 200k window and on a 1M window without a re-tune.
-- **`--warn-pct` / `--act-pct` are TIGHTEN-ONLY. They are NOT inert.** They were inert
-  once and older text still says so. `cmd/harmonik/resolve_keeper_config.go`
-  `ResolveKeeperConfig` now feeds an explicitly-set pct flag in as the pct-CEIL
-  (pct ÷ 100), so it flows through the same `min(abs, ceil × window)` band as everything
-  else. It may only move a gate EARLIER. A value looser (higher) than the resolved ceil
-  is REJECTED with a `KeeperConfigError` naming the flag, and **the keeper refuses to
-  start**. `internal/keeper/thresholds.go` `EffectiveBandTokens` enforces the same
-  direction at the helper level, and
-  `internal/keeper/live_keeper_present_hkx7s_test.go`
-  `TestEffectiveBandTokens_DefaultsAndTightenOnly` pins it.
-
-  **Know this before you type one:** the resolved default ceils are around 0.70 warn and
-  0.85 act, so `--warn-pct 80` and `--act-pct 90` — the values older runbooks suggest —
-  are both LOOSER than the default and both hard-fail at startup. To move the band, reach
-  for `--warn-abs-tokens` / `--act-abs-tokens`. Reach for a pct flag only when you mean to
-  tighten the gate relative to a particular window size. (Refs: hk-odhh, hk-5da7.)
-- **HARD** (220k) fires the cycle **unconditionally, bypassing the
-  CrispIdle gate**, so a perpetually-busy session that never goes idle still gets
-  cleared before exhaustion (`cycle.go` `CyclerConfig.aboveForceThreshold` /
-  `forceActThreshold`, Refs: hk-0uu).
-- **HARD-CEILING** (`HardCeilingAbsTokens = 280000` — declared in
-  `internal/keeper/thresholds.go` as an alias of `DefaultHardCeilingTokens`) is a
-  SEPARATE, SID-independent backstop above the normal band: any watched pane at
-  ≥280k forces a handoff+restart **regardless of whether the session_id binding
-  is correct**, so a mis-bound keeper cannot silently let a session overflow
-  (Refs: hk-34ac). It does NOT change the warn/act/force_act thresholds.
-- **Every keeper value is OPERATOR-SET** — via a CLI flag OR the
-  `.harmonik/config.yaml` `keeper:` block (see § Project config below). CLI flags
-  win over config.yaml; an UNSET required value makes the keeper **refuse to start**
-  (no compiled fallback). Set the band with `--warn-abs-tokens` / `--act-abs-tokens`.
-  The pct flags are tighten-only and hard-fail when they would loosen the band — see the
-  bullet above before you use one. Refs: hk-odhh, hk-lhu2, hk-5da7.
-
-### § Project config — .harmonik/config.yaml `keeper:` block (OPERATOR-REQUIRED)
-
-harmonik imposes **NO built-in keeper defaults at runtime**: every value must be set
-by the operator or `harmonik keeper` refuses to start, listing every missing key in
-one aggregated error. The one-command migration is:
-
-```bash
-harmonik keeper config --example >> .harmonik/config.yaml   # complete starting block
-# then edit the numbers; or `harmonik init` writes the same complete block for a new project
-```
-
-`harmonik keeper config --example` prints a COMPLETE, commented `keeper:` block with a
-suggested value for every required key (thresholds / hard_ceiling / timings / cadence /
-budgets, plus the optional self_service / warn_messages). Paste it under
-`schema_version: 1` in `.harmonik/config.yaml` and tune the numbers — don't delete keys.
-Precedence: **CLI flag > config.yaml > (unset → refuse to start)**.
-
-Special cases: `hard_ceiling.mode: off` is an explicit choice (then `abs_tokens` is not
-required), and `boot_grace: 0s` is the explicit "disable boot grace" sentinel (present,
-not missing). self_service / warn_messages are OPTIONAL (not in the required set);
-`crews_enabled` absent ⇒ true (crews self-restart by default — hk-vs4u).
-
-The keeper reloads `keeper.warn_messages` after the config file changes.
-Restart the keeper to apply threshold changes.
-Refs: `cmd/harmonik/resolve_keeper_config.go` (operator-facing chokepoint),
-`internal/daemon/projectconfig.go`, hk-lhu2.
-
----
+A **captain** additionally drives its own restart, at a clean idle point with no
+dispatch in flight: finish the current unit, write `HANDOFF-captain.md` with a
+fresh `<!-- KEEPER:<nonce> -->` comment, run `harmonik keeper restart-now --agent
+captain`, then keep the turn open and stop typing. The keeper fires on its next
+tick. The handoff carries INTENT only — the boot runbook re-grounds on live
+state, so do not snapshot queue or daemon state into it.
 
 ## § Command surface
 
-All keeper verbs are under `harmonik keeper`. Top-level usage: the
-`keeperTopUsage` const in `cmd/harmonik/keeper_cmd.go`.
+**Every keeper verb is flag-only.** Pass `--agent <name>`. A positional agent is
+rejected with exit 2, because it used to be silently accepted as an agent named
+after the flag — the recurring restart-now failure.
 
-> **Cite symbols, not line numbers.** Every code reference below names a file plus
-> a Go symbol (`func`/`const`/`var`) — grep for the symbol. Line numbers in this
-> repo rot within days and were the source of a real stale-citation defect here.
-
-### `harmonik keeper config --example` — print a complete starting `keeper:` block
-
-Prints a COMPLETE, commented `keeper:` config block (every operator-required key with
-a suggested value) to stdout. Use it to migrate to the operator-required-config model:
-`harmonik keeper config --example >> .harmonik/config.yaml`, then tune the numbers.
-Same source of truth as the block `harmonik init` generates.
-
-### `harmonik keeper restart-now --agent <name> [--project DIR]` — captain-initiated on-demand restart
-
-Writes the `.restart-now` marker (`{nonce, requested_at, session_id}`) read from
-the captain's current `HANDOFF-captain.md`. On the next watcher tick, the keeper
-calls `RunOnDemand`, which bypasses the act-pct idle gate and runs the
-handoff → nonce-poll → `/clear` → `/session-resume` cycle immediately.
-
-**The keeper band is UNCHANGED.** The warn and act thresholds are not widened.
-`restart-now` bypasses ONLY the act-pct idle-gate (CrispIdle check); all other
-safety gates (nonce-confirmed handoff, `.managed`, HoldingDispatch check) remain
-intact. The operator HARD-NO on widening the band stands.
-
-**The captain mints the nonce.** On the request path the captain writes
-`HANDOFF-captain.md` (including the `<!-- KEEPER:<nonce> -->` comment), then calls
-`harmonik keeper restart-now --agent captain`. The keeper reads the nonce from the
-handoff; if no nonce is present or the nonce mismatches the one in `.restart-now`,
-the cycle is aborted (safety invariant: never `/clear` without a confirmed nonce).
-
-```bash
-# Captain procedure (at a clean idle point — no in-flight dispatch):
-# 1. Write HANDOFF-captain.md with current state (include the KEEPER nonce comment).
-# 2. Trigger the restart-now cycle:
-harmonik keeper restart-now --agent captain [--project DIR]
-# The keeper's next tick (≤5 s) fires RunOnDemand → /clear → /session-resume.
-```
-
-**A restart-now is now VERIFIABLE — don't assume it landed (hk-uldg).** Before
-this, the firing agent fired the command, trusted the exit code, and moved on; if
-the keeper was dead / watching the wrong pane / couldn't verify the session id, the
-restart silently never happened. The keeper now injects a `[KEEPER ACK <nonce>]
-received restart` line into the pane **before** the gated `/clear`, and
-`restart-now` prints `nonce=rn-<millis>` to stdout. An **external** observer reads
-that nonce and runs `harmonik keeper await-ack` (below) to PROVE the keeper
-delivered the ACK. It must be external because on a SELF restart the `/clear`
-wipes the firing agent's context before it could ever read its own ACK — see
-§ Verifying a restart with await-ack.
-
-### `harmonik keeper await-ack --agent <name> --nonce <N> [--kind restart|ping] [--timeout 15s] [--poll 1s] [--project DIR]` — confirm the ACK landed
-
-The AGENT-SIDE half of the handshake. Polls the agent's OWN pane scrollback for
-the exact bracket token `[KEEPER ACK <nonce>]` (not the bare nonce — no cross-cycle
-false match). **Exit 0** when observed (keeper proven alive); on timeout it
-emits a durable `session_keeper_ack_timeout` event to `events.jsonl` and **exits
-3** (distinct from the flag-misuse exit 2). The pane-capture is an injectable seam
-so the timer/poll/match logic is unit-tested Go, not skill prose.
-
-The binary does **NOT** send comms — the CALLER owns escalation (comms identity
-`--from <lane>` is the caller's; baking a hardcoded `--from` in would risk the
-"uncommissioned --from captain freezes the fleet" footgun). On exit 3 the caller
-must comms-alert the operator and run the investigation steps:
-
-```bash
-harmonik comms send --to operator --topic keeper-alert --from <lane> \
-  "keeper ACK timeout for <agent> nonce <N> — keeper may be dead/wrong-pane/unverifiable sid; investigating"
-```
-
-Default timeouts: 15s (ping) — pass `--timeout 30s` for restart-now (the keeper
-does freshness checks + three injects around the ACK). **Exit codes:** `0` ack
-observed; `1` argument error; `2` flag misuse (flag-only); `3` ack-timeout
-(event emitted).
-
-### § Verifying a restart with await-ack — who runs it (design decision 1)
-
-**Captain watches crews; a restart wrapper watches for self.** The asymmetry:
-
-- **ping** (self-service liveness) — the SAME live agent fires `ping --nonce N`
-  then runs `await-ack --kind ping --nonce N`; the ACK lands in its own pane and
-  it reads `await-ack`'s exit code. Use a FRESH unique nonce per ping.
-- **restart-now (SELF)** — `harmonik keeper restart-now --agent <self>` is now
-  **synchronous and self-verifying in-process** (`internal/keeper/restartnow.go`):
-  the one `restart-now` call resolves the pane, runs the freshness check, injects
-  the ACK line, then drives the `/clear` + `/session-resume`, all before returning.
-  Because the verification happens inside the same call, you do NOT need an external
-  watcher for a SELF restart — fire `restart-now` and read its exit code. The old
-  external wrapper `scripts/captain-tools/keeper-restart-verified.sh` is RETIRED
-  (off the native launch path per review B; the script file is deleted by ES8). Do
-  NOT wire SELF restarts through it.
-- **restart-now (CREW, captain watching)** — the captain tells the crew to
-  restart, fires `restart-now --agent <crew>`, captures the nonce, then runs
-  `await-ack --agent <crew> --kind restart` directly. The captain's process is
-  external to the crew, so it survives the crew's `/clear`. See the captain skill
-  §10 Restart continuity.
-
-> **OUT OF SCOPE (hk-uldg):** the AUTOMATIC keeper cycle (`MaybeRun`/`runCycle` in
-> `cycle.go`/`watcher.go`) does NOT yet run `await-ack` on its own restarts — it
-> still relies on its internal handoff-nonce poll. Adding ACK verification to the
-> automatic cycle is a separate bead (companion hk-vpnp owns that area). The
-> verification wired here covers the MANUAL `restart-now` / `ping` paths only.
-
-### `harmonik keeper --agent <name> [flags]` — the watcher (run this to start it)
-
-Starts the watcher loop and blocks until SIGINT/SIGTERM.
-
-Flags (`keeper_cmd.go` `runKeeperSubcommand`):
-
-| flag | default | meaning |
-|---|---|---|
-| `--agent <name>` | — (**required**) | identifies the lockfile + `.managed` marker |
-| `--tmux <target>` | auto-derived | pane to inject warn/handoff into; auto-resolved from `harmonik-<hash12>-<agent>` if omitted (`keeper.ResolveTmuxTarget`) |
-| `--warn-pct N` | `0` = unset | **tighten-only** warn pct-ceil (fed in as pct ÷ 100). A value looser than the resolved ceil is rejected and the keeper refuses to start — see § The two thresholds. NOT inert. |
-| `--act-pct N` | `0` = unset | **tighten-only** act pct-ceil, same rule. Not the raw pct gate. |
-| `--warn-abs-tokens N` | `DefaultWarnAbsTokens` | absolute warn gate — this is the flag to use when you want to move the band |
-| `--act-abs-tokens N` | `DefaultActAbsTokens` | absolute act gate — likewise |
-| `--window-size N` | the fallback window size | assumed window when the gauge reports `WindowSize==0` |
-| `--respawn-cmd <cmd>` | — | supervised respawn: after the gauge goes stale 20s and the pane is at a shell prompt, run `sh -c <cmd>` to relaunch the agent (requires `--tmux`; 90s cooldown). Refs hk-3w2. |
-
-**Behaviour** (`keeper_cmd.go` `runKeeperSubcommand`): acquire the single-keeper lock →
-boot-doctor (loud, non-fatal) → check `.managed` (absent ⇒ no-op exit 0) →
-resolve tmux target → crash-recovery (resume any interrupted prior cycle) →
-poll the gauge every 5s. Emits `session_keeper_warn` on the first upward warn
-crossing, runs the reset cycle on the act crossing (CrispIdle + no in-flight
-dispatch), and emits `session_keeper_no_gauge` at boot and every 120s when the
-gauge file is absent/stale (so a missing `statusLine.command` is visible, not
-silent).
-
-**Exit codes** (`keeper_cmd.go` `runKeeperSubcommand` doc comment): `0` clean (no-op or signal
-shutdown); `1` argument or I/O error; `2` lock already held by another live
-keeper (only ONE keeper per agent).
-
-### `harmonik keeper enable --agent <name> [flags]` — wire the hooks
-
-IDEMPOTENT wiring of the three keeper stanzas into the GLOBAL
-`~/.claude/settings.json`: `statusLine` + `Stop` hook + `PreCompact` hook. Backs
-up settings.json first, normalizes env-var names, seeds `HANDOFF-<agent>.md`,
-validates the `--tmux` pane, and prints the exact run command
-(`keeper_enable_doctor_cmd.go` `runKeeperEnable`).
-
-Flags (`keeper_enable_doctor_cmd.go` `parseKeeperEnableArgs` / `keeperEnableUsage`): `--project DIR`,
-`--scripts-dir DIR` (auto-detected relative to the binary if omitted),
-`--tmux TARGET`, `--yes-destructive`.
-
-**Safety / gates:**
-- It edits the **GLOBAL** settings.json — a machine-wide change that affects
-  EVERY Claude session on the box (`docs/captain-restart.md` Enablement step 1).
-  Do it deliberately, ideally when no crew is mid-task.
-- `.managed` (the marker that makes the reset cycle LIVE) is **never created
-  without `--yes-destructive`** (`keeper_enable_doctor_cmd.go` `runKeeperEnable`).
-- Known live agents (`flywheel`, `named-queues`, `controlpoints`) are **refused
-  without `--yes-destructive`** — a misconfigured `.managed` could `/clear` an
-  active session (`keeper_enable_doctor_cmd.go` `knownLiveAgents` +
-  `runKeeperEnableEntry`).
-- The `statusLine` stanza is normalized to include `"type":"command"`; without
-  it Claude Code rejects the whole settings.json and disables ALL hooks (hk-hs1,
-  `keeper_enable_doctor_cmd.go` `statusLineTypeIsCommand` / `getOrCreateStatusLine`).
-
-**Exit codes** (`keeper_enable_doctor_cmd.go` `runKeeperEnableSubcommand`): `0` success; `1`
-argument, validation, or I/O error.
-
-### `harmonik keeper doctor --agent <name> [--project DIR]` — read-only drift validator
-
-READ-ONLY; mutates nothing. Also runs automatically at keeper **boot** as a loud
-diagnostic (`keeper_enable_doctor_cmd.go` `runKeeperDoctorAtBoot`). **Run this to
-find out the ACTUAL deployed keeper state.** Checks
-(`keeper_enable_doctor_cmd.go` `runKeeperDoctor` + `keeperDoctorUsage`):
-
-| check | passes when |
+| command | what it does |
 |---|---|
-| `binary` | `harmonik` on PATH and `<30` days old |
-| `statusLine` | `keeper-statusline.sh` wired (+ `HARMONIK_PROJECT=`, `"type":"command"`, no literal `HARMONIK_AGENT=` pollution) |
-| `Stop hook` | `keeper-stop-hook.sh` wired in `hooks.Stop` |
-| `PreCompact hook` | `keeper-precompact-hook.sh` wired in `hooks.PreCompact` |
-| `gauge` | `.harmonik/keeper/<agent>.ctx` exists and is `<5` min old |
-| `idle marker` | `.harmonik/keeper/<agent>.idle` written (Stop hook has fired) |
-| `managed` | `.harmonik/keeper/<agent>.managed` present **and** a watcher is running. The marker is *consent*, never *liveness*: marker-present-with-no-watcher is a silent deadlock and reads RED here (hk-220lv) |
-| `api-key-risk` | `ANTHROPIC_API_KEY` NOT set (else keeper-launched claude bills the API pool, not the subscription) |
+| `harmonik keeper --agent <name> [--tmux T]` | start the watcher; blocks until signal. Exit 2 means another live keeper already holds the lock — there is only ever one per agent. |
+| `harmonik keeper doctor --agent <name>` | read-only drift check. Run this to find the ACTUAL state. |
+| `harmonik keeper enable --agent <name> --tmux T [--yes-destructive]` | idempotent wiring of the statusLine and Stop / PreCompact hooks. |
+| `harmonik keeper config --example` | print a complete `keeper:` config block. |
+| `harmonik keeper restart-now --agent <name>` | run the cycle now. Prints `nonce=rn-<millis>`. |
+| `harmonik keeper ping --agent <name> --nonce N` | inject an ACK line for a liveness check. |
+| `harmonik keeper await-ack --agent <name> --nonce N [--kind restart\|ping]` | confirm the ACK landed. Exit 0 observed; exit 3 timed out and a `session_keeper_ack_timeout` event was written. |
+| `harmonik keeper set-dispatching` / `clear-dispatching --agent <name>` | defer the reset while a queue batch is in flight, then release. Both idempotent. |
+| `harmonik keeper hold` / `release --agent <name>` | suspend the act cutoff while co-working with an operator, then release. |
 
-**Exit codes** (`keeper_enable_doctor_cmd.go` `runKeeperDoctorSubcommand`): `0` all
-checks passed; `1` one or more failed (details on stdout).
+`--warn-abs-tokens` / `--act-abs-tokens` set the band on the watcher.
+`--respawn-cmd` relaunches the agent through tmux after the gauge goes stale at a
+shell prompt.
 
-### `harmonik keeper set-dispatching --agent <name> [--project DIR]` — hold the reset
+**`enable` edits the GLOBAL `~/.claude/settings.json`**, which affects every
+Claude session on the box. Do it deliberately, ideally when no crew is mid-task.
+It refuses to arm a known-live agent without `--yes-destructive`, because a
+misconfigured `.managed` marker can `/clear` a working session.
 
-Writes `.harmonik/keeper/<agent>.dispatching` so `HoldingDispatch → true`
-(`keeper_cmd.go` `runKeeperSetDispatching`). The reset cycle **defers** while this
-marker is present. **Call it BEFORE submitting a batch to the daemon queue** so the
-keeper does not `/clear` you mid-dispatch (`keeperTopUsage` VERBS). Exit codes:
-`0` written; `1` argument / path-traversal / I/O error. Verified by
-`keeper_dispatching_cmd_hkrc51s_test.go` `TestRunKeeperSetDispatching_CreatesMarker`.
+### restart-now and await-ack
 
-### `harmonik keeper clear-dispatching --agent <name> [--project DIR]` — release the hold
+`restart-now` on **yourself** is synchronous and self-verifying: the one call
+resolves the pane, injects the ACK, and drives the `/clear` and resume before it
+returns. Fire it and read the exit code — you do not need an external watcher,
+and you could not be one anyway, since the `/clear` wipes your context before
+your own ACK could reach you.
 
-Removes the `.dispatching` marker so `HoldingDispatch → false`
-(`keeper_cmd.go` `runKeeperClearDispatching`). **Idempotent** — an already-absent
-marker is not an error
-(`keeper_dispatching_cmd_hkrc51s_test.go` `TestRunKeeperClearDispatching_IdempotentWhenAbsent`).
-Call it once all
-in-flight queue work has completed. Exit codes: `0` removed (or already absent);
-`1` argument / path-traversal / I/O error.
+`restart-now` on a **crew** needs an external observer, and that is the captain:
+fire `restart-now --agent <crew>`, capture the printed nonce, then run `await-ack
+--agent <crew> --kind restart --timeout 30s`. The captain's process survives the
+crew's `/clear`.
 
-### `harmonik keeper hold --agent <name> [--project DIR]` / `harmonik keeper release --agent <name> [--project DIR]` — co-working override
+On an ACK timeout the caller owns the escalation — the binary sends no comms, on
+purpose, so nothing bakes in a wrong `--from`. Alert the operator and investigate:
+a timeout means the keeper may be dead, watching the wrong pane, or unable to
+verify the session id.
 
-An **operator/agent override that suspends the ACT/restart cutoff** while you are
-actively co-working with an agent, so the keeper does not `/clear` the session out
-from under a live human collaboration. **WARN still fires under a hold** — only the
-ACT/restart action is suspended (added 2026-06-20, hk-9waz). Distinct from
-`set-dispatching`: a dispatch-hold defers the cycle while a *queue batch* is in
-flight; a hold defers it while an *operator* is in the loop.
+### set-dispatching, and hold
 
-- `harmonik keeper hold --agent <name>` writes the hold marker; `release` clears it
-  early. **`release` is idempotent** — an already-absent hold is not an error.
-- **Auto-revert invariant (it can NEVER survive a restart):** the hold marker is
-  `.harmonik/keeper/<agent>.hold.<sessionID>`, keyed by the **live session-id**.
-  The session-id is re-minted on every `/clear`, so a hold from a previous session
-  is dead on arrival after any restart — it cannot leak past the co-working window
-  it was created for.
-- **Timer backstop** covers operator-walk-away / crash: a hold older than
-  `cadence.hold_ttl` (`.harmonik/config.yaml` `keeper:` block; default **45m**,
-  `DefaultHoldTTL`) is ignored regardless of session-id, so a forgotten hold
-  self-clears.
-- **The hard-ceiling restart OVERRIDES a hold** (the one carve-out): overflow
-  protection wins, so a held session at ≥280k tokens is still force-restarted
-  rather than allowed to overflow the pane.
-- **Honest caveat — version-gated:** a hold is only honored by a keeper watcher
-  running a binary that has the feature (added 2026-06-20). An **older keeper
-  silently ignores the hold marker** and will ACT/restart anyway. Confirm the
-  watching binary is current (`harmonik keeper doctor` reports binary age) before
-  relying on a hold to protect a live co-working session.
+Call `set-dispatching` **before** submitting a batch to the daemon queue so the
+keeper does not `/clear` you mid-dispatch, and `clear-dispatching` once the
+in-flight work drains.
 
----
+`hold` is the different case: a dispatch-hold defers the cycle while a queue
+batch is in flight, a `hold` defers it while an **operator is in the loop**. Warn
+still fires under a hold; only the act-and-restart action is suspended. Two
+things keep a hold from leaking:
 
-## § Warn vs act — what to do at each
+- The marker is keyed by the live session id, which is re-minted on every
+  `/clear`, so a hold can never survive a restart.
+- A hold older than `cadence.hold_ttl` is ignored regardless, so a forgotten one
+  self-clears after an operator walks away.
 
-| crossing | keeper does | YOU do (crew / default) | YOU do (captain / OnDemandRestart) |
-|---|---|---|---|
-| **NOTICE** (≥170k tokens abs / `--warn-pct` fallback) | sends continuity guidance and emits `session_keeper_warn` | Continue active work. Shape its state so a fresh session can resume it. | Same. Use `restart-now` when ready. |
-| **WARN** (≥200k / `--act-pct` fallback) | sends a stronger checkpoint warning | Bring the current unit to a durable checkpoint. | Same. Use `restart-now` when ready. |
-| **HARD** (≥220k / force threshold) | starts the automatic handoff request when the safety gates pass | Finish the handoff. The observation window does not abort useful work. | Same. A late marked handoff remains valid. |
-| **HARD-CEILING** (≥280k, SID-independent) | forces handoff+restart regardless of session_id binding (`thresholds.go` `HardCeilingAbsTokens`, hk-34ac) | **Nothing** — last-resort backstop against a mis-bound keeper. | **Nothing** — same backstop. |
-| **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
-| **operator attached at cycle entry** | act-path goes **warn-only**: cycle injection is not started while a tmux client is active | nothing (`cycle.go` `CyclerConfig.OperatorAttachedFn`, hk-6qf) | nothing |
-| **operator turn during handoff wait** | the keeper still reads the handoff on every tick. A real user transcript turn parks the cycle before `/clear`. Client activity alone does not hide a written handoff | nothing | nothing |
+The hard-ceiling restart overrides a hold. Overflow protection wins.
 
-**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
-it does NOT widen warn or act thresholds. All other safety gates (nonce-confirmed
-handoff, `.managed`, `HoldingDispatch`) remain intact.
+**A hold is only honoured by a keeper new enough to know about it.** An older
+watcher ignores the marker and restarts anyway. Check binary age with `keeper
+doctor` before you rely on a hold to protect a live session.
 
----
+## § Confirming the keeper is actually armed
 
-## § On a keeper warn — crew vs captain
+The gauge writer and the watcher are decoupled: the statusLine hook writes the
+`.ctx` file on every render whether or not any watcher is running. **A fresh
+gauge file does not mean a keeper is active.** Run `harmonik keeper doctor
+--agent <agent>` and read its `live-watcher` check, which probes the lock and so
+distinguishes a running keeper from a stale corpse lockfile.
 
-### Crews (default advisory warn text)
+`doctor` also checks the binary age, the statusLine and hook wiring, the gauge,
+the idle marker, whether `ANTHROPIC_API_KEY` is set (which would bill the API
+pool instead of the subscription), and `.managed`. It reports the last cycle
+phase; a `phase=parked reason=operator_turn_recent` is a transient deferral that
+the watcher retries, not a hold.
 
-On a keeper context-warning:
+**`.managed` present with no watcher is a deadlock, not a degraded mode.** A live
+captain once sat at a typed-but-unsent `/clear` waiting for a cycle that could
+never fire, while config, hooks, gauge, marker and pane all read green. Nothing
+on the box supervises the watcher. If `doctor` shows a missing watcher, start one
+by hand — `harmonik keeper --agent <agent>` — before you rely on the cycle.
 
-1. Refresh your `HANDOFF-<agent>.md` (so the eventual reset carries good state).
-   **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
-2. **Keep working.** Let the keeper cycle you when it crosses ACT.
+Crew keepers are armed by the daemon at `crew start`, which adds a sibling keeper
+window and writes the `.managed` marker. A crew spawned by an older binary is
+unwatched, and `doctor` is what tells you.
 
-### Captain (OnDemandRestart warn text)
+If the keeper is not armed and a crew wedges near the ceiling: `harmonik crew
+stop <name>` then `harmonik crew start <name>` with a fresh mission
+(`docs/known-workarounds.md` § Crew context management).
 
-The captain's warn injection says: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."*
+## § What a restart means for the fleet
 
-At a **clean idle point** (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
-1. Finish the current logical unit of work.
-2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce. **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
-3. Run `harmonik keeper restart-now --agent captain`.
-4. Keep the turn OPEN, stop typing — the keeper fires the cycle on its next tick (≤5 s).
-5. **NEVER exit or terminate your own session on a warn.** The keeper owns the clear→resume cycle; self-terminating
-   exits the captain permanently (no supervised respawn path today).
-
-Handoff carries INTENT only — `STARTUP.md` re-drains comms and re-grounds via live
-state on resume. Do not snapshot live queue/daemon state in the handoff body.
-
----
-
-## § Crew-restart re-hydration
-
-When the keeper cycles a session, it `/clear`s and **`/session-resume`s the SAME
-`session_id`** — so the agent re-runs its full boot sequence from scratch, with
-context cleared but identity and durable state intact.
-
-**In-flight queue work is NOT lost.** A crew's named queue keeps draining on the
-**daemon** independent of the crew's session, and `{queue, epic_id}` are durable
-in beads (`assignee == crew_name`). On resume the crew re-reads its handoff
-frontmatter and the `br show <epic_id> --assignee` mirror, re-`join`s comms with
-a fresh dedupe `seen` set, and re-processes its inbox idempotently. See
-**crew-launch § Self-restart via the keeper** for the exact re-hydration steps,
-and **captain §10 Restart continuity** — *a keeper restart is a NON-EVENT for
-the captain*: do not treat a transient presence drop as a crew failure and do not
-re-`crew start`; the crew returns under the same name.
-
----
-
-## § Confirming keeper status — always check before relying on it
-
-The gauge writer and the watcher are **fully decoupled**: the statusLine hook writes
-`<agent>.ctx` on every Claude Code render regardless of whether any watcher is
-running. A fresh gauge file does NOT mean a keeper is active.
-
-**Always confirm the actual state with `harmonik keeper doctor --agent <agent>`**
-(flag-only, hk-nbft). The `live-watcher` check uses `LiveKeeperPresent` (flock
-probe) to distinguish a running keeper from a stale corpse lockfile — it is the
-authoritative liveness signal, not gauge mtime.
-
-`keeper doctor` also reports the last cycle phase and reason from
-`.harmonik/keeper/<agent>.cycle`. A parked cycle reports
-`phase=parked reason=operator_turn_recent`. This is a transient deferral. It does
-not create an operator hold. The watcher can retry after the activity window.
-
-**`.managed` present with no watcher is a DEADLOCK, not a degraded mode** (hk-220lv).
-A live captain once sat at a typed-but-unsent `/clear` waiting for a restart cycle
-that could never fire: the watcher had died and every other surface — config, hooks,
-fresh gauge, `.managed`, live pane — was still green. Nothing on the box supervises
-the watcher: the daemon's only liveness probe (`probeKeeperLiveness`) is one-shot at
-crew spawn, warn-only, and DISABLED unless `keeper.timings.flock_acquire_grace` is
-set in `.harmonik/config.yaml`. So if `doctor` shows `managed` red naming a missing
-watcher, start one by hand — `harmonik keeper --agent <agent>` — before you rely on
-the restart cycle.
-
-Crew keepers are auto-armed by the daemon (`HandleCrewStart → SpawnCrewSession`,
-hk-rmy1, hk-lcga, hk-tt9q). On `crew start` the daemon adds a sibling `keeper`
-window in the crew session running full force-cut mode. The `.managed` gate is still
-required — the daemon writes it as part of `HandleCrewStart`. If a crew was spawned
-by a pre-wiring binary it will be unwatched; `doctor` detects this via the
-`live-watcher` check.
-
----
-
-## § Quick reference
-
-```bash
-# All keeper verbs are FLAG-ONLY (hk-nbft) — pass --agent <name>; a POSITIONAL agent
-# is rejected with exit 2 (a positional silently became an agent literally named the
-# flag, the recurring restart-now failure). Use --agent everywhere below.
-
-# Is the keeper actually armed for this agent? (run this first — settles the drift)
-harmonik keeper doctor --agent <agent> --project $HARMONIK_PROJECT
-
-# Wire the hooks (GLOBAL settings.json edit; --yes-destructive arms the reset cycle)
-harmonik keeper enable --agent <agent> --tmux <pane> --yes-destructive
-
-# Start the watcher. Set the band with ABSOLUTE tokens: the pct flags are tighten-only
-# and a loosening value makes the keeper refuse to start (see § The two thresholds).
-# Read the current defaults from `internal/keeper/thresholds.go` or
-# `harmonik keeper config --example` rather than copying numbers out of a runbook.
-harmonik keeper --agent <agent> --tmux <pane> \
-  --warn-abs-tokens <DefaultWarnAbsTokens> --act-abs-tokens <DefaultActAbsTokens>
-
-# Defer the reset while a queue batch is in flight, then release
-harmonik keeper set-dispatching --agent <agent>
-harmonik keeper clear-dispatching --agent <agent>
-
-# Suspend the ACT/restart cutoff while co-working with an agent, then release early.
-# WARN still fires; auto-reverts on restart (session-id-keyed) + 45m timer backstop.
-harmonik keeper hold --agent <agent>
-harmonik keeper release --agent <agent>
-
-# Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
-harmonik keeper restart-now --agent captain [--project DIR]
-
-# Confirm a restart actually landed.
-# SELF restart: restart-now is synchronous + self-verifying in-process — no
-# external wrapper needed (keeper-restart-verified.sh is RETIRED, deleted by ES8).
-# CREW restart: the captain runs await-ack directly after restart-now:
-harmonik keeper await-ack --agent <crew> --nonce rn-<millis> --kind restart --timeout 30s
-
-# Self-service liveness check (live agent — fresh nonce each time):
-harmonik keeper ping --agent <self> --nonce ping-$(date +%s%3N)
-harmonik keeper await-ack --agent <self> --nonce ping-<same> --kind ping --timeout 15s
-```
-
-If the keeper is NOT armed (per `doctor`) and a crew wedges at ~200k tokens:
-`harmonik crew stop <name>` then `harmonik crew start <name>` with a fresh
-mission (known-workarounds.md §Crew context management).
-
----
-
-## References
-
-- `cmd/harmonik/keeper_cmd.go` — the watcher, `set-dispatching` /
-  `clear-dispatching`, flags, exit codes, `keeperTopUsage`.
-- `cmd/harmonik/keeper_enable_doctor_cmd.go` — `enable` / `doctor`, the
-  settings.json wiring, the doctor check table, usage strings.
-- `internal/keeper/thresholds.go` — **the single source of truth for the threshold
-  defaults** (`DefaultWarnAbsTokens`, `DefaultActAbsTokens`, `DefaultForceActAbsOffset`,
-  `HardCeilingAbsTokens`, `DefaultWarnPctCeil`, `DefaultActPctCeil`), the
-  `min(abs, pctCeil × window)` formula in `minAbsOrPctCeil`, and the tighten-only
-  guarantee in `EffectiveBandTokens`. Shared by both watcher and cycler. Read the numbers
-  here, not out of prose.
-- `internal/keeper/cycle.go` — CrispIdle / force-act / operator-attached gating
-  and the reset-cycle state machine.
-- `internal/keeper/watcher.go` — the poll loop, `FallbackWindowSize`, warn
-  emission.
-- `cmd/harmonik/keeper_dispatching_cmd_hkrc51s_test.go` — the
-  set/clear-dispatching contract (markers, idempotency, exit codes).
-- `docs/captain-restart.md` — the captain reset cycle and the §Current
-  deployment state drift note.
-- `docs/known-workarounds.md` §Crew context management — the
-  not-deployed-for-crews workaround.
-- `.claude/skills/crew-launch/SKILL.md` § Self-restart via the keeper — crew
-  re-hydration.
-- `.claude/skills/captain/SKILL.md` §10 — captain restart continuity + the
-  do-not-self-terminate rule.
+A keeper restart is a NON-EVENT. In-flight queue work is not lost — a crew's
+named queue keeps draining on the daemon independent of the session, and
+`{queue, epic_id}` are durable in beads. On resume the agent re-runs its own boot
+sequence with a fresh dedupe set. Do not read a transient presence drop as a crew
+failure and do not `crew start` a replacement; the crew comes back under the same
+name. The crew-side steps are in the **crew-launch** skill, § Restart via the
+keeper.

@@ -134,7 +134,7 @@ both crew (warn-only) and captain keepers.
 > `force_act_abs_*`, or `max_boot_grace_total` on a crew keeper parses fine but has **no runtime
 > effect** — the crew self-restarts via the actionable-warn handshake (see
 > [`docs/keeper-restart-now-ack-protocol.md`](../../keeper-restart-now-ack-protocol.md) §"Actionable
-> warn → self-service restart"), and the crew-launch skill's "§ Self-restart via the keeper" prose.
+> warn → self-service restart"), and the crew-launch skill's "§ Restart via the keeper" prose.
 
 ---
 

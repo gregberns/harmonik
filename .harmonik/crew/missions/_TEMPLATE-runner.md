@@ -28,12 +28,14 @@ You are crew **<NAME>**, owning epic **<BEAD_ID>** on queue **<NAME>-q**. Report
 Follow the standard crew-launch skill dispatch loop (`.claude/skills/crew-launch/SKILL.md`):
 drain **<NAME>-q** → claim bead → implement → commit → next.
 
-**Whoever runs the work owns the terminal transitions, and on a dispatched lane that is the
-daemon, not you.** Do not set `in_progress` and do not close. A pre-set status makes the bead
-undispatchable, and the run then goes nowhere with no error. A close you make by hand leaves
-the ledger out of step with the run state, so the completion event never fires. A crew closes
-its own beads only when this mission file grants it in writing. The captain or the operator
-writes that grant. It is not something to work out at run time from what looks idle.
+**Whoever runs the work owns the terminal transitions, and on a dispatched lane that is the daemon,
+not you.** Do not set `in_progress` and do not close. A pre-set status makes `queue submit` refuse
+the bead (`bead_already_dispatched`, `-32015`, exit 1), so the work never reaches the queue. A close
+you make by hand leaves the ledger out of step with the run state, so the completion event never
+fires. A bead you work by hand and submit to no queue is the other case, and it needs no grant:
+close that one yourself, because nothing else will — `harmonik reconcile` closes only beads whose
+commit carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. The predicate is
+what you submitted, never what looks idle.
 
 ## Keeper restart
 

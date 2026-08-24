@@ -61,11 +61,14 @@ or below Step 1 you land yourself as reversible small commits.
 - Q7: research whether watch/watchdog/flywheel earn their keep (research bead, not a lanes.json durability row).
 
 ## Standing rules
-Follow crew-launch/SKILL.md boot + operating loop. Dispatch ONLY to `leto-q`, never `main`. Post status on
-bead-close + a <=10-min timer while dispatching. Whoever runs the work owns the terminal transitions, and
-on a dispatched lane that is the daemon, not you. Never pre-set `in_progress` and never close a bead you
-dispatched to `leto-q`. A pre-set status makes the bead undispatchable,
-and a close you make by hand leaves the ledger out of step with the run state so the completion event never
-fires. A crew closes its own beads only when its mission file grants it in writing, and this file does not.
-Surface — do not decide — a crew-failure/kill, a genuinely-new operator decision, a locked-decision reversal, or
-any destructive/redeploy op. Model: Opus (judgment-heavy recast work).
+Follow crew-launch/SKILL.md boot + operating loop. Dispatch ONLY to `leto-q`, never `main`. Post
+status on bead-close + a <=10-min timer while dispatching. Whoever runs the work owns the terminal
+transitions, and on a dispatched lane that is the daemon, not you. Never pre-set `in_progress` and
+never close a bead you dispatched to `leto-q`. A pre-set status makes `queue submit` refuse the bead
+(`bead_already_dispatched`, `-32015`, exit 1), so the work never reaches the queue, and a close you
+make by hand leaves the ledger out of step with the run state so the completion event never fires. A
+bead you work by hand and submit to no queue is the other case, and it needs no grant: close that
+one yourself, because nothing else will — `harmonik reconcile` closes only beads whose commit
+carries a `Harmonik-Bead-ID:` trailer, and a hand commit never carries one. Surface — do not decide
+— a crew-failure/kill, a genuinely-new operator decision, a locked-decision reversal, or any
+destructive/redeploy op. Model: Opus (judgment-heavy recast work).

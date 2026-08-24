@@ -64,8 +64,7 @@ format (`.harmonik/crew/<name>.json`).
 
 The assessor is **not a crew** for handoff purposes, even though it is launched
 through the `crew start` verb. The crew schema (`specs/crew-handoff-schema.md` v1)
-mandates exactly six fields — `schema_version, crew_name, queue, epic_id, goal,
-captain_name` — with **no `branch`, no `gate`, no `commit`**. But the assessor's
+has **no `branch`, no `gate`, no `commit`**. But the assessor's
 load-bearing inputs are precisely `branch` (the branch-under-test), `gate` (which
 of the two gates to run), and — for the deploy gate — `commit` (the GATE-0 target
 SHA). Reusing the crew schema would leave every one of these in the unparseable

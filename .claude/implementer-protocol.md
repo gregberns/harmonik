@@ -113,7 +113,7 @@ fix) may use `Trivial: true` instead.
 
 ```
 git commit -m "$(cat <<'EOF'
-<type>(<scope>): <subject ≤72 chars>
+<type>(<scope>): <subject>
 
 - <file>: <one-line bullet>
 - <file>: <one-line bullet>
@@ -126,6 +126,8 @@ EOF
 ```
 
 The quoted `'EOF'` prevents shell expansion. After committing, verify with `git show HEAD --format='%s'` — output MUST be ONLY the subject line, NOT bullets collapsed in.
+
+What is REQUIRED here is the heredoc pattern and the trailers, not the subject's shape. `harmonik commit-msg validate` polices review honesty and nothing else: the type set, the 72-character ceiling, the trailing period and the scope charset are checked by no gate. Conventional-Commits form under ~72 characters is house style — write it that way because the log reads better, not because something will reject you.
 
 Do NOT add `## Why / ## What / ## Spec alignment / ## Test plan / ## Risk` sections.
 (`docs/foundation/project-level/build-practices.md` once directed a `scenario-test exempt:`
@@ -158,10 +160,11 @@ At the end of every dispatch, report:
 - Any follow-up beads you created (with their IDs)
 - Any deviations from the bead body or brief, with reasoning
 
-## Bead-close ownership (DAEMON-OWNED — do NOT close beads)
+## Bead-close ownership (the daemon dispatched you — do NOT close beads)
 
 DO NOT run `br close`, `br update --status closed`, or any terminal bead transition.
-The daemon owns all bead lifecycle transitions (open -> in_progress -> closed/failed).
+The daemon owns the lifecycle transitions (open -> in_progress -> closed/failed) of every bead
+it dispatches, and every bead you see under this protocol is one it dispatched.
 Running `br close` from the worktree causes premature closure that leaks to the parent
 repo even when no implementation has landed — this was the root cause of the ~80%
 "close-without-impl" failure rate in v60.

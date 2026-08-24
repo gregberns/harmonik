@@ -119,8 +119,10 @@ type RunCtx struct {
 	// skips collision check when true.
 	AgentTaskReAttach bool
 
-	// PriorVerdictFile is the absolute path to the archived reviewer verdict for the
-	// preceding iteration. Set only for Phase = implementer-resume; empty otherwise.
+	// PriorVerdictFile is the absolute path to the prior iteration's feedback file,
+	// for Phase = implementer-resume. NOTHING ASSIGNS IT: it is empty on every
+	// production path, and the agent-task brief derives
+	// .harmonik/reviewer-feedback.iter-<N-1>.md instead.
 	PriorVerdictFile string
 
 	// PriorVerdictSummary is a short human-readable summary of the prior verdict.

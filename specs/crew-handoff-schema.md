@@ -72,7 +72,7 @@ it is human-readable guidance for the crew agent.>
 - The frontmatter MUST begin on line 1 with exactly `---` (no leading whitespace,
   no trailing spaces).
 - The frontmatter MUST be closed with a `---` line before any Markdown body.
-- All six fields listed in §3 MUST be present. A handoff missing any required
+- All six required fields listed in §3 MUST be present. A handoff missing any required
   field is **invalid** — the crew MUST NOT parse partial frontmatter and dispatch.
 - Field values are parsed as YAML. `goal` SHOULD be quoted (double-quotes) if it
   contains special YAML characters.

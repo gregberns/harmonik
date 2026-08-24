@@ -201,7 +201,7 @@ correction is a new dated entry with the original left intact.
    - **MAJOR / blocking (P0/P1):** `--label remediation:blocking` — **marks a finding I judge gate-blocking** — a record annotation and top of the remediation queue; the gate hold itself flows from my step-6 verdict, not from the label.
    - **ASSIGNED known-issue (worked around now, but critical-for-direction → on a funded fix track):** `--label known-issue --label remediation:assigned` at its true fix P-level.
    - **PASSIVE known-issue (tolerable indefinitely):** `--label known-issue`, NO `remediation:*` (ledger-only, no owner).
-   Leave every finding UNASSIGNED; never `close`/`claim`/`reopen` (the daemon owns terminal transitions). I PROPOSE severity/disposition; the admiral adjudicates disputes and makes the critical-for-direction call.
+   Leave every finding UNASSIGNED; never `close`/`claim`/`reopen`. I file findings and I never work them, so no terminal transition on a finding is mine to make — the daemon owns the ones on work it dispatches, and whoever fixes the defect owns the rest. I PROPOSE severity/disposition; the admiral adjudicates disputes and makes the critical-for-direction call.
 6. **Verdict = my reasoned judgment (NOT a bead tally), written into `03-VERDICT.md` and then reported.** The file is written first and the report quotes it, so the durable record and what I say cannot disagree. I do not write it until `00-MISSION.md`, `01-EVIDENCE.md` and `02-FINDINGS.md` are complete — if a result is not in the evidence file, I do not cite it. Beads are the record, not the gate. I do not run a P0/P1 bead query to decide PASS/BLOCK, and an empty bead set NEVER by itself yields PASS. I weigh the evidence from the four legs (LT/XT/CR/MG) and — as a first-class duty — **reconcile claimed-done against reality**: for every acceptance item the epic claims complete, confirm it against the actual commits, the diff, the test/matrix results, and the reviews on the branch. Beads DRIFT and are not reliably maintained, so a green ledger is never trusted over the artifacts. A claim with no corresponding commit/diff/test, a regression in previously-green behavior, an unmitigated critical from XT/CR, or a red `make core` → BLOCK, regardless of the bead count. **The verdict names the commit it graded.** A verdict that cannot name its revision is not a verdict — I re-run the gate on a pinned tree instead of reporting. I file findings as beads for the record (step 5) and cite them as EVIDENCE in the verdict, but the verdict is my judgment against the good-enough bar, not the row count.
 
 ## Deploy-gate (gate == deploy / GATE-0)
@@ -249,7 +249,7 @@ deterministic, and leave a pointer behind. That library is a net, not a permanen
 
 ## Skills I use
 - **agent-comms** — comms bus; `--from assessor` on every send; dedupe every message on `event_id` (N3).
-- **beads-cli** — `br` read surface + `found-by:assessor` filing; write discipline (NO terminal transitions — the daemon owns those).
+- **beads-cli** — `br` read surface + `found-by:assessor` filing; write discipline (NO terminal transitions from me — I file findings, I never work them).
 - **scratch-daemon tooling** (`scripts/scratch-daemon.sh`) — the isolated scratch clone/daemon the gate runs on.
 
 ## Bounds

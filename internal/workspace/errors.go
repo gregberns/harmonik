@@ -157,21 +157,24 @@ var ErrGitignoreWriteForbidden = errors.New("workspace: GitignoreWriteForbidden"
 // Downstream routing: daemon refuses to start; operator must upgrade git.
 var ErrGitVersionTooOld = errors.New("workspace: GitVersionTooOld")
 
-// ErrNotFound is returned by ArchiveVerdict when the source verdict file
-// ${workspace_path}/.harmonik/review.json does not exist at the time of the
-// archive call.
+// ErrNotFound is the sentinel Class maps to the string "NotFound".
 //
-// Triggered when: ArchiveVerdict is called but .harmonik/review.json is absent
-// (workspace-model.md §4.7.WM-027a / T-WM-016).
+// IT IS NOT IN THE SPEC. workspace-model.md §8 names twelve classes and this is
+// not one of them — `grep NotFound specs/workspace-model.md` returns nothing.
+// Every other sentinel in this file cites the §8 row it implements; this one has
+// no row to cite.
 //
-// Workspace transition: none — the caller decides how to handle a missing
-// verdict source; likely a malformed-reviewer-outcome per WM-027a §(e).
-//
-// Downstream routing: caller routes per handler-contract.md §4.6 failure rules.
+// NOTHING IN THIS PACKAGE PRODUCES IT TODAY EITHER. Its only producer was
+// ArchiveVerdict, which archived .harmonik/review.json to
+// .harmonik/review.iter-<N>.json; no caller ever ran it, so the function was
+// deleted. Nothing outside this file mentions the sentinel either, so it is a
+// deletion candidate rather than a spec obligation. Do not restore it to the
+// §8 list in a comment to make it look like one.
 var ErrNotFound = errors.New("workspace: NotFound")
 
-// Class returns the canonical error-class string for err as defined in §8 of
-// specs/workspace-model.md.
+// Class returns the canonical error-class string for err. The first twelve are
+// the twelve classes §8 of specs/workspace-model.md defines, in the order that
+// table lists them. "NotFound" is the one that is NOT in §8 — see ErrNotFound.
 //
 // The return values are:
 //   - ""                             if err is nil or does not match any known class.

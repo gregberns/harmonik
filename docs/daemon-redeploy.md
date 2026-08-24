@@ -36,7 +36,7 @@ from a stale-binary daemon.
 
 ## GATE 0 (MANDATORY, operator-mandated 2026-07-05): end-to-end tests on the new code
 
-**Do NOT proceed to the runbook until this passes.** A green unit suite is NOT this gate, and cycling the live daemon to watch a canary is NOT this gate (never test on the primary daemon — see orchestrator-rules §"PRE-DEPLOY END-TO-END TEST GATE").
+**Do NOT proceed to the runbook until this passes.** A green unit suite is NOT this gate, and cycling the live daemon to watch a canary is NOT this gate (never test on the primary daemon — see the orchestrator-rules skill, hard rule 8, the pre-deploy end-to-end gate).
 
 1. For the behavior this deploy changes, ADD at least one **end-to-end test that reproduces the daemon's real launch path in ISOLATION** — ephemeral worktree / stub HTTP server / throwaway repo, exercising the actual argv+env+sandbox-wrap+models.json+commit path, not a mock of the thing under test.
 2. The test must prove the fix WORKS end-to-end (not just that a gate returns the right value) AND that neighbouring paths don't regress.

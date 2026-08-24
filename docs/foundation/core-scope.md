@@ -325,7 +325,7 @@ section used to say "No PRs — now or later" and "Direct commits to `main`".
 - Trivial commits (typo, one-line obvious fix) MAY skip reviewer, and still run `make full`.
 - **Human review is asynchronous after commit** — user reads `git log` + diffs. Never a gate.
 
-**Commit conventions: Conventional Commits, closed type set.** `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `spec` / `build` / `perf`. Scopes preferred (subsystem ID or package). Subject ≤72 chars, imperative.
+**Commit conventions: Conventional Commits, closed type set.** `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `spec` / `build` / `perf`. Scopes preferred (subsystem ID or package). Subject short and imperative. This is house style: since 2026-08-23 no gate reads the subject.
 
 **Required trailers when applicable:**
 - `Refs: <bead-id|kerf-codename>`
@@ -340,7 +340,7 @@ Reviewed-By: none — no reviewer was reached for this commit
 Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": ["no-reviewer-reached"], "notes": "<what was verified instead, and by whom>"}
 ```
 
-`build-practices.md` §Commit conventions owns these rules; `scripts/validate-commit-msg.sh` enforces them.
+`build-practices.md` §Commit conventions owns these rules; the Go package `internal/commitmsg` enforces the trailer half, reached as `harmonik commit-msg validate <file>`.
 
 **Commit body for non-trivial commits:** Why / What / Spec alignment / Test plan / Risk sections (same info the old PR template had, now embedded in the commit).
 

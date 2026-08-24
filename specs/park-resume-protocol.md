@@ -7,10 +7,10 @@ spec-id: park-resume-protocol
 status: draft
 spec-shape: contract
 spec-category: foundation-cross-cutting
-version: 1.1.1
+version: 1.1.2
 spec-template-version: 1.1
 owner: sleep-wake-author
-last-updated: 2026-07-30
+last-updated: 2026-08-23
 depends-on:
   - crew-handoff-schema
   - queue-model
@@ -60,7 +60,7 @@ plumbing rename candidates; see `internal/daemon/quiesce.go`.)
 
 | Role | Session | Primary watcher |
 |---|---|---|
-| **Captain** | One per project; MUST NOT exit | `comms recv --agent captain --follow --json` + `/loop 12m` |
+| **Captain** | One per project; MUST NOT exit | `comms recv --agent captain --follow --json` + `harmonik subscribe --types epic_completed --json` |
 | **Crew** | One per named queue; created/stopped by captain | `comms recv --follow --json` + `harmonik subscribe --heartbeat 60s` |
 | **Daemon** | Deterministic Go process; stays up across fleet sleep | Wind-down coordinator (`internal/daemon/quiesce.go`, M1) |
 
@@ -128,7 +128,7 @@ last output line, the crew is **at rest** (see §0):
 When the captain's `comms recv --follow` Monitor exits with the park message,
 the captain is **at rest**:
 
-1. **Cancel the `/loop 12m` health tick.** Do not let it re-arm.
+1. **Stop the `epic_completed` subscribe.** Do not re-arm it.
 2. **Do NOT re-arm `comms recv --follow`.** The Monitor self-exited; leave it
    stopped.
 3. The captain pane remains open but idle (MUST NOT self-exit — R-C4.11).
@@ -150,8 +150,10 @@ On pane nudge:
 1. Run the full `STARTUP.md` boot sequence (Steps 1–6). Treat the wake exactly
    like a fresh session start — re-derive live state, do NOT trust pre-sleep
    snapshots.
-2. Re-arm `comms recv --follow` (Step 5 in STARTUP.md).
-3. Re-arm the `/loop 12m` health tick (STARTUP.md §6 Watcher 2).
+2. Re-arm `comms recv --follow` (STARTUP.md Step 6).
+3. Re-arm the `epic_completed` subscribe (STARTUP.md Step 6, the second standing
+   watcher). Captain liveness is the ops-monitor's job — there is no health-tick loop
+   to re-arm.
 4. Staff all ready lanes (autonomous duty — same as fresh boot).
 
 ### 4.2 Crew WAKE
@@ -234,7 +236,7 @@ L1 (`drain`) for operator-issued PARK; L0 (`abandon`) for TEARDOWN.
 
 | Role | L0 | L1 | L2 | L3 |
 |---|---|---|---|---|
-| **Captain** | `harmonik sleep --force` immediately; no handoff | Cancel health tick + subscribe; `harmonik sleep` (veto-gated) | Run `/session-handoff`; `harmonik sleep` | Stay alive; re-arm watcher; sleep when drain fires |
+| **Captain** | `harmonik sleep --force` immediately; no handoff | Stop both watchers; `harmonik sleep` (veto-gated) | Run `/session-handoff`; `harmonik sleep` | Stay alive; keep both watchers armed; sleep when drain fires |
 | **Crew** | `harmonik crew stop <name>` immediately | Stop subscribe Monitor; let current run commit; then `crew stop` | Finish run; write `/session-handoff`; captain integrates; `crew stop` | Continue operating until epic drains; then `crew stop` |
 | **Queue** | `harmonik queue pause --force` | `harmonik queue pause` (drains current item) | Same as L1, but wait for handoff write before pause confirmation | No pause; natural drain |
 
@@ -280,7 +282,7 @@ Operator → `harmonik sleep [--level L2]`
   │
   ├─ Captain:
   │    1. Receives park message (after crew handoffs integrated)
-  │    2. Cancels `/loop 12m` + subscribe Monitor
+  │    2. Stops both watchers (comms recv + `epic_completed` subscribe)
   │    3. Writes own `/session-handoff` (captain-level state summary)
   │    4. Pane stays alive; enters at-rest state
   │
@@ -314,7 +316,7 @@ Captain initiates:
   3. For each crew with a running epic:
        • Sends park message (reason: semantic_park, level: L3)
        • Crew continues to natural queue empty, then self-stops (L3 finish-lane)
-  4. Captain cancels `/loop 12m` + subscribe Monitor
+  4. Captain stops both watchers (comms recv + `epic_completed` subscribe)
   5. Captain pane alive; enters at-rest state
 
 Terminal state: fleet ASLEEP (captain at rest; crews either stopped or draining
@@ -360,7 +362,7 @@ Keeper WARN fires on crew session:
 Escalation to L0 (abandon): if the crew reaches the ACT ceiling before
   completing the L2 handoff, the keeper triggers `/clear` + `/session-resume`.
   The active bead returns to `open` (stranded, L0 semantics). The captain
-  re-dispatches on the next health tick.
+  re-dispatches on its next backlog pull.
 ```
 
 **Note:** W4 is crew-autonomous — it does NOT require captain initiation. The

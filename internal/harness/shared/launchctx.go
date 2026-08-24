@@ -81,9 +81,10 @@ type LaunchCtx struct {
 	// re-launch semantics).
 	AgentTaskReAttach bool
 
-	// PriorVerdictFile is the absolute path to the archived reviewer verdict
-	// for the immediately preceding iteration (.harmonik/review.iter-<N-1>.json).
-	// Set only for phase = implementer-resume; empty otherwise.
+	// PriorVerdictFile is the absolute path to the prior iteration's feedback
+	// file, for phase = implementer-resume. NOTHING ASSIGNS IT: it is empty on
+	// every production path, and workspace.AgentTaskPayload then derives
+	// .harmonik/reviewer-feedback.iter-<N-1>.md instead.
 	PriorVerdictFile string
 
 	// PriorVerdictSummary is a short human-readable summary of the prior

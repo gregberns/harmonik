@@ -57,9 +57,11 @@ different: it reads every commit from the baseline forward and reports what it
 finds. **No target calls it that way any more.** It read 236 commits, took 47
 seconds, named 109 rejections and exited 0 regardless, so `make full` dropped
 it and keeps `--head-only` alone.
-To check one message before you commit it, call the validator directly:
-`harmonik commit-msg validate <file>`. It exits 0 on a clean message and 1 with
-every problem numbered on stderr. The rules live in the Go package
+To check one message before you commit it, call the validator directly, from
+source: `go run ./cmd/harmonik commit-msg validate <file>`. It exits 0 on a
+clean message and 1 with every problem numbered on stderr. The subcommand
+landed on 2026-08-23; an installed `harmonik` older than that exits 2 with
+`unknown subcommand "commit-msg"`. The rules live in the Go package
 `internal/commitmsg`; the shell validator it replaced is gone.
 
 ## The check targets

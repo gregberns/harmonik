@@ -104,7 +104,17 @@ that gives you the current text. Refs `hk-jlb13`.
   cover the review trailers only: a non-trivial commit needs `Reviewed-By:` and
   `Review-Verdict:`, an approval must name a reviewer this repo ships and carry
   `flags`, and no verdict may be self-authored. Subject shape is no longer
-  checked. Run `harmonik commit-msg validate <file>` before you commit.
+  checked. Validate before you commit, and run it **from source**:
+
+      go run ./cmd/harmonik commit-msg validate <file>
+
+  Not the installed `harmonik`. This subcommand landed on 2026-08-23, and the
+  installed copy is older. It exits 2 and says `unknown subcommand
+  "commit-msg"`. The refusal is one line, and 63 lines of general help follow
+  it — read the exit code, not the screen. Do not repair it with `go install`.
+  `/Users/gb/go/bin/harmonik` is the path the running daemon and its supervisor
+  both start from, so a new build there lands at the next restart. That is a
+  redeploy, and a redeploy needs assessor sign-off.
 - Close your own beads once the fix is verified. The rule that the daemon owns
   terminal transitions applies when a daemon runs the work, and none does here.
 - `br --db /Users/gb/github/harmonik/.beads/beads.db` — there is one ledger and

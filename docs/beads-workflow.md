@@ -125,7 +125,9 @@ It reads the review trailers and nothing else — the subject shape, the closed 
    must name none; and no verdict may be self-authored.
 
 Because those trailers are multi-line-ish and JSON-quoted, write the message to a file and use
-`git commit -F`. Check the file first with `harmonik commit-msg validate <file>`. The only bypasses
+`git commit -F`. Check the file first with `go run ./cmd/harmonik commit-msg validate <file>`. Run
+it from source: the subcommand landed on 2026-08-23, and an older installed `harmonik` exits 2.
+The only bypasses
 are a literal `Trivial: true` trailer (typos and whitespace only), merge / `fixup!` / `squash!`
 subjects, and GitHub's synthetic pull-request merge commit. `--no-verify` is forbidden.
 

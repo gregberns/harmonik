@@ -5,7 +5,7 @@ type: task
 priority: 0
 labels: [lint, gate, clear-the-ground]
 depends_on: []
-blocks: [lint-ratchet-mutation-proof, core-cluster-map, core-split-by-cluster, runregistry-extract, harnesspick-extract, spendmeter-extract, handlerpause-extract, cli-extract-logic]
+blocks: [lint-ratchet-mutation-proof, core-cluster-map, core-split-by-cluster, runregistry-extract, harnesspick-extract, spendmeter-extract, handlerpause-extract, cli-extract-logic, lint-burn-context-plumbing, lint-burn-copyloopvar, lint-burn-errcheck, lint-burn-error-returns, lint-burn-exhaustive, lint-burn-forbidigo, lint-burn-gocritic, lint-burn-gosec, lint-burn-last-three-linters, lint-burn-prealloc-unconvert, lint-burn-revive, lint-burn-unparam, lint-burn-unused]
 workstream: W1
 batch: 1
 ---

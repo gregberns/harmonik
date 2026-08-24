@@ -4,136 +4,106 @@ crew_name: alpha
 queue: none
 epic_id: none
 captain_name: operator
-goal: "Run real work through the daemon on the Pi harness against the DGX until it works reliably, and fix what stops it first. Own the core — internal/daemon and the run machine. HANDOFF-alpha.md is the state; LANES.md is the order."
+goal: "Keep charlie fed. Write and rank the task files in plans/2026-08-23-clear-the-ground/ so charlie always has ready work to push through the queue. Do not implement them. The DGX and the Pi harness are bravo's, not this lane's. HANDOFF-alpha.md is the state."
 ---
 
-# Mission: alpha — the core lane
+# Mission: alpha — the lane that plans the work
 
-**You are one of two hand-run delivery lanes finalizing
-`plans/2026-07-27-delete-and-rewrite/`.** You and bravo are the parallelism.
+**You prepare work; charlie runs it.** You are the planning half of the
+`plans/2026-08-23-clear-the-ground/` program. Charlie is the execution half: it
+takes what you list, submits it to the queue, and the daemon's implementers write
+the code in their own worktrees. Neither half works without the other, and the
+half that stalls first is normally this one, because an empty ready list looks
+exactly like a quiet day.
 
 **The daemon is UP as of 2026-08-15 and is dispatching real beads.** The older
 "the daemon is down, nothing dispatches to you" framing in this file and in
-LANES.md is retired. You still hand-run your own lane work and close the beads
-you ran by hand — nothing dispatches to *you*. But the daemon now runs beads, and
-making it run them on the DGX is the job below.
+LANES.md is retired. Nothing dispatches to *you* — you work at the keyboard and
+you close the beads you ran by hand. But the beads you WRITE are run by the
+daemon, through charlie, so a task file is a real delivery and not paperwork.
 
 
 ## THE OBJECTIVE — read this before anything else in this file
 
-**Run real beads through the daemon on the Pi harness against the DGX, watch what
-breaks, and fix that first.** The DGX is the always-on GPU box on Tailscale that
-serves a local model; in this file "the box" always means that machine and
-nothing else. The point is to move load off the operator's own Claude and Codex
-tokens and onto it. That has been the objective for
-weeks. It outranks every other framing in this file, in the handoffs, and in the
-plan documents. If something you are about to do does not move that forward, it
-is not the job.
+**Keep charlie fed.** Charlie is the agent that pushes beads through the queue for
+the `plans/2026-08-23-clear-the-ground/` program. It converts a task file into a
+bead, submits it to the `charlie-batch` queue, watches it land on `work/charlie-batch-1`,
+and takes the next one. **It does not decide what to work on and it does not write
+task files. That is this lane.** If charlie has nothing ready to run, that is a
+failure here.
 
-**This is a DOING task, not an analysis task.** The measurement that counts is a
-real bead that ran to green on the Pi harness against the DGX. A passing test
-suite is not that. A diagnosis is not that. Neither is a report saying the box
-looks healthy — it has looked healthy while being completely unfed. Submit work,
-watch the run, and read `harness_selected` / `model_selected` in the event stream
-to confirm which harness actually took it. Do not trust the intent; confirm the
-event.
+The measurement that counts is: **is there ready work in front of charlie right now,
+and how many rows are left before the list is empty.** A tidy plan document is not
+that. A correct analysis is not that. Count the genuinely-ready rows and keep the
+number above zero.
 
-**The beads you submit must be work worth doing.** A bead whose whole deliverable
-is text — a comment corrected, a doc claim fixed, prose tightened, a README edited
-— does not count and must not be dispatched. The operator read twenty such commits
-and said there was almost nothing of value in them, and that judgement is correct.
-Submit beads that repair something that is broken or build something that does not
-exist yet. "Correct a false comment" became the default unit of work here because
-it always succeeds, which is the reason it is the wrong one.
+**The program directory is the only source of work.**
 
-**Start the daemon from a build you know is good, and do not redeploy for its own
-sake.** The running daemon is the binary at `/Users/gb/go/bin/harmonik`; a
-redeploy is worth doing when the new build is MEASURED better, not when it is
-merely newer. If the daemon is already up on a good build, leave it alone and go
-submit work. Getting beads onto the box outranks getting the newest commit onto
-the box.
+| Path | What it is |
+|---|---|
+| `plans/2026-08-23-clear-the-ground/PLAN.md` | Why the program exists, and its nine workstreams. Changes rarely. |
+| `plans/2026-08-23-clear-the-ground/TASKS.md` | **Charlie's processing list.** The rows that are ready to run. |
+| `plans/2026-08-23-clear-the-ground/tasks/` | One self-contained file per task, shaped to become a bead with no interpretation. |
+| `plans/2026-08-23-clear-the-ground/README.md` | The rules for that directory. Read it before adding anything. |
 
-**Priority order, until the Pi path is reliable:**
+**Writing a task file and listing it are two separate acts.** A file goes in
+`tasks/` as soon as it is written. It reaches `TASKS.md` only when its dependencies
+are settled. A file that exists and is not listed is a normal state, not an
+oversight, so `tasks/` always holds at least as many files as `TASKS.md` holds rows.
 
-1. Anything that stops a bead from running on Pi against the box, or that makes it
-   silently run somewhere else. These outrank every other bead in the ledger,
-   including anything the plan documents rank higher. The operator set this order
-   directly, which is what lets it outrank them — see the grant below.
-2. Anything that makes a Pi failure look like something it is not — a fast failure
-   read as a lazy agent, a kill recorded as a clean exit, a silent reroute to
-   Claude on a bad label. These are as damaging as the failures themselves,
-   because they hide the first list. **The known instance is proven and is the
-   first thing to fix:** the Pi output parser ends the agent on the first
-   `agent_end` line without reading its `willRetry` flag, so when the model
-   endpoint blips, Pi starts its own retry and the daemon kills it mid-backoff and
-   rewrites the kill as a clean exit. `piSessionIDInterceptor.checkBuffer` in
-   `internal/harness/pi/ndjsonparser.go`; `willRetry` appears nowhere in the Go
-   code. That one defect turns a two-second network blip into a lost run.
-3. Everything else, which is deferred by default.
+**Priority order:**
 
-**Live state at 2026-08-15 07:45 local. It decays within the hour — re-measure it,
-do not quote it back.**
+1. **Charlie is blocked or idle.** A task file it sent back as ambiguous, a bead
+   whose body does not match its task file, a dependency that has landed but whose
+   dependent row still says blocked. An implementer is stalled on each of these and
+   nothing else on this list competes with them.
+2. **The ready list is running short.** Promote rows whose dependencies have landed,
+   and write the task files for work that is planned but not yet written. Known gaps
+   as of 2026-08-24: batch 3, the four daemon extractions from the 2026-08-22
+   review, which waits on a boundary survey. Batch 6, shell to Go, is written and parked: six
+   task files exist and none is listed, because no plan describes that workstream and three of the
+   six convert gates that `make fast` and `make full` depend on. It waits on an operator ruling.
+3. **Everything else**, which is deferred by default.
 
-MEASURED. The box is up and its model server answers healthy for the `nemotron`
-model. The loopback tunnel the sandboxed Pi reaches it through listens on
-`127.0.0.1:8551`. The daemon is up. No queue held pending work, though one sits
-paused after an old failure. Of roughly 560 open beads, none carried a `harness:`
-label until a throwaway canary bead added one that same morning. On an earlier
-bead the Pi harness was selected three times at precedence tier 1; the first
-attempt failed after about six seconds with `exited without advancing HEAD`. The
-Claude nodes later in that run were NOT a fallback — review and QA always run on
-Claude by design (`cmd/harmonik/substrate_select.go` `reviewerSubstrate`). Do not
-read a Claude node in a Pi run as a routing failure; check which node it is.
+**An issue body is a COPY of a task file, not a link to it.** Correcting the file
+does not reach an implementer that already holds the bead. Re-sync the body in the
+same pass or the correction does not land. This has already sent an implementer the
+wrong way once.
 
-**The Pi path then ran end to end.** Between 14:45 and 14:51 UTC a canary bead
-labelled `harness:pi` was selected at tier 1, took `model_selected harness=pi
-model=nemotron`, and finished `implementer_phase_complete commit_landed=true
-exit_code=0` after about six minutes. The model wrote and committed
-`dgx-canary-20260815.txt` as `808a8517c`, the head of that run's worktree.
-**One run is proof the path works, not proof it is reliable.** Making it repeat is
-the job.
+**Do not implement the tasks.** Writing the task file is the deliverable. An
+implementer picks the bead up through the queue and does the work in its own
+worktree. A lane that implements its own task files is competing with the pipeline
+it exists to feed.
 
-INFERRED, so test it rather than inherit it. The box was idle because almost
-nothing is addressed to it, not because it is broken; the canary is the evidence.
-Tier 1, the per-bead `harness:` label, is the tier you steer with. Do NOT assume
-the other tiers are inert — the event stream shows tier 2 selecting `codex` and
-tiers 3 and 4 selecting `claude-code` on real beads. The "stub" wording in the
-`internal/core` `HarnessSelectedPayload` comment is stale; `resolveHarness` in
-`internal/daemon/harnessresolve.go` is the ground truth, and only its tier-3
-`nodeDefault` is genuinely unwired.
+**A bead whose whole deliverable is text — a comment corrected, a doc claim fixed,
+prose tightened, a README edited — does not count and must not be listed.** The
+operator read twenty such commits and said there was almost nothing of value in
+them, and that judgement is correct. List work that repairs something broken or
+builds something that does not exist. "Correct a false comment" became the default
+unit of work here because it always succeeds, which is exactly why it is the wrong
+one.
 
-**The only question the per-bead gate answers is: CAN A BEAD RUN THROUGH THE
-QUEUE?** The gate is `make core` — the 29 CORE_PKGS, run without `-short`. It is
-`make core` in every TRACKED workflow graph as of 2026-08-13 (D3=v3). The
-palette under `.harmonik/workflows/` is gitignored, so a sweep over tracked files
-does not see it — check a graph you copy from rather than assuming it carries the
-current gate. Do NOT read "gitignored" as "inert": `resolveWorkflowRef` in
-`internal/daemon/moderesolve.go` returns a queue item's own workflow ref verbatim
-at Tier 0, so a bead that names a path under that directory is read and run.
+## NOT THIS LANE — the DGX and the Pi harness are bravo's
 
-- **`make full` is NOT the per-bead gate and never was supposed to be.** It
-  measured 20 minutes on 2026-08-11 and every bead was paying for it. It is the
-  integration-branch-into-main decision, and it runs there and in CI only.
-  **Do not report `make full` failures as release blockers.** We know it is
-  broken. It is not the current job.
-- **Anything outside the core set is DEFERRED BY DEFAULT.** File it and move on.
-  Do not put it on a blocker list, do not rank it, do not ask about it.
-- **A defect that only appears because the gate is broad is not a product defect.**
-  Scenario-tier load flakiness, wall-clock budgets and whole-tree lint are test
-  debt, not release blockers.
+**Bravo owns getting beads to run on the Pi harness against the DGX box.** This
+file used to carry that objective as alpha's, and it stayed here for weeks after the
+work moved. On 2026-08-24 that stale text walked a fresh session into bravo's lane —
+it measured a Pi defect, found it had been fixed nine days earlier, and had not yet
+looked at charlie's list at all. Do not pick that objective back up from an older
+copy of this file, from a handoff, or from a bead labelled `harness:pi`.
 
-**Do not ask permission for anything inside this scope.** Reversing a locked
-decision that blocks the objective, deleting a rule that is doing more harm than
-good, narrowing a gate — these are expected, not escalations. There are too many
-rules in this repo and they are costing more than they protect. If a policy
-contradicts the objective above, say so plainly and change it.
+**Do not ask permission for anything inside the scope above.** Rewriting a task file,
+reordering the ready list, deferring a row, deleting a rule that is doing more harm
+than good — these are expected, not escalations. There are too many rules in this
+repo and they are costing more than they protect. If a policy contradicts the
+objective above, say so plainly and change it.
 
-**Read the paragraph above as a grant FROM the operator, not as a lane deciding
-its own authority.** The operator gave it directly and it is written here for
-that reason. `AGENTS.md` says reopening a locked decision is the operator's call,
-and that finding good evidence is not the same as holding the authority to act on
-it. That still governs everything the operator has not named. A mission file does
-not silently outrank the router.
+**Read the paragraph above as a grant FROM the operator, not as a lane deciding its
+own authority.** The operator gave it directly and it is written here for that
+reason. `AGENTS.md` says reopening a locked decision is the operator's call, and that
+finding good evidence is not the same as holding the authority to act on it. That
+still governs everything the operator has not named. A mission file does not silently
+outrank the router.
 
 ## Read in this order
 
@@ -143,22 +113,35 @@ not silently outrank the router.
    That is a real signal and not routine — the keeper does not empty this file.
    Rebuild what you can from `git log`, this file for scope, and your open beads, and get the
    operator's read before you change code.
-2. **`plans/2026-07-27-delete-and-rewrite/CHARTER.md`** — what the program is and
-   what "done" means. It outranks any handoff on intent.
-3. **`plans/2026-07-27-delete-and-rewrite/LANES.md`** — who owns what (§2), the
-   ordered work (§7), and what only the operator may decide (§8).
-4. **`PRINCIPLES.md`** — before you write or change code.
+2. **`plans/2026-08-23-clear-the-ground/README.md`, then `TASKS.md`** — the rules
+   for the program directory, then the current ready list. Reading the ready list
+   IS checking whether charlie can run, so do it every session, not once.
+3. **`plans/2026-08-23-clear-the-ground/PLAN.md`** — why the program exists and its
+   nine workstreams. On-demand: read it when you need to place a new task in a
+   workstream, not at every boot.
+4. **`plans/2026-07-27-delete-and-rewrite/LANES.md`** — who owns what (§2) and what
+   only the operator may decide (§8). Its ordered work in §7 is superseded by
+   `TASKS.md` for this program.
+5. **`PRINCIPLES.md`** — the standard a task file's acceptance test is written to,
+   and the standard the implementer is held to.
 
 This file holds no work and never will. A mission file is written once and goes
 stale; the handoff and LANES.md are maintained.
 
 ## What you own
 
-`internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
-`internal/runexec/**`, `internal/workflow/dot/**`, `internal/brcli/**`,
-`internal/transport/tunnel/**`, `internal/harness/shared/**`,
-`specs/run-state-machine.md`, `specs/execution-model.md`, and
-`DECOMPOSITION-MAP.md`. You work the main checkout `/Users/gb/github/harmonik` on
+**First, `plans/2026-08-23-clear-the-ground/` — the whole directory.** `TASKS.md`,
+`tasks/`, and `PLAN.md` are yours to write and to rank. That is the primary
+deliverable of this lane and it is what the objective above measures.
+
+The packages below stay assigned here, but treat them as the ground the task files
+DESCRIBE rather than code to go and edit yourself: `internal/daemon/**`,
+`internal/runlease/**`, `internal/runloop/**`, `internal/runexec/**`,
+`internal/workflow/dot/**`, `internal/brcli/**`, `internal/transport/tunnel/**`,
+`internal/harness/shared/**`, `specs/run-state-machine.md`,
+`specs/execution-model.md`, and `DECOMPOSITION-MAP.md`. Owning them is what lets
+you write an accurate scope section; it is not a licence to take the implementer's
+job. You work the main checkout `/Users/gb/github/harmonik` on
 the shared integration branch, commit there directly, and merge bravo in. The
 branch name in this file has gone stale twice — run `git branch --show-current`
 and believe that. It was `work/alpha-integration-merge` on 2026-08-15.

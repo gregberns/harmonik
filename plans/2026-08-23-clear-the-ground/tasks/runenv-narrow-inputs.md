@@ -5,7 +5,7 @@ type: task
 priority: 1
 labels: [daemon, run-machine, clear-the-ground]
 depends_on: [run-goroutine-supervisor]
-blocks: []
+blocks: [beadrunone-extract-phases]
 workstream: W2
 batch: 2
 ---

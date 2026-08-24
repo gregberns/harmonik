@@ -5,7 +5,7 @@ type: task
 priority: 0
 labels: [daemon, run-machine, clear-the-ground]
 depends_on: [workloop-name-the-state]
-blocks: []
+blocks: [dotworkflow-extract-decisions, run-machine-second-wave]
 workstream: W2
 batch: 2
 ---

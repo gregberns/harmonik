@@ -337,6 +337,14 @@ test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10
 comment-only-commit-gate:  ## forbid a Go change that is all comment and no code
 	scripts/comment-only-commit-gate.sh
 
+# dispatch-activation-gate: the crash-safe dispatch producer stays inert until
+# activation is designed. Boot rejects unresolved stored intents and replay
+# implements only part of the action set, so a production Store.Create call can
+# permanently prevent restart. Wired into `make fast` via freeze-gates.
+.PHONY: dispatch-activation-gate
+dispatch-activation-gate:  ## forbid production dispatchstore.Store.Create calls
+	scripts/dispatch-activation-gate.sh
+
 # codex-capture-pane-gate: the SC6 capture-pane grep ratchet — the structured
 # input driver must never scrape a tmux pane (capture-pane is an exec-arg string,
 # not an import, so a grep gate is the cheapest enforcement; the forbidigo +
@@ -935,6 +943,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 # belong in the inner loop.
 .PHONY: freeze-gates
 freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
+	scripts/dispatch-activation-gate.sh
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh

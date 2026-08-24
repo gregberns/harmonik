@@ -58,10 +58,9 @@ const (
 // -able and which the dispatchstore tests already discriminate on. So the gap
 // is narrower than "the error says nothing", and it is still a gap.
 //
-// The chain is reachable in the call graph and unreached at run time.
-// dispatchstore.Store.Create has no production caller, so Store.List answers
-// empty and daemon.preflightDispatchReplay returns before Advance runs. The
-// violation is latent, which argues for closing it before the writer lands.
+// The chain is reachable but unreached at run time. Store.Create has no
+// production caller, and scripts/dispatch-activation-gate.sh keeps it that way
+// until activation is designed. Store.List therefore answers empty here.
 //
 // Wiring Store.Advance to this type changes production behavior. It needs its
 // own change, and it must not ride along with a reachability triage.

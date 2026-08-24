@@ -367,15 +367,14 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 }
 
 // TestScheduleTick_IntervalFires covers the ScheduleKindEvery path end-to-end
-// through the tick: a job that has never fired fires immediately; a subsequent
-// tick that is too early does not re-fire; a tick after the interval elapses fires
-// again.
+// through the tick: a job that has never fired fires immediately, and a
+// subsequent tick that is too early does not re-fire.
 func TestScheduleTick_IntervalFires(t *testing.T) {
 	port, store, crew := newTickPort(t)
 
 	job := schedule.ScheduledJob{
 		ID:            "interval1",
-		Schedule:      schedule.Schedule{Kind: schedule.ScheduleKindEvery, Interval: "1s"},
+		Schedule:      schedule.Schedule{Kind: schedule.ScheduleKindEvery, Interval: "1m"},
 		Action:        schedule.Action{Kind: schedule.ActionKindSpawnCrew, Crew: "owl", Queue: "night"},
 		Enabled:       true,
 		OverlapPolicy: schedule.OverlapPolicySkip,

@@ -104,7 +104,22 @@ func TestScenario_Bl2k6_SubstrateKill_LeavesNoOrphanDescendant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 
-	if out, startErr := runner.Command(ctx, "tmux", "new-session", "-d", "-s", sessionName).CombinedOutput(); startErr != nil {
+	// The default session gets an EXPLICIT command, and that argument is load-bearing.
+	//
+	// With no command tmux runs an interactive login shell in the default pane. On
+	// macOS /etc/zshrc sets HISTFILE=$HOME/.zsh_history unconditionally — after the
+	// environment, so clearing HISTFILE or SAVEHIST in the env does not stop it — and
+	// that shell writes the file as it dies, which can be AFTER `tmux kill-server`
+	// has returned and even after the server pid is gone. When the write lands
+	// between t.TempDir's last readdir and its rmdir, rmdir gets ENOTEMPTY and Go
+	// fails an already-green test with a message about a temp directory and nothing
+	// about orphans. It cost the merge gate seven reds between 22 and 24 August
+	// (hk-gt3ax).
+	//
+	// This session is pure scaffolding: it exists to keep the server alive. The path
+	// under test is NewWindowIn, which is untouched by this argument.
+	if out, startErr := runner.Command(ctx, "tmux", "new-session", "-d", "-s", sessionName,
+		"sleep", "100000").CombinedOutput(); startErr != nil {
 		t.Skipf("bl2k6 scenario: could not start tmux on private socket %q: %v: %s", socketName, startErr, out)
 	}
 	t.Cleanup(func() {

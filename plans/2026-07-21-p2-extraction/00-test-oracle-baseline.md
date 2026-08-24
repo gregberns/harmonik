@@ -191,6 +191,20 @@ TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace    # RECLASSIFIED 2026-
 # HARNESS-TEARDOWN — the assertion PASSES; the FAIL comes from Go's testing package.
 # NEITHER re-run procedure applies. Read the FAIL text instead.
 TestL2_SSHLocalhost_TmuxPaneID_hk8u2al                      # ADDED 2026-07-23 (lane S); TempDir RemoveAll vs. tmux server
+                                                            # GONE 2026-08-24: this test no longer exists in the tree.
+                                                            # Kept only so a reader who greps the name learns that.
+TestScenario_Bl2k6_SubstrateKill_LeavesNoOrphanDescendant   # ADDED + FIXED 2026-08-24 (hk-gt3ax); same mechanism.
+                                                            # Failed the gate 7x between 22 and 24 Aug with every
+                                                            # assertion green.
+                                                            # THE REMEDY IS GENERAL: never let a tmux DEFAULT session
+                                                            # run an interactive login shell inside a directory your
+                                                            # test owns. Give `new-session` an explicit command and no
+                                                            # shell ever starts, so nothing writes the history file.
+                                                            # MEASURED DEAD ENDS, do not retry them: waiting for the
+                                                            # server to exit does not close it (the write can land
+                                                            # after the server pid is gone); and clearing HISTFILE or
+                                                            # SAVEHIST in the environment does nothing, because macOS
+                                                            # /etc/zshrc assigns them unconditionally, after the env.
 
 # any dispatch/throughput/timing failure while `df -h` shows <10 GiB free — see Addendum §3
 ```

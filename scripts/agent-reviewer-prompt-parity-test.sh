@@ -39,7 +39,12 @@ fail() {
 #   ### 3. Test adequacy
 # The heading text is the identity of the check. A prompt that renumbers to the
 # right count without carrying the text is not carrying the check.
-mapfile -t check_titles < <(
+# Read loop, not `mapfile`: mapfile is bash 4 and stock macOS ships bash 3.2,
+# where `make fast` would die here instead of running the check.
+check_titles=()
+while IFS= read -r title; do
+    check_titles+=("$title")
+done < <(
     sed -n '/^## Tier-1 reviewer responsibilities/,/^## Flag vocabulary/p' "$skill" \
         | sed -n 's/^### [0-9]\{1,\}\. \(.*\)$/\1/p'
 )
@@ -48,10 +53,13 @@ mapfile -t check_titles < <(
 
 # ── The flags the contract declares ──────────────────────────────────────────
 # Rows of the flag-vocabulary table: | `tag` | when to use |
+flags=()
 # shellcheck disable=SC2016 # \1 is a sed backreference, so the single quotes are
 # required. Double quotes would have the shell expand \1 to nothing and the flag
 # list would come back empty, which reads as "the contract declares no flags".
-mapfile -t flags < <(
+while IFS= read -r flag; do
+    flags+=("$flag")
+done < <(
     sed -n '/^## Flag vocabulary/,/^## Output format/p' "$skill" \
         | sed -n 's/^| `\([a-z0-9-]\{1,\}\)` |.*/\1/p'
 )

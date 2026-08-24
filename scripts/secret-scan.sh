@@ -45,9 +45,9 @@
 #   (default)     the INDEX — `git diff --cached`. Pre-commit and standalone
 #                 use. Unchanged.
 #   --head-only   the commit just made, against its first parent. Runs in
-#                 gate-static, beside the commit-message tip check, for the same
-#                 reason: the commit is yours, it is the tip, and amending it
-#                 costs nothing.
+#                 gate-static, for the reason the commit-message tip check gives
+#                 in `make full`: the commit is yours, it is the tip, and
+#                 amending it costs nothing.
 #   --range       everything this branch adds on top of BASELINE. Runs in
 #                 `make full`, the merge decision.
 #

@@ -20,18 +20,6 @@
 # so a producer that emits ONE unbroken line never orphans itself, at any size.
 # Treat that as an implementation detail of this grep, not as a licence.
 
-# ── scripts/validate-commit-msg.sh ────────────────────────────────────────────
-# $value is one trailer line, `Reviewed-By: <name>`. This is a NEGATIVE assertion
-# — it refuses a self-authored approval — so it is the class that matters most,
-# and it is exempt only because a trailer value is a single short line that
-# nothing can make grow. If that ever stops being true, fix the site instead.
-#
-# Another session owns this file, so it was read and judged rather than edited.
-# It had four more sites when this list was first written; that session fixed
-# them while this gate was being built, the entries went stale, and the gate said
-# so. That is the stale-entry check doing its job.
-scripts/validate-commit-msg.sh::(^|[^a-z])self([^a-z]|$)
-
 # ── plans/2026-07-17-assessor-daemon-campaign/runs/*/scenarios/preflight-4A.sh ──
 # Frozen artifacts of three completed assessment runs. Rewriting them would make
 # the record disagree with what was actually executed, which is worse than the

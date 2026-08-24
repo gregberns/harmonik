@@ -328,6 +328,10 @@ EXIT CODES
 		return runWriteReviewVerdictSubcommand(os.Args[2:])
 	}
 
+	if len(os.Args) >= 2 && os.Args[1] == "commit-msg" {
+		return runCommitMsgSubcommand(context.Background(), os.Args[2:], os.Stdout, os.Stderr)
+	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "beads-merge" {
 		return runBeadsMergeSubcommand(os.Args[2:])
 	}

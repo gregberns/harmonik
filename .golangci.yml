@@ -229,6 +229,33 @@ linters:
             - { pkg: "github.com/sashabaranov/go-openai", desc: "PL-INV-002: daemon must not import any LLM SDK" }
             - { pkg: "github.com/liushuangls/go-anthropic", desc: "PL-INV-002: daemon must not import any LLM SDK" }
   
+        # commitmsg: the review-trailer rules, lifted out of the deleted shell
+        # validator scripts/validate-commit-msg.sh and now reached as
+        # `harmonik commit-msg validate`. It is a PURE leaf and the allow list
+        # says so: stdlib and nothing else. Validate reads no file, runs no git
+        # command and reaches no clock, which is what lets every rule be decided
+        # by a table test — the reason the bash it replaces could not be unit
+        # tested at all. The two things it cannot work out for itself (which
+        # reviewer names this repo tracks, and the cleanup mode git will apply)
+        # arrive as arguments, so the I/O stays with the caller. An edge to
+        # daemon, or to workspace, would put that I/O back inside the rules.
+        commitmsg:
+          files: ["**/internal/commitmsg/**"]
+          allow:
+            - "$gostd"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "commitmsg is a pure leaf: the review-trailer rules must stay decidable without the daemon" }
+            - { pkg: "github.com/gregberns/harmonik/internal/workspace", desc: "commitmsg is a pure leaf: workspace reads files, and these rules take their inputs as arguments" }
+            # The purity claim above is prose until something enforces it, and
+            # "$gostd" alone allowed every one of these. Named so the package
+            # doc comment is a rule and not a promise. Nothing in the package
+            # imports any of them today, so this fences the future, not the
+            # present.
+            - { pkg: "os", desc: "commitmsg reads no file: the message arrives as a string and git state arrives in Options" }
+            - { pkg: "os/exec", desc: "commitmsg runs no git command: the cleanup mode and the reviewer set are read by the caller" }
+            - { pkg: "net", desc: "commitmsg reaches nothing over the network: same rules, same answer, on any machine" }
+            - { pkg: "time", desc: "commitmsg reads no clock: a table test decides every rule, which is what the shell validator could not do" }
+
         # crew: stdlib + core + self-import (external test pattern); MUST NOT import daemon.
         # The crew registry is a leaf durable-state package read by daemon and CLI.
         # Rationale: docs/plans/captain/05-specs/c2-spec.md §3.3; bead hk-i1ue4.
@@ -1004,6 +1031,12 @@ linters:
           files: ["**/internal/workspace/**"]
           allow:
             - "$gostd"
+            # commitmsg is reached by agenttaskguidance_test.go alone (depguard
+            # `files:` globs match _test.go too). That test feeds the commit
+            # template this package renders to the gate that judges it, which is
+            # what makes the section heading's promise true. commitmsg is a pure
+            # leaf, so the edge adds no I/O.
+            - "github.com/gregberns/harmonik/internal/commitmsg"
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/eventbus"
             - "github.com/gregberns/harmonik/internal/adapter/br"
@@ -1136,6 +1169,13 @@ linters:
           allow:
             - "$gostd"
             - "github.com/google/uuid"
+            # commitmsg is reached by commitexemption_test.go alone (depguard
+            # `files:` globs match _test.go too). That test asserts the merge
+            # path's own commit messages land, and that the `Trivial: true`
+            # exemption is what lets them, so it has to hold the gate's rules;
+            # commitmsg is a pure leaf, so holding them costs no edge to
+            # anything that does I/O.
+            - "github.com/gregberns/harmonik/internal/commitmsg"
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/gitprobe"
             - "github.com/gregberns/harmonik/internal/handlercontract"

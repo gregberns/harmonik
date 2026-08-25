@@ -24,13 +24,26 @@ ratchet refuses new debt, and the invariance it rests on does not hold. Charlie 
 claim.** A dependency that lives only in front matter is a comment, and `closed` means someone
 judged the acceptance items met, not that they were.
 
-**REPAIRING A TASK FILE IS NOT FINISHED WHEN YOU COMMIT IT. It is finished when it reaches the branch
-runs are cut from.** `.harmonik/branching.yaml` sets `start_from` to the batch branch, so every
-implementer worktree is cut from the batch and reads the batch's copy of a task file. A repair that
-lands on the integration branch is **invisible to every run** until it is cherry-picked across. Two
-task-file repairs were one dispatch away from this on 2026-08-25 — the run would have read the stale
-file and rebuilt shipped code. **After you repair a task file, check which branch the next run is cut
-from, and get the repair onto it.**
+**MORE THAN HALF THE TASK FILES IN THIS PROGRAM WERE ABSENT FROM THE TREE IMPLEMENTERS READ.**
+Measured 2026-08-25 (`hk-kw3ip`, P0): the batch branch carried **26** task files and integration
+carried **55** — 43 files differing by 4737 insertions.
+
+`.harmonik/branching.yaml` sets `start_from` to the batch branch, so every implementer worktree is cut
+from the batch and reads the batch's copy of a task file. Planning lands on integration. **Nothing
+carries planning commits across**, so the batch drifts from the moment it is cut and nothing reports
+it. Every dispatch since the cut ran against a partial view of the program.
+
+It surfaced when a repaired task file was one dispatch from being read stale. The attempted fix showed
+the real scale: cherry-picking the commit carrying five repaired task files conflicted `DU` on all
+five, **because those five files had never existed on the batch branch** — a commit cannot modify a
+file the branch never had. What looked like a two-commit gap was 43 files. It was closed for now by
+copying the whole plan directory across in one commit, which repairs the instance and not the
+mechanism.
+
+**So: a document is not delivered when it is committed. It is delivered when it is on the branch that
+reads it.** After you repair a task file, check which branch the next run is cut from and get the
+repair onto it. This is the same shape as a row count measured on the wrong branch — correct on the
+tree you measured, wrong on the tree that matters.
 
 **THE LINT RATCHET IS NOT CURRENTLY PROTECTING THIS PROGRAM. Read this before you plan around it.**
 Verifying the closed P0 above turned up two live bypasses in `scripts/lint-allow-ratchet.sh`, both

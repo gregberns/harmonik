@@ -61,7 +61,6 @@ func TestDotNodeModelLeak_NoPinInheritsRunLevel(t *testing.T) {
 		{"pi, run-level value inherited verbatim", "some-pi-model", core.AgentTypePi, "some-pi-model"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := daemon.ExportedNodeModelForHarness(tc.resolved, "", tc.harness); got != tc.wantInherit {

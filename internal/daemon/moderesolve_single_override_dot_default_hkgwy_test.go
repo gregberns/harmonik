@@ -45,7 +45,6 @@ func TestResolveWorkflow_SingleLabelOverridesDotDefault(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -82,7 +81,6 @@ func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 	}
 
 	for _, dd := range daemonDefaults {
-		dd := dd
 		t.Run(dd.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -166,7 +164,6 @@ func TestResolveWorkflow_DotDefaultPreservesNonSingleLabels(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

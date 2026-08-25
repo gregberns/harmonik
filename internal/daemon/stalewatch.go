@@ -650,6 +650,32 @@ func (w *StaleWatcher) checkRun(
 	goroutineCount, activeRunCount int,
 ) {
 	w.mu.Lock()
+	st := w.resolveStaleState(runID, handle)
+
+	if w.tryForceReap(ctx, runID, handle, st, now) {
+		return
+	}
+	if w.tryDeadProcessReap(runID, handle, st, now) {
+		return
+	}
+
+	st = w.advanceStallDetectors(ctx, runID, handle, st, now)
+	if st == nil {
+		return
+	}
+
+	decision, ok := w.evaluateStaleness(st, handle, now)
+	if !ok {
+		return
+	}
+
+	w.emitRunStale(ctx, runID, handle, decision, goroutineCount, activeRunCount)
+}
+
+// resolveStaleState returns the runStaleState for runID, creating it on first
+// sight of the run and back-filling any per-bead thresholds a prior state is
+// still missing. Callers must hold w.mu.
+func (w *StaleWatcher) resolveStaleState(runID core.RunID, handle *runregistry.RunHandle) *runStaleState {
 	st, ok := w.states[runID]
 	if !ok {
 		st = &runStaleState{
@@ -673,117 +699,202 @@ func (w *StaleWatcher) checkRun(
 	if st.beadID == "" {
 		st.beadID = handle.BeadID
 	}
+	return st
+}
 
-	if !st.cancelledAt.IsZero() && !st.forceReapFired && now.Sub(st.cancelledAt) >= w.cfg.ForceReapGrace {
-		st.forceReapFired = true
-		beadIDForReap := st.beadID
-		grace := now.Sub(st.cancelledAt)
+// tryForceReap force-reaps a run that has sat cancelled past the grace
+// window. Callers must hold w.mu on entry. Returns true when it handled the
+// run, in which case w.mu is already unlocked and the caller must return
+// immediately.
+func (w *StaleWatcher) tryForceReap(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+) bool {
+	if st.cancelledAt.IsZero() || st.forceReapFired || now.Sub(st.cancelledAt) < w.cfg.ForceReapGrace {
+		return false
+	}
+	st.forceReapFired = true
+	beadIDForReap := st.beadID
+	grace := now.Sub(st.cancelledAt)
+	w.mu.Unlock()
+	w.forceReap(ctx, runID, beadIDForReap, handle, grace)
+	return true
+}
+
+// tryDeadProcessReap cancels a run whose agent process/pane is confirmed gone
+// and has been silent past the dead-process window. Callers must hold w.mu on
+// entry. Returns true when it handled the run, in which case w.mu is already
+// unlocked and the caller must return immediately.
+func (w *StaleWatcher) tryDeadProcessReap(
+	runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+) bool {
+	deadFn := w.runProcessDeadFn()
+	if deadFn == nil || !st.cancelledAt.IsZero() || st.deadProcessCancelled {
+		return false
+	}
+	ref := st.lastEventAt
+	if ref.IsZero() {
+		ref = handle.StartedAt
+	}
+	if now.Sub(ref) < w.cfg.DeadProcessStaleAfter || !deadFn(runID, handle) {
+		return false
+	}
+	st.deadProcessCancelled = true
+	st.cancelledAt = now
+	beadIDForDead := st.beadID
+	silent := now.Sub(ref)
+	w.mu.Unlock()
+	fmt.Fprintf(os.Stderr,
+		"daemon: stalewatch: fast dead-process reap: bead %s run %s: agent process/pane gone and silent %s — cancelling; force-reap in %s if still registered\n",
+		beadIDForDead, runID, silent.Round(time.Second), w.cfg.ForceReapGrace)
+	if handle.Cancel != nil {
+		handle.MarkAborted()
+		handle.Cancel()
+	}
+	return true
+}
+
+// runUnlockedAndRefresh releases w.mu, runs fn, then reacquires w.mu and
+// re-reads the run's state — fn may itself trigger a cancellation that
+// removes it. If the state is gone, w.mu is left unlocked (the caller has
+// nothing left to guard) and nil is returned; otherwise w.mu is held again
+// on return.
+func (w *StaleWatcher) runUnlockedAndRefresh(runID core.RunID, fn func()) *runStaleState {
+	w.mu.Unlock()
+	fn()
+	w.mu.Lock()
+	st := w.states[runID]
+	if st == nil {
 		w.mu.Unlock()
-		w.forceReap(ctx, runID, beadIDForReap, handle, grace)
-		return
 	}
+	return st
+}
 
-	if deadFn := w.runProcessDeadFn(); deadFn != nil &&
-		st.cancelledAt.IsZero() && !st.deadProcessCancelled {
-		ref := st.lastEventAt
-		if ref.IsZero() {
-			ref = handle.StartedAt
-		}
-		if now.Sub(ref) >= w.cfg.DeadProcessStaleAfter && deadFn(runID, handle) {
-			st.deadProcessCancelled = true
-			st.cancelledAt = now
-			beadIDForDead := st.beadID
-			silent := now.Sub(ref)
-			w.mu.Unlock()
-			fmt.Fprintf(os.Stderr,
-				"daemon: stalewatch: fast dead-process reap: bead %s run %s: agent process/pane gone and silent %s — cancelling; force-reap in %s if still registered\n",
-				beadIDForDead, runID, silent.Round(time.Second), w.cfg.ForceReapGrace)
-			if handle.Cancel != nil {
-				handle.MarkAborted()
-				handle.Cancel()
-			}
-			return
-		}
+// advanceStallDetectors runs the launch/agent-ready/never-spawned stall
+// checks in sequence. Callers must hold w.mu. Returns the (possibly
+// refreshed) state, or nil if the run's state disappeared mid-check — in
+// that case w.mu is already unlocked and the caller must return immediately.
+func (w *StaleWatcher) advanceStallDetectors(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+) *runStaleState {
+	st = w.checkLaunchStall(ctx, runID, st, now)
+	if st == nil {
+		return nil
 	}
+	st = w.checkAgentReadyStall(ctx, runID, st, now)
+	if st == nil {
+		return nil
+	}
+	st = w.checkNeverSpawnedInitial(ctx, runID, handle, st, now)
+	if st == nil {
+		return nil
+	}
+	return w.checkNeverSpawnedRelaunch(ctx, runID, handle, st, now)
+}
 
-	runStartedAt := st.runStartedAt
-	launchInitiatedSeen := st.launchInitiatedSeen
-	launchStallEmitted := st.launchStallEmitted
+// checkLaunchStall fires when a run was started but never reached
+// launch-initiated within launchStallThreshold. See advanceStallDetectors
+// for the locking contract.
+func (w *StaleWatcher) checkLaunchStall(
+	ctx context.Context, runID core.RunID, st *runStaleState, now time.Time,
+) *runStaleState {
+	if st.runStartedAt.IsZero() || st.launchInitiatedSeen || st.launchStallEmitted ||
+		now.Sub(st.runStartedAt) <= launchStallThreshold {
+		return st
+	}
+	st.launchStallEmitted = true
 	beadIDForStall := st.beadID
-	if !runStartedAt.IsZero() && !launchInitiatedSeen && !launchStallEmitted &&
-		now.Sub(runStartedAt) > launchStallThreshold {
-		st.launchStallEmitted = true
-		w.mu.Unlock()
-		w.emitLaunchStallDetected(ctx, runID, beadIDForStall, now.Sub(runStartedAt))
-		w.mu.Lock()
-		st = w.states[runID]
-		if st == nil {
-			w.mu.Unlock()
-			return
-		}
-	}
+	elapsed := now.Sub(st.runStartedAt)
+	return w.runUnlockedAndRefresh(runID, func() {
+		w.emitLaunchStallDetected(ctx, runID, beadIDForStall, elapsed)
+	})
+}
 
-	if st.launchInitiatedSeen && !st.agentReadySeen && !st.agentReadyStallEmitted &&
-		!st.launchInitiatedAt.IsZero() &&
-		now.Sub(st.launchInitiatedAt) > st.agentReadyStallThreshold {
-		st.agentReadyStallEmitted = true
-		beadIDForARS := st.beadID
-		arsStall := now.Sub(st.launchInitiatedAt)
-		w.mu.Unlock()
+// checkAgentReadyStall fires when a run reached launch-initiated but never
+// reached agent-ready within its threshold. See advanceStallDetectors for
+// the locking contract.
+func (w *StaleWatcher) checkAgentReadyStall(
+	ctx context.Context, runID core.RunID, st *runStaleState, now time.Time,
+) *runStaleState {
+	if !st.launchInitiatedSeen || st.agentReadySeen || st.agentReadyStallEmitted ||
+		st.launchInitiatedAt.IsZero() || now.Sub(st.launchInitiatedAt) <= st.agentReadyStallThreshold {
+		return st
+	}
+	st.agentReadyStallEmitted = true
+	beadIDForARS := st.beadID
+	arsStall := now.Sub(st.launchInitiatedAt)
+	return w.runUnlockedAndRefresh(runID, func() {
 		w.emitAgentReadyStallDetected(ctx, runID, beadIDForARS, arsStall)
-		w.mu.Lock()
-		st = w.states[runID]
-		if st == nil {
-			w.mu.Unlock()
-			return
-		}
-	}
+	})
+}
 
-	launchInitiatedAt := st.launchInitiatedAt
-	agentReadySeen := st.agentReadySeen
-	neverSpawnedFired := st.neverSpawnedFired
-	if st.launchInitiatedSeen && !agentReadySeen && !neverSpawnedFired && !launchInitiatedAt.IsZero() &&
-		now.Sub(launchInitiatedAt) > st.neverSpawnedTimeout {
-		st.neverSpawnedFired = true
-		if st.cancelledAt.IsZero() {
-			st.cancelledAt = now
-		}
-		beadIDForNSR := st.beadID
-		w.mu.Unlock()
-		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR, handle, now.Sub(launchInitiatedAt))
-		w.mu.Lock()
-		st = w.states[runID]
-		if st == nil {
-			w.mu.Unlock()
-			return
-		}
+// checkNeverSpawnedInitial fires the never-spawned reaper when a run's first
+// launch never reached agent-ready. See advanceStallDetectors for the
+// locking contract.
+func (w *StaleWatcher) checkNeverSpawnedInitial(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+) *runStaleState {
+	if !st.launchInitiatedSeen || st.agentReadySeen || st.neverSpawnedFired ||
+		st.launchInitiatedAt.IsZero() || now.Sub(st.launchInitiatedAt) <= st.neverSpawnedTimeout {
+		return st
 	}
+	return w.fireNeverSpawned(ctx, runID, handle, st, now, st.launchInitiatedAt)
+}
 
-	lastLaunchInitiatedAt := st.lastLaunchInitiatedAt
-	agentReadySinceLastLaunch := st.agentReadySeenSinceLastLaunch
-	if agentReadySeen && !agentReadySinceLastLaunch && !neverSpawnedFired &&
-		!lastLaunchInitiatedAt.IsZero() &&
-		now.Sub(lastLaunchInitiatedAt) > st.neverSpawnedTimeout {
-		st.neverSpawnedFired = true
-		if st.cancelledAt.IsZero() {
-			st.cancelledAt = now
-		}
-		beadIDForNSR2 := st.beadID
-		w.mu.Unlock()
-		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR2, handle, now.Sub(lastLaunchInitiatedAt))
-		w.mu.Lock()
-		st = w.states[runID]
-		if st == nil {
-			w.mu.Unlock()
-			return
-		}
+// checkNeverSpawnedRelaunch fires the never-spawned reaper when a run's most
+// recent relaunch never reached agent-ready again. See advanceStallDetectors
+// for the locking contract.
+func (w *StaleWatcher) checkNeverSpawnedRelaunch(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+) *runStaleState {
+	if !st.agentReadySeen || st.agentReadySeenSinceLastLaunch || st.neverSpawnedFired ||
+		st.lastLaunchInitiatedAt.IsZero() || now.Sub(st.lastLaunchInitiatedAt) <= st.neverSpawnedTimeout {
+		return st
 	}
+	return w.fireNeverSpawned(ctx, runID, handle, st, now, st.lastLaunchInitiatedAt)
+}
 
+// fireNeverSpawned marks the never-spawned reaper as fired, cancels the run
+// if it is not already cancelled, and invokes the reaper. See
+// advanceStallDetectors for the locking contract.
+func (w *StaleWatcher) fireNeverSpawned(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, st *runStaleState, now time.Time,
+	launchInitiatedAt time.Time,
+) *runStaleState {
+	st.neverSpawnedFired = true
+	if st.cancelledAt.IsZero() {
+		st.cancelledAt = now
+	}
+	beadIDForNSR := st.beadID
+	elapsed := now.Sub(launchInitiatedAt)
+	return w.runUnlockedAndRefresh(runID, func() {
+		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR, handle, elapsed)
+	})
+}
+
+// staleDecision carries what evaluateStaleness found, for emitRunStale to
+// report without re-reading the (by then unlocked) run state.
+type staleDecision struct {
+	ageSeconds         int64
+	noProgressSeconds  *int64
+	lastEventType      string
+	lastEventAtStr     string
+	beadID             core.BeadID
+	emitCount          int
+	shouldKillConsumer bool
+}
+
+// evaluateStaleness decides whether runID is quiet or wedged enough to emit a
+// run_stale event, and if so advances the state's backoff clocks. Callers
+// must hold w.mu on entry; w.mu is always unlocked on return. The bool result
+// is false when neither condition holds, in which case the decision is a
+// zero value and the caller should just return.
+func (w *StaleWatcher) evaluateStaleness(
+	st *runStaleState, handle *runregistry.RunHandle, now time.Time,
+) (staleDecision, bool) {
 	refTime := st.lastEventAt
 	if refTime.IsZero() {
 		refTime = handle.StartedAt
 	}
-
 	age := now.Sub(refTime)
 
 	effectiveThreshold := st.nextEmitAfter
@@ -803,8 +914,9 @@ func (w *StaleWatcher) checkRun(
 
 	if !quiet && !wedged {
 		w.mu.Unlock()
-		return
+		return staleDecision{}, false
 	}
+
 	var noProgressSeconds *int64
 	if wedged {
 		secs := int64(noProgressAge.Seconds())
@@ -812,17 +924,14 @@ func (w *StaleWatcher) checkRun(
 	}
 
 	st.emitCount++
-	emitCount := st.emitCount
 	ageSeconds := int64(age.Seconds())
 	if ageSeconds < 1 {
 		ageSeconds = 1
 	}
-	lastEventType := st.lastEventType
 	lastEventAtStr := ""
 	if !st.lastEventAt.IsZero() {
 		lastEventAtStr = st.lastEventAt.UTC().Format(time.RFC3339)
 	}
-	beadID := st.beadID
 	shouldKillConsumer := quiet && !st.killConsumerFired
 	if shouldKillConsumer {
 		st.killConsumerFired = true
@@ -836,12 +945,31 @@ func (w *StaleWatcher) checkRun(
 	if wedged {
 		st.nextNoProgressAfter *= 2
 	}
-	w.mu.Unlock()
 
-	staleReason := fmt.Sprintf("session silent for %ds", ageSeconds)
-	if noProgressSeconds != nil {
+	d := staleDecision{
+		ageSeconds:         ageSeconds,
+		noProgressSeconds:  noProgressSeconds,
+		lastEventType:      st.lastEventType,
+		lastEventAtStr:     lastEventAtStr,
+		beadID:             st.beadID,
+		emitCount:          st.emitCount,
+		shouldKillConsumer: shouldKillConsumer,
+	}
+	w.mu.Unlock()
+	return d, true
+}
+
+// emitRunStale transitions the run's lifecycle to failed on a silent hang,
+// builds and emits the run_stale event, and fires the kill-consumer backstop
+// if evaluateStaleness called for one. Called with w.mu already unlocked.
+func (w *StaleWatcher) emitRunStale(
+	ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, d staleDecision,
+	goroutineCount, activeRunCount int,
+) {
+	staleReason := fmt.Sprintf("session silent for %ds", d.ageSeconds)
+	if d.noProgressSeconds != nil {
 		staleReason = fmt.Sprintf("session made no progress for %ds (last event %s, %ds ago)",
-			*noProgressSeconds, lastEventType, ageSeconds)
+			*d.noProgressSeconds, d.lastEventType, d.ageSeconds)
 	}
 	var lifecycleStateStr, lifecycleEnteredAtStr string
 	if m := handle.GetMachine(); m != nil {
@@ -872,12 +1000,12 @@ func (w *StaleWatcher) checkRun(
 
 	pl := core.RunStalePayload{
 		RunID:              runID.String(),
-		BeadID:             string(beadID),
-		AgeSeconds:         ageSeconds,
-		NoProgressSeconds:  noProgressSeconds,
-		LastEventType:      lastEventType,
-		LastEventAt:        lastEventAtStr,
-		EmitCount:          emitCount,
+		BeadID:             string(d.beadID),
+		AgeSeconds:         d.ageSeconds,
+		NoProgressSeconds:  d.noProgressSeconds,
+		LastEventType:      d.lastEventType,
+		LastEventAt:        d.lastEventAtStr,
+		EmitCount:          d.emitCount,
 		OwningEpicID:       owningEpicIDPtr,
 		OwningEpicAssignee: owningEpicAssigneePtr,
 		Snapshot: &core.RunStaleSnapshot{
@@ -897,8 +1025,8 @@ func (w *StaleWatcher) checkRun(
 		fmt.Fprintf(os.Stderr, "daemon: stalewatch: emit run_stale for run %s: %v\n", runID, emitErr)
 	}
 
-	if shouldKillConsumer {
-		w.killConsumerBackstop(runID, beadID, handle, time.Duration(ageSeconds)*time.Second)
+	if d.shouldKillConsumer {
+		w.killConsumerBackstop(runID, d.beadID, handle, time.Duration(d.ageSeconds)*time.Second)
 	}
 }
 

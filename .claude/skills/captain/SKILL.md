@@ -116,7 +116,11 @@ daemon (§9). Any other exit is a name/queue collision or a launch failure: post
 error, then diagnose. **Never rename or retry around a collision** — STARTUP.md Step 3
 owns why and how to find the holder.
 
-Then poll `harmonik comms who` until the name appears — the crew comes online once its
+Then poll until the crew has an **online** row —
+`harmonik comms who --json | jq -r 'select(.status=="online") | .agent' | grep -qx '<crew>'`.
+A bare name match is not evidence it booted: a stopped crew of the same name keeps
+printing as `stale` for up to twelve minutes, and respawn under the same name is the
+normal case. The crew comes online once its
 boot loop runs `comms join`. Bounded wait; never appearing is the "crew offline" row in
 §9. Two crews need two `crew start` calls, distinct names and distinct queues.
 
@@ -197,9 +201,12 @@ independent of any crew self-report. Do not widen it to run-level telemetry; fol
 
 On each `epic_completed{epic_id, last_child_bead_id, closed_at}`, deduped on `event_id`:
 
-1. **Attribute from the durable mirror** — `br show <epic_id> --format json` → `assignee`
-   equals the owning `crew_name`. The crew sets it on every epic adoption, boot and comms
-   re-task alike, so it does not go stale. **Do not attribute via `crew list` /
+1. **Attribute from the durable mirror** —
+   `br show <epic_id> --format json | jq -r '.[0].assignee'` equals the owning
+   `crew_name`. `br show` returns an ARRAY: a bare `.assignee` fails with `Cannot index
+   array with string`, and that failure looks like an unattributed epic. The crew sets
+   the mirror on every epic adoption, boot and comms re-task alike, so it does not go
+   stale. **Do not attribute via `crew list` /
    `Record.Epic`**: that field is written at spawn time only and goes stale the moment the
    crew is re-tasked. An empty `assignee`, or one matching no live crew, is the
    unassigned-epic row in §9 — surface it as informational and do not spawn in response.
@@ -294,18 +301,20 @@ needs to see. With no admiral running, go straight to the operator and say that 
 **The action column is what to do, not permission to wait.** You report so the operator
 can see the fleet, and you keep acting in the same turn; the only rows that stop and wait
 are the §8 four. **Attribute before you report** — for every run event you surface,
-resolve the owning crew first with `br show <epic_or_bead_id> --format json` → `assignee`.
+resolve the owning crew first with
+`br show <epic_or_bead_id> --format json | jq -r '.[0].assignee'` — the `.[0]` is required,
+because `br show` returns an array.
 Do not ask a crew or the operator whose bead it is.
 
 | Situation | Detection | Action |
 |---|---|---|
 | **Daemon down** | any daemon RPC exits **17** | Report, then get it back — STARTUP.md Step 2.1 owns the supervisor-vs-hand-restart call. Local reads still work. |
 | **`crew start` fails (non-17)** | non-zero exit with the daemon's message | Post the exact error, then diagnose. Never rename or retry around a collision (§2). |
-| **Crew goes offline** | drops from `comms who` past the ~120s TTL and/or stops posting `--topic status` | Report, then check pane-truth. Presence ages out on its own and a keeper restart drops it transiently, so a crew that re-appears needs no action. A dead or wedged pane is a zombie — reconcile it per STARTUP.md Step 3. |
+| **Crew goes offline** | its `comms who` row leaves `"status":"online"` (the 120-second TTL), or it stops posting `--topic status`. It keeps printing as `"status":"stale"` for ten more minutes, so still being listed is not being online. | Report, then check pane-truth. Presence ages out on its own and a keeper restart drops it transiently, so a crew that re-appears needs no action. A dead or wedged pane is a zombie — reconcile it per STARTUP.md Step 3. |
 | **`epic_completed` for an unknown epic** | `assignee` empty or matching no live crew | Surface as informational; do not spawn or assign in response. |
 | **Duplicate `epic_completed`** | same `event_id` re-delivered, or a second event for an already-surfaced epic | Dedupe on `event_id`. Surface at most one completion per epic. |
 | **A named queue stopped** | `harmonik queue list --json` shows a `status` of `paused-by-failure`. **Sweep for it yourself; ops-monitor will not tell you.** Its `paused-queues` check fires only when the owning crew is online, so the case you care about — a queue that stopped after its crew went away — is exactly the one it never reports. It also guesses the crew name by stripping a trailing `-q` from the queue name, so `charlie-batch` guesses crew `charlie-batch` and `yueh2-q` guesses `yueh2`, and neither matches a real crew. `LIVE_ALLOW_JSON` in `scripts/ops-monitor-check.sh` is empty, so nothing overrides either miss. A green `paused-queues` is not evidence. The `jq` sweep in SHUTDOWN.md check 3 is the reliable one. | A failed bead parked that queue. It dispatches nothing and emits nothing further, so it reads as idle rather than as broken. Attribute it to the owning crew and have that crew restart it with `harmonik queue recover --queue <name>`; do it yourself if the crew is gone. `harmonik queue resume` will not do it. Mechanism, and what recovery refuses: the **harmonik-dispatch** skill, § Restart a queue that stopped. |
-| **A `run_failed` / `run_stale` you happen to see** | on a subscription you also watch | Attribute first: `br show <bead_id>` → `parent_id` → `br show <parent_id>` → `assignee`. Then act at LANE level — the crew owns recovering its own bead, so nudge or re-drive the crew rather than reaching into the run. A `run_stale` shortly after launch is usually a slow implementer, not a wedge. |
+| **A `run_failed` / `run_stale` you happen to see** | on a subscription you also watch | Attribute first: `br show <bead_id> --format json \| jq -r '.[0].parent_id'`, then `br show <parent_id> --format json \| jq -r '.[0].assignee'`. `br show` returns an array — without the `.[0]` both steps error. Then act at LANE level — the crew owns recovering its own bead, so nudge or re-drive the crew rather than reaching into the run. A `run_stale` shortly after launch is usually a slow implementer, not a wedge. |
 
 **You are a light orchestrator.** You share one rate limit with every crew and every
 implementer the daemon is running, so a wide captain fan-out slows the fleet it exists to

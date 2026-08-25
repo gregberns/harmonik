@@ -116,7 +116,9 @@ is the reference for what those commands are. Two things it cannot tell you:
   the **harmonik-dispatch** skill, § Restart a queue that stopped.
 
 Build the live-state table from the digest, one row per registered crew — in `crew list`?
-in `comms who`? tmux window alive? epic (`br show <epic> --format json` → assignee)?
+in `comms who` with `"status":"online"`? tmux window alive? epic
+(`br show <epic> --format json | jq -r '.[0].assignee'` — `br show` returns an ARRAY, so a
+bare `.assignee` errors)?
 dispatched a bead? Those first three columns intersect to classify it in Step 3.
 
 ### Step 2.1 — Daemon down
@@ -135,11 +137,17 @@ Supervisor confirmed dead (no session, backoff elapsed, still no socket) ⇒ run
 
 | Classification | Signature | Action |
 |---|---|---|
-| **HEALTHY** | in `crew list` ∧ in `comms who` ∧ tmux window alive ∧ has an epic ∧ recently dispatched | Keep. A real working lane. |
-| **ZOMBIE** | in `crew list` ∧ tmux window alive **∧ NOT in `comms who`** past the 120s TTL | Stale or wedged. `harmonik crew stop <name>`, re-establish in Step 5. |
-| **IDLE** | in `comms who` ∧ in `crew list` ∧ has an epic **but dispatched nothing** | Not a zombie. Re-task over comms, do NOT `crew stop`. |
-| **GHOST RECORD** | in `crew list` ∧ no tmux window ∧ NOT in `comms who` | Orphan record. `harmonik crew stop <name>`. |
-| **STRAY WORKTREE WINDOW** | tmux window named `.../worktrees/<uuid>`, not `hk-crew-<name>` | A daemon bead worktree. Leave it — and it is not evidence a crew is working. |
+| **HEALTHY** | in `crew list` ∧ online in `comms who` ∧ tmux window alive ∧ has an epic ∧ recently dispatched | Keep. A real working lane. |
+| **ZOMBIE** | in `crew list` ∧ tmux window alive **∧ no `"status":"online"` row in `comms who`** | Stale or wedged. `harmonik crew stop <name>`, re-establish in Step 5. |
+| **IDLE** | online in `comms who` ∧ in `crew list` ∧ has an epic **but dispatched nothing** | Not a zombie. Re-task over comms, do NOT `crew stop`. |
+| **GHOST RECORD** | in `crew list` ∧ no tmux window ∧ no `"status":"online"` row in `comms who` | Orphan record. `harmonik crew stop <name>`. |
+| **STRAY RUN SESSION** | a `harmonik-<hash>-run-<id>` session whose handle is in no `crew list --json` row | A daemon bead worktree. Leave it — and it is not evidence a crew is working. |
+
+**Being listed by `comms who` is not being online.** Presence has two windows: online for
+120 seconds after the last beat, then **stale for ten more minutes** — and `comms who`
+prints the stale rows too. Read the `status` field. Test absence against the ten-minute
+stale cutoff, never the 120-second TTL, or a wedged crew reads healthy for eight minutes
+longer than this table says. (`internal/presence/presence.go`, `TTL` and `StaleCutoff`.)
 
 `harmonik crew stop <name>` removes the registry record, the pane, and the keeper marker.
 `--pause-queue` only if the operator wants that queue halted; the default leaves it
@@ -230,18 +238,26 @@ A live crew that just needs a new epic is a comms re-task, not a new `crew start
 ```bash
 # (a) comms-online — the crew ran its boot loop and called `comms join`. Capture first:
 #     piping `comms who --json` into grep can lose `who` to SIGPIPE on a big roster.
+#     Filter on status: `who` also prints `stale` rows, for ten minutes past the TTL.
 who="$(harmonik comms who --json)"
-grep -q '"agent":"<crew>"' <<<"$who" && echo ONLINE || echo "NOT ONLINE"
+jq -r 'select(.status=="online") | .agent' <<<"$who" \
+  | grep -qx '<crew>' && echo ONLINE || echo "NOT ONLINE"
 
 # (b) pane-truth — look for comms join, "crew <crew> online owning <epic>", a queue submit.
-tmux capture-pane -p -t harmonik-<hash>-crew-<crew>:hk-crew-<crew> | tail -25
+#     Take the target from the `handle` field. Never rebuild it by hand: window names have
+#     already changed once, and a hand-built target fails on a crew that is perfectly fine.
+pane="$(harmonik crew list --json | jq -r 'select(.name=="<crew>") | .handle')"
+# An EMPTY $pane makes tmux capture YOUR OWN pane and exit 0. Guard it, or a typo
+# and a record with a blank handle both return your own text as the crew's pane-truth.
+[ -n "$pane" ] || echo "NO HANDLE for <crew> — not registered, or the record has none."
+[ -n "$pane" ] && tmux capture-pane -p -t "$pane" | tail -25
 harmonik comms log --from <crew> --topic status --since 10m --json
 harmonik queue status --json
 ```
 
-A lane passes only on (a) **and** (b). Recovery is routine — act, do not wait. (a)
-failing past ~120s ⇒ re-drive the crew and post a status; only declaring the crew
-*failed* and killing its work is an escalation. (a) passing while (b) shows the pane
+A lane passes only on (a) **and** (b). Recovery is routine — act, do not wait. (a) still
+failing ~120s after launch ⇒ re-drive the crew and post a status; only declaring the
+crew *failed* and killing its work is an escalation. (a) passing while (b) shows the pane
 wedged at a prompt ⇒ clear-and-retype it (`SKILL.md` §6) and re-verify.
 
 Boot is complete only when every planned lane passes 5d or is explicitly parked.
@@ -302,18 +318,25 @@ not executing and sends nothing, so the comms bus is structurally blind to it:
   in-flight bead was closed out-of-band (an operator `br close`, not through the daemon
   queue), so no `run_completed` ever fires and its wake never comes.
 
-Every 15–20 minutes while crews are staffed, capture each crew's agent pane
-(`tmux capture-pane -p -t <session>:1`). Healthy is an advancing spinner or an empty `❯ `
-input box (idle-armed, waiting on a wake). Flag any crew with stable non-whitespace text
+Every 15–20 minutes while crews are staffed, capture each crew's agent pane. Take the
+target from the `handle` field as in Step 5d — `<session>:1` resolves today only because
+the agent window happens to sit at index 1, and the window is identified by NAME, not by
+index. Healthy is an advancing spinner or an empty `❯ ` input box (idle-armed, waiting on
+a wake). Flag any crew with stable non-whitespace text
 after `❯ ` and no active spinner — no human types into a crew pane, so leftover input
 means a submit that did not take. Re-capture ~15s later and flag only if it persists
 across both samples; a frozen spinner over stale input is the same wedge.
 
 ```bash
-tmux send-keys -t <session>:1 C-u                     # clear the stale input
-tmux send-keys -t <session>:1 -l "<fresh directive>"  # retype it literally (-l)
-tmux send-keys -t <session>:1 Enter                   # submit
-tmux capture-pane -p -t <session>:1 | tail -5         # confirm: spinner up, input box EMPTY
+pane="$(harmonik crew list --json | jq -r 'select(.name=="<crew>") | .handle')"
+if [ -z "$pane" ]; then
+  echo "NO HANDLE for <crew> — not registered, or the record has none. Do NOT send keys."
+else
+  tmux send-keys -t "$pane" C-u                     # clear the stale input
+  tmux send-keys -t "$pane" -l "<fresh directive>"  # retype it literally (-l)
+  tmux send-keys -t "$pane" Enter                   # submit
+  tmux capture-pane -p -t "$pane" | tail -5         # confirm: spinner up, input box EMPTY
+fi
 ```
 
 A bare `Enter` on the stale buffer often fails to register; clear-and-retype works. For a
@@ -362,10 +385,11 @@ watchers; keeper arming survives the cycle, the watchers do not.
 
 ## Definition of a healthy fleet
 
-1. Every planned lane has a crew in **both** `crew list` and `comms who`.
+1. Every planned lane has a crew in `crew list` **and** online in `comms who`.
 2. Each crew owns a distinct epic and a distinct named queue.
-3. Each crew's epic is mirrored — `br show <epic> --format json` → `.assignee` is the
-   owning crew, so run-event attribution needs no round-trip.
+3. Each crew's epic is mirrored — `br show <epic> --format json | jq -r '.[0].assignee'`
+   is the owning crew, so run-event attribution needs no round-trip. `br show` returns an
+   ARRAY; a bare `.assignee` fails with `Cannot index array with string`.
 4. Each crew shows pane-truth: a recent `--topic status` post and a dispatched bead, or a
    clean "idling — no ready beads" drain status, which is also healthy.
 5. No zombie or ghost records in `crew list`.
@@ -374,11 +398,12 @@ watchers; keeper arming survives the cycle, the watchers do not.
 ```bash
 # The registered-but-offline signature, in one line. Any name printed = ZOMBIE/GHOST → Step 3.
 comm -23 <(harmonik crew list --json | jq -r '.name' | sort) \
-         <(harmonik comms who --json | jq -r '.agent' | sort)
+         <(harmonik comms who --json | jq -r 'select(.status=="online") | .agent' | sort)
 ```
 
 Three confusions worth naming, because each has cost a fleet real time: a daemon worktree
-window is not a crew working; a stale `comms who` entry is not a live crew; and a bead
+window is not a crew working; a `comms who` row with `"status":"stale"` is not a live
+crew, and it keeps printing for ten minutes after the crew stopped beating; and a bead
 running is not a reason to park on it while other lanes sit idle.
 
 ---

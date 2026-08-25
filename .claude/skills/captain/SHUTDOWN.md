@@ -52,7 +52,8 @@ git -C $HARMONIK_PROJECT log --oneline -3
 ```
 
 Act on any crew message that needs it (bead banked, lane complete, error) before
-proceeding. Attribute run events via `br show <epic_id> --format json` → `.assignee`.
+proceeding. Attribute run events via `br show <epic_id> --format json | jq -r '.[0].assignee'`.
+`br show` returns an ARRAY, so a bare `.assignee` errors.
 
 ---
 
@@ -130,10 +131,21 @@ harmonik comms send --from "$HARMONIK_AGENT" --to <crew> --topic status -- \
 # b) Stop the crew (removes registry record + pane)
 harmonik crew stop <crew>
 
-# c) Confirm it left the bus
-harmonik comms who --json    # <crew> should be absent
-harmonik crew list --json    # no registry record for <crew>
+# c) Confirm the stop took. The registry is the check that answers now.
+harmonik crew list --json    # no registry record for <crew> — this is the real check
+harmonik comms who --json    # <crew> may still be listed: see below
 ```
+
+**`crew stop` does not take the crew off the bus, so do not test the stop that way.**
+It kills the crew and removes the registry record; it emits no presence leave beat.
+`HandleCrewStop` (`internal/daemon/crewstart.go`) sends `/quit`, waits out the grace
+period, then kills the crew's tmux session — `StopCrewSession` in
+`internal/daemon/tmuxsubstrate.go`, or `StopWindowByHandle` where the substrate has no
+session stopper. Neither writes an `agent_presence` event. Presence is computed
+from the event log, not from the registry, so the stopped crew stays in `comms who` —
+`online` for 120 seconds, then `stale` for ten more minutes. Only a crew that ran
+`harmonik comms leave` itself before the pane died goes offline at once. Treat the empty
+`crew list` row as the stop confirmation and let presence age out.
 
 `crew stop` does not delete `.harmonik/crew/missions/<crew>.md`. The next captain
 respawns the crew with the same mission file via
@@ -298,7 +310,7 @@ harmonik queue list --json | jq -r '.queues[] | select(.status == "paused-by-fai
 ```bash
 comm -23 \
   <(harmonik crew list --json | jq -r '.name' | sort) \
-  <(harmonik comms who --json | jq -r '.agent' | sort)
+  <(harmonik comms who --json | jq -r 'select(.status=="online") | .agent' | sort)
 # Any name printed = unresolved zombie — reconcile before exiting
 ```
 

@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,182 +42,34 @@ func runBeadSubcommand(subArgs []string) int {
 }
 
 func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
-	projectDirFlag := ""
-	beadsFlag := ""    // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1 // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""  // --context <inline|@file> (hk-boiwe)
-	notifyStream := "" // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
-	notifyStreamSet := false
-	workflowModeFlag := ""                // --workflow-mode <builtin|single|dot> (hk-qo9pq); empty = "builtin"
-	workflowRefFlag := ""                 // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
-	noNotifyStream := false               // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
-	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
-	dryRun := false                       // --dry-run / --plan-only: print plan without launching (hk-cebjc)
-	targetBranchFlag := ""                // --target-branch (hk-mkxw1)
-	var protectBranchesFlag []string      // --protect-branch repeatable (hk-mkxw1)
-	forbidUnprotectedDefaultFlag := false // --forbid-default-main (hk-mkxw1)
-	positional := []string{}
-
-	for i := 0; i < len(subArgs); i++ {
-		arg := subArgs[i]
-		switch {
-		case arg == "--project" && i+1 < len(subArgs):
-			i++
-			projectDirFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--project="):
-			projectDirFlag = strings.TrimPrefix(arg, "--project=")
-
-		case arg == "--beads" && i+1 < len(subArgs):
-			i++
-			beadsFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--beads="):
-			beadsFlag = strings.TrimPrefix(arg, "--beads=")
-
-		case arg == "--max-concurrent" && i+1 < len(subArgs):
-			i++
-			n, convErr := strconv.Atoi(subArgs[i])
-			if convErr != nil || n < 1 {
-				fmt.Fprintf(os.Stderr, "harmonik run: --max-concurrent must be a positive integer, got %q\n", subArgs[i])
-				return 1
-			}
-			maxConcurrent = n
-		case strings.HasPrefix(arg, "--max-concurrent="):
-			val := strings.TrimPrefix(arg, "--max-concurrent=")
-			n, convErr := strconv.Atoi(val)
-			if convErr != nil || n < 1 {
-				fmt.Fprintf(os.Stderr, "harmonik run: --max-concurrent must be a positive integer, got %q\n", val)
-				return 1
-			}
-			maxConcurrent = n
-
-		case arg == "--context" && i+1 < len(subArgs):
-			i++
-			contextFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--context="):
-			contextFlag = strings.TrimPrefix(arg, "--context=")
-
-		case arg == "--review-loop":
-			fmt.Fprintln(os.Stderr,
-				"harmonik run: --review-loop was retired along with the review-loop mode.\n"+
-					"  Drop the flag: dot is the default and is already reviewed.")
-			return 1
-		case arg == "--no-review-loop":
-			fmt.Fprintln(os.Stderr,
-				"harmonik run: --no-review-loop was retired along with the review-loop mode.\n"+
-					"  It used to mean \"run single-node, unreviewed\". If that is what you want,\n"+
-					"  say it directly: --workflow-mode single.")
-			return 1
-
-		case arg == "--notify-stream":
-			notifyStreamSet = true
-			notifyStream = "-" // stdout
-		case strings.HasPrefix(arg, "--notify-stream="):
-			notifyStreamSet = true
-			notifyStream = strings.TrimPrefix(arg, "--notify-stream=")
-			if notifyStream == "" {
-				notifyStream = "-"
-			}
-
-		case arg == "--workflow-mode" && i+1 < len(subArgs):
-			i++
-			workflowModeFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--workflow-mode="):
-			workflowModeFlag = strings.TrimPrefix(arg, "--workflow-mode=")
-
-		case arg == "--workflow-ref" && i+1 < len(subArgs):
-			i++
-			workflowRefFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--workflow-ref="):
-			workflowRefFlag = strings.TrimPrefix(arg, "--workflow-ref=")
-
-		case arg == "--no-notify-stream":
-			noNotifyStream = true
-
-		case arg == "--wave":
-
-		case arg == "--param" && i+1 < len(subArgs):
-			i++
-			kv := subArgs[i]
-			eqIdx := strings.IndexByte(kv, '=')
-			if eqIdx <= 0 {
-				fmt.Fprintf(os.Stderr, "harmonik run: --param must be KEY=VALUE, got %q\n", kv)
-				return 1
-			}
-			key := kv[:eqIdx]
-			val := kv[eqIdx+1:]
-			templateParams[key] = val
-		case strings.HasPrefix(arg, "--param="):
-			kv := strings.TrimPrefix(arg, "--param=")
-			eqIdx := strings.IndexByte(kv, '=')
-			if eqIdx <= 0 {
-				fmt.Fprintf(os.Stderr, "harmonik run: --param must be KEY=VALUE, got %q\n", kv)
-				return 1
-			}
-			key := kv[:eqIdx]
-			val := kv[eqIdx+1:]
-			templateParams[key] = val
-
-		case arg == "--target-branch" && i+1 < len(subArgs):
-			i++
-			targetBranchFlag = subArgs[i]
-		case strings.HasPrefix(arg, "--target-branch="):
-			targetBranchFlag = strings.TrimPrefix(arg, "--target-branch=")
-
-		case arg == "--protect-branch" && i+1 < len(subArgs):
-			i++
-			protectBranchesFlag = append(protectBranchesFlag, subArgs[i])
-		case strings.HasPrefix(arg, "--protect-branch="):
-			protectBranchesFlag = append(protectBranchesFlag, strings.TrimPrefix(arg, "--protect-branch="))
-
-		case arg == "--forbid-default-main":
-			forbidUnprotectedDefaultFlag = true
-
-		case arg == "--dry-run" || arg == "--plan-only":
-			dryRun = true
-
-		case arg == "--help" || arg == "-h":
-			if err := runUsage(stdout); err != nil {
-				return 1
-			}
-			return 0
-
-		case strings.HasPrefix(arg, "-"):
-			fmt.Fprintf(os.Stderr, "harmonik run: unknown flag %q\n", arg)
-			return 1
-
-		default:
-			positional = append(positional, arg)
-		}
-	}
-
-	var beadIDs []core.BeadID
-	switch {
-	case beadsFlag != "" && len(positional) > 0:
-		fmt.Fprintln(os.Stderr, "harmonik run: cannot mix positional <bead-id> with --beads; use one or the other")
-		return 1
-	case beadsFlag != "":
-		for _, raw := range strings.Split(beadsFlag, ",") {
-			id := strings.TrimSpace(raw)
-			if id == "" {
-				continue
-			}
-			beadIDs = append(beadIDs, core.BeadID(id))
-		}
-		if len(beadIDs) == 0 {
-			fmt.Fprintln(os.Stderr, "harmonik run: --beads requires at least one bead ID")
-			return 1
-		}
-	case len(positional) == 1:
-		beadIDs = []core.BeadID{core.BeadID(positional[0])}
-	case len(positional) == 0:
-		fmt.Fprintln(os.Stderr, "harmonik run: missing <bead-id> argument")
-		fmt.Fprintln(os.Stderr, "usage: harmonik run <bead-id> [--project DIR] [--context TEXT] [--workflow-mode MODE]")
-		fmt.Fprintln(os.Stderr, "       harmonik run --beads id1,id2,... [--max-concurrent N] [--project DIR] [--context TEXT] [--workflow-mode MODE]")
-		return 1
-	default:
-		fmt.Fprintf(os.Stderr, "harmonik run: too many positional arguments (got %d, expected 1); use --beads for multiple\n", len(positional))
+	opts, err := parseRunBeadOptions(subArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: %v\n", err)
 		return 1
 	}
+	if opts.help {
+		if err := runUsage(stdout); err != nil {
+			return 1
+		}
+		return 0
+	}
+	return runBeadOptionsIO(subArgs, opts, stdout)
+}
+
+func runBeadOptionsIO(subArgs []string, opts runBeadOptions, stdout io.Writer) int {
+	beadIDs, _ := selectRunBeads(opts.beads, opts.positional)
+	workflow, _ := selectRunWorkflow(opts.workflowMode, opts.workflowRef)
+	notifyStreamSet, notifyStream := selectNotifyStream(opts.notifyStreamSet, opts.noNotifyStream, len(beadIDs), opts.maxConcurrent, opts.notifyStream)
+
+	projectDirFlag := opts.projectDir
+	maxConcurrent := opts.maxConcurrent
+	contextFlag := opts.context
+	itemWorkflowMode, itemWorkflowRef := workflow.mode, workflow.ref
+	templateParams := opts.templateParams
+	dryRun := opts.dryRun
+	targetBranchFlag := opts.targetBranch
+	protectBranchesFlag := opts.protectBranches
+	forbidUnprotectedDefaultFlag := opts.forbidUnprotectedDefault
 
 	var extraContext string
 	if contextFlag != "" {
@@ -234,45 +85,6 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 			extraContext = contextFlag
 		}
 	}
-
-	var itemWorkflowMode string
-	var itemWorkflowRef string
-	switch workflowModeFlag {
-	case "", "builtin":
-		if workflowRefFlag != "" {
-			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")
-			return 1
-		}
-	case "single":
-		itemWorkflowMode = string(core.WorkflowModeSingle)
-		if workflowRefFlag != "" {
-			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")
-			return 1
-		}
-	case core.WorkflowModeRetiredReviewLoop:
-		fmt.Fprintln(os.Stderr,
-			"harmonik run: --workflow-mode review-loop was retired; use --workflow-mode dot.\n"+
-				"  review-loop was a hand-written implementer→reviewer cycle; dot is the general\n"+
-				"  graph walker it was a special case of, and the embedded standard-bead.dot\n"+
-				"  default already runs an implementer→reviewer→close shape.")
-		return 1
-	case "dot":
-		itemWorkflowMode = string(core.WorkflowModeDot)
-		if workflowRefFlag == "" {
-			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-mode dot requires --workflow-ref <path>")
-			return 1
-		}
-		itemWorkflowRef = workflowRefFlag
-	default:
-		fmt.Fprintf(os.Stderr, "harmonik run: unknown --workflow-mode %q (valid: builtin, single, dot)\n", workflowModeFlag)
-		return 1
-	}
-
-	if !notifyStreamSet && !noNotifyStream && (len(beadIDs) > 1 || maxConcurrent > 1) {
-		notifyStream = "-" // stdout
-		notifyStreamSet = true
-	}
-
 	var notifyWriter io.Writer
 	var notifyFile *os.File
 	if notifyStreamSet {
@@ -438,31 +250,31 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		return 1
 	}
 	if existingQueue != nil && existingQueue.Status != queue.QueueStatusCompleted {
-		switch existingQueue.Status {
-		case queue.QueueStatusPausedByFailure, queue.QueueStatusCancelled:
+		pidStatus, _, pidErr := lifecycle.ProbePidfileLock(projectDir)
+		decision := classifyStaleQueue(existingQueue.Status, pidStatus, errors.Is(pidErr, os.ErrNotExist))
+		switch decision {
+		case staleQueueArchive:
+			orphaned := existingQueue.Status != queue.QueueStatusPausedByFailure && existingQueue.Status != queue.QueueStatusCancelled
 			archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, queue.QueueNameMain, time.Now())
 			if archiveErr != nil {
-				fmt.Fprintf(os.Stderr, "harmonik run: cannot archive stale queue: %v\n", archiveErr)
+				if orphaned {
+					fmt.Fprintf(os.Stderr, "harmonik run: cannot archive orphaned queue: %v\n", archiveErr)
+				} else {
+					fmt.Fprintf(os.Stderr, "harmonik run: cannot archive stale queue: %v\n", archiveErr)
+				}
 				return 1
 			}
-			fmt.Fprintf(os.Stderr, "harmonik run: archived stale queue to %s\n", archivePath)
-		default:
-			pidStatus, _, pidErr := lifecycle.ProbePidfileLock(projectDir)
-			daemonDead := errors.Is(pidErr, os.ErrNotExist) || pidStatus == lifecycle.PidfileLockStatusStale
-			if daemonDead {
-				archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, queue.QueueNameMain, time.Now())
-				if archiveErr != nil {
-					fmt.Fprintf(os.Stderr, "harmonik run: cannot archive orphaned queue: %v\n", archiveErr)
-					return 1
-				}
+			if orphaned {
 				fmt.Fprintf(os.Stderr, "harmonik run: daemon appears dead; archived orphaned queue to %s\n", archivePath)
 			} else {
-				fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
-				fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
-				fmt.Fprintln(os.Stderr, "  use 'harmonik queue cancel' to cancel a queue whose daemon is no longer running,")
-				fmt.Fprintln(os.Stderr, "  or 'harmonik queue status' to inspect the live queue")
-				return 1
+				fmt.Fprintf(os.Stderr, "harmonik run: archived stale queue to %s\n", archivePath)
 			}
+		case staleQueueRefuse:
+			fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
+			fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
+			fmt.Fprintln(os.Stderr, "  use 'harmonik queue cancel' to cancel a queue whose daemon is no longer running,")
+			fmt.Fprintln(os.Stderr, "  or 'harmonik queue status' to inspect the live queue")
+			return 1
 		}
 	}
 

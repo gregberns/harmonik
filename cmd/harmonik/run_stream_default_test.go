@@ -12,6 +12,14 @@ func streamDefaultFixtureResolveKind(t *testing.T, extraArgs []string) string {
 	return string(kind)
 }
 
+func TestRunNotifyStreamAutoEnableDecision(t *testing.T) {
+	t.Parallel()
+	set, path := selectNotifyStream(false, false, 2, 1, "")
+	if !set || path != "-" {
+		t.Fatalf("got (%v, %q), want (true, stdout)", set, path)
+	}
+}
+
 // TestRunStreamDefaultKindIsStream verifies that omitting --wave produces
 // GroupKindStream (the new default introduced by hk-7nbey).
 func TestRunStreamDefaultKindIsStream(t *testing.T) {

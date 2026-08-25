@@ -130,7 +130,7 @@ func TestGenuineDrain_PausedByFailureIsStuck(t *testing.T) {
 func TestGenuineDrain_FailedArchiveFileIsStuck(t *testing.T) {
 	dir := emptyTestProjectDir(t)
 	archive := filepath.Join(dir, ".harmonik", "queues", "main.json.failed-20260101000000")
-	if err := os.WriteFile(archive, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(archive, []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
 	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), dir)
@@ -581,7 +581,7 @@ func TestGatherDrainFacts_QueueAxisNonTerminalItem(t *testing.T) {
 func TestGatherDrainFacts_WorktreePathsPopulated(t *testing.T) {
 	dir := emptyTestProjectDir(t)
 	wtDir := filepath.Join(dir, ".harmonik", "worktrees", "019e-fake-run")
-	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+	if err := os.MkdirAll(wtDir, 0o750); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), dir)

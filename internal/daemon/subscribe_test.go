@@ -321,7 +321,10 @@ func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
 	t.Parallel()
 
 	reg := runregistry.NewRunRegistry()
-	runID, _ := uuid.NewV7()
+	runID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
 	startedAt := time.Now().Add(-30 * time.Second)
 	reg.Register(core.RunID(runID), &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-test-123"),

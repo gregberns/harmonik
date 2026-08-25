@@ -205,11 +205,6 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 }
 
 func (p *HandlerPausePolicyGoroutine) buildInFlightList() []InFlightBeadRecord {
-	type runEntry struct {
-		runID  core.RunID
-		handle *runregistry.RunHandle
-	}
-
 	snap := p.cfg.Registry.SnapshotWithKeys()
 
 	out := make([]InFlightBeadRecord, 0, len(snap))

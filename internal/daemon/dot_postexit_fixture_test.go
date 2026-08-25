@@ -108,7 +108,7 @@ type dotFixtureOpts struct {
 	// bag of knobs, not a call scope: the run context is the thing under test
 	// here, so a test must be able to supply its own instead of taking the
 	// fixture's default.
-	RunContext context.Context
+	RunContext context.Context //nolint:containedctx // dotFixtureOpts is a bag of knobs, not a call scope; the run context under test must be swappable per test.
 
 	// HookOutcome is the raw outcome_emitted payload the agent reported, or
 	// empty for "nothing arrived".

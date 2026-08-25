@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runregistry"
+	"github.com/gregberns/harmonik/internal/spend"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -135,7 +136,7 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 	}
 
 	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
-		spendMeter := NewDaemonSpendMeter(bus)
+		spendMeter := spend.NewDaemonSpendMeter(bus)
 		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
 			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
 		}
@@ -146,7 +147,7 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
 	}
 
-	perQueueSpendMeter := NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
+	perQueueSpendMeter := spend.NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
 	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
 	}

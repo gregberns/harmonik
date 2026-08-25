@@ -74,7 +74,7 @@ func (r ActorRole) Valid() bool {
 // WorkQueueSet helper that formerly consumed this slice was dead code (no
 // non-test caller) and has been deleted. The shipping dispatch surface is
 // per-queue-name, not per-actor-role — see internal/queuewiring/store.go
-// and internal/daemon/perqueuespendmeter_tigaf11.go.
+// and internal/spend/perqueuespendmeter_tigaf11.go.
 //
 // Spec: [architecture.md §4.8 AR-032].
 func AllActorRoles() []ActorRole {

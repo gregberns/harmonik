@@ -1,4 +1,4 @@
-package daemon_test
+package spend_test
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runregistry"
+	"github.com/gregberns/harmonik/internal/spend"
 )
 
 const pqBytesPerUSD = 100_000.0
@@ -20,7 +20,7 @@ const pqBytesPerUSD = 100_000.0
 func pqMakeQueue(name string, capUSD float64) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       newTestQueueID(),
+		QueueID:       uuid.Must(uuid.NewV7()).String(),
 		Name:          name,
 		Workers:       1,
 		SpendCapUSD:   capUSD,
@@ -68,14 +68,14 @@ func pqRegisterRun(t *testing.T, reg *runregistry.RunRegistry, queueName string)
 	return runID
 }
 
-func pqSetup(t *testing.T, queues ...*queue.Queue) (*runregistry.RunRegistry, *queuewiring.QueueStore, *daemon.PerQueueSpendMeter) {
+func pqSetup(t *testing.T, queues ...*queue.Queue) (*runregistry.RunRegistry, *queuewiring.QueueStore, *spend.PerQueueSpendMeter) {
 	t.Helper()
 	reg := runregistry.NewRunRegistry()
 	store := queuewiring.NewQueueStore()
 	for _, q := range queues {
-		daemon.ExportedQueueStoreSetQueue(store, q)
+		store.SetQueue(q)
 	}
-	meter := daemon.ExportedNewPerQueueSpendMeter(reg, store, "" /* no persistence */)
+	meter := spend.ExportedNewPerQueueSpendMeter(reg, store, "" /* no persistence */)
 	return reg, store, meter
 }
 
@@ -87,7 +87,7 @@ func TestPerQueueSpendMeter_CappedQueueTrips(t *testing.T) {
 	ctx := context.Background()
 	runID := pqRegisterRun(t, reg, "busy")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 5.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 5.0)); err != nil {
 		t.Fatalf("handleBudgetAccrual: %v", err)
 	}
 
@@ -105,10 +105,10 @@ func TestPerQueueSpendMeter_SiblingNotStarved(t *testing.T) {
 	busyRun := pqRegisterRun(t, reg, "busy")
 	calmRun := pqRegisterRun(t, reg, "calm")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, busyRun, 2.5)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, busyRun, 2.5)); err != nil {
 		t.Fatalf("busy accrual: %v", err)
 	}
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, calmRun, 1.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, calmRun, 1.0)); err != nil {
 		t.Fatalf("calm accrual: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestPerQueueSpendMeter_NoCapNoChange(t *testing.T) {
 	ctx := context.Background()
 	runID := pqRegisterRun(t, reg, "uncapped")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 1000.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 1000.0)); err != nil {
 		t.Fatalf("handleBudgetAccrual: %v", err)
 	}
 
@@ -145,18 +145,18 @@ func TestPerQueueSpendMeter_NoCapNoChange(t *testing.T) {
 func TestPerQueueSpendMeter_CapOverGlobalStillTrips(t *testing.T) {
 	t.Parallel()
 	reg, store, meter := pqSetup(t, pqMakeQueue("rich", 50.0))
-	daemon.ExportedPerQueueSpendMeterSetGlobalCapUSD(meter, 20.0)
+	spend.ExportedPerQueueSpendMeterSetGlobalCapUSD(meter, 20.0)
 	ctx := context.Background()
 	runID := pqRegisterRun(t, reg, "rich")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 30.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 30.0)); err != nil {
 		t.Fatalf("under-cap accrual: %v", err)
 	}
 	if got := store.QueueByName("rich").Status; got != queue.QueueStatusActive {
 		t.Fatalf("status after $30 of $50 cap = %q, want active", got)
 	}
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 20.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 20.0)); err != nil {
 		t.Fatalf("trip accrual: %v", err)
 	}
 	if got := store.QueueByName("rich").Status; got != queue.QueueStatusPausedByBudget {
@@ -173,16 +173,16 @@ func TestPerQueueSpendMeter_RolloverResetsAndUnpauses(t *testing.T) {
 	ctx := context.Background()
 	runID := pqRegisterRun(t, reg, "busy")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 3.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 3.0)); err != nil {
 		t.Fatalf("trip accrual: %v", err)
 	}
 	if got := store.QueueByName("busy").Status; got != queue.QueueStatusPausedByBudget {
 		t.Fatalf("pre-rollover status = %q, want paused-by-budget", got)
 	}
 
-	daemon.ExportedPerQueueSpendMeterSetDayKey(meter, "2000-01-01")
+	spend.ExportedPerQueueSpendMeterSetDayKey(meter, "2000-01-01")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 1.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, runID, 1.0)); err != nil {
 		t.Fatalf("post-rollover accrual: %v", err)
 	}
 	if got := store.QueueByName("busy").Status; got != queue.QueueStatusActive {
@@ -198,7 +198,7 @@ func TestPerQueueSpendMeter_AttributionEmptyName(t *testing.T) {
 	ctx := context.Background()
 	fallbackRun := pqRegisterRun(t, reg, "")
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, fallbackRun, 100.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, fallbackRun, 100.0)); err != nil {
 		t.Fatalf("handleBudgetAccrual: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestPerQueueSpendMeter_AttributionGetMiss(t *testing.T) {
 	}
 	missRun := core.RunID(missUUID)
 
-	if err := daemon.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, missRun, 100.0)); err != nil {
+	if err := spend.ExportedPerQueueSpendMeterHandleBudgetAccrual(meter, ctx, pqMakeAccrualEvent(t, missRun, 100.0)); err != nil {
 		t.Fatalf("handleBudgetAccrual returned error on registry miss (want nil): %v", err)
 	}
 

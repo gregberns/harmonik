@@ -7,6 +7,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/spend"
 )
 
 // WithWorktreeFactory returns a TestOption that replaces productionWorktreeFactory
@@ -73,7 +74,7 @@ func WithBrAdapterFactory(factory func(brPath, projectDir string) (*brcli.Adapte
 // number of synthetic events.
 //
 // Bead ref: hk-c7lxc.
-func WithSpendMeterObserver(fn func(*DaemonSpendMeter)) TestOption {
+func WithSpendMeterObserver(fn func(*spend.DaemonSpendMeter)) TestOption {
 	return func(h *daemonTestHooks) {
 		h.spendMeterObserver = fn
 	}

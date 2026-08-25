@@ -329,6 +329,34 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runregistry is a leaf: importing daemon would re-couple the run registry to the monolith (runregistry-extract, the keystone extraction)" }
 
+        # spend: the daemon-wide and per-queue spend meters (budget_accrual
+        # accounting and per-queue budget pausing) extracted out of
+        # internal/daemon (P2 spendmeter-extract). Its one dependency on
+        # daemon — *runregistry.RunRegistry, used only for reg.Get(runID) —
+        # disappeared on its own once runregistry-extract landed. The allow
+        # list is the MEASURED direct import set of both production files and
+        # their tests: stdlib; google/uuid (test fixture run/event IDs);
+        # internal/core (event types); internal/eventbus (Subscribe/Emit);
+        # internal/queue (Queue, QueueStatusPausedByBudget, Persist);
+        # internal/queuewiring (QueueStore); internal/runregistry
+        # (RunRegistry.Get); and self (white-box + export_test.go). It MUST
+        # NOT import daemon: doing so would re-couple the meters to the
+        # monolith and defeat the extraction.
+        # Rationale: plans/2026-08-23-clear-the-ground/tasks/spendmeter-extract.md.
+        spend:
+          files: ["**/internal/spend/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/queuewiring"
+            - "github.com/gregberns/harmonik/internal/runregistry"
+            - "github.com/gregberns/harmonik/internal/spend"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "spend is a leaf: importing daemon would re-couple the spend meters to the monolith (spendmeter-extract)" }
+
         # runloop: the run machine's boundary contract — the narrow structural
         # PORT interfaces (LedgerPort … RunRegistryPort) and the value/handle
         # BUNDLES (RunEnv, RunPorts, SharedHandles) the run path consumes. This is

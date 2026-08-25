@@ -475,7 +475,10 @@ everything reads:
      grep -qx "$base" /tmp/live-checkouts || echo "GONE $(basename "$d")"
    done
    ls -lt ~/Library/Caches/harmonik-lane-gocache   # newest first: the busy lanes sit at the top
-   rm -rf ~/Library/Caches/harmonik-lane-gocache/<one-directory>
+   GOCACHE=~/Library/Caches/harmonik-lane-gocache/<one-directory> \
+     DRY_RUN=1 scripts/go-cache-reap.sh 2         # report only, delete nothing
+   GOCACHE=~/Library/Caches/harmonik-lane-gocache/<one-directory> \
+     scripts/go-cache-reap.sh 2                   # trim that lane to 2 GiB
    ```
 
    A basename can match a live worktree and still be stale, because two
@@ -483,12 +486,22 @@ everything reads:
    Read `ls -lt` too: a directory nothing has written to for days is stale
    whatever its name says.
 
-   A directory whose checkout is gone, or that no build has written to for
-   hours, is free to delete, and it costs that checkout one cold build. A
-   directory a lane is compiling against right now is **not** free — that is the
-   same mid-build hazard as the shared-cache step below, at one lane's scale
-   instead of the whole box. This is why the step lists directories before it
-   deletes them.
+   **Trim a lane cache with the reap. Delete the directory itself only when the
+   lane is done with it.** Read the dry-run count first and apply the "Prefer a
+   quiet box" rule above: under 1,000 objects is a small reap, and 1,000 or more
+   wants a quiet box. Delete a directory outright in two cases. Its checkout is
+   gone, which costs nothing, because the checkout no longer exists. Or nothing
+   has written to it for hours by `ls -lt`, which costs that checkout one cold
+   build. A directory a lane compiles against right now is neither case.
+
+   ```bash
+   D=~/Library/Caches/harmonik-lane-gocache/<one-directory>
+   pgrep -fl 'go build|go test|golangci-lint|compile' | head
+   rm -rf "$D"                                # only in one of the two cases above
+   ```
+
+   `pgrep` is a sample, not a guarantee — a build can start one second later.
+   This is why the step lists the directories before it deletes any of them.
 
 2. **Stale worktrees — §4.** Deleting a worktree directory never loses a commit;
    only uncommitted changes are at risk, and §4 shows how to find those first.
@@ -499,9 +512,23 @@ everything reads:
 
    ```bash
    pgrep -fl 'go build|go test|golangci-lint|compile' | head
-   go clean -cache             # the 9.4 GiB
-   golangci-lint cache clean   # the 1.1 GiB (or rm -rf the directory)
+   DRY_RUN=1 scripts/go-cache-reap.sh 15                              # measure first
+   scripts/go-cache-reap.sh 15                                        # the shared go-build cache
+   GOCACHE=~/Library/Caches/golangci-lint scripts/go-cache-reap.sh 1  # the lint cache
    ```
+
+   Read the dry run before you reap. Measured 2026-08-24: the shared cache held
+   28.5 GiB, and a 15 GiB limit takes 20,333 objects. That is a large reap by the
+   "Prefer a quiet box" rule above, so quiet the box first. The lint cache held
+   0.9 GiB the same day, so a 1 GiB limit does nothing; give a lower limit or
+   skip that line.
+
+   The reap replaces `go clean -cache` and `golangci-lint cache clean` here.
+   Each of those empties a cache root, and an empty root breaks the builds that
+   read it. The recorded symptom is a "could not import" failure — see "Measure
+   these first" above. The lint cache holds the same `<hash>-a` and `<hash>-d`
+   entries as the Go build cache, so the reap accepts it when you point `GOCACHE`
+   at it.
 
    `pgrep` is a sample, not a guarantee — a build can start one second later.
    That is the reason this step is third and the reason no automation owns it.
@@ -580,7 +607,10 @@ find "$ROOT" -maxdepth 4 -name README -type f 2>/dev/null | while read -r r; do
 done | sort -u | while read -r d; do du -sm "$d"; done | sort -rn
 ```
 
-**Safe to delete**: Go caches are regenerable build artifacts — zero risk.
+**Safe to delete once the session that owns it is dead** (the next section
+says how to decide that): Go caches are regenerable build artifacts. The root of
+a cache a live session still builds against is not safe — see "Prefer a quiet
+box" at the top.
 
 ### Deciding a session is dead (hk-pans1)
 
@@ -695,7 +725,7 @@ A reclaim that checks one convention finds almost nothing:
 | `~/Library/Caches/golangci-lint` | the linter's default cache — **1.1 GiB**, missing from this runbook until 2026-07-28 |
 | `$TMPDIR/tmp.XXXXXXXX` | bare inline `GOCACHE=$(mktemp -d)` — **unowned, the big one in `$TMPDIR`** |
 | `$TMPDIR/harmonik-gocache.XXXXXX` | `scripts/with-isolated-gocache.sh` (self-cleaning except on SIGKILL) |
-| `~/Library/Caches/harmonik-lane-gocache/<name>-<hash>` | `scripts/with-lane-gocache.sh`, used by the Go steps in `make fast`, `make core` and `make full`. **Persistent by design, never self-cleans, and OUTLIVES the worktree that made it** — persistence is what keeps a lane warm, but agent worktrees are created and discarded constantly here and nothing reaps what they leave. One directory per checkout: 157 MiB for `go build ./...` alone, larger once `-race` test objects land. This is the "one cache per session" shape recommended above. **`go clean -cache` does NOT reach these** — it clears whatever `GOCACHE` resolves to, which by default is `go-build`. Sweep with `rm -rf ~/Library/Caches/harmonik-lane-gocache`; deleting any one directory is safe and costs that checkout one cold build. Override the root with `HARMONIK_LANE_GOCACHE_ROOT`. |
+| `~/Library/Caches/harmonik-lane-gocache/<name>-<hash>` | `scripts/with-lane-gocache.sh`, used by the Go steps in `make fast`, `make core` and `make full`. **Persistent by design, never self-cleans, and OUTLIVES the worktree that made it** — persistence is what keeps a lane warm, but agent worktrees are created and discarded constantly here and nothing reaps what they leave. One directory per checkout: 157 MiB for `go build ./...` alone, larger once `-race` test objects land. This is the "one cache per session" shape recommended above. **`go clean -cache` does NOT reach these** — it clears whatever `GOCACHE` resolves to, which by default is `go-build`. Trim one with `GOCACHE=<that directory> scripts/go-cache-reap.sh 2`. Delete a directory outright only when its checkout is gone, or when nothing has written to it for hours; §0 step 1 gives both cases. Override the root with `HARMONIK_LANE_GOCACHE_ROOT`. |
 | `$TMPDIR/go-build*` | the Go toolchain's own temp dirs |
 | `~/.cache/h-*-gocache`, `/tmp/h-*/gocache` | long-lived named caches (assessor campaigns, isolated lanes) |
 | `<worktree>/.harmonik/go-cache` | the daemon's merge gate (`internal/daemon/workloop.go`) |

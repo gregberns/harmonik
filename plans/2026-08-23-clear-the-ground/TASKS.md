@@ -36,12 +36,14 @@ from, and get the repair onto it.**
 Verifying the closed P0 above turned up two live bypasses in `scripts/lint-allow-ratchet.sh`, both
 reproduced on 2026-08-25 and both filed:
 
-- **New tolerated debt is challenged for exactly one commit** (`hk-h4h78`, P0). The comparison base is
+- **New tolerated debt is challenged for exactly one commit** (`hk-h4h78`, P0, blocked on row 1 of
+  §Ready now — the fix cannot land first, see its bead). The comparison base is
   one commit back, so the window slides. A pair that fails at commit N passes from N+1 onward.
   Reproduced on plain linear history — it needs no merge and no intent. The merge case is worse: the
   committed window unions the parents, so a side branch can add a pair without ever running the gate
   and the merge commit reports PASS.
-- **A dormant branch launders unlimited debt through a comment** (`hk-ym2nn`, P0). One legacy-format
+- **A dormant branch launders unlimited debt through a comment** (`hk-ym2nn`, P0, and it is READY
+  NOW — it has no dependencies, so it is the one gate defect on this list you can feed today). One legacy-format
   row anywhere in the list flips the whole comparison to path-keying, and it then derives a row's key
   from the trailing `#` location comment — which the file's own header calls "only aids" and which
   the author writes. `allow.txt` has 0 legacy rows today, so this is dormant and two commits from
@@ -119,7 +121,7 @@ superset: `crew-cleanup-skill` is on the alpha branch only, `dead-shell-sweep`,
 
 | # | Task | P | Workstream | Bead | Why it is first |
 |---|---|---|---|---|---|
-| 1 | [`lint-rekey-exclusion-list`](tasks/lint-rekey-exclusion-list.md) | **P0** | W1 | `hk-lint-rekey-exclusion-list-t9ebz` | **Feed this before anything else — it frees nine rows on its own** and is a second dependency on four more. **Its task file is stale and must be repaired before it is fed** — see the warning under this table. The operator ruling stands: change the keying rule, do not teach the ratchet to detect renames. |
+| 1 | [`lint-rekey-exclusion-list`](tasks/lint-rekey-exclusion-list.md) | **P0** | W1 | `hk-lint-rekey-exclusion-list-t9ebz` | **Feed this before anything else — it frees ELEVEN rows on its own, two of them P0** — and is a second dependency on four more. Its task file was repaired and committed on 2026-08-25; see the note under this table. The operator ruling stands: change the keying rule, do not teach the ratchet to detect renames. |
 | 2 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
 | 3 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
 | 4 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
@@ -129,22 +131,30 @@ superset: `crew-cleanup-skill` is on the alpha branch only, `dead-shell-sweep`,
 one read-only cost measurement, one governance row, and one command-line split that has already
 failed once. All five are in `br ready`, measured 2026-08-25.
 
-**STOP before you feed row 1. Its task file does not match the code.** The file still describes
-`allow.txt` as 575 findings keyed `<path><TAB><linter>`; the real file is 956 rows already keyed by
-content identity, migrated in `fbe830453`. Its "design decision" section asks the implementer to pick
-a keying scheme and option B is the scheme that shipped. Two of its four acceptance items are
-unrunnable as written — item 1 is already satisfied and proves nothing, item 3 names 575 findings
-where there are 956 — and item 4 names four extractions as its evidence when two of them
-(`runregistry-extract`, `spendmeter-extract`) have already landed and the other two
-(`handlerpause-extract`, `harnesspick-extract`) are blocked on this very task, so the half that could
-still prove it is circular. **Repair the task file first, or the implementer rebuilds
-shipped code.** The bead description is accurate where the task file is not, but the task file is the
-spec and outranks it.
+**Row 1's task file was repaired and committed on 2026-08-25 (`eaee3a8c`).** An earlier revision of
+this page carried a STOP here, because the file described `allow.txt` as 575 path-keyed findings when
+it is content-keyed and has been since `fbe830453`, asked the implementer to pick a keying scheme
+whose winning option already shipped, and rested its acceptance on four extractions that are either
+landed or blocked on this very task. **That is fixed.** The file now states the property, the five
+routes a package name reaches the key by, a keying decision made on measured ground, and a
+self-contained fixture that does not depend on the extractions.
 
-**Landing row 1 frees nine rows, not thirteen.** Eight single-dependency lint rows and
-`handlerpause-extract` come back. `lint-burn-errcheck`, `lint-burn-gocritic`,
-`lint-burn-last-three-linters` and `harnesspick-extract` each hold a second dependency, and all three
-of those second dependencies are `deferred` — rows nobody is going to feed. Plan for nine.
+**One thing survives from that STOP and still applies: a repair only counts once it is on the branch
+the run is cut from** — see the block at the top of this page.
+
+**Landing row 1 frees ELEVEN rows, and two of them are P0.** Measured 2026-08-25 by walking every
+edge: eleven beads carry `hk-lint-rekey-exclusion-list-t9ebz` as their ONLY open dependency. Eight
+lint rows, `handlerpause-extract`, and **two P0s that outrank everything else on this page** —
+`hk-h4h78`, the ratchet's sliding window, and `hk-lint-ratchet-mutation-proof-hdju9`, reopened. Both
+are gate work rather than burn-down work, and neither had a row on this page until this revision.
+
+An earlier revision said nine. That was true when written and stopped being true the same day, because
+both P0 edges were added after the count was taken. **Re-walk the edges rather than inheriting this
+number** — it has gone stale twice now.
+
+**Four more rows stay blocked** behind a second dependency: `lint-burn-errcheck`, `lint-burn-gocritic`,
+`lint-burn-last-three-linters` and `harnesspick-extract`. All three of those second dependencies are
+`deferred` — rows nobody is going to feed.
 
 The two review-gate repairs and the two test repairs that used to head this list are landed on
 `work/charlie-batch-1` — see §Landed.
@@ -275,7 +285,14 @@ identities" and not 61. The two figures do not disagree.
 
 **Then one follow-up run, starting from the tag, to strip five things and keep a sixth.**
 
-1. Delete both `safeexec` files and revert all 71 call sites.
+1. Delete both `safeexec` files and revert **81** call sites, not 71. **The 71 figure counts only one
+   of the two helpers and following it leaves the tree unable to compile.** Measured on
+   `rescue/gosec-final-zero` 2026-08-25: `internal/safeexec` accounts for 71 calls across 21 files,
+   and `internal/core/safeexec.go` defines a second helper, `SafeCommandContext`, called **10 more
+   times across 6 files** — `internal/harness/codex/walguard.go`, `internal/keeper/awaitack.go`,
+   `internal/workspace/diffhash.go`, `internal/runloop/scenariogate.go`,
+   `internal/runloop/scenariogate_test.go`, `internal/runmerge/fixture_test.go`. Delete the file and
+   miss those and every one is a dangling reference. 81 calls across 27 files.
 2. Revert the `safeexec` depguard line in `.golangci.yml`. Keep the two `internal/secureio` entries.
 3. Drop the 4 rows the series adds to `tools/lintreport/allow.txt`. Keep all 194 removals.
 4. Drop the 2 `#nosec G304` comments on the `secureio.ReadFile` calls. They are redundant, because
@@ -303,8 +320,9 @@ shorter range.** The legitimate allow-list removals and the `safeexec` conversio
 one commit, `fa206bdf7` — 111 files, and 133 of the removals. No selection of commits separates them.
 
 **What the audit found.** The series adds two copies of a `safeexec` helper —
-`internal/safeexec/safeexec.go` and `internal/core/safeexec.go` — and converts 71 call sites across
-21 files to them. The helper builds `exec.CommandContext(ctx, "/usr/bin/env")` and sets `cmd.Args[0]`
+`internal/safeexec/safeexec.go` and `internal/core/safeexec.go` — and converts 81 call sites (71 to
+the first helper, 10 to the second; an earlier revision said 71 for both) across
+27 files to them. The helper builds `exec.CommandContext(ctx, "/usr/bin/env")` and sets `cmd.Args[0]`
 to `env`, so every argv shifts by one position. The tests that assert on `argv[0]` were never
 updated: the tree at the tag holds 57 such assertions and the series edits none of them. The audit
 counts 14 that break by inspection. The suppression counts also match the original rejection exactly
@@ -343,6 +361,8 @@ flight.
 
 | Task | P | Bead | Waits on |
 |---|---|---|---|
+| gate: ratchet sliding window | **P0** | `hk-h4h78` | **The P0 at row 1 of §Ready now.** No task file — this is a defect found on 2026-08-25, not a planned row. The fix widens the ratchet's comparison base, and until the digest survives re-qualification a legitimate move genuinely does change rows, so a fixed base would flag every one. Ordering is forced, not preferred. |
+| gate: mutation proof | **P0** | `hk-lint-ratchet-mutation-proof-hdju9` | **The P0 at row 1 of §Ready now.** Reopened 2026-08-25 — four of its eight acceptance items were never proved and could not be by the commits that closed it. See its §Landed row and the bead. |
 | [`handlerpause-extract`](tasks/handlerpause-extract.md) | P1 | `hk-handlerpause-extract-bkjoo` | **The P0 at row 1 of §Ready now, and only that.** The single-owner rule below released this row when the spend-meter extraction landed, and that release still holds — no other run owns those files. **This supersedes the 2026-08-25 07:00Z agreement that the row goes out on batch 2.** When it is freed: it shares `bootstate.go`, `daemon.go` and `export_meters_pause_test.go` with the spend-meter extraction, and `d5673dee4` edits `bootstate.go` directly, so start from a branch that carries `internal/spend`. |
 | [`harnesspick-extract`](tasks/harnesspick-extract.md) | P1 | `hk-harnesspick-extract-3290z` | **Two things, not one.** `harness-composition-root-policy`, which is deferred pending an operator ruling, **and** `hk-lint-rekey-exclusion-list-t9ebz`, the P0 at row 1. `br blocked` shows both. An earlier revision named only the first. |
 
@@ -350,7 +370,8 @@ flight.
 
 Verified 2026-08-24 by **file presence on each branch**, not by `git log <branch> --grep "<bead-id>"`.
 A grep over commit messages misses a cherry-pick and misses a squash, and it is how the first twelve
-of these rows stayed on the ready list after they had landed. All beads closed.
+of these rows stayed on the ready list after they had landed. **All beads closed except
+`hk-lint-ratchet-mutation-proof-hdju9`, which was reopened on 2026-08-25** — its row below says so.
 
 **A row marked "batch only" stays on this list until `work/charlie-batch-1` merges.** The work is not
 on the integration branch yet, so the list still owes the record. Delete those rows at the merge, not

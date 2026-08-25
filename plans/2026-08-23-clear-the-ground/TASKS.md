@@ -139,8 +139,8 @@ of `work/alpha-integration-merge` or of `work/charlie-batch-1`.
 **Land `352e00e6b` only.** It is the clean, separable base of the range: 21 files, it removes 61 rows
 from `tools/lintreport/allow.txt`, it adds zero suppressions, and it touches no argv. It stands on
 its own. **The 61 rows are not all `gosec`** — they are 49 `gosec`, 4 `errcheck`, 3 `unused`, 3
-`gocognit` and 1 `gocritic`, which is why the commit message says "49 gosec identities" and not 61.
-The two figures do not disagree.
+`gocognit`, 1 `gocritic` and 1 `contextcheck`, which is why the commit message says "49 gosec
+identities" and not 61. The two figures do not disagree.
 
 **Then one follow-up run, starting from the tag, to strip five things and keep a sixth.**
 
@@ -155,8 +155,12 @@ The two figures do not disagree.
    `internal/core/detectorharness_rc010_test.go` and 5 in
    `internal/daemon/detectorbarrier_rc020b_test.go` — and not one of them is a command call site.
    Measured 2026-08-25: the base of the range carries 13 `//nolint:forbidigo` and 11
-   `//nolint:gocritic`, and the tag carries 21 and 3. The last commit of the series, `b2136f097`,
-   relabelled those 8 lines from one linter to the other and changed nothing else about them.
+   `//nolint:gocritic`, and the tag carries 21 and 3. The change is a REMOVE-THEN-ADD across TWO
+   commits, not a relabel in one: `fa206bdf7` removes all 8 `//nolint:gocritic`, and
+   `b2136f097` then adds 8 `//nolint:forbidigo` to lines that carry no directive at all.
+   **Do NOT revert `b2136f097` wholesale to satisfy this step.** It touches 7 files and also
+   carries an `exec.Command` to `safeexec.Command` swap plus three errcheck and close-error
+   fixes, which a wholesale revert would silently drop. Remove the 8 directives by name.
    `352e00e6b`, the commit to land, adds none of them. The allow list still tolerates all 8 as
    `forbidigo` entries — 40 at the base and the same 40 digests at the tag — so the inline directive
    quietens a finding the allow list already quietens, and it takes those 8 out of the reach of

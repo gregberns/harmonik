@@ -571,6 +571,12 @@ needs an operator answer either way. §8 carries it.
 on branch `work/<lane>`, at `/Users/gb/github/harmonik-wt/<lane>`. Alpha is the exception because it
 is the lane that merges, and a merge needs the shared branch checked out somewhere.
 
+> ⚠ **Both claims in that paragraph are superseded, 2026-08-24.** A checkout is not a grant of merge
+> authority. Which checkout holds the shared branch is a fact about disk; who may merge into it is set
+> by whatever governs the branch — see "Merge discipline" below, and Step 3 of `BATCH-GATE.md` at the
+> repo root. The checkout claim has gone stale too: charlie works from the main checkout as well
+> (`.harmonik/crew/missions/charlie.md`), so alpha is no longer the only lane there.
+
 Not a shared checkout: `check-fast` runs `go build ./...` and `go vet ./...`, so one lane's
 half-finished edit fails the other lane's gate for a reason it cannot see or fix. And in a shared
 checkout no lane can tell its own dirty files from another's, which is the exact shape of this repo's
@@ -715,12 +721,12 @@ corrections to it rather than editing it.
 A lane never merges itself. It commits on `work/<lane>` and records "ready at `<sha>`" in its handoff.
 Alpha merges, at a clean breakpoint.
 
-> ⚠ **Superseded for batch work, 2026-08-24.** The line above was written 2026-08-01 for two lanes.
-> A batch that goes through `BATCH-GATE.md` is merged into the alpha branch by the agent that
-> produced it, not by alpha — Step 3 of that file, and the operator directive recorded in
+> ⚠ **Superseded for batch work, 2026-08-24.** The two lines above were written 2026-08-01 for two
+> lanes. A batch that goes through `BATCH-GATE.md` at the repo root is merged into the alpha branch
+> by the agent that produced it, not by alpha — Step 3 of that file, and the operator directive in
 > `.harmonik/crew/missions/charlie.md`. Alpha still merges a plain lane branch, as below.
 > Two live role files point readers here as the owner of a current rule, so this note is load-bearing
-> rather than history: an agent read the unqualified line as merge authority and it cost a standoff.
+> rather than history. The unqualified line has been read as a grant of merge authority.
 
 Before offering a merge: rebase onto the shared tip, then run the gate. **Never hand over a red gate.**
 Commit with `git commit -F <file>`. Non-trivial commits carry `Reviewed-By:` and `Review-Verdict:`

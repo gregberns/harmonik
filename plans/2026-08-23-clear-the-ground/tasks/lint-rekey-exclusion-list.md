@@ -296,38 +296,43 @@ regardless**. Removing them is out of scope for this task.
    the moved package; an `*ast.ImportSpec` finding; and a `file scope` finding.
    **Do not fabricate digests.** Compute them from real Go sources through the real code path. The
    existing shell cases fabricate, which is why they prove nothing.
-4. **Land this as FOUR commits, and each one has its own checkable claim.** An earlier version of
-   this file asked for a single commit that left the row count unchanged. That is not satisfiable:
-   the branch starts red, three separate row changes are required, and asserting one global count
-   hides all of them. Assert per commit instead.
+4. **Land this as THREE commits. The shape is FORCED — it is not a style choice.**
+
+   **You are blocked on `hk-iw11o` and cannot start until it lands.** That bead teaches the ratchet
+   to express a key-scheme migration. Without it this task cannot be committed at all: today's
+   ratchet on a faithful re-key reports **934 added pairs and exits 1**, and the ratchet runs in
+   `core`, `fast` and `full` alike.
+
+   **Why the repair cannot be its own commit.** `hk-iw11o` branches on the DECLARED SCHEME VERSION
+   in the allow-list header. A commit that only swaps re-fingerprinted rows does not change the
+   scheme — the code moved, the keying rule did not — so the version is unchanged, the ratchet takes
+   the CHEAP text-compare path, and it fails on the added rows. **The row repair must ride inside the
+   commit that declares the new scheme, or it cannot land.**
+
+   - **Commit 1 — delete the rows the judge reports clean.** Pure deletion, allowed under any gate.
+     State the before and after counts, from YOUR branch.
+   - **Commit 2 — fix the three `revive package-comments` findings** in the `evaltasks/eval-*` files,
+     one comment line each, and delete their three rows. Pure deletion of rows; count falls by three.
+     Takes the `file scope` population to zero live rows.
+   - **Commit 3 — the scheme migration. Everything else happens here, at once.** Bump the
+     `# key-scheme:` header, land the keying change, regenerate every row, and repair the
+     re-fingerprinted rows in the same commit. **Name the move that caused each repaired row in the
+     commit body** — that is the part a reviewer can check and the tool cannot.
 
    **The branch starts RED and it is not your fault. Do not widen scope to go green.** At batch tip
-   `d5673dee4` the judge refuses 14 findings, and `make fast` runs `lint-allow` (Makefile `fast`
-   target), so `make fast` is red before you start. Those 14 are the damage this task exists to
-   repair: the run-registry and spend-meter extractions moved code, the moved declarations
-   re-fingerprinted, and the list still holds their pre-move digests. Commit A repairs exactly that.
+   `d5673dee4` the judge refuses 14 findings and `make fast` runs `lint-allow`, so `make fast` is red
+   before you touch anything. Commit 3 is what clears it. **Every count comes from YOUR branch and
+   none from this file** — the list holds 956 rows at integration tip `eae64d47a` and 923 at batch
+   tip `d5673dee4` with byte-identical `tools/lintreport` code on both, and a batch cut after the
+   merge carries a third number. An earlier version of this file named 575, which would have told you
+   to delete 381 rows. **A literal is wrong here whichever branch you take it from.**
 
-   - **Commit A — swap the re-fingerprinted rows. Net zero.** For each finding the judge refuses,
-     delete the stale row it should have matched and add the row it hashes to now. **Name the move
-     that caused each pair in the commit body.** This is a swap, not a widening: same count in, same
-     count out, and nothing newly tolerated. After A the judge is green and `make fast` is green,
-     under the CURRENT keying scheme, with no change to `tools/lintreport`. **Do this first** — every
-     later step needs a tree whose list matches it.
-   - **Commit B — delete the rows the judge reports clean. Count falls, by the number it names.**
-     Their findings are gone. State the before and after counts.
-   - **Commit C — fix the three `revive package-comments` findings** in the `evaltasks/eval-*` files,
-     one comment line each, and delete their three rows. Count falls by three. This takes the
-     `file scope` population to zero live rows, which is the only honest way to stop defending that
-     code path.
-   - **Commit D — the re-key itself. Net zero, and this is the one that must be a bijection.** Same
-     count in, same count out. State both.
-
-   **Every count comes from YOUR branch, and none from this file.** The list holds 956 rows at
-   integration tip `eae64d47a` and 923 at batch tip `d5673dee4`, with byte-identical
-   `tools/lintreport` code on both, so only the list differs; a batch cut after the merge carries a
-   third number. An earlier version of this file named 575, which would have told you to delete 381
-   rows, and a version naming 956 would tell you to ADD 33 your branch does not tolerate. **A literal
-   is wrong here whichever branch you take it from.**
+   **Commit 3 must ALSO drop every stale row, and this is the trap most likely to read as a bug.**
+   `hk-iw11o`'s check requires that no new row exists which no old row maps to, and a row whose
+   finding is gone cannot map. `lintreport -write` drops stale rows automatically, so a regenerating
+   migration is fine — but a HAND-EDITED migration that preserves them fails, and the failure looks
+   like a defect in the gate rather than a rule you broke. Commit 1 removes most of them; do not
+   reintroduce any.
 
 5. **You did NOT touch `scripts/lint-allow-ratchet.sh`.** An earlier version of this file asked you to
    delete the dead `is_legacy` / `legacy_pairs` branch here. **That was a scope collision and it is
@@ -357,18 +362,22 @@ already existed. The file format is unchanged (`digest TAB linter TAB # comment`
 `scripts/lint-allow-ratchet.sh`'s `comm -23` keeps working untouched. **Note that `-remap` does not
 exist — `main.go` declares only `-allow` and `-write`. You are writing it.**
 
-**Rule 3 is why commit A comes first, and skipping A makes the tool unrunnable.** "Refuse if any
-finding's OLD digest is absent" fires on precisely the 14 findings the judge already refuses at the
-batch tip — *refused* means their digest is not in the list. So `-remap` run on an unrepaired tree
-aborts every time, by design, on the exact damage this task exists to fix. **And the re-key does not
-dissolve it:** after qualifier-neutralization those findings hash to a NEW digest while the list still
-holds their PRE-MOVE digest, so the old-digest lookup misses either way. Nothing you do inside the
-re-key rescues a row whose stored digest was computed on a tree that no longer exists.
+**Rule 3 fires on the 14, and repairing them is the answer — not relaxing it.** "Refuse if any
+finding's OLD digest is absent" hits precisely the findings the judge already refuses, because
+*refused* means the digest is not in the list. And the re-key does not dissolve that: after
+neutralization those findings hash to a NEW digest while the list still holds their PRE-MOVE digest,
+so the lookup misses either way. Nothing inside the re-key rescues a row whose stored digest was
+computed on a tree that no longer exists — you have to put the current digests back.
 
-**Commit A is what makes the old digests present again**, under the current scheme, before any keying
-change. After A, every finding's old digest is in the list and rule 3 never fires. Keep rule 3 exactly
-as written — it is the property that stops the tool adopting untolerated debt, and the answer to it
-firing is to repair the tree, never to relax the rule.
+**That repair rides inside commit 3**, which is where the scheme version changes and therefore the
+only commit that can carry an added row at all. Handle those rows explicitly there and rule 3 stops
+firing.
+
+**Keep rule 3 exactly as written.** It is the property that stops the tool adopting untolerated debt,
+and it turned out to carry the soundness proof of `hk-iw11o`'s cheap check as well: a genuinely new
+tolerated finding is refused BY THIS RULE, because its old-scheme digest was never in the old list.
+**The answer to it firing is to repair the tree, never to relax the rule.** Relaxing it would have
+destroyed the proof before anyone discovered it was needed.
 
 **The remap was a bijection where it was measured** — 934 identities to 934, zero splits, zero merges
 — which is why a 1:1 remap is the right shape. **That reading is from integration tip `eae64d47a`, and

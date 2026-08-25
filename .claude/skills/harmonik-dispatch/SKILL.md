@@ -178,3 +178,30 @@ A `run_failed` on the stream: read the failure class from `events.jsonl`
 - **A bug in harmonik itself** — sub-agent this one bead, and file a bug bead.
 - **The same bead failed twice this session** — stop. Dispatch an investigator
   before any further re-dispatch, and never a third attempt without one.
+
+### `queue recover` and `queue recover --drop` want opposite bead states
+
+A queue parked `paused-by-failure` has two release verbs, and they refuse on
+opposite ledger states. Check which one fits before you touch the failed
+bead's status.
+
+- **`harmonik queue recover --queue <name>`** re-arms the failed items and
+  resumes dispatch. It refuses with `recovery_bead_not_open` (`-32033`) unless
+  every failed bead is still OPEN — recovery re-dispatches the bead, so a
+  closed bead would be worked twice.
+- **`harmonik queue recover --queue <name> --drop`** archives the failed
+  group without re-arming it. It refuses with `drop_bead_not_closed`
+  (`-32041`) unless every failed bead is CLOSED — drop hides the failure
+  rather than re-running it, so an open bead would vanish from the queue with
+  its work never done. It also refuses with `drop_trailing_groups`
+  (`-32040`) unless the failed group is the queue's last, so it never
+  discards pending groups behind the failure.
+
+So the choice depends on whether the bead's work already landed: if you
+recovered the work by hand (fixed it, committed it yourself) and the bead is
+already closed, use `--drop`. If the bead is still open and you want the
+daemon to redo the work, use plain `recover` and leave the bead open — closing
+it first only makes `recover` refuse.
+
+`--drop` is not on every deployed daemon; check `harmonik queue recover
+--help` for the flag before assuming it is there.

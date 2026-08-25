@@ -69,6 +69,23 @@ differ too. Treat them as evidence that the scheme works, not as numbers to repr
    a whitespace collapse. Measured with `.tools/golangci-lint -E errcheck`: `Text` comes back as
    ``Error return value of `os.Remove` is not checked``. depguard messages quote the import path.
    Fixing the AST alone leaves this route open.
+
+   **And a message can carry an ABSOLUTE LINE NUMBER, which falsifies this scheme's central claim.**
+   `nilerr` emits ``error is not nil (line 195) but it returns nil``. That number is in `Text`, so it
+   is in the digest. **"Moving unchanged code does not change the hash" is false for any
+   line-number-bearing message** — and the trigger is not a package move, which is rare and
+   deliberate, but ANY edit that inserts or deletes a line ABOVE the declaration. Measured: two rows
+   whose printed declaration is byte-identical before and after a move re-keyed anyway, purely
+   because `(line 73)` became `(line 74)`. Filed as `hk-k11fp`.
+
+   **Scoped, and the scope is small: `nilerr` is the only linter that does this.** A scan of a real
+   whole-tree lint capture found 40 messages carrying `line N` and every one is `nilerr`; the tree
+   holds 16 `nilerr` rows. **The repair is to normalize absolute line references out of message text,
+   the same way whitespace is already collapsed. DO NOT fix it by dropping the message from the
+   digest** — the message is load-bearing discrimination, and it is what tells two findings from one
+   linter on one declaration apart. **This task absorbs that repair**, because the message channel is
+   already route 2 and regenerating rows you know will re-key on the next unrelated insertion is
+   wasted work.
 3. **Import paths, by two separate mechanisms.** `identityNode` accepts `*ast.ImportSpec`, so a
    finding on an import line hashes the import-path string literal — **3 depguard rows** are this
    shape. Separately, `enclosing`'s `best == nil` fallback concatenates **every** declaration in the
@@ -92,6 +109,33 @@ differ too. Treat them as evidence that the scheme works, not as numbers to repr
    let a genuine content change — swapping the binary in an `exec.Command` — ride an old exemption,
    which is the gate-bypass direction. **The line to hold: exclude comments because they can never
    change what a linter flags; keep string literals because they can.**
+
+## What neutralization does NOT cover — measured, so you do not mistake a boundary for a bug
+
+The 14 findings the judge refuses at the batch tip were traced to root cause on 2026-08-25. **The
+qualifier fix covers half of them.** An implementer who believes it covers all 14 will regenerate,
+see four still refused, and not know whether the tool has a bug or has reached its limit.
+
+| n | cause | covered by this task? |
+|---|---|---|
+| 7 | pure re-qualification of a moved type | **yes** — neutralization plus regenerated rows |
+| 3 | a **doc comment** rewritten to say `runregistry.X` | **no** — stripping walks `*ast.SelectorExpr`, and comment text is not an expression. Route 4 excludes comments from the body, which removes them from the hash entirely and therefore also covers this — confirm that is what happens rather than assuming it |
+| 3 | a **line-number-bearing `nilerr` message** | **yes, but only via the route-2 line normalization above** — not by the qualifier fix |
+| 1 | a **genuine API change** — `handle.aborted.Store(true)` became `handle.MarkAborted()` when an unexported field had to become an exported method on leaving the package, in `stalewatch.go` `checkRun` | **no, and it should not be.** The code really changed. This row must be re-keyed by hand and the change named |
+
+**Neutralization is ONE-SIDED, and that is why a half-measure fails.** The rows in `allow.txt` hash
+UN-neutralized text, and that text is full of qualifiers unrelated to any move — `core.RunID`,
+`core.BeadID`, `queuewiring.NewQueueStore()`, `eventbus.NewBusImpl()`, `json.Marshal`. Strip on the
+post-move side only and you produce text matching **neither** the old tree nor the new one. Measured:
+**0 of 14** matched their stored rows that way.
+
+**Applied to BOTH sides — meaning the rows are regenerated under the new rule — 10 of the 14
+declarations become byte-identical across the move.** The design is sound. It cannot work without
+rewriting the rows.
+
+**So there is no partial landing.** Shipping neutralization without regenerating turns a 14-finding
+failure into roughly a 900-finding one, because it changes the digest of essentially every finding
+whose declaration contains any qualifier at all.
 
 ## The existing tests do not cover this, and one of them covers less than its name says
 

@@ -24,8 +24,8 @@ fills up halfway through and hands off a worse session than it inherited.
 Here are the mechanics:
 - Read `HANDOFF-<my name>.md` as my state, check its claims against the repo,
   then continue the work it points at.
-- Write, review and commit code in my own checkout — the main one if I am the
-  lane that merges, my own worktree otherwise. I close my own beads once the fix
+- Write, review and commit code in my own checkout — the main one if I hold the
+  shared branch, my own worktree otherwise. I close my own beads once the fix
   is verified.
 - Prove a fix instead of assuming it. A test that passes against the defect it
   was written for is measuring nothing, so I break the fix on purpose and watch

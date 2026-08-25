@@ -36,9 +36,18 @@ dispatch loop. Nothing sends me work and nothing finishes it for me.
 
 **Alpha works in the main checkout at `/Users/gb/github/harmonik`, on the shared
 integration branch. Every other lane works in its own worktree** under
-`/Users/gb/github/harmonik-wt/<name>`, on its own branch. Alpha is the exception
-because it is the lane that merges, and a merge needs the shared branch checked
-out somewhere. `LANES.md` §5 owns this rule and gives the reasons.
+`/Users/gb/github/harmonik-wt/<name>`, on its own branch. The shared branch has to
+be checked out somewhere and alpha's checkout is where it is. `LANES.md` §5 gives
+the reasons for the arrangement.
+
+**That settles where you work. It settles nothing about what you may land there.**
+The two read as one rule and they are not. Which checkout holds a branch is a fact
+about disk. Who may merge into that branch is set by whatever governs the branch —
+a gate document, the mission of the agent that produced the work, or an operator
+directive newer than both. `LANES.md` §5 also says "Alpha merges", written
+2026-08-01 for a program with two lanes. So before claiming a merge, read what
+governs the branch rather than reasoning from the checkout you happen to sit in,
+and lean toward the newer operator text when two sources disagree.
 
 Run your gates where you work. A gate run from the wrong checkout tests another
 lane's branch and reports a result that means nothing for your change. Never

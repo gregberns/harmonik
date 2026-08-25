@@ -335,7 +335,7 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -360,7 +360,10 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 		RetryAfterSeconds: &retry,
 		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 	}
-	plBytes, _ := json.Marshal(pl)
+	plBytes, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	evt := core.Event{Payload: plBytes}
 
 	if err := b.handle(context.Background(), evt); err != nil {
@@ -377,7 +380,7 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -402,7 +405,10 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 		RetryAfterSeconds: &retry,
 		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 	}
-	plBytes, _ := json.Marshal(pl)
+	plBytes, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	evt := core.Event{Payload: plBytes}
 
 	if err := b.handle(context.Background(), evt); err != nil {

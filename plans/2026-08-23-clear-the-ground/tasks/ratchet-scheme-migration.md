@@ -107,7 +107,18 @@ from paths, similarity or history. It recomputes from the tree.
 ## Limits
 
 - **Do not touch `tools/lintreport`, the Makefile, or the self-test.** The prototype needed none of
-  them: 179 lines INSERTED, zero modified, zero deleted.
+  them.
+- **Behaviour on the cheap path must not change.** That path runs on every commit, so a regression
+  there is a regression everywhere. **You may restructure the existing comparison** if branching
+  reads better than wrapping — done-when 3 and 4 are what decide whether you got it right, not the
+  shape of the diff.
+
+  **An earlier version of this file said "179 lines inserted, zero modified, zero deleted" as a
+  Limit. That was a mistake and it is withdrawn.** Those numbers describe how the PROTOTYPE happened
+  to come out; they were never the property anyone cared about. The property is the line above. A
+  measurement of how one implementation landed is not automatically a constraint on how another
+  must, and writing it as one forces a reviewer to infer behaviour from a line count. See the
+  "principles, not laws" rule in `AGENTS.md` — this file broke it.
 - **Do NOT wire the report-reuse optimisation.** There is an optional ~3-line change reusing an
   existing lint report to cut 6.2s to 2.3s. **It cannot work as things stand** — the ratchet runs
   inside `gate-static`, which fires BEFORE `lint-allow`, so no report exists yet. And honouring an
@@ -120,9 +131,10 @@ from paths, similarity or history. It recomputes from the tree.
   it is a reference for is the wrong order.
 - **Do not change the comparison window.** `hk-h4h78` owns it and stays after the re-key.
 
-## Cost, measured — so a reviewer can check the claim rather than trust it
+## Cost, measured — evidence that the change is small, NOT a shape you must reproduce
 
-- **179 lines inserted, zero modified, zero deleted.**
+- **179 lines inserted, zero modified, zero deleted** in the prototype. **Descriptive, not
+  prescriptive** — see Limits.
 - Expensive path **6.2s wall / 15.1s CPU** standalone, warm.
 - **It fires ONLY while the scheme header differs from the base** — the migration edit and the one
   commit that lands it. From the next commit it is the cheap text compare forever. **A one-off, not a

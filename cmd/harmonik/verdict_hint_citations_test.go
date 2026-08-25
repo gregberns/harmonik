@@ -10,25 +10,16 @@ import (
 
 var verdictHintCitationRe = regexp.MustCompile(`harmonik\s+([a-z][a-z0-9-]*)`)
 
-var mainDispatchVerbRe = regexp.MustCompile(`os\.Args\[1\] == "([a-z][a-z0-9-]*)"`)
-
 func realSubcommands(t *testing.T) map[string]bool {
 	t.Helper()
-
-	src, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("read main.go: %v", err)
-	}
-
 	verbs := map[string]bool{}
-	for _, m := range mainDispatchVerbRe.FindAllStringSubmatch(string(src), -1) {
-		verbs[m[1]] = true
+	for _, command := range commandVerbs {
+		verbs[command.name] = true
 	}
 
 	if len(verbs) < 20 {
-		t.Fatalf("dispatch scan of main.go found only %d subcommands (%v); the "+
-			"chain shape changed and mainDispatchVerbRe needs updating — it must "+
-			"not be allowed to pass vacuously", len(verbs), sortedKeys(verbs))
+		t.Fatalf("command table holds only %d subcommands (%v); the test must not pass vacuously",
+			len(verbs), sortedKeys(verbs))
 	}
 
 	return verbs

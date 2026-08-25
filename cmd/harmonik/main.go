@@ -61,6 +61,386 @@ func main() {
 	os.Exit(run())
 }
 
+type commandVerb struct {
+	name        string
+	description string
+	run         func([]string) int
+}
+
+// commandVerbs is the single inventory of top-level command verbs. Keep
+// command-specific argument handling in the handler, not in the dispatcher.
+var commandVerbs = []commandVerb{
+	{"session-bootstrap", "Bootstrap a managed agent session (internal use)", runSessionBootstrapCommand},
+	{"version", "Print semver and commit hash, or inspect a binary", runVersionCommand},
+	{"init", "Bootstrap a new project", runInitSubcommand},
+	{"sync-assets", "Reconcile project instructions with embedded assets", runSyncAssetsSubcommand},
+	{"reconcile", "Close completed beads whose implementation has merged", runReconcileSubcommand},
+	{"confirm-verdict", "NOT CONNECTED — confirm a parked reconciliation verdict", runConfirmVerdictSubcommand},
+	{"veto-verdict", "NOT CONNECTED — veto a parked reconciliation verdict", runVetoVerdictSubcommand},
+	{"write-review-verdict", "Write a structured review verdict", runWriteReviewVerdictSubcommand},
+	{"commit-msg", "Validate claims in a commit message", runCommitMsgCommand},
+	{"beads-merge", "Merge bead ledgers by bead ID", runBeadsMergeSubcommand},
+	{"beads-dedup", "Deduplicate a bead ledger", runBeadsDedupSubcommand},
+	{"sleep", "Park all LLM sessions", runSleepCommand},
+	{"sleep-gate", "Check whether sessions may sleep", runSleepGateSubcommand},
+	{"wake", "Wake sleeping LLM sessions", runWakeCommand},
+	{"queue", "Submit or inspect the bead queue", runQueueCommand},
+	{"worker", "Toggle a remote worker live", runWorkerCommand},
+	{"handler", "Inspect or resume a paused handler", runHandlerSubcommand},
+	{"run", "Submit to a daemon or run inline", runBeadSubcommand},
+	{"keeper", "Manage the context watcher for an agent pane", runKeeperCommand},
+	{"supervise", "Manage the supervisor process", runSuperviseSubcommand},
+	{"subscribe", "Stream daemon events as NDJSON", runSubscribeSubcommand},
+	{"smoke", "Verify a live daemon end to end", runSmokeSubcommand},
+	{"comms", "Use the agent-to-agent messaging bus", runCommsSubcommand},
+	{"decisions", "Inspect recorded decisions", runDecisionsSubcommand},
+	{"mailbox", "Inspect an agent mailbox", runMailboxSubcommand},
+	{"captain", "Manage a captain session", runCaptainSubcommand},
+	{"start", "Launch a daemon or agent session", runStartCommand},
+	{"crew", "Manage captain and crew sessions", runCrewSubcommand},
+	{"agent", "Manage agent sessions", runAgentSubcommand},
+	{"ops-monitor", "Run the operations monitor", runOpsMonitorSubcommand},
+	{"schedule", "Manage scheduled work", runScheduleSubcommand},
+	{"sentinel", "Run the sentinel", runSentinelSubcommand},
+	{"greenlight", "Manage greenlight state", runGreenlightSubcommand},
+	{"goal-keeper", "Update operator goal state", runGoalkeeperSubcommand},
+	{"graph", "Use workflow graph utilities", runGraphSubcommand},
+	{"promote", "Promote banked commits", runPromoteSubcommand},
+	{"gc", "Collect stale Harmonik state", runGCSubcommand},
+	{"release", "Manage the release ledger", runReleaseSubcommand},
+	{"state", "Inspect Harmonik state", runStateSubcommand},
+	{"dashboard", "Render the dashboard", runDashboardSubcommand},
+	{"digest", "Render a project digest", runDigestSubcommand},
+	{"project-hash", "Print the project hash", runProjectHashSubcommand},
+	{"remote-control-prefix", "Print the Claude remote-control prefix", runRemoteControlPrefixSubcommand},
+	{"migrate-rc-prefix", "Migrate the remote-control prefix", runMigrateRCPrefixSubcommand},
+	{"tmux-start", "Create and attach to a detached tmux session", runTmuxStartCommand},
+	{"hook-relay", "Forward a Claude hook event to the daemon", runHookRelayCommand},
+	{"usage", "Analyze transcript and event token cost", runUsageSubcommand},
+	{"eval", "Run an evaluation", runEvalCommand},
+	{"harness", "Run the scenario harness", runHarnessSubcommand},
+}
+
+func run() int {
+	if len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
+		harmonikUsage()
+		return 0
+	}
+	if len(os.Args) >= 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		return runVersionCommand(os.Args[2:])
+	}
+	if len(os.Args) >= 2 {
+		for _, command := range commandVerbs {
+			if command.name == os.Args[1] {
+				return command.run(os.Args[2:])
+			}
+		}
+	}
+	if verb, ok := unknownSubcommand(os.Args); ok {
+		fmt.Fprintf(os.Stderr, "harmonik: unknown subcommand %q\n", verb)
+		harmonikUsage()
+		return exitUnknownSubcommand
+	}
+	fmt.Fprint(os.Stderr, daemonStartRefusal(os.Args))
+	harmonikUsage()
+	return exitUnknownSubcommand
+}
+
+func runSessionBootstrapCommand(args []string) int {
+	return runSessionBootstrap(args, os.Getenv, os.Environ, resolveSessionBootstrapExecutable, sessionBootstrapDial, sessionBootstrapExec, os.Stderr)
+}
+
+func runVersionCommand(args []string) int {
+	if versionArgsRouteToInspect(append([]string{"harmonik", "version"}, args...)) {
+		return runVersionInspect(args, os.Stdout, os.Stderr)
+	}
+	fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())
+	return 0
+}
+
+func runCommitMsgCommand(args []string) int {
+	return runCommitMsgSubcommand(context.Background(), args, os.Stdout, os.Stderr)
+}
+
+func runSleepCommand(args []string) int { return runSleepSubcommand(context.Background(), args) }
+func runWakeCommand(args []string) int  { return runWakeSubcommand(context.Background(), args) }
+func runEvalCommand(args []string) int  { return runEvalCmd(args, os.Stdout, os.Stderr) }
+
+func runStartCommand(args []string) int {
+	if len(args) > 0 && args[0] == "daemon" {
+		daemonArgs := args[1:]
+		if len(daemonArgs) > 0 && (daemonArgs[0] == "--help" || daemonArgs[0] == "-h") {
+			daemonUsage()
+			return 0
+		}
+		os.Args = append([]string{os.Args[0]}, daemonArgs...)
+		return runDaemon()
+	}
+	return runStart(args)
+}
+
+func runTmuxStartCommand(_ []string) int {
+	subArgs := os.Args[2:]
+	for _, arg := range subArgs {
+		if arg == "--help" || arg == "-h" {
+			fmt.Print(`harmonik tmux-start — create a detached tmux session and attach to it
+
+This verb starts no daemon. It creates the session with one window running your
+login shell in the project directory, then replaces itself with
+'tmux attach-session'. To start a daemon, run 'harmonik start daemon' inside
+the session.
+
+USAGE
+  harmonik tmux-start [--session-name NAME] [--project DIR]
+
+FLAGS
+  --session-name NAME  tmux session name. The default is
+                       harmonik-<project-hash>-default. A name you supply must
+                       start with 'harmonik-<project-hash>-', or the command
+                       exits 24. Run 'harmonik project-hash' for the current
+                       directory, or 'harmonik project-hash --project DIR' for
+                       another one. That verb ignores a bare positional path.
+
+  --project DIR        Project directory (default: current working directory)
+
+EXIT
+  0   the session is ready, or you were already inside tmux and nothing was done
+  22  tmux is missing, or the tmux probe failed
+  24  any other unrecoverable failure. The known causes are a session name
+      without the required prefix, a project path that cannot be resolved, a
+      working directory that cannot be read, tmux refusing to create the
+      session, and a failed exec of 'tmux attach-session'.
+
+  On the success path this process is replaced by 'tmux attach-session', so the
+  status you finally see is tmux's, not harmonik's.
+
+EXAMPLES
+  harmonik tmux-start
+  harmonik tmux-start --project /path/to/project
+  harmonik tmux-start --session-name "harmonik-$(harmonik project-hash)-scratch"
+`)
+			return 0
+		}
+	}
+	sessionNameFlag := ""
+	projectDirFlag := ""
+	for i := 0; i < len(subArgs); i++ {
+		switch {
+		case subArgs[i] == "--session-name" && i+1 < len(subArgs):
+			i++
+			sessionNameFlag = subArgs[i]
+		case strings.HasPrefix(subArgs[i], "--session-name="):
+			sessionNameFlag = strings.TrimPrefix(subArgs[i], "--session-name=")
+		case subArgs[i] == "--project" && i+1 < len(subArgs):
+			i++
+			projectDirFlag = subArgs[i]
+		case strings.HasPrefix(subArgs[i], "--project="):
+			projectDirFlag = strings.TrimPrefix(subArgs[i], "--project=")
+		}
+	}
+	if projectDirFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot determine working directory: %v\n", err)
+			return 24
+		}
+		projectDirFlag = wd
+	}
+	absProjectDir, err := filepath.Abs(projectDirFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot resolve project path %q: %v\n", projectDirFlag, err)
+		return 24
+	}
+	return tmux.RunTmuxStart(absProjectDir, sessionNameFlag, os.Stdout, os.Stderr, tmux.SyscallExec, nil)
+}
+
+func runHookRelayCommand(_ []string) int {
+	if len(os.Args) >= 3 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
+		fmt.Print(`harmonik hook-relay — forward a Claude hook event to the daemon (internal use)
+
+USAGE
+  harmonik hook-relay <event-kind>
+
+ARGUMENTS
+  event-kind  The Claude hook event type. The relay sends four kinds to the
+              daemon: SessionStart, Stop, StopFailure and Notification. It
+              knows SessionEnd and does nothing with it. It accepts every
+              other kind and does nothing with it.
+
+NOTES
+  Claude Code hook configurations call this subcommand. An operator rarely
+  calls it directly.
+  The relay reads the hook JSON on stdin. It sends one message to the daemon
+  socket that HARMONIK_DAEMON_SOCKET names.
+  A shell where every HARMONIK_* variable is UNSET is not a harmonik-managed
+  session. In that shell the relay sends nothing and exits 0. A call you type
+  yourself takes this path. Exporting even one of those names, with a value or
+  empty, makes the shell harmonik-managed. A required variable that is
+  exported but empty is then broken wiring, and the relay exits 1.
+  The daemon must run to receive an event. The relay looks at the daemon only
+  on a path that has an event to send. A socket that is not listening yet is a
+  daemon still starting, so the relay retries it for up to 25 seconds and then
+  exits 1. A dial that can never succeed, such as a path that is not a socket,
+  exits 1 at once with no wait. On a path that sends nothing the relay does not
+  look at the daemon at all.
+
+EXAMPLES
+  harmonik hook-relay Stop
+  harmonik hook-relay SessionStart
+
+EXIT CODES
+  0   The relay sent the event. Also 0 when it had nothing to send: SessionEnd,
+      an event kind it does not know, or a shell where every HARMONIK_*
+      variable is unset.
+  1   Missing event-kind argument, broken harmonik wiring, unreadable or
+      invalid hook JSON on stdin, a session id that disagrees with
+      HARMONIK_CLAUDE_SESSION_ID, an event kind that disagrees with the one on
+      the command line, or a daemon socket that did not answer.
+`)
+		return 0
+	}
+	eventKind := ""
+	if len(os.Args) >= 3 {
+		eventKind = os.Args[2]
+	}
+	if eventKind == "" {
+		fmt.Fprintln(os.Stderr, "harmonik hook-relay: missing event-kind argument")
+		return 1
+	}
+	return hookrelay.Run(eventKind, os.Stdin, os.Stderr, nil)
+}
+
+func runQueueCommand(_ []string) int {
+	verb := ""
+	if len(os.Args) >= 3 {
+		verb = os.Args[2]
+	}
+	if verb == "--help" || verb == "-h" {
+		fmt.Print(queueTopUsage)
+		return 0
+	}
+	subArgs := []string{}
+	if len(os.Args) >= 4 {
+		subArgs = os.Args[3:]
+	}
+	if len(subArgs) >= 1 && verb != "readiness" && (subArgs[0] == "--help" || subArgs[0] == "-h") {
+		fmt.Print(queueTopUsage)
+		return 0
+	}
+	return dispatchQueueCommand(verb, subArgs)
+}
+
+func dispatchQueueCommand(verb string, subArgs []string) int {
+	ctx := context.Background()
+	switch verb {
+	case "submit":
+		return queuecli.RunQueueSubmit(ctx, subArgs, os.Stdout, os.Stderr)
+	case "append":
+		return queuecli.RunQueueAppend(ctx, subArgs, os.Stdout, os.Stderr)
+	case "status":
+		return queuecli.RunQueueStatus(ctx, subArgs, os.Stdout, os.Stderr)
+	case "list":
+		return queuecli.RunQueueList(ctx, subArgs, os.Stdout, os.Stderr)
+	case "pause":
+		return queuecli.RunQueuePause(ctx, subArgs, os.Stdout, os.Stderr)
+	case "resume":
+		return queuecli.RunQueueResume(ctx, subArgs, os.Stdout, os.Stderr)
+	case "recover":
+		return queuecli.RunQueueRecover(ctx, subArgs, os.Stdout, os.Stderr)
+	case "dry-run":
+		return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
+	case "cancel":
+		return queuecli.RunQueueCancel(ctx, subArgs, os.Stdout, os.Stderr)
+	case "set-concurrency":
+		return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
+	case "readiness":
+		return runQueueReadiness(ctx, subArgs, os.Stdout, os.Stderr)
+	default:
+		fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, readiness, dry-run, cancel, set-concurrency\n", verb)
+		return 2
+	}
+}
+
+func runWorkerCommand(_ []string) int {
+	verb := ""
+	if len(os.Args) >= 3 {
+		verb = os.Args[2]
+	}
+	if verb == "--help" || verb == "-h" {
+		fmt.Print(workerTopUsage)
+		return 0
+	}
+	subArgs := []string{}
+	if len(os.Args) >= 4 {
+		subArgs = os.Args[3:]
+	}
+	if len(subArgs) >= 1 && (subArgs[0] == "--help" || subArgs[0] == "-h") {
+		fmt.Print(workerTopUsage)
+		return 0
+	}
+	ctx := context.Background()
+	switch verb {
+	case "enable":
+		return queuecli.RunWorkerEnable(ctx, subArgs, os.Stdout, os.Stderr)
+	case "disable":
+		return queuecli.RunWorkerDisable(ctx, subArgs, os.Stdout, os.Stderr)
+	default:
+		fmt.Fprintf(os.Stderr, "harmonik worker: unrecognised verb %q; verbs are: enable, disable\n", verb)
+		return 2
+	}
+}
+
+func runKeeperCommand(_ []string) int {
+	subArgs := []string{}
+	if len(os.Args) >= 3 {
+		subArgs = os.Args[2:]
+	}
+	if len(subArgs) > 0 {
+		if code, dispatched := dispatchKeeperCommand(subArgs); dispatched {
+			return code
+		}
+	}
+	for _, arg := range subArgs {
+		if arg == "--help" || arg == "-h" {
+			fmt.Print(keeperTopUsage)
+			return 0
+		}
+	}
+	return runKeeperSubcommand(subArgs)
+}
+
+func dispatchKeeperCommand(args []string) (int, bool) {
+	switch args[0] {
+	case "config":
+		return runKeeperConfig(args[1:]), true
+	case "set-dispatching":
+		return runKeeperSetDispatching(args[1:]), true
+	case "clear-dispatching":
+		return runKeeperClearDispatching(args[1:]), true
+	case "hold":
+		return runKeeperHold(args[1:]), true
+	case "release":
+		return runKeeperRelease(args[1:]), true
+	case "enable":
+		return runKeeperEnableSubcommand(args[1:]), true
+	case "doctor":
+		return runKeeperDoctorSubcommand(args[1:]), true
+	case "restart-now":
+		return runKeeperRestartNow(args[1:]), true
+	case "ping":
+		return runKeeperPing(args[1:]), true
+	case "await-ack":
+		return runKeeperAwaitAck(args[1:]), true
+	default:
+		if strings.HasPrefix(args[0], "-") {
+			return 0, false
+		}
+		fmt.Fprintf(os.Stderr, "harmonik keeper: unknown keeper subcommand %q\n\n", args[0])
+		fmt.Fprint(os.Stderr, keeperTopUsage)
+		return 2, true
+	}
+}
+
 const queueTopUsage = `harmonik queue — submit or inspect the bead queue
 
 USAGE
@@ -164,528 +544,11 @@ EXAMPLES
   harmonik worker enable gb-mbp --json
 `
 
-func run() int {
-	if len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		harmonikUsage()
-		return 0
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "session-bootstrap" {
-		return runSessionBootstrap(os.Args[2:], os.Getenv, os.Environ, resolveSessionBootstrapExecutable, sessionBootstrapDial, sessionBootstrapExec, os.Stderr)
-	}
-
-	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
-		if versionArgsRouteToInspect(os.Args) {
-			return runVersionInspect(os.Args[2:], os.Stdout, os.Stderr)
-		}
-		fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())
-		return 0
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "tmux-start" {
-		subArgs := os.Args[2:]
-		for _, arg := range subArgs {
-			if arg == "--help" || arg == "-h" {
-				fmt.Print(`harmonik tmux-start — create a detached tmux session and attach to it
-
-This verb starts no daemon. It creates the session with one window running your
-login shell in the project directory, then replaces itself with
-'tmux attach-session'. To start a daemon, run 'harmonik start daemon' inside
-the session.
-
-USAGE
-  harmonik tmux-start [--session-name NAME] [--project DIR]
-
-FLAGS
-  --session-name NAME  tmux session name. The default is
-                       harmonik-<project-hash>-default. A name you supply must
-                       start with 'harmonik-<project-hash>-', or the command
-                       exits 24. Run 'harmonik project-hash' for the current
-                       directory, or 'harmonik project-hash --project DIR' for
-                       another one. That verb ignores a bare positional path.
-
-  --project DIR        Project directory (default: current working directory)
-
-EXIT
-  0   the session is ready, or you were already inside tmux and nothing was done
-  22  tmux is missing, or the tmux probe failed
-  24  any other unrecoverable failure. The known causes are a session name
-      without the required prefix, a project path that cannot be resolved, a
-      working directory that cannot be read, tmux refusing to create the
-      session, and a failed exec of 'tmux attach-session'.
-
-  On the success path this process is replaced by 'tmux attach-session', so the
-  status you finally see is tmux's, not harmonik's.
-
-EXAMPLES
-  harmonik tmux-start
-  harmonik tmux-start --project /path/to/project
-  harmonik tmux-start --session-name "harmonik-$(harmonik project-hash)-scratch"
-`)
-				return 0
-			}
-		}
-		sessionNameFlag := ""
-		projectDirFlag := ""
-		for i := 0; i < len(subArgs); i++ {
-			switch {
-			case subArgs[i] == "--session-name" && i+1 < len(subArgs):
-				i++
-				sessionNameFlag = subArgs[i]
-			case strings.HasPrefix(subArgs[i], "--session-name="):
-				sessionNameFlag = strings.TrimPrefix(subArgs[i], "--session-name=")
-			case subArgs[i] == "--project" && i+1 < len(subArgs):
-				i++
-				projectDirFlag = subArgs[i]
-			case strings.HasPrefix(subArgs[i], "--project="):
-				projectDirFlag = strings.TrimPrefix(subArgs[i], "--project=")
-			}
-		}
-		if projectDirFlag == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot determine working directory: %v\n", err)
-				return 24
-			}
-			projectDirFlag = wd
-		}
-		absProjectDir, err := filepath.Abs(projectDirFlag)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot resolve project path %q: %v\n", projectDirFlag, err)
-			return 24
-		}
-		return tmux.RunTmuxStart(absProjectDir, sessionNameFlag, os.Stdout, os.Stderr, tmux.SyscallExec, nil)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "hook-relay" {
-		if len(os.Args) >= 3 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
-			fmt.Print(`harmonik hook-relay — forward a Claude hook event to the daemon (internal use)
-
-USAGE
-  harmonik hook-relay <event-kind>
-
-ARGUMENTS
-  event-kind  The Claude hook event type. The relay sends four kinds to the
-              daemon: SessionStart, Stop, StopFailure and Notification. It
-              knows SessionEnd and does nothing with it. It accepts every
-              other kind and does nothing with it.
-
-NOTES
-  Claude Code hook configurations call this subcommand. An operator rarely
-  calls it directly.
-  The relay reads the hook JSON on stdin. It sends one message to the daemon
-  socket that HARMONIK_DAEMON_SOCKET names.
-  A shell where every HARMONIK_* variable is UNSET is not a harmonik-managed
-  session. In that shell the relay sends nothing and exits 0. A call you type
-  yourself takes this path. Exporting even one of those names, with a value or
-  empty, makes the shell harmonik-managed. A required variable that is
-  exported but empty is then broken wiring, and the relay exits 1.
-  The daemon must run to receive an event. The relay looks at the daemon only
-  on a path that has an event to send. A socket that is not listening yet is a
-  daemon still starting, so the relay retries it for up to 25 seconds and then
-  exits 1. A dial that can never succeed, such as a path that is not a socket,
-  exits 1 at once with no wait. On a path that sends nothing the relay does not
-  look at the daemon at all.
-
-EXAMPLES
-  harmonik hook-relay Stop
-  harmonik hook-relay SessionStart
-
-EXIT CODES
-  0   The relay sent the event. Also 0 when it had nothing to send: SessionEnd,
-      an event kind it does not know, or a shell where every HARMONIK_*
-      variable is unset.
-  1   Missing event-kind argument, broken harmonik wiring, unreadable or
-      invalid hook JSON on stdin, a session id that disagrees with
-      HARMONIK_CLAUDE_SESSION_ID, an event kind that disagrees with the one on
-      the command line, or a daemon socket that did not answer.
-`)
-			return 0
-		}
-		eventKind := ""
-		if len(os.Args) >= 3 {
-			eventKind = os.Args[2]
-		}
-		if eventKind == "" {
-			fmt.Fprintln(os.Stderr, "harmonik hook-relay: missing event-kind argument")
-			return 1
-		}
-		return hookrelay.Run(eventKind, os.Stdin, os.Stderr, nil)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "init" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runInitSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "sync-assets" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runSyncAssetsSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "reconcile" {
-		return runReconcileSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "confirm-verdict" {
-		return runConfirmVerdictSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "veto-verdict" {
-		return runVetoVerdictSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "write-review-verdict" {
-		return runWriteReviewVerdictSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "commit-msg" {
-		return runCommitMsgSubcommand(context.Background(), os.Args[2:], os.Stdout, os.Stderr)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "beads-merge" {
-		return runBeadsMergeSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "beads-dedup" {
-		return runBeadsDedupSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "sleep" {
-		subArgs := os.Args[2:]
-		return runSleepSubcommand(context.Background(), subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "sleep-gate" {
-		return runSleepGateSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "wake" {
-		subArgs := os.Args[2:]
-		return runWakeSubcommand(context.Background(), subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "queue" {
-		verb := ""
-		if len(os.Args) >= 3 {
-			verb = os.Args[2]
-		}
-		if verb == "--help" || verb == "-h" {
-			fmt.Print(queueTopUsage)
-			return 0
-		}
-		subArgs := []string{}
-		if len(os.Args) >= 4 {
-			subArgs = os.Args[3:]
-		}
-		if len(subArgs) >= 1 && verb != "readiness" && (subArgs[0] == "--help" || subArgs[0] == "-h") {
-			fmt.Print(queueTopUsage)
-			return 0
-		}
-		ctx := context.Background()
-		switch verb {
-		case "submit":
-			return queuecli.RunQueueSubmit(ctx, subArgs, os.Stdout, os.Stderr)
-		case "append":
-			return queuecli.RunQueueAppend(ctx, subArgs, os.Stdout, os.Stderr)
-		case "status":
-			return queuecli.RunQueueStatus(ctx, subArgs, os.Stdout, os.Stderr)
-		case "list":
-			return queuecli.RunQueueList(ctx, subArgs, os.Stdout, os.Stderr)
-		case "pause":
-			return queuecli.RunQueuePause(ctx, subArgs, os.Stdout, os.Stderr)
-		case "resume":
-			return queuecli.RunQueueResume(ctx, subArgs, os.Stdout, os.Stderr)
-		case "recover":
-			return queuecli.RunQueueRecover(ctx, subArgs, os.Stdout, os.Stderr)
-		case "dry-run":
-			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
-		case "cancel":
-			return queuecli.RunQueueCancel(ctx, subArgs, os.Stdout, os.Stderr)
-		case "set-concurrency":
-			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
-		case "readiness":
-			return runQueueReadiness(ctx, subArgs, os.Stdout, os.Stderr)
-		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, readiness, dry-run, cancel, set-concurrency\n", verb)
-			return 2
-		}
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "worker" {
-		verb := ""
-		if len(os.Args) >= 3 {
-			verb = os.Args[2]
-		}
-		if verb == "--help" || verb == "-h" {
-			fmt.Print(workerTopUsage)
-			return 0
-		}
-		subArgs := []string{}
-		if len(os.Args) >= 4 {
-			subArgs = os.Args[3:]
-		}
-		if len(subArgs) >= 1 && (subArgs[0] == "--help" || subArgs[0] == "-h") {
-			fmt.Print(workerTopUsage)
-			return 0
-		}
-		ctx := context.Background()
-		switch verb {
-		case "enable":
-			return queuecli.RunWorkerEnable(ctx, subArgs, os.Stdout, os.Stderr)
-		case "disable":
-			return queuecli.RunWorkerDisable(ctx, subArgs, os.Stdout, os.Stderr)
-		default:
-			fmt.Fprintf(os.Stderr, "harmonik worker: unrecognised verb %q; verbs are: enable, disable\n", verb)
-			return 2
-		}
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "handler" {
-		return runHandlerSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "run" {
-		return runBeadSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "keeper" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		if len(subArgs) > 0 {
-			switch subArgs[0] {
-			case "config":
-				return runKeeperConfig(subArgs[1:])
-			case "set-dispatching":
-				return runKeeperSetDispatching(subArgs[1:])
-			case "clear-dispatching":
-				return runKeeperClearDispatching(subArgs[1:])
-			case "hold":
-				return runKeeperHold(subArgs[1:])
-			case "release":
-				return runKeeperRelease(subArgs[1:])
-			case "enable":
-				return runKeeperEnableSubcommand(subArgs[1:])
-			case "doctor":
-				return runKeeperDoctorSubcommand(subArgs[1:])
-			case "restart-now":
-				return runKeeperRestartNow(subArgs[1:])
-			case "ping":
-				return runKeeperPing(subArgs[1:])
-			case "await-ack":
-				return runKeeperAwaitAck(subArgs[1:])
-			default:
-				if !strings.HasPrefix(subArgs[0], "-") {
-					fmt.Fprintf(os.Stderr, "harmonik keeper: unknown keeper subcommand %q\n\n", subArgs[0])
-					fmt.Fprint(os.Stderr, keeperTopUsage)
-					return 2
-				}
-			}
-		}
-		for _, arg := range subArgs {
-			if arg == "--help" || arg == "-h" {
-				fmt.Print(keeperTopUsage)
-				return 0
-			}
-		}
-		return runKeeperSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "supervise" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runSuperviseSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "subscribe" {
-		return runSubscribeSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "smoke" {
-		return runSmokeSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "comms" {
-		return runCommsSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "decisions" {
-		return runDecisionsSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "mailbox" {
-		return runMailboxSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "captain" {
-		return runCaptainSubcommand(os.Args[2:])
-	}
-
-	startDaemonRequested := false
-	if len(os.Args) >= 3 && os.Args[1] == "start" && os.Args[2] == "daemon" {
-		daemonArgs := os.Args[3:]
-		if len(daemonArgs) >= 1 && (daemonArgs[0] == "--help" || daemonArgs[0] == "-h") {
-			harmonikUsage()
-			return 0
-		}
-		startDaemonRequested = true
-		os.Args = append([]string{os.Args[0]}, daemonArgs...)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "start" {
-		return runStart(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "crew" {
-		return runCrewSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "agent" {
-		return runAgentSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "ops-monitor" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runOpsMonitorSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "schedule" {
-		return runScheduleSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "sentinel" {
-		return runSentinelSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "greenlight" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runGreenlightSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "goal-keeper" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runGoalkeeperSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "graph" {
-		return runGraphSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "promote" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runPromoteSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "gc" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runGCSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "release" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runReleaseSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "state" {
-		return runStateSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "dashboard" {
-		return runDashboardSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "digest" {
-		return runDigestSubcommand(os.Args[2:])
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "project-hash" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runProjectHashSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "remote-control-prefix" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runRemoteControlPrefixSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "migrate-rc-prefix" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runMigrateRCPrefixSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "usage" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runUsageSubcommand(subArgs)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "eval" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runEvalCmd(subArgs, os.Stdout, os.Stderr)
-	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "harness" {
-		subArgs := []string{}
-		if len(os.Args) >= 3 {
-			subArgs = os.Args[2:]
-		}
-		return runHarnessSubcommand(subArgs)
-	}
-
-	if verb, ok := unknownSubcommand(os.Args); ok {
-		fmt.Fprintf(os.Stderr, "harmonik: unknown subcommand %q\n", verb)
-		harmonikUsage()
-		return exitUnknownSubcommand
-	}
-
-	if !startDaemonRequested {
-		fmt.Fprint(os.Stderr, daemonStartRefusal(os.Args))
-		harmonikUsage()
-		return exitUnknownSubcommand
-	}
-
+// runDaemon is the CLI composition root. Its branches report independent
+// boundary failures while it constructs the daemon and its external ports.
+//
+//nolint:cyclop,funlen,gocognit // preserving each boundary's exit and diagnostic keeps the wiring explicit
+func runDaemon() int {
 	defer lifecycle.RecoverWithLogFlush(nil, nil, nil)
 
 	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{}
@@ -751,7 +614,7 @@ EXIT CODES
 	flag.DurationVar(&spawnStaggerFlag, "spawn-stagger", 0,
 		"minimum interval between consecutive agent window creations; 0 disables (hk-hzj)")
 
-	flag.Usage = harmonikUsage
+	flag.Usage = daemonUsage
 	flag.Parse()
 
 	if projectFlag == "" {

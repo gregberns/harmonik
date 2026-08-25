@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -36,7 +37,10 @@ func staleFixtureNewBus(t *testing.T) *staleFixtureBus {
 			}
 			var pl core.RunStalePayload
 			if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-				return nil
+				// Propagate: a malformed run_stale payload is a real fixture bug,
+				// not something to swallow. The bus records it as a dead letter
+				// (consumer_error) instead of silently discarding the event.
+				return fmt.Errorf("staleFixtureNewBus: unmarshal payload: %w", err)
 			}
 			sfb.mu.Lock()
 			sfb.emitted = append(sfb.emitted, pl)
@@ -339,7 +343,10 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 			}
 			var pl core.RunStalePayload
 			if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-				return nil
+				// Propagate: a malformed run_stale payload is a real fixture bug,
+				// not something to swallow. The bus records it as a dead letter
+				// (consumer_error) instead of silently discarding the event.
+				return fmt.Errorf("TestStaleWatch_LastEventTypeTracked: unmarshal payload: %w", err)
 			}
 			sfb.mu.Lock()
 			sfb.emitted = append(sfb.emitted, pl)

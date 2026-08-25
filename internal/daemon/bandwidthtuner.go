@@ -72,7 +72,11 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 	}
 	var pl core.AgentRateLimitStatusPayload
 	if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-		return nil // malformed payload — skip
+		// Propagate: the bus records this as a dead letter (consumer_error) so a
+		// malformed agent_rate_limit_status payload is visible instead of silently
+		// dropped. The tuner still receives no notification either way — a
+		// malformed payload carries no usable retry_after.
+		return fmt.Errorf("bandwidthTunerBackstop.handle: unmarshal payload: %w", err)
 	}
 	if pl.Status != core.AgentRateLimitStatusActive {
 		return nil // only act on the active (rate-limited) transition

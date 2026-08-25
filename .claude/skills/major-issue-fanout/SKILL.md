@@ -14,6 +14,14 @@ Reach for this when a wedge or failure class has survived two or more fix
 attempts, the root cause has flip-flopped, and you are thinking "let me look at X
 one more time." That instinct is what this protocol replaces.
 
+**The round count is itself the evidence, and rounds that FIND things are the
+ones that fool you.** Repairs that each turn up real errors feel like progress,
+so nobody asks whether they can reach the obstruction at all. If repeated repairs
+to a thing do not make the work move, stop repairing that thing and ask what you
+have not been reading. The common shape: every round read the document that
+DESCRIBES the work, and the obstruction was in the machine that JUDGES it — a
+spec defect and a gate defect look identical from inside the spec.
+
 It DIAGNOSES a stuck blocker. It does not DECIDE an open question.
 
 ## The one rule that matters most

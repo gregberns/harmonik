@@ -77,6 +77,14 @@ draft — is still work: never read an empty result as "drained" without also
 checking in-progress beads, beads blocked by an open epic, and paused or failed
 queues.
 
+**And the converse: a bead IN `br ready` is not therefore ready.** An empty
+dependency list is evidence about edges, and readiness is a different question.
+A bead's scope can be contingent on a decision another bead has not made yet, and
+the ledger has nowhere to record that. Feed such a bead and the run either
+redoes work or builds the wrong thing. When a bead's scope depends on a choice
+still open, say so in a comment rather than inventing an edge: an edge says WHAT
+is blocked, only prose says WHY, and the why is the part that expires.
+
 `br ready --sort priority` is where an ordering of the *unclaimed backlog* comes
 from. Above that line, priority comes from stated intent — the named initiatives
 of the operator and the admiral, which no ledger query returns.

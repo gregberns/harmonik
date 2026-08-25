@@ -8,11 +8,15 @@ If a task file is ambiguous, that is a defect in the task file. Send it back rat
 **Ordering is a recommendation, not a schedule.** Run anything whose `depends_on` has landed. The
 rows are grouped by what unblocks the most work, not by batch — batches are a writing unit only.
 
-**The live queue is `charlie-batch`.** Measured 2026-08-25 06:32Z with
-`harmonik queue status --queue charlie-batch`: it is active, it has one worker, and that worker holds
-the spend-meter extraction (`hk-spendmeter-extract-pph48`, dispatched). One item in flight, not two.
-The run-registry extraction it used to hold is completed. Take your own reading before you submit —
-this queue moves by the minute.
+**The live queue is `charlie-batch`, and it is STOPPED ON PURPOSE.** Measured 2026-08-25 07:58Z
+with `harmonik queue status --queue charlie-batch`: status `paused-by-failure`, zero workers, its
+single group drained to `complete-with-failures` — seven items completed and one failed. Nothing is
+in flight. **Do not read the pause as a fault to clear.** Charlie reported at 08:0xZ that dispatch is
+held deliberately while it merges `work/charlie-batch-1` (tip `d5673dee4`, declared final), and the
+one failure is `hk-runbead-extract-decisions-4wj2g` — the already-recorded first attempt whose trap
+is written up in the ready list below, not a new fault. **A paused queue accepts no work**, so
+nothing here can be fed until charlie releases the hold, and that is charlie's call, not this
+list's. Take your own reading before you submit — this queue moves by the minute.
 
 **No queue named `charlie-q` exists now.** An earlier revision of this file warned that one was
 stopped. `harmonik queue list` on 2026-08-25 shows no queue of that name, among the active queues or
@@ -21,6 +25,14 @@ likely source of the confusion. The queue that is stopped is **`main`** — `pau
 `hk-pipeline-commits-claim-unreviewed-wgk5x` failed in it. That bead has since landed (`584cfdee1`),
 so the pause now holds on a fault that is fixed: it needs a resume, not a report. Do not submit work
 to `main` in the meantime.
+
+Last updated 2026-08-25 07:58Z (fifth revision). **What changed since the fourth:** the
+spend-meter extraction closed and landed on `work/charlie-batch-1` (`04de6424e` and `d5673dee4`), so it leaves
+§In flight for §Landed; its departure releases `handlerpause-extract` from the single-owner rule and
+that row moves from §Blocked to §Ready now; and `charlie-batch` itself drained and is now
+`paused-by-failure` with zero workers, so the "one worker, one item in flight" reading at the top of
+the fourth revision no longer holds. The eight feedable lint rows were re-checked against
+`br blocked` and are unchanged. The fourth revision's own note follows.
 
 Last updated 2026-08-25 (fourth revision), after re-measuring the bead ledger and the live queue.
 The 2026-08-24 revision measured every row against the bead ledger and against both branches
@@ -45,12 +57,16 @@ superset: `crew-cleanup-skill` is on the alpha branch only, `dead-shell-sweep`,
 | 2 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
 | 3 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
 | 4 | [`runbead-extract-decisions`](tasks/runbead-extract-decisions.md) | P1 | W2 | `hk-runbead-extract-decisions-4wj2g` | `cmd/harmonik/run.go` `runBeadSubcommandIO` is 540 lines. Outside the single-owner rule below. **Read this before you start — the first attempt failed and the trap is easy to walk into again.** That attempt is on the tag `rescue/runbead-extract-4wj2g`, was cherry-picked as `25d4720fc` and `18a75fda2`, and was reverted by `2083adcfa`. **It renamed the function instead of decomposing it:** a 14-line shim over a new `runBeadOptionsIO` carrying 338 lines at `gocognit` 86, plus a new `parseRunBeadOptions` at 27, against a ceiling of 20, with no allow-list entry for either. Renaming the body moved the allow-list key rather than resolving the finding, and `make lint-allow` judges the whole tree inside `make fast`, so the branch would have stayed red under every later bead. Real reduction was 540 lines to 421, not 540 to 14. Two of the three mutation checks the commit body claimed do not reproduce, and seven flag doc comments were deleted, which the task file Limits forbid. **Start from acceptance item 4, the mutation check, rather than ending with it.** The bead is open; it is marked `failed` in `charlie-batch` from that run. |
+| 5 | [`handlerpause-extract`](tasks/handlerpause-extract.md) | P1 | W2 | `hk-handlerpause-extract-bkjoo` | **Newly free at 2026-08-25 07:58Z.** It was never held by the ledger — the bead is `open` and `br blocked` has never listed it. What held it was the single-owner rule below, because `spendmeter-extract` was in flight on the same run-machine files. That landed (`04de6424e` and `d5673dee4`), the queue has drained, and nothing else is running on those files, so the rule releases it. **It shares `bootstate.go`, `daemon.go` and `export_meters_pause_test.go` with the extraction that just landed, and the second of those two commits edits `bootstate.go` directly**, so start from a branch that carries `internal/spend` — otherwise you edit files the merge is about to move under you. |
 
-**Four rows, plus the eight feedable linter rows below (of thirteen written).** One structural
-measurement, one read-only cost measurement, one governance row, and one command-line split that has
-already failed once. The two
+**Five rows, plus the eight feedable linter rows below (of thirteen written).** One structural
+measurement, one read-only cost measurement, one governance row, one command-line split that has
+already failed once, and one run-machine extraction that the spend-meter landing just freed. The two
 review-gate repairs and the two test repairs that used to head this list are landed on
 `work/charlie-batch-1` — see §Landed.
+
+**The queue these go to is held.** `charlie-batch` is paused while charlie merges — see the note at
+the top. These five are ready to feed; the queue is not ready to take them, and that is intended.
 
 ## The lint exclusion-list burn-down — thirteen rows, eight feedable at 2026-08-25 06:32Z
 
@@ -189,12 +205,14 @@ them against it. Both become feedable the moment this one closes.
 
 ## In flight — do not pick up
 
-| Task | Bead | Where |
-|---|---|---|
-| [`spendmeter-extract`](tasks/spendmeter-extract.md) | `hk-spendmeter-extract-pph48` | Dispatched on `charlie-batch`, bead `in_progress`, and the one item in that queue's in-flight set at 2026-08-25 06:32Z. It holds the W2 run-machine files, so the single-owner rule below holds `handlerpause-extract` until it lands. |
+**Nothing is in flight.** Measured 2026-08-25 07:58Z: `charlie-batch` has zero workers and its
+group has drained.
 
-The keystone extraction that used to sit here, `runregistry-extract`, closed 2026-08-25 and landed on
-`work/charlie-batch-1`. It is in §Landed. Do not carry it as in flight.
+The spend-meter extraction that sat here closed 2026-08-25 and landed on `work/charlie-batch-1`
+(`04de6424e` and `d5673dee4`, verified by the presence of `internal/spend` on that branch, not by a
+commit-message grep; charlie confirmed both by message and reported reviewer and QA APPROVE on each). It is in §Landed. **Its departure frees `handlerpause-extract`** — see §Ready now. The
+keystone extraction before it, `runregistry-extract`, is also in §Landed. Do not carry either as in
+flight.
 
 ## Held — do not feed these yet
 
@@ -208,7 +226,6 @@ The keystone extraction that used to sit here, `runregistry-extract`, closed 202
 
 | Task | P | Bead | Waits on |
 |---|---|---|---|
-| [`handlerpause-extract`](tasks/handlerpause-extract.md) | P1 | `hk-handlerpause-extract-bkjoo` | **Nothing in the ledger holds it any more.** The run-registry extraction it waited on closed 2026-08-25, the bead is `open`, `br blocked` does not list it, and `br ready` offers it at 06:32Z. What holds it is the **single-owner rule** below: `spendmeter-extract` is in flight on the same run-machine files. Free the moment that lands. |
 | [`harnesspick-extract`](tasks/harnesspick-extract.md) | P1 | `hk-harnesspick-extract-3290z` | `harness-composition-root-policy`, which is deferred pending an operator ruling. `br blocked` confirms the hold at 2026-08-25 06:32Z. |
 
 ## Landed — kept so the record is not re-derived
@@ -223,6 +240,7 @@ before.
 
 | Task | Bead | Landed at | On |
 |---|---|---|---|
+| `spendmeter-extract` | closed | `04de6424e`, `d5673dee4` | **batch only** |
 | `reviewer-subagent-drift` | closed | `9c2424259` | both |
 | `lint-rekey-exclusion-list` | closed | `fbe830453` | both |
 | `dispatch-activation-guard` | closed | `626a4a25e` | both |

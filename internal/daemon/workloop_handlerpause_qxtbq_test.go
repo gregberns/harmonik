@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -18,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type hfatalLedger struct {

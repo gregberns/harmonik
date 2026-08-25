@@ -3,14 +3,13 @@ package daemon
 import (
 	"context"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type testRuntime struct {

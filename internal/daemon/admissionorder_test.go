@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -20,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 const (

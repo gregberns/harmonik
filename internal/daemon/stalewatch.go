@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -22,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 

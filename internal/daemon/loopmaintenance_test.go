@@ -14,12 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 

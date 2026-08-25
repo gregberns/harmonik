@@ -7,12 +7,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 var _ queue.HandlerPauseChecker = (*HandlerPauseController)(nil)

@@ -4,9 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 // runTerminalResult is the complete result of one supervised run. A run has

@@ -13,8 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -29,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"

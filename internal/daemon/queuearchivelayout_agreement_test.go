@@ -8,11 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func writeRealFailedArchive(t *testing.T, projectDir, queueName string, at time.Time) string {

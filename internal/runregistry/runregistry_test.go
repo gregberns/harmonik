@@ -20,7 +20,7 @@ func runregistryFixtureRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-func runregistryFixtureHandle(beadID string, wtPath string) *runregistry.RunHandle {
+func runregistryFixtureHandle(beadID, wtPath string) *runregistry.RunHandle {
 	return &runregistry.RunHandle{
 		BeadID:       core.BeadID(beadID),
 		WorktreePath: wtPath,

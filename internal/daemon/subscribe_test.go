@@ -11,12 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 	"go.uber.org/goleak"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func subscribeTestMakeEvent(t *testing.T, evtType string) core.Event {

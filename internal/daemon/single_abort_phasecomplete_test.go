@@ -8,9 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type singleFixtureAborter struct {

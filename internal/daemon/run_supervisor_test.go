@@ -6,11 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func TestRunSupervisor_CompletedRunLeavesNoGoroutineBehind(t *testing.T) {

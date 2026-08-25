@@ -5,10 +5,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/runregistry"
-
 	"github.com/gregberns/harmonik/internal/core"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type dotFixtureMachineWatchingHookStore struct {

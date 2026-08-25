@@ -177,7 +177,7 @@ A live pane whose gauge is dead must still be recoverable WITHOUT a live gauge.
 
 > **Bead not yet created.** File with:
 > `br create --title="KEEPER: wire dormant ForceRestartFn behind --force-restart (fail-closed)" --type=task --priority=1`
-> then `br label add <id> codename:keeper-redesign` and
+> then `br label add <id> -l codename:keeper-redesign` and
 > `br dep add <id> hk-7rmv; br dep add <id> hk-75mr; br dep add <id> hk-0t5s`
 > (attach via codename label, not an epic dep — see memory "Epic dep blocks dispatch").
 

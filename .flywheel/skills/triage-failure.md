@@ -88,7 +88,7 @@ note(kind="decision",
 Tag the bead with the idempotency label:
 
 ```bash
-br label <bead_id> "reaction:<event_id>"
+br label add <bead_id> -l "reaction:<event_id>"
 ```
 
 ### Step 6 — Second failure: halt re-dispatch, trigger investigation (CL-072 guard #3)
@@ -97,7 +97,7 @@ Do NOT re-dispatch the bead. Instead:
 
 1. Tag idempotency label:
    ```bash
-   br label <bead_id> "reaction:<event_id>"
+   br label add <bead_id> -l "reaction:<event_id>"
    ```
 
 2. File an investigation bead (check idempotency first — `br list --label "investigate:<bead_id>"`):

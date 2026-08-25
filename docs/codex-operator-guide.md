@@ -133,7 +133,7 @@ The harness is resolved per-run at claim time, in precedence order (highest wins
 
 | Tier | How to set | Example |
 |---|---|---|
-| Per-bead | `harness:codex` bead label | `br label hk-abc add harness:codex` |
+| Per-bead | `harness:codex` bead label | `br label add hk-abc -l harness:codex` |
 | Per-queue | `default_harness` field in `queue/types.go` Group | `"default_harness": "codex"` in JSON |
 | Per-node (DOT) | `harness` attribute on an `implementer` node | `harness=codex` in the DOT workflow |
 | Global daemon default | `Config.DefaultHarness` / `--default-harness` flag | `--default-harness codex` |
@@ -149,7 +149,7 @@ production runs.
 ### 4.1 Per-bead selection (recommended for initial rollout)
 
 ```bash
-br label hk-abc add harness:codex
+br label add hk-abc -l harness:codex
 # Verify:
 br show hk-abc | grep harness
 ```
@@ -348,7 +348,7 @@ the review loop stalls or falls through to the `verdict absent` salvage path.
 
 ```bash
 # 1. Configure a test bead with harness:codex on both implementer and reviewer:
-br label hk-test add harness:codex
+br label add hk-test -l harness:codex
 # or use a DOT workflow with both nodes set to harness=codex
 
 # 2. Submit the bead to a test queue with workflow_mode=review-loop:

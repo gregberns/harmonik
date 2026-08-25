@@ -46,7 +46,7 @@ The 455 untagged beads were classified:
 - **10 top-level spec-parent epic envelopes** (e.g. `hk-63oh`, `hk-b3f`, `hk-8mup`) — organizational, not work units. Per bead body: "Epic envelopes…need not carry scope labels." Left untagged intentionally.
 - **445 work-unit beads** — none in the bootstrap INCLUDE set, all classified `post-mvh`.
 
-Label `post-mvh` applied to 445 beads via `br label add -l post-mvh`.
+Label `post-mvh` applied to 445 beads via `br label add <bead-id> -l post-mvh`.
 
 ---
 

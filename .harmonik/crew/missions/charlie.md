@@ -231,6 +231,10 @@ once will collide. One bead at a time satisfies this for free; remember it if yo
 
 ## When it goes wrong
 
+**A paused queue is not a stop signal — read the failure, fix it, and keep going.** Nobody has to
+authorize the restart.
+
+
 - **Queue says `paused-by-failure`** → `harmonik queue recover --queue charlie-batch`. Not
   `resume`; resume is for a drain pause and is refused here. Read the failure before re-arming it.
 - **Queue says `paused-by-drain`** → `harmonik queue resume --queue charlie-batch`. Bare `resume` names

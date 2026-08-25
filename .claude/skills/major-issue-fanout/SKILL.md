@@ -22,6 +22,13 @@ have not been reading. The common shape: every round read the document that
 DESCRIBES the work, and the obstruction was in the machine that JUDGES it — a
 spec defect and a gate defect look identical from inside the spec.
 
+**One outcome of this protocol is "the blocker is an invariant doing its job."**
+Before you relax a rule that is in your way, check whether it fired on a state it
+exists to refuse. If it did, it is working, and the repair belongs in the state
+rather than in the rule. The tell is that it refused at the exact moment you
+wanted to move — which is when it is most tempting, and most load-bearing, to
+read a correct refusal as an inconvenience.
+
 It DIAGNOSES a stuck blocker. It does not DECIDE an open question.
 
 ## The one rule that matters most

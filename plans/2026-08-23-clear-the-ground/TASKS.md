@@ -177,7 +177,8 @@ superset: `crew-cleanup-skill` is on the alpha branch only, `dead-shell-sweep`,
 
 | # | Task | P | Workstream | Bead | Why it is first |
 |---|---|---|---|---|---|
-| 1 | [`lint-rekey-exclusion-list`](tasks/lint-rekey-exclusion-list.md) | **P0** | W1 | `hk-lint-rekey-exclusion-list-t9ebz` | **Feed this before anything else — it frees ELEVEN rows on its own, two of them P0** — and is a second dependency on four more. Its task file was repaired and committed on 2026-08-25; see the note under this table. The operator ruling stands: change the keying rule, do not teach the ratchet to detect renames. |
+| 1 | [`ratchet-scheme-migration`](tasks/ratchet-scheme-migration.md) | **P0** | W1 | `hk-iw11o` | **Feed this first — nothing else in W1 can move until it lands.** The ratchet forbids any added row, so it forbids every repair of itself: the re-key, the masking fix (`hk-e0ybh`, 328 unlisted identities), and the comparison window all block on it. Costed and prototyped: 179 lines inserted, zero modified, existing suite passes unmodified, one-off 6.2s. Touches one script, collides with nothing. |
+| — | [`lint-rekey-exclusion-list`](tasks/lint-rekey-exclusion-list.md) | **P0** | W1 | `hk-lint-rekey-exclusion-list-t9ebz` | **BLOCKED on row 1** and correctly out of `br ready`. |
 | 2 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
 | 3 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
 | 4 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |

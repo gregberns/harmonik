@@ -47,4 +47,4 @@ logic that was hard to test from a `main` package now lives where it can be test
 - Do not combine a move with a change.
 - Do not touch `run() int`. It belongs to the run-machine chain.
 - Do not start before the assessment lands. Moving 24,491 lines on instinct is how `internal/core`
-  got 449 flat files.
+  got 450 flat files.

@@ -5,7 +5,7 @@ type: task
 priority: 0
 labels: [daemon, dispatch, gate, clear-the-ground]
 depends_on: []
-blocks: []
+blocks: [freeze-gates-to-go]
 workstream: W0
 batch: 1
 ---

@@ -5,7 +5,7 @@ type: bug
 priority: 0
 labels: [agent-config, review-gate, clear-the-ground]
 depends_on: []
-blocks: [reviewer-portability-review]
+blocks: [reviewer-portability-review, skill-copy-governance]
 workstream: W7
 batch: 1
 ---

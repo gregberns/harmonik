@@ -5,7 +5,7 @@ type: task
 priority: 0
 labels: [daemon, run-machine, clear-the-ground]
 depends_on: []
-blocks: [workloop-extract-pure-decisions]
+blocks: [workloop-extract-pure-decisions, run-goroutine-supervisor]
 workstream: W2
 batch: 2
 ---

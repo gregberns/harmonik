@@ -338,11 +338,38 @@ func resolveProjectPath(projectDir string) string {
 	return resolved
 }
 
+// commsWakePaneCandidates returns the tmux targets to try, in order, when a
+// directed comms message must wake its recipient.
+//
+// Order, and why:
+//
+//  1. The crew registry handle VERBATIM. A handle is "session:window"
+//     ("hk-alpha:1", "harmonik-<hash>-crew-charlie:agent") and tmux resolves
+//     that form to the window's ACTIVE pane. This is the only candidate that
+//     is correct regardless of the server's pane-base-index, and it is the
+//     same rule internal/keeper/tmuxresolve.go ResolveTmuxTarget follows.
+//  2. and 3. The two naming conventions, for an agent with no registry record.
+//     Both are bare session names, so they also resolve to an active pane.
+//
+// No candidate names a pane index. Appending ".0" to the handle was candidate 1
+// until hk-vigk8, and on a server with pane-base-index 1 it made every directed
+// wake fail fleet-wide. Keeping it as a late fallback buys nothing either: the
+// loop stops at the first success, so a ".0" target is reached only after the
+// bare handle already failed, and a narrower target cannot resolve where the
+// wider one did not.
+//
+// KNOWN LIMIT: if an agent's window holds more than one pane and the agent does
+// not hold the active one, the wake lands on the wrong pane and reports success.
+// A pane id is the real fix. Every fleet window is single-pane today.
 func commsWakePaneCandidates(projectDir, agentName string) []string {
 	hash := lifecycle.ComputeProjectHash(resolveProjectPath(projectDir))
-	var candidates []string
+	var handle string
 	if rec, loadErr := crew.Load(projectDir, agentName); loadErr == nil && rec.Handle != "" {
-		candidates = append(candidates, rec.Handle+".0")
+		handle = rec.Handle
+	}
+	var candidates []string
+	if handle != "" {
+		candidates = append(candidates, handle)
 	}
 	candidates = append(candidates,
 		lifecycle.TmuxSessionName(hash, "crew-"+agentName),
@@ -353,15 +380,23 @@ func commsWakePaneCandidates(projectDir, agentName string) []string {
 func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
 	const nudgeMsg = "[[harmonik-message:v1 origin=comms]]\nYou have a new comms message. Please check your inbox."
 	candidates := commsWakePaneCandidates(projectDir, agentName)
-	var lastErr error
-	for _, paneTarget := range candidates {
-		if err := commsInjectTmuxPane(ctx, paneTarget, nudgeMsg); err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
+	if len(candidates) == 0 {
+		return fmt.Errorf("no tmux target could be derived for agent %q", agentName)
 	}
-	return lastErr
+	// Keep EVERY attempt, not just the last one. Reporting only the last error
+	// named a naming-convention guess and hid the registry candidate that
+	// really failed, so the fleet read a wrong-pane bug as "unknown agent" and
+	// lost a work window chasing it (hk-vigk8).
+	attempts := make([]error, 0, len(candidates))
+	for _, paneTarget := range candidates {
+		err := commsInjectTmuxPane(ctx, paneTarget, nudgeMsg)
+		if err == nil {
+			return nil
+		}
+		attempts = append(attempts, fmt.Errorf("candidate %d/%d %q: %w", len(attempts)+1, len(candidates), paneTarget, err))
+	}
+	return fmt.Errorf("no tmux target accepted the wake for agent %q; tried %d:\n%w",
+		agentName, len(candidates), errors.Join(attempts...))
 }
 
 func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {

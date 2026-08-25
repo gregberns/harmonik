@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queuewiring"
@@ -87,7 +89,7 @@ func ExportedSpendMeterSetDailyCapBytes(m *DaemonSpendMeter, b float64) {
 // package daemon_test (NQ-X1).
 //
 // Bead ref: hk-tigaf.11.
-func ExportedNewPerQueueSpendMeter(reg *RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
+func ExportedNewPerQueueSpendMeter(reg *runregistry.RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
 	return NewPerQueueSpendMeter(reg, store, projectDir)
 }
 

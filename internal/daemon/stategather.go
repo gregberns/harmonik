@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/keeper"
@@ -25,7 +27,7 @@ const fallbackWindowSize int64 = 200_000
 
 // LiveStateBuilder gathers a StateSnapshot from in-daemon memory + disk.
 type LiveStateBuilder struct {
-	runs        *RunRegistry
+	runs        *runregistry.RunRegistry
 	queues      *queuewiring.QueueStore
 	drain       *DrainDetector
 	conc        *ConcurrencyController
@@ -45,7 +47,7 @@ type LiveStateBuilder struct {
 // kconfig carries the parsed keeper: block from .harmonik/config.yaml; the
 // zero value (KeeperConfig{}) is safe and means all thresholds are unset.
 func NewLiveStateBuilder(
-	runs *RunRegistry,
+	runs *runregistry.RunRegistry,
 	queues *queuewiring.QueueStore,
 	drain *DrainDetector,
 	conc *ConcurrencyController,
@@ -127,7 +129,7 @@ func (b *LiveStateBuilder) buildRuns() []StateRun {
 	if b.runs == nil {
 		return nil
 	}
-	keyed := b.runs.snapshotWithKeys()
+	keyed := b.runs.SnapshotWithKeys()
 	runs := make([]StateRun, 0, len(keyed))
 	for runID, h := range keyed {
 		sr := StateRun{

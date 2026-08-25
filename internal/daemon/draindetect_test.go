@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -86,7 +88,7 @@ func emptyTestProjectDir(t *testing.T) string {
 // paginated query might have returned empty.
 func TestGenuineDrain_PaginatedReadyHidesWork(t *testing.T) {
 	ready := &fakeReady{records: []core.BeadRecord{{BeadID: "hk-hidden"}}}
-	d := NewDrainDetector(ready, drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(ready, drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -112,7 +114,7 @@ func TestGenuineDrain_PausedByFailureIsStuck(t *testing.T) {
 			Items: []queue.Item{{BeadID: "hk-a", Status: queue.ItemStatusFailed}},
 		}},
 	})
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), qs, emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -132,7 +134,7 @@ func TestGenuineDrain_FailedArchiveFileIsStuck(t *testing.T) {
 	if err := os.WriteFile(archive, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), dir)
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), dir)
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -146,10 +148,10 @@ func TestGenuineDrain_FailedArchiveFileIsStuck(t *testing.T) {
 // TestGenuineDrain_InFlightRunBlocksDrain asserts a registered in-flight run ⇒
 // HAS_WORK (defense #4).
 func TestGenuineDrain_InFlightRunBlocksDrain(t *testing.T) {
-	runs := NewRunRegistry()
+	runs := runregistry.NewRunRegistry()
 	runs.Register(
 		core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000abc")),
-		&RunHandle{BeadID: "hk-running"},
+		&runregistry.RunHandle{BeadID: "hk-running"},
 	)
 	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runs, queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
@@ -166,7 +168,7 @@ func TestGenuineDrain_InFlightRunBlocksDrain(t *testing.T) {
 // and surfaces the error (fail-closed toward staying awake).
 func TestGenuineDrain_BrExecErrorIsUnsure(t *testing.T) {
 	sentinel := errors.New("br ready: db locked")
-	d := NewDrainDetector(&fakeReady{err: sentinel}, drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(&fakeReady{err: sentinel}, drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if got.State != DrainStateUnsure {
@@ -192,7 +194,7 @@ func TestGenuineDrain_TerminalUnrolledRaceIsUnsure(t *testing.T) {
 			},
 		}},
 	})
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), qs, emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -207,7 +209,7 @@ func TestGenuineDrain_TerminalUnrolledRaceIsUnsure(t *testing.T) {
 // DRAINED when every axis shows positive emptiness. (Phase B extends this with
 // the epic axis in TestGenuineDrain_TrulyDrainedReturnsDrained.)
 func TestGenuineDrain_PhaseADrained(t *testing.T) {
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -230,7 +232,7 @@ func TestGenuineDrain_OpenEpicWithReadyChild(t *testing.T) {
 		string(core.CoarseStatusBlocked): {blockedChild(child)},
 	}}
 	ledger := &fakeLedger{edges: map[[2]core.BeadID]bool{{epic, child}: true}}
-	d := NewDrainDetector(drainedReady(), lister, ledger, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, ledger, runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -252,7 +254,7 @@ func TestGenuineDrain_LedgerLookupErrorIsUnsure(t *testing.T) {
 		string(core.CoarseStatusOpen):    {openEpic(epic)},
 		string(core.CoarseStatusBlocked): {blockedChild(child)},
 	}}
-	d := NewDrainDetector(drainedReady(), lister, &fakeLedger{edgeErr: sentinel}, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, &fakeLedger{edgeErr: sentinel}, runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if got.State != DrainStateUnsure {
@@ -267,7 +269,7 @@ func TestGenuineDrain_LedgerLookupErrorIsUnsure(t *testing.T) {
 // error in the epic axis ⇒ UNSURE (fail-closed) with the wrapped error.
 func TestGenuineDrain_ListerErrorIsUnsure(t *testing.T) {
 	sentinel := errors.New("br list: db locked")
-	d := NewDrainDetector(drainedReady(), &fakeLister{err: sentinel}, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), &fakeLister{err: sentinel}, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if got.State != DrainStateUnsure {
@@ -283,7 +285,7 @@ func TestGenuineDrain_ListerErrorIsUnsure(t *testing.T) {
 // UNSURE — a nil seam must never license a DRAINED (the load-bearing invariant
 // that lets M1 wire this oracle to the sleep decision).
 func TestGenuineDrain_NilEpicSeamIsUnsure(t *testing.T) {
-	d := NewDrainDetector(drainedReady(), nil, nil, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), nil, nil, runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -307,7 +309,7 @@ func TestGenuineDrain_DeferredLedgerDepItemIsWork(t *testing.T) {
 			Items: []queue.Item{{BeadID: "hk-deferred", Status: queue.ItemStatusDeferredForLedgerDep}},
 		}},
 	})
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), qs, emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -325,7 +327,7 @@ func TestGenuineDrain_DeferredLedgerDepItemIsWork(t *testing.T) {
 // construction; this guards that a ready-but-kerf-hidden bead is still seen.
 func TestGenuineDrain_KerfNotConsulted(t *testing.T) {
 	ready := &fakeReady{records: []core.BeadRecord{{BeadID: "hk-kerf-hidden"}}}
-	d := NewDrainDetector(ready, drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(ready, drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -347,7 +349,7 @@ func TestGenuineDrain_TrulyDrainedReturnsDrained(t *testing.T) {
 	lister := &fakeLister{byStatus: map[string][]core.BeadRecord{
 		string(core.CoarseStatusOpen): {openEpic("hk-childless-epic")},
 	}}
-	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	got, err := d.GenuineDrain(context.Background())
 	if err != nil {
@@ -397,7 +399,7 @@ func TestGatherDrainFacts_InProgressAxisPopulated(t *testing.T) {
 			minimalBead("hk-running-2", core.CoarseStatusInProgress, "bug"),
 		},
 	}}
-	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -418,7 +420,7 @@ func TestGatherDrainFacts_DraftAndDeferredAxes(t *testing.T) {
 		string(core.CoarseStatusDraft):    {minimalBead("hk-draft", core.CoarseStatusDraft, "task")},
 		string(core.CoarseStatusDeferred): {minimalBead("hk-def", core.CoarseStatusDeferred, "task")},
 	}}
-	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -442,7 +444,7 @@ func TestGatherDrainFacts_NeedsAttentionVisible(t *testing.T) {
 			minimalBead("hk-normal", core.CoarseStatusOpen, "task"),
 		},
 	}}
-	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -475,7 +477,7 @@ func TestGatherDrainFacts_NeedsDecomposition(t *testing.T) {
 	ledger := &fakeLedger{edges: map[[2]core.BeadID]bool{
 		{epicWithChild, childA}: true,
 	}}
-	d := NewDrainDetector(drainedReady(), lister, ledger, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, ledger, runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -507,7 +509,7 @@ func TestGatherDrainFacts_NoShortCircuitOnMultipleEdges(t *testing.T) {
 		{epic, childA}: true,
 		{epic, childB}: true,
 	}}
-	d := NewDrainDetector(drainedReady(), lister, ledger, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), lister, ledger, runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -528,7 +530,7 @@ func TestGatherDrainFacts_UnsureIsFlagNotVerdict(t *testing.T) {
 			minimalBead("hk-running", core.CoarseStatusInProgress, "task"),
 		},
 	}}
-	d := NewDrainDetector(&fakeReady{err: sentinel}, lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(&fakeReady{err: sentinel}, lister, drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if !errors.Is(err, sentinel) {
@@ -560,7 +562,7 @@ func TestGatherDrainFacts_QueueAxisNonTerminalItem(t *testing.T) {
 			},
 		}},
 	})
-	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runregistry.NewRunRegistry(), qs, emptyTestProjectDir(t))
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -583,7 +585,7 @@ func TestGatherDrainFacts_WorktreePathsPopulated(t *testing.T) {
 	if err := os.MkdirAll(wtDir, 0o755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), dir)
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), dir)
 
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
@@ -599,7 +601,7 @@ func TestGatherDrainFacts_WorktreePathsPopulated(t *testing.T) {
 
 // TestGatherDrainFacts_GatheredAtIsSet asserts GatheredAt is non-zero.
 func TestGatherDrainFacts_GatheredAtIsSet(t *testing.T) {
-	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	facts, err := d.GatherDrainFacts(context.Background())
 	if err != nil {
 		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)

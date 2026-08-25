@@ -801,7 +801,7 @@ func dispatchDotAgenticNode(
 		HeartbeatViaTap: !isReviewer,
 		OnBeforeLaunch:  emitReviewerLaunched,
 		// hk-b4xf2: the stale watcher's silent-hang drive and stategather's
-		// dashboard read both reach the lifecycle machine through the RunHandle.
+		// dashboard read both reach the lifecycle machine through the runregistry.RunHandle.
 		// A graph run never set it, so both were inert on the path that carries
 		// the traffic. A graph run holds one session per node, so the handle
 		// carries the machine of the node running now — which is the one a stale

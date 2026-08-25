@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -83,7 +85,7 @@ type workLoopInput struct {
 	handles       runloop.SharedHandles
 	ledger        beadLedger
 	queueStore    *queuewiring.QueueStore
-	runRegistry   *RunRegistry
+	runRegistry   *runregistry.RunRegistry
 	substrate     handler.Substrate
 	mergeQueue    *mergeq.Queue
 	launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
@@ -138,13 +140,13 @@ type reapSeamPort struct {
 	cancelOnQueueExit  context.CancelFunc
 	maxConcurrent      int
 	concurrencyCtrl    *ConcurrencyController
-	runRegistry        *RunRegistry
+	runRegistry        *runregistry.RunRegistry
 	targetBranch       string
 	eagerRefill        eagerRefillPort
 	completionStore    queue.CompletionStore
 }
 
-func newReapSeamPort(bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) reapSeamPort {
+func newReapSeamPort(bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *runregistry.RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) reapSeamPort {
 	return reapSeamPort{
 		bus:                bus,
 		projectDir:         projectDir,
@@ -222,7 +224,7 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 	return queue.DefaultWorkers(q.Workers, globalCap)
 }
 
-func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) (queueSelection, bool) {
+func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *runregistry.RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) (queueSelection, bool) {
 	sel, ok := orchestrator.SelectNextQueue(snapshotFleet(lq, reg, globalCap, rrCursor, blockedQueues, skipBeads))
 	if !ok {
 		return queueSelection{anyPausedOrEmpty: sel.SawNonContributing}, false
@@ -246,7 +248,7 @@ func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalC
 	}, true
 }
 
-func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) orchestrator.FleetSnapshot {
+func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *runregistry.RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) orchestrator.FleetSnapshot {
 	names := lq.LockedAllQueueNames()
 	queues := make([]orchestrator.QueueSnapshot, 0, len(names))
 	for _, name := range names {
@@ -1123,7 +1125,7 @@ func runWorkLoop(ctx context.Context, input workLoopInput, collaborators loopCol
 		capturedWorkerTarget := capturedQueueWorkerTarget
 		capturedDefaultHarness := capturedQueueDefaultHarness
 
-		dispatchedHandle := &RunHandle{
+		dispatchedHandle := &runregistry.RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
 			// capacity tally (LenForQueue/LenForQueueLocal) bounds this queue

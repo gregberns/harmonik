@@ -5,15 +5,16 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 type dotFixtureMachineWatchingHookStore struct {
 	dotFixtureHookStore
 
-	reg        *daemon.RunRegistry
+	reg        *runregistry.RunRegistry
 	sawMachine atomic.Bool
 	sawHandle  atomic.Bool
 }
@@ -34,7 +35,7 @@ func (s *dotFixtureMachineWatchingHookStore) SetAgentReadyCallback(runID, sessID
 func TestDotNode_SessionMachineReachesTheRunHandle(t *testing.T) {
 	t.Parallel()
 
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	store := &dotFixtureMachineWatchingHookStore{reg: reg}
 
 	const beadID = core.BeadID("hk-b4xf2-machine-on-handle")

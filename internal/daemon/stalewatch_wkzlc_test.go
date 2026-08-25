@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -72,11 +74,11 @@ func staleFixtureNewRunID(t *testing.T) core.RunID {
 // TestStaleWatch_NoEmitBelowThreshold verifies that no run_stale event is emitted
 // when the run's age is strictly less than staleAfter.
 func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-test1",
 		StartedAt: startedAt,
 	})
@@ -111,11 +113,11 @@ func TestStaleWatch_NoEmitBelowThreshold(t *testing.T) {
 // TestStaleWatch_EmitAtThreshold verifies that run_stale is emitted when the
 // run's age equals or exceeds staleAfter.
 func TestStaleWatch_EmitAtThreshold(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-test2",
 		StartedAt: startedAt,
 	})
@@ -164,11 +166,11 @@ func TestStaleWatch_EmitAtThreshold(t *testing.T) {
 // TestStaleWatch_ExponentialBackoff verifies that after the first run_stale
 // emission, re-emission happens at 2M, then 4M (exponential doubling).
 func TestStaleWatch_ExponentialBackoff(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testback",
 		StartedAt: startedAt,
 	})
@@ -261,11 +263,11 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 // TestStaleWatch_NoEmitAfterRunDeregistered verifies that once a run is removed
 // from the registry, its state is pruned and no new run_stale events fire.
 func TestStaleWatch_NoEmitAfterRunDeregistered(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testprune",
 		StartedAt: startedAt,
 	})
@@ -312,11 +314,11 @@ func TestStaleWatch_NoEmitAfterRunDeregistered(t *testing.T) {
 // TestStaleWatch_LastEventTypeTracked verifies that when the bus delivers an
 // event for a run, the watcher's last_event_type reflects that event's type.
 func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testtrack",
 		StartedAt: startedAt,
 	})
@@ -439,11 +441,11 @@ func TestBeadStaleAfter_LabelParsing(t *testing.T) {
 // "stale_after=<seconds>" label uses the label value as its stale threshold
 // instead of the watcher's default.
 func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testlabel",
 		Labels:    []string{"stale_after=1200"}, // 1200s = 20 min
 		StartedAt: startedAt,
@@ -490,11 +492,11 @@ func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
 // with a "stale_after:<seconds>" label (colon form — the only form accepted by
 // beads label validation) uses that value as its stale threshold.
 func TestStaleWatch_PerBeadColonFormLabelOverride(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testcolonlabel",
 		Labels:    []string{"stale_after:120"},
 		StartedAt: startedAt,
@@ -543,11 +545,11 @@ func TestStaleWatch_PerBeadColonFormLabelOverride(t *testing.T) {
 // false-positive run_stale events during normal reviewer execution windows
 // (logmine F38, hk-0z2).
 func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testrevgating",
 		StartedAt: startedAt,
 	})
@@ -619,11 +621,11 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 // once the exponential backoff has grown beyond ReviewerLaunchStaleAfter, the
 // backoff value (not the gate floor) governs subsequent re-emissions.
 func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testrevbackoff",
 		StartedAt: startedAt,
 	})
@@ -696,11 +698,11 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 // TestStaleWatch_PayloadValid verifies that the emitted RunStalePayload passes
 // its own Valid() check.
 func TestStaleWatch_PayloadValid(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-testvalid",
 		StartedAt: startedAt,
 	})

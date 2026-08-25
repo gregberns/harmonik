@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -197,10 +199,10 @@ type runStaleState struct {
 }
 
 type forceReapCB struct {
-	fn func(runID core.RunID, handle *RunHandle)
+	fn func(runID core.RunID, handle *runregistry.RunHandle)
 }
 type runDeadCB struct {
-	fn func(runID core.RunID, handle *RunHandle) bool
+	fn func(runID core.RunID, handle *runregistry.RunHandle) bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -213,7 +215,7 @@ type StaleWatcherConfig struct {
 	Emitter handlercontract.EventEmitter
 
 	// Registry is the in-flight run registry. Required.
-	Registry *RunRegistry
+	Registry *runregistry.RunRegistry
 
 	// Gate is the INACTIVE poll gate (SS-007, hk-w6q7).  When non-nil and
 	// gate.IsInactive() == true, scan returns early without doing work.
@@ -263,7 +265,7 @@ type StaleWatcherConfig struct {
 
 	// ForceReapGrace is the grace period the force-reap watchdog waits after a
 	// run's Cancel was invoked before force-Unregistering a still-registered
-	// RunHandle (hk-mdus1). Zero → forceReapGraceDefault (90 s).
+	// runregistry.RunHandle (hk-mdus1). Zero → forceReapGraceDefault (90 s).
 	ForceReapGrace time.Duration
 
 	// DeadProcessStaleAfter gates the fast dead-process reap (hk-mdus1): a run
@@ -272,21 +274,21 @@ type StaleWatcherConfig struct {
 	DeadProcessStaleAfter time.Duration
 
 	// ForceReap, when non-nil, is invoked by the force-reap watchdog immediately
-	// before the RunHandle is force-Unregistered (hk-mdus1). It is the seam the
+	// before the runregistry.RunHandle is force-Unregistered (hk-mdus1). It is the seam the
 	// daemon wires to emit a terminal run_failed for the wedged run and to drive
 	// its owning queue item terminal (evaluateGroupAdvanceWithOutcome) — work
 	// the wedged per-run goroutine can no longer do itself. Nil (e.g. unit-test
 	// mode with no ProjectDir / queueStore) → the watchdog still frees the slot
 	// via Registry.Unregister; only the terminal-event/queue-advance is skipped.
 	// May also be set post-construction via SetForceReap.
-	ForceReap func(runID core.RunID, handle *RunHandle)
+	ForceReap func(runID core.RunID, handle *runregistry.RunHandle)
 
 	// RunProcessDead, when non-nil, reports whether the agent process/pane for a
 	// run is already gone (hk-mdus1 fast dead-process reap). The daemon wires it
 	// to the tmux substrate's #{pane_pid} liveness (processDead / WindowPanePID).
 	// Nil → the fast reap is inert and detection falls back to the stale
 	// thresholds. May also be set post-construction via SetRunProcessDead.
-	RunProcessDead func(runID core.RunID, handle *RunHandle) bool
+	RunProcessDead func(runID core.RunID, handle *runregistry.RunHandle) bool
 
 	// RunSilenceStall is the quiet window that fires the heartbeat-gap
 	// signature. Zero → stallRunSilenceDefault.
@@ -327,24 +329,24 @@ type StaleWatcher struct {
 
 // SetForceReap publishes (or replaces) the force-reap seam after construction.
 // Safe to call while the scan goroutine is running (hk-mdus1).
-func (w *StaleWatcher) SetForceReap(fn func(runID core.RunID, handle *RunHandle)) {
+func (w *StaleWatcher) SetForceReap(fn func(runID core.RunID, handle *runregistry.RunHandle)) {
 	w.forceReapPtr.Store(&forceReapCB{fn: fn})
 }
 
 // SetRunProcessDead publishes (or replaces) the dead-process liveness seam after
 // construction. Safe to call while the scan goroutine is running (hk-mdus1).
-func (w *StaleWatcher) SetRunProcessDead(fn func(runID core.RunID, handle *RunHandle) bool) {
+func (w *StaleWatcher) SetRunProcessDead(fn func(runID core.RunID, handle *runregistry.RunHandle) bool) {
 	w.runDeadPtr.Store(&runDeadCB{fn: fn})
 }
 
-func (w *StaleWatcher) forceReapFn() func(core.RunID, *RunHandle) {
+func (w *StaleWatcher) forceReapFn() func(core.RunID, *runregistry.RunHandle) {
 	if p := w.forceReapPtr.Load(); p != nil {
 		return p.fn
 	}
 	return nil
 }
 
-func (w *StaleWatcher) runProcessDeadFn() func(core.RunID, *RunHandle) bool {
+func (w *StaleWatcher) runProcessDeadFn() func(core.RunID, *runregistry.RunHandle) bool {
 	if p := w.runDeadPtr.Load(); p != nil {
 		return p.fn
 	}
@@ -622,7 +624,7 @@ func (w *StaleWatcher) scan(ctx context.Context) {
 		return
 	}
 	now := w.cfg.Now()
-	handles := w.cfg.Registry.snapshotWithKeys()
+	handles := w.cfg.Registry.SnapshotWithKeys()
 	goroutineCount := runtime.NumGoroutine()
 	activeRunCount := len(handles)
 
@@ -644,7 +646,7 @@ func (w *StaleWatcher) scan(ctx context.Context) {
 func (w *StaleWatcher) checkRun(
 	ctx context.Context,
 	runID core.RunID,
-	handle *RunHandle,
+	handle *runregistry.RunHandle,
 	now time.Time,
 	goroutineCount, activeRunCount int,
 ) {
@@ -698,7 +700,7 @@ func (w *StaleWatcher) checkRun(
 				"daemon: stalewatch: fast dead-process reap: bead %s run %s: agent process/pane gone and silent %s — cancelling; force-reap in %s if still registered\n",
 				beadIDForDead, runID, silent.Round(time.Second), w.cfg.ForceReapGrace)
 			if handle.Cancel != nil {
-				handle.aborted.Store(true)
+				handle.MarkAborted()
 				handle.Cancel()
 			}
 			return
@@ -904,7 +906,7 @@ func (w *StaleWatcher) checkRun(
 func (w *StaleWatcher) killConsumerBackstop(
 	runID core.RunID,
 	beadID core.BeadID,
-	handle *RunHandle,
+	handle *runregistry.RunHandle,
 	age time.Duration,
 ) {
 	fmt.Fprintf(os.Stderr,
@@ -916,11 +918,11 @@ func (w *StaleWatcher) killConsumerBackstop(
 			beadID, runID)
 		return
 	}
-	handle.aborted.Store(true)
+	handle.MarkAborted()
 	handle.Cancel()
 }
 
-func (w *StaleWatcher) forceReap(_ context.Context, runID core.RunID, beadID core.BeadID, handle *RunHandle, sinceCancel time.Duration) {
+func (w *StaleWatcher) forceReap(_ context.Context, runID core.RunID, beadID core.BeadID, handle *runregistry.RunHandle, sinceCancel time.Duration) {
 	fmt.Fprintf(os.Stderr,
 		"daemon: stalewatch: FORCE-REAP: bead %s run %s: still registered %s after Cancel — force-Unregistering leaked slot (hk-mdus1)\n",
 		beadID, runID, sinceCancel.Round(time.Second))
@@ -966,7 +968,7 @@ func (w *StaleWatcher) fireNeverSpawnedReaper(
 	_ context.Context,
 	runID core.RunID,
 	beadID core.BeadID,
-	handle *RunHandle,
+	handle *runregistry.RunHandle,
 	elapsed time.Duration,
 ) {
 	fmt.Fprintf(os.Stderr,
@@ -978,7 +980,7 @@ func (w *StaleWatcher) fireNeverSpawnedReaper(
 			beadID, runID)
 		return
 	}
-	handle.aborted.Store(true)
+	handle.MarkAborted()
 	handle.Cancel()
 }
 

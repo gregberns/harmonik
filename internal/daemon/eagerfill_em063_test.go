@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -522,7 +524,7 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	deps.capacity.maxConcurrent = 1
 
-	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &RunHandle{
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-other"),
 		StartedAt: time.Now(),
 	})
@@ -632,11 +634,11 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	deps.capacity.maxConcurrent = 3
 
-	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &RunHandle{
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-inflight-1"),
 		StartedAt: time.Now(),
 	})
-	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000002")), &RunHandle{
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000002")), &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-inflight-2"),
 		StartedAt: time.Now(),
 	})

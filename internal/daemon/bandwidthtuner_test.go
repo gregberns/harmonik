@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -330,7 +332,7 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 
 // TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner verifies PI-073: a
 // rate-limit event from a Pi run MUST NOT snap the global concurrency ceiling.
-// The backstop must skip NotifyRateLimit when the RunHandle's agent type is Pi.
+// The backstop must skip NotifyRateLimit when the runregistry.RunHandle's agent type is Pi.
 func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -342,8 +344,8 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	piRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000010"))
-	reg := NewRunRegistry()
-	handle := &RunHandle{}
+	reg := runregistry.NewRunRegistry()
+	handle := &runregistry.RunHandle{}
 	handle.SetAgentType(core.AgentTypePi)
 	reg.Register(piRunID, handle)
 
@@ -384,8 +386,8 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	claudeRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000011"))
-	reg := NewRunRegistry()
-	handle := &RunHandle{}
+	reg := runregistry.NewRunRegistry()
+	handle := &runregistry.RunHandle{}
 	handle.SetAgentType(core.AgentTypeClaudeCode)
 	reg.Register(claudeRunID, handle)
 

@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/harness/shared"
@@ -18,7 +20,7 @@ type testRuntime struct {
 
 	ledger        beadLedger
 	queueStore    *queuewiring.QueueStore
-	runRegistry   *RunRegistry
+	runRegistry   *runregistry.RunRegistry
 	substratePort handler.Substrate
 	mergeQueue    *mergeq.Queue
 	launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)

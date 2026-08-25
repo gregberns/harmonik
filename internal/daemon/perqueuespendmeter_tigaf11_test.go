@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -53,23 +55,23 @@ func pqMakeAccrualEvent(t *testing.T, runID core.RunID, usdUnits float64) core.E
 	}
 }
 
-func pqRegisterRun(t *testing.T, reg *daemon.RunRegistry, queueName string) core.RunID {
+func pqRegisterRun(t *testing.T, reg *runregistry.RunRegistry, queueName string) core.RunID {
 	t.Helper()
 	runUUID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("pqRegisterRun: uuid: %v", err)
 	}
 	runID := core.RunID(runUUID)
-	daemon.ExportedRunRegistryRegister(reg, runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-test"),
 		QueueName: queueName,
 	})
 	return runID
 }
 
-func pqSetup(t *testing.T, queues ...*queue.Queue) (*daemon.RunRegistry, *queuewiring.QueueStore, *daemon.PerQueueSpendMeter) {
+func pqSetup(t *testing.T, queues ...*queue.Queue) (*runregistry.RunRegistry, *queuewiring.QueueStore, *daemon.PerQueueSpendMeter) {
 	t.Helper()
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	store := queuewiring.NewQueueStore()
 	for _, q := range queues {
 		daemon.ExportedQueueStoreSetQueue(store, q)

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -29,7 +31,7 @@ type stallFeedFixture struct {
 	jsonlPath string
 	writer    *eventbus.JSONLWriter
 	bus       eventbus.EventBus
-	registry  *RunRegistry
+	registry  *runregistry.RunRegistry
 	watcher   *StaleWatcher
 	feed      *runloop.StallFeed
 	closed    bool
@@ -68,7 +70,7 @@ func stallFeedNewFixture(t *testing.T, now time.Time, runMaxAge time.Duration) *
 	t.Helper()
 	f := &stallFeedFixture{
 		jsonlPath: filepath.Join(t.TempDir(), "events.jsonl"),
-		registry:  NewRunRegistry(),
+		registry:  runregistry.NewRunRegistry(),
 		feed:      runloop.NewStallFeed(),
 		now:       now,
 	}
@@ -112,7 +114,7 @@ func stallFeedNewFixture(t *testing.T, now time.Time, runMaxAge time.Duration) *
 func (f *stallFeedFixture) register(t *testing.T, beadID string, startedAt time.Time) core.RunID {
 	t.Helper()
 	runID := stallFeedRunID(t)
-	f.registry.Register(runID, &RunHandle{
+	f.registry.Register(runID, &runregistry.RunHandle{
 		BeadID:    core.BeadID(beadID),
 		QueueName: "lane-a",
 		StartedAt: startedAt,
@@ -269,7 +271,7 @@ func TestStallFeeder_APerBeadCeilingKeepsALongRunAlive(t *testing.T) {
 	f := stallFeedNewFixture(t, start, 2*time.Hour)
 
 	runID := stallFeedRunID(t)
-	f.registry.Register(runID, &RunHandle{
+	f.registry.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-long",
 		QueueName: "lane-a",
 		StartedAt: start,

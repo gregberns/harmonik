@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -131,9 +133,9 @@ type dotFixtureOpts struct {
 	// dotFixtureHookStore over HookOutcome.
 	HookStore runloop.HookStore
 
-	// RunRegistry lets a test read the in-flight RunHandle while the run is
+	// runregistry.RunRegistry lets a test read the in-flight runregistry.RunHandle while the run is
 	// still live. Nil creates a fresh one inside the deps.
-	RunRegistry *daemon.RunRegistry
+	RunRegistry *runregistry.RunRegistry
 
 	// BeadDescription is the bead body the ledger reports. A `## Branching`
 	// block in it is how a bead declares a cross-repo target_repo.

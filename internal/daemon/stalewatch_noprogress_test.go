@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -26,7 +28,7 @@ type noProgressFixture struct {
 	emitted []core.RunStalePayload
 }
 
-func newNoProgressFixture(t *testing.T, reg *daemon.RunRegistry, start time.Time, cfg daemon.StaleWatcherConfig) *noProgressFixture {
+func newNoProgressFixture(t *testing.T, reg *runregistry.RunRegistry, start time.Time, cfg daemon.StaleWatcherConfig) *noProgressFixture {
 	t.Helper()
 	f := &noProgressFixture{t: t, bus: eventbus.NewBusImpl(), now: start}
 
@@ -109,11 +111,11 @@ func (f *noProgressFixture) collected() []core.RunStalePayload {
 // run_stale events for as long as the beat continues, because every beat resets
 // the deadline the beat is measured against.
 func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-wedged",
 		StartedAt: start,
 	})
@@ -173,11 +175,11 @@ func TestStaleWatch_HeartbeatOnlyRunGoesStale(t *testing.T) {
 // arms the kill-consumer backstop and cancels the run — so a run that works
 // quietly and then reports a phase must stay silent on both clocks.
 func TestStaleWatch_QuietButProgressingRunIsNotStale(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-slow-but-working",
 		StartedAt: start,
 	})
@@ -217,11 +219,11 @@ func TestStaleWatch_QuietButProgressingRunIsNotStale(t *testing.T) {
 // bead whose single phase legitimately outlives the default window widens its
 // own window, the same way run_max_age and stale_after already work.
 func TestStaleWatch_NoProgressPerBeadLabelOverride(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-long-phase",
 		StartedAt: start,
 		Labels:    []string{"workflow:default", "no_progress_after=21600"}, // 6 h
@@ -260,12 +262,12 @@ func TestStaleWatch_NoProgressPerBeadLabelOverride(t *testing.T) {
 // Without this test the change is only pinned as an event count, and the risk
 // it carries — a false stale killing a working agent — is never exercised.
 func TestStaleWatch_NoProgressReportsButDoesNotCancel(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
 	var cancelled atomic.Bool
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-wedged-but-not-doomed",
 		StartedAt: start,
 		Cancel:    func() { cancelled.Store(true) },
@@ -300,12 +302,12 @@ func TestStaleWatch_NoProgressReportsButDoesNotCancel(t *testing.T) {
 // still trips the quiet window and still gets cancelled. Without this, scoping
 // the backstop to `quiet` could disable it everywhere and no test would notice.
 func TestStaleWatch_QuietRunStillCancels(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := staleFixtureNewRunID(t)
 	start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
 	var cancelled atomic.Bool
-	reg.Register(runID, &daemon.RunHandle{
+	reg.Register(runID, &runregistry.RunHandle{
 		BeadID:    "hk-gone-silent",
 		StartedAt: start,
 		Cancel:    func() { cancelled.Store(true) },
@@ -349,11 +351,11 @@ func TestStaleWatch_DaemonOwnEventsAreNotProgress(t *testing.T) {
 		{"implementer_resumed", core.EventTypeImplementerResumed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reg := daemon.NewRunRegistry()
+			reg := runregistry.NewRunRegistry()
 			runID := staleFixtureNewRunID(t)
 			start := time.Date(2026, 8, 9, 3, 0, 0, 0, time.UTC)
 
-			reg.Register(runID, &daemon.RunHandle{
+			reg.Register(runID, &runregistry.RunHandle{
 				BeadID:    "hk-spinning",
 				StartedAt: start,
 			})

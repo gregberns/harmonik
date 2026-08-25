@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -204,7 +206,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	}
 	ctrl := daemon.NewHandlerPauseController(ctrlBus, nil)
 
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	policy := daemon.ExportedNewHandlerPausePolicyGoroutine(daemon.ExportedHandlerPausePolicyConfig{
 		AgentType:  core.AgentTypeClaudeCode,

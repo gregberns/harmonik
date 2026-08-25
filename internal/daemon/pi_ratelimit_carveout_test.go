@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/runloop"
@@ -19,8 +21,8 @@ func piCarveLaunchThenRateLimit(t *testing.T, agentType core.AgentType) int {
 	in := alaunchInput(t, &alaunchSpySubstrate{}, false, []string{"PATH=/usr/bin"})
 	in.Artifacts = shared.LaunchArtifacts{ResolvedAgentType: agentType}
 
-	registry := NewRunRegistry()
-	registry.Register(in.RunID, &RunHandle{BeadID: core.BeadID("hk-pi-carve-out")})
+	registry := runregistry.NewRunRegistry()
+	registry.Register(in.RunID, &runregistry.RunHandle{BeadID: core.BeadID("hk-pi-carve-out")})
 	in.Handles.RunRegistry = daemonRunRegistry{reg: registry}
 
 	if handle, ok := registry.Get(in.RunID); !ok || handle.GetAgentType() != core.AgentType("") {
@@ -105,8 +107,8 @@ func TestPiRateLimit_TheLaunchIsWhatRecordsTheHarness(t *testing.T) {
 	in := alaunchInput(t, &alaunchSpySubstrate{}, false, []string{"PATH=/usr/bin"})
 	in.Artifacts = shared.LaunchArtifacts{ResolvedAgentType: core.AgentTypePi}
 
-	registry := NewRunRegistry()
-	registry.Register(in.RunID, &RunHandle{BeadID: core.BeadID("hk-pi-carve-out")})
+	registry := runregistry.NewRunRegistry()
+	registry.Register(in.RunID, &runregistry.RunHandle{BeadID: core.BeadID("hk-pi-carve-out")})
 	in.Handles.RunRegistry = daemonRunRegistry{reg: registry}
 
 	res := runAgentLaunch(context.Background(), in)
@@ -123,4 +125,4 @@ func TestPiRateLimit_TheLaunchIsWhatRecordsTheHarness(t *testing.T) {
 	}
 }
 
-var _ runloop.RunHandlePort = (*RunHandle)(nil)
+var _ runloop.RunHandlePort = (*runregistry.RunHandle)(nil)

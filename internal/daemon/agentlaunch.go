@@ -135,7 +135,7 @@ type agentLaunchInput struct {
 	OnBeforeLaunch func(ctx context.Context)
 
 	// OnLaunchedExtra is site-specific post-launch work (single-mode's
-	// RunHandle machine set and its comms presence join). nil for sites with none.
+	// runregistry.RunHandle machine set and its comms presence join). nil for sites with none.
 	OnLaunchedExtra func(ctx context.Context, sess handler.Session)
 
 	// RunScope is the scope holding the RUN's resources — the worktree, the

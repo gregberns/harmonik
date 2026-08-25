@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -21,13 +23,13 @@ import (
 type diskReclaimPort struct {
 	projectDir                string
 	bus                       handlercontract.EventEmitter
-	runRegistry               *RunRegistry
+	runRegistry               *runregistry.RunRegistry
 	diskCheckIntervalOverride time.Duration
 	diskFreeBytesFunc         func(path string) (uint64, error)
 	worktreeReclaimFunc       func(ctx context.Context, projectDir string, stalePaths []string) error
 }
 
-func newDiskReclaimPort(projectDir string, bus handlercontract.EventEmitter, runRegistry *RunRegistry) diskReclaimPort {
+func newDiskReclaimPort(projectDir string, bus handlercontract.EventEmitter, runRegistry *runregistry.RunRegistry) diskReclaimPort {
 	return diskReclaimPort{
 		projectDir:  projectDir,
 		bus:         bus,

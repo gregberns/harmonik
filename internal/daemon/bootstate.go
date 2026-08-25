@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -32,7 +34,7 @@ type bootState struct {
 	clockRegressionDetected bool
 	qs                      *queuewiring.QueueStore
 	handlerPauseCtrl        *HandlerPauseController
-	sharedRunRegistry       *RunRegistry
+	sharedRunRegistry       *runregistry.RunRegistry
 	workerRegistry          *workers.Registry
 	workerRegistryBuilt     bool
 	pollGate                *PollGate
@@ -110,7 +112,7 @@ func (bs *bootState) constructBusAndRegistries() (*eventbus.JSONLWriter, error) 
 	}
 	bs.qs = qs
 	bs.handlerPauseCtrl = NewHandlerPauseController(bs.bus, nil)
-	bs.sharedRunRegistry = NewRunRegistry()
+	bs.sharedRunRegistry = runregistry.NewRunRegistry()
 	bs.pollGate = &PollGate{}
 
 	return jsonlWriter, nil

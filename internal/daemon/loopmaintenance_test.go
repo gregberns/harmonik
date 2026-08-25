@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -199,7 +201,7 @@ func staleWorktreeFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *dis
 	calls := &diskSeamCalls{}
 	port := diskReclaimPort{
 		projectDir:        projectDir,
-		runRegistry:       NewRunRegistry(),
+		runRegistry:       runregistry.NewRunRegistry(),
 		diskFreeBytesFunc: func(string) (uint64, error) { return freeBytes, nil },
 		worktreeReclaimFunc: func(context.Context, string, []string) error {
 			calls.worktreeReclaim++

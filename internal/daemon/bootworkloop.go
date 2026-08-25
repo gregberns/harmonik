@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
@@ -290,11 +292,11 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 	return true
 }
 
-func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) {
+func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *runregistry.RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) {
 	cfg := bs.cfg
 	reapPort := newReapSeamPort(bus, projectDir, targetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, eagerRefill)
 
-	bs.staleWatcher.SetForceReap(func(runID core.RunID, handle *RunHandle) {
+	bs.staleWatcher.SetForceReap(func(runID core.RunID, handle *runregistry.RunHandle) {
 		emitRunCompleted(ctx, bs.bus, runID, string(handle.BeadID), handle.OwningEpicID, handle.OwningEpicAssignee, false,
 			"force-reaped: run wedged past cancel grace; concurrency slot reclaimed (hk-mdus1)",
 			handle.QueueID, handle.QueueGroupIndex, nil)
@@ -311,7 +313,7 @@ func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlerc
 	if reapAdapter == nil || cfg.ProjectDir == "" {
 		return
 	}
-	bs.staleWatcher.SetRunProcessDead(func(runID core.RunID, _ *RunHandle) bool {
+	bs.staleWatcher.SetRunProcessDead(func(runID core.RunID, _ *runregistry.RunHandle) bool {
 		return bs.probeRunProcessDead(ctx, reapAdapter, runID)
 	})
 }

@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -22,7 +24,7 @@ const (
 
 type bandwidthTunerBackstop struct {
 	tuner atomic.Pointer[BandwidthTuner]
-	reg   atomic.Pointer[RunRegistry]
+	reg   atomic.Pointer[runregistry.RunRegistry]
 }
 
 // SetTuner stores the running tuner so the bus handler can forward events.
@@ -36,7 +38,7 @@ func (b *bandwidthTunerBackstop) SetTuner(t *BandwidthTuner) {
 // isolated from the global tuner. Called from daemon init before beads
 // are dispatched. Optional — if nil, no filtering is applied (safe default:
 // all events reach the tuner, Pi is not yet in production).
-func (b *bandwidthTunerBackstop) SetRunRegistry(r *RunRegistry) {
+func (b *bandwidthTunerBackstop) SetRunRegistry(r *runregistry.RunRegistry) {
 	b.reg.Store(r)
 }
 

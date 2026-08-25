@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -22,7 +24,7 @@ func hppNewController(t *testing.T) *daemon.HandlerPauseController {
 	return daemon.NewHandlerPauseController(bus, nil)
 }
 
-func hppNewPolicy(t *testing.T, ctrl *daemon.HandlerPauseController, reg *daemon.RunRegistry) *daemon.HandlerPausePolicyGoroutine {
+func hppNewPolicy(t *testing.T, ctrl *daemon.HandlerPauseController, reg *runregistry.RunRegistry) *daemon.HandlerPausePolicyGoroutine {
 	t.Helper()
 	return daemon.ExportedNewHandlerPausePolicyGoroutine(daemon.ExportedHandlerPausePolicyConfig{
 		AgentType:  core.AgentTypeClaudeCode,
@@ -109,7 +111,7 @@ func TestHandlerPausePolicy_NoTripOnSingleRateLimit(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
@@ -125,7 +127,7 @@ func TestHandlerPausePolicy_TripOnTwoConsecutiveRateLimits(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
@@ -161,7 +163,7 @@ func TestHandlerPausePolicy_NoTripAfterClearance(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	hppDeliverRateLimit(t, policy, core.AgentRateLimitStatusActive)
@@ -181,7 +183,7 @@ func TestHandlerPausePolicy_TripOnBudgetExhausted(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	hppDeliverBudgetExhausted(t, policy)
@@ -207,21 +209,21 @@ func TestHandlerPausePolicy_TripOnBudgetExhausted(t *testing.T) {
 }
 
 // TestHandlerPausePolicy_InFlightFreezeListPopulated verifies that when a
-// pause is triggered, the in-flight bead list is populated from the RunRegistry.
+// pause is triggered, the in-flight bead list is populated from the runregistry.RunRegistry.
 func TestHandlerPausePolicy_InFlightFreezeListPopulated(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	runID1 := hppMakeRunID(t)
 	runID2 := hppMakeRunID(t)
-	reg.Register(runID1, &daemon.RunHandle{
+	reg.Register(runID1, &runregistry.RunHandle{
 		BeadID:    "hk-inflight-001",
 		StartedAt: time.Now(),
 	})
-	reg.Register(runID2, &daemon.RunHandle{
+	reg.Register(runID2, &runregistry.RunHandle{
 		BeadID:    "hk-inflight-002",
 		StartedAt: time.Now(),
 	})
@@ -261,7 +263,7 @@ func TestHandlerPausePolicy_IdempotentOnDoubleBudgetExhausted(t *testing.T) {
 	t.Parallel()
 
 	ctrl := hppNewController(t)
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	policy := hppNewPolicy(t, ctrl, reg)
 
 	hppDeliverBudgetExhausted(t, policy)

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -341,7 +343,7 @@ func TestInFlightBeadRecordFromRunHandle(t *testing.T) {
 	t.Parallel()
 
 	ts := time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC)
-	handle := &daemon.RunHandle{
+	handle := &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-abc99"),
 		StartedAt: ts,
 	}

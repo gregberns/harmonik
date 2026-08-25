@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -315,7 +317,7 @@ func (c *HandlerPauseController) runDiagnose(ctx context.Context) (handlercontra
 //
 // inFlight is the caller-supplied freeze-list snapshot: the set of runs for
 // agentType that were in flight at the moment the pause was triggered.  The
-// caller (daemon policy goroutine) is responsible for querying RunRegistry and
+// caller (daemon policy goroutine) is responsible for querying runregistry.RunRegistry and
 // filtering by agent type before calling Pause.  inFlight may be empty or nil.
 //
 // Per specs/handler-pause.md §9 HP-050, in-flight runs are NOT interrupted.
@@ -760,15 +762,15 @@ func (e *ErrHandlerNotPaused) Error() string {
 }
 
 // InFlightBeadRecordFromRunHandle builds an InFlightBeadRecord from a
-// RunHandle for use in the Pause freeze-list argument.
+// runregistry.RunHandle for use in the Pause freeze-list argument.
 //
-// The daemon policy goroutine (hk-37zy8) calls this for each RunHandle whose
+// The daemon policy goroutine (hk-37zy8) calls this for each runregistry.RunHandle whose
 // agent type matches the handler being paused.  The agentType field is not on
-// RunHandle (RunHandle is agent-type-agnostic), so the caller supplies it
+// runregistry.RunHandle (runregistry.RunHandle is agent-type-agnostic), so the caller supplies it
 // separately.
 //
-// runID is the RunID key under which handle was registered in RunRegistry.
-func InFlightBeadRecordFromRunHandle(runID core.RunID, handle *RunHandle) InFlightBeadRecord {
+// runID is the RunID key under which handle was registered in runregistry.RunRegistry.
+func InFlightBeadRecordFromRunHandle(runID core.RunID, handle *runregistry.RunHandle) InFlightBeadRecord {
 	return InFlightBeadRecord{
 		RunID:        runID.String(),
 		BeadID:       string(handle.BeadID),

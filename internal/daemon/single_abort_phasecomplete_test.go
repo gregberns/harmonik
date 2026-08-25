@@ -8,20 +8,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 type singleFixtureAborter struct {
 	marker   string
-	registry *daemon.RunRegistry
+	registry *runregistry.RunRegistry
 	latch    bool
 	fired    atomic.Bool
 	stop     chan struct{}
 	done     chan struct{}
 }
 
-func newSingleFixtureAborter(t *testing.T, registry *daemon.RunRegistry, latch bool) *singleFixtureAborter {
+func newSingleFixtureAborter(t *testing.T, registry *runregistry.RunRegistry, latch bool) *singleFixtureAborter {
 	t.Helper()
 	return &singleFixtureAborter{
 		marker:   filepath.Join(t.TempDir(), "implementer-running"),
@@ -55,9 +56,9 @@ func (a *singleFixtureAborter) start() {
 					continue
 				}
 				if a.latch {
-					daemon.ExportedMarkRunAborted(h)
+					h.MarkAborted()
 				}
-				if daemon.ExportedRunHandleIsAborted(h) != a.latch {
+				if h.Aborted() != a.latch {
 					return // the test's own guard reports it
 				}
 				h.Cancel()
@@ -76,7 +77,7 @@ func (a *singleFixtureAborter) finish() { close(a.stop); <-a.done }
 func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testing.T) {
 	t.Parallel()
 
-	registry := daemon.ExportedNewRunRegistry()
+	registry := runregistry.NewRunRegistry()
 	aborter := newSingleFixtureAborter(t, registry, true)
 	script := aborter.handlerScript(t)
 	aborter.start()
@@ -120,7 +121,7 @@ func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testi
 func TestLegacySingleInput_NoReviewDOTShutdownDrainsRatherThanFails(t *testing.T) {
 	t.Parallel()
 
-	registry := daemon.ExportedNewRunRegistry()
+	registry := runregistry.NewRunRegistry()
 	stopper := newSingleFixtureAborter(t, registry, false)
 	script := stopper.handlerScript(t)
 	stopper.start()

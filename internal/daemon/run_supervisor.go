@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 )
 
@@ -18,20 +20,20 @@ type runTerminalResult struct {
 // only place that starts them, records their terminal result, and performs
 // their final cancellation and registry removal.
 type runSupervisor struct {
-	registry *RunRegistry
+	registry *runregistry.RunRegistry
 
 	wg      sync.WaitGroup
 	mu      sync.Mutex
 	results []runTerminalResult
 }
 
-func newRunSupervisor(registry *RunRegistry) *runSupervisor {
+func newRunSupervisor(registry *runregistry.RunRegistry) *runSupervisor {
 	return &runSupervisor{registry: registry}
 }
 
 // Start registers and starts one run. onTerminal receives the returned result
 // before the run is removed from the live registry.
-func (s *runSupervisor) Start(parent context.Context, runID core.RunID, handle *RunHandle,
+func (s *runSupervisor) Start(parent context.Context, runID core.RunID, handle *runregistry.RunHandle,
 	run func(context.Context) bool, onTerminal func(runTerminalResult),
 ) {
 	runCtx, cancel := context.WithCancel(parent)

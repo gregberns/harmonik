@@ -1,4 +1,4 @@
-package daemon_test
+package runregistry_test
 
 import (
 	"sync"
@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func runregistryFixtureRunID(t *testing.T) core.RunID {
@@ -20,8 +20,8 @@ func runregistryFixtureRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-func runregistryFixtureHandle(beadID string, wtPath string) *daemon.RunHandle {
-	return &daemon.RunHandle{
+func runregistryFixtureHandle(beadID string, wtPath string) *runregistry.RunHandle {
+	return &runregistry.RunHandle{
 		BeadID:       core.BeadID(beadID),
 		WorktreePath: wtPath,
 		StartedAt:    time.Now().UTC(),
@@ -29,7 +29,7 @@ func runregistryFixtureHandle(beadID string, wtPath string) *daemon.RunHandle {
 }
 
 func TestRunRegistry_RegisterGetUnregister(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	runID := runregistryFixtureRunID(t)
 	handle := runregistryFixtureHandle("bead-abc", "/worktrees/abc")
@@ -62,7 +62,7 @@ func TestRunRegistry_RegisterGetUnregister(t *testing.T) {
 }
 
 func TestRunRegistry_UnregisterNoop(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := runregistryFixtureRunID(t)
 	reg.Unregister(runID)
 	if n := reg.Len(); n != 0 {
@@ -71,7 +71,7 @@ func TestRunRegistry_UnregisterNoop(t *testing.T) {
 }
 
 func TestRunRegistry_RegisterOverwrite(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 	runID := runregistryFixtureRunID(t)
 
 	h1 := runregistryFixtureHandle("bead-1", "/wt/1")
@@ -94,7 +94,7 @@ func TestRunRegistry_RegisterOverwrite(t *testing.T) {
 
 func TestRunRegistry_Snapshot(t *testing.T) {
 	const count = 5
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	ids := make([]core.RunID, count)
 	for i := range count {
@@ -120,7 +120,7 @@ func TestRunRegistry_Snapshot(t *testing.T) {
 
 func TestRunRegistry_ConcurrentRegisterUnregister(t *testing.T) {
 	const n = 100
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	ids := make([]core.RunID, n)
 	for i := range n {
@@ -153,7 +153,7 @@ func TestRunRegistry_SnapshotStableDuringMutation(t *testing.T) {
 		mutators = 50 // concurrent mutator goroutines
 	)
 
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	preloadIDs := make([]core.RunID, preload)
 	for i := range preload {
@@ -224,7 +224,7 @@ func TestRunHandle_ResolvedProvider_SetGet(t *testing.T) {
 // runs resolved to the named provider and excludes unresolved runs, mirroring
 // LenForQueue's per-queue tally semantics.
 func TestRunRegistry_LenForProvider(t *testing.T) {
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	openrouterA := runregistryFixtureHandle("bead-or-a", "/wt/or-a")
 	openrouterA.SetResolvedProvider("openrouter")

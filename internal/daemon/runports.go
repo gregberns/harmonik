@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -30,7 +32,7 @@ var (
 	_ runloop.WorktreePort    = daemonWorktree{}
 	_ runloop.LaunchPort      = daemonLaunch{}
 	_ runloop.BudgetPort      = daemonBudget{}
-	_ runloop.RunHandlePort   = (*RunHandle)(nil)
+	_ runloop.RunHandlePort   = (*runregistry.RunHandle)(nil)
 	_ runloop.RunRegistryPort = daemonRunRegistry{}
 )
 
@@ -178,7 +180,7 @@ func newBudgetPort(queueStore *queuewiring.QueueStore, projectDir string) runloo
 }
 
 type daemonRunRegistry struct {
-	reg *RunRegistry
+	reg *runregistry.RunRegistry
 }
 
 func (a daemonRunRegistry) Get(runID core.RunID) (runloop.RunHandlePort, bool) {
@@ -226,7 +228,7 @@ func runEnvWithDispatch(base runloop.RunEnv,
 	return base
 }
 
-func newSharedHandles(runRegistry *RunRegistry, localInFlight *atomic.Int32, agentSpawnSem chan struct{}, workerRegistry *workers.Registry, queueStore *queuewiring.QueueStore, projectDir string, harnessRegistry *handlercontract.HarnessRegistry, adapterRegistry *handlercontract.AdapterRegistry, hookStore hookStoreIface, substratePort, reviewerSubstrate handler.Substrate, tidGen runloop.TransitionIDSource, emittedEpics map[core.BeadID]struct{}, emittedEpicsMu *sync.Mutex, adapter beadLedger, runner tmuxpkg.CommandRunner, worktreeFactory func(context.Context, string, string, string) (string, func(), error), worktreeCreateMu *sync.Mutex) runloop.SharedHandles {
+func newSharedHandles(runRegistry *runregistry.RunRegistry, localInFlight *atomic.Int32, agentSpawnSem chan struct{}, workerRegistry *workers.Registry, queueStore *queuewiring.QueueStore, projectDir string, harnessRegistry *handlercontract.HarnessRegistry, adapterRegistry *handlercontract.AdapterRegistry, hookStore hookStoreIface, substratePort, reviewerSubstrate handler.Substrate, tidGen runloop.TransitionIDSource, emittedEpics map[core.BeadID]struct{}, emittedEpicsMu *sync.Mutex, adapter beadLedger, runner tmuxpkg.CommandRunner, worktreeFactory func(context.Context, string, string, string) (string, func(), error), worktreeCreateMu *sync.Mutex) runloop.SharedHandles {
 	return runloop.SharedHandles{
 		RunRegistry: daemonRunRegistry{reg: runRegistry}, LocalInFlight: localInFlight,
 		AgentSpawnSem: agentSpawnSem, Workers: workerRegistry, Budget: newBudgetPort(queueStore, projectDir),

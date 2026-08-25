@@ -6,17 +6,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
 
 func TestRunSupervisor_CompletedRunLeavesNoGoroutineBehind(t *testing.T) {
-	registry := NewRunRegistry()
+	registry := runregistry.NewRunRegistry()
 	supervisor := newRunSupervisor(registry)
 	before := runtime.NumGoroutine()
 
-	supervisor.Start(t.Context(), core.RunID(uuid.MustParse("00000000-0000-0000-0000-000000000001")), &RunHandle{},
+	supervisor.Start(t.Context(), core.RunID(uuid.MustParse("00000000-0000-0000-0000-000000000001")), &runregistry.RunHandle{},
 		func(context.Context) bool { return true }, func(runTerminalResult) {})
 	results := supervisor.Wait()
 
@@ -30,9 +32,9 @@ func TestRunSupervisor_CompletedRunLeavesNoGoroutineBehind(t *testing.T) {
 }
 
 func TestRunSupervisor_CancelledRunLeavesNoGoroutineBehind(t *testing.T) {
-	registry := NewRunRegistry()
+	registry := runregistry.NewRunRegistry()
 	supervisor := newRunSupervisor(registry)
-	handle := &RunHandle{}
+	handle := &runregistry.RunHandle{}
 	started := make(chan struct{})
 	before := runtime.NumGoroutine()
 

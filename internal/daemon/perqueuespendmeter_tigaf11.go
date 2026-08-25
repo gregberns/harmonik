@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
@@ -20,7 +22,7 @@ type perQueueCounters struct {
 }
 
 // PerQueueSpendMeter tracks per-queue daemon-spawned claude spend (via
-// budget_accrual events, attributed back to a queue through the RunRegistry) and
+// budget_accrual events, attributed back to a queue through the runregistry.RunRegistry) and
 // pauses ONLY a queue whose attributed daily spend reaches its own
 // Queue.SpendCapUSD ceiling (NQ-X1). The global DaemonSpendMeter remains the
 // daemon-wide ceiling.
@@ -38,7 +40,7 @@ type PerQueueSpendMeter struct {
 	oversubLogged map[string]struct{}
 
 	// collaborators — immutable after construction.
-	reg        *RunRegistry
+	reg        *runregistry.RunRegistry
 	store      *queuewiring.QueueStore
 	projectDir string
 
@@ -52,12 +54,12 @@ type PerQueueSpendMeter struct {
 }
 
 // NewPerQueueSpendMeter constructs a PerQueueSpendMeter. reg is the shared
-// *RunRegistry used to attribute a budget_accrual chunk to its queue; store is
+// *runregistry.RunRegistry used to attribute a budget_accrual chunk to its queue; store is
 // the QueueStore whose Queue.Status this meter mutates on cap-trip and rollover;
 // projectDir is the persist root (empty disables persistence, e.g. in tests).
 //
 // Bead ref: hk-tigaf.11.
-func NewPerQueueSpendMeter(reg *RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
+func NewPerQueueSpendMeter(reg *runregistry.RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
 	return &PerQueueSpendMeter{
 		dayKey:        spendMeterTodayKey(),
 		counters:      make(map[string]*perQueueCounters),

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
@@ -72,7 +74,7 @@ func TestFailedArchiveLayout_AllThreeReadersFindWhatTheWriterWrote(t *testing.T)
 	}
 	assertSamePaths(t, "diskFailedArchives", gotDisk, want)
 
-	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), projectDir)
+	d := NewDrainDetector(drainedReady(), drainedLister(), drainedLedger(), runregistry.NewRunRegistry(), queuewiring.NewQueueStore(), projectDir)
 	gotDrain, err := d.failedArchives()
 	if err != nil {
 		t.Fatalf("DrainDetector.failedArchives: %v", err)

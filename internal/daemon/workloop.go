@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/runregistry"
+
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -53,8 +55,8 @@ type strandedInProgressResetter interface {
 	) error
 }
 
-func newLocalRunRegistry() *RunRegistry {
-	return NewRunRegistry()
+func newLocalRunRegistry() *runregistry.RunRegistry {
+	return runregistry.NewRunRegistry()
 }
 
 // beadRunOne executes a single claimed bead end-to-end: worktree creation,

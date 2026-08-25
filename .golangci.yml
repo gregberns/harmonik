@@ -305,6 +305,30 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "projectconfig is a leaf: importing daemon would re-couple the config value types to the monolith (P2 LIFT crit 5)" }
 
+        # runregistry: the in-flight run registry (RunHandle / RunRegistry)
+        # extracted out of internal/daemon (P2 runregistry-extract, the keystone
+        # extraction — two of the other three daemon extractions depend on the
+        # symbols it owns, and internal/runloop already declares the
+        # consumer-side ports for it: RunHandlePort, RunRegistryPort). The
+        # allow list is the MEASURED direct import set of runregistry.go and
+        # its tests: stdlib; google/uuid (test fixture run IDs); internal/core
+        # (BeadID / RunID / AgentType); internal/handlercontract (RunHandle.
+        # Watcher); internal/handlercontract/lifecycle (RunHandle.machine);
+        # and self (white-box tests). It MUST NOT import daemon: doing so
+        # would re-couple the registry back to the monolith and defeat the
+        # extraction.
+        # Rationale: plans/2026-08-23-clear-the-ground/tasks/runregistry-extract.md.
+        runregistry:
+          files: ["**/internal/runregistry/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/runregistry"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runregistry is a leaf: importing daemon would re-couple the run registry to the monolith (runregistry-extract, the keystone extraction)" }
+
         # runloop: the run machine's boundary contract — the narrow structural
         # PORT interfaces (LedgerPort … RunRegistryPort) and the value/handle
         # BUNDLES (RunEnv, RunPorts, SharedHandles) the run path consumes. This is

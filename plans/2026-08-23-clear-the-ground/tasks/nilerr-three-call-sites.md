@@ -61,6 +61,29 @@ out.
 **Do not let that make the fix feel arbitrary.** Returning nil on a non-nil error is usually a real
 bug. Judge each on its merits.
 
+**The evidence is in the allow list itself.** The stored rows carry `stalewatch_wkzlc_test.go:38`,
+`:341` and `bandwidthtuner.go:74`; the current findings are at `:39`, `:342` and `:75`. One line, in
+each case. Nothing else about them changed.
+
+## FIX ALL THREE OR NONE — a partial fix leaves the tree redder than it started
+
+Two of the three are in the same file, and **any edit you make shifts the lines below it**. Row 9 is
+near the top (`staleFixtureNewBus`); row 2 is 300 lines further down. Fix row 9 and row 2's line
+number moves, which re-keys row 2 — its stored row goes stale while its finding stays unlisted, and
+the judge fails on a finding you did not touch.
+
+**Fixing both is harmless**, because both rows go stale either way and both findings are gone. Fixing
+one is not.
+
+**This applies to a `nolint` too, and that is easy to miss.** A `nolint` comment is a LINE. Adding one
+above row 9 shifts row 2 exactly as a code change would. There is no edit to this file that does not
+move the lines below it.
+
+**Verified safe outside these three:** the allow list carries `nilerr` rows in 11 files. Only two are
+in scope — `bandwidthtuner.go` and `stalewatch_wkzlc_test.go` — and **this task owns every `nilerr`
+row in both.** So no line shift you make can re-key a row that is currently green. No other task
+touches a file carrying one, which is why three sibling tasks can run in parallel with this one.
+
 ## Done when
 
 1. **Each of the three has a NAMED decision recorded in the commit body**: what the call site now does
@@ -69,7 +92,8 @@ bug. Judge each on its merits.
 2. **Row 13 is reviewed as a behaviour change**, not as a lint fix. If its error now propagates, say
    what the caller does with it and what changes for a running daemon.
 3. **All three findings are gone** from `make lint-allow` — by repair or by a `nolint` carrying a
-   stated reason.
+   stated reason. **All three, in one commit.** See the section above: a partial fix re-keys the row
+   it did not touch.
 4. **`allow.txt` gained no row.** Adding one is refused by the ratchet.
 5. **A `--uniq-by-line=false` run shows nothing revealed.** These three were measured as carrying no
    masked sibling; confirm your edit did not create one.

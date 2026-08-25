@@ -87,6 +87,8 @@
 #                         is re-detected after the window + stall_ticks fresh ticks (Test 43)
 #   [x] dquote-guard: latest.json is non-empty valid JSON even with double-quote-rich comms/state
 #                     (hk-2mw1x; guards against dquote-truncation landmine regression) (Test 44)
+#   [x] SD-4 PARKED/GATELESS: exact status "parked" suppresses the wake, while an
+#                     unrecognised status remains a candidate (Test 46/46b, hk-uzd5j)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -2856,6 +2858,58 @@ else
   fail "dquote-guard: latest.json is not valid JSON (content: $(head -c 120 "$LATEST_44" 2>/dev/null))"
 fi
 assert_json_bool "dquote-guard: daemon_up in snapshot" "$LATEST_44" "daemon_up" "true"
+rm -rf "$PROJ"
+
+# Test 46/46b: parked, gateless lane is skipped; unknown status stays armed.
+echo ""
+echo "=== Test 46: SD-4 parked + gateless lane is excluded from known-ready candidates ==="
+PARKED_GATELESS_LANES='{"schema_version":1,"lanes":[{"lane":"parked-gateless","epic_id":"hk-parked","status":"parked","gate":null}]}'
+STATE_46='{"stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":'"$(date +%s)"',"alerted_immediate":{}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --state-json "$STATE_46" \
+  --lanes-json "$PARKED_GATELESS_LANES" \
+  --br-parent-json '{"hk-parked":[{"id":"hk-p-1"}]}' \
+)
+OUTPUT_46=$(run_check "$PROJ")
+LATEST_46="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_json_bool "46: parked gateless lane keeps program_drained_stall=false" \
+  "$LATEST_46" "program_drained_stall" "false"
+KNOWN_46=$(python3 -c "import json;print(json.load(open('$LATEST_46')).get('known_ready_lane',''))")
+assert_eq "46: parked gateless lane leaves known_ready_lane empty" "" "$KNOWN_46"
+assert_not_contains "46: no program-drained-stall in stdout" "program-drained-stall" "$OUTPUT_46"
+LOG_46=$(comms_log "$PROJ")
+if [[ -s "$LOG_46" ]]; then
+  fail "46: parked gateless lane must send no comms; got: $(cat "$LOG_46")"
+else
+  pass "46: parked gateless lane sends no comms"
+fi
+rm -rf "$PROJ"
+
+echo ""
+echo "=== Test 46b: SD-4 unrecognised status + gateless lane remains a candidate ==="
+QUIESCED_GATELESS_LANES='{"schema_version":1,"lanes":[{"lane":"quiesced-gateless","epic_id":"hk-quiesced","status":"quiesced","gate":null}]}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$QUIESCED_GATELESS_LANES" \
+  --br-parent-json '{"hk-quiesced":[{"id":"hk-q-1"}]}' \
+)
+OUTPUT_46B=$(run_check "$PROJ")
+LATEST_46B="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_contains "46b: unrecognised status fires program-drained-stall" \
+  "program-drained-stall" "$OUTPUT_46B"
+assert_json_bool "46b: unrecognised status sets program_drained_stall=true" \
+  "$LATEST_46B" "program_drained_stall" "true"
+KNOWN_46B=$(python3 -c "import json;print(json.load(open('$LATEST_46B')).get('known_ready_lane',''))")
+assert_eq "46b: unrecognised status names its lane" "quiesced-gateless" "$KNOWN_46B"
+assert_json_list_contains "46b: immediate signal names quiesced-gateless" \
+  "$LATEST_46B" "immediate_signals" "lane=quiesced-gateless"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

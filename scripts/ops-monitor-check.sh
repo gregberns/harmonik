@@ -455,8 +455,11 @@ fi
 # and pushes a lane-NAMED wake the captain cannot self-score its way out of.
 #
 # This block computes, for each lane in .harmonik/context/lanes.json:
-#   - the lane is a candidate iff its epic_id is non-null AND its gate is null OR
-#     EXPIRED (gate.expires < now == absent; LAPSE→autonomous default, Part 1b), AND
+#   - the lane has a non-null epic_id, AND
+#   - a lane with a gate is a candidate when that gate is expired or malformed
+#     (LAPSE→autonomous default, Part 1b), while a lane without a gate is a candidate
+#     unless its status is exactly "parked". A missing, null, or unknown status stays
+#     armed: hiding a dashboard row is cheap, but muting a wake is not, AND
 #   - `br ready --parent <epic_id> --limit 0 --json` returns >=1 ready bead.
 # "KNOWN" = present in the index (a fact read from a file), NOT "in the live kerf-next
 # feed right now." Lanes with epic_id:null contribute ZERO (the index invariant
@@ -481,9 +484,10 @@ if [[ -f "$LANES_FILE" ]]; then
   elif ! jq -e . "$LANES_FILE" >/dev/null 2>&1; then
     echo "ops-monitor-check: WARN — lanes.json missing/unparseable; skipping known-ready-lane check (SD-1)" >&2
   else
-    # Emit "lane<TAB>epic_id" for each candidate lane: non-null epic_id AND gate is
-    # null OR its expires is absent OR expired (gate.expires < now). gate.expires may be
-    # DATE-ONLY (the live index writes "2026-07-09") OR full RFC3339 ("2026-07-09T00:00:00Z");
+    # Emit "lane<TAB>epic_id" for each candidate lane. A non-null gate decides only by
+    # its expiry; a null gate consults status and excludes only the literal "parked".
+    # gate.expires may be DATE-ONLY (the live index writes "2026-07-09") OR full
+    # RFC3339 ("2026-07-09T00:00:00Z");
     # fromdateiso8601 needs the full form, so try (expires + "T00:00:00Z") FIRST (parses a
     # date-only value), fall back to the raw value (parses an already-full RFC3339), and
     # only if BOTH fail (missing/null/malformed) default to 0 == past == candidate (the
@@ -493,13 +497,16 @@ if [[ -f "$LANES_FILE" ]]; then
       (.lanes // [])[]
       | select(.epic_id != null)
       | select(
-          (.gate == null)
-          or ((.gate.expires // null) == null)
-          or (
-              ( ((.gate.expires + "T00:00:00Z") | fromdateiso8601?)
-                // (.gate.expires | fromdateiso8601?)
-                // 0 ) < $now
-            )
+          if .gate == null then
+            ((.status // "active") != "parked")
+          else
+            ((.gate.expires // null) == null)
+            or (
+                ( ((.gate.expires + "T00:00:00Z") | fromdateiso8601?)
+                  // (.gate.expires | fromdateiso8601?)
+                  // 0 ) < $now
+              )
+          end
         )
       | "\(.lane)\t\(.epic_id)"
     ' "$LANES_FILE" 2>/dev/null) || _LANE_CANDIDATES=""

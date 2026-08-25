@@ -95,7 +95,7 @@ func (m *PerQueueSpendMeter) Subscribe(bus eventbus.EventBus) error {
 func (m *PerQueueSpendMeter) handleBudgetAccrual(ctx context.Context, evt core.Event) error {
 	var payload core.BudgetAccrualPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
-		return nil
+		return nil //nolint:nilerr // a malformed budget_accrual payload is dropped, not fatal
 	}
 	if payload.CostBasis != core.CostBasisOutputBytes {
 		return nil // only accumulate output_bytes at this layer (mirrors the global meter)
@@ -164,7 +164,10 @@ func (m *PerQueueSpendMeter) pauseQueueByBudget(ctx context.Context, queueName s
 		lq.Done()
 		return nil
 	}
-	q.Status = queue.QueueStatusPausedByBudget
+	if err := queue.PauseQueueForBudget(q); err != nil {
+		lq.Done()
+		return fmt.Errorf("PerQueueSpendMeter.pauseQueueByBudget[%s]: %w", queueName, err)
+	}
 	lq.LockedSetQueueByName(queueName, q)
 
 	if m.projectDir != "" {
@@ -195,7 +198,11 @@ func (m *PerQueueSpendMeter) unpauseBudgetPausedQueues(ctx context.Context) {
 		if q == nil || q.Status != queue.QueueStatusPausedByBudget {
 			continue
 		}
-		q.Status = queue.QueueStatusActive
+		if err := queue.ResumeQueueFromBudget(q); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: per-queue-spend-meter: rollover resume[%s]: %v\n", name, err)
+			continue
+		}
 		lq.LockedSetQueueByName(name, q)
 		resumed = true
 		if m.projectDir != "" {

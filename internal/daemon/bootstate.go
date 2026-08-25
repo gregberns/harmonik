@@ -135,21 +135,8 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 		bs.logSubsystemDisabled(projectconfig.SubsystemHandlerPausePolicy, "handler-pause policy not constructed")
 	}
 
-	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
-		spendMeter := spend.NewDaemonSpendMeter(bus)
-		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
-			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
-		}
-		if bs.hooks.spendMeterObserver != nil {
-			bs.hooks.spendMeterObserver(spendMeter)
-		}
-	} else {
-		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
-	}
-
-	perQueueSpendMeter := spend.NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
-	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
+	if wireErr := bs.wireSpendMeters(cfg, bus); wireErr != nil {
+		return wireErr
 	}
 
 	queueOpConsumer := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
@@ -185,6 +172,29 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 		bs.logSubsystemDisabled(projectconfig.SubsystemSubscribeHub, "subscribe hub not constructed")
 	}
 
+	return nil
+}
+
+// wireSpendMeters constructs and subscribes the daemon-wide and per-queue
+// spend meters. Split out of wireSpendAndQueueConsumers so that function's
+// cognitive complexity stays under the gocognit threshold.
+func (bs *bootState) wireSpendMeters(cfg Config, bus eventbus.EventBus) error {
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
+		spendMeter := spend.NewDaemonSpendMeter(bus)
+		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+		}
+		if bs.hooks.spendMeterObserver != nil {
+			bs.hooks.spendMeterObserver(spendMeter)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
+	}
+
+	perQueueSpendMeter := spend.NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
+	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
+	}
 	return nil
 }
 

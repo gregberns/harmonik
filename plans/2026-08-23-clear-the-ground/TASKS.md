@@ -86,10 +86,26 @@ currently refuses.**
 Three rounds of task-file repair never touched this, because the obstruction was never in the spec.
 **A spec defect and a gate defect look identical from inside the task file.**
 
-**It is with the operator.** Two options are costed: a one-time scoped exception that names its commit
-and expires, or teaching the ratchet to compare the recomputed tolerated finding SET rather than the
-row text. The second reads as inside the 2026-08-23 operator ruling, which forbids inferring identity
-from paths, similarity or history — recomputing from the tree infers nothing.
+**RESOLVED 2026-08-25, and no operator decision was needed.** The fix is `hk-iw11o` (P0): teach the
+ratchet to express a key-scheme migration. It compares the recomputed tolerated finding SET rather
+than the row text, and only when the list's declared scheme version differs from the base — every
+other commit keeps today's sub-second text compare. This reads as INSIDE the 2026-08-23 operator
+ruling, which forbids inferring identity from paths, similarity or history; recomputing from the tree
+infers nothing.
+
+**Costed before it was chosen: 179 lines inserted, zero modified, zero deleted.** `tools/lintreport`,
+the Makefile and the ratchet self-test are all untouched, the existing 16-assertion suite passes
+unmodified, and three bypasses nobody asked it to try were refused. The expensive path is a one-off
+6.2s that fires only while the header differs from the base.
+
+**Nothing is waived, so there was nothing to authorise.** The alternative — a scoped exception — was
+dropped once it turned out to need the waiver TWICE: the row repair and the re-key each add rows and
+neither declares a scheme change, so both hit the text compare. Merging them to get one waiver makes
+the diff too large to read carefully. The comparison was never "unblocks today versus stronger
+later"; it was "something is waived versus nothing is waived", and the waived path was also the
+expensive one.
+
+**`hk-lint-rekey-exclusion-list-t9ebz` now blocks on `hk-iw11o`** and is correctly out of `br ready`.
 
 **The honest framing, and it changes the question:** the gate already lets this through. The sliding
 window (`hk-h4h78`) passes a re-key at N+1, unread and unchallenged, and a negative control confirmed

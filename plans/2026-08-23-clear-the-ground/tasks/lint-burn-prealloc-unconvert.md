@@ -41,10 +41,23 @@ these are the cheapest rows in it.
 
 ## Done when
 
-1. `awk -F'\t' '$2=="prealloc" || $2=="unconvert"' tools/lintreport/allow.txt | wc -l` prints `0`.
+1. `awk -F'\t' '($2=="prealloc" || $2=="unconvert") &&
+   $3 !~ /buildCodexRoutedLaunchSpec/' tools/lintreport/allow.txt | wc -l` prints `0`. The unfiltered count prints `1`, not `0`. One row
+   stays: the `unconvert` row in `internal/daemon/harnessregistry.go` `buildCodexRoutedLaunchSpec`.
+   A `funlen` row sits on that same declaration, and Limits below keep `funlen` rows. Edit the
+   conversion and the declaration text changes, which re-keys the `funlen` row, which turns
+   `make lint-allow` red — so this row and item 2 cannot both be satisfied. Leave it, and name it in
+   the commit body. Read the survivor rather than trust the number:
+   `awk -F'\t' '$2=="prealloc" || $2=="unconvert"' tools/lintreport/allow.txt` prints one line, and
+   its comment names `harnessregistry.go` and `buildCodexRoutedLaunchSpec`. Any other survivor is a
+   row you missed. The other two `unconvert` co-tenants are plain rows and you fix them.
 2. `make lint-allow` exits 0 with the tree in that state.
 3. `scripts/lint-allow-ratchet.sh` exits 0 in both windows.
 4. `make fast` is green, and every test that covered an edited file still runs and still passes.
+
+`awk … | wc -l` exits 0 whatever it counts, so the printed number is the verdict and the exit status
+says nothing. The `$3` filter reads the location comment, which the allow list calls an aid, so look
+at the row it keeps.
 
 ## Limits
 

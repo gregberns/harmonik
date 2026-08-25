@@ -54,11 +54,20 @@ Suggested order: whole-unit deletions first (`internal/crewrun/idlereap.go`,
 
 ## Done when
 
-1. `awk -F'\t' '$2=="unused"' tools/lintreport/allow.txt | wc -l` prints `0`.
+1. `awk -F'\t' '$2=="unused" && $3 !~ /internal\/daemon\/workloop\.go/' tools/lintreport/allow.txt |
+   wc -l` prints `0`. The unfiltered count prints `1`, not `0`. One row stays:
+   `internal/daemon/workloop.go` `emitImplPresence`, because the run-machine lane holds that file and
+   Limits below tell you not to open it. Read the survivor rather than trust the number —
+   `awk -F'\t' '$2=="unused"' tools/lintreport/allow.txt` prints one line, and its comment names
+   `workloop.go` and `emitImplPresence`. Any other survivor is a row you missed.
 2. `make lint-allow` exits 0 with the tree in that state.
 3. `scripts/lint-allow-ratchet.sh` exits 0 in both windows.
 4. `make fast` is green. No test loses coverage of a behaviour: a symbol that only tests used is
    dead only if the test that used it is also dead — check, and say which is which.
+
+`awk … | wc -l` exits 0 whatever it counts, so the printed number is the verdict and the exit status
+says nothing. The `$3` filter reads the location comment, which the allow list calls an aid, so look
+at the row it keeps.
 
 ## Limits
 

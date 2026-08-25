@@ -49,14 +49,40 @@ type, and the ten-second repair that suggests itself is a new allow-list line.
 
 ## Done when
 
-1. `awk -F'\t' '$2=="exhaustive"' tools/lintreport/allow.txt | wc -l` prints `0`.
+1. `awk -F'\t' '$2=="exhaustive"' tools/lintreport/allow.txt | wc -l` prints `0`. This group really
+   can reach `0`: its one co-tenant is a plain `gocritic` row, not a complexity suppression, so no
+   Limit below forbids any of the seven. `awk … | wc -l` exits 0 whatever it counts, so the printed
+   number is the verdict and the exit status says nothing.
 2. `make lint-allow` exits 0 with the tree in that state.
 3. `scripts/lint-allow-ratchet.sh` exits 0 in both windows.
 4. `make fast` is green, and every test that covered an edited file still runs and still passes.
-5. **Adding a member to one of the switched enums no longer produces an `exhaustive` finding in these
-   files.** Prove it: add a throwaway member to `queue.ItemStatus`, confirm the gate is still green
-   for these seven declarations, and revert. That is the acceptance test — after this task the list
-   holds nothing that a new event type can re-fingerprint.
+5. **Each of the seven switches now answers every case, and none of them was silenced.** Two checks,
+   neither of which changes a shared type:
+   - `grep -rn --include='*.go' -e 'nolint:[a-z, ]*exhaustive' \
+     -e 'exhaustive:ignore' -e 'exhaustive:enforce' .` prints nothing. The tree holds no such
+     directive today. A directive is the ten-second repair this task exists to prevent, and it is one
+     way item 1 can read `0` while the switch still ignores a case. **Keep the whole command on one
+     logical line — that is what the `\` is for — and put the path operand last, after the options.**
+     A `grep` with no path reads standard input and hangs; a path before the options works only
+     because most greps permute, and BSD grep under `POSIXLY_CORRECT=1` instead exits 1 and prints
+     nothing. Every one of those failures prints nothing, and "prints nothing" is the pass condition
+     here, so a broken command and a clean tree look identical.
+   - The commit body lists all seven declarations, one line each, and says which repair each one got:
+     a `default:` clause, or the full case list written out. Say it per switch, in the order of the
+     table above, so a reviewer can check the list against the table without reading the diff.
+     **For a `default:`, say what that branch does with a member it does not recognise.** "It has a
+     `default:`" is not an answer. `.golangci.yml` sets `default-signifies-exhaustive: true`, so an
+     empty `default:` or one holding only a comment silences the linter completely: item 1 reads `0`,
+     the grep prints nothing, and the switch still ignores every case. That is the same ten-second
+     repair in a different spelling, and no command in this list catches it — only your sentence does.
+     A `default:` switch cannot go red when the enum grows. A written-out list can, and Limits below
+     allow that on purpose — where you chose it, say what a future member is meant to do.
+
+   **Do not add a member to `queue.ItemStatus`, `core.Kind` or any other enum to test this**, even
+   with the intent to revert. A new member makes `exhaustive` findings in switches this task never
+   touched and that are not on the allow list, so `make lint-allow` goes red for reasons that are not
+   yours and the result tells you nothing about these seven. No command reports the gate verdict for
+   one declaration, which is why the check above is a grep plus a written report.
 
 ## Limits
 

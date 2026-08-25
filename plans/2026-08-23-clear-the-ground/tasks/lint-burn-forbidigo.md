@@ -58,12 +58,26 @@ Suggested order:
 
 ## Done when
 
-1. `awk -F'\t' '$2=="forbidigo"' tools/lintreport/allow.txt | wc -l` prints `0`.
+1. `awk -F'\t' '$2=="forbidigo" &&
+   $3 !~ /queue-status-writer-ratchet\.go/' tools/lintreport/allow.txt | wc -l` prints `0`. The unfiltered count prints `2`, not `0`. Two rows
+   stay: both panics in `scripts/queue-status-writer-ratchet.go` `main`. A `gocognit` row sits on that
+   same declaration, and Limits below keep complexity rows. Edit either panic and the declaration
+   text changes, which re-keys the `gocognit` row, which turns `make lint-allow` red — so these two
+   rows and item 2 cannot both be satisfied. Leave them, and name them in the commit body. Read the
+   survivors rather than trust the number:
+   `awk -F'\t' '$2=="forbidigo"' tools/lintreport/allow.txt` prints two lines, and both comments name
+   `queue-status-writer-ratchet.go` and `main`. Any other survivor is a row you missed. The third
+   co-tenant, a `nilerr` row in `internal/daemon/handlerpause_scenario_6f1uj_test.go`
+   `TestScenario_HandlerPause_EventTripsPolicy`, is a plain row and you fix it in the same landing.
 2. `make lint-allow` exits 0 with the tree in that state.
 3. `scripts/lint-allow-ratchet.sh` exits 0 in both windows.
 4. `make fast` is green, and every test that covered an edited file still runs and still passes.
 5. Where a panic became a returned error, a caller now handles it and a test proves the error path
    is reachable. A returned error nobody checks is not an improvement over a panic.
+
+`awk … | wc -l` exits 0 whatever it counts, so the printed number is the verdict and the exit status
+says nothing. The `$3` filter reads the location comment, which the allow list calls an aid, so look
+at the rows it keeps.
 
 ## Limits
 

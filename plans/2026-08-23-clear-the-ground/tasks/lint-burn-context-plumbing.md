@@ -59,13 +59,40 @@ Suggested order:
 
 ## Done when
 
-1. `awk -F'\t' '$2=="contextcheck" || $2=="noctx" || $2=="containedctx"' tools/lintreport/allow.txt |
-   wc -l` prints `0`.
+1. The rows this task is allowed to fix are gone, and the rows it is not allowed to fix are still
+   there. The unfiltered count does not reach `0`, and chasing `0` is how this task gets stuck.
+   Two commands, both filtered on the location comment:
+   - `awk -F'\t' '($2=="contextcheck" || $2=="noctx" || $2=="containedctx") &&
+     $3 ~ /internal\/daemon\/workloop\.go/' tools/lintreport/allow.txt | wc -l` prints `3`, unchanged.
+     Those three rows are `beadRunOne` twice and `productionWorktreeFactory`. The run-machine lane
+     owns that file. Hand them over; do not count them as yours.
+   - `awk -F'\t' '($2=="contextcheck" || $2=="noctx" || $2=="containedctx") &&
+     $3 !~ /internal\/daemon\/workloop\.go/' tools/lintreport/allow.txt | wc -l` prints the rows you did
+     not fix, out of 29. `0` is the best case. It is above `0` if you left a row on a declaration
+     that also carries a `gocognit` or `cyclop` suppression, which Limits let you do rather than
+     restructure the function. There is a second cause: Limits also name four `noctx` declarations
+     shared with `lint-burn-errcheck`, and that pair is not serialized, so if that lane lands first a
+     row re-keys and one more can survive. Nine rows carry a complexity co-tenant today, on seven
+     declarations:
+     `internal/daemon/commsrecvhandler_nnwaa.go` `commsSendHandlerImpl.HandleCommsRecv`,
+     `internal/daemon/crewstart.go` `crewHandlerImpl.HandleCrewStart`,
+     `internal/daemon/daemon.go` `startWithHooks` (2 rows),
+     `internal/daemon/orphansweep.go` `RunOrphanSweep`,
+     `internal/daemon/pasteinject.go` `pasteInjectQuitOnCommit`,
+     `internal/daemon/subscribe.go` `SubscribeHub.HandleSubscribe` (2 rows), and
+     `internal/projectconfig/projectconfig.go` `parseKeeperBlock`. So this count can land anywhere
+     from `0` to `9`. Name every row you leave in the commit body, by file and symbol, with the
+     reason. The count must equal the number of rows you named, and every row you did not name must
+     be gone.
 2. `make lint-allow` exits 0 with the tree in that state.
 3. `scripts/lint-allow-ratchet.sh` exits 0 in both windows.
 4. `make fast` is green, and every test that covered an edited file still runs and still passes.
 5. Where a subprocess or a listener gained a context, cancelling that context stops it, and a test
    proves it. Plumbing a context that nothing honours is a signature change, not a fix.
+
+`awk … | wc -l` exits 0 whatever it counts, so the printed number is the verdict and the exit status
+says nothing. The `$3` filter reads the location comment, which the allow list calls an aid, so look
+at the rows it keeps.
 
 ## Limits
 

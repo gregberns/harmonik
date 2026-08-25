@@ -84,6 +84,24 @@ obstruction is what refuses a genuinely new tolerated finding: its old-scheme di
 old list. **Do not relax it.** The answer to it firing is to repair the tree, never to weaken the
 rule. Relaxing it would have destroyed the proof before anyone discovered it was needed.
 
+### The precondition this design implies, and it is not optional
+
+> **A SCHEME MIGRATION REQUIRES A TREE THAT IS GREEN UNDER THE OLD SCHEME.**
+
+(i) computes OLD-scheme digests of CURRENT findings, so it **inherits exactly the blindness the new
+scheme exists to remove**. It cannot tell "this was tolerated before the code moved" from "this is
+new debt", because telling those apart is what the new scheme is for and (i) does not have it yet.
+
+That is not a flaw. Proving soundness against the old scheme is the only thing both sides of the
+migration can agree on. But it means **any finding the judge refuses at the base will fail (i) and
+block the migration**, and the only fix is to repair the tree — fix the finding, or make it
+legitimately tolerated — BEFORE the migration commit.
+
+**Measured 2026-08-25:** this bead landed green, and `hk-lint-rekey-exclusion-list-t9ebz` was still
+blocked, because 14 findings were refused at the batch tip. "The judge refuses it" and "its digest is
+absent from the list" are the same statement, so those 14 fail (i) by definition. **Do not read that
+as (i) being too strict.** It is the gate correctly saying *repair the tree first*.
+
 **This is NOT rename detection and it is inside the 2026-08-23 operator ruling.** It infers nothing
 from paths, similarity or history. It recomputes from the tree.
 

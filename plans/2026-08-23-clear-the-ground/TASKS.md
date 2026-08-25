@@ -70,6 +70,33 @@ reproduced on 2026-08-25 and both filed:
   defect that is still in the code. Every extraction in this program moves code and exports symbols,
   which is exactly the edit that triggers it.
 
+**AND THE GATE NOW BLOCKS ITS OWN REPAIR. This is the top fact about this page.** Row 1 of §Ready
+now cannot pass the gate it exists to fix, so the eleven rows behind it are held by a deadlock rather
+than by unfinished work:
+
+> **You cannot change a keying scheme under a ratchet that forbids any row from changing.**
+
+The ratchet fails on any ADDED pair — `comm -23`, so deletions do not offset it — and it runs in
+`core`, `fast` and `full` alike (`freeze-gates` calls it; `gate-static-product` calls `freeze-gates`).
+Re-keying changes the digest of every row whose canonical form differs: measured at integration tip,
+447 findings carry a module-internal qualifier in the printed declaration, 38 in the linter message
+and 34 in a doc comment. Every one is an added pair. **Hundreds of rows, not the 14 the judge
+currently refuses.**
+
+Three rounds of task-file repair never touched this, because the obstruction was never in the spec.
+**A spec defect and a gate defect look identical from inside the task file.**
+
+**It is with the operator.** Two options are costed: a one-time scoped exception that names its commit
+and expires, or teaching the ratchet to compare the recomputed tolerated finding SET rather than the
+row text. The second reads as inside the 2026-08-23 operator ruling, which forbids inferring identity
+from paths, similarity or history — recomputing from the tree infers nothing.
+
+**The honest framing, and it changes the question:** the gate already lets this through. The sliding
+window (`hk-h4h78`) passes a re-key at N+1, unread and unchallenged, and a negative control confirmed
+genuinely new debt passes identically. So the choice is not whether to weaken the gate. It is whether
+this passes silently through a defect already filed, or deliberately with a human having read the
+diff.
+
 **What this changes for a row on this page:** a green ratchet is not evidence a landing added no
 debt. It is evidence only that the landing commit itself did not, and only while the list stays free
 of legacy rows. Do not use "the ratchet passed" as an acceptance argument.

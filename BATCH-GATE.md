@@ -29,8 +29,33 @@ where work actually went, read where the commit landed: `git log --oneline work/
 
 ## The gate
 
-Run on a CLEAN worktree cut from the batch tip — never in the main checkout, which
-carries other sessions' uncommitted work.
+**The gate runs on the MERGED tree, not on the batch tip.** Cut a clean throwaway worktree
+detached at the CURRENT integration tip, merge the batch into it, and gate that. Never gate in
+the main checkout, which carries other sessions' uncommitted work.
+
+```bash
+git worktree add --detach <scratch>/gate work/alpha-integration-merge
+git -C <scratch>/gate merge --no-commit --no-ff work/charlie-batch-1
+```
+
+  A green gate on the batch tip is not a green gate on what ships. The integration branch runs
+  tens of commits ahead of the batch's merge base, so the batch tip is a tree that will never
+  exist anywhere after the merge. Gating it answers a question nobody asked. Corrected
+  2026-08-24, after a session measured integration at 31 commits ahead of the batch and the doc
+  still said to gate the batch tip.
+
+  **Record what you gated BEFORE you merge, not after.** The merge above is `--no-commit`, so
+  `HEAD` in that worktree still points at the integration tip and `git log -1` reports a commit
+  that contains none of the batch. The two facts that identify the gated tree are the base you
+  cut and the content you merged onto it:
+
+  ```bash
+  git -C <scratch>/gate rev-parse --short HEAD      # the base — capture this BEFORE the merge
+  git -C <scratch>/gate diff --cached --stat | tail -1   # what the merge brought in
+  ```
+
+  The merge target moves while you work. Re-cut the worktree and re-run both if the integration
+  tip changed between the merge check and the gate.
 
 **Step 1 — the whole-branch build.** `make full`. Not `make core`. The daemon's per-bead
 commit gate runs `make core` (29 packages); `make full` is the merge decision and nothing
@@ -44,7 +69,9 @@ in the daemon path runs it. This step is why the batch exists.
 
 **Step 2 — real end-to-end runs, by sub-agents.** A green suite is not evidence the system
 does what we want. Spin the software up and put real work through it. At minimum:
-  - Boot a daemon from the batch build against a THROWAWAY project dir, not this repo.
+  - Boot a daemon built from the MERGED tree you gated in Step 1 — the same worktree — against a
+    THROWAWAY project dir, never this repo. A daemon built from the batch tip is not the software
+    that ships, for the same reason Step 1 does not gate that tree.
   - Submit a real bead and watch it reach a terminal state.
   - Exercise the paths this batch touched.
   - Confirm the failure modes still fail: a protected-branch landing is refused; a red

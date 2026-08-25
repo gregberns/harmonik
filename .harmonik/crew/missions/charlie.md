@@ -29,6 +29,81 @@ Work from `/Users/gb/github/harmonik`. The implementers get worktrees; you never
 are following the generic crew-launch skill, skip its epic steps — mirroring an assignee onto an
 epic and waiting on `epic_completed` do not apply here. This file outranks it.
 
+## Who owns what
+
+**Operator directive, 2026-08-24: the whole pipeline is yours.** Pick, pre-screen, dispatch, watch,
+gate, merge, turn the batch over, and pick again. There is no second agent in that loop and nothing
+in it waits on one.
+
+**The planning session plans. It does not execute.** That session writes and repairs the task files under
+`plans/2026-08-23-clear-the-ground/tasks/` and it answers the operator. It does not run the gate,
+it does not merge your batch, and it does not repair your failed beads. **Do not park work on
+the planning session** — an earlier session handed it the gate and two failed beads and then idled for hours
+waiting on a session that was never going to act. If a thing is stuck and it is not a decision the
+operator owns, it is yours.
+
+**When the ready list runs low, ask the planning session for more planned work.** The message bus
+reaches it but does not wake it, so use its terminal directly:
+
+```bash
+tmux send-keys -t hk-alpha:1 '[[harmonik-message:v1 origin=comms]] charlie: the ready clear-the-ground list is down to N. Please plan and task the next tranche.' Enter
+```
+
+**Address the WINDOW, not a pane.** `hk-alpha:1` lets tmux pick the active pane and works whatever
+the pane numbering is. The bus wake appends `.0` to the registry handle and this tmux server sets
+`pane-base-index 1`, so it builds `hk-alpha:1.0`, which cannot exist — that is the whole of
+`hk-vigk8`. The error it prints names the wrong session, so it sends you hunting a bug that is not
+there. **A zero exit from `harmonik comms send` is not delivery of attention.** The
+`[[harmonik-message:v1 origin=comms]]` prefix is what `cmd/harmonik/comms.go` uses to mark an
+injected line as data rather than an instruction; keep it when you paste into another agent.
+
+## Work that is finished but on no branch
+
+A run can do its work, commit it, and still fail. The commit then sits on a run branch that nothing
+merges and the bead reads as failed. **Before you re-dispatch a failed bead, look for its work:**
+
+```bash
+git tag -l 'rescue/*'
+git merge-base --is-ancestor <tag> work/charlie-batch-1 && echo landed || echo STRANDED
+```
+
+A stranded commit is recovered with `git cherry-pick`, not with another multi-hour run. Run the
+task file's done-when against the picked tree before you believe it.
+
+**Then who closes the bead depends on whether a live queue still lists it as failed. Check, do not
+assume.**
+
+```bash
+harmonik queue status --queue charlie-batch    # does it list this bead, status failed?
+```
+
+- **A live queue lists it as failed** → leave the bead OPEN and run
+  `harmonik queue recover --queue charlie-batch`. Recovery reads the ledger for **every** failed
+  item first and refuses the WHOLE queue with `recovery_bead_not_open` (`-32033`) when any one of
+  them is not open, so a tidy-up `br close` here locks the queue shut for every other item in it.
+  `recoveryPreflight` in `internal/queuewiring/recovery.go` is the code. The **harmonik-dispatch**
+  skill owns this rule; it does not stop being true because you recovered the work by hand.
+- **No live queue lists it** → close it yourself, because nothing else will. `harmonik reconcile`
+  closes only beads whose commit carries a `Harmonik-Bead-ID:` trailer, and a cherry-pick does not
+  carry one.
+
+**This changes the day the daemon carries `recover --drop`.** That verb (`7dea15b28`, on
+`work/charlie-batch-1`, absent from the deployed binary) exists for exactly the case above, and its
+preconditions are the INVERSE of `recover`'s: it refuses with `drop_bead_not_closed` (`-32041`)
+unless every failed bead is CLOSED, and with `drop_trailing_groups` (`-32040`) unless the failed
+group is the queue's last. So once this batch merges and the daemon is redeployed, the right move
+for a bead whose work you recovered by hand becomes close-then-drop, not leave-open-and-re-run.
+Check which verbs the running daemon has before you follow the branch above — `harmonik queue
+recover --help`. Redeploying to get it is the operator's call, not yours.
+
+**Never submit to a queue that is `paused-by-failure`.** Nothing stops you and there is no error:
+`Validate` in `internal/queue/validation.go` excludes `paused-by-failure` from the
+`queue_already_active` refusal on purpose, so a submit under the stopped queue's own name
+**silently replaces it**. The failed items are never re-armed, no archive of them is written, and
+the beads that stopped the lane are left open with nobody watching. Measured 2026-08-24 — this
+session did it, and it destroyed the record of two failed items. `recover` is the verb that
+re-arms. Read the failure before you re-arm it.
+
 ## The loop
 
 **1. Pick.** One bead, the top of this list:
@@ -69,7 +144,8 @@ cannot be fooled by what a commit message happens to say.
 > one that matches too much — it just fails quietly in the other direction.
 >
 > If you want corroboration beyond the done-when check, ask which FILES moved:
-> `git log origin/work/alpha-integration-merge --oneline -- <the files the task file names>`.
+> `git log work/charlie-batch-1 --oneline -- <the files the task file names>` — the branch work
+> actually lands on. Querying the integration branch misses everything in the unmerged batch.
 > That is evidence about the code. A message match is evidence about prose.
 
 **3. Submit.**
@@ -104,8 +180,8 @@ harmonik subscribe --types run_completed,run_failed,run_stale,queue_paused,heart
 
 ```bash
 git -C /Users/gb/github/harmonik fetch origin --quiet
-git log --oneline origin/work/alpha-integration-merge -- <the files the task file names>  # expect a new commit
-git log --oneline -1 origin/main                                                          # expect NO movement
+git log --oneline work/charlie-batch-1 -- <the files the task file names>   # expect a new commit
+git log --oneline -1 origin/main                                            # expect NO movement
 ```
 
 Then **re-run the task file's `done-when` checks**. That is the step that actually decides it: a

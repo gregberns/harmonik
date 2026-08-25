@@ -5,10 +5,67 @@ is complete enough to become a bead without interpretation.
 
 If a task file is ambiguous, that is a defect in the task file. Send it back rather than deciding.
 
+**A `blocks:` line in a task file enforces NOTHING. Dispatch reads bead edges.** Read this once;
+the rest of the page does not repeat it.
+
+`tasks/lint-rekey-exclusion-list.md` (P0) lists 21 `blocks:` targets in its front matter. It had a
+bead, `hk-lint-rekey-exclusion-list-gfry7` — created, worked and **closed done on 2026-08-24** — and
+`br dep list` on it returns **no dependencies**. Not one of the 21 was ever entered as an edge, so
+nothing held anything. Two extractions were dispatched past a P0 and `work/charlie-batch-1` went red
+on `make full`. Its commit, `fbe830453`, also landed `Reviewed-By: none`.
+
+**Two failures, and the second is the one to carry forward.** The edges were never entered, and the
+bead was closed on acceptance items its commit did not meet. A sibling P0,
+`hk-lint-ratchet-mutation-proof-hdju9`, is closed the same way — it claims to prove the re-keyed
+ratchet refuses new debt, and the invariance it rests on does not hold. Charlie re-filed the work as
+`hk-lint-rekey-exclusion-list-t9ebz` on 2026-08-25 with the edges attached.
+
+**So: confirm a dependency exists in `br blocked` before you trust it, and treat a closed P0 as a
+claim.** A dependency that lives only in front matter is a comment, and `closed` means someone
+judged the acceptance items met, not that they were.
+
+**REPAIRING A TASK FILE IS NOT FINISHED WHEN YOU COMMIT IT. It is finished when it reaches the branch
+runs are cut from.** `.harmonik/branching.yaml` sets `start_from` to the batch branch, so every
+implementer worktree is cut from the batch and reads the batch's copy of a task file. A repair that
+lands on the integration branch is **invisible to every run** until it is cherry-picked across. Two
+task-file repairs were one dispatch away from this on 2026-08-25 — the run would have read the stale
+file and rebuilt shipped code. **After you repair a task file, check which branch the next run is cut
+from, and get the repair onto it.**
+
+**THE LINT RATCHET IS NOT CURRENTLY PROTECTING THIS PROGRAM. Read this before you plan around it.**
+Verifying the closed P0 above turned up two live bypasses in `scripts/lint-allow-ratchet.sh`, both
+reproduced on 2026-08-25 and both filed:
+
+- **New tolerated debt is challenged for exactly one commit** (`hk-h4h78`, P0). The comparison base is
+  one commit back, so the window slides. A pair that fails at commit N passes from N+1 onward.
+  Reproduced on plain linear history — it needs no merge and no intent. The merge case is worse: the
+  committed window unions the parents, so a side branch can add a pair without ever running the gate
+  and the merge commit reports PASS.
+- **A dormant branch launders unlimited debt through a comment** (`hk-ym2nn`, P0). One legacy-format
+  row anywhere in the list flips the whole comparison to path-keying, and it then derives a row's key
+  from the trailing `#` location comment — which the file's own header calls "only aids" and which
+  the author writes. `allow.txt` has 0 legacy rows today, so this is dormant and two commits from
+  armed. No test covers the branch.
+
+- **The gate never sees about a quarter of the findings** (`hk-e0ybh`, P1).
+  `golangci-lint --uniq-by-line` defaults to true and this repo sets it nowhere, so at most one
+  finding per source line reaches the report — 989 findings against 1305 with the flag off. Worse
+  than hiding them: a second finding appearing on a line EVICTS the first, and the judge then reports
+  the evicted one under "now clean — delete these lines". Follow that and you permanently un-ratchet a
+  defect that is still in the code. Every extraction in this program moves code and exports symbols,
+  which is exactly the edit that triggers it.
+
+**What this changes for a row on this page:** a green ratchet is not evidence a landing added no
+debt. It is evidence only that the landing commit itself did not, and only while the list stays free
+of legacy rows. Do not use "the ratchet passed" as an acceptance argument.
+
 **Ordering is a recommendation, not a schedule.** Run anything whose `depends_on` has landed. The
 rows are grouped by what unblocks the most work, not by batch — batches are a writing unit only.
 
-**The live queue is `charlie-batch`, and it is STOPPED ON PURPOSE.** Measured 2026-08-25 07:58Z
+**The live queue is `charlie-batch`, and it is STOPPED ON PURPOSE.** Re-measured 2026-08-25 (sixth
+revision) and unchanged from the reading below. Charlie reported at 09:35Z that the merge recipe is
+re-verified at integration tip `eae64d47a` with both precondition diffs empty, the batch tip is still
+`d5673dee4`, dispatch is still held and nothing is in flight. Originally measured 2026-08-25 07:58Z
 with `harmonik queue status --queue charlie-batch`: status `paused-by-failure`, zero workers, its
 single group drained to `complete-with-failures` — seven items completed and one failed. Nothing is
 in flight. **Do not read the pause as a fault to clear.** Charlie reported at 08:0xZ that dispatch is
@@ -25,6 +82,15 @@ likely source of the confusion. The queue that is stopped is **`main`** — `pau
 `hk-pipeline-commits-claim-unreviewed-wgk5x` failed in it. That bead has since landed (`584cfdee1`),
 so the pause now holds on a fault that is fixed: it needs a resume, not a report. Do not submit work
 to `main` in the meantime.
+
+Last updated 2026-08-25 (sixth revision). **What changed:** the re-key P0 was re-filed with its
+dependency edges attached — see the block at the top of this page. **Thirteen rows moved from ready
+to blocked in one step**: eleven open lint rows, `handlerpause-extract` and `harnesspick-extract`.
+The fifth revision had just promoted `handlerpause-extract` to §Ready now and called eight lint rows
+feedable; both were true against the ledger then and are false now. Its claim that the re-keying
+dependency had landed was **false and load-bearing** — the content-key migration landed, the
+invariance the task requires did not. §Ready now is five rows, none of them lint. The fifth
+revision's own note follows.
 
 Last updated 2026-08-25 07:58Z (fifth revision). **What changed since the fourth:** the
 spend-meter extraction closed and landed on `work/charlie-batch-1` (`04de6424e` and `d5673dee4`), so it leaves
@@ -53,25 +119,66 @@ superset: `crew-cleanup-skill` is on the alpha branch only, `dead-shell-sweep`,
 
 | # | Task | P | Workstream | Bead | Why it is first |
 |---|---|---|---|---|---|
-| 1 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
-| 2 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
-| 3 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
-| 4 | [`runbead-extract-decisions`](tasks/runbead-extract-decisions.md) | P1 | W2 | `hk-runbead-extract-decisions-4wj2g` | `cmd/harmonik/run.go` `runBeadSubcommandIO` is 540 lines. Outside the single-owner rule below. **Read this before you start — the first attempt failed and the trap is easy to walk into again.** That attempt is on the tag `rescue/runbead-extract-4wj2g`, was cherry-picked as `25d4720fc` and `18a75fda2`, and was reverted by `2083adcfa`. **It renamed the function instead of decomposing it:** a 14-line shim over a new `runBeadOptionsIO` carrying 338 lines at `gocognit` 86, plus a new `parseRunBeadOptions` at 27, against a ceiling of 20, with no allow-list entry for either. Renaming the body moved the allow-list key rather than resolving the finding, and `make lint-allow` judges the whole tree inside `make fast`, so the branch would have stayed red under every later bead. Real reduction was 540 lines to 421, not 540 to 14. Two of the three mutation checks the commit body claimed do not reproduce, and seven flag doc comments were deleted, which the task file Limits forbid. **Start from acceptance item 4, the mutation check, rather than ending with it.** The bead is open; it is marked `failed` in `charlie-batch` from that run. |
-| 5 | [`handlerpause-extract`](tasks/handlerpause-extract.md) | P1 | W2 | `hk-handlerpause-extract-bkjoo` | **Newly free at 2026-08-25 07:58Z.** It was never held by the ledger — the bead is `open` and `br blocked` has never listed it. What held it was the single-owner rule below, because `spendmeter-extract` was in flight on the same run-machine files. That landed (`04de6424e` and `d5673dee4`), the queue has drained, and nothing else is running on those files, so the rule releases it. **It shares `bootstate.go`, `daemon.go` and `export_meters_pause_test.go` with the extraction that just landed, and the second of those two commits edits `bootstate.go` directly**, so start from a branch that carries `internal/spend` — otherwise you edit files the merge is about to move under you. |
+| 1 | [`lint-rekey-exclusion-list`](tasks/lint-rekey-exclusion-list.md) | **P0** | W1 | `hk-lint-rekey-exclusion-list-t9ebz` | **Feed this before anything else — it frees nine rows on its own** and is a second dependency on four more. **Its task file is stale and must be repaired before it is fed** — see the warning under this table. The operator ruling stands: change the keying rule, do not teach the ratchet to detect renames. |
+| 2 | [`structural-scoreboard`](tasks/structural-scoreboard.md) | P1 | W0 | `hk-structural-scoreboard-7o2u2` | Without it this program cannot tell real progress from a comment deletion. |
+| 3 | [`test-mass-cost-measure`](tasks/test-mass-cost-measure.md) | P1 | W5 | `hk-test-mass-cost-measure-3gmk8` | Answers whether the whole program is possible. Read-only, so it is free to run alongside anything. |
+| 4 | [`skill-copy-governance`](tasks/skill-copy-governance.md) | P1 | W7 | `hk-skill-copy-governance-8fz8h` | Its dependency landed. Small. |
+| 5 | [`runbead-extract-decisions`](tasks/runbead-extract-decisions.md) | P1 | W2 | `hk-runbead-extract-decisions-4wj2g` | `cmd/harmonik/run.go` `runBeadSubcommandIO` is 540 lines. Outside the single-owner rule below. **Read this before you start — the first attempt failed and the trap is easy to walk into again.** That attempt is on the tag `rescue/runbead-extract-4wj2g`, was cherry-picked as `25d4720fc` and `18a75fda2`, and was reverted by `2083adcfa`. **It renamed the function instead of decomposing it:** a 14-line shim over a new `runBeadOptionsIO` carrying 338 lines at `gocognit` 86, plus a new `parseRunBeadOptions` at 27, against a ceiling of 20, with no allow-list entry for either. Renaming the body moved the allow-list key rather than resolving the finding, and `make lint-allow` judges the whole tree inside `make fast`, so the branch would have stayed red under every later bead. Real reduction was 540 lines to 421, not 540 to 14. Two of the three mutation checks the commit body claimed do not reproduce, and seven flag doc comments were deleted, which the task file Limits forbid. **Start from acceptance item 4, the mutation check, rather than ending with it.** The bead is open; it is marked `failed` in `charlie-batch` from that run. |
 
-**Five rows, plus the eight feedable linter rows below (of thirteen written).** One structural
-measurement, one read-only cost measurement, one governance row, one command-line split that has
-already failed once, and one run-machine extraction that the spend-meter landing just freed. The two
-review-gate repairs and the two test repairs that used to head this list are landed on
+**Five rows, and NO feedable linter rows.** One re-keying gate at P0, one structural measurement,
+one read-only cost measurement, one governance row, and one command-line split that has already
+failed once. All five are in `br ready`, measured 2026-08-25.
+
+**STOP before you feed row 1. Its task file does not match the code.** The file still describes
+`allow.txt` as 575 findings keyed `<path><TAB><linter>`; the real file is 956 rows already keyed by
+content identity, migrated in `fbe830453`. Its "design decision" section asks the implementer to pick
+a keying scheme and option B is the scheme that shipped. Two of its four acceptance items are
+unrunnable as written — item 1 is already satisfied and proves nothing, item 3 names 575 findings
+where there are 956 — and item 4 names four extractions as its evidence when two of them
+(`runregistry-extract`, `spendmeter-extract`) have already landed and the other two
+(`handlerpause-extract`, `harnesspick-extract`) are blocked on this very task, so the half that could
+still prove it is circular. **Repair the task file first, or the implementer rebuilds
+shipped code.** The bead description is accurate where the task file is not, but the task file is the
+spec and outranks it.
+
+**Landing row 1 frees nine rows, not thirteen.** Eight single-dependency lint rows and
+`handlerpause-extract` come back. `lint-burn-errcheck`, `lint-burn-gocritic`,
+`lint-burn-last-three-linters` and `harnesspick-extract` each hold a second dependency, and all three
+of those second dependencies are `deferred` — rows nobody is going to feed. Plan for nine.
+
+The two review-gate repairs and the two test repairs that used to head this list are landed on
 `work/charlie-batch-1` — see §Landed.
 
 **The queue these go to is held.** `charlie-batch` is paused while charlie merges — see the note at
-the top. These five are ready to feed; the queue is not ready to take them, and that is intended.
+the top. Four of these five are ready to feed and row 1 needs its task file repaired first; either
+way the queue is not ready to take them, and that is intended.
 
-## The lint exclusion-list burn-down — thirteen rows, eight feedable at 2026-08-25 06:32Z
+## The lint exclusion-list burn-down — thirteen rows, ZERO feedable
 
-`tools/lintreport/allow.txt` holds **956 tolerated entries**. Its re-keying dependency landed
-(`fbe830453`), so no row here waits on it.
+**Eleven of these thirteen rows are blocked on row 1 of §Ready now**
+(`hk-lint-rekey-exclusion-list-t9ebz`, P0). Measured against `br blocked` on 2026-08-25. The other
+two are not: `lint-burn-copyloopvar` is closed and landed, and `lint-burn-gosec` is `deferred` with
+**no dependencies at all** — `br dep list` on it returns none. Nothing here is feedable, but the
+reasons are not the same reason.
+
+`tools/lintreport/allow.txt` holds **956 tolerated entries**.
+
+**An earlier revision said "its re-keying dependency landed (`fbe830453`), so no row here waits on
+it." That was false, and it is the sentence that let two extractions be dispatched past a P0.** Two
+different things carry the same name. What landed in `fbe830453` is the **migration to content
+keys** — the allow list no longer keys a row by file path, and its legacy path-plus-linter branch is
+dormant. What did **not** land is the **invariance** the task file asks for: "the key must contain
+neither a file path nor a package name." A package name still reaches the key by three routes, all
+measured with the real binary on 2026-08-25 and written up on the bead: the gofmt-printed enclosing
+declaration (a qualifier such as `*runregistry.RunHandle` is literal text in the hashed bytes), the
+linter's own finding message (errcheck and depguard both quote qualified names), and `*ast.ImportSpec`
+rows that hash an import path. Changing only `*RunHandle` to `*runregistry.RunHandle` changed the
+digest.
+
+**Why that matters to every row here:** a cross-package move re-keys tolerated rows it never touched,
+including rows for linters the row was told to leave alone. That is the hard reason "fix this row"
+and "leave that row alone" can be mutually exclusive, and it is invisible unless you read
+`findingDigest` in `tools/lintreport/main.go`.
 
 **"956 findings" is the wrong word, and the tool itself makes the distinction.** An entry on the
 allow list is one content identity, and one identity can carry more than one finding. `make
@@ -80,22 +187,26 @@ already stale — the finding they tolerate is gone and the line is waiting to b
 2026-08-25 06:32Z; the 2026-08-24 run gave the same three figures. Use "identity" for a row and
 "finding" for a report, the way `judge` in `tools/lintreport/main.go` does.
 
-**Five of the thirteen are not feedable, and one of the five is a trap.** Measured 2026-08-25 06:32Z
-from `br ready --limit 0`, from `br show` on each of the thirteen, and from `br blocked`. Take your
-own reading before you pull anything: this ledger moves by the minute, and a count on this page is
-only worth what its stamp says.
+**None of the thirteen is feedable, and the reasons differ per row.** Measured 2026-08-25 from
+`br ready --limit 0`, from `br show` on each of the thirteen, and from `br blocked`. Eleven are open
+and held behind the P0. One is closed and its work has landed. One is deferred with most of its work
+parked on a tag. Take your own reading before you pull anything: this ledger moves by the minute, and
+a count on this page is only worth what its stamp says.
 
-| Row | State at 2026-08-25 06:32Z | Why you cannot take it |
+| Row | State at 2026-08-25 (sixth revision) | Why you cannot take it |
 |---|---|---|
 | `lint-burn-copyloopvar` | **closed** | **DO NOT PULL — the work is done.** A worker held it `in_progress` earlier the same morning and it landed on `work/charlie-batch-1` (`9aaf0ea5b`). Starting it again redoes landed work. |
 | `lint-burn-gosec` | `deferred` | Most of the work is done and parked on a tag. See §Done, not landed. |
-| `lint-burn-errcheck` | `open`, blocked | `br blocked` holds it behind `lint-burn-gosec`. 17 shared declarations. |
-| `lint-burn-gocritic` | `open`, blocked | `br blocked` holds it behind `lint-burn-gosec`. 8 shared declarations. |
-| `lint-burn-last-three-linters` | `open`, blocked | `br blocked` holds it behind the first core split (`hk-core-split-by-cluster-ee833`), which is `deferred` and sits in §Held. So it waits on a row nobody is going to feed. |
+| `lint-burn-errcheck` | `open`, blocked | Held behind **two**: the P0 re-key, and `lint-burn-gosec`. 17 shared declarations. |
+| `lint-burn-gocritic` | `open`, blocked | Held behind **two**: the P0 re-key, and `lint-burn-gosec`. 8 shared declarations. |
+| `lint-burn-last-three-linters` | `open`, blocked | Held behind **two**: the P0 re-key, and the first core split (`hk-core-split-by-cluster-ee833`), which is `deferred` and sits in §Held. So it also waits on a row nobody is going to feed. |
+| the other eight open rows | `open`, blocked | Held behind the P0 re-key alone. Named in the paragraph below. |
 
-**The other eight are in `br ready` now**, and they are the whole feedable set: `lint-burn-unused`,
-`lint-burn-revive`, `lint-burn-forbidigo`, `lint-burn-context-plumbing`, `lint-burn-unparam`,
-`lint-burn-prealloc-unconvert`, `lint-burn-exhaustive` and `lint-burn-error-returns`.
+**The eight an earlier revision called the feedable set are now all held behind the P0**, and none is
+in `br ready`: `lint-burn-unused`, `lint-burn-revive`, `lint-burn-forbidigo`,
+`lint-burn-context-plumbing`, `lint-burn-unparam`, `lint-burn-prealloc-unconvert`,
+`lint-burn-exhaustive` and `lint-burn-error-returns`. Nothing about the work in them changed — only
+the edge that should always have held them. They return the moment row 1 lands.
 
 **These thirteen rows are not one batch, and nothing makes them one.** The coupling is the allow
 list, not the linter configuration. `tools/lintreport` keys each tolerated finding by a hash of the
@@ -121,7 +232,11 @@ in parallel will meet 44 and 25 instead. Plan for the re-key hazard, and expect 
 forbid editing that file. No row here can invalidate a cache the way a configuration change would, so
 "they must land together or the cache goes stale" is not a reason to batch them.
 
-| # | Task | P | Bead | Findings |
+**Every numbered row below is BLOCKED, not queued.** The number is the order to feed them in once
+row 1 of §Ready now lands — it is not a position in a live queue. Nothing in this table is feedable
+today.
+
+| Order once freed | Task | P | Bead | Findings |
 |---|---|---|---|---|
 | — | [`lint-burn-gosec`](tasks/lint-burn-gosec.md) | P1 | `hk-lint-burn-gosec-ywauz` | 182 security findings. **DO NOT PULL — most of the work is done and one commit of it needs landing. See §Done, not landed.** The bead is `deferred`, so `br ready` no longer offers it and the ledger enforces this row. |
 | 1 | [`lint-burn-unused`](tasks/lint-burn-unused.md) | P1 | `hk-lint-burn-unused-5ozcz` | 65 unused symbols — deletion, so no caller and no reference means no gate. |
@@ -132,10 +247,10 @@ forbid editing that file. No row here can invalidate a cache the way a configura
 | 5 | [`lint-burn-unparam`](tasks/lint-burn-unparam.md) | P2 | `hk-lint-burn-unparam-wzbmo` | 28 parameters and results nothing varies or reads. |
 | 6 | [`lint-burn-prealloc-unconvert`](tasks/lint-burn-prealloc-unconvert.md) | P2 | `hk-lint-burn-prealloc-unconvert-cj33e` | 17 pre-allocation and redundant-conversion findings. |
 | 7 | [`lint-burn-exhaustive`](tasks/lint-burn-exhaustive.md) | P2 | `hk-lint-burn-exhaustive-29g0t` | 7 non-exhaustive switches. **The repair is a `default:` clause, never an allow-list entry** — adding an event type re-fingerprints every `exhaustive` finding. |
-| 8 | [`lint-burn-error-returns`](tasks/lint-burn-error-returns.md) | P2 | `hk-lint-burn-error-returns-v3hm5` | 22 swallowed, unwrapped or unchecked errors. **Feedable — an earlier revision said this row was held behind `lint-burn-gosec` and it is not.** Re-checked 2026-08-25 06:32Z: the bead is `open`, `br blocked` does not list it, it has no dependency, and `br ready` offers it. |
-| — | [`lint-burn-last-three-linters`](tasks/lint-burn-last-three-linters.md) | P3 | `hk-lint-burn-last-three-linters-lj4wu` | The last six rows. **Held in the ledger behind the first core split (`hk-core-split-by-cluster-ee833`)**, which is `deferred` and sits in §Held. |
-| — | [`lint-burn-errcheck`](tasks/lint-burn-errcheck.md) | P1 | `hk-lint-burn-errcheck-udr56` | **Held in the ledger behind `lint-burn-gosec`.** 17 shared declarations. |
-| — | [`lint-burn-gocritic`](tasks/lint-burn-gocritic.md) | P2 | `hk-lint-burn-gocritic-hsqwt` | **Held in the ledger behind `lint-burn-gosec`.** 8 shared declarations. |
+| 8 | [`lint-burn-error-returns`](tasks/lint-burn-error-returns.md) | P2 | `hk-lint-burn-error-returns-v3hm5` | 22 swallowed, unwrapped or unchecked errors. **BLOCKED on the P0 at row 1 of §Ready now**, and on nothing else — `br dep list` returns that one edge. An earlier revision called this row feedable with no dependency; that was true then and is false now. It is NOT held behind `lint-burn-gosec`, which is the older error this page carried. |
+| — | [`lint-burn-last-three-linters`](tasks/lint-burn-last-three-linters.md) | P3 | `hk-lint-burn-last-three-linters-lj4wu` | The last six rows. **Held behind TWO: the P0 at row 1 of §Ready now, and the first core split (`hk-core-split-by-cluster-ee833`)**, which is `deferred` and sits in §Held. Landing the P0 alone does not free it. |
+| — | [`lint-burn-errcheck`](tasks/lint-burn-errcheck.md) | P1 | `hk-lint-burn-errcheck-udr56` | **Held behind TWO: the P0 at row 1 of §Ready now, and `lint-burn-gosec`**, which is `deferred`. 17 shared declarations. Landing the P0 alone does not free it. |
+| — | [`lint-burn-gocritic`](tasks/lint-burn-gocritic.md) | P2 | `hk-lint-burn-gocritic-hsqwt` | **Held behind TWO: the P0 at row 1 of §Ready now, and `lint-burn-gosec`**, which is `deferred`. 8 shared declarations. Landing the P0 alone does not free it. |
 
 ## Done, not landed — do not implement these
 
@@ -199,9 +314,10 @@ between iterations. All four commits carry `Reviewed-By: none` and `Review-Verdi
 **Charlie owns this row and lands the base commit through its own queue.** Leave the tag
 `rescue/gosec-final-zero` in place — the follow-up run starts from it.
 
-**Landing it releases two more rows.** The ledger holds `lint-burn-errcheck` (17 shared declarations)
-and `lint-burn-gocritic` (8 shared declarations) behind this bead, and `br blocked` lists both of
-them against it. Both become feedable the moment this one closes.
+**Landing it is necessary for two more rows and not sufficient.** The ledger holds
+`lint-burn-errcheck` (17 shared declarations) and `lint-burn-gocritic` (8 shared declarations) behind
+this bead, and `br blocked` lists both against it — **and against the P0 re-key at row 1 of §Ready
+now**. Both have two open dependencies, so closing this one alone frees neither.
 
 ## In flight — do not pick up
 
@@ -210,7 +326,8 @@ group has drained.
 
 The spend-meter extraction that sat here closed 2026-08-25 and landed on `work/charlie-batch-1`
 (`04de6424e` and `d5673dee4`, verified by the presence of `internal/spend` on that branch, not by a
-commit-message grep; charlie confirmed both by message and reported reviewer and QA APPROVE on each). It is in §Landed. **Its departure frees `handlerpause-extract`** — see §Ready now. The
+commit-message grep; charlie confirmed both by message and reported reviewer and QA APPROVE on each). It is in §Landed. **Its departure released `handlerpause-extract` from the single-owner rule below,
+and that row is still blocked** — on the P0 at row 1, which is a different hold. See §Blocked. The
 keystone extraction before it, `runregistry-extract`, is also in §Landed. Do not carry either as in
 flight.
 
@@ -226,7 +343,8 @@ flight.
 
 | Task | P | Bead | Waits on |
 |---|---|---|---|
-| [`harnesspick-extract`](tasks/harnesspick-extract.md) | P1 | `hk-harnesspick-extract-3290z` | `harness-composition-root-policy`, which is deferred pending an operator ruling. `br blocked` confirms the hold at 2026-08-25 06:32Z. |
+| [`handlerpause-extract`](tasks/handlerpause-extract.md) | P1 | `hk-handlerpause-extract-bkjoo` | **The P0 at row 1 of §Ready now, and only that.** The single-owner rule below released this row when the spend-meter extraction landed, and that release still holds — no other run owns those files. **This supersedes the 2026-08-25 07:00Z agreement that the row goes out on batch 2.** When it is freed: it shares `bootstate.go`, `daemon.go` and `export_meters_pause_test.go` with the spend-meter extraction, and `d5673dee4` edits `bootstate.go` directly, so start from a branch that carries `internal/spend`. |
+| [`harnesspick-extract`](tasks/harnesspick-extract.md) | P1 | `hk-harnesspick-extract-3290z` | **Two things, not one.** `harness-composition-root-policy`, which is deferred pending an operator ruling, **and** `hk-lint-rekey-exclusion-list-t9ebz`, the P0 at row 1. `br blocked` shows both. An earlier revision named only the first. |
 
 ## Landed — kept so the record is not re-derived
 
@@ -238,18 +356,28 @@ of these rows stayed on the ready list after they had landed. All beads closed.
 on the integration branch yet, so the list still owes the record. Delete those rows at the merge, not
 before.
 
+**Two rows on this table are marked, and the first is the most useful row here.** A "landed" row is a
+claim like any other. `lint-rekey-exclusion-list` was recorded as closed at `fbe830453` on both
+branches, and the commit is real — but it delivered the migration to content keys, not the invariance
+the task requires, and the task is open again at row 1 of §Ready now. **Match a landed row to the
+task file's acceptance items, not to a commit subject.**
+
+**Read the partial row before you work row 1.** Its bead `hk-lint-rekey-exclusion-list-gfry7` carries
+the design rationale for the content-key scheme that shipped, and `fbe830453` is the code. This
+section exists so the record is not re-derived, and that is the record.
+
 | Task | Bead | Landed at | On |
 |---|---|---|---|
 | `spendmeter-extract` | closed | `04de6424e`, `d5673dee4` | **batch only** |
 | `reviewer-subagent-drift` | closed | `9c2424259` | both |
-| `lint-rekey-exclusion-list` | closed | `fbe830453` | both |
+| `lint-rekey-exclusion-list` | **PARTIAL** — bead `hk-lint-rekey-exclusion-list-gfry7` closed done, work reopened as `t9ebz` | `fbe830453` | both |
 | `dispatch-activation-guard` | closed | `626a4a25e` | both |
 | `workloop-name-the-state` | closed | `bb066d18f` | both |
 | `cli-structure-assessment` | closed | `32beb52ec` | both |
 | `crew-cleanup-skill` | closed | `4c4e08efc` | **alpha only** |
 | `reviewer-portability-review` | closed | `296c759d3` | **batch only** |
 | `dead-shell-sweep` | closed | `1b0da6fe3` | **batch only** |
-| `lint-ratchet-mutation-proof` | closed | `16e946d28`, `0fa5698d6`, `8cbac5127` | both |
+| `lint-ratchet-mutation-proof` | **REOPENED 2026-08-25** — P0 `hk-lint-ratchet-mutation-proof-hdju9` was closed done 2026-08-24 with four of its eight acceptance items unproved. Evidence is on the bead. | `16e946d28`, `0fa5698d6`, `8cbac5127` | both |
 | `workloop-extract-pure-decisions` | closed | `d9cb8e209` | both |
 | `run-goroutine-supervisor` | closed | `ffb75b7cf` | **batch only** |
 | `core-cluster-map` | closed | `a3b400d72` | both |
@@ -319,8 +447,8 @@ caller and no reference needs no gate, so this belongs to a sweep, not to a task
 
 ## Standing rules for anything on this list
 
-1. **Never widen `tools/lintreport/allow.txt`.** The re-keying task changed how entries are keyed,
-   not which findings are tolerated.
+1. **Never widen `tools/lintreport/allow.txt`.** The re-keying work so far changed how entries are
+   keyed, not which findings are tolerated. It is not finished — see rule 6.
 2. **A structural acceptance test, or it is not done.** Complexity, parameter count, package
    boundary, caller count. Never a line count — the comment cut proved that metric is gameable.
 3. **A suppression is not a fix, and this one has already been tried.** On 2026-08-24 an implementer
@@ -344,7 +472,11 @@ caller and no reference needs no gate, so this belongs to a sweep, not to a task
    Comments are re-examined afterwards as a separate step (PLAN.md §W3.3). Spec-bearing comment has
    already been lost this way once, and seven flag doc comments were lost the second way in the
    reverted run above.
-6. **Deletion of something with no caller and no reference needs no gate.** Moves need the re-keying
-   task, which has landed.
+6. **Deletion of something with no caller and no reference needs no gate. A MOVE IS NOT SAFE YET.**
+   An earlier version of this rule said moves "need the re-keying task, which has landed." That is
+   the false sentence — see the block at the top of this page. The re-keying task delivered content
+   keys and did NOT deliver the invariance a move needs, so a cross-package move still re-keys its
+   tolerated findings and still turns the gate red. **Do not move code between packages until
+   `hk-lint-rekey-exclusion-list-t9ebz` lands.**
 7. `plans/2026-08-21-back-on-track/` and `plans/2026-08-22-decomposition-program/` are rejected by the
    operator and are not inputs. Do not revive their task IDs.

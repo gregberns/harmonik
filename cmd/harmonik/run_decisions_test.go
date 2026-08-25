@@ -45,8 +45,10 @@ func TestSelectRunWorkflow(t *testing.T) {
 		mode, ref, wantMode, wantRef string
 		wantErr                      bool
 	}{
-		{"builtin", "", "", "", false}, {"single", "", "single", "", false},
-		{"dot", "flow.dot", "dot", "flow.dot", false}, {"dot", "", "", "", true},
+		{"builtin", "", "", "", false},
+		{"single", "", "single", "", false},
+		{"dot", "flow.dot", "dot", "flow.dot", false},
+		{"dot", "", "", "", true},
 	}
 	for _, tt := range tests {
 		got, err := selectRunWorkflow(tt.mode, tt.ref)
@@ -64,8 +66,10 @@ func TestSelectNotifyStream(t *testing.T) {
 		wantSet            bool
 		want               string
 	}{
-		{false, false, 1, 1, false, ""}, {false, false, 2, 1, true, "-"},
-		{false, false, 1, 2, true, "-"}, {false, true, 2, 2, false, ""},
+		{false, false, 1, 1, false, ""},
+		{false, false, 2, 1, true, "-"},
+		{false, false, 1, 2, true, "-"},
+		{false, true, 2, 2, false, ""},
 		{true, false, 1, 1, true, "events"},
 	}
 	for _, tt := range tests {

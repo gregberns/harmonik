@@ -57,6 +57,10 @@ The broken case is the move that re-qualifies.
 Measured 2026-08-25 with the repo's own binary and cross-checked against `go/types` ground truth.
 Routes 1 to 4 must be closed; route 5 must deliberately be left open. Do not re-derive these.
 
+**Every `989 findings` and `934 identities` figure in this file is an integration-tip (`eae64d47a`)
+reading.** Row counts are branch-qualified throughout because they differ; these are not, and they
+differ too. Treat them as evidence that the scheme works, not as numbers to reproduce.
+
 1. **The printed enclosing declaration.** `enclosing` returns `format.Node` bytes and they go
    straight into the hash, so a qualifier written in the declaration is literal text in the hashed
    bytes. Measured: same file, line, linter and message, changing only `*RunHandle` to
@@ -111,11 +115,17 @@ ratchet cannot prove anything about the hashing.**
 - `tools/lintreport/main.go` — `findingDigest`, `sourceFile.enclosing`, `identityNode`, `nodeName`.
   This is where the work is.
 
-  **Parse each file TWICE, and this is not optional.** Tree A with `parser.ParseComments`, used only
-  to LOCATE. Tree B with mode `0` (no comments), qualifier-stripped, used only to PRINT. The bridge is
-  the located node's code start line: locate on A, take `fset.Position(node.Pos()).Line`, then run the
-  existing plain search on B at that line. You need `Doc` present to locate (route 3) and absent to
-  print (route 4), and one tree cannot do both jobs.
+  **Parse each file TWICE, and get the ORDER right — the obvious order is wrong and fails silently.**
+  You need comments present to LOCATE (route 3, doc-comment lines) and absent to PRINT (route 4).
+
+  **Do NOT locate on a comment-bearing tree and then search a mode-`0` tree at the same line number.**
+  A mode-`0` parse has `File.Comments` nil, so reprinting drops every comment line and the two trees
+  no longer agree on line numbers. The search lands past short declarations, falls into the
+  `best == nil` whole-file branch, and emits wrong digests **with no error at all**.
+
+  **The correct order is the inverse:** strip the qualifiers and reprint from the COMMENT-BEARING
+  tree, then reparse that output with mode `0`, then locate and derive from the reparsed tree. One
+  coordinate system throughout.
 
   **The trap that will cost you a day if you skip it: `go/printer` reads POSITIONS.** Replacing a node
   in place leaves stale positions, so a naive in-place mutation prints differently from the same code
@@ -163,7 +173,7 @@ so module-only scoping makes them unreachable.
 costs nothing: the qualifier stays and the row is exactly as fragile as it is today. A false positive
 costs a merged key — and a merge needs the ENTIRE printed declaration to become byte-identical to
 another one, with the same linter and the same canonicalized message. Measured across all 989
-findings: **zero merges**, including at the 3 shadowing sites (`schedule.store` and `schedule.wakeC`
+findings **at integration tip `eae64d47a`**: **zero merges**, including at the 3 shadowing sites (`schedule.store` and `schedule.wakeC`
 in `internal/daemon/scheduler.go`, `substrate.tmuxAdapter` in `internal/daemon/bootworkloop.go`).
 
 **Delete the qualifier. Do not replace it with a sentinel.** The obvious design — `pkg.Sel` becomes
@@ -171,14 +181,15 @@ in `internal/daemon/scheduler.go`, `substrate.tmuxAdapter` in `internal/daemon/b
 `internal/daemon`, the files left behind rewrite bare `RunHandle` to `runregistry.RunHandle` AND the
 moved file rewrites bare `RunRegistry` to `daemon.RunRegistry`. Invariance needs `pkg.Foo` and `Foo`
 to hash the same, which only deletion gives. Deletion is also alias-invariant for free, which this
-tree needs: it carries 14 distinct aliases for internal packages (`runpkg`, `ltmux`, `tmux`,
-`tmuxPkg`, `tmuxpkg` all name `internal/lifecycle/tmux`).
+tree needs: it carries 14 distinct aliases for internal packages — `ltmux`, `tmux`, `tmuxPkg` and
+`tmuxpkg` all name `internal/lifecycle/tmux`, and `runpkg` names `internal/run`.
 
 **`go/types` is rejected on measured cost, not on principle.** `packages.Load("./...")` at
 `NeedTypes|NeedTypesInfo|NeedDeps` takes **4.6 s warm** against **1.37 s** for the entire current
 derive over all 989 findings. `golang.org/x/tools` is in neither `go.mod` nor `go.sum` and pulls
-**7 new modules** onto a module with 13 — including `x/telemetry`, in the build graph of a quality
-gate. That is 0.054% of accuracy on a difference that produced zero merges.
+**7 new modules** onto a module with **8** direct requires — including `x/telemetry`, in the build
+graph of a quality gate. That is 0.054% of accuracy on a difference that produced zero merges.
+`golang.org/x/tools` is in neither `go.mod` nor `go.sum` today; verified 2026-08-25.
 
 **Justify the choice with a measured number, not an argument.** Whatever you pick, a qualifier that
 gets stripped makes two previously distinct declarations hash the same, so one tolerated row can
@@ -239,18 +250,39 @@ regardless**. Removing them is out of scope for this task.
    the moved package; an `*ast.ImportSpec` finding; and a `file scope` finding.
    **Do not fabricate digests.** Compute them from real Go sources through the real code path. The
    existing shell cases fabricate, which is why they prove nothing.
-4. **`make fast` is green and the tolerated set has the same number of rows it had when you
-   started.** Count the rows on YOUR branch before you change anything, record that number in the
-   commit body, and show the same number after. **This task changes how rows are named, not which
-   findings are tolerated.**
+4. **Land this as FOUR commits, and each one has its own checkable claim.** An earlier version of
+   this file asked for a single commit that left the row count unchanged. That is not satisfiable:
+   the branch starts red, three separate row changes are required, and asserting one global count
+   hides all of them. Assert per commit instead.
 
-   **Do not take a row count from this file or from any other document.** The count differs by
-   branch and it moves: `tools/lintreport/allow.txt` holds 956 rows at integration tip `eae64d47a`
-   and 923 at batch tip `d5673dee4`, and the `tools/lintreport` code is byte-identical on both, so
-   only the list differs. A batch cut after the merge will carry a third number. An earlier version
-   of this file named 575, which would have told you to delete 381 rows; a version that names 956
-   would tell you to ADD 33 that your branch does not tolerate. **A literal is wrong here whichever
-   branch you take it from.** Count yours.
+   **The branch starts RED and it is not your fault. Do not widen scope to go green.** At batch tip
+   `d5673dee4` the judge refuses 14 findings, and `make fast` runs `lint-allow` (Makefile `fast`
+   target), so `make fast` is red before you start. Those 14 are the damage this task exists to
+   repair: the run-registry and spend-meter extractions moved code, the moved declarations
+   re-fingerprinted, and the list still holds their pre-move digests. Commit A repairs exactly that.
+
+   - **Commit A — swap the re-fingerprinted rows. Net zero.** For each finding the judge refuses,
+     delete the stale row it should have matched and add the row it hashes to now. **Name the move
+     that caused each pair in the commit body.** This is a swap, not a widening: same count in, same
+     count out, and nothing newly tolerated. After A the judge is green and `make fast` is green,
+     under the CURRENT keying scheme, with no change to `tools/lintreport`. **Do this first** — every
+     later step needs a tree whose list matches it.
+   - **Commit B — delete the rows the judge reports clean. Count falls, by the number it names.**
+     Their findings are gone. State the before and after counts.
+   - **Commit C — fix the three `revive package-comments` findings** in the `evaltasks/eval-*` files,
+     one comment line each, and delete their three rows. Count falls by three. This takes the
+     `file scope` population to zero live rows, which is the only honest way to stop defending that
+     code path.
+   - **Commit D — the re-key itself. Net zero, and this is the one that must be a bijection.** Same
+     count in, same count out. State both.
+
+   **Every count comes from YOUR branch, and none from this file.** The list holds 956 rows at
+   integration tip `eae64d47a` and 923 at batch tip `d5673dee4`, with byte-identical
+   `tools/lintreport` code on both, so only the list differs; a batch cut after the merge carries a
+   third number. An earlier version of this file named 575, which would have told you to delete 381
+   rows, and a version naming 956 would tell you to ADD 33 your branch does not tolerate. **A literal
+   is wrong here whichever branch you take it from.**
+
 5. **You did NOT touch `scripts/lint-allow-ratchet.sh`.** An earlier version of this file asked you to
    delete the dead `is_legacy` / `legacy_pairs` branch here. **That was a scope collision and it is
    withdrawn:** deleting that branch is the entire content of `hk-ym2nn`, which owns it. Doing it
@@ -276,11 +308,28 @@ it stands and never reads the previous list, so it silently adopts any finding t
 
 `-remap` cannot adopt a finding that was not already tolerated, because it only ever maps rows that
 already existed. The file format is unchanged (`digest TAB linter TAB # comment`), so
-`scripts/lint-allow-ratchet.sh`'s `comm -23` keeps working untouched.
+`scripts/lint-allow-ratchet.sh`'s `comm -23` keeps working untouched. **Note that `-remap` does not
+exist — `main.go` declares only `-allow` and `-write`. You are writing it.**
 
-**The remap is a bijection on the branch this was measured on** — 934 old identities to 934 new, zero
-splits, zero merges — which is why a 1:1 remap is the right shape. Re-measure on your own branch; do
-not inherit that number.
+**Rule 3 is why commit A comes first, and skipping A makes the tool unrunnable.** "Refuse if any
+finding's OLD digest is absent" fires on precisely the 14 findings the judge already refuses at the
+batch tip — *refused* means their digest is not in the list. So `-remap` run on an unrepaired tree
+aborts every time, by design, on the exact damage this task exists to fix. **And the re-key does not
+dissolve it:** after qualifier-neutralization those findings hash to a NEW digest while the list still
+holds their PRE-MOVE digest, so the old-digest lookup misses either way. Nothing you do inside the
+re-key rescues a row whose stored digest was computed on a tree that no longer exists.
+
+**Commit A is what makes the old digests present again**, under the current scheme, before any keying
+change. After A, every finding's old digest is in the list and rule 3 never fires. Keep rule 3 exactly
+as written — it is the property that stops the tool adopting untolerated debt, and the answer to it
+firing is to repair the tree, never to relax the rule.
+
+**The remap was a bijection where it was measured** — 934 identities to 934, zero splits, zero merges
+— which is why a 1:1 remap is the right shape. **That reading is from integration tip `eae64d47a`, and
+934 is an IDENTITY count, not a row count**: the list is 923 rows at the batch tip and 956 at
+integration, and one identity can carry more than one finding. **Re-measure both on your own branch.**
+The zero-merges figure is the whole safety argument for the import-set choice, so if it does not
+reproduce on your branch, stop and say so rather than proceeding.
 
 **Land the already-clean rows as a SEPARATE, EARLIER commit.** The judge reports some rows as clean —
 their finding is gone and the row is waiting to be deleted. A remap drops them, so the row count falls

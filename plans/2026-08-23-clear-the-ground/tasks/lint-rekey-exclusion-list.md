@@ -112,9 +112,11 @@ differ too. Treat them as evidence that the scheme works, not as numbers to repr
 
 ## What neutralization does NOT cover — measured, so you do not mistake a boundary for a bug
 
-The 14 findings the judge refuses at the batch tip were traced to root cause on 2026-08-25. **The
-qualifier fix covers half of them.** An implementer who believes it covers all 14 will regenerate,
-see four still refused, and not know whether the tool has a bug or has reached its limit.
+The 14 findings the judge refuses at the batch tip were traced to root cause on 2026-08-25.
+**Expect 13 to be covered and ONE not to be** — but by three different routes, not one. The qualifier
+walk covers 7; route 2's line normalization covers 3; route 4's comment exclusion covers 3. An
+implementer who believes the qualifier walk covers all 14 will regenerate, see six still refused, and
+not know whether the tool has a bug or has reached its limit.
 
 | n | cause | covered by this task? |
 |---|---|---|

@@ -11,6 +11,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 // TestCooldownRefusalDoesNotParkTheLoop measures whether the loop keeps ticking
@@ -35,8 +36,8 @@ func TestCooldownRefusalDoesNotParkTheLoop(t *testing.T) {
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
 
-	reg := daemon.NewRunRegistry()
-	daemon.ExportedRunRegistryRegister(reg, core.RunID(uuid.New()), &daemon.RunHandle{BeadID: beadID})
+	reg := runregistry.NewRunRegistry()
+	reg.Register(core.RunID(uuid.New()), &runregistry.RunHandle{BeadID: beadID})
 
 	params := admissionDeps(t, ledger, qs, qLedger, true, nil)
 	params.RunRegistry = reg

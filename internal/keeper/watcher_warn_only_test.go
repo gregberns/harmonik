@@ -41,15 +41,18 @@ func TestWatcher_WarnOnly_EmitsWarnButNoRespawn(t *testing.T) {
 	writeCtxFile(t, projectDir, agent, 85.0, "sess-crew-01")
 
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 5 * time.Millisecond,
-		WarnPct:      80.0,
-		IdleQuiesce:  1 * time.Millisecond,
-		Staleness:    40 * time.Millisecond, // fresh early (warn fires) → stale later (respawn eligible)
-		TmuxTarget:   "dummy-pane",
-		WarnOnly:     true, // ← the flag under test
-		InjectFn:     func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         5 * time.Millisecond,
+		WarnPct:              80.0,
+		IdleQuiesce:          1 * time.Millisecond,
+		Staleness:            40 * time.Millisecond, // fresh early (warn fires) → stale later (respawn eligible)
+		TmuxTarget:           "dummy-pane",
+		WarnOnly:             true, // ← the flag under test
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 		// RespawnCmd is non-empty so without WarnOnly the respawn path would be
 		// eligible (a harmless no-op command). With WarnOnly=true it must never
 		// fire — proven by the absence of respawn_attempted events below.
@@ -91,18 +94,21 @@ func TestWatcher_WarnOnly_NoLivePaneRecover(t *testing.T) {
 	rec := &warnOnlyRespawnRecorder{}
 
 	cfg := keeper.WatcherConfig{
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		PollInterval:        10 * time.Millisecond,
-		Staleness:           5 * time.Millisecond,  // immediately stale
-		LiveRecoverGrace:    10 * time.Millisecond, // tiny for test speed
-		LiveRecoverCooldown: 10 * time.Second,      // long: at most one attempt
-		TmuxTarget:          "dummy-pane",
-		WarnOnly:            true, // ← the flag under test
-		IsPaneAliveFn:       func(_ context.Context, _ string) bool { return true },
-		OperatorAttachedFn:  func(_ string) bool { return false },
-		LiveRecoverFn:       rec.fn, // would fire if WarnOnly were false
-		InjectFn:            func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		Staleness:            5 * time.Millisecond,  // immediately stale
+		LiveRecoverGrace:     10 * time.Millisecond, // tiny for test speed
+		LiveRecoverCooldown:  10 * time.Second,      // long: at most one attempt
+		TmuxTarget:           "dummy-pane",
+		WarnOnly:             true, // ← the flag under test
+		IsPaneAliveFn:        func(_ context.Context, _ string) bool { return true },
+		OperatorAttachedFn:   func(_ string) bool { return false },
+		LiveRecoverFn:        rec.fn, // would fire if WarnOnly were false
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 	}
 
 	em := &keeper.RecordingEmitter{}
@@ -132,16 +138,19 @@ func TestWatcher_WarnOnly_False_RespawnStillFires(t *testing.T) {
 	rec := &warnOnlyRespawnRecorder{}
 
 	cfg := keeper.WatcherConfig{
-		AgentName:       agent,
-		ProjectDir:      projectDir,
-		PollInterval:    10 * time.Millisecond,
-		Staleness:       5 * time.Millisecond,  // immediately stale
-		RespawnGrace:    10 * time.Millisecond, // tiny
-		RespawnCooldown: 10 * time.Second,
-		TmuxTarget:      "dummy-pane",
-		WarnOnly:        false, // default: respawn IS permitted
-		IsPaneIdleFn:    func(_ context.Context, _ string) bool { return true },
-		InjectFn:        func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		Staleness:            5 * time.Millisecond,  // immediately stale
+		RespawnGrace:         10 * time.Millisecond, // tiny
+		RespawnCooldown:      10 * time.Second,
+		TmuxTarget:           "dummy-pane",
+		WarnOnly:             false, // default: respawn IS permitted
+		IsPaneIdleFn:         func(_ context.Context, _ string) bool { return true },
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 		// Use a real non-empty RespawnCmd so maybeRespawn would qualify.
 		// The spy fn overrides RespawnCmd via the exec path — wire spy as
 		// RespawnCmd is a string; instead supply LiveRecoverFn which doesn't

@@ -43,7 +43,7 @@ type ReadQuality struct {
 	Reasons []string `json:"reasons,omitempty"`
 }
 
-// StateRun is one in-flight run projected from a *RunHandle.  Spec: SS-001.
+// StateRun is one in-flight run projected from a *runregistry.RunHandle.  Spec: SS-001.
 type StateRun struct {
 	RunID          string `json:"run_id"`
 	BeadID         string `json:"bead_id"`

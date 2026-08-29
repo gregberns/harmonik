@@ -11,6 +11,7 @@ import (
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 // FleetFacts is the read-only fact bundle the captain reads to decide whether
@@ -24,7 +25,7 @@ type FleetFacts struct {
 
 	// In-flight work (defense #4).
 	InProgress BeadAxis `json:"in_progress"` // beads the ledger reports in_progress
-	Runs       RunAxis  `json:"runs"`        // RunRegistry + live worktrees
+	Runs       RunAxis  `json:"runs"`        // runregistry.RunRegistry + live worktrees
 
 	// Lined-up / queued-but-not-yet-dispatchable (defenses #2 queue, #3).
 	Queued QueueAxis `json:"queued"`
@@ -80,7 +81,7 @@ type BeadFact struct {
 // worktree dirs, reported separately so a stale-worktree-with-empty-registry
 // case is legible.
 type RunAxis struct {
-	RegistryCount int      `json:"registry_count"` // RunRegistry.Len()
+	RegistryCount int      `json:"registry_count"` // runregistry.RunRegistry.Len()
 	LiveWorktrees int      `json:"live_worktrees"` // entries under .harmonik/worktrees
 	WorktreePaths []string `json:"worktree_paths,omitempty"`
 }
@@ -159,7 +160,7 @@ type DrainDetector struct {
 	ready      readySource
 	lister     openBeadLister
 	ledger     queue.BeadLedger
-	runs       *RunRegistry
+	runs       *runregistry.RunRegistry
 	queues     *queuewiring.QueueStore
 	projectDir string
 }
@@ -169,7 +170,7 @@ type DrainDetector struct {
 //   - ready: the br-ready adapter exposing ReadyAll (defense #1).
 //   - lister: the br adapter exposing ListBeadsByStatus (ledger/epic axis).
 //   - ledger: the queue.BeadLedger bridge exposing BlocksEdge (defense #2).
-//   - runs: the shared in-flight RunRegistry (defense #4).
+//   - runs: the shared in-flight runregistry.RunRegistry (defense #4).
 //   - queues: the shared QueueStore (defenses #2, #3 in-memory portion).
 //   - projectDir: the project root, for the `.harmonik/queues/*.json.failed-*`
 //     archive scan (defense #3) and the `.harmonik/worktrees/*` live-run scan
@@ -178,7 +179,7 @@ func NewDrainDetector(
 	ready readySource,
 	lister openBeadLister,
 	ledger queue.BeadLedger,
-	runs *RunRegistry,
+	runs *runregistry.RunRegistry,
 	queues *queuewiring.QueueStore,
 	projectDir string,
 ) *DrainDetector {

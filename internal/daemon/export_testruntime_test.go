@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -57,12 +58,12 @@ type TestRuntimeParams struct {
 	// tests (hk-e61c3.2).
 	MaxConcurrent int
 
-	// RunRegistry is the in-flight run registry for the work loop. When nil,
-	// ExportedTestRuntime creates a fresh NewRunRegistry(). Supply an explicit
+	// runregistry.RunRegistry is the in-flight run registry for the work loop. When nil,
+	// ExportedTestRuntime creates a fresh runregistry.NewRunRegistry(). Supply an explicit
 	// registry when the test needs to inspect or control it directly.
 	//
 	// Bead ref: hk-e61c3.2.
-	RunRegistry *RunRegistry
+	RunRegistry *runregistry.RunRegistry
 
 	// AdapterRegistry is the sealed adapter registry forwarded into
 	// handler.NewHandler as a latent seam (hk-gql20.16). When nil,
@@ -382,7 +383,7 @@ func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 
 	reg := p.RunRegistry
 	if reg == nil {
-		reg = NewRunRegistry()
+		reg = runregistry.NewRunRegistry()
 	}
 
 	var hookStore hookStoreIface

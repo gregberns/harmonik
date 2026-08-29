@@ -50,7 +50,7 @@ The spec does NOT own: the CLI surface and JSON-RPC transport (owned by [/Users/
 - Per-run state machine, dispatch eligibility, capacity gate — owned by [/Users/gb/github/harmonik/specs/execution-model.md §4.3, §7.1].
 - `br` adapter, `blocks`-edge resolution, bead-status enum — owned by [/Users/gb/github/harmonik/specs/beads-integration.md §4.3, §4.5].
 - Drain pseudocode and pause-class transitions — owned by [/Users/gb/github/harmonik/specs/operator-nfr.md §4.7 ON-027].
-- `queue-remove` / `queue-clear` semantics — deferred to v0.2 (see §A.3). Failed-queue recovery is NO LONGER deferred: it ships as `queue-recover` per §8.3b QM-052b.
+- `queue-remove` / `queue-clear` semantics — deferred to v0.2 (see §A.3). Failed-queue recovery is NO LONGER deferred: it ships as `queue-recover` per §8.3b QM-052b, and failed-queue drop (dispose of a stale failure without re-arming it) ships as `queue-drop` per §8.3c QM-052c.
 
 ## 2. Data Model
 
@@ -1157,6 +1157,59 @@ which cites all three.
 `operator-resume` aimed at a queue in `paused-by-failure` MUST be refused with a
 typed error that names `queue-recover`. Reporting success there is forbidden:
 nothing dispatches, so a success reply is a wrong answer rather than an error.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+### 8.3c QM-052c — Failed-queue drop
+
+`queue-drop` accepts exactly one selected queue in `paused-by-failure`. It is
+DISTINCT from `queue-recover`: recovery re-arms the failed items for another
+attempt; drop never re-arms anything. Drop exists for the failure whose bead
+already reached a terminal state by another path (most often: the same bead
+was worked to completion on a different queue while this queue sat paused),
+so re-arming it would dispatch already-finished work a second time.
+
+Unlike QM-052b, drop introduces no new queue-state transition. It composes
+two existing primitives: the QM-001 archive path §3.2 uses for `queue-cancel`
+(rename the canonical file to `<name>.json.failed-<timestamp>`) and the
+daemon's in-memory queue-store reap (`QueueSetter.ClearQueueByName`). The
+queue does not transition to `active` with its failure undone; it ceases to
+exist under that name, the same terminal shape `queue-cancel` already
+produces for any other queue.
+
+Before archiving, the daemon MUST refuse unless BOTH hold:
+
+1. The queue's `complete-with-failures` group is its LAST group — no group
+   with `GroupStatus: pending` may follow it. A queue with real pending work
+   behind the failure MUST be left untouched; discarding that work silently
+   is the one thing this operation exists to avoid doing.
+2. Every failed item's Beads record is NOT `open` and NOT `in_progress` (a
+   missing record or one in any other status counts as closed for this
+   purpose — the same collapse `BRQueueLedger.LookupStatus` already applies
+   for QM-020). No bead ledger wired MUST also refuse: unlike QM-052b's
+   preflight, which may be skipped because re-arming is reversible, drop's
+   preflight is the only thing standing between it and permanently discarding
+   a live failure, so it MUST NOT run un-checked.
+
+The operation MUST return exactly one typed rejection carrying a `reason`
+from this closed enum:
+
+```
+ENUM QueueDropReason: queue_not_found, queue_not_recoverable,
+                      queue_quarantined, drop_trailing_groups,
+                      drop_bead_not_closed, drop_ledger_unavailable,
+                      drop_read_failed, drop_write_failed
+```
+
+Codes `-32037` through `-32044` map to those values in that order. These
+codes are the queue-drop block, distinct from the queue-recovery block
+(`-32030` through `-32036`, QM-052b) and from every other allocated block.
+
+A committed drop produces no receipt: it produces no new queue state to
+re-check later, only the archived file's path, matching `queue-cancel`'s
+existing answer shape. The production entry point is `internal/daemon`
+`QueueRecoveryController.HandleQueueDrop`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent

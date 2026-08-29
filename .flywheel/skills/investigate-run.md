@@ -72,7 +72,7 @@ grep '"type":"reviewer_verdict"' .harmonik/events/events.jsonl \
 The `notes` field is the reviewer's block reason. Choose:
 - **Implementer misunderstood scope:** update the bead description via `br update <id> --description="..."` with clarified acceptance criteria. Re-dispatch.
 - **Spec-level ambiguity:** file a follow-up bead to clarify the spec first; block the original bead on it.
-- **Code quality:** add a `reviewer-guidance` label to the bead with the specific constraint (`br label <bead_id> "reviewer-guidance:<constraint>"`). Re-dispatch.
+- **Code quality:** add a `reviewer-guidance` label to the bead with the specific constraint (`br label add <bead_id> -l "reviewer-guidance:<constraint>"`). Re-dispatch.
 
 #### `merge_conflict`
 

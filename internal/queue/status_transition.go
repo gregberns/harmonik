@@ -263,6 +263,32 @@ func ResumeQueueFromDrain(q *Queue) error {
 	return nil
 }
 
+// PauseQueueForBudget parks an active queue whose attributed daily spend
+// reached its own Queue.SpendCapUSD ceiling (NQ-X1).
+func PauseQueueForBudget(q *Queue) error {
+	if q == nil {
+		return fmt.Errorf("queue: pause queue for budget: nil queue")
+	}
+	if q.Status != QueueStatusActive {
+		return fmt.Errorf("queue: pause queue for budget: status %q is not active", q.Status)
+	}
+	setQueueStatus(q, QueueStatusPausedByBudget)
+	return nil
+}
+
+// ResumeQueueFromBudget resumes a queue paused-by-budget, at the daily UTC
+// rollover that resets the attributed per-queue spend counters (NQ-X1).
+func ResumeQueueFromBudget(q *Queue) error {
+	if q == nil {
+		return fmt.Errorf("queue: resume queue from budget: nil queue")
+	}
+	if q.Status != QueueStatusPausedByBudget {
+		return fmt.Errorf("queue: resume queue from budget: status %q is not paused-by-budget", q.Status)
+	}
+	setQueueStatus(q, QueueStatusActive)
+	return nil
+}
+
 // CompleteQueue marks a queue completed after every group completed successfully.
 //
 // It accepts every status a completion accepts, plus the already-completed

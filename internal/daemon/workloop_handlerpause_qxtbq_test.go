@@ -16,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type hfatalLedger struct {
@@ -204,7 +205,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	}
 	ctrl := daemon.NewHandlerPauseController(ctrlBus, nil)
 
-	reg := daemon.NewRunRegistry()
+	reg := runregistry.NewRunRegistry()
 
 	policy := daemon.ExportedNewHandlerPausePolicyGoroutine(daemon.ExportedHandlerPausePolicyConfig{
 		AgentType:  core.AgentTypeClaudeCode,
@@ -238,9 +239,10 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	defer cancel()
 
 	loopDone := make(chan struct{})
+	var loopErr error
 	go func() {
 		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps)
+		loopErr = daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
 	hfatalFixturePollReopen(t, ledger, 30*time.Second)
@@ -293,5 +295,8 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	case <-loopDone:
 	case <-time.After(daemon.ExportedDaemonExitHangBudget):
 		t.Fatalf("work loop did not exit within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
+	}
+	if loopErr != nil {
+		t.Errorf("work loop returned non-nil error after context cancellation: %v", loopErr)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
+//nolint:gocognit,cyclop,funlen // graph traversal remains one state machine; split only at a real state boundary
 func driveDotWorkflow(
 	ctx context.Context,
 	env runloop.RunEnv,
@@ -471,29 +472,33 @@ func driveDotWorkflow(
 			if why != "" {
 				summary += ": " + why
 			}
+			var approveVerdict *workspace.ReviewVerdict
+			if success && priorVerdict == workspace.ReviewVerdictApprove {
+				// The normal APPROVE path reaches its terminal immediately. Carry
+				// the verdict to the merge spine so it can replace the implementer's
+				// provisional review trailers before the commit lands.
+				//nolint:errcheck // non-fatal: merge may proceed when the verdict file cannot be read
+				approveVerdict, _ = readDotReviewVerdictRetry(ctx, runner, wtPath)
+			}
 			return dotWorkflowResult{
 				success:        success,
 				terminalNodeID: currentNodeID,
 				needsAttention: !success,
 				summary:        summary,
+				approveVerdict: approveVerdict,
 			}
 
 		case decision.Failed:
-			if decision.CompletionReason == "cap_hit" && currentNodeID == "commit_gate" && !graphHasReviewerNode(nodesByID) {
-				if salvageHead, salvageErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); salvageErr == nil &&
-					salvageHead != "" && salvageHead != parentSHA {
-					return dotWorkflowResult{
-						success: true,
-						summary: "dot: commit_gate cap-hit salvaged — committed tip present; auto-advancing to merge (hk-1vlz F42)",
-					}
-				}
-			}
 			needsAttention := true
 			summary := fmt.Sprintf("dot: cascade failed at node %q: class=%s reason=%s",
 				currentNodeID, decision.FailureClass, decision.FailureReason)
 			if decision.CompletionReason == "cap_hit" {
 				summary = fmt.Sprintf("dot: traversal cap hit at node %q (%s)",
 					currentNodeID, decision.FailureReason)
+				if committedHead, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); headErr == nil &&
+					committedHead != "" && committedHead != parentSHA {
+					summary += fmt.Sprintf("; committed worktree HEAD: %s", committedHead)
+				}
 			}
 			return dotWorkflowResult{
 				success:        false,
@@ -796,7 +801,7 @@ func dispatchDotAgenticNode(
 		HeartbeatViaTap: !isReviewer,
 		OnBeforeLaunch:  emitReviewerLaunched,
 		// hk-b4xf2: the stale watcher's silent-hang drive and stategather's
-		// dashboard read both reach the lifecycle machine through the RunHandle.
+		// dashboard read both reach the lifecycle machine through the runregistry.RunHandle.
 		// A graph run never set it, so both were inert on the path that carries
 		// the traffic. A graph run holds one session per node, so the handle
 		// carries the machine of the node running now — which is the one a stale

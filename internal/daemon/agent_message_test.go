@@ -109,7 +109,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			payloadBytes, marshalErr := json.Marshal(tc.payload)
 			if marshalErr != nil {
@@ -123,7 +122,10 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 
 			var gotLive bool
 			{
-				evtID, _ := uuid.NewV7()
+				evtID, uuidErr := uuid.NewV7()
+				if uuidErr != nil {
+					t.Fatalf("live event uuid: %v", uuidErr)
+				}
 				evt := core.Event{
 					EventID:       core.EventID(evtID),
 					SchemaVersion: 1,
@@ -148,7 +150,6 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 			var gotReplay bool
 			{
 				dir := t.TempDir()
-				jsonlPath := filepath.Join(dir, "events.jsonl")
 
 				cursorID, uuidErr := uuid.NewV7()
 				if uuidErr != nil {
@@ -167,10 +168,11 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 					Payload:       json.RawMessage(payloadBytes),
 				}
 
-				f, createErr := os.Create(jsonlPath)
+				f, createErr := os.CreateTemp(dir, "events-*.jsonl")
 				if createErr != nil {
 					t.Fatalf("create jsonl: %v", createErr)
 				}
+				jsonlPath := f.Name()
 				if encErr := json.NewEncoder(f).Encode(testEvt); encErr != nil {
 					_ = f.Close()
 					t.Fatalf("encode test event: %v", encErr)
@@ -189,7 +191,7 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 				go func() {
 					defer close(handlerDone)
 					hub.HandleSubscribe(ctx, srv, SubscribeRequest{
-						SinceEventID:     uuid.UUID(cursorID).String(),
+						SinceEventID:     cursorID.String(),
 						HeartbeatSeconds: 600,
 						To:               tc.to,
 						From:             tc.from,
@@ -198,8 +200,13 @@ func TestMatchAgentMessage_SharedTable(t *testing.T) {
 				}()
 
 				rdr := bufio.NewReader(cli)
-				_ = cli.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-				line, _ := rdr.ReadBytes('\n')
+				if deadlineErr := cli.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); deadlineErr != nil {
+					t.Fatalf("set read deadline: %v", deadlineErr)
+				}
+				line, readErr := rdr.ReadBytes('\n')
+				if readErr != nil && tc.want {
+					t.Fatalf("read replay event: %v", readErr)
+				}
 
 				_ = cli.Close()
 				cancel()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func writeTestJSONL(t *testing.T, dir string, records []struct {
@@ -330,11 +331,11 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 
 // TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner verifies PI-073: a
 // rate-limit event from a Pi run MUST NOT snap the global concurrency ceiling.
-// The backstop must skip NotifyRateLimit when the RunHandle's agent type is Pi.
+// The backstop must skip NotifyRateLimit when the runregistry.RunHandle's agent type is Pi.
 func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -342,8 +343,8 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	piRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000010"))
-	reg := NewRunRegistry()
-	handle := &RunHandle{}
+	reg := runregistry.NewRunRegistry()
+	handle := &runregistry.RunHandle{}
 	handle.SetAgentType(core.AgentTypePi)
 	reg.Register(piRunID, handle)
 
@@ -359,7 +360,10 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 		RetryAfterSeconds: &retry,
 		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 	}
-	plBytes, _ := json.Marshal(pl)
+	plBytes, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	evt := core.Event{Payload: plBytes}
 
 	if err := b.handle(context.Background(), evt); err != nil {
@@ -376,7 +380,7 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -384,8 +388,8 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	claudeRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000011"))
-	reg := NewRunRegistry()
-	handle := &RunHandle{}
+	reg := runregistry.NewRunRegistry()
+	handle := &runregistry.RunHandle{}
 	handle.SetAgentType(core.AgentTypeClaudeCode)
 	reg.Register(claudeRunID, handle)
 
@@ -401,7 +405,10 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 		RetryAfterSeconds: &retry,
 		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 	}
-	plBytes, _ := json.Marshal(pl)
+	plBytes, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	evt := core.Event{Payload: plBytes}
 
 	if err := b.handle(context.Background(), evt); err != nil {

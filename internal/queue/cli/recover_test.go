@@ -72,6 +72,42 @@ func TestRunQueueRecover_AcceptsTheQueueFlagForm(t *testing.T) {
 	}
 }
 
+func TestRunQueueRecover_DropSendsTheQueueDropOp(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedOp string
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue":         "investigate",
+			"queue_id":      "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0300",
+			"dropped":       []any{"hk-canary"},
+			"dropped_count": 1,
+			"archive_path":  "/tmp/investigate.json.failed-20260824000000",
+		})
+	})
+
+	var out, errOut strings.Builder
+	got := cli.RunQueueRecover(context.Background(), []string{"--project", projectDir, "--drop", "investigate"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedOp != "queue-drop" {
+		t.Errorf("op = %q, want %q — --drop must route to queue-drop, not queue-recover", capturedOp, "queue-drop")
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("queue = %q, want %q", capturedQueue, "investigate")
+	}
+	if !strings.Contains(out.String(), "hk-canary") {
+		t.Errorf("stdout = %q, want the dropped bead listed", out.String())
+	}
+}
+
 func TestRunQueueRecover_RefusesASuccessThatCarriesNoReceipt(t *testing.T) {
 	t.Parallel()
 

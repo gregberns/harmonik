@@ -20,10 +20,9 @@ set -euo pipefail
 #   - queue_perqueue_pause_globalflag_tigaf6_test.go — asserts on the
 #     daemon-owned OperatorPauseController.
 #
-# NOT yet fenced: *spendmeter*. internal/daemon/spendmeter_hkk3f8g.go and
-# perqueuespendmeter_tigaf11.go are still in daemon (they are slice E3b, gated on
-# the RunRegistry closure port). Add the pattern when E3b lands, not before, or
-# the guard fails its own repo.
+# *spendmeter* fenced too: spendmeter_hkk3f8g.go and perqueuespendmeter_tigaf11.go
+# moved to internal/spend (P2 spendmeter-extract), gated on the RunRegistry
+# closure port (runregistry-extract).
 #
 # Exit 0: clean. Exit 1: the door was reopened.
 
@@ -38,7 +37,7 @@ while IFS= read -r f; do
     HITS=$((HITS + 1))
 done < <(find internal/daemon -type f \
              \( -name '*queuestore*.go' -o -name '*queueledger*.go' \
-                -o -name '*queue_operatorevent*.go' \) \
+                -o -name '*queue_operatorevent*.go' -o -name '*spendmeter*.go' \) \
              ! -name '*_test.go')
 
 # (2) No re-declaration of the symbols that moved to internal/queuewiring.

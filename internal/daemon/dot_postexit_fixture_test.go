@@ -17,6 +17,7 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 const dotFixtureGraph = `digraph "dot-postexit-fixture" {
@@ -107,7 +108,7 @@ type dotFixtureOpts struct {
 	// bag of knobs, not a call scope: the run context is the thing under test
 	// here, so a test must be able to supply its own instead of taking the
 	// fixture's default.
-	RunContext context.Context
+	RunContext context.Context //nolint:containedctx // dotFixtureOpts is a bag of knobs, not a call scope; the run context under test must be swappable per test.
 
 	// HookOutcome is the raw outcome_emitted payload the agent reported, or
 	// empty for "nothing arrived".
@@ -131,9 +132,9 @@ type dotFixtureOpts struct {
 	// dotFixtureHookStore over HookOutcome.
 	HookStore runloop.HookStore
 
-	// RunRegistry lets a test read the in-flight RunHandle while the run is
+	// runregistry.RunRegistry lets a test read the in-flight runregistry.RunHandle while the run is
 	// still live. Nil creates a fresh one inside the deps.
-	RunRegistry *daemon.RunRegistry
+	RunRegistry *runregistry.RunRegistry
 
 	// BeadDescription is the bead body the ledger reports. A `## Branching`
 	// block in it is how a bead declares a cross-repo target_repo.

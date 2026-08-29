@@ -51,7 +51,21 @@ func trailingPositional(args []string) string {
 }
 
 func harmonikUsage() {
-	fmt.Fprint(os.Stderr, `harmonik — agent-driven bead execution daemon
+	fmt.Fprint(os.Stderr, harmonikUsageHeader)
+	for _, command := range commandVerbs {
+		if command.description == "" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  %-22s %s\n", command.name, command.description)
+	}
+	fmt.Fprint(os.Stderr, harmonikUsageFooter)
+}
+
+func daemonUsage() {
+	fmt.Fprint(os.Stderr, harmonikUsageHeader, harmonikUsageFooter)
+}
+
+const harmonikUsageHeader = `harmonik — agent-driven bead execution daemon
 
 USAGE
   harmonik <subcommand> [flags]
@@ -61,41 +75,9 @@ USAGE
   To start a daemon, name it: "harmonik start daemon".
 
 SUBCOMMANDS
-  version          Print semver + commit hash and exit (also: --version);
-                   "version --binary PATH [--contains COMMIT]" reads a binary's
-                   embedded vcs.revision stamp — the build-provenance check that
-                   generalises across fixes (version --help lists the exit codes)
-  init             Bootstrap a new project: create .harmonik/, init beads DB, write configs, render AGENTS.md
-  start            Launch a daemon or an agent session (start daemon | start captain | start crew <name> | start commodore | start admiral | start assessor); "start daemon" is the ONLY way to start a daemon
-  sync-assets      Reconcile a project's instruction files with the binary's embedded assets (dry-run by default)
-  run              Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
-  handler          Inspect or resume a paused handler
-  queue            Submit or inspect the bead queue (daemon must be running)
-  subscribe        Stream daemon events (run_completed/run_failed/run_stale/heartbeat) as NDJSON
-  comms            Agent-to-agent messaging bus (send/recv/who/log/join/leave)
-  crew             Captain & crew session management (start/stop/list)
-  reconcile        Close in_progress beads whose implementation has merged
-  commit-msg       Check what a commit message CLAIMS about its review ("commit-msg validate <file>")
-  confirm-verdict  NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
-  veto-verdict     NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
-  graph            Workflow graph utilities (validate, etc.)
-  promote          Cherry-pick banked SHA(s) to target with build gate + push, or open a PR (--pr)
-  release          Release ledger management (ledger, certify, yank)
-  supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
-  keeper           Context watcher for a managed agent pane (session-keeper Phase-1)
-  sleep            Park all LLM sessions now (manual quiesce override; gated on GenuineDrain unless --force)
-  wake             Wake sleeping LLM sessions (--agent <name> or --all; fleet-stall escape hatch)
-  beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
-  beads-dedup      Deduplicate .beads/issues.jsonl in-place (keeps newest record per bead ID)
-  smoke            5-signal end-to-end verification of a live daemon (hk-4rkrg)
-  harness          Run the scenario harness (--list, --dry-run, --cadence, --scenario)
-  goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)
-  project-hash     Print the PL-006a project hash for a directory (no daemon required)
-  remote-control-prefix  Print the per-project Claude RC label prefix (no daemon required)
-  tmux-start       Create a detached tmux session and attach to it (starts no daemon)
-  hook-relay       Forward a Claude hook event to the daemon (internal use)
-  usage            Token cost analysis: join transcripts × events by run_id (no daemon required)
+`
 
+const harmonikUsageFooter = `
 DAEMON FLAGS (used with "start daemon")
   --project DIR          Project directory (default: current working directory)
   --max-concurrent N     Max simultaneous beads (default 1)
@@ -103,17 +85,12 @@ DAEMON FLAGS (used with "start daemon")
   --no-auto-pull         No-op alias; queue-only is the default (back-compat)
 
 EXAMPLES
-  # Canonical dispatch: start one persistent daemon (queue-only), then submit
-  # beads to its queue. This is the primary path for ongoing work.
   harmonik start daemon --project /path/to/project --no-auto-pull --max-concurrent 4
   harmonik queue submit --beads hk-abc123,hk-def456
   harmonik subscribe --types run_completed,run_failed --json
 
-  # Legacy/solo-bootstrap: submits to a running daemon if one exists, else runs
-  # the beads inline and exits on completion.
   harmonik run hk-abc123
   harmonik run --beads hk-abc123,hk-def456 --max-concurrent 2
 
 Run 'harmonik <subcommand> --help' for subcommand-specific flags.
-`)
-}
+`

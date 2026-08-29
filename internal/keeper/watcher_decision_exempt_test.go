@@ -62,15 +62,18 @@ func k6EmitPresence(t *testing.T, ctx context.Context, projectDir, agent string,
 
 func k6RespawnConfig(projectDir, agent string) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 10 * time.Millisecond,
-		Staleness:    5 * time.Millisecond, // gauge immediately stale/absent
-		RespawnGrace: 5 * time.Millisecond,
-		RespawnCmd:   "true",
-		TmuxTarget:   "dummy-pane",
-		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true }, // pane idle
-		InjectFn:     func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		Staleness:            5 * time.Millisecond, // gauge immediately stale/absent
+		RespawnGrace:         5 * time.Millisecond,
+		RespawnCmd:           "true",
+		TmuxTarget:           "dummy-pane",
+		IsPaneIdleFn:         func(_ context.Context, _ string) bool { return true }, // pane idle
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 	}
 }
 

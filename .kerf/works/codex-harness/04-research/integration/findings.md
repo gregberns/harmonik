@@ -68,7 +68,7 @@ Absent all four → `claude`, byte-identical to today.
 
 ```bash
 # one-off: run a single bead on codex
-br label add hk-xxxx harness:codex
+br label add hk-xxxx -l harness:codex
 
 # a whole queue on codex (named-queues)
 harmonik queue submit codex-queue.json     # group/queue carries harness:codex default

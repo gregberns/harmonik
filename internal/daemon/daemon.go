@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/spend"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -610,7 +611,7 @@ type daemonTestHooks struct {
 	// they can trip the meter with a small number of synthetic events.
 	//
 	// Bead ref: hk-c7lxc.
-	spendMeterObserver func(*DaemonSpendMeter)
+	spendMeterObserver func(*spend.DaemonSpendMeter)
 
 	// worktreeFactory, when non-nil, replaces productionWorktreeFactory in
 	// beadRunOne.  Tests use this to inject a pre-committing factory that

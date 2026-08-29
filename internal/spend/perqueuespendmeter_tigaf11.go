@@ -1,4 +1,4 @@
-package daemon
+package spend
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type perQueueCounters struct {
@@ -20,7 +21,7 @@ type perQueueCounters struct {
 }
 
 // PerQueueSpendMeter tracks per-queue daemon-spawned claude spend (via
-// budget_accrual events, attributed back to a queue through the RunRegistry) and
+// budget_accrual events, attributed back to a queue through the runregistry.RunRegistry) and
 // pauses ONLY a queue whose attributed daily spend reaches its own
 // Queue.SpendCapUSD ceiling (NQ-X1). The global DaemonSpendMeter remains the
 // daemon-wide ceiling.
@@ -38,7 +39,7 @@ type PerQueueSpendMeter struct {
 	oversubLogged map[string]struct{}
 
 	// collaborators — immutable after construction.
-	reg        *RunRegistry
+	reg        *runregistry.RunRegistry
 	store      *queuewiring.QueueStore
 	projectDir string
 
@@ -52,12 +53,12 @@ type PerQueueSpendMeter struct {
 }
 
 // NewPerQueueSpendMeter constructs a PerQueueSpendMeter. reg is the shared
-// *RunRegistry used to attribute a budget_accrual chunk to its queue; store is
+// *runregistry.RunRegistry used to attribute a budget_accrual chunk to its queue; store is
 // the QueueStore whose Queue.Status this meter mutates on cap-trip and rollover;
 // projectDir is the persist root (empty disables persistence, e.g. in tests).
 //
 // Bead ref: hk-tigaf.11.
-func NewPerQueueSpendMeter(reg *RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
+func NewPerQueueSpendMeter(reg *runregistry.RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
 	return &PerQueueSpendMeter{
 		dayKey:        spendMeterTodayKey(),
 		counters:      make(map[string]*perQueueCounters),
@@ -94,7 +95,7 @@ func (m *PerQueueSpendMeter) Subscribe(bus eventbus.EventBus) error {
 func (m *PerQueueSpendMeter) handleBudgetAccrual(ctx context.Context, evt core.Event) error {
 	var payload core.BudgetAccrualPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
-		return nil
+		return nil //nolint:nilerr // a malformed budget_accrual payload is dropped, not fatal
 	}
 	if payload.CostBasis != core.CostBasisOutputBytes {
 		return nil // only accumulate output_bytes at this layer (mirrors the global meter)
@@ -163,7 +164,10 @@ func (m *PerQueueSpendMeter) pauseQueueByBudget(ctx context.Context, queueName s
 		lq.Done()
 		return nil
 	}
-	q.Status = queue.QueueStatusPausedByBudget
+	if err := queue.PauseQueueForBudget(q); err != nil {
+		lq.Done()
+		return fmt.Errorf("PerQueueSpendMeter.pauseQueueByBudget[%s]: %w", queueName, err)
+	}
 	lq.LockedSetQueueByName(queueName, q)
 
 	if m.projectDir != "" {
@@ -194,7 +198,11 @@ func (m *PerQueueSpendMeter) unpauseBudgetPausedQueues(ctx context.Context) {
 		if q == nil || q.Status != queue.QueueStatusPausedByBudget {
 			continue
 		}
-		q.Status = queue.QueueStatusActive
+		if err := queue.ResumeQueueFromBudget(q); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: per-queue-spend-meter: rollover resume[%s]: %v\n", name, err)
+			continue
+		}
 		lq.LockedSetQueueByName(name, q)
 		resumed = true
 		if m.projectDir != "" {

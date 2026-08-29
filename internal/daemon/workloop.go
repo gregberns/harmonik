@@ -1,3 +1,4 @@
+//nolint:contextcheck,nakedret // existing orchestration file; contexts and named results encode run lifecycles
 package daemon
 
 import (
@@ -26,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
@@ -52,8 +54,8 @@ type strandedInProgressResetter interface {
 	) error
 }
 
-func newLocalRunRegistry() *RunRegistry {
-	return NewRunRegistry()
+func newLocalRunRegistry() *runregistry.RunRegistry {
+	return runregistry.NewRunRegistry()
 }
 
 // beadRunOne executes a single claimed bead end-to-end: worktree creation,
@@ -496,8 +498,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			if dotResult.approveVerdict == nil || rbc != nil {
 				return
 			}
-			if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
+			if amendErr := runmerge.ReplaceReviewTrailersOnHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.ReplaceReviewTrailersOnHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
 					retry, beadID, amendErr)
 			}
 		},

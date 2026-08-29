@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
@@ -53,13 +54,13 @@ func stallSignatureEvent(sig core.StallSignature) (runexec.EventKind, bool) {
 	}
 }
 
-func (w *StaleWatcher) stallPass(ctx context.Context, now time.Time, handles map[core.RunID]*RunHandle) {
+func (w *StaleWatcher) stallPass(ctx context.Context, now time.Time, handles map[core.RunID]*runregistry.RunHandle) {
 	for runID, handle := range handles {
 		w.stallPassRun(ctx, runID, handle, now)
 	}
 }
 
-func (w *StaleWatcher) stallPassRun(ctx context.Context, runID core.RunID, handle *RunHandle, now time.Time) {
+func (w *StaleWatcher) stallPassRun(ctx context.Context, runID core.RunID, handle *runregistry.RunHandle, now time.Time) {
 	snap, cfg, ok := w.stallInputs(runID, handle, now)
 	if !ok {
 		return
@@ -81,7 +82,7 @@ func (w *StaleWatcher) stallPassRun(ctx context.Context, runID core.RunID, handl
 }
 
 func (w *StaleWatcher) stallInputs(
-	runID core.RunID, handle *RunHandle, now time.Time,
+	runID core.RunID, handle *runregistry.RunHandle, now time.Time,
 ) (sentinel.Snapshot, sentinel.LayerAConfig, bool) {
 	if handle.StartedAt.IsZero() {
 		return sentinel.Snapshot{}, sentinel.LayerAConfig{}, false

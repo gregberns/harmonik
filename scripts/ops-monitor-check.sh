@@ -6,7 +6,7 @@
 #   1a. supervisor-up   — harmonik supervise status --json; file-surface, no daemon needed.
 #                         supervisor-down is [IMMEDIATE]; when BOTH daemon and supervisor are
 #                         down the fleet has no self-healing path (hk-pen9: 7h11m gap).
-#   2. paused-queues    — main queue or active crew queue paused-by-failure
+#   2. paused-queues    — main queue or crew queue paused-by-failure
 #   3. single-mode      — max_concurrent == 1 (throughput bottleneck)
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses;
 #                         suppressed if crew posted an agent_message within 900s (comms
@@ -93,9 +93,7 @@ CAPTAIN_ABSENT_THRESHOLD=600   # seconds the captain may be absent from comms-wh
 
 # Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
 # immediate alert. Add exact names or fnmatch-style globs. Editable here.
-INERT_SUPPRESS_JSON='["main","remote-substrate","chani-q*","duncan-q*","liet-q*","stilgar-q*"]'
-# Queues that are always alert-worthy even when their crew is offline.
-LIVE_ALLOW_JSON='[]'
+INERT_SUPPRESS_JSON='["remote-substrate","chani-q*","duncan-q*","liet-q*","stilgar-q*"]'
 # Re-alert cooldown for the SAME still-active immediate signal (seconds).
 IMMEDIATE_COOLDOWN=1800  # 30 minutes
 # Shorter re-alert cooldown for critical-component down signals (daemon / supervisor / fleet /
@@ -457,8 +455,11 @@ fi
 # and pushes a lane-NAMED wake the captain cannot self-score its way out of.
 #
 # This block computes, for each lane in .harmonik/context/lanes.json:
-#   - the lane is a candidate iff its epic_id is non-null AND its gate is null OR
-#     EXPIRED (gate.expires < now == absent; LAPSE→autonomous default, Part 1b), AND
+#   - the lane has a non-null epic_id, AND
+#   - a lane with a gate is a candidate when that gate is expired or malformed
+#     (LAPSE→autonomous default, Part 1b), while a lane without a gate is a candidate
+#     unless its status is exactly "parked". A missing, null, or unknown status stays
+#     armed: hiding a dashboard row is cheap, but muting a wake is not, AND
 #   - `br ready --parent <epic_id> --limit 0 --json` returns >=1 ready bead.
 # "KNOWN" = present in the index (a fact read from a file), NOT "in the live kerf-next
 # feed right now." Lanes with epic_id:null contribute ZERO — and the REASON changed on
@@ -488,9 +489,10 @@ if [[ -f "$LANES_FILE" ]]; then
   elif ! jq -e . "$LANES_FILE" >/dev/null 2>&1; then
     echo "ops-monitor-check: WARN — lanes.json missing/unparseable; skipping known-ready-lane check (SD-1)" >&2
   else
-    # Emit "lane<TAB>epic_id" for each candidate lane: non-null epic_id AND gate is
-    # null OR its expires is absent OR expired (gate.expires < now). gate.expires may be
-    # DATE-ONLY (the live index writes "2026-07-09") OR full RFC3339 ("2026-07-09T00:00:00Z");
+    # Emit "lane<TAB>epic_id" for each candidate lane. A non-null gate decides only by
+    # its expiry; a null gate consults status and excludes only the literal "parked".
+    # gate.expires may be DATE-ONLY (the live index writes "2026-07-09") OR full
+    # RFC3339 ("2026-07-09T00:00:00Z");
     # fromdateiso8601 needs the full form, so try (expires + "T00:00:00Z") FIRST (parses a
     # date-only value), fall back to the raw value (parses an already-full RFC3339), and
     # only if BOTH fail (missing/null/malformed) default to 0 == past == candidate (the
@@ -500,13 +502,16 @@ if [[ -f "$LANES_FILE" ]]; then
       (.lanes // [])[]
       | select(.epic_id != null)
       | select(
-          (.gate == null)
-          or ((.gate.expires // null) == null)
-          or (
-              ( ((.gate.expires + "T00:00:00Z") | fromdateiso8601?)
-                // (.gate.expires | fromdateiso8601?)
-                // 0 ) < $now
-            )
+          if .gate == null then
+            ((.status // "active") != "parked")
+          else
+            ((.gate.expires // null) == null)
+            or (
+                ( ((.gate.expires + "T00:00:00Z") | fromdateiso8601?)
+                  // (.gate.expires | fromdateiso8601?)
+                  // 0 ) < $now
+              )
+          end
         )
       | "\(.lane)\t\(.epic_id)"
     ' "$LANES_FILE" 2>/dev/null) || _LANE_CANDIDATES=""
@@ -751,7 +756,7 @@ _OM_PY=$(mktemp "${TMPDIR:-/tmp}/ops-monitor-XXXXXX.py")
 # Part 1: imports + variable bindings — shell expansion via heredoc (writing to a
 # file, not a -c arg, so double-quotes in expanded values are passed through safely).
 cat >> "$_OM_PY" << OM_VARS
-import json, sys, os, datetime, fnmatch
+import json, sys, os, datetime, fnmatch, glob
 
 proj               = '$PROJ'
 ts                 = '$TS'
@@ -777,7 +782,6 @@ persistent_immediate_cooldown = int('$PERSISTENT_IMMEDIATE_COOLDOWN')
 ops_critical_count   = int('$OPS_CRITICAL_COUNT')
 ops_critical_elapsed = int('$OPS_CRITICAL_ELAPSED')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
-live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
 qlist_raw          = '''$QUEUE_LIST_JSON'''
 ready_count        = int('$READY_COUNT')
@@ -1184,7 +1188,22 @@ for line in comms_raw.strip().splitlines():
 queues = []
 max_concurrent = 0
 paused_queues  = []
+paused_queue_owners = {}
 ready_unstaffed = []
+
+# Queue names are operator-defined routing keys. Resolve their owners from the
+# durable crew registry instead of deriving a crew name from the queue name.
+queue_owners = {}
+for crew_path in glob.glob(os.path.join(proj, '.harmonik', 'crew', '*.json')):
+    try:
+        with open(crew_path, encoding='utf-8') as crew_file:
+            crew_record = json.load(crew_file)
+        crew_name = crew_record.get('name', '')
+        crew_queue = crew_record.get('queue', '')
+        if crew_name and crew_queue:
+            queue_owners[crew_queue] = crew_name
+    except Exception:
+        pass
 
 if daemon_up and qlist_raw.strip().startswith('{'):
     try:
@@ -1199,16 +1218,14 @@ if daemon_up and qlist_raw.strip().startswith('{'):
             queues.append({'name': qname, 'status': qstatus, 'workers': workers,
                            'pending_items': pending, 'failed_items': failed})
 
-            # Paused signal: alert only when queue is NOT inert AND its crew is
-            # online (or the queue is in the explicit live-allow list).
+            # A stopped non-inert queue needs attention whether its owner is
+            # online, offline, or unknown. An offline owner makes the alert more
+            # important because nobody is present to notice the failure.
             if qstatus == 'paused-by-failure':
                 is_inert = any(fnmatch.fnmatch(qname, pat) for pat in inert_suppress)
                 if not is_inert:
-                    crew_guess    = qname[:-2] if qname.endswith('-q') else qname
-                    is_crew_online = crew_guess in online_crews
-                    is_live_allow  = qname in live_allow
-                    if is_crew_online or is_live_allow:
-                        paused_queues.append(qname)
+                    paused_queues.append(qname)
+                    paused_queue_owners[qname] = queue_owners.get(qname, '')
 
             # Ready-unstaffed: pending items but workers==0 and crew not online
             if pending > 0 and workers == 0 and qstatus not in ('paused-by-failure', 'paused-by-drain'):
@@ -1809,6 +1826,7 @@ snapshot = {
     'single_mode': single_mode,
     'queues': queues,
     'paused_queues': paused_queues,
+    'paused_queue_owners': paused_queue_owners,
     'crew_status': crew_status,
     'stale_crews': stale_signal_crews,
     'ready_unstaffed': ready_unstaffed,

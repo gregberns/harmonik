@@ -18,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/workflow"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 func em012aProjectDir(t *testing.T) string {
@@ -311,6 +312,9 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 	if result.TerminalNodeID != "close" {
 		t.Errorf("EM-012a: TerminalNodeID=%q, want %q (APPROVE path → close; "+
 			"BLOCK/cap-hit → close-needs-attention)", result.TerminalNodeID, "close")
+	}
+	if result.ApproveVerdict == nil || result.ApproveVerdict.Verdict != workspace.ReviewVerdictApprove {
+		t.Errorf("EM-012a: ApproveVerdict=%+v, want the reviewer verdict on the ordinary close path", result.ApproveVerdict)
 	}
 
 	events := collector.eventTypes()

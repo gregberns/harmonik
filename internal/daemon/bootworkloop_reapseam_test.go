@@ -10,6 +10,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
@@ -76,7 +77,7 @@ func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
 		t.Fatal("force-reap callback was not wired")
 	}
 	groupIndex := 0
-	forceReap(core.RunID{}, &RunHandle{
+	forceReap(core.RunID{}, &runregistry.RunHandle{
 		BeadID:          "hk-force-reaped",
 		QueueName:       queueName,
 		QueueID:         &queueID,

@@ -380,16 +380,19 @@ func TestWatcher_RespawnSuppressedWhenHeld(t *testing.T) {
 
 		em := &keeper.RecordingEmitter{}
 		cfg := keeper.WatcherConfig{
-			AgentName:    agent,
-			ProjectDir:   dir,
-			PollInterval: 10 * time.Millisecond,
-			Staleness:    5 * time.Millisecond,
-			RespawnGrace: 5 * time.Millisecond,
-			RespawnCmd:   "printf RESPAWNED > " + sentinel,
-			TmuxTarget:   "dummy-pane",
-			IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
-			InjectFn:     func(_ context.Context, _ string) error { return nil },
-			HeldCheckFn:  func(_, _ string) bool { return held },
+			AgentName:            agent,
+			ProjectDir:           dir,
+			PollInterval:         10 * time.Millisecond,
+			Staleness:            5 * time.Millisecond,
+			RespawnGrace:         5 * time.Millisecond,
+			RespawnCmd:           "printf RESPAWNED > " + sentinel,
+			TmuxTarget:           "dummy-pane",
+			IsPaneIdleFn:         func(_ context.Context, _ string) bool { return true },
+			InjectFn:             func(_ context.Context, _ string) error { return nil },
+			SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+			MessageInjectFn:      func(context.Context, string, string) error { return nil },
+			DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
+			HeldCheckFn:          func(_, _ string) bool { return held },
 		}
 		keeperDir := filepath.Join(dir, ".harmonik", "keeper")
 		if err := os.MkdirAll(keeperDir, 0o700); err != nil {
@@ -424,18 +427,21 @@ func TestWatcher_LivePaneRecoverSuppressedWhenHeld(t *testing.T) {
 		rec := &lprHoldRecorder{}
 		em := &keeper.RecordingEmitter{}
 		cfg := keeper.WatcherConfig{
-			AgentName:           agent,
-			ProjectDir:          dir,
-			PollInterval:        10 * time.Millisecond,
-			Staleness:           5 * time.Millisecond,
-			LiveRecoverGrace:    10 * time.Millisecond,
-			LiveRecoverCooldown: 10 * time.Second,
-			TmuxTarget:          "dummy-pane",
-			IsPaneAliveFn:       func(_ context.Context, _ string) bool { return true },
-			OperatorAttachedFn:  func(_ string) bool { return false },
-			LiveRecoverFn:       rec.fn,
-			InjectFn:            func(_ context.Context, _ string) error { return nil },
-			HeldCheckFn:         func(_, _ string) bool { return held },
+			AgentName:            agent,
+			ProjectDir:           dir,
+			PollInterval:         10 * time.Millisecond,
+			Staleness:            5 * time.Millisecond,
+			LiveRecoverGrace:     10 * time.Millisecond,
+			LiveRecoverCooldown:  10 * time.Second,
+			TmuxTarget:           "dummy-pane",
+			IsPaneAliveFn:        func(_ context.Context, _ string) bool { return true },
+			OperatorAttachedFn:   func(_ string) bool { return false },
+			LiveRecoverFn:        rec.fn,
+			InjectFn:             func(_ context.Context, _ string) error { return nil },
+			SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+			MessageInjectFn:      func(context.Context, string, string) error { return nil },
+			DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
+			HeldCheckFn:          func(_, _ string) bool { return held },
 		}
 		runWatcherFor(context.Background(), cfg, em, 800*time.Millisecond)
 		return rec.count()
@@ -669,15 +675,18 @@ func TestWatcher_OlderBinaryIgnoresHoldMarker(t *testing.T) {
 	sentinel := filepath.Join(dir, "respawned.flag")
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   dir,
-		PollInterval: 10 * time.Millisecond,
-		Staleness:    5 * time.Millisecond,
-		RespawnGrace: 5 * time.Millisecond,
-		RespawnCmd:   "printf RESPAWNED > " + sentinel,
-		TmuxTarget:   "dummy-pane",
-		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
-		InjectFn:     func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           dir,
+		PollInterval:         10 * time.Millisecond,
+		Staleness:            5 * time.Millisecond,
+		RespawnGrace:         5 * time.Millisecond,
+		RespawnCmd:           "printf RESPAWNED > " + sentinel,
+		TmuxTarget:           "dummy-pane",
+		IsPaneIdleFn:         func(_ context.Context, _ string) bool { return true },
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 		// Older binary: hold gate absent — always returns false regardless of disk.
 		HeldCheckFn: func(_, _ string) bool { return false },
 	}

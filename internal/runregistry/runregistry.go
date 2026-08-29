@@ -1,4 +1,7 @@
-package daemon
+// Package runregistry holds the concurrency-safe in-memory registry of
+// currently in-flight bead runs (RunHandle, RunRegistry) that the daemon's
+// dispatch, capacity-gate, and reaper paths read and write.
+package runregistry
 
 import (
 	"context"
@@ -217,6 +220,14 @@ func (h *RunHandle) Aborted() bool {
 	return h.aborted.Load()
 }
 
+// MarkAborted records that the never-spawned reaper (StaleWatcher) is
+// aborting this run before cancelling its context (hk-0z5x). Maps to
+// aborted.Store(true) — the setter that lifts the daemon-private `aborted`
+// field write across RunHandlePort so the run path never names it directly.
+func (h *RunHandle) MarkAborted() {
+	h.aborted.Store(true)
+}
+
 // RunRegistry is a concurrency-safe map of run_id → *RunHandle.
 //
 // It is safe to call Register, Unregister, Get, Len, and Snapshot from
@@ -360,7 +371,11 @@ func (r *RunRegistry) HasBeadRun(beadID core.BeadID) bool {
 	return false
 }
 
-func (r *RunRegistry) snapshotWithKeys() map[core.RunID]*RunHandle {
+// SnapshotWithKeys returns a stable copy of the registry keyed by run ID.
+// Like Snapshot, mutations to RunHandle fields via the returned pointers are
+// visible to other callers, but additions/deletions to the registry after
+// SnapshotWithKeys returns are not reflected in the returned map.
+func (r *RunRegistry) SnapshotWithKeys() map[core.RunID]*RunHandle {
 	r.mu.RLock()
 	out := make(map[core.RunID]*RunHandle, len(r.handles))
 	for id, h := range r.handles {

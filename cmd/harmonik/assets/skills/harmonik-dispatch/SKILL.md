@@ -225,8 +225,11 @@ to carry this rule in your head.
 
 **Leave the failed bead open.** Recovery reads the ledger for every failed item
 before it touches the queue, and refuses with `recovery_bead_not_open` (`-32033`)
-when any of those beads is not `open`. A tidy-up `br close` therefore locks the
-queue shut.
+when any of those beads is not `open`. A tidy-up `br close` therefore blocks
+plain `recover`. It does not lock the queue shut: `recover --drop` refuses on the
+opposite state and is the verb for a bead you already closed. The next section
+gives the two preconditions side by side. Do not reach for `queue cancel` here —
+it destroys the pending work behind the failure.
 
 **Submitting around a stopped queue is not a fix, and nothing will stop you.**
 A submit under a new name always succeeds. So does a submit under the stopped
@@ -236,3 +239,30 @@ queue's OWN name: `Validate` in `internal/queue/validation.go` excludes
 fresh queue and no error, the failed items are never re-armed, and the beads that
 stopped the lane stay unworked with nobody watching them. `recover` is the verb
 that re-arms them.
+
+### `queue recover` and `queue recover --drop` want opposite bead states
+
+A queue parked `paused-by-failure` has two release verbs, and they refuse on
+opposite ledger states. Check which one fits before you touch the failed
+bead's status.
+
+- **`harmonik queue recover --queue <name>`** re-arms the failed items and
+  resumes dispatch. It refuses with `recovery_bead_not_open` (`-32033`) unless
+  every failed bead is still OPEN — recovery re-dispatches the bead, so a
+  closed bead would be worked twice.
+- **`harmonik queue recover --queue <name> --drop`** archives the failed
+  group without re-arming it. It refuses with `drop_bead_not_closed`
+  (`-32041`) unless every failed bead is CLOSED — drop hides the failure
+  rather than re-running it, so an open bead would vanish from the queue with
+  its work never done. It also refuses with `drop_trailing_groups`
+  (`-32040`) unless the failed group is the queue's last, so it never
+  discards pending groups behind the failure.
+
+So the choice depends on whether the bead's work already landed: if you
+recovered the work by hand (fixed it, committed it yourself) and the bead is
+already closed, use `--drop`. If the bead is still open and you want the
+daemon to redo the work, use plain `recover` and leave the bead open — closing
+it first only makes `recover` refuse.
+
+`--drop` is not on every deployed daemon; check `harmonik queue recover
+--help` for the flag before assuming it is there.

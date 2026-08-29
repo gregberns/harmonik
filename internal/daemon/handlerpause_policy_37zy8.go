@@ -22,7 +22,7 @@ package daemon
 // TODO(hk-107gz): expand the failure-class taxonomy with further classes.
 //
 // Architecture placement: internal/daemon/ — same reasoning as
-// HandlerPauseController: the policy goroutine needs access to RunRegistry
+// HandlerPauseController: the policy goroutine needs access to runregistry.RunRegistry
 // (for the in-flight freeze-list) and HandlerPauseController, both of which live
 // in the composition root package.
 //
@@ -39,6 +39,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/policy"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 const rateLimitHysteresisCount = policy.DefaultRateLimitThreshold
@@ -57,7 +58,7 @@ type HandlerPausePolicyConfig struct {
 
 	// Registry is the in-flight run registry used to build the freeze-list at
 	// pause time.  Required; must not be nil.
-	Registry *RunRegistry
+	Registry *runregistry.RunRegistry
 }
 
 // HandlerPausePolicyGoroutine is the daemon-side component that watches
@@ -204,12 +205,7 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 }
 
 func (p *HandlerPausePolicyGoroutine) buildInFlightList() []InFlightBeadRecord {
-	type runEntry struct {
-		runID  core.RunID
-		handle *RunHandle
-	}
-
-	snap := p.cfg.Registry.snapshotWithKeys()
+	snap := p.cfg.Registry.SnapshotWithKeys()
 
 	out := make([]InFlightBeadRecord, 0, len(snap))
 	for runID, handle := range snap {

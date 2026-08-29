@@ -3,19 +3,19 @@
 #
 # Injects each failure scenario via a stubbed 'harmonik' binary on PATH;
 # asserts correct comms signal tier (immediate vs ≤15m digest), latest.json
-# content, all-green sends nothing, and inert-queue suppression.
+# content, all-green sends nothing, and paused main-queue coverage.
 #
 # DONE-CHECK:
 #   [x] daemon-down          → immediate signal
 #   [x] supervisor-down      → immediate signal (supervisor not running; no auto-revive)
 #   [x] fleet-down           → immediate signal (both daemon and supervisor down; hk-pen9)
-#   [x] paused-queue         → immediate signal (non-inert crew online)
+#   [x] paused-queue         → immediate signal (crew online or offline)
 #   [x] single-mode          → immediate signal (max_concurrent==1)
 #   [x] stale-crew ×2 misses → digest signal
 #   [x] ready-unstaffed      → digest signal
 #   [x] idle-fleet           → digest signal
 #   [x] all-green            → no comms sent
-#   [x] inert-queue suppression (main queue paused → no alert)
+#   [x] main queue paused    → immediate signal
 #   [x] review-gate bypass   → immediate signal (reviewer_launched, NO reviewer_verdict)
 #   [x] review-gate clean    → no flag (reviewer_launched has matching verdict)
 #   [x] review-gate grace    → no flag (fresh reviewer_launched, verdict may be in flight)
@@ -87,6 +87,8 @@
 #                         is re-detected after the window + stall_ticks fresh ticks (Test 43)
 #   [x] dquote-guard: latest.json is non-empty valid JSON even with double-quote-rich comms/state
 #                     (hk-2mw1x; guards against dquote-truncation landmine regression) (Test 44)
+#   [x] SD-4 PARKED/GATELESS: exact status "parked" suppresses the wake, while an
+#                     unrecognised status remains a candidate (Test 46/46b, hk-uzd5j)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -550,7 +552,7 @@ rm -rf "$PROJ"
 
 # ── Test 3: paused-queue (non-inert crew online) — immediate ──────────────────
 echo ""
-echo "=== Test 3: paused-queue (non-inert crew online) — immediate ==="
+echo "=== Test 3: paused-queue (crew-online fixture) — immediate ==="
 CREW_TS=$(ts_ago 10)
 COMMS_WHO='{"agent":"myagent","status":"online","last_seen":"'"$CREW_TS"'"}'
 QLIST='{"queues":[{"name":"myagent-q","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
@@ -575,6 +577,33 @@ fi
 rm -rf "$PROJ"
 
 # ── Test 4: single-mode (max_concurrent==1) — immediate ──────────────────────
+echo ""
+echo "=== Test 3b: charlie-batch paused with owner offline — immediate ==="
+QLIST='{"queues":[{"name":"charlie-batch","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json "$QLIST" \
+  --hk-comms-who-json '' \
+)
+mkdir -p "$PROJ/.harmonik/crew"
+printf '%s\n' '{"schema_version":1,"name":"charlie","queue":"charlie-batch"}' \
+  > "$PROJ/.harmonik/crew/charlie.json"
+OUTPUT=$(run_check "$PROJ")
+assert_contains "offline paused queue stdout IMMEDIATE" "IMMEDIATE" "$OUTPUT"
+assert_contains "offline paused queue names charlie-batch" "charlie-batch" "$OUTPUT"
+assert_json_list_contains "offline paused queue is immediate" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "paused-queue:charlie-batch"
+OWNER=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json'))['paused_queue_owners']['charlie-batch'])")
+assert_eq "offline paused queue owner comes from registry" "charlie" "$OWNER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "offline paused queue: comms sent"
+  assert_contains "offline paused queue comms names charlie-batch" "charlie-batch" "$(cat "$LOG")"
+else
+  fail "offline paused queue: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
 echo ""
 echo "=== Test 4: single-mode (max_concurrent==1) — immediate ==="
 PROJ=$(setup_fixture \
@@ -693,24 +722,24 @@ rm -rf "$PROJ"
 
 # ── Test 8: inert-queue suppression (main queue paused → no alert) ────────────
 echo ""
-echo "=== Test 8: inert-queue suppression (main queue paused) — no alert ==="
-CREW_TS=$(ts_ago 10)
-CW='{"agent":"main","status":"online","last_seen":"'"$CREW_TS"'"}'
+echo "=== Test 8: main queue paused — immediate ==="
 QLIST='{"queues":[{"name":"main","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":2}],"max_concurrent":4}'
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json "$QLIST" \
-  --hk-comms-who-json "$CW" \
+  --hk-comms-who-json '' \
 )
 OUTPUT=$(run_check "$PROJ")
-assert_not_contains "inert suppression: no paused-queue in stdout" "paused-queue" "$OUTPUT"
-assert_json_list_empty "inert suppression: no immediate_signals" \
-  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_contains "main paused queue stdout IMMEDIATE" "IMMEDIATE" "$OUTPUT"
+assert_contains "main paused queue named in stdout" "paused-queue:main" "$OUTPUT"
+assert_json_list_contains "main paused queue is immediate" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "paused-queue:main"
 LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
-  fail "inert suppression: should NOT have sent comms"
+  pass "main paused queue: comms sent"
+  assert_contains "main paused queue comms signal" "paused-queue:main" "$(cat "$LOG")"
 else
-  pass "inert suppression: no comms sent"
+  fail "main paused queue: expected comms send, got none"
 fi
 rm -rf "$PROJ"
 
@@ -2829,6 +2858,58 @@ else
   fail "dquote-guard: latest.json is not valid JSON (content: $(head -c 120 "$LATEST_44" 2>/dev/null))"
 fi
 assert_json_bool "dquote-guard: daemon_up in snapshot" "$LATEST_44" "daemon_up" "true"
+rm -rf "$PROJ"
+
+# Test 46/46b: parked, gateless lane is skipped; unknown status stays armed.
+echo ""
+echo "=== Test 46: SD-4 parked + gateless lane is excluded from known-ready candidates ==="
+PARKED_GATELESS_LANES='{"schema_version":1,"lanes":[{"lane":"parked-gateless","epic_id":"hk-parked","status":"parked","gate":null}]}'
+STATE_46='{"stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":'"$(date +%s)"',"alerted_immediate":{}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --state-json "$STATE_46" \
+  --lanes-json "$PARKED_GATELESS_LANES" \
+  --br-parent-json '{"hk-parked":[{"id":"hk-p-1"}]}' \
+)
+OUTPUT_46=$(run_check "$PROJ")
+LATEST_46="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_json_bool "46: parked gateless lane keeps program_drained_stall=false" \
+  "$LATEST_46" "program_drained_stall" "false"
+KNOWN_46=$(python3 -c "import json;print(json.load(open('$LATEST_46')).get('known_ready_lane',''))")
+assert_eq "46: parked gateless lane leaves known_ready_lane empty" "" "$KNOWN_46"
+assert_not_contains "46: no program-drained-stall in stdout" "program-drained-stall" "$OUTPUT_46"
+LOG_46=$(comms_log "$PROJ")
+if [[ -s "$LOG_46" ]]; then
+  fail "46: parked gateless lane must send no comms; got: $(cat "$LOG_46")"
+else
+  pass "46: parked gateless lane sends no comms"
+fi
+rm -rf "$PROJ"
+
+echo ""
+echo "=== Test 46b: SD-4 unrecognised status + gateless lane remains a candidate ==="
+QUIESCED_GATELESS_LANES='{"schema_version":1,"lanes":[{"lane":"quiesced-gateless","epic_id":"hk-quiesced","status":"quiesced","gate":null}]}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$QUIESCED_GATELESS_LANES" \
+  --br-parent-json '{"hk-quiesced":[{"id":"hk-q-1"}]}' \
+)
+OUTPUT_46B=$(run_check "$PROJ")
+LATEST_46B="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_contains "46b: unrecognised status fires program-drained-stall" \
+  "program-drained-stall" "$OUTPUT_46B"
+assert_json_bool "46b: unrecognised status sets program_drained_stall=true" \
+  "$LATEST_46B" "program_drained_stall" "true"
+KNOWN_46B=$(python3 -c "import json;print(json.load(open('$LATEST_46B')).get('known_ready_lane',''))")
+assert_eq "46b: unrecognised status names its lane" "quiesced-gateless" "$KNOWN_46B"
+assert_json_list_contains "46b: immediate signal names quiesced-gateless" \
+  "$LATEST_46B" "immediate_signals" "lane=quiesced-gateless"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

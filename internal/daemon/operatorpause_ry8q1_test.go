@@ -135,7 +135,6 @@ func TestOperatorPauseController_ConcurrentPauseSerializes(t *testing.T) {
 	errs := make([]error, n)
 	wg.Add(n)
 	for i := 0; i < n; i++ {
-		i := i
 		go func() {
 			defer wg.Done()
 			errs[i] = ctrl.HandleOperatorPause(ctx, "")

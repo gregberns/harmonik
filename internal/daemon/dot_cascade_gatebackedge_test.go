@@ -109,6 +109,9 @@ func TestDeterministicGateFail_TellsTheImplementerToFixTheFailure(t *testing.T) 
 	select {
 	case result := <-done:
 		t.Logf("cascade result: %+v", result)
+		if result.Success {
+			t.Errorf("a deterministic gate failure must not report success: %+v", result)
+		}
 	case <-ctx.Done():
 		t.Fatal("cascade did not terminate within budget")
 	}

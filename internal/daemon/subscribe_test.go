@@ -15,6 +15,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 func subscribeTestMakeEvent(t *testing.T, evtType string) core.Event {
@@ -319,10 +320,13 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
 	t.Parallel()
 
-	reg := NewRunRegistry()
-	runID, _ := uuid.NewV7()
+	reg := runregistry.NewRunRegistry()
+	runID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
 	startedAt := time.Now().Add(-30 * time.Second)
-	reg.Register(core.RunID(runID), &RunHandle{
+	reg.Register(core.RunID(runID), &runregistry.RunHandle{
 		BeadID:    core.BeadID("hk-test-123"),
 		StartedAt: startedAt,
 	})
@@ -771,7 +775,6 @@ func TestSubscribeHub_HeartbeatClampBoundaries(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 // SubscribeHandler is the interface the socket dispatch invokes for a
@@ -65,11 +66,11 @@ const (
 
 const commsCursorFlushInterval = 2 * time.Second
 
-// ActiveRunsSource is the minimal RunRegistry surface that subscribeHub
-// needs to render the heartbeat active_runs snapshot. *RunRegistry satisfies
+// ActiveRunsSource is the minimal runregistry.RunRegistry surface that subscribeHub
+// needs to render the heartbeat active_runs snapshot. *runregistry.RunRegistry satisfies
 // this interface via Snapshot().
 type ActiveRunsSource interface {
-	Snapshot() []*RunHandle
+	Snapshot() []*runregistry.RunHandle
 }
 
 const subscribeMaxConnectionsDefault = 32

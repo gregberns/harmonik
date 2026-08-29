@@ -20,6 +20,8 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
+	"github.com/gregberns/harmonik/internal/spend"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -32,7 +34,7 @@ type bootState struct {
 	clockRegressionDetected bool
 	qs                      *queuewiring.QueueStore
 	handlerPauseCtrl        *HandlerPauseController
-	sharedRunRegistry       *RunRegistry
+	sharedRunRegistry       *runregistry.RunRegistry
 	workerRegistry          *workers.Registry
 	workerRegistryBuilt     bool
 	pollGate                *PollGate
@@ -110,7 +112,7 @@ func (bs *bootState) constructBusAndRegistries() (*eventbus.JSONLWriter, error) 
 	}
 	bs.qs = qs
 	bs.handlerPauseCtrl = NewHandlerPauseController(bs.bus, nil)
-	bs.sharedRunRegistry = NewRunRegistry()
+	bs.sharedRunRegistry = runregistry.NewRunRegistry()
 	bs.pollGate = &PollGate{}
 
 	return jsonlWriter, nil
@@ -133,21 +135,8 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 		bs.logSubsystemDisabled(projectconfig.SubsystemHandlerPausePolicy, "handler-pause policy not constructed")
 	}
 
-	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
-		spendMeter := NewDaemonSpendMeter(bus)
-		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
-			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
-		}
-		if bs.hooks.spendMeterObserver != nil {
-			bs.hooks.spendMeterObserver(spendMeter)
-		}
-	} else {
-		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
-	}
-
-	perQueueSpendMeter := NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
-	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
+	if wireErr := bs.wireSpendMeters(cfg, bus); wireErr != nil {
+		return wireErr
 	}
 
 	queueOpConsumer := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
@@ -183,6 +172,29 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 		bs.logSubsystemDisabled(projectconfig.SubsystemSubscribeHub, "subscribe hub not constructed")
 	}
 
+	return nil
+}
+
+// wireSpendMeters constructs and subscribes the daemon-wide and per-queue
+// spend meters. Split out of wireSpendAndQueueConsumers so that function's
+// cognitive complexity stays under the gocognit threshold.
+func (bs *bootState) wireSpendMeters(cfg Config, bus eventbus.EventBus) error {
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
+		spendMeter := spend.NewDaemonSpendMeter(bus)
+		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+		}
+		if bs.hooks.spendMeterObserver != nil {
+			bs.hooks.spendMeterObserver(spendMeter)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
+	}
+
+	perQueueSpendMeter := spend.NewPerQueueSpendMeter(bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
+	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
+	}
 	return nil
 }
 

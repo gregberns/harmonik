@@ -13,6 +13,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 
 type bandwidthTunerBackstop struct {
 	tuner atomic.Pointer[BandwidthTuner]
-	reg   atomic.Pointer[RunRegistry]
+	reg   atomic.Pointer[runregistry.RunRegistry]
 }
 
 // SetTuner stores the running tuner so the bus handler can forward events.
@@ -36,7 +37,7 @@ func (b *bandwidthTunerBackstop) SetTuner(t *BandwidthTuner) {
 // isolated from the global tuner. Called from daemon init before beads
 // are dispatched. Optional — if nil, no filtering is applied (safe default:
 // all events reach the tuner, Pi is not yet in production).
-func (b *bandwidthTunerBackstop) SetRunRegistry(r *RunRegistry) {
+func (b *bandwidthTunerBackstop) SetRunRegistry(r *runregistry.RunRegistry) {
 	b.reg.Store(r)
 }
 
@@ -71,7 +72,11 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 	}
 	var pl core.AgentRateLimitStatusPayload
 	if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-		return nil // malformed payload — skip
+		// Propagate: the bus records this as a dead letter (consumer_error) so a
+		// malformed agent_rate_limit_status payload is visible instead of silently
+		// dropped. The tuner still receives no notification either way — a
+		// malformed payload carries no usable retry_after.
+		return fmt.Errorf("bandwidthTunerBackstop.handle: unmarshal payload: %w", err)
 	}
 	if pl.Status != core.AgentRateLimitStatusActive {
 		return nil // only act on the active (rate-limited) transition

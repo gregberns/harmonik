@@ -1,0 +1,3 @@
+{"type":"run_started","payload":{"bead_id":"sub-fixture","run_id":"our-run"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"our-run","node_id":"implement"}}
+{"type":"run_completed","payload":{"run_id":"another-run","success":true,"summary":"another bead closed"}}

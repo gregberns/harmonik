@@ -158,6 +158,13 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 		TmuxTarget:       "dummy-pane", // non-empty → hint path is ENABLED
 		InjectFn:         func(_ context.Context, _ string) error { return nil },
 		SelfHintInjectFn: spyHint, // ← observe the one-time self-hint
+		// Stub the remaining tmux seams the warn loop reaches on a fake pane:
+		// the settle-warn path probes OperatorAttachedFn and then delivers
+		// through MessageInjectFn, both of which shell out to real tmux by
+		// default. Same stub set as the other watcher unit tests.
+		OperatorAttachedFn:   func(_ string) bool { return false },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 		// Session is awake — this test exercises the once-per-session latch, not
 		// the sleep gate. Set explicitly because the default IsSleeping
 		// fail-closes to true on the empty session id this fixture uses (hk-bzol4
@@ -260,6 +267,13 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 		TmuxTarget:       "dummy-pane", // non-empty → hint path is ENABLED
 		InjectFn:         func(_ context.Context, _ string) error { return nil },
 		SelfHintInjectFn: spyHint, // ← observe (and gate) the one-time self-hint
+		// Stub the remaining tmux seams the warn loop reaches on a fake pane:
+		// the settle-warn path probes OperatorAttachedFn and then delivers
+		// through MessageInjectFn, both of which shell out to real tmux by
+		// default. Same stub set as the other watcher unit tests.
+		OperatorAttachedFn:   func(_ string) bool { return false },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 		SleepingCheckFn: func(_ /*projectDir*/, _ /*sessionID*/ string) bool {
 			return sleeping.Load()
 		},

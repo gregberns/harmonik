@@ -32,17 +32,21 @@ func (r *lprRecorder) count() int {
 
 func lprConfig(projectDir, agent string, recoverFn func(context.Context, string) error) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		PollInterval:        10 * time.Millisecond,
-		Staleness:           5 * time.Millisecond,  // gauge immediately stale
-		LiveRecoverGrace:    10 * time.Millisecond, // tiny for test speed
-		LiveRecoverCooldown: 10 * time.Second,      // long: at most one attempt per run
-		TmuxTarget:          "dummy-pane",
-		IsPaneAliveFn:       func(_ context.Context, _ string) bool { return true },
-		OperatorAttachedFn:  func(_ string) bool { return false },
-		LiveRecoverFn:       recoverFn,
-		InjectFn:            func(_ context.Context, _ string) error { return nil },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		Staleness:            5 * time.Millisecond,  // gauge immediately stale
+		LiveRecoverGrace:     10 * time.Millisecond, // tiny for test speed
+		LiveRecoverCooldown:  10 * time.Second,      // long: at most one attempt per run
+		TmuxTarget:           "dummy-pane",
+		IsPaneAliveFn:        func(_ context.Context, _ string) bool { return true },
+		OperatorAttachedFn:   func(_ string) bool { return false },
+		ResolveTmuxTargetFn:  func(_, _ string) string { return "" },
+		LiveRecoverFn:        recoverFn,
+		InjectFn:             func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn:     func(context.Context, string, string) error { return nil },
+		MessageInjectFn:      func(context.Context, string, string) error { return nil },
+		DashboardNagInjectFn: func(context.Context, string, string) error { return nil },
 	}
 }
 

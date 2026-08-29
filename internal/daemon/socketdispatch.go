@@ -372,6 +372,7 @@ func buildSocketRouter(d *socketDispatch) *socketrouter.Router {
 	r.Register("queue-set-concurrency", d.queueSetConcurrency)
 	r.Register("queue-cancel", d.queueCancel)
 	r.Register("queue-recover", d.queueRecover)
+	r.Register("queue-drop", d.queueDrop)
 	r.Register("worker-set-enabled", d.workerSetEnabled)
 	r.Register("comms-send", d.commsSend)
 	r.Register("comms-presence", d.commsPresence)

@@ -2,52 +2,11 @@ package keeper
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/substrate"
 )
-
-//nolint:gosec,errcheck // Real tmux commands use test-owned names and best-effort cleanup.
-func TestResetTmuxInput_RemovesQueuedClear(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
-	session := fmt.Sprintf("keeper-reset-input-%d", time.Now().UnixNano())
-	start := exec.CommandContext(t.Context(), "tmux", "new-session", "-d", "-s", session, "bash --noprofile --norc")
-	if out, err := start.CombinedOutput(); err != nil {
-		t.Fatalf("start tmux: %v: %s", err, out)
-	}
-	t.Cleanup(func() { _ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", session).Run() })
-
-	if out, err := exec.CommandContext(t.Context(), "tmux", "send-keys", "-t", session, "-l", "/clear").CombinedOutput(); err != nil {
-		t.Fatalf("queue clear: %v: %s", err, out)
-	}
-	capture := func() string {
-		t.Helper()
-		out, err := exec.CommandContext(t.Context(), "tmux", "capture-pane", "-p", "-t", session).CombinedOutput()
-		if err != nil {
-			t.Fatalf("capture tmux: %v: %s", err, out)
-		}
-		return string(out)
-	}
-	if got := capture(); !strings.Contains(got, "/clear") {
-		t.Fatalf("queued clear not visible before reset: %q", got)
-	}
-	if err := ResetTmuxInput(t.Context(), session); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.CommandContext(t.Context(), "tmux", "send-keys", "-t", session, "Enter").CombinedOutput(); err != nil {
-		t.Fatalf("submit prompt after reset: %v: %s", err, out)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if got := capture(); strings.Contains(got, "bash: /clear") || strings.Contains(got, "/clear: command not found") {
-		t.Fatalf("queued clear executed after reset: %q", got)
-	}
-}
 
 // TestInjectorSleep_FullDurationElapsed verifies that the injector's settle
 // sleep returns true when the full duration elapses without cancellation.

@@ -9,6 +9,7 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 type testRuntime struct {
@@ -18,7 +19,7 @@ type testRuntime struct {
 
 	ledger        beadLedger
 	queueStore    *queuewiring.QueueStore
-	runRegistry   *RunRegistry
+	runRegistry   *runregistry.RunRegistry
 	substratePort handler.Substrate
 	mergeQueue    *mergeq.Queue
 	launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)

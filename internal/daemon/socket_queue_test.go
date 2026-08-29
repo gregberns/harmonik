@@ -79,7 +79,6 @@ func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
 
 	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency", "worker-set-enabled"}
 	for _, op := range queueOps {
-		op := op
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			conn := socketFixtureDial(t, sockPath)
@@ -127,7 +126,6 @@ func TestSocketListener_QueueMethodsNilHandler(t *testing.T) {
 
 	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency", "worker-set-enabled"}
 	for _, op := range queueOps {
-		op := op
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			conn := socketFixtureDial(t, sockPath)

@@ -10,6 +10,7 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -85,7 +86,7 @@ func ExportedStoreLocalInFlight(deps testRuntime, n int32) {
 }
 
 func runBeadOneTest(ctx context.Context, deps testRuntime, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
-	deps.runRegistry.Register(env.RunID, &RunHandle{
+	deps.runRegistry.Register(env.RunID, &runregistry.RunHandle{
 		BeadID:          env.BeadRecord.BeadID,
 		QueueName:       env.QueueName,
 		QueueID:         env.QueueID,

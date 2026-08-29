@@ -32,10 +32,21 @@ func TestRSB11_IsSSHConnectionFailure_OtherExits(t *testing.T) {
 	t.Parallel()
 
 	for _, code := range []int{0, 1, 2, 127} {
-		code := code
 		t.Run(fmt.Sprintf("exit%d", code), func(t *testing.T) {
 			t.Parallel()
-			cmd := exec.CommandContext(t.Context(), "sh", "-c", fmt.Sprintf("exit %d", code))
+			var cmd *exec.Cmd
+			switch code {
+			case 0:
+				cmd = exec.CommandContext(t.Context(), "sh", "-c", "exit 0")
+			case 1:
+				cmd = exec.CommandContext(t.Context(), "sh", "-c", "exit 1")
+			case 2:
+				cmd = exec.CommandContext(t.Context(), "sh", "-c", "exit 2")
+			case 127:
+				cmd = exec.CommandContext(t.Context(), "sh", "-c", "exit 127")
+			default:
+				t.Fatalf("unsupported exit code %d", code)
+			}
 			err := cmd.Run()
 			if tmux.IsSSHConnectionFailure(err) {
 				t.Errorf("RSB11: IsSSHConnectionFailure(exit %d) = true, want false", code)

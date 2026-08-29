@@ -18,6 +18,7 @@ import (
 
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runregistry"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -199,7 +200,7 @@ func staleWorktreeFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *dis
 	calls := &diskSeamCalls{}
 	port := diskReclaimPort{
 		projectDir:        projectDir,
-		runRegistry:       NewRunRegistry(),
+		runRegistry:       runregistry.NewRunRegistry(),
 		diskFreeBytesFunc: func(string) (uint64, error) { return freeBytes, nil },
 		worktreeReclaimFunc: func(context.Context, string, []string) error {
 			calls.worktreeReclaim++

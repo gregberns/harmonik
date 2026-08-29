@@ -18,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runregistry"
 )
 
 const (
@@ -428,8 +429,8 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		qs := daemon.ExportedNewQueueStore()
 		qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
 
-		reg := daemon.NewRunRegistry()
-		daemon.ExportedRunRegistryRegister(reg, core.RunID(uuid.New()), &daemon.RunHandle{BeadID: beadID})
+		reg := runregistry.NewRunRegistry()
+		reg.Register(core.RunID(uuid.New()), &runregistry.RunHandle{BeadID: beadID})
 		resetter := &admissionResetter{}
 
 		var tickMu sync.Mutex

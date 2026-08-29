@@ -703,14 +703,14 @@ func pasteInjectImplementerInitial(ctx context.Context, clk substrate.ClockPort,
 
 	bufName := bufferName(claudeSessID, "task")
 	msg := "Please read .harmonik/agent-task.md and begin.\n"
-	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial"); reason != "" {
-		return reason
-	}
+	reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial")
 	splashDismissWait(ctx, clk)
+	// A failed verification is not evidence the paste failed - submit anyway.
+	// An unsubmitted prompt is strictly worse than a duplicate one.
 	if es, ok := inj.(enterSender); ok {
 		sendSubmitEnterWithRetry(ctx, clk, es, "implementer-initial")
 	}
-	return ""
+	return reason
 }
 
 func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string, runner tmux.CommandRunner) string {
@@ -748,14 +748,14 @@ func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, 
 	}
 
 	bufName := bufferName(claudeSessID, "task")
-	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume"); reason != "" {
-		return reason
-	}
+	reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume")
 	splashDismissWait(ctx, clk)
+	// A failed verification is not evidence the paste failed - submit anyway.
+	// An unsubmitted prompt is strictly worse than a duplicate one.
 	if es, ok := inj.(enterSender); ok {
 		sendResumeSubmitEnter(ctx, clk, es)
 	}
-	return ""
+	return reason
 }
 
 func submitSeedInput(ctx context.Context, inj pasteInjecter, bufName string, payload []byte) (handler.Ack, error) {
@@ -855,13 +855,13 @@ func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj paste
 
 	bufName := bufferName(claudeSessID, "review")
 	msg := reviewerKickoffSeed
-	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "review-target.md", "reviewer"); reason != "" {
-		return reason
-	}
+	reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "review-target.md", "reviewer")
+	// A failed verification is not evidence the paste failed - submit anyway.
+	// An unsubmitted prompt is strictly worse than a duplicate one.
 	if es, ok := inj.(enterSender); ok {
 		sendSubmitEnterWithRetry(ctx, clk, es, "reviewer")
 	}
-	return ""
+	return reason
 }
 
 var reviewFileTimeout = 10 * time.Minute

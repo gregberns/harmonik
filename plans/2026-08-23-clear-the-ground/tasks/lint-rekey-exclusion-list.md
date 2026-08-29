@@ -23,8 +23,9 @@ identity`.** An earlier version of this file described the world before that com
 build what it built. Do not rebuild it. Measured against the tree on 2026-08-25:
 
 - `tools/lintreport/allow.txt` carries **0 rows in the legacy `<path><TAB><linter>` format** — every
-  row is already keyed by content identity. The row COUNT depends on your branch (956 at integration
-  tip `eae64d47a`, 923 at batch tip `d5673dee4`); measure your own and see "Done when" item 4.
+  row is already keyed by content identity. The row COUNT depends on your branch — **923 at the
+  post-merge integration tip `f42496152`**, and it was 956 at `eae64d47a` before the batch landed.
+  Measure your own and see "Done when" item 4.
 - `findingDigest`, `sourceFile.enclosing`, `identityNode` and `nodeName` all exist in
   `tools/lintreport/main.go`. Resolving a finding to its enclosing declaration is **not** work you
   have to write.

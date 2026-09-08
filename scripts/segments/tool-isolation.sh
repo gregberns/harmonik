@@ -41,10 +41,12 @@ for gomod in tools/*/go.mod; do
 		status=1
 		continue
 	fi
-	import_hits="$(printf '%s\n' "$deps" | grep -E "$banned" | grep -vx "$self" || true)"
+	# A tool's own subpackages (e.g. tools/echo/cmd/echo) are self, not a
+	# sibling: exempt anything under self's own path, not just an exact match.
+	import_hits="$(printf '%s\n' "$deps" | grep -E "$banned" | grep -vE "^${self}(/|$)" || true)"
 
 	# (2) The go.mod require edges — a cheap second signal.
-	mod_hits="$(grep -oE "$banned" "$gomod" | grep -vx "$self" || true)"
+	mod_hits="$(grep -oE "$banned" "$gomod" | grep -vE "^${self}(/|$)" || true)"
 
 	hits="$(printf '%s\n%s\n' "$import_hits" "$mod_hits" | grep -v '^$' | sort -u || true)"
 	if [ -n "$hits" ]; then

@@ -1266,9 +1266,13 @@ segments:  ## The scoped gate for the segment modules: build+vet+test+lint each 
 # was never gofumpt'd, and running it here would fight the committed style
 # instead of matching it.
 #
-# Requires buf + protoc-gen-go + protoc-gen-go-grpc in GOPATH/bin.
-# Install: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-#          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+# Requires buf + protoc-gen-go + protoc-gen-go-grpc in GOPATH/bin. protoc-gen-go
+# stamps ITS OWN protobuf module version into every generated file's header
+# comment, so an `@latest` install drifts the moment upstream cuts a release —
+# pin it to the exact version contract/go.mod requires for
+# google.golang.org/protobuf, and re-pin both together on a bump.
+# Install: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.6
+#          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 #          go install github.com/bufbuild/buf/cmd/buf@latest
 .PHONY: proto-regen-check
 proto-regen-check:  ## Regen contract/ proto and verify committed gen/ matches (fails on drift)

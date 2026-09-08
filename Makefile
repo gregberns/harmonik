@@ -1258,6 +1258,14 @@ segments:  ## The scoped gate for the segment modules: build+vet+test+lint each 
 # produce today" is always checkable. A drift means someone edited proto/ without
 # regenerating, or edited gen/ by hand. Both are wrong.
 #
+# The committed gen/ tree also carries gci's import ordering (the repo-wide
+# `make fmt` groups github.com/gregberns/harmonik/... imports as local — see
+# scripts/go-format.sh), which raw `buf generate` does not produce. Re-run gci
+# over the fresh output before diffing, or every regeneration reports a false
+# drift on import order alone. gofumpt is NOT part of this: the committed tree
+# was never gofumpt'd, and running it here would fight the committed style
+# instead of matching it.
+#
 # Requires buf + protoc-gen-go + protoc-gen-go-grpc in GOPATH/bin.
 # Install: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 #          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
@@ -1276,6 +1284,14 @@ proto-regen-check:  ## Regen contract/ proto and verify committed gen/ matches (
 	( cd contract && PATH="$$(go env GOPATH)/bin:$$PATH" "$$buf" breaking --against buf-breaking-baseline.binpb ) || exit 1; \
 	echo "== proto-regen-check: buf generate + drift check =="; \
 	( cd contract && PATH="$$(go env GOPATH)/bin:$$PATH" "$$buf" generate ) || exit 1; \
+	gci="$(TOOLS_DIR)/gci"; \
+	if [ ! -x "$$gci" ]; then \
+		echo "proto-regen-check: gci not found under $(TOOLS_DIR)"; \
+		echo "  Run 'make tools' to install the pinned version, then re-run 'make segments'."; \
+		exit 1; \
+	fi; \
+	gen_files=$$(find contract/gen -name '*.go'); \
+	"$$gci" write -s standard -s default -s "prefix(github.com/gregberns/harmonik)" -- $$gen_files; \
 	if ! git diff --quiet -- contract/gen/; then \
 		echo "proto-regen-check: FAIL — contract/gen/ differs from committed code:"; \
 		git diff -- contract/gen/; \

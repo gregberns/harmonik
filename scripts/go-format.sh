@@ -39,7 +39,12 @@ while IFS= read -r -d '' file; do
     # A tracked path can be deleted in the working tree; formatters should not
     # receive a path that no longer exists.
     [[ -f "$file" ]] && files+=("$file")
-done < <(git ls-files -z --cached --others --exclude-standard -- '*.go')
+# contract/gen/ is buf-generated (see contract/doc.go): its own regeneration
+# step, proto-regen-check, already re-runs gci over it and diffs against the
+# committed tree, and gofumpt has never been part of that step. Running this
+# script's gofumpt pass over it too fights proto-regen-check's own idea of
+# what the committed tree should look like.
+done < <(git ls-files -z --cached --others --exclude-standard -- '*.go' ':(exclude)contract/gen/**')
 
 [[ ${#files[@]} -gt 0 ]] || exit 0
 

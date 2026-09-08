@@ -1236,6 +1236,10 @@ core: twins  ## The core set only (CHARTER §3): can this run beads through the 
 # ---------------------------------------------------------------------------
 SEGMENT_MODULES := contract kernel tools/echo
 
+# buf and its code-gen plugins live in GOPATH/bin (installed by go install).
+# Reference them by absolute path so Make does not rely on the shell PATH.
+BUF := $(shell go env GOPATH)/bin/buf
+
 .PHONY: segments
 segments:  ## The scoped gate for the segment modules: build+vet+test+lint each + the three boundary checks
 	@for m in $(SEGMENT_MODULES); do \
@@ -1243,9 +1247,42 @@ segments:  ## The scoped gate for the segment modules: build+vet+test+lint each 
 		( cd $$m && go build ./... && go vet ./... && go test ./... ) || exit 1; \
 	done
 	$(MAKE) segments-lint
+	$(MAKE) proto-regen-check
 	scripts/segments/import-closure.sh
 	scripts/segments/tool-isolation.sh
 	scripts/segments/kernel-vocabulary.sh
+
+# proto-regen-check — drift guard for the committed generated Go.
+#
+# buf generate is deterministic, so "committed generated code == what buf would
+# produce today" is always checkable. A drift means someone edited proto/ without
+# regenerating, or edited gen/ by hand. Both are wrong.
+#
+# Requires buf + protoc-gen-go + protoc-gen-go-grpc in GOPATH/bin.
+# Install: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+#          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+#          go install github.com/bufbuild/buf/cmd/buf@latest
+.PHONY: proto-regen-check
+proto-regen-check:  ## Regen contract/ proto and verify committed gen/ matches (fails on drift)
+	@buf="$(BUF)"; \
+	if [ ! -x "$$buf" ]; then \
+		echo "proto-regen-check: buf not found at $$buf"; \
+		echo "  Install: go install github.com/bufbuild/buf/cmd/buf@latest"; \
+		exit 1; \
+	fi; \
+	echo "== proto-regen-check: buf lint =="; \
+	( cd contract && PATH="$$(go env GOPATH)/bin:$$PATH" "$$buf" lint ) || exit 1; \
+	echo "== proto-regen-check: buf breaking =="; \
+	( cd contract && PATH="$$(go env GOPATH)/bin:$$PATH" "$$buf" breaking --against buf-breaking-baseline.binpb ) || exit 1; \
+	echo "== proto-regen-check: buf generate + drift check =="; \
+	( cd contract && PATH="$$(go env GOPATH)/bin:$$PATH" "$$buf" generate ) || exit 1; \
+	if ! git diff --quiet -- contract/gen/; then \
+		echo "proto-regen-check: FAIL — contract/gen/ differs from committed code:"; \
+		git diff -- contract/gen/; \
+		echo "  Run 'cd contract && buf generate' and commit the result."; \
+		exit 1; \
+	fi; \
+	echo "proto-regen-check: ok — generated code matches proto"
 
 # chaos — the fault-injection tier for the segment modules (//go:build chaos).
 # Empty until K9 lands the VC-12 reload-under-load gate; it exists from commit

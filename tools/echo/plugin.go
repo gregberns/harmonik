@@ -18,11 +18,21 @@ import (
 var ErrNotStarted = errors.New("echo: Deliver called before Start")
 
 // Handshake is the go-plugin magic cookie both echo and its launcher must
-// agree on before either side trusts the connection.
+// agree on before either side trusts the connection. The values here MUST
+// match kernel/host's own Handshake: that package's doc comment states it
+// is "the magic-cookie pair this host and every plugin binary it launches
+// must share", and tools/echo cannot import kernel/host to reuse it
+// directly (tool-isolation forbids a tool depending on the kernel), so the
+// literal values are duplicated here instead. A K7 end-to-end run against a
+// real launched echo binary is what caught these previously not matching
+// host.Handshake ("HARMONIK_PLUGIN"/Namespace): the process handshake
+// failed silently as "no output on stdout" because echo never saw its own
+// magic cookie env var, so it printed the plain "this is a plugin binary"
+// message instead of negotiating.
 var Handshake = goplugin.HandshakeConfig{
-	ProtocolVersion:  apiVersion,
-	MagicCookieKey:   "HARMONIK_PLUGIN",
-	MagicCookieValue: Namespace,
+	ProtocolVersion:  1,
+	MagicCookieKey:   "HARMONIK_KERNEL_PLUGIN",
+	MagicCookieValue: "v1",
 }
 
 // PluginKey names this plugin in a go-plugin ServeConfig/Plugins map.

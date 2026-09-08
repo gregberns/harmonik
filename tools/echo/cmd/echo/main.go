@@ -4,8 +4,9 @@
 package main
 
 import (
-	"github.com/gregberns/harmonik/tools/echo"
 	goplugin "github.com/hashicorp/go-plugin"
+
+	"github.com/gregberns/harmonik/tools/echo"
 )
 
 func main() {

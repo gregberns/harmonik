@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"sync"
 
-	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 )
 
 // ErrNotStarted is returned when Deliver is called before Start has dialed

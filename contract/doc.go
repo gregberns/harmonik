@@ -1,8 +1,9 @@
-// Package contract holds the harmonik wire contract: the proto types that cross
-// the boundary between the substrate and a plugin.
+// Package contract holds the harmonik wire contract: the proto types and
+// generated gRPC stubs that cross the boundary between the substrate and a
+// plugin.
 //
-// This module is a pure leaf. It imports nothing from this project. The real
-// proto and its generated Go types land in a later change; this placeholder
-// only gives the module a compile target, so the workspace and the boundary
-// checks have something to build against from the first commit.
+// Source of truth: contract/proto/harmonik/kernel/v1/
+// Generated Go:    contract/gen/harmonik/kernel/v1/   (committed; regenerate with buf generate)
+//
+// This is a pure leaf module. It imports nothing from this project.
 package contract

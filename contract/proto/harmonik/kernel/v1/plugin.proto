@@ -1,0 +1,94 @@
+// The kernel -> plugin side. Deliberately tiny: lifecycle + delivery.
+// ALL data flows the other way, through KernelService, which the plugin calls.
+// That is why the plugin API and the REST API are the same service.
+//
+// Ported from plans/2026-07-15-agent-substrate-v2/design/25-reconciled-proto/
+// with package renamed harmonik.kernel.v1 (was fleet.kernel.v1) and
+// go_package updated to this module's generated path.
+//
+// D2 amendment (2026-09-07, operator-approved): Deliver(DeliverRequest) has
+// been added to PluginService as a unary RPC. The reconciled proto carried
+// only lifecycle RPCs; the drain gate (K8) requires a per-message unary
+// completion signal from the kernel to the plugin so the kernel can confirm
+// delivery before tearing down the plugin process. A pure server-stream pull
+// model has no such signal and would force an invented ack protocol.
+// Deviation recorded here so no future agent "corrects" it back.
+syntax = "proto3";
+
+package harmonik.kernel.v1;
+
+import "harmonik/kernel/v1/kernel.proto";
+
+option go_package = "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1;kernelv1";
+
+// A channel this plugin declares. First declaration of a name wins; a later
+// conflicting TYPE for the same name is rejected AT REGISTRATION, before any
+// byte moves — which is the whole reason declaration is static.
+message ChannelDecl {
+  string name = 1;        // must sit inside the plugin's own namespace
+  ChannelType type = 2;
+  bool public = 3;        // may other namespaces subscribe? default: no
+  string description = 4;
+}
+
+// What this plugin needs to react to. BRIEF 3.1: "the plugin would say what
+// resources it was interested in/needed to react to. Maybe it needed changes
+// in the node list." Exactly two kinds exist, and that is the point.
+message InterestDecl {
+  oneof kind {
+    ChannelInterest channel = 1;
+    RosterInterest roster = 2;
+  }
+}
+message ChannelInterest {
+  string pattern = 1;  // outside own namespace => channel must be public
+  string group = 2;    // POINT_TO_POINT: competing-consumer group
+}
+message RosterInterest {}  // "tell me when the node list changes"
+
+message PluginManifest {
+  string namespace = 1;    // owns <namespace>.* and its own storage. THE identity.
+  string version = 2;      // semver of the plugin
+  uint32 api_version = 3;  // kernel API major it was built against
+  repeated ChannelDecl channels = 4;
+  repeated InterestDecl interests = 5;  // the plugin's MAXIMAL surface, inspectable without running it
+  string description = 6;
+}
+
+message DescribeRequest {}
+message DescribeResponse { PluginManifest manifest = 1; }
+
+message StartRequest {
+  string node = 1;             // which box this is
+  string kernel_endpoint = 2;  // where to call KernelService back
+  string caller_id = 3;        // names the caller. A name tag, not a lock: trusted network.
+  uint32 api_version = 4;
+}
+message StartResponse {}
+
+message StopRequest { uint32 grace_ms = 1; }
+message StopResponse {}
+
+message HealthRequest {}
+message HealthResponse { bool ok = 1; string detail = 2; }
+
+// D2: kernel pushes each envelope to the plugin as a unary call.
+// The plugin's return is the delivery receipt: the kernel holds the message
+// kernel-side until Deliver returns, so the drain gate can drain all in-flight
+// calls before killing the process. A server-stream pull has no such signal.
+message DeliverRequest  { Envelope envelope = 1; }
+message DeliverResponse {}
+
+// Five methods. A plugin holds NO in-memory state across Start/Stop — all
+// state lives in kernel storage — which is precisely what makes "kill the
+// child, spawn the new binary, daemon never stops" a safe reload.
+//
+// Deliver is D2: added to PluginService (the reconciled proto carried only
+// the four lifecycle RPCs). See the file header for the rationale.
+service PluginService {
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Start(StartRequest) returns (StartResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
+}

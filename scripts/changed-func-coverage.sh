@@ -67,7 +67,10 @@ if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
     exit 2
 fi
 
-MODULE="$(go list -m 2>/dev/null | head -1)"
+# GOWORK=off: the platform re-grounding go.work makes a bare `go list -m` return
+# every workspace member. This coverage gate is scoped to the root module, so
+# pin the module query to it rather than depending on the workspace member order.
+MODULE="$(GOWORK=off go list -m 2>/dev/null | head -1)"
 if [[ -z "${MODULE}" ]]; then
     echo "changed-func-coverage: no Go module here" >&2
     exit 2

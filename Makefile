@@ -1209,6 +1209,70 @@ core: twins  ## The core set only (CHARTER §3): can this run beads through the 
 	$(MAKE) gate-static-product
 	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS),)
 
+# ---------------------------------------------------------------------------
+# make segments — the SCOPED gate for the platform re-grounding.
+#
+# The segment modules (contract, kernel, tools/echo) are separate go.work
+# members, so a whole-tree `go build ./...` in the root module never reaches
+# them. This target builds, vets, tests and lints each one on its own, then runs
+# the three boundary checks that hold the segmentation:
+#
+#   import-closure   no segment reaches the unsegmented internal/ zone.
+#   tool-isolation   no tools/* module requires a sibling tool or the kernel.
+#   kernel-vocabulary  no domain noun appears in kernel/ Go source.
+#
+# It is DELIBERATELY narrow. It never runs internal/, and it is neither `make
+# core` nor `make full`. A future segment or kernel bead gates on THIS target
+# (segment-bead.dot), so it stays cheap and stays scoped to the new modules.
+#
+# The lint step is full-strength and fail-closed: each module carries its own
+# .golangci.yml with an empty allow-list, and a missing golangci-lint is a hard
+# stop with an actionable message, not a silent skip. A day-one standard that
+# does not run is the "test that cannot fail" (PRINCIPLES §7).
+#
+# Layout of record: plans/2026-09-07-harmonik-restructure/
+#   07-segmented-structure-and-day1-standards.md (§3, the day-one standards) and
+#   06-segmented-layout.md (§2, the one-way rules these checks hold).
+# ---------------------------------------------------------------------------
+SEGMENT_MODULES := contract kernel tools/echo
+
+.PHONY: segments
+segments:  ## The scoped gate for the segment modules: build+vet+test+lint each + the three boundary checks
+	@for m in $(SEGMENT_MODULES); do \
+		echo "== segments: build/vet/test $$m =="; \
+		( cd $$m && go build ./... && go vet ./... && go test ./... ) || exit 1; \
+	done
+	$(MAKE) segments-lint
+	scripts/segments/import-closure.sh
+	scripts/segments/tool-isolation.sh
+	scripts/segments/kernel-vocabulary.sh
+
+# chaos — the fault-injection tier for the segment modules (//go:build chaos).
+# Empty until K9 lands the VC-12 reload-under-load gate; it exists from commit
+# one so the harness has a home and `make segments` never silently skips it. It
+# is deliberately NOT part of `make fast`/`make full`/`make segments` — a chaos
+# run is a slice gate the assessor drives, not a per-commit cost.
+.PHONY: chaos
+chaos:  ## Fault-injection tier (//go:build chaos) over the segment modules — empty until K9
+	@for m in $(SEGMENT_MODULES); do \
+		echo "== chaos: $$m =="; \
+		( cd $$m && go test -tags chaos ./... ) || exit 1; \
+	done
+
+.PHONY: segments-lint
+segments-lint:  ## Full-strength golangci-lint per segment module (empty allow-list; fail-closed on a missing tool)
+	@lint="$(TOOLS_DIR)/golangci-lint"; \
+	if [ ! -x "$$lint" ]; then \
+		echo "segments-lint: golangci-lint not found at $$lint"; \
+		echo "  Run 'make tools' to install the pinned version, then re-run 'make segments'."; \
+		echo "  A day-one lint standard that silently does not run is worse than a loud stop."; \
+		exit 1; \
+	fi; \
+	for m in $(SEGMENT_MODULES); do \
+		echo "== segments-lint: $$m =="; \
+		( cd $$m && "$$lint" run ) || exit 1; \
+	done
+
 # gate-test-report-probe — the smallest real use of the test step above.
 #
 # It exists so scripts/gate-fails-closed-test.sh can drive the capture-render-
@@ -1270,6 +1334,12 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	$(MAKE) test-subprocess
 	$(MAKE) test-scenario
 	$(MAKE) module-hygiene
+	# The segment gate runs inside the merge decision too, so the go.work
+	# segment modules and their boundary checks are covered by `make full`, not
+	# only by the per-bead segment-bead.dot path. A segment regression committed
+	# through any non-segment workflow is caught here (agent-reviewer Finding 2;
+	# spec 07 §2/§3 — "in make full from the first commit").
+	$(MAKE) segments
 
 # ---------------------------------------------------------------------------
 # full-guarded — the SAME merge decision, run only when the box can answer.

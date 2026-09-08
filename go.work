@@ -1,0 +1,26 @@
+// The harmonik workspace ties the existing root module together with the new
+// segment modules of the platform re-grounding. Each segment is its own module,
+// so one segment cannot reach into another segment's internal packages — the
+// wall is the compiler, not a naming rule.
+//
+// Members, and only these four:
+//   .            the existing root module (the live daemon; unchanged).
+//   ./contract   the wire contract (a pure leaf).
+//   ./kernel     the substrate.
+//   ./tools/echo the first tool.
+//
+// Layout of record: plans/2026-09-07-harmonik-restructure/
+//   07-segmented-structure-and-day1-standards.md and 06-segmented-layout.md.
+// There is no shared/ module yet: shared admits a package only when a second
+// consumer exists in committed code, and none does today.
+
+go 1.25
+
+toolchain go1.26.3
+
+use (
+	.
+	./contract
+	./kernel
+	./tools/echo
+)

@@ -1305,12 +1305,15 @@ proto-regen-check:  ## Regen contract/ proto and verify committed gen/ matches (
 	echo "proto-regen-check: ok — generated code matches proto"
 
 # chaos — the fault-injection tier for the segment modules (//go:build chaos).
-# Empty until K9 lands the VC-12 reload-under-load gate; it exists from commit
-# one so the harness has a home and `make segments` never silently skips it. It
-# is deliberately NOT part of `make fast`/`make full`/`make segments` — a chaos
-# run is a slice gate the assessor drives, not a per-commit cost.
+# It carries the VC-12 slice gate (K9): tools/echo/chaos_test.go publishes a
+# sequence-stamped load at echo.ping against a live harmonikd, reloads the plugin
+# mid-stream at a byte-distinct binary, and asserts journal set-equality (no loss
+# and no duplication), an unchanged harmonikd PID, and a single-digit-ms reload;
+# it also runs VC-13 (PUBSUB conformance) and VC-14 (kernel vocabulary). It is
+# deliberately NOT part of `make fast`/`make full`/`make segments` — a chaos run
+# is a slice gate the assessor drives, not a per-commit cost.
 .PHONY: chaos
-chaos:  ## Fault-injection tier (//go:build chaos) over the segment modules — empty until K9
+chaos:  ## Fault-injection tier (//go:build chaos) over the segment modules — carries the VC-12 gate (K9)
 	@for m in $(SEGMENT_MODULES); do \
 		echo "== chaos: $$m =="; \
 		( cd $$m && go test -tags chaos ./... ) || exit 1; \

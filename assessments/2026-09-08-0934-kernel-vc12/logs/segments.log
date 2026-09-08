@@ -1,0 +1,39 @@
+== segments: build/vet/test contract ==
+?   	github.com/gregberns/harmonik/contract	[no test files]
+?   	github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1	[no test files]
+== segments: build/vet/test kernel ==
+?   	github.com/gregberns/harmonik/kernel	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/cmd/harmonikd	(cached)
+?   	github.com/gregberns/harmonik/kernel/cmd/harmonikd/harnesstestplugin	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/host	(cached)
+?   	github.com/gregberns/harmonik/kernel/host/hoststub	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/state	(cached)
+?   	github.com/gregberns/harmonik/kernel/state/durabilityhelper	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/transport	(cached)
+== segments: build/vet/test tools/echo ==
+ok  	github.com/gregberns/harmonik/tools/echo	(cached)
+?   	github.com/gregberns/harmonik/tools/echo/cmd/echo	[no test files]
+/Library/Developer/CommandLineTools/usr/bin/make segments-lint
+== segments-lint: contract ==
+0 issues.
+== segments-lint: kernel ==
+0 issues.
+== segments-lint: tools/echo ==
+0 issues.
+/Library/Developer/CommandLineTools/usr/bin/make proto-regen-check
+== proto-regen-check: buf lint ==
+== proto-regen-check: buf breaking ==
+== proto-regen-check: buf generate + drift check ==
+2026-09-08T09:43:44.044-0700	INFO	gci/gci.go:47	Writing formatted File: contract/gen/harmonik/kernel/v1/plugin_grpc.pb.go
+2026-09-08T09:43:44.046-0700	INFO	gci/gci.go:47	Writing formatted File: contract/gen/harmonik/kernel/v1/plugin.pb.go
+2026-09-08T09:43:44.046-0700	INFO	gci/gci.go:47	Writing formatted File: contract/gen/harmonik/kernel/v1/kernel_grpc.pb.go
+2026-09-08T09:43:44.052-0700	INFO	gci/gci.go:47	Writing formatted File: contract/gen/harmonik/kernel/v1/kernel.pb.go
+proto-regen-check: ok — generated code matches proto
+scripts/segments/import-closure.sh
+import-closure: ok — contract reaches no internal/ package
+import-closure: ok — kernel reaches no internal/ package
+import-closure: ok — tools/echo reaches no internal/ package
+scripts/segments/tool-isolation.sh
+tool-isolation: ok — tools/echo (module github.com/gregberns/harmonik/tools/echo)
+scripts/segments/kernel-vocabulary.sh
+kernel-vocabulary: ok — no domain noun in kernel/ Go source

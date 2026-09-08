@@ -1,0 +1,28 @@
+== chaos: contract ==
+?   	github.com/gregberns/harmonik/contract	[no test files]
+?   	github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1	[no test files]
+== chaos: kernel ==
+?   	github.com/gregberns/harmonik/kernel	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/cmd/harmonikd	(cached)
+?   	github.com/gregberns/harmonik/kernel/cmd/harmonikd/harnesstestplugin	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/host	(cached)
+?   	github.com/gregberns/harmonik/kernel/host/hoststub	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/state	(cached)
+?   	github.com/gregberns/harmonik/kernel/state/durabilityhelper	[no test files]
+ok  	github.com/gregberns/harmonik/kernel/transport	(cached)
+== chaos: tools/echo ==
+--- FAIL: TestVC12ChaosReloadUnderLoad (5.81s)
+    chaos_test.go:92: echo binary A sha256=68bb6017d4c4498ad9179c9d3eb7cc7364ca853d55ccc0594be460d6c8d50b65
+        echo binary B sha256=f324baa2964ff7f1c84994669dcb5c7e325ab13836fee49f3b0b5af7afdc94f2
+    chaos_test.go:150: load: 500 messages in 2.67s => 187 msg/s
+    chaos_test.go:151: reload latency (mid-stream, to a byte-distinct binary): 70.096917ms
+    --- FAIL: TestVC12ChaosReloadUnderLoad/reload-latency-single-digit-ms (0.00s)
+        chaos_test.go:245: reload latency 70.096917ms is not single-digit ms (budget 10ms); this is the known VC-12 latency finding, not a zero-loss failure
+    chaos_test.go:251: --- harmonikd log ---
+        2026/09/08 09:44:08 INFO harmonikd: listening kernel_addr=127.0.0.1:62406 admin_addr=127.0.0.1:62407 plugin_namespace=echo
+        2026/09/08 09:44:09 INFO harmonikd: reload manifest diff persisted=[echo.ping] added=[] removed=[]
+FAIL
+FAIL	github.com/gregberns/harmonik/tools/echo	8.696s
+?   	github.com/gregberns/harmonik/tools/echo/cmd/echo	[no test files]
+FAIL
+make: *** [chaos] Error 1

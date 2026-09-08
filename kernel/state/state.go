@@ -22,9 +22,8 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
-
 	"google.golang.org/protobuf/types/known/timestamppb"
+	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 
 	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 )

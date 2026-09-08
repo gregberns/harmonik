@@ -7,9 +7,10 @@ import (
 	"net"
 	"testing"
 
+	"google.golang.org/grpc"
+
 	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 	"github.com/gregberns/harmonik/tools/echo"
-	"google.golang.org/grpc"
 )
 
 func TestManifestDeclaresOnePingChannel(t *testing.T) {

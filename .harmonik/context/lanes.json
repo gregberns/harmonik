@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-12T21:00:00Z",
-  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate. Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. 2026-07-12: FLEET TORN DOWN under the freeze-and-carve clean slate (direction-log ~18:00Z) — no lanes are staffed; execution is frozen pending ratification of plans/2026-07-12-codebase-census/PLAN.md. Re-seed this array only when lanes are re-stood on ratification (STEP-0 first, out-of-pipeline). Pre-freeze 6-lane snapshot: .harmonik/archive/2026-07-12-freeze-and-carve/lanes.json.",
+  "updated": "2026-09-07T00:00:00Z",
+  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate. Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. 2026-09-07: fleet DOWN, planning turn — no lanes staffed. Direction of record = the platform re-grounding (plans/2026-09-07-harmonik-{bus,restructure}/); staffing is gated on open operator decisions in captain-lanes.md. Re-seed this array only when a lane is stood up on a go/no-go.",
   "lanes": []
 }

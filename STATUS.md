@@ -2,6 +2,14 @@
 
 > **[HANDOFF.md](HANDOFF.md) is the per-session authoritative source for current state and next steps.** This file is a higher-level structural summary. Sections below labelled "*(historical)*" are preserved for reference.
 >
+> **2026-09-07 (planning, direction of record for platform work):** A **platform re-grounding**
+> is in planning — the kernel/fabric substrate + a segmented-module restructure. Direction doc:
+> **[`plans/2026-09-07-harmonik-restructure/07-segmented-structure-and-day1-standards.md`](plans/2026-09-07-harmonik-restructure/07-segmented-structure-and-day1-standards.md)**
+> (referenced from AGENTS.md §Start here). The **kernel/dispatch half revives P1/P3 cleanly**. The
+> **restructure half targets the same daemon/core as the delete-and-rewrite program below** but by a
+> different strategy (segment modules vs in-place) — **whether it replaces / follows / runs alongside
+> delete-and-rewrite is an OPEN operator decision.** Nothing is committed yet.
+>
 > **2026-07-28 (current program):** The active program is **delete-and-rewrite** — see
 > **[`plans/2026-07-27-delete-and-rewrite/CHARTER.md`](plans/2026-07-27-delete-and-rewrite/CHARTER.md)**
 > for why it exists, the phase sequence, the decided core subsystem set, and what "done" means. Phase 1

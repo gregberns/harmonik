@@ -167,3 +167,22 @@ Take one path through the system, hold it to all of the above end to end, and pr
 extract the parts it needed — ports, clock, replay — into something the next vertical reuses. Find
 the subsystem that already comes closest and make the rest of the tree look like it. Do not invent
 the exemplar, and do not generalize from zero working examples.
+
+## 10. Verify the whole stack, and cross the real boundary early
+
+"Testing" gets read as "write a few unit tests," and unit tests alone never tell you a system
+works. The word here is **verification**: the whole stack — the pure core, the process and network
+boundaries, and the faults the real world injects. A system is "working" only when its real seams
+have been exercised, not when the green count is high.
+
+- **For anything distributed, the boundary is not last and it is not optional.** If you write the
+  code across a network or process boundary first and verify it after, every failure mode of that
+  boundary — a sleeping peer, a half-open socket, a dropped or duplicated message, a worker that
+  dies mid-job — arrives at once at the end, and the result is poor. Cross the real boundary early:
+  stand up the smallest slice that spans it and fault-inject against it before building on top.
+- **Build a slice, wrap it in verification, then the next slice.** The harness grows with the
+  system (§8, §9); it is not bolted on when the code is done. The fault-injection for a slice is
+  part of the slice, not a follow-up.
+- **A passing unit suite is necessary and not sufficient.** The bar is that the real boundary
+  survived the faults you threw at it — partition, kill, reload-under-load, a slow consumer, a
+  crash mid-acknowledge. Assume it does not work until a fault-injection run says otherwise (§7).

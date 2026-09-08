@@ -1,54 +1,40 @@
-// standard-bead.dot — the standard harmonik bead workflow (v1)
+// segment-bead.dot — the bead workflow for segment / kernel work (v1)
 //
-// The canonical bead lifecycle: implement → commit-gate (build+vet+test+scenario)
-// → independent review → close, with review APPROVE as the SOLE inbound edge to
-// close. Unions implement-review-fix.dot and green-build-merge-gate.dot into one
-// complete workflow. No daemon code change required.
+// Same topology as specs/examples/standard-bead.dot: implement → commit_gate
+// → review → close, with review APPROVE as the SOLE inbound edge to close. It
+// differs in ONE node: the commit_gate runs `make segments`, not `make core`.
+//
+// WHY A SEPARATE GRAPH. A segment or kernel bead touches the new go.work
+// modules (contract, kernel, tools/echo), which the core set (CORE_PKGS) does
+// not build and `make core` does not test. Gating that work on `make core`
+// would ask a question about the queue path — "can this run beads through the
+// queue?" — that a kernel change does not answer, and would leave the segment's
+// own build, its boundary rules and its full-strength lint ungated. `make
+// segments` is the gate built for this work: it builds+vets+tests+lints each
+// segment module and runs the three boundary checks (import-closure,
+// tool-isolation, kernel-vocabulary). It is scoped to the new modules and never
+// runs internal/, so it stays cheap.
 //
 // Topology:
 //   start
 //   → implement (agent: implementer; commit required)
-//   → commit_gate (tool: make core — the core set: can beads run through the queue? fail-closed)
+//   → commit_gate (tool: make segments — the segment modules + boundary checks; fail-closed)
 //     SUCCESS                   → review
 //     FAIL + deterministic      → implement (fix-loop, capped at 3)
 //     FAIL + transient          → commit_gate (self-loop, capped at 2)
 //     fallback                  → close-needs-attention (canceled / structural)
-//   → review (agent: reviewer — reads the diff)
-//     APPROVE                   → qa
-//     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
-//     BLOCK                     → close-needs-attention
-//     fallback                  → close-needs-attention
-//   → qa (agent: reviewer-class QA — EXECUTES the code + edge-case testing)
+//   → review (agent: reviewer)
 //     APPROVE                   → close (SOLE inbound edge to close)
 //     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
 //     BLOCK                     → close-needs-attention
 //     fallback                  → close-needs-attention
 //
-// Key design decisions:
-//   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
-//   D3=v3: the gate is `make core` — THE CORE SET ONLY, fail-closed. Operator
-//     instruction, standing: the only question this gate answers is "can this
-//     run beads through the queue?". `make core` is named and built for exactly
-//     that — the 29 CORE_PKGS, run WITHOUT `-short`, so it executes TestSmokeLoop
-//     (real ledger, real worktree, real merge, bead to closed) and
-//     TestScenario_HappyPath_N1. `make full` runs those same packages WITH
-//     `-short` and skips both; it stays the merge decision on the integration
-//     branch and in CI, where nothing is blocked waiting on it.
-//     This is NOT the fail-open v1.1 gate that v2 deleted. That one chose
-//     packages by asking git what changed since main — main is over a thousand
-//     commits behind, so the question was unanswerable — and it had five ways to
-//     APPROVE work that never passed against one way to block. CORE_PKGS is a
-//     FIXED list in the Makefile and inherits neither defect.
-//     v2's reason for going whole-repo was that a red in an unrelated package
-//     should block every bead. That is a defensible merge policy and it belongs
-//     on the merge decision, not on the per-bead gate: a broad gate made the
-//     scenario tier's own load-flakiness into a release blocker three times over.
-//   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
-//     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
+// The SOLE-inbound-edge invariant (only review→close[APPROVE] reaches close) is
+// a contract this graph is written to, UNASSERTED here as in standard-bead.dot.
+// Treat it as a rule a human holds, not one the suite catches.
 //
 // Spec refs:
-//   - docs/sdlc-workflow-corpus.md §1  (implement-review-fix reference topology)
-//   - docs/sdlc-workflow-corpus.md §15 (green-build-merge-gate topology)
+//   - specs/examples/standard-bead.dot (the topology this graph copies)
 //   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
 //   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
 //   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
@@ -61,14 +47,15 @@
 //   - specs/handler-contract.md §III.1 HC-063 — in-process shell handler
 //   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
 //
-// Source: harmonik-productization-design workflow 2026-06-02.
-// Bead ref: hk-p0kum.
+// Layout of record: plans/2026-09-07-harmonik-restructure/
+//   07-segmented-structure-and-day1-standards.md (§3, the day-one standards)
+//   and 06-segmented-layout.md.
 
-digraph "standard-bead" {
+digraph "segment-bead" {
     // ─── Graph-level attributes ──────────────────────────────────────────────
     schema_version="1";
     version="1.0";
-    workflow_id="standard-bead";
+    workflow_id="segment-bead";
     start_node="start";
     terminal_node_ids="close,close-needs-attention";
     context_keys="bead_id";
@@ -85,81 +72,56 @@ digraph "standard-bead" {
 
     // implement: agentic implementer. On the first visit, produces the change.
     // On re-entry (after REQUEST_CHANGES or a deterministic commit_gate failure),
-    // addresses the reviewer feedback or fixes the build/test failure.
+    // addresses the reviewer feedback or fixes the build/test/boundary failure.
     implement [
         type="agentic",
         agent_type="implementer",
         handler_ref="claude-implementer",
         idempotency_class="non-idempotent",
-        role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
+        role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the segments-gate failure."
     ];
 
-    // commit_gate: `make core` — the per-bead gate, defined in the Makefile.
-    // It runs the static half (format, `go build ./...`, `go vet ./...`, the
-    // subsystem freeze greps, the changed-line lint) and then the 29 CORE_PKGS
-    // WITHOUT `-short`. That set is the run path: queue, queue wiring, ledger
-    // CLI, workspace, daemon, run loop / exec / lease / launch, workflow and the
-    // graph engine, merge, merge queue, core, handler, git probe and the CLI.
+    // commit_gate: `make segments` — the scoped gate for the platform
+    // re-grounding, defined in the Makefile. It builds, vets, tests and lints
+    // each segment module (contract, kernel, tools/echo) and then runs the
+    // three boundary checks: import-closure (no segment reaches internal/),
+    // tool-isolation (no tools/* requires a sibling tool or the kernel), and
+    // kernel-vocabulary (no domain noun in kernel/ Go source).
     //
-    // A PER-BEAD GATE MUST BE CHEAP. `make full` tests every package and then
-    // runs the whole scenario tier on top of that, and every bead was paying
-    // for it; that is not what it is for. It measured 20 minutes on 2026-08-11
-    // at 4ebd8a334 — timed start to end, load sampled every 15 s, in
-    // assessments/2026-08-11-1434-gate-on-alpha-tip/01-EVIDENCE.md section 2.
-    // `make full` is the integration-branch-into-main decision and it runs
-    // there and in CI only.
+    // THE GATE IS `make segments`, NOT `make core` OR `make full`. A segment or
+    // kernel bead does not touch the queue path CORE_PKGS covers, and `make
+    // core` never builds the new modules. `make segments` is scoped to exactly
+    // the new modules, so it stays cheap and answers the question this work
+    // raises: does the segment build, pass its own full-strength lint, and hold
+    // its boundary rules?
     //
     // Fail-closed at every step. No retry, and no path that reports SUCCESS on a
-    // timeout, an OOM, a compile failure or an exit code nothing recognised.
+    // timeout, a compile failure, a lint finding, a boundary breach or an exit
+    // code nothing recognises.
     //
-    // This gate IS package-scoped — to the fixed CORE_PKGS list named above. An
-    // earlier version of this comment said "no package scoping", which the same
-    // comment then contradicted eight lines up by naming 29 packages. What the
-    // v1.1 gate did and this one does not is DERIVE the scope, by asking git what
-    // changed since main. A fixed list in the Makefile is still a scope; it is
-    // just one that cannot silently shrink to nothing.
-    //
-    // scripts/gate-fails-closed-test.sh covers `core` as of 2026-08-13, and the
-    // claim it holds is exactly one: STRUCTURALLY, every step of `make core`
-    // propagates its exit status. Its behavioural cases drive `gate-test-compile`
-    // and `full` and do not reach `core`. So read it as proof that no step of this
-    // gate swallows a failure — not as proof that the gate tests the right things.
-    //
-    // Keeping the gate here rather than in the graph is deliberate: the graph
-    // used to carry its own copy of the command, so the graph and the Makefile
-    // could disagree about what "passing" meant. There is one definition now.
     // Exit 0 (SUCCESS) → every check passed → advance to review.
-    // Non-zero deterministic → build / vet / test-compile / test failure → loop back to implement (capped at 3).
+    // Non-zero deterministic → build / vet / test / lint / boundary failure → loop back to implement (capped at 3).
     // Non-zero transient → infra glitch → self-loop retry (capped at 2).
     // Any other outcome → unconditional fallback → close-needs-attention.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="make core",
+        tool_command="make segments",
         // The node timeout must clear the work the node does, or a real red can
-        // never report. That is the history here: at 900s this node timed out
-        // deterministically, was classified TRANSIENT, burned its self-loop
-        // budget and died in close-needs-attention having never said WHICH test
-        // failed. 1800s was then sized for a gate that tested only the affected
-        // packages and retried them once.
-        //
-        // `make full` does more and retries nothing. Measured on this box,
-        // 2026-08-03, warm cache: static half about 90s, compile every test file
-        // about 60s, whole-repo `go test -short` 340s, the tagged scenario tier
-        // up to its own 10m budget, module hygiene about 60s. That is roughly
-        // 22 minutes at the worst case. 3600s doubles it, which covers a cold
-        // cache and a loaded box (load average 43.67 has been observed during
-        // this node). A timeout here is a hard FAIL, never an approval.
-        timeout="3600",
-        role="commit gate: make core — the core set only: can this run beads through the queue? fail-closed; exit 0 = ready for review"
+        // never report. `make segments` is far cheaper than `make full` — it
+        // builds only the new empty-to-small modules and runs three greps — so
+        // this ceiling is generous. A timeout here is a hard FAIL, never an
+        // approval.
+        timeout="1800",
+        role="commit gate: make segments — the segment modules + boundary checks; fail-closed; exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label
     // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
-    // harness="claude-code" pins review to Claude at tier 3 so the reviewer
-    // stays on Claude even when the global default (tier 4) is pi — avoids
-    // the Pi-reviewer pane seed-paste bug (hk-z4nif). hk-ytzj2.
+    // harness="claude-code" pins review to Claude — the reviewer node stays on
+    // Claude by project decision even when the global default is another
+    // harness.
     review [
         type="agentic",
         agent_type="reviewer",
@@ -170,26 +132,8 @@ digraph "standard-bead" {
         role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
     ];
 
-    // qa: agentic QA gate — runs AFTER review APPROVE. Reviewer-class node
-    // (agent_type="reviewer" + handler_ref="claude-reviewer") so it reuses the
-    // verdict machinery: writes .harmonik/review.json with APPROVE / REQUEST_CHANGES
-    // / BLOCK, and that preferred_label drives the cascade. Unlike `review` (which
-    // reads the diff), QA MUST actually EXECUTE the changed code, run it, and
-    // exercise edge cases before it can APPROVE. harness="claude-code" gives it a
-    // real execution environment in the worktree; model pinned to opus like review.
-    qa [
-        type="agentic",
-        agent_type="reviewer",
-        handler_ref="claude-reviewer",
-        idempotency_class="idempotent",
-        model="claude-opus-4-8",
-        harness="claude-code",
-        role="QA gate — you are the last line of defense before merge. Do NOT merely read the diff. ACTUALLY EXECUTE the changed code: build it (go build ./... and any affected binaries), run the specific commands/flows the bead changed, and exercise EDGE CASES (empty input, boundary values, error paths, concurrent/repeat invocation, malformed input). Reproduce the bead's stated goal end-to-end and confirm the observed behavior matches what was asked — not just that tests pass. Write your verdict to .harmonik/review.json: APPROVE only if you ran the code and it demonstrably works including edge cases; REQUEST_CHANGES (with concrete repro steps + the failing case in notes) if execution reveals ANY defect or the change does not actually do what the bead required; BLOCK only if the change cannot be validated at all. When in doubt, REQUEST_CHANGES — never APPROVE code you did not execute."
-    ];
-
     // close: terminal node — APPROVE path only. The SOLE inbound edge is
-    // qa->close[APPROVE] (QA runs after review; review->qa->close). No other path
-    // reaches this node.
+    // review→close[APPROVE]. No other path reaches this node.
     close [
         type="non-agentic",
         handler_ref="noop",
@@ -219,7 +163,7 @@ digraph "standard-bead" {
         condition="outcome.status == 'SUCCESS'"
     ];
 
-    // (4) Gate deterministic failure (build error, test assertion) → fix-loop.
+    // (4) Gate deterministic failure (build error, test/lint/boundary failure) → fix-loop.
     // Capped at 3: at most 3 fix attempts before escalating.
     commit_gate -> implement [
         condition="outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'",
@@ -238,8 +182,8 @@ digraph "standard-bead" {
     // Must appear last among commit_gate outgoing edges.
     commit_gate -> "close-needs-attention";
 
-    // (7) Review APPROVE → QA gate (NOT close). QA must execute the code before merge.
-    review -> qa [
+    // (7) APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
+    review -> close [
         condition="outcome.preferred_label == 'APPROVE'"
     ];
 
@@ -257,25 +201,4 @@ digraph "standard-bead" {
     // (10) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
     // Catches any unrecognized or absent preferred_label. Must appear last.
     review -> "close-needs-attention";
-
-    // (11) QA APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
-    // QA executed the changed code and confirmed it works incl. edge cases.
-    qa -> close [
-        condition="outcome.preferred_label == 'APPROVE'"
-    ];
-
-    // (12) QA REQUEST_CHANGES → back to implement (fix-loop, capped at 3).
-    qa -> implement [
-        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
-        traversal_cap="3"
-    ];
-
-    // (13) QA BLOCK → close-needs-attention (cannot validate / structural).
-    qa -> "close-needs-attention" [
-        condition="outcome.preferred_label == 'BLOCK'"
-    ];
-
-    // (14) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
-    // Must appear last among qa outgoing edges.
-    qa -> "close-needs-attention";
 }

@@ -44,6 +44,7 @@ type Config struct {
 	AdminAddr    string // admin HTTP for the client verbs; "" picks an ephemeral port
 	PluginPath   string
 	PluginSHA256 string
+	Logger       *slog.Logger // drain-gate + dispatch diagnostics; nil uses slog.Default()
 }
 
 // Daemon is one running harmonikd process: the kernel gRPC listener, the
@@ -92,7 +93,7 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 		KernelEndpoint: grpcLis.Addr().String(),
 		CallerID:       cfg.Node,
 		APIVersion:     1,
-	}, tp)
+	}, tp, cfg.Logger)
 	if err != nil {
 		grpcServer.Stop()
 		closeLogged(ctx, journal)
@@ -176,7 +177,7 @@ func (d *Daemon) AdminAddr() string { return d.adminLis.Addr().String() }
 
 // PluginManifest reports the registered plugin's own manifest, discovered at
 // launch — never assumed by this package.
-func (d *Daemon) PluginManifest() *kernelv1.PluginManifest { return d.plugin.manifest }
+func (d *Daemon) PluginManifest() *kernelv1.PluginManifest { return d.plugin.currentManifest() }
 
 // Close tears the daemon down: the admin surface, the kernel gRPC surface,
 // the plugin process, and the state handle, in that order.

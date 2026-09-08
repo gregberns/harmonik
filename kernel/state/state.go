@@ -75,7 +75,7 @@ func Open(path string) (*State, error) {
 	}
 	// One connection, reused for every call: database/sql then serializes
 	// callers for us, so PRAGMA synchronous set ahead of a write always
-	// applies to that same write's transaction on the same session.
+	// applies to that same write's transaction on the same connection.
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.ExecContext(context.Background(), schemaDDL); err != nil {

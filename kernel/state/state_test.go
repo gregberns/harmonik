@@ -50,7 +50,7 @@ func readAll(t *testing.T, st *State, namespace string, req *kernelv1.JournalRea
 func TestAppendAssignsMonotonicSeqsAndReadReturnsThemInOrder(t *testing.T) {
 	st, _ := openTemp(t)
 
-	resp, err := st.Append(withDeadline(t), "echo", &kernelv1.JournalAppendRequest{
+	resp, err := st.Append(withDeadline(t), "writer-ns", &kernelv1.JournalAppendRequest{
 		Journal: "seen",
 		Records: [][]byte{[]byte("a"), []byte("b"), []byte("c")},
 	})
@@ -61,7 +61,7 @@ func TestAppendAssignsMonotonicSeqsAndReadReturnsThemInOrder(t *testing.T) {
 		t.Fatalf("Seqs = %v, want %v", got, want)
 	}
 
-	records := readAll(t, st, "echo", &kernelv1.JournalReadRequest{Journal: "seen"})
+	records := readAll(t, st, "writer-ns", &kernelv1.JournalReadRequest{Journal: "seen"})
 	if len(records) != 3 {
 		t.Fatalf("Read returned %d records, want 3", len(records))
 	}
@@ -82,7 +82,7 @@ func TestAppendAssignsMonotonicSeqsAndReadReturnsThemInOrder(t *testing.T) {
 func TestSeqIsMonotonicAcrossARestart(t *testing.T) {
 	st, path := openTemp(t)
 
-	if _, err := st.Append(withDeadline(t), "echo", &kernelv1.JournalAppendRequest{
+	if _, err := st.Append(withDeadline(t), "writer-ns", &kernelv1.JournalAppendRequest{
 		Journal: "seen", Records: [][]byte{[]byte("first")}, Sync: true,
 	}); err != nil {
 		t.Fatalf("first Append: %v", err)
@@ -101,7 +101,7 @@ func TestSeqIsMonotonicAcrossARestart(t *testing.T) {
 		}
 	}()
 
-	resp, err := reopened.Append(withDeadline(t), "echo", &kernelv1.JournalAppendRequest{
+	resp, err := reopened.Append(withDeadline(t), "writer-ns", &kernelv1.JournalAppendRequest{
 		Journal: "seen", Records: [][]byte{[]byte("second")},
 	})
 	if err != nil {
@@ -115,13 +115,13 @@ func TestSeqIsMonotonicAcrossARestart(t *testing.T) {
 func TestReadAfterSeqExcludesAlreadySeenRecords(t *testing.T) {
 	st, _ := openTemp(t)
 
-	if _, err := st.Append(withDeadline(t), "echo", &kernelv1.JournalAppendRequest{
+	if _, err := st.Append(withDeadline(t), "writer-ns", &kernelv1.JournalAppendRequest{
 		Journal: "seen", Records: [][]byte{[]byte("a"), []byte("b"), []byte("c")},
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
-	records := readAll(t, st, "echo", &kernelv1.JournalReadRequest{Journal: "seen", AfterSeq: 1})
+	records := readAll(t, st, "writer-ns", &kernelv1.JournalReadRequest{Journal: "seen", AfterSeq: 1})
 	if len(records) != 2 {
 		t.Fatalf("Read after_seq=1 returned %d records, want 2", len(records))
 	}
@@ -154,7 +154,7 @@ func TestFollowDeliversAnAppendMadeAfterReadStarted(t *testing.T) {
 	received := make(chan *kernelv1.JournalRecord, 1)
 	readErr := make(chan error, 1)
 	go func() {
-		readErr <- st.Read(ctx, "echo", &kernelv1.JournalReadRequest{Journal: "seen", Follow: true}, func(rec *kernelv1.JournalRecord) error {
+		readErr <- st.Read(ctx, "writer-ns", &kernelv1.JournalReadRequest{Journal: "seen", Follow: true}, func(rec *kernelv1.JournalRecord) error {
 			received <- rec
 			return nil
 		})
@@ -163,7 +163,7 @@ func TestFollowDeliversAnAppendMadeAfterReadStarted(t *testing.T) {
 	// Give Read a moment to register its watch before the append lands.
 	time.Sleep(50 * time.Millisecond)
 
-	if _, err := st.Append(context.Background(), "echo", &kernelv1.JournalAppendRequest{
+	if _, err := st.Append(context.Background(), "writer-ns", &kernelv1.JournalAppendRequest{
 		Journal: "seen", Records: [][]byte{[]byte("late")},
 	}); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -184,41 +184,47 @@ func TestFollowDeliversAnAppendMadeAfterReadStarted(t *testing.T) {
 	}
 }
 
-// TestSyncAppendSurvivesKillNine is the K3 durability probe: a child process
-// appends one record with sync=true, announces it, and is then killed with
-// SIGKILL — a real, uncooperative process death, not a clean shutdown. The
-// record must still be there when the parent reopens the same database file.
+// TestSyncAppendSurvivesKillNine is the K3 durability probe: a separate
+// helper process (kernel/state/durabilityhelper) appends one record with
+// sync=true, announces it, and is then killed with SIGKILL — a real,
+// uncooperative process death, not a clean shutdown. The record must still
+// be there when this test reopens the same database file.
 func TestSyncAppendSurvivesKillNine(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "journal.db")
+	helperBin := filepath.Join(dir, "durabilityhelper")
 
-	//nolint:gosec // os.Args[0] is this test binary re-executing itself, the standard Go helper-process pattern
-	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestDurabilityHelperProcess$")
-	cmd.Env = append(os.Environ(),
-		durabilityHelperEnv+"=1",
-		durabilityHelperDBEnv+"="+dbPath,
-	)
+	//nolint:gosec // "go build" with fixed args plus a TempDir output path this test controls
+	buildCmd := exec.CommandContext(context.Background(), "go", "build", "-o", helperBin,
+		"github.com/gregberns/harmonik/kernel/state/durabilityhelper")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build durabilityhelper: %v\n%s", err, out)
+	}
+
+	//nolint:gosec // helperBin is a binary this test just built into its own TempDir
+	cmd := exec.CommandContext(context.Background(), helperBin)
+	cmd.Env = append(os.Environ(), durabilityDBEnv+"="+dbPath)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("StdoutPipe: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start helper: %v", err)
+		t.Fatalf("start durabilityhelper: %v", err)
 	}
 
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil {
-		t.Fatalf("read helper announcement: %v", err)
+		t.Fatalf("read durabilityhelper announcement: %v", err)
 	}
-	if line != durabilityAppendedLine+"\n" {
-		t.Fatalf("helper announcement = %q, want %q", line, durabilityAppendedLine)
+	if line != durabilityAnnouncedLine+"\n" {
+		t.Fatalf("durabilityhelper announcement = %q, want %q", line, durabilityAnnouncedLine)
 	}
 
 	if err := cmd.Process.Kill(); err != nil {
-		t.Fatalf("kill -9 helper: %v", err)
+		t.Fatalf("kill -9 durabilityhelper: %v", err)
 	}
 	if err := cmd.Wait(); err != nil {
-		t.Logf("helper process exited via kill -9, as expected: %v", err)
+		t.Logf("durabilityhelper exited via kill -9, as expected: %v", err)
 	}
 
 	st, err := Open(dbPath)
@@ -240,42 +246,12 @@ func TestSyncAppendSurvivesKillNine(t *testing.T) {
 	}
 }
 
+// These must match the corresponding constants in
+// kernel/state/durabilityhelper/main.go.
 const (
-	durabilityHelperEnv    = "HARMONIK_KERNEL_STATE_DURABILITY_HELPER"
-	durabilityHelperDBEnv  = "HARMONIK_KERNEL_STATE_DURABILITY_DB"
-	durabilityNamespace    = "durability-ns"
-	durabilityJournal      = "durability-journal"
-	durabilityPayload      = "durable-payload"
-	durabilityAppendedLine = "APPENDED"
+	durabilityDBEnv         = "HARMONIK_KERNEL_STATE_DURABILITY_DB"
+	durabilityNamespace     = "durability-ns"
+	durabilityJournal       = "durability-journal"
+	durabilityPayload       = "durable-payload"
+	durabilityAnnouncedLine = "APPENDED"
 )
-
-// TestDurabilityHelperProcess is not a real test: it only runs when
-// durabilityHelperEnv is set, as the re-exec'd child of
-// TestSyncAppendSurvivesKillNine. It appends one record with sync=true,
-// prints an announcement, then blocks so the parent can SIGKILL it.
-func TestDurabilityHelperProcess(t *testing.T) {
-	dbPath := os.Getenv(durabilityHelperDBEnv)
-	if os.Getenv(durabilityHelperEnv) == "" || dbPath == "" {
-		t.Skip("not invoked as the durability helper process")
-	}
-
-	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("helper Open: %v", err)
-	}
-
-	if _, err := st.Append(context.Background(), durabilityNamespace, &kernelv1.JournalAppendRequest{
-		Journal: durabilityJournal,
-		Records: [][]byte{[]byte(durabilityPayload)},
-		Sync:    true,
-	}); err != nil {
-		t.Fatalf("helper Append: %v", err)
-	}
-
-	if _, err := os.Stdout.WriteString(durabilityAppendedLine + "\n"); err != nil {
-		t.Fatalf("helper announce: %v", err)
-	}
-
-	// Block until the parent sends SIGKILL. Never returns on its own.
-	select {}
-}

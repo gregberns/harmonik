@@ -72,13 +72,17 @@ func startDaemon(t *testing.T, path, digest string) *Daemon {
 	return d
 }
 
+// harnessJournal is the only journal the harness plugin ever writes to (its
+// default), so every test reads back from this one name.
+const harnessJournal = "records"
+
 // pollJournal retries clientJournalRead until want is present or ctx times
 // out; the plugin's own JournalAppend call happens asynchronously to
 // Publish returning, so a single read can legitimately race it.
-func pollJournal(t *testing.T, ctx context.Context, addr, journal, want string) []string {
+func pollJournal(t *testing.T, ctx context.Context, addr, want string) []string {
 	t.Helper()
 	for {
-		lines, err := clientJournalRead(ctx, addr, journal)
+		lines, err := clientJournalRead(ctx, addr, harnessJournal)
 		if err != nil {
 			t.Fatalf("clientJournalRead: %v", err)
 		}
@@ -89,7 +93,7 @@ func pollJournal(t *testing.T, ctx context.Context, addr, journal, want string) 
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("journal %q never contained %q; last read: %v", journal, want, lines)
+			t.Fatalf("journal %q never contained %q; last read: %v", harnessJournal, want, lines)
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
@@ -114,7 +118,7 @@ func TestSplitDemoRoundTrips(t *testing.T) {
 	}
 
 	want := hex.EncodeToString(payload)
-	pollJournal(t, ctx, d.KernelAddr(), "records", want)
+	pollJournal(t, ctx, d.KernelAddr(), want)
 }
 
 // TestPublishWhileStoppedStaysQueuedThenDelivers is the other half of K7's
@@ -136,7 +140,7 @@ func TestPublishWhileStoppedStaysQueuedThenDelivers(t *testing.T) {
 	if _, err := clientPublish(ctx, d.KernelAddr(), channel, firstPayload); err != nil {
 		t.Fatalf("clientPublish (first): %v", err)
 	}
-	pollJournal(t, ctx, d.KernelAddr(), "records", hex.EncodeToString(firstPayload))
+	pollJournal(t, ctx, d.KernelAddr(), hex.EncodeToString(firstPayload))
 
 	// Simulate the plugin process going down without a reload, the way an
 	// unexpected exit would leave things: killed, and no process installed
@@ -168,5 +172,5 @@ func TestPublishWhileStoppedStaysQueuedThenDelivers(t *testing.T) {
 		t.Fatalf("requestReload: %v", err)
 	}
 
-	pollJournal(t, ctx, d.KernelAddr(), "records", hex.EncodeToString(secondPayload))
+	pollJournal(t, ctx, d.KernelAddr(), hex.EncodeToString(secondPayload))
 }

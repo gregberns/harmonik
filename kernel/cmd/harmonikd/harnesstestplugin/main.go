@@ -12,7 +12,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
@@ -26,6 +28,13 @@ const (
 	namespaceEnv = "HARMONIK_HARNESSTESTPLUGIN_NAMESPACE"
 	channelEnv   = "HARMONIK_HARNESSTESTPLUGIN_CHANNEL"
 	journalEnv   = "HARMONIK_HARNESSTESTPLUGIN_JOURNAL"
+	// deliverDelayEnv makes every Deliver wait this many milliseconds before
+	// it writes to the journal — a deliberately slow, but finishing, handler.
+	deliverDelayEnv = "HARMONIK_HARNESSTESTPLUGIN_DELIVER_DELAY_MS"
+	// deliverHangEnv makes every Deliver block until its context is cancelled
+	// and never write to the journal — a hung handler the drain gate must
+	// cancel and kill through.
+	deliverHangEnv = "HARMONIK_HARNESSTESTPLUGIN_DELIVER_HANG"
 
 	defaultNamespace = "harnesstestplugin"
 	defaultJournal   = "records"
@@ -34,9 +43,11 @@ const (
 type server struct {
 	kernelv1.UnimplementedPluginServiceServer
 
-	namespace string
-	channel   string
-	journal   string
+	namespace    string
+	channel      string
+	journal      string
+	deliverDelay time.Duration
+	deliverHang  bool
 
 	mu     sync.RWMutex
 	conn   *grpc.ClientConn
@@ -91,6 +102,18 @@ func (s *server) Health(context.Context, *kernelv1.HealthRequest) (*kernelv1.Hea
 }
 
 func (s *server) Deliver(ctx context.Context, req *kernelv1.DeliverRequest) (*kernelv1.DeliverResponse, error) {
+	if s.deliverHang {
+		<-ctx.Done()
+		return nil, fmt.Errorf("harnesstestplugin: deliver hung until cancelled: %w", ctx.Err())
+	}
+	if s.deliverDelay > 0 {
+		select {
+		case <-time.After(s.deliverDelay):
+		case <-ctx.Done():
+			return nil, fmt.Errorf("harnesstestplugin: deliver cancelled mid-delay: %w", ctx.Err())
+		}
+	}
+
 	s.mu.RLock()
 	kernel := s.kernel
 	s.mu.RUnlock()
@@ -119,7 +142,18 @@ func main() {
 	channel := envOrDefault(channelEnv, namespace+".in")
 	journal := envOrDefault(journalEnv, defaultJournal)
 
-	impl := &server{namespace: namespace, channel: channel, journal: journal}
+	var deliverDelay time.Duration
+	if ms, err := strconv.Atoi(os.Getenv(deliverDelayEnv)); err == nil && ms > 0 {
+		deliverDelay = time.Duration(ms) * time.Millisecond
+	}
+
+	impl := &server{
+		namespace:    namespace,
+		channel:      channel,
+		journal:      journal,
+		deliverDelay: deliverDelay,
+		deliverHang:  os.Getenv(deliverHangEnv) != "",
+	}
 
 	goplugin.Serve(&goplugin.ServeConfig{
 		HandshakeConfig: host.Handshake,

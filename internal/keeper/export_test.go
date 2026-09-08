@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 // ResolveCyclerDefaultsForTest returns a CyclerConfig whose zero-valued numeric
@@ -16,17 +18,17 @@ func ResolveCyclerDefaultsForTest() CyclerConfig {
 	return c
 }
 
-// OperatorActiveSinceForTest exposes the pure operatorActiveSince distinction
-// (tmuxresolve.go) to the keeper_test package so the suite can assert the
-// idle/remote-control-client-vs-live-typist split that the operator-attached
-// guard depends on (hk-0t5s). Refs: hk-nlio.
+// OperatorActiveSinceForTest exposes tmuxhost.OperatorActiveSince (moved from
+// tmuxresolve.go at KH-1) to the keeper_test package so the suite can assert
+// the idle/remote-control-client-vs-live-typist split that the
+// operator-attached guard depends on (hk-0t5s). Refs: hk-nlio.
 func OperatorActiveSinceForTest(listClientsOutput string, now time.Time, window time.Duration) bool {
-	return operatorActiveSince(listClientsOutput, now, window)
+	return tmuxhost.OperatorActiveSince(listClientsOutput, now, window)
 }
 
-// OperatorActiveWindowForTest exposes the production operatorActiveWindow so the
+// OperatorActiveWindowForTest exposes the production OperatorActiveWindow so the
 // suite feeds the real window to OperatorActiveSinceForTest. Refs: hk-nlio.
-const OperatorActiveWindowForTest = operatorActiveWindow
+const OperatorActiveWindowForTest = tmuxhost.OperatorActiveWindow
 
 // SetCyclerLastFiredSID sets the reactor's LastFiredSID state, allowing test
 // code to pre-arm the anti-loop gate without running a real cycle. (T7: the

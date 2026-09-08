@@ -1,4 +1,4 @@
-package keeper
+package tmuxhost
 
 import (
 	"fmt"
@@ -84,8 +84,8 @@ func TestOperatorActiveSince(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := operatorActiveSince(tc.out, now, window); got != tc.want {
-				t.Errorf("operatorActiveSince(%q) = %v, want %v", tc.out, got, tc.want)
+			if got := OperatorActiveSince(tc.out, now, window); got != tc.want {
+				t.Errorf("OperatorActiveSince(%q) = %v, want %v", tc.out, got, tc.want)
 			}
 		})
 	}

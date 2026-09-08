@@ -1,6 +1,6 @@
 //go:build integration
 
-package keeper
+package tmuxhost
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func tsiKillSession(t *testing.T, name string) {
 //  3. The session is killed by name → tmuxSessionLive reports false (live →
 //     absent transition through the real subprocess).
 //
-// This is the in-package (package keeper) test that can reach the unexported
+// This is the in-package (package tmuxhost) test that can reach the unexported
 // helper; the public ResolveTmuxTarget seam is covered separately below.
 func TestIntegration_TmuxSessionLive_RealProbePath(t *testing.T) {
 	tsiRequireTmux(t)
@@ -94,7 +94,7 @@ func TestIntegration_TmuxSessionLive_RealProbePath(t *testing.T) {
 //
 // Assertions:
 //   - session live  → ResolveTmuxTarget returns the derived name, targeting the
-//     AGENT window's active pane ("<derived>:agent" — see the windowAgent /
+//     AGENT window's active pane ("<derived>:agent" — see the WindowAgent /
 //     "Priority 2: bare convention" doc on ResolveTmuxTarget; a keeper running
 //     in its own sibling "keeper" window must inject/measure the agent window,
 //     never itself).
@@ -116,7 +116,7 @@ func TestIntegration_ResolveTmuxTarget_RealLivePath(t *testing.T) {
 	}
 
 	tsiStartSession(t, derived)
-	wantLive := derived + ":" + windowAgent
+	wantLive := derived + ":" + WindowAgent
 	if got := ResolveTmuxTarget(dir, agent, "", nil); got != wantLive {
 		t.Fatalf("tsi: ResolveTmuxTarget(real path) = %q; want %q (live session not detected)", got, wantLive)
 	}

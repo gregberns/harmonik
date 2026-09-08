@@ -70,40 +70,6 @@ func TestInjectText_EmptyTargetReturnsError(t *testing.T) {
 	}
 }
 
-// TestInjectText_SettleConstants verifies that the timing constants introduced
-// in 55753ac (hk-89g) retain their designed values. A regression here would
-// reintroduce the submit-Enter race where injected commands sit unsubmitted.
-func TestInjectText_SettleConstants(t *testing.T) {
-	t.Parallel()
-
-	if submitSettle != 750*time.Millisecond {
-		t.Errorf("submitSettle = %v; want 750ms (hk-89g: race window)", submitSettle)
-	}
-
-	if submitRetries != 2 {
-		t.Errorf("submitRetries = %d; want 2 (hk-89g: bounded retry count)", submitRetries)
-	}
-
-	if submitRetryDelay != 400*time.Millisecond {
-		t.Errorf("submitRetryDelay = %v; want 400ms (hk-89g: retry inter-delay)", submitRetryDelay)
-	}
-}
-
-// TestInjectText_SettleCanBeOverriddenInTests verifies that submitSettle is a
-// var (not a const), meaning tests can zero it out to skip the settle wait when
-// invoking InjectText with a real tmux target in integration tests.
-//
-// Deliberately NOT t.Parallel(): it mutates the package-level submitSettle,
-// which TestInjectText_SettleConstants (which IS parallel) reads. Go runs
-// sequential top-level tests to completion before resuming any paused parallel
-// one, so staying sequential is what keeps the mutation from interleaving with
-// that assertion.
-func TestInjectText_SettleCanBeOverriddenInTests(t *testing.T) {
-	original := submitSettle
-	defer func() { submitSettle = original }()
-
-	submitSettle = 0
-	if submitSettle != 0 {
-		t.Error("submitSettle is not assignable; it must be a var, not a const")
-	}
-}
+// Settle-timing constants (hk-89g) are now owned by tmuxhost, the package the
+// tmux inject mechanics were extracted to (KH-1); see
+// panehost/tmuxhost/inject_test.go.

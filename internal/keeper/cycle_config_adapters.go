@@ -3,16 +3,18 @@ package keeper
 import (
 	"context"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
 )
 
 type configPaneWriter struct{ cfg *CyclerConfig }
 
 func (p configPaneWriter) Inject(ctx context.Context, target, value string) error {
-	return injectTextClocked(ctx, p.cfg.Clock, target, value)
+	return p.cfg.PaneHost.Inject(ctx, panehost.Target(target), value)
 }
 func (p configPaneWriter) SendEscape(context.Context, string) error { return nil }
 func (p configPaneWriter) SetEnv(ctx context.Context, target, key, value string) error {
-	return SetTmuxEnv(ctx, target, key, value)
+	return p.cfg.PaneHost.SetSessionEnv(ctx, panehost.Target(target), key, value)
 }
 
 type configContextStore struct{ cfg *CyclerConfig }

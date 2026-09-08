@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 type recordingInjector struct {
@@ -298,7 +299,7 @@ func TestRestartNow_CrewAgent_AccCorpus1_B4(t *testing.T) {
 	requested := time.Now()
 	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
 
-	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + windowAgent
+	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + tmuxhost.WindowAgent
 
 	rec := &recordingInjector{}
 	err := RestartNow(context.Background(), RestartNowConfig{

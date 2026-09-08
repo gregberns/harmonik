@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
@@ -41,10 +42,19 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		resolvedBootGrace = resolved.BootGrace
 	}
 
+	// paneHost is the ONE owner of the production tmux defaults (KH-1,
+	// plans/2026-09-07-keeper-herdr-substrate/README.md §4.1): both the
+	// cycle core (CycleDepsFromConfig) and the watcher (WatcherConfig.
+	// applyDefaults) route their Inject/Foreground/OperatorAttached/Resolve
+	// defaults through this SAME constructed value, so swapping in a herdr
+	// PaneHost later is a wiring change here, not an edit to each *Fn seam.
+	paneHost := tmuxhost.New()
+
 	cyclerCfg := keeper.CyclerConfig{
 		AgentName:            p.AgentName,
 		ProjectDir:           p.ProjectDir,
 		TmuxTarget:           p.ResolvedTmux,
+		PaneHost:             paneHost,
 		ActPct:               float64(p.ActPctRaw),
 		ActAbsTokens:         resolved.ActAbsTokens,
 		WarnAbsTokens:        resolved.WarnAbsTokens,
@@ -70,6 +80,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		ProjectDir:           p.ProjectDir,
 		WarnPct:              float64(p.WarnPctRaw),
 		TmuxTarget:           p.ResolvedTmux,
+		PaneHost:             paneHost,
 		Cycler:               nil, // caller assigns the constructed *Cycler post crash-recovery
 		FallbackWindowSize:   p.WindowSize,
 		WarnAbsTokens:        resolved.WarnAbsTokens,
@@ -760,6 +771,7 @@ func runKeeperAwaitAck(args []string) int {
 		Kind:       *kindFlag,
 		Timeout:    *timeoutFlag,
 		Poll:       *pollFlag,
+		PaneHost:   tmuxhost.New(),
 	}, emitter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper await-ack: %v\n", err)

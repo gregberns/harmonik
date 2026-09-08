@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -207,6 +209,13 @@ type CyclerConfig struct {
 	// Gate 5e. Refs: hk-74iyd.
 	PostAnswerGrace time.Duration
 
+	// PaneHost is the ONE owner of the production pane-substrate defaults
+	// (KH-1, plans/2026-09-07-keeper-herdr-substrate/README.md §4.1):
+	// CycleDepsFromConfig's Pane/Operator wiring reads its default Inject /
+	// SetSessionEnv / OperatorAttached from here rather than assigning tmux
+	// free functions directly. Nil selects a tmux Host (tmuxhost.New()).
+	PaneHost panehost.PaneHost
+
 	// hasRespawn is set by NewCycler once the RespawnPort is bound; the pure
 	// reactor reads it (a policy scalar, not IO) to reproduce the pre-rebuild
 	// "count marches but never fires when no respawn is wired" escalation
@@ -280,6 +289,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.IdleRestartCooldown <= 0 {
 		c.IdleRestartCooldown = DefaultIdleRestartCooldown
+	}
+	if c.PaneHost == nil {
+		c.PaneHost = tmuxhost.New()
 	}
 }
 

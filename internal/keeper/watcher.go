@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 	"github.com/gregberns/harmonik/internal/presence"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
@@ -263,6 +265,15 @@ type WatcherConfig struct {
 	// skips actual injection (warn event is still emitted). This is the normal
 	// case for unit tests.
 	TmuxTarget string
+
+	// PaneHost is the ONE owner of the production pane-substrate defaults
+	// (KH-1, plans/2026-09-07-keeper-herdr-substrate/README.md §4.1):
+	// applyDefaults derives InjectFn/IsPaneIdleFn/IsPaneAliveFn/
+	// OperatorAttachedFn/ResolveTmuxTargetFn from here instead of assigning
+	// tmux free functions directly, so swapping the substrate later means
+	// constructing a different PaneHost, not editing each *Fn seam. Nil
+	// selects a tmux Host (tmuxhost.New()).
+	PaneHost panehost.PaneHost
 
 	// InjectFn is the function used to deliver the wrap-up-warning injection.
 	// When nil, InjectWrapUpWarning is used. Set to a spy function in unit tests
@@ -718,8 +729,14 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.ActPctCeil <= 0 {
 		c.ActPctCeil = defaultActPctCeil
 	}
+	if c.PaneHost == nil {
+		c.PaneHost = tmuxhost.New()
+	}
 	if c.MessageInjectFn == nil {
-		c.MessageInjectFn = InjectText
+		ph := c.PaneHost
+		c.MessageInjectFn = func(ctx context.Context, target, text string) error {
+			return ph.Inject(ctx, panehost.Target(target), text)
+		}
 	}
 	if c.IdleQuiesce <= 0 {
 		c.IdleQuiesce = DefaultIdleQuiesce
@@ -752,10 +769,16 @@ func (c *WatcherConfig) applyDefaults() {
 		c.RespawnCooldown = DefaultRespawnCooldown
 	}
 	if c.IsPaneIdleFn == nil {
-		c.IsPaneIdleFn = IsPaneIdle
+		ph := c.PaneHost
+		c.IsPaneIdleFn = func(ctx context.Context, target string) bool {
+			return ph.Foreground(ctx, panehost.Target(target)) == panehost.ForegroundShell
+		}
 	}
 	if c.SelfHintInjectFn == nil {
-		c.SelfHintInjectFn = InjectText
+		ph := c.PaneHost
+		c.SelfHintInjectFn = func(ctx context.Context, target, text string) error {
+			return ph.Inject(ctx, panehost.Target(target), text)
+		}
 	}
 	if c.LiveRecoverGrace <= 0 {
 		c.LiveRecoverGrace = DefaultLiveRecoverGrace
@@ -764,17 +787,24 @@ func (c *WatcherConfig) applyDefaults() {
 		c.LiveRecoverCooldown = DefaultLiveRecoverCooldown
 	}
 	if c.IsPaneAliveFn == nil {
-		c.IsPaneAliveFn = IsPaneAlive
+		ph := c.PaneHost
+		c.IsPaneAliveFn = func(ctx context.Context, target string) bool {
+			return ph.Foreground(ctx, panehost.Target(target)) == panehost.ForegroundAgent
+		}
 	}
 	if c.OperatorAttachedFn == nil {
-		c.OperatorAttachedFn = OperatorAttached
+		ph := c.PaneHost
+		c.OperatorAttachedFn = func(target string) bool {
+			return ph.OperatorAttached(panehost.Target(target))
+		}
 	}
 	if c.ReadSidFn == nil {
 		c.ReadSidFn = ReadSessionIDFile
 	}
 	if c.ResolveTmuxTargetFn == nil {
+		ph := c.PaneHost
 		c.ResolveTmuxTargetFn = func(projectDir, agentName string) string {
-			return ResolveTmuxTarget(projectDir, agentName, "", nil)
+			return string(ph.Resolve(projectDir, agentName, ""))
 		}
 	}
 	if c.SleepingCheckFn == nil {
@@ -810,6 +840,18 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.EventsJSONLPath == "" && c.ProjectDir != "" {
 		c.EventsJSONLPath = filepath.Join(c.ProjectDir, ".harmonik", core.EventsJSONLPath)
 	}
+}
+
+// paneHost returns c.PaneHost, defaulting to a tmux Host. Call sites that can
+// run against a WatcherConfig built without applyDefaults (a direct struct
+// literal, as several unit tests do) use this rather than reading c.PaneHost
+// directly, so they still route through the ONE PaneHost owner instead of
+// nil-panicking or falling back to a bare free function.
+func (c *WatcherConfig) paneHost() panehost.PaneHost {
+	if c.PaneHost != nil {
+		return c.PaneHost
+	}
+	return tmuxhost.New()
 }
 
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
@@ -1282,8 +1324,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 				if inject == nil {
 					operatorAttached := w.cfg.TmuxTarget != "" && w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget)
 					text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
+					ph := w.cfg.paneHost()
 					inject = func(ctx context.Context, target string) error {
-						return InjectText(ctx, target, AutomationMessage("keeper", text))
+						return ph.Inject(ctx, panehost.Target(target), AutomationMessage("keeper", text))
 					}
 				}
 				if injectErr := inject(ctx, w.cfg.TmuxTarget); injectErr != nil {

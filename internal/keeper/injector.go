@@ -3,11 +3,9 @@ package keeper
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
-	"time"
 
-	"github.com/gregberns/harmonik/internal/substrate"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 const wrapUpWarningText = "[KEEPER NOTICE] We use periodic session transitions to keep our work token-efficient. " +
@@ -152,98 +150,16 @@ func AckLine(nonce, kind string) string {
 	return fmt.Sprintf("[KEEPER ACK %s] received %s", nonce, kind)
 }
 
-var submitSettle = 750 * time.Millisecond
-
-const submitRetries = 2
-
-var submitRetryDelay = 400 * time.Millisecond
-
-const injectBufferName = "harmonik-keeper-inject"
-
-var tmuxRunFn = runTmuxCombined
-
-func runTmuxCombined(ctx context.Context, stdin string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "tmux", args...)
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	return cmd.CombinedOutput()
-}
-
-// InjectText delivers arbitrary text into the tmux pane at tmuxTarget using
-// the bracketed-paste mechanism (tmux load-buffer → paste-buffer → settle →
-// send-keys Enter with bounded retry).
-//
-// tmuxTarget is a tmux pane address in any of tmux's accepted forms:
-// "session:window.pane", "session:window", "%pane_id", or just the session name.
-//
-// The submit Enter is delivered after a short settle and then re-sent a bounded
-// number of times. This mirrors the WORKING implementer paste path
-// (internal/daemon/pasteinject.go) and fixes the bracketed-paste submit race
-// where the injected line (e.g. /session-resume) sits in the pane buffer until
-// a manual Enter (hk-89g).
-//
-// The cycle core uses this as its InjectFn default, so /session-handoff,
-// /clear, and /session-resume all inherit the fix.
+// InjectText is a back-compat wrapper over tmuxhost.InjectText (KH-1: the
+// tmux inject mechanics moved to panehost/tmuxhost). See tmuxhost.InjectText
+// for the full doc.
 func InjectText(ctx context.Context, tmuxTarget, text string) error {
-	return injectTextClocked(ctx, substrate.SystemClock{}, tmuxTarget, text)
+	return tmuxhost.InjectText(ctx, tmuxTarget, text)
 }
 
-func injectTextClocked(ctx context.Context, clock substrate.ClockPort, tmuxTarget, text string) error {
-	if clock == nil {
-		clock = substrate.SystemClock{}
-	}
-	if tmuxTarget == "" {
-		return fmt.Errorf("keeper: inject: tmuxTarget is empty")
-	}
-
-	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", injectBufferName, "-"); err != nil {
-		return fmt.Errorf("keeper: tmux load-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
-	}
-
-	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", injectBufferName, "-t", tmuxTarget, "-d"); err != nil {
-		return fmt.Errorf("keeper: tmux paste-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
-	}
-
-	if !clock.Sleep(ctx, submitSettle) {
-		return ctx.Err()
-	}
-
-	if err := sendEnter(ctx, tmuxTarget); err != nil {
-		return fmt.Errorf("keeper: tmux send-keys Enter: %w", err)
-	}
-
-	for i := 0; i < submitRetries; i++ {
-		if !clock.Sleep(ctx, submitRetryDelay) {
-			break
-		}
-		_ = sendEnter(ctx, tmuxTarget) //nolint:errcheck // retry; best-effort
-	}
-
-	return nil
-}
-
-func sendEnter(ctx context.Context, tmuxTarget string) error {
-	if out, err := tmuxRunFn(ctx, "", "send-keys", "-t", tmuxTarget, "Enter"); err != nil {
-		return fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// SendEscapeKey sends an Escape keypress to the tmux pane at tmuxTarget.
-// The cycle core calls this before injecting /session-handoff to preempt any
-// in-progress input on a busy pane (e.g. partial text, a tool-call response
-// being typed). Escape is harmless at a clean prompt and clears partial input
-// in most REPL implementations. Refs: hk-qoz (forced-clear busy-pane fix).
+// SendEscapeKey is a back-compat wrapper over tmuxhost.SendEscapeKey.
 func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
-	if tmuxTarget == "" {
-		return fmt.Errorf("keeper: send-escape: tmuxTarget is empty")
-	}
-	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", tmuxTarget, "Escape")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("keeper: tmux send-keys Escape: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return tmuxhost.SendEscapeKey(ctx, tmuxTarget)
 }
 
 // InjectWrapUpWarning delivers the wrap-up-warning prompt into the tmux pane
@@ -255,20 +171,7 @@ func InjectWrapUpWarning(ctx context.Context, tmuxTarget string) error {
 	return InjectText(ctx, tmuxTarget, AutomationMessage("keeper", wrapUpWarningText))
 }
 
-// SetTmuxEnv sets an environment variable in the tmux session that owns
-// tmuxTarget. The variable is inherited by any new process started in that
-// session after this call — including a Claude Code session resumed after /clear.
-//
-// Uses `tmux setenv -t <target> <key> <value>` which writes to the session
-// environment table. This is intentionally NOT `setenv -g` (global) to avoid
-// leaking across unrelated sessions.
+// SetTmuxEnv is a back-compat wrapper over tmuxhost.SetTmuxEnv.
 func SetTmuxEnv(ctx context.Context, tmuxTarget, key, value string) error {
-	if tmuxTarget == "" {
-		return fmt.Errorf("keeper: setenv: tmuxTarget is empty")
-	}
-	cmd := exec.CommandContext(ctx, "tmux", "setenv", "-t", tmuxTarget, key, value)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("keeper: tmux setenv %s: %w (stderr: %s)", key, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return tmuxhost.SetTmuxEnv(ctx, tmuxTarget, key, value)
 }

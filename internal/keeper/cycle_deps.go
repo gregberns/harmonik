@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -176,7 +177,7 @@ func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 		Dispatch: boolProbe(func() bool { return HoldingDispatch(cfg.ProjectDir, cfg.AgentName) }),
 		Sleep:    sleepProbeFunc(func(sid string) bool { return IsSleeping(cfg.ProjectDir, sid) }),
 		Hold:     boolProbe(func() bool { return isHeldAt(cfg.ProjectDir, cfg.AgentName, cfg.HoldTTL, cfg.Clock) }),
-		Operator: operatorProbeFunc(OperatorAttached),
+		Operator: operatorProbeFunc(func(target string) bool { return cfg.PaneHost.OperatorAttached(panehost.Target(target)) }),
 		Handoff:  configHandoffDocument{cfg: &cfg}, Journal: configJournalStore{cfg: &cfg},
 		Emitter: emitter,
 	}

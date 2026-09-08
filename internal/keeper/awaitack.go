@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -21,8 +22,6 @@ const (
 	DefaultAwaitAckTimeout = 15 * time.Second
 	DefaultAwaitAckPoll    = 1 * time.Second
 )
-
-const awaitAckScrollback = 200
 
 const captureErrorBudget = 5
 
@@ -35,9 +34,12 @@ type PaneCapturer func(ctx context.Context, tmuxTarget string) (string, error)
 
 // AwaitAckConfig carries everything AwaitAck needs. TmuxTarget is the
 // already-resolved pane (the CLI resolves it via ResolveTmuxTarget). Capture
-// defaults to CaptureTmuxPane when nil; Clock defaults to substrate.SystemClock
-// (overridable in tests via a substrate.FakeClock for a deterministic clock);
-// Timeout/Poll default to the package constants when zero.
+// defaults to PaneHost.Capture when nil (PaneHost itself defaulting to a
+// tmux Host — KH-1, the ONE owner of the production tmux default per
+// plans/2026-09-07-keeper-herdr-substrate/README.md); Clock defaults to
+// substrate.SystemClock (overridable in tests via a substrate.FakeClock for a
+// deterministic clock); Timeout/Poll default to the package constants when
+// zero.
 type AwaitAckConfig struct {
 	AgentName  string
 	TmuxTarget string
@@ -47,6 +49,9 @@ type AwaitAckConfig struct {
 	Poll       time.Duration
 	Capture    PaneCapturer
 	Clock      substrate.ClockPort
+	// PaneHost supplies the default Capture when Capture is nil. Nil selects
+	// a tmux Host (tmuxhost.New()) — the production default.
+	PaneHost panehost.PaneHost
 }
 
 // ErrAckTimeout is returned by AwaitAck when the timeout elapses without
@@ -69,7 +74,13 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 	}
 	capture := cfg.Capture
 	if capture == nil {
-		capture = CaptureTmuxPane
+		ph := cfg.PaneHost
+		if ph == nil {
+			ph = tmuxhost.New()
+		}
+		capture = func(ctx context.Context, target string) (string, error) {
+			return ph.Capture(ctx, panehost.Target(target))
+		}
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -163,22 +174,9 @@ func emitAckTimeout(ctx context.Context, emitter Emitter, cfg AwaitAckConfig, ki
 	_ = emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperAckTimeout, raw) //nolint:errcheck // best-effort; return value is the authoritative signal
 }
 
-// CaptureTmuxPane is the production PaneCapturer: it runs
-// `tmux capture-pane -p -t <target> -S -<awaitAckScrollback>` to grab the pane
-// text plus a bounded scrollback tail. The -S tail catches a fast ACK that
-// already scrolled off the visible region between the inject and the first poll.
+// CaptureTmuxPane is a back-compat wrapper over tmuxhost.CaptureTmuxPane
+// (KH-1: the tmux capture-pane call moved to panehost/tmuxhost). See
+// tmuxhost.CaptureTmuxPane for the full doc.
 func CaptureTmuxPane(ctx context.Context, tmuxTarget string) (string, error) {
-	if tmuxTarget == "" {
-		return "", fmt.Errorf("keeper: capture-pane: tmuxTarget is empty")
-	}
-	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-t", tmuxTarget, "-S", fmt.Sprintf("-%d", awaitAckScrollback))
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return "", fmt.Errorf("keeper: tmux capture-pane: %w (stderr: %s)", err, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("keeper: tmux capture-pane: %w", err)
-	}
-	return string(out), nil
+	return tmuxhost.CaptureTmuxPane(ctx, tmuxTarget)
 }

@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strings"
+
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 // ErrLiveRecoverIdentityUntrusted is returned by the LiveRecoverFn built by
@@ -47,52 +48,15 @@ func NewLiveRecoverViaRespawn(projectDir, respawnCmd string) func(ctx context.Co
 	}
 }
 
-var shellCmds = map[string]struct{}{
-	"zsh":  {},
-	"bash": {},
-	"sh":   {},
-	"fish": {},
-	"dash": {},
-	"csh":  {},
-	"tcsh": {},
-}
-
-// IsPaneIdle reports whether the tmux pane at target is running a shell
-// (indicating the managed agent has exited). It uses `tmux display-message` to
-// query #{pane_current_command}. Returns false on any tmux error so that a
-// transient query failure never triggers an unintended respawn.
+// IsPaneIdle is a back-compat wrapper over tmuxhost.IsPaneIdle (KH-1: the
+// pane-foreground probes moved to panehost/tmuxhost, where they also back the
+// unified panehost.PaneHost.Foreground). See tmuxhost.IsPaneIdle for the full
+// doc.
 func IsPaneIdle(ctx context.Context, target string) bool {
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", target, "-p", "#{pane_current_command}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	cur := strings.TrimSpace(string(out))
-	_, ok := shellCmds[cur]
-	return ok
+	return tmuxhost.IsPaneIdle(ctx, target)
 }
 
-// IsPaneAlive reports whether the tmux pane at target is running a NON-shell
-// command — i.e. the managed agent process is still present (hung mid-turn, not
-// exited). It is the gating signal for live-pane recovery (hk-75mr): a stale
-// gauge over an ALIVE pane is the hung-agent case that the idle-respawn path
-// (IsPaneIdle) does NOT cover and a /clear inject cannot reach.
-//
-// It queries #{pane_current_command} via `tmux display-message`. It returns
-// false (fail-closed: do NOT force-restart) on ANY tmux error or an empty
-// result, so a transient query failure never triggers an unintended restart.
-// A non-empty command that is not a known shell counts as alive. IsPaneAlive
-// and IsPaneIdle are mutually exclusive for any successful query.
+// IsPaneAlive is a back-compat wrapper over tmuxhost.IsPaneAlive.
 func IsPaneAlive(ctx context.Context, target string) bool {
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", target, "-p", "#{pane_current_command}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	cur := strings.TrimSpace(string(out))
-	if cur == "" {
-		return false
-	}
-	_, isShell := shellCmds[cur]
-	return !isShell
+	return tmuxhost.IsPaneAlive(ctx, target)
 }

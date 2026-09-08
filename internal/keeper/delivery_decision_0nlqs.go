@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
 	"github.com/gregberns/harmonik/internal/presence"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
@@ -95,8 +96,9 @@ func (w *Watcher) deliverTerminalWarn(ctx context.Context, ctxFile *CtxFile, cri
 	inject := w.cfg.InjectFn
 	if inject == nil {
 		text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
+		ph := w.cfg.paneHost()
 		inject = func(ctx context.Context, target string) error {
-			return InjectText(ctx, target, AutomationMessage("keeper", text))
+			return ph.Inject(ctx, panehost.Target(target), AutomationMessage("keeper", text))
 		}
 	}
 	return inject(ctx, w.cfg.TmuxTarget)

@@ -5,7 +5,26 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
+
+// swapTmuxRunFn spies on the REAL tmuxhost run seam (not a PaneHost stub), so
+// the returned counter reflects actual tmux subprocess invocations — needed
+// where a test asserts the settle+retry-Enter invocation COUNT, not merely
+// whether the pane was written. Zeroes the settle/retry delays so the test
+// does not block on real sleeps.
+func swapTmuxRunFn(t *testing.T) *int {
+	t.Helper()
+	count := new(int)
+	origRun, origSettle, origRetry := tmuxhost.RunFn, tmuxhost.SubmitSettle, tmuxhost.SubmitRetryDelay
+	tmuxhost.RunFn = func(_ context.Context, _ string, _ ...string) ([]byte, error) { *count++; return nil, nil }
+	tmuxhost.SubmitSettle, tmuxhost.SubmitRetryDelay = 0, 0
+	t.Cleanup(func() {
+		tmuxhost.RunFn, tmuxhost.SubmitSettle, tmuxhost.SubmitRetryDelay = origRun, origSettle, origRetry
+	})
+	return count
+}
 
 // (a) OPERATOR-TYPING COLLISION — the pane-write collision with an operator's own
 // keystrokes is AVOIDED because the leader comms path takes over: even with the
@@ -17,7 +36,7 @@ import (
 func TestScenario_OperatorTypingCollision_CommsZeroPaneWrite_qji8g(t *testing.T) {
 	path := writePresenceBeat(t, "captain", time.Now()) // fresh → Online leader
 	comms := swapCommsSend(t)
-	paneWrites := swapTmuxRun(t)
+	paneWrites, ph := paneWriteCounter()
 
 	operatorTyping := func(string) bool { return true }
 	w := &Watcher{cfg: WatcherConfig{
@@ -25,6 +44,7 @@ func TestScenario_OperatorTypingCollision_CommsZeroPaneWrite_qji8g(t *testing.T)
 		EventsJSONLPath:    path,
 		TmuxTarget:         "s:0.0",
 		OperatorAttachedFn: operatorTyping,
+		PaneHost:           ph,
 	}}
 
 	handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
@@ -49,7 +69,7 @@ func TestScenario_CommsUnreachableFallback_qji8g(t *testing.T) {
 	t.Run("absent_target_falls_back_to_terminal_never_silent", func(t *testing.T) {
 		other := writePresenceBeat(t, "admiral", time.Now())
 		comms := swapCommsSend(t)
-		paneWrites := swapTmuxRun(t)
+		paneWrites := swapTmuxRunFn(t)
 
 		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: other, TmuxTarget: "s:0.0"}}
 		ch, err := w.deliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true, false, "cyc-absent")
@@ -70,9 +90,9 @@ func TestScenario_CommsUnreachableFallback_qji8g(t *testing.T) {
 	t.Run("present_target_takes_comms_zero_pane", func(t *testing.T) {
 		present := writePresenceBeat(t, "captain", time.Now())
 		comms := swapCommsSend(t)
-		paneWrites := swapTmuxRun(t)
+		paneWrites, ph := paneWriteCounter()
 
-		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: present, TmuxTarget: "s:0.0"}}
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: present, TmuxTarget: "s:0.0", PaneHost: ph}}
 		ch, err := w.deliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true, false, "cyc-present")
 		if err != nil {
 			t.Fatalf("deliverLeaderWarn: %v", err)
@@ -108,17 +128,17 @@ func TestScenario_OperatorPresentMisread_ReSampleCatches_qji8g(t *testing.T) {
 	}
 
 	entrySample := activityAt(entryNow, 6*time.Minute)
-	if got := operatorActiveSince(entrySample, entryNow, window); got != false {
+	if got := OperatorActiveSinceForTest(entrySample, entryNow, window); got != false {
 		t.Fatalf("entry sample: operatorActiveSince = %v, want false (the entry-only read MISSES the operator — the bug)", got)
 	}
 
 	resampleNow := entryNow.Add(3 * time.Minute)
 	resample := activityAt(resampleNow, 1*time.Minute)
-	if got := operatorActiveSince(resample, resampleNow, window); got != true {
+	if got := OperatorActiveSinceForTest(resample, resampleNow, window); got != true {
 		t.Fatalf("re-sample: operatorActiveSince = %v, want true (the re-check must CATCH the mid-cycle operator)", got)
 	}
 
-	if operatorActiveSince(entrySample, entryNow, window) == operatorActiveSince(resample, resampleNow, window) {
+	if OperatorActiveSinceForTest(entrySample, entryNow, window) == OperatorActiveSinceForTest(resample, resampleNow, window) {
 		t.Fatal("entry sample and re-sample agree; the scenario must show entry=absent, re-sample=present")
 	}
 }

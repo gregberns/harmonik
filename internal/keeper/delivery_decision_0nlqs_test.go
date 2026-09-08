@@ -10,8 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
+
+// countingPaneHost is a panehost.PaneHost stub that counts Inject calls, used
+// to observe the terminal-fallback pane-write path without a real tmux
+// server. Every other method is unused by these tests and left zero-valued.
+type countingPaneHost struct {
+	panehost.PaneHost
+	count *int
+}
+
+func (h countingPaneHost) Inject(context.Context, panehost.Target, string) error {
+	*h.count++
+	return nil
+}
 
 func writePresenceBeat(t *testing.T, agent string, ts time.Time) string {
 	t.Helper()
@@ -48,22 +62,20 @@ func swapCommsSend(t *testing.T) *[]struct{ agent, body string } {
 	return calls
 }
 
-func swapTmuxRun(t *testing.T) *int {
-	t.Helper()
+// paneWriteCounter returns a fake PaneHost that counts Inject calls, so
+// terminal-fallback tests can assert pane-write counts without a real tmux
+// server or reaching into tmuxhost's private seams.
+func paneWriteCounter() (*int, panehost.PaneHost) {
 	count := new(int)
-	origRun, origSettle, origRetry := tmuxRunFn, submitSettle, submitRetryDelay
-	tmuxRunFn = func(_ context.Context, _ string, _ ...string) ([]byte, error) { *count++; return nil, nil }
-	submitSettle, submitRetryDelay = 0, 0
-	t.Cleanup(func() { tmuxRunFn, submitSettle, submitRetryDelay = origRun, origSettle, origRetry })
-	return count
+	return count, countingPaneHost{count: count}
 }
 
 func TestDeliverLeaderWarn_OnlineLeader_CommsPathZeroPaneWrite(t *testing.T) {
 	path := writePresenceBeat(t, "captain", time.Now()) // fresh → Online
 	comms := swapCommsSend(t)
-	paneWrites := swapTmuxRun(t)
+	paneWrites, ph := paneWriteCounter()
 
-	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0"}}
+	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0", PaneHost: ph}}
 	ch, err := w.deliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true, false, "cyc-abc")
 	if err != nil {
 		t.Fatalf("deliverLeaderWarn: %v", err)
@@ -88,9 +100,9 @@ func TestDeliverLeaderWarn_OnlineLeader_CommsPathZeroPaneWrite(t *testing.T) {
 func TestDeliverLeaderWarn_OfflineLeader_TerminalFallback(t *testing.T) {
 	path := writePresenceBeat(t, "captain", time.Now().Add(-20*time.Minute)) // stale → Offline
 	comms := swapCommsSend(t)
-	paneWrites := swapTmuxRun(t)
+	paneWrites, ph := paneWriteCounter()
 
-	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0"}}
+	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0", PaneHost: ph}}
 	ch, err := w.deliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true, false, "cyc-abc")
 	if err != nil {
 		t.Fatalf("deliverLeaderWarn: %v", err)
@@ -111,9 +123,9 @@ func TestDeliverLeaderWarn_CommsFailure_FallsBackToTerminal(t *testing.T) {
 	origComms := commsSendFn
 	commsSendFn = func(_ context.Context, _, _ string) error { return fmt.Errorf("daemon down") }
 	t.Cleanup(func() { commsSendFn = origComms })
-	paneWrites := swapTmuxRun(t)
+	paneWrites, ph := paneWriteCounter()
 
-	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0"}}
+	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: path, TmuxTarget: "s:0.0", PaneHost: ph}}
 	ch, err := w.deliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true, false, "cyc-abc")
 	if err != nil {
 		t.Fatalf("deliverLeaderWarn (comms-fail path): %v", err)
@@ -154,8 +166,8 @@ func TestMaybeDeliverLeaderWarn_Routing(t *testing.T) {
 
 	t.Run("leader online -> comms, handled, zero pane write", func(t *testing.T) {
 		comms := swapCommsSend(t)
-		pane := swapTmuxRun(t)
-		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: onlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp}}
+		pane, ph := paneWriteCounter()
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: onlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp, PaneHost: ph}}
 		handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
 		if !handled || !cleared {
 			t.Fatalf("handled=%v cleared=%v, want true,true", handled, cleared)
@@ -167,8 +179,8 @@ func TestMaybeDeliverLeaderWarn_Routing(t *testing.T) {
 
 	t.Run("leader offline -> terminal, handled, pane written", func(t *testing.T) {
 		comms := swapCommsSend(t)
-		pane := swapTmuxRun(t)
-		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: offlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp}}
+		pane, ph := paneWriteCounter()
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: offlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp, PaneHost: ph}}
 		handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
 		if !handled || !cleared {
 			t.Fatalf("handled=%v cleared=%v, want true,true", handled, cleared)

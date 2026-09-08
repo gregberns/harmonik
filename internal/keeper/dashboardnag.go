@@ -7,6 +7,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/dashboard"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
 )
 
 const dashboardNagApproachFrac = 0.8
@@ -69,7 +70,10 @@ func (w *Watcher) maybeNagDashboardStale(ctx context.Context, now time.Time) {
 func (w *Watcher) injectDashboardNag(ctx context.Context, now time.Time) {
 	inject := w.cfg.DashboardNagInjectFn
 	if inject == nil {
-		inject = InjectText
+		ph := w.cfg.paneHost()
+		inject = func(ctx context.Context, target, text string) error {
+			return ph.Inject(ctx, panehost.Target(target), text)
+		}
 	}
 	if err := inject(ctx, w.cfg.TmuxTarget, dashboardNagText); err != nil {
 		return

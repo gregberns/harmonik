@@ -141,6 +141,73 @@ func TestLiveHerdrSmoke(t *testing.T) {
 	if !asErr(err, &wireErr) || wireErr.Code != "invalid_agent_name" {
 		t.Fatalf("live AgentStart(invalid name) error = %#v, want *WireError{Code: invalid_agent_name}", err)
 	}
+
+	// events.subscribe round trip (iter-2 review: the self-check never
+	// exercised subscribe against the live server, which is how the
+	// missing-pane_id defect on pane.agent_status_changed slipped through).
+	//
+	// pane.created is global: subscribe first, then split a second
+	// throwaway pane and observe the event it produces.
+	createdSub, err := c.Subscribe(ctx, herdrwire.PaneCreatedSpec())
+	if err != nil {
+		t.Fatalf("Subscribe(PaneCreatedSpec): %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := createdSub.Close(); closeErr != nil {
+			t.Logf("close pane.created subscription: %v", closeErr)
+		}
+	})
+
+	secondSplit, err := c.PaneSplit(ctx, herdrwire.PaneSplitParams{
+		Direction:    herdrwire.SplitDown,
+		CWD:          tmpDir,
+		TargetPaneID: targetPaneID,
+		WorkspaceID:  workspaceID,
+		Focus:        false,
+	})
+	if err != nil {
+		t.Fatalf("PaneSplit (for pane.created subscribe trigger): %v", err)
+	}
+	secondPaneID := secondSplit.Pane.PaneID
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		if closeErr := c.PaneClose(closeCtx, secondPaneID); closeErr != nil {
+			t.Logf("close second pane: %v", closeErr)
+		}
+	})
+
+	nextCtx, nextCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer nextCancel()
+	ev, err := createdSub.Next(nextCtx)
+	if err != nil {
+		t.Fatalf("live Subscribe(pane.created) Next: %v", err)
+	}
+	if ev.PaneCreated == nil || ev.PaneCreated.Pane.PaneID == "" {
+		t.Fatalf("live pane.created event = %+v, want a populated PaneCreated payload", ev)
+	}
+	t.Logf("live pane.created event: pane_id=%s", ev.PaneCreated.Pane.PaneID)
+
+	// pane.agent_status_changed is scoped: this is the exact regression
+	// iter-2 caught — a spec with no pane_id is refused by the live server,
+	// so the ack itself (not an event) is the claim under test.
+	statusSub, err := c.Subscribe(ctx, herdrwire.PaneAgentStatusChangedSpec(panePaneID))
+	if err != nil {
+		t.Fatalf("Subscribe(PaneAgentStatusChangedSpec(%q)): %v (this must succeed against the live server: pane_id is required and now sent)", panePaneID, err)
+	}
+	if closeErr := statusSub.Close(); closeErr != nil {
+		t.Logf("close pane.agent_status_changed subscription: %v", closeErr)
+	}
+
+	// And the negative case, live: no pane_id must still fail closed even
+	// if this package's local pre-dial check were ever removed by mistake —
+	// but Subscribe rejects it before dialing, so assert that directly
+	// (see TestFaultSubscribeAgentStatusChangedMissingPaneID for the
+	// against-a-fake-socket version of this same claim).
+	_, err = c.Subscribe(ctx, herdrwire.SubscriptionSpec{Type: herdrwire.SubscribePaneAgentStatusChanged})
+	if err == nil {
+		t.Fatal("live Subscribe(pane.agent_status_changed, no pane_id): want error, got nil")
+	}
 }
 
 func asErr(err error, target **herdrwire.WireError) bool {

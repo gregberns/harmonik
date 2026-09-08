@@ -2,6 +2,7 @@ package herdrwire_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -275,6 +276,25 @@ func TestSubscribePaneCreatedAndStatusChanged(t *testing.T) {
 			logIfErr(herdrfake.WriteError(conn, req.ID, "method_not_found", "fake"))
 			return
 		}
+		// Assert the client actually put pane_id on the wire for the
+		// agent_status_changed subscription (iter-2 review: it must, since
+		// the live server rejects that type without one).
+		var params struct {
+			Subscriptions []struct {
+				Type   string `json:"type"`
+				PaneID string `json:"pane_id"`
+			} `json:"subscriptions"`
+		}
+		if jsonErr := json.Unmarshal(req.Params, &params); jsonErr != nil {
+			logIfErr(herdrfake.WriteError(conn, req.ID, "internal", "fake: bad params: "+jsonErr.Error()))
+			return
+		}
+		for _, s := range params.Subscriptions {
+			if s.Type == "pane.agent_status_changed" && s.PaneID == "" {
+				logIfErr(herdrfake.WriteError(conn, req.ID, "invalid_request", "missing field `pane_id`"))
+				return
+			}
+		}
 		logIfErr(herdrfake.WriteResult(conn, req.ID, map[string]any{"type": "subscription_started"}))
 		logIfErr(herdrfake.WriteEvent(conn, "pane_created", map[string]any{
 			"pane": map[string]any{"pane_id": "w3:p9", "terminal_id": "t", "workspace_id": "w3", "tab_id": "w3:t1", "focused": false, "agent_status": "unknown", "revision": 0},
@@ -293,7 +313,7 @@ func TestSubscribePaneCreatedAndStatusChanged(t *testing.T) {
 	})
 
 	c := herdrwire.NewClient(srv.Path)
-	sub, err := c.Subscribe(ctxT(t), herdrwire.SubscribePaneCreated, herdrwire.SubscribePaneAgentStatusChanged)
+	sub, err := c.Subscribe(ctxT(t), herdrwire.PaneCreatedSpec(), herdrwire.PaneAgentStatusChangedSpec("w3:p9"))
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}

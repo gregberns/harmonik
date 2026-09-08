@@ -234,7 +234,7 @@ func TestFaultMidStreamCloseDuringSubscribe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	sub, err := c.Subscribe(ctx, herdrwire.SubscribePaneCreated)
+	sub, err := c.Subscribe(ctx, herdrwire.PaneCreatedSpec())
 	if err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
@@ -323,5 +323,67 @@ func TestFaultTruncatedFrame(t *testing.T) {
 	err = c.PaneClose(ctx, "w1:p1")
 	if err == nil {
 		t.Fatal("PaneClose against a truncated frame: want error, got nil")
+	}
+}
+
+// FaultSubscribeAgentStatusChangedMissingPaneID (iter-2 review): the live
+// protocol-22 server refuses a pane.agent_status_changed subscription with
+// no pane_id (invalid_request, "missing field `pane_id`"). Subscribe must
+// fail closed on this before ever dialing — asserted here without a fake
+// server at all, since the check is local.
+func TestFaultSubscribeAgentStatusChangedMissingPaneID(t *testing.T) {
+	c := herdrwire.NewClient(filepath.Join(t.TempDir(), "unreachable.sock"))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := c.Subscribe(ctx, herdrwire.PaneAgentStatusChangedSpec(""))
+	if err == nil {
+		t.Fatal("Subscribe(PaneAgentStatusChangedSpec(\"\")): want error, got nil")
+	}
+	var dialErr *herdrwire.DialError
+	if errors.As(err, &dialErr) {
+		t.Fatalf("Subscribe error = %#v, want a local validation error (no dial attempted against the unreachable socket)", err)
+	}
+}
+
+// FaultSubscribeAgentStatusChangedServerRejects: even if the local
+// pre-dial check were bypassed, the server's own invalid_request rejection
+// must still surface as a typed error, not a usable *Subscription.
+func TestFaultSubscribeAgentStatusChangedServerRejects(t *testing.T) {
+	srv, err := herdrfake.Start(func(conn net.Conn) {
+		defer closeConn(conn)
+		req, _, rerr := herdrfake.ReadRequest(conn)
+		if rerr != nil {
+			return
+		}
+		if req.Method == "ping" {
+			logIfErr(herdrfake.WriteResult(conn, req.ID, herdrfake.PongResult(herdrwire.ProtocolVersion)))
+			return
+		}
+		logIfErr(herdrfake.WriteError(conn, req.ID, "invalid_request", "missing field `pane_id`"))
+	})
+	if err != nil {
+		t.Fatalf("start fake server: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := srv.Close(); closeErr != nil {
+			t.Logf("close fake server: %v", closeErr)
+		}
+	})
+
+	c := herdrwire.NewClient(srv.Path)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	sub, err := c.Subscribe(ctx, herdrwire.PaneAgentStatusChangedSpec("w1:p1"))
+	if err == nil {
+		if closeErr := sub.Close(); closeErr != nil {
+			t.Logf("close subscription: %v", closeErr)
+		}
+		t.Fatal("Subscribe against a server that rejects the request: want error, got a live subscription")
+	}
+	var wireErr *herdrwire.WireError
+	if !errors.As(err, &wireErr) || wireErr.Code != "invalid_request" {
+		t.Fatalf("Subscribe error = %#v, want *WireError{Code: invalid_request}", err)
 	}
 }

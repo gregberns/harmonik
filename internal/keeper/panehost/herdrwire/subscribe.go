@@ -13,10 +13,16 @@ import (
 // SubscriptionType names one events.subscribe filter. Only the two the P0
 // keeper needs are modeled: PaneCreated (to learn a new agent's pane id)
 // and PaneAgentStatusChanged (to cache agent_status without polling
-// pane.process_info every tick). Verified live: unlike pane.output_matched,
-// neither subscription type takes a pane_id filter — both are global across
-// every pane on the server, and the event payload itself carries the
-// pane_id that changed.
+// pane.process_info every tick).
+//
+// PaneCreated is global: no pane_id filter, and it fires for every pane on
+// the server. PaneAgentStatusChanged is scoped: verified live against the
+// protocol-22 server, a subscription of this type with no pane_id is
+// refused with {"code":"invalid_request","message":"missing field
+// `pane_id`"} — matching the design of record
+// (plans/2026-09-07-keeper-herdr-substrate/README.md §5.3, "subscribe per
+// pane, after learning it from a global pane.created"). Use
+// PaneAgentStatusChangedSpec to subscribe to one pane's status changes.
 type SubscriptionType string
 
 // The two SubscriptionType values this package supports.
@@ -24,6 +30,27 @@ const (
 	SubscribePaneCreated            SubscriptionType = "pane.created"
 	SubscribePaneAgentStatusChanged SubscriptionType = "pane.agent_status_changed"
 )
+
+// SubscriptionSpec is one events.subscribe filter to request. PaneID is
+// required for SubscribePaneAgentStatusChanged (the server rejects the
+// subscribe call otherwise) and must be left empty for SubscribePaneCreated
+// (a global subscription; herdr has no pane_id filter for it).
+type SubscriptionSpec struct {
+	Type   SubscriptionType
+	PaneID string
+}
+
+// PaneCreatedSpec is the global "learn every new pane" subscription.
+func PaneCreatedSpec() SubscriptionSpec {
+	return SubscriptionSpec{Type: SubscribePaneCreated}
+}
+
+// PaneAgentStatusChangedSpec subscribes to agent_status changes for one
+// specific pane. paneID must be non-empty — herdr fails closed on this
+// subscription type without one.
+func PaneAgentStatusChangedSpec(paneID string) SubscriptionSpec {
+	return SubscriptionSpec{Type: SubscribePaneAgentStatusChanged, PaneID: paneID}
+}
 
 // PaneCreatedEvent is the "pane_created" subscription-event payload.
 type PaneCreatedEvent struct {
@@ -51,7 +78,8 @@ type Event struct {
 }
 
 type wireSubscriptionSpec struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
+	PaneID string `json:"pane_id,omitempty"`
 }
 
 type wireEventsSubscribeParams struct {
@@ -74,10 +102,23 @@ type Subscription struct {
 }
 
 // Subscribe opens one events.subscribe stream for the given subscription
-// types and blocks until the server acks it ("subscription_started") or
+// specs and blocks until the server acks it ("subscription_started") or
 // the ack fails. The returned *Subscription owns the connection; the
 // caller must Close it.
-func (c *Client) Subscribe(ctx context.Context, types ...SubscriptionType) (*Subscription, error) {
+//
+// Fails closed before dialing when a SubscribePaneAgentStatusChanged spec
+// carries an empty PaneID — herdr itself refuses that combination
+// (invalid_request, "missing field `pane_id`"), so this check only turns
+// the failure into a local, typed one instead of a round trip.
+func (c *Client) Subscribe(ctx context.Context, specs ...SubscriptionSpec) (*Subscription, error) {
+	wireSpecs := make([]wireSubscriptionSpec, len(specs))
+	for i, s := range specs {
+		if s.Type == SubscribePaneAgentStatusChanged && s.PaneID == "" {
+			return nil, fmt.Errorf("herdrwire: Subscribe: %s requires a non-empty PaneID", s.Type)
+		}
+		wireSpecs[i] = wireSubscriptionSpec{Type: string(s.Type), PaneID: s.PaneID}
+	}
+
 	if err := c.checkProtocolOnce(ctx); err != nil {
 		return nil, err
 	}
@@ -87,11 +128,7 @@ func (c *Client) Subscribe(ctx context.Context, types ...SubscriptionType) (*Sub
 		return nil, err
 	}
 
-	specs := make([]wireSubscriptionSpec, len(types))
-	for i, t := range types {
-		specs[i] = wireSubscriptionSpec{Type: string(t)}
-	}
-	paramsRaw, err := json.Marshal(wireEventsSubscribeParams{Subscriptions: specs})
+	paramsRaw, err := json.Marshal(wireEventsSubscribeParams{Subscriptions: wireSpecs})
 	if err != nil {
 		abortSubscribeDial(ctx, conn)
 		return nil, fmt.Errorf("herdrwire: marshal events.subscribe params: %w", err)

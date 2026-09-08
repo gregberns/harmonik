@@ -1,0 +1,91 @@
+# Full-strength linter for a segment module, with an EMPTY allow-list.
+#
+# This is a day-one standard of the platform re-grounding
+# (plans/2026-09-07-harmonik-restructure/07-segmented-structure-and-day1-standards.md
+# §3.1): every segment module ships this config, and no finding is grandfathered.
+# A package that cannot pass the full linter does not enter a segment — it waits
+# in the unsegmented internal/ zone behind a port until it is fixed.
+#
+# The three segment modules (contract, kernel, tools/echo) keep this file
+# byte-identical. Change one, change all three in the same commit.
+#
+# EMPTY ALLOW-LIST: exclusions.rules is [] on purpose. There is nothing to
+# tolerate, because nothing moved in with debt. Do not add a grandfathering rule
+# here; fix the code instead.
+version: "2"
+run:
+  timeout: 5m
+  go: "1.25"
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errorlint
+    - nilerr
+    - copyloopvar
+    - testifylint
+    - errchkjson
+    - exhaustive
+    # Resource / context
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - contextcheck
+    - noctx
+    - containedctx
+    - fatcontext
+    # Style / diagnostics
+    - gocritic
+    - revive
+    - misspell
+    - unparam
+    - unconvert
+    - prealloc
+    - nakedret
+    - nolintlint
+    - gosec
+    - forbidigo
+    # Complexity ceilings
+    - funlen
+    - cyclop
+    - gocognit
+  exclusions:
+    # EMPTY allow-list — no grandfathered findings in a segment module.
+    rules: []
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    revive:
+      rules:
+        - { name: exported }
+        - { name: package-comments }
+        - { name: var-naming }
+        - { name: error-return }
+        - { name: error-naming }
+        - { name: if-return }
+    gocritic:
+      enabled-tags: [diagnostic, performance, style]
+      disabled-checks: [hugeParam, rangeValCopy]
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    funlen:
+      lines: 100
+      statements: 60
+      ignore-comments: true
+    cyclop:
+      max-complexity: 15
+      package-average: 0
+    gocognit:
+      min-complexity: 20
+    forbidigo:
+      forbid:
+        - { pattern: '^fmt\.Print.*$', msg: "use the structured logger" }
+        - { pattern: '^panic$', msg: "return an error; panics only in main/init" }

@@ -28,7 +28,11 @@ tools_home=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null |
 
 gofumpt=${GOFUMPT:-"$tools_home/.tools/gofumpt"}
 gci=${GCI:-"$tools_home/.tools/gci"}
-module=$(go list -m -f '{{.Path}}')
+# GOWORK=off: with the platform re-grounding go.work present, a bare `go list -m`
+# returns every workspace member, so the gci --local prefix below would become a
+# multiline value and gci would mis-group every harmonik import. This script
+# formats the root-module tree, so pin the module query to the root module.
+module=$(GOWORK=off go list -m -f '{{.Path}}')
 
 files=()
 while IFS= read -r -d '' file; do

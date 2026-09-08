@@ -48,6 +48,14 @@ set -uo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root" || exit 1
 
+# The repo carries a go.work (the platform re-grounding segment modules). This
+# script reports on THIS module — the root module — only; the scenario tier
+# lives here and in none of the segment modules. In workspace mode `go list -m`
+# returns EVERY member, which the single-module logic below cannot read (the awk
+# then gets a multiline module path and errors). Turn the workspace off so every
+# go query in this script sees the root module alone.
+export GOWORK=off
+
 # One line per package: import path, then the count of files in each of the
 # three test-bearing sets. -e keeps a package with a build error from killing
 # the listing.

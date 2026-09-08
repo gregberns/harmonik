@@ -170,8 +170,3 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 func InjectWrapUpWarning(ctx context.Context, tmuxTarget string) error {
 	return InjectText(ctx, tmuxTarget, AutomationMessage("keeper", wrapUpWarningText))
 }
-
-// SetTmuxEnv is a back-compat wrapper over tmuxhost.SetTmuxEnv.
-func SetTmuxEnv(ctx context.Context, tmuxTarget, key, value string) error {
-	return tmuxhost.SetTmuxEnv(ctx, tmuxTarget, key, value)
-}

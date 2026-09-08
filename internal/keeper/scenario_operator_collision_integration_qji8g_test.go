@@ -58,13 +58,14 @@ func TestIntegration_OperatorTypingCollision_CommsLeavesPartialLine_qji8g(t *tes
 
 	path := writePresenceBeat(t, "captain", time.Now())
 	comms := swapCommsSend(t)
-	paneWrites := swapTmuxRun(t) // guards the in-process injector seam: must stay 0
+	paneWrites, ph := paneWriteCounter() // guards the in-process injector seam: must stay 0
 
 	w := &Watcher{cfg: WatcherConfig{
 		AgentName:          "captain",
 		EventsJSONLPath:    path,
 		TmuxTarget:         target,
 		OperatorAttachedFn: func(string) bool { return true }, // operator is typing
+		PaneHost:           ph,
 	}}
 	handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
 	if !handled || !cleared {

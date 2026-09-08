@@ -22,13 +22,6 @@ func HarmonikSessionName(projectDir, agentName string) string {
 	return tmuxhost.HarmonikSessionName(projectDir, agentName)
 }
 
-// HarmonikCrewSessionName is a back-compat wrapper over
-// tmuxhost.HarmonikCrewSessionName. See tmuxhost.HarmonikCrewSessionName for
-// the full doc.
-func HarmonikCrewSessionName(projectDir, agentName string) string {
-	return tmuxhost.HarmonikCrewSessionName(projectDir, agentName)
-}
-
 // SplitTmuxTarget is a back-compat wrapper over tmuxhost.SplitTmuxTarget.
 func SplitTmuxTarget(value string) (session, window string) {
 	return tmuxhost.SplitTmuxTarget(value)
@@ -38,12 +31,6 @@ func SplitTmuxTarget(value string) (session, window string) {
 // See tmuxhost.ResolveTmuxTarget for the full doc.
 func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn func(string) bool) string {
 	return tmuxhost.ResolveTmuxTarget(projectDir, agentName, explicit, sessionExistsFn)
-}
-
-// OperatorAttached is a back-compat wrapper over tmuxhost.OperatorAttached.
-// See tmuxhost.OperatorAttached for the full doc.
-func OperatorAttached(target string) bool {
-	return tmuxhost.OperatorAttached(target)
 }
 
 const recentTranscriptTailBytes = 256 * 1024

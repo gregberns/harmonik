@@ -55,9 +55,8 @@ func readLoggedArgv(t *testing.T, logPath string) []string {
 // TestHostArgv_ByteIdentical pins the exact tmux argv each Host method
 // issues. This is the KH-1 self-check: the tmux mechanics moved verbatim
 // from internal/keeper into this package, and this test proves the move did
-// not alter a single flag. A deliberate mutation of any one of these argv
-// strings (see the sibling TestHostArgv_MutationIsCaught) must fail this
-// test — that failure-on-purpose is what makes the assertion meaningful.
+// not alter a single flag. Verified failure-on-purpose during KH-1: mutating
+// any one of the "want" argv strings below fails the corresponding subtest.
 func TestHostArgv_ByteIdentical(t *testing.T) {
 	origSettle, origRetry := SubmitSettle, SubmitRetryDelay
 	SubmitSettle, SubmitRetryDelay = 0, 0

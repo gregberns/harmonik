@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 func hashDir(t *testing.T, dir string) string {
@@ -188,7 +189,7 @@ func TestHarmonikCrewSessionName(t *testing.T) {
 
 	dir := t.TempDir()
 	want := "harmonik-" + hashDir(t, dir) + "-crew-admiral"
-	got := keeper.HarmonikCrewSessionName(dir, "admiral")
+	got := tmuxhost.HarmonikCrewSessionName(dir, "admiral")
 	if got != want {
 		t.Errorf("HarmonikCrewSessionName: got %q, want %q", got, want)
 	}
@@ -202,7 +203,7 @@ func TestHarmonikCrewSessionName_DifferentFromBare(t *testing.T) {
 	dir := t.TempDir()
 	hash := hashDir(t, dir)
 	bare := keeper.HarmonikSessionName(dir, "admiral")
-	crew := keeper.HarmonikCrewSessionName(dir, "admiral")
+	crew := tmuxhost.HarmonikCrewSessionName(dir, "admiral")
 	wantBare := "harmonik-" + hash + "-admiral"
 	wantCrew := "harmonik-" + hash + "-crew-admiral"
 	if bare != wantBare {
@@ -230,7 +231,7 @@ func TestResolveTmuxTarget_CrewNaming_B4(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	crewSession := keeper.HarmonikCrewSessionName(dir, "admiral")
+	crewSession := tmuxhost.HarmonikCrewSessionName(dir, "admiral")
 
 	stub := func(name string) bool { return name == crewSession }
 
@@ -248,7 +249,7 @@ func TestResolveTmuxTarget_BareFirstThenCrew(t *testing.T) {
 
 	dir := t.TempDir()
 	bareSession := keeper.HarmonikSessionName(dir, "captain")
-	crewSession := keeper.HarmonikCrewSessionName(dir, "captain")
+	crewSession := tmuxhost.HarmonikCrewSessionName(dir, "captain")
 
 	stub := func(name string) bool { return name == bareSession || name == crewSession }
 
@@ -265,7 +266,7 @@ func TestResolveTmuxTarget_CrewOnlyNoBare(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	crewSession := keeper.HarmonikCrewSessionName(dir, "jamis")
+	crewSession := tmuxhost.HarmonikCrewSessionName(dir, "jamis")
 
 	stub := func(name string) bool { return name == crewSession }
 

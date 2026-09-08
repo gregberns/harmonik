@@ -456,7 +456,6 @@ internal/hookrelay/hookrelay_test.go	unparam
 internal/hookrelay/hookrelay.go	gocognit
 internal/hooksystem/dispatcher.go	forbidigo
 internal/keeper/awaitack.go	gocognit
-internal/keeper/awaitack.go	gosec
 internal/keeper/cycle.go	gocognit
 internal/keeper/heartbeat.go	gocognit
 internal/keeper/tmuxresolve.go	gocognit

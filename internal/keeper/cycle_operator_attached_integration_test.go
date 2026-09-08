@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 const (
@@ -114,7 +115,7 @@ func oaiAttachClient(t *testing.T, name string) (detach func()) {
 func oaiWaitClients(name string, want bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
-		got := OperatorAttached(name)
+		got := tmuxhost.OperatorAttached(name)
 		if got == want || time.Now().After(deadline) {
 			return got
 		}
@@ -130,24 +131,24 @@ func TestIntegration_OperatorAttached_RealClient(t *testing.T) {
 
 	name := oaiUniqueSessionName(t)
 
-	if OperatorAttached(name) {
-		t.Fatalf("oai: OperatorAttached(%q) true before the session exists", name)
+	if tmuxhost.OperatorAttached(name) {
+		t.Fatalf("oai: tmuxhost.OperatorAttached(%q) true before the session exists", name)
 	}
 
 	oaiStartSession(t, name)
 
 	if oaiWaitClients(name, false, 2*time.Second) {
-		t.Fatalf("oai: OperatorAttached(%q) true with no client attached", name)
+		t.Fatalf("oai: tmuxhost.OperatorAttached(%q) true with no client attached", name)
 	}
 
 	detach := oaiAttachClient(t, name)
 	if !oaiWaitClients(name, true, 3*time.Second) {
-		t.Fatalf("oai: OperatorAttached(%q) false while a real client IS attached", name)
+		t.Fatalf("oai: tmuxhost.OperatorAttached(%q) false while a real client IS attached", name)
 	}
 
 	detach()
 	if oaiWaitClients(name, false, 3*time.Second) {
-		t.Fatalf("oai: OperatorAttached(%q) still true after the client detached", name)
+		t.Fatalf("oai: tmuxhost.OperatorAttached(%q) still true after the client detached", name)
 	}
 }
 
@@ -225,7 +226,7 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 
 	detach := oaiAttachClient(t, name)
 	if !oaiWaitClients(name, true, 3*time.Second) {
-		t.Fatalf("oai: client not visible to OperatorAttached(%q) before suppress assertion", name)
+		t.Fatalf("oai: client not visible to tmuxhost.OperatorAttached(%q) before suppress assertion", name)
 	}
 
 	if err := cycler.MaybeRun(context.Background(), &CtxFile{Pct: 95.0, SessionID: prevSID}); err != nil {

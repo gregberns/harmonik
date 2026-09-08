@@ -438,6 +438,7 @@ darwin/arm64 github.com/gregberns/harmonik/internal/keeper.Lock.Path
 darwin/arm64 github.com/gregberns/harmonik/internal/keeper.RecordingEmitter.EmitWithRunID
 darwin/arm64 github.com/gregberns/harmonik/internal/keeper.RecordingEmitter.EventsOfType
 darwin/arm64 github.com/gregberns/harmonik/internal/keeper.SplitTmuxTarget
+darwin/arm64 github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost.SplitTmuxTarget
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.AcquireReconciliationLock
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ActiveRunEntry.BranchName
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ActiveRunSet.Entries
@@ -1062,6 +1063,7 @@ linux/amd64 github.com/gregberns/harmonik/internal/keeper.Lock.Path
 linux/amd64 github.com/gregberns/harmonik/internal/keeper.RecordingEmitter.EmitWithRunID
 linux/amd64 github.com/gregberns/harmonik/internal/keeper.RecordingEmitter.EventsOfType
 linux/amd64 github.com/gregberns/harmonik/internal/keeper.SplitTmuxTarget
+linux/amd64 github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost.SplitTmuxTarget
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.AcquireReconciliationLock
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ActiveRunEntry.BranchName
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ActiveRunSet.Entries

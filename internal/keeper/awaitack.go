@@ -173,10 +173,3 @@ func emitAckTimeout(ctx context.Context, emitter Emitter, cfg AwaitAckConfig, ki
 	}
 	_ = emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperAckTimeout, raw) //nolint:errcheck // best-effort; return value is the authoritative signal
 }
-
-// CaptureTmuxPane is a back-compat wrapper over tmuxhost.CaptureTmuxPane
-// (KH-1: the tmux capture-pane call moved to panehost/tmuxhost). See
-// tmuxhost.CaptureTmuxPane for the full doc.
-func CaptureTmuxPane(ctx context.Context, tmuxTarget string) (string, error) {
-	return tmuxhost.CaptureTmuxPane(ctx, tmuxTarget)
-}

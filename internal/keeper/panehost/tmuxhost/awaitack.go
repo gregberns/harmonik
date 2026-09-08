@@ -18,6 +18,7 @@ func CaptureTmuxPane(ctx context.Context, tmuxTarget string) (string, error) {
 	if tmuxTarget == "" {
 		return "", fmt.Errorf("keeper: capture-pane: tmuxTarget is empty")
 	}
+	//nolint:gosec // G204: tmuxTarget is a keeper-resolved tmux address, not attacker input
 	cmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-t", tmuxTarget, "-S", fmt.Sprintf("-%d", awaitAckScrollback))
 	out, err := cmd.Output()
 	if err != nil {

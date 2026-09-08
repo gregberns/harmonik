@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 func smokeSessionName() string {
@@ -157,7 +158,7 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 		project := t.TempDir()
 		agent := "smoke-crew-b4-" + strconv.Itoa(os.Getpid())
 
-		crewSessName := keeper.HarmonikCrewSessionName(project, agent)
+		crewSessName := tmuxhost.HarmonikCrewSessionName(project, agent)
 		t.Cleanup(func() {
 			smokeKillSession(crewSessName)
 		})

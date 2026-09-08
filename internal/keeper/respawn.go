@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-
-	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 // ErrLiveRecoverIdentityUntrusted is returned by the LiveRecoverFn built by
@@ -46,17 +44,4 @@ func NewLiveRecoverViaRespawn(projectDir, respawnCmd string) func(ctx context.Co
 		cmd := exec.CommandContext(ctx, "sh", "-c", respawnCmd)
 		return cmd.Run()
 	}
-}
-
-// IsPaneIdle is a back-compat wrapper over tmuxhost.IsPaneIdle (KH-1: the
-// pane-foreground probes moved to panehost/tmuxhost, where they also back the
-// unified panehost.PaneHost.Foreground). See tmuxhost.IsPaneIdle for the full
-// doc.
-func IsPaneIdle(ctx context.Context, target string) bool {
-	return tmuxhost.IsPaneIdle(ctx, target)
-}
-
-// IsPaneAlive is a back-compat wrapper over tmuxhost.IsPaneAlive.
-func IsPaneAlive(ctx context.Context, target string) bool {
-	return tmuxhost.IsPaneAlive(ctx, target)
 }

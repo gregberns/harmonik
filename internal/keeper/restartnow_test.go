@@ -299,7 +299,7 @@ func TestRestartNow_CrewAgent_AccCorpus1_B4(t *testing.T) {
 	requested := time.Now()
 	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
 
-	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + tmuxhost.WindowAgent
+	crewTarget := tmuxhost.HarmonikCrewSessionName(dir, agent) + ":" + tmuxhost.WindowAgent
 
 	rec := &recordingInjector{}
 	err := RestartNow(context.Background(), RestartNowConfig{
@@ -337,7 +337,7 @@ func TestRestartNow_CrewAgent_ResolveThenRun_B4(t *testing.T) {
 	requested := time.Now()
 	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
 
-	crewSession := HarmonikCrewSessionName(dir, agent)
+	crewSession := tmuxhost.HarmonikCrewSessionName(dir, agent)
 
 	sessionExistsFn := func(name string) bool { return name == crewSession }
 	target := ResolveTmuxTarget(dir, agent, "", sessionExistsFn)

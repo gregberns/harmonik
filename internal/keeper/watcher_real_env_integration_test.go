@@ -13,6 +13,8 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/keeper/panehost"
+	"github.com/gregberns/harmonik/internal/keeper/panehost/tmuxhost"
 )
 
 // TestIntegration_Watcher_GaugeStaleAlive proves that a stale gauge over a live
@@ -74,16 +76,19 @@ func TestIntegration_Watcher_GaugeStaleAlive(t *testing.T) {
 		// RespawnCmd wired to a spy — will be called if the watcher fires respawn.
 		RespawnCmd:   "echo respawn-fired",
 		RespawnGrace: 200 * time.Millisecond, // short so it would fire quickly if wired
-		// IsPaneIdleFn: nil → uses real IsPaneIdle (the twin's pane is NOT idle,
-		// since it runs a non-shell binary — so the respawn gate should NOT fire).
-		// HeartbeatEnabled: false (default) — lets the gauge go genuinely stale.
-		// SuppressNoGauge: false — we WANT the no_gauge event.
+		// IsPaneIdleFn: nil → applyDefaults derives it from the production
+		// PaneHost (tmuxhost.Host.Foreground==ForegroundShell); the twin's pane
+		// is NOT idle, since it runs a non-shell binary — so the respawn gate
+		// should NOT fire. HeartbeatEnabled: false (default) — lets the gauge
+		// go genuinely stale. SuppressNoGauge: false — we WANT the no_gauge
+		// event.
 		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "", nil },
 		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 
+	ph := tmuxhost.New()
 	cfg.IsPaneIdleFn = func(ctx context.Context, target string) bool {
-		idle := keeper.IsPaneIdle(ctx, target)
+		idle := ph.Foreground(ctx, panehost.Target(target)) == panehost.ForegroundShell
 		if idle {
 			respawnMu.Lock()
 			respawnFired = true

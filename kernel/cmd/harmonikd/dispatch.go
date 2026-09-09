@@ -14,6 +14,7 @@ import (
 	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 	"github.com/gregberns/harmonik/kernel/host"
 	"github.com/gregberns/harmonik/kernel/transport"
+	"github.com/gregberns/harmonik/kernel/transport/memmesh"
 )
 
 // idleBackoff is how long the dispatch loop waits before checking again
@@ -33,44 +34,87 @@ const idleBackoff = 20 * time.Millisecond
 const defaultDrainDeadline = 2 * time.Second
 
 // dispatcher pumps one kernel-held subscription into whatever process its
-// pluginManager currently holds. held is an envelope already popped from
-// the subscription but not yet delivered — set whenever a process was not
-// ready for it, or Deliver against it failed — so Pending, and the loop
-// itself, both treat "sitting in held" the same as "still queued in the
-// subscription": either way it has not reached the plugin yet.
+// pluginManager currently holds.
+//
+// For a PUBSUB interest, held is an envelope already popped from the
+// subscription but not yet delivered — set whenever a process was not ready for
+// it, or Deliver against it failed — so Pending, and the loop itself, both treat
+// "sitting in held" the same as "still queued in the subscription": either way
+// it has not reached the plugin yet.
+//
+// For a POINT_TO_POINT interest, held is never used: Recv leases the envelope in
+// the transport, and that lease IS the hold. The lease is resolved by exactly
+// one Ack (delivered) or Nack (returned to the group queue for reassignment to a
+// live member); nothing rides on this dispatcher's memory, so a reload or a
+// worker death strands no message. ptp selects which loop runs; subscriberID,
+// pattern, and group are what a reload needs to detach and re-attach the member.
 type dispatcher struct {
-	sub *transport.Subscription
+	subscriberID string
+	pattern      string
+	group        string // "" for PUBSUB; the competing-consumer group for POINT_TO_POINT
+	ptp          bool
 
-	mu   sync.Mutex
-	held *kernelv1.Envelope
+	mu         sync.Mutex
+	sub        *transport.Subscription
+	held       *kernelv1.Envelope // PUBSUB-only
+	pumpCancel context.CancelFunc // cancels this dispatcher's pump goroutine; a reload restarts a PTP pump on a fresh subscription
+	pumpDone   chan struct{}      // closed when the pump goroutine has exited
 }
 
 // pending reports how many envelopes this dispatcher has not yet delivered:
-// whatever the subscription itself still buffers, plus one more if an
-// envelope is currently held pending a ready process.
+// whatever the subscription itself still buffers, plus one more if a PUBSUB
+// envelope is currently held pending a ready process. A leased POINT_TO_POINT
+// envelope is in flight, not pending, so the transport counts it, never held.
 func (d *dispatcher) pending() int {
 	d.mu.Lock()
 	held := d.held != nil
+	sub := d.sub
 	d.mu.Unlock()
-	n := d.sub.Pending()
+	n := sub.Pending()
 	if held {
 		n++
 	}
 	return n
 }
 
-// pump feeds sub into whatever process pm currently holds, until ctx is
-// done. It never calls sub.Recv while it already holds an undelivered
-// envelope, so a process dying between enter and Deliver (or a reload
-// pausing dispatch between the two) retries the same envelope instead of
-// losing it. The drain gate (pluginManager.reload) is what closes the
-// duplicate window a bare kill-and-relaunch would leave open.
+// currentSub returns the subscription this dispatcher is pumping right now. A
+// reload swaps it for a POINT_TO_POINT member — detach + re-attach yields a
+// fresh Subscription — so the pump reads it through this rather than caching it.
+func (d *dispatcher) currentSub() *transport.Subscription {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.sub
+}
+
+func (d *dispatcher) setSub(sub *transport.Subscription) {
+	d.mu.Lock()
+	d.sub = sub
+	d.mu.Unlock()
+}
+
+// pump routes to the delivery loop the interest's channel type needs. The
+// PUBSUB loop is the one K8 shipped; the POINT_TO_POINT loop leases, delivers,
+// then acks or nacks.
 func (d *dispatcher) pump(ctx context.Context, pm *pluginManager) {
+	if d.ptp {
+		d.pumpLeased(ctx, pm)
+		return
+	}
+	d.pumpHeld(ctx, pm)
+}
+
+// pumpHeld is the PUBSUB loop, unchanged from K8 except that it reads the
+// subscription through currentSub. It never calls Recv while it already holds an
+// undelivered envelope, so a process dying between enter and Deliver (or a
+// reload pausing dispatch between the two) retries the same envelope instead of
+// losing it. The drain gate (pluginManager.reload) is what closes the duplicate
+// window a bare kill-and-relaunch would leave open.
+func (d *dispatcher) pumpHeld(ctx context.Context, pm *pluginManager) {
 	for {
 		env := d.takeHeld()
 		if env == nil {
 			var err error
-			env, err = d.sub.Recv(ctx)
+			env, err = d.currentSub().Recv(ctx)
 			if err != nil {
 				return
 			}
@@ -82,7 +126,7 @@ func (d *dispatcher) pump(ctx context.Context, pm *pluginManager) {
 			// kernel-held and wait. It has not been dispatched, so it is
 			// still exactly-once eligible once a process is ready again.
 			d.setHeld(env)
-			if !sleepOrDone(ctx, idleBackoff) {
+			if !sleepOrDone(ctx) {
 				return
 			}
 			continue
@@ -100,7 +144,7 @@ func (d *dispatcher) pump(ctx context.Context, pm *pluginManager) {
 		if err != nil {
 			d.setHeld(env)
 			pm.logDeliverFailure(ctx, env, err)
-			if !sleepOrDone(ctx, idleBackoff) {
+			if !sleepOrDone(ctx) {
 				return
 			}
 			continue
@@ -108,12 +152,85 @@ func (d *dispatcher) pump(ctx context.Context, pm *pluginManager) {
 	}
 }
 
-// sleepOrDone waits d, or returns false the moment ctx is done.
-func sleepOrDone(ctx context.Context, d time.Duration) bool {
+// pumpLeased is the POINT_TO_POINT loop. Recv leases the next envelope in the
+// transport; from there exactly one of Ack or Nack resolves the lease. A
+// delivery that cannot happen now — no ready process, or a reload draining —
+// nacks the lease straight back, so the transport reassigns it to a live member
+// (a survivor on another node, or this sole member again) and the dispatcher
+// keeps no copy. A delivery that fails — a dead worker surfaces Unavailable —
+// nacks too: that is the C5 requeue-to-survivors path. The Ack or Nack lands
+// BEFORE leave, so waitInflight cannot see the in-flight count reach zero until
+// the lease is resolved; otherwise a reload's detach could reassign an envelope
+// a delivery had already completed and journaled.
+func (d *dispatcher) pumpLeased(ctx context.Context, pm *pluginManager) {
+	for {
+		env, err := d.currentSub().Recv(ctx)
+		if err != nil {
+			return // ctx done: the manager is closing, or a reload is resetting this pump
+		}
+
+		h, ok := pm.enter()
+		if !ok {
+			d.releaseLease(ctx, pm, env)
+			if !sleepOrDone(ctx) {
+				return
+			}
+			continue
+		}
+
+		dctx, dcancel := context.WithCancel(ctx)
+		id := pm.trackCancel(dcancel)
+		_, err = h.Deliver(dctx, env)
+		if err != nil {
+			pm.logDeliverFailure(ctx, env, err)
+			d.releaseLease(ctx, pm, env)
+		} else {
+			d.ackLease(ctx, pm, env)
+		}
+		pm.leave(id)
+		dcancel()
+		if err != nil {
+			if !sleepOrDone(ctx) {
+				return
+			}
+		}
+	}
+}
+
+// ackLease tells the transport the leased envelope is done. A lease already
+// reclaimed by a reload's detach (leaseGone) is not an error: the detach has
+// taken ownership, so there is nothing left to ack.
+func (d *dispatcher) ackLease(ctx context.Context, pm *pluginManager, env *kernelv1.Envelope) {
+	if err := pm.transport.Ack(d.subscriberID, env.GetMessageId()); err != nil && !leaseGone(err) {
+		pm.logger.WarnContext(ctx, "harmonikd: ack leased message",
+			"channel", env.GetChannel(), "message_id", env.GetMessageId(), "error", err.Error())
+	}
+}
+
+// releaseLease hands the leased envelope back to the transport for reassignment
+// to a live member. Same leaseGone tolerance as ackLease.
+func (d *dispatcher) releaseLease(ctx context.Context, pm *pluginManager, env *kernelv1.Envelope) {
+	if err := pm.transport.Nack(d.subscriberID, env.GetMessageId()); err != nil && !leaseGone(err) {
+		pm.logger.WarnContext(ctx, "harmonikd: nack leased message",
+			"channel", env.GetChannel(), "message_id", env.GetMessageId(), "error", err.Error())
+	}
+}
+
+// leaseGone reports whether err means the lease this dispatcher tried to resolve
+// is already gone — reclaimed by a reload's detach, on either the single-box
+// transport or a mesh node. It is the one Ack/Nack outcome the pump may ignore.
+func leaseGone(err error) bool {
+	return errors.Is(err, transport.ErrNotLeased) ||
+		errors.Is(err, transport.ErrUnknownSubscriber) ||
+		errors.Is(err, memmesh.ErrUnknownMember)
+}
+
+// sleepOrDone waits one idleBackoff, or returns false the moment ctx is done.
+func sleepOrDone(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(d):
+	case <-time.After(idleBackoff):
 		return true
 	}
 }
@@ -144,6 +261,12 @@ type pluginManager struct {
 	dispatchers []*dispatcher
 	logger      *slog.Logger
 
+	// spawnPump starts one dispatcher's pump under a context derived from the
+	// manager's dispatch context. It is a closure rather than a stored context so
+	// a reload can restart a POINT_TO_POINT pump on a fresh subscription without
+	// the manager holding a context.Context field.
+	spawnPump func(*dispatcher)
+
 	mu            sync.Mutex
 	manifest      *kernelv1.PluginManifest
 	current       *host.Host
@@ -168,6 +291,7 @@ type pluginManager struct {
 // dispatcher per subscription. It returns once the plugin has reached
 // RUNNING; the dispatchers keep going until the returned manager's close is
 // called.
+//nolint:contextcheck // the dispatchers' pump context is derived from context.Background() on purpose — they outlive this launch ctx; see dispatchCtx below.
 func launchPlugin(ctx context.Context, spec host.LaunchSpec, t transportPort, logger *slog.Logger, onManifest func(*kernelv1.PluginManifest) error) (*pluginManager, error) {
 	var opts []host.LaunchOption
 	if onManifest != nil {
@@ -203,20 +327,44 @@ func launchPlugin(ctx context.Context, spec host.LaunchSpec, t transportPort, lo
 		stop:          cancel,
 	}
 
+	// spawnPump captures dispatchCtx rather than storing it on the manager: a
+	// context belongs in a call, not a struct field. It tracks each pump's cancel
+	// and a done channel so a reload can stop a POINT_TO_POINT pump, re-attach its
+	// member, and start it again on the fresh subscription.
+	pm.spawnPump = func(d *dispatcher) {
+		pumpCtx, pumpCancel := context.WithCancel(dispatchCtx)
+		done := make(chan struct{})
+		d.mu.Lock()
+		d.pumpCancel = pumpCancel
+		d.pumpDone = done
+		d.mu.Unlock()
+		go func() {
+			defer close(done)
+			d.pump(pumpCtx, pm)
+		}()
+	}
+
 	for _, interest := range manifest.GetInterests() {
 		chInterest := interest.GetChannel()
 		if chInterest == nil {
 			continue // roster interest: no delivery queue to pump in this slice
 		}
-		sub, err := t.Subscribe(manifest.GetNamespace(), chInterest.GetPattern(), chInterest.GetGroup())
+		group := chInterest.GetGroup()
+		sub, err := t.Subscribe(manifest.GetNamespace(), chInterest.GetPattern(), group)
 		if err != nil {
 			cancel()
 			h.Kill()
 			return nil, fmt.Errorf("harmonikd: subscribe %q: %w", chInterest.GetPattern(), err)
 		}
-		d := &dispatcher{sub: sub}
+		d := &dispatcher{
+			subscriberID: manifest.GetNamespace(),
+			pattern:      chInterest.GetPattern(),
+			group:        group,
+			ptp:          group != "",
+			sub:          sub,
+		}
 		pm.dispatchers = append(pm.dispatchers, d)
-		go d.pump(dispatchCtx, pm) //nolint:contextcheck // dispatchCtx deliberately outlives ctx; see the comment above its construction
+		pm.spawnPump(d)
 	}
 
 	return pm, nil
@@ -288,10 +436,13 @@ func (pm *pluginManager) liveHost() *host.Host {
 // message. go-plugin's own shutdown hard-stops an in-flight call, so the
 // kernel drains itself first.
 //
-// Invariant: every message is either never-dispatched (still kernel-held,
-// delivered after reload) or drained to completion (journaled before Kill);
-// there is no third state — this is what makes VC-12's exact-count assertion
-// satisfiable.
+// Invariant: an envelope is always in exactly one of three states, never
+// between — this is what makes VC-12's exact-count assertion satisfiable:
+//   - never-dispatched: still kernel-held, delivered after reload;
+//   - drained to completion: journaled before Kill (and, for a POINT_TO_POINT
+//     lease, Acked before the in-flight count falls to zero);
+//   - leased-but-undelivered work is nacked back to the group queue; there is
+//     still no state in which an envelope is both unfinished and unowned.
 func (pm *pluginManager) reload(ctx context.Context, spec host.LaunchSpec) error {
 	pm.mu.Lock()
 	pm.draining = true // new dispatches are refused at enter and stay kernel-held
@@ -303,14 +454,32 @@ func (pm *pluginManager) reload(ctx context.Context, spec host.LaunchSpec) error
 	// Long-lived streams would be cancelled here (never waited on — a
 	// subscription never ends on its own). This slice has none: the only
 	// long-lived consumer is the kernel-held dispatcher loop, which enter now
-	// turns away, so each dispatcher parks its envelope instead.
+	// turns away, so each dispatcher parks (PUBSUB) or nacks its lease (PTP).
 
 	// Wait for in-flight unary deliveries to finish, but only to a deadline;
 	// then cancel whatever is still running. A call that finished in time was
-	// journaled before this point; one cancelled here returns Canceled and
-	// its envelope goes back to the kernel-held queue to be redelivered.
+	// journaled — and, for PTP, Acked — before this point; one cancelled here
+	// returns Canceled and its envelope goes back to the queue to be
+	// redelivered: parked kernel-held for PUBSUB, nacked to the group for PTP.
 	pm.waitInflight(deadline)
 	pm.cancelInflight()
+
+	// A POINT_TO_POINT member's lease queue lives in the transport, not in the
+	// dying process, so it must be handed back before the process goes away:
+	// stop the pump (so nothing races the detach), then detach, which nacks
+	// everything the member held — assigned-but-unreceived and in-flight leased
+	// alike — to the surviving members on other nodes. A PUBSUB dispatcher keeps
+	// its pump and its kernel-held queue untouched, exactly as K8 left it.
+	for _, d := range pm.dispatchers {
+		if !d.ptp {
+			continue
+		}
+		pm.stopPump(d)
+		if err := pm.transport.Detach(d.subscriberID); err != nil && !leaseGone(err) {
+			pm.logger.WarnContext(ctx, "harmonikd: detach member for reload",
+				"subscriber", d.subscriberID, "error", err.Error())
+		}
+	}
 
 	// Kill, then relaunch. host.Launch checks VERIFIED (a fresh sha256)
 	// before it starts the binary.
@@ -326,19 +495,52 @@ func (pm *pluginManager) reload(ctx context.Context, spec host.LaunchSpec) error
 		return fmt.Errorf("harmonikd: reload plugin: %w", err)
 	}
 
-	// Diff the new manifest against the old: a channel in both persists, and
-	// its kernel-held queue and the dispatcher pumping it are left untouched —
-	// reload is not re-subscribe. In this single-plugin slice the manifest is
-	// stable, so every channel persists and no subscription is rebuilt.
+	// Diff the new manifest against the old: a PUBSUB channel in both persists,
+	// and its kernel-held queue and the dispatcher pumping it are left untouched —
+	// reload is not re-subscribe for PUBSUB. In this single-plugin slice the
+	// manifest is stable, so every channel persists and no PUBSUB subscription is
+	// rebuilt.
 	pm.logManifestDiff(ctx, oldManifest, h.Manifest())
 
 	pm.mu.Lock()
 	pm.current = h
 	pm.spec = spec
 	pm.manifest = h.Manifest()
-	pm.draining = false // dispatch resumes; parked dispatchers flush their held envelope
+	pm.draining = false // dispatch resumes; parked PUBSUB dispatchers flush their held envelope
 	pm.mu.Unlock()
+
+	// Re-attach each POINT_TO_POINT member on a fresh subscription and restart
+	// its pump. This runs after the process is RUNNING and draining is off, so the
+	// restarted pump delivers straight away instead of nacking against a
+	// not-yet-ready process.
+	for _, d := range pm.dispatchers {
+		if !d.ptp {
+			continue
+		}
+		sub, subErr := pm.transport.Subscribe(d.subscriberID, d.pattern, d.group)
+		if subErr != nil {
+			return fmt.Errorf("harmonikd: re-subscribe %q after reload: %w", d.pattern, subErr)
+		}
+		d.setSub(sub)
+		pm.spawnPump(d)
+	}
 	return nil
+}
+
+// stopPump cancels one dispatcher's pump goroutine and waits for it to exit, so
+// a reload can detach and re-attach a POINT_TO_POINT member with no pump
+// concurrently reading or resolving a lease on it.
+func (pm *pluginManager) stopPump(d *dispatcher) {
+	d.mu.Lock()
+	cancel := d.pumpCancel
+	done := d.pumpDone
+	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 }
 
 // waitInflight blocks until every counted in-flight delivery has finished, or

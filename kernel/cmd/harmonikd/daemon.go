@@ -128,7 +128,9 @@ func startNode(ctx context.Context, cfg Config, port transportPort, roster *rost
 		closeLogged(ctx, journal)
 		return nil, err
 	}
-	kernel.setNamespace(plugin.namespace())
+	// The namespace is registered once, by the OnManifest hook above, before the
+	// plugin's own Start runs. A second setNamespace here would be redundant —
+	// the hook has already fired by the time Launch returns.
 
 	d := &Daemon{
 		journal:    journal,

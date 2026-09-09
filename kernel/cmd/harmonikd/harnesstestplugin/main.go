@@ -35,6 +35,10 @@ const (
 	// and never write to the journal — a hung handler the drain gate must
 	// cancel and kill through.
 	deliverHangEnv = "HARMONIK_HARNESSTESTPLUGIN_DELIVER_HANG"
+	// groupEnv, when set, switches the declared channel from PUBSUB to
+	// POINT_TO_POINT and makes the interest a competing-consumer member of the
+	// named group — so two of these plugins in one mesh split one stream.
+	groupEnv = "HARMONIK_HARNESSTESTPLUGIN_GROUP"
 
 	defaultNamespace = "harnesstestplugin"
 	defaultJournal   = "records"
@@ -46,6 +50,7 @@ type server struct {
 	namespace    string
 	channel      string
 	journal      string
+	group        string
 	deliverDelay time.Duration
 	deliverHang  bool
 
@@ -55,17 +60,21 @@ type server struct {
 }
 
 func (s *server) Describe(context.Context, *kernelv1.DescribeRequest) (*kernelv1.DescribeResponse, error) {
+	channelType := kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB
+	if s.group != "" {
+		channelType = kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT
+	}
 	return &kernelv1.DescribeResponse{
 		Manifest: &kernelv1.PluginManifest{
 			Namespace:  s.namespace,
 			Version:    "0.0.0-harness",
 			ApiVersion: 1,
 			Channels: []*kernelv1.ChannelDecl{
-				{Name: s.channel, Type: kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB},
+				{Name: s.channel, Type: channelType},
 			},
 			Interests: []*kernelv1.InterestDecl{
 				{Kind: &kernelv1.InterestDecl_Channel{
-					Channel: &kernelv1.ChannelInterest{Pattern: s.channel},
+					Channel: &kernelv1.ChannelInterest{Pattern: s.channel, Group: s.group},
 				}},
 			},
 		},
@@ -151,6 +160,7 @@ func main() {
 		namespace:    namespace,
 		channel:      channel,
 		journal:      journal,
+		group:        os.Getenv(groupEnv),
 		deliverDelay: deliverDelay,
 		deliverHang:  os.Getenv(deliverHangEnv) != "",
 	}

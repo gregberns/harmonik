@@ -32,6 +32,13 @@ type transportPort interface {
 	Declare(name string, typ kernelv1.ChannelType) error
 	Publish(req *kernelv1.PublishRequest, producer string) (*kernelv1.PublishResponse, error)
 	Subscribe(subscriberID, pattern string, group ...string) (*transport.Subscription, error)
+	// Ack, Nack, and Detach are the POINT_TO_POINT lease verbs the dispatcher
+	// drives: Ack forgets a delivered lease, Nack returns it to the group queue
+	// for reassignment, and Detach nacks everything a member holds when a reload
+	// takes its process away. They are no-ops for a PUBSUB-only deployment.
+	Ack(subscriberID, messageID string) error
+	Nack(subscriberID, messageID string) error
+	Detach(subscriberID string) error
 	Info() *kernelv1.InfoResponse
 	Request(ctx context.Context, req *kernelv1.PublishRequest, producer string) (*kernelv1.RequestResponse, error)
 	Serve(ctx context.Context, pattern string, deliver func(env *kernelv1.Envelope, requestID string) error) error

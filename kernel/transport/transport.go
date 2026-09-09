@@ -3,17 +3,22 @@
 // It carries opaque byte payloads between declared channels and never parses
 // them. A channel is a (name, type) pair; the first declaration for a name
 // wins, and a later declaration with a different type for the same name is
-// rejected before any byte moves. Only CHANNEL_TYPE_PUBSUB carries traffic
-// in this slice — the other three declared types are accepted but every
-// operation against them returns ErrChannelTypeNotImplemented, a typed
-// refusal, never a silent no-op.
+// rejected before any byte moves. Two of the four declared types carry
+// traffic here: CHANNEL_TYPE_PUBSUB (copy to every matching subscriber) and
+// CHANNEL_TYPE_POINT_TO_POINT (competing consumers — one member of each named
+// group takes each message, see ptp.go). The other two are accepted at
+// declaration but every operation against them returns
+// ErrChannelTypeNotImplemented, a typed refusal, never a silent no-op.
 //
 // A subscription and its pending queue are transport state keyed by the
 // subscriber's own identity, not by any calling process. Once created, a
 // subscription and whatever it has buffered outlive a detach: a later call
 // with the same subscriber identity reattaches to the same queue and drains
 // what built up while nobody was reading it. This is the guarantee a plugin
-// reload depends on.
+// reload depends on. POINT_TO_POINT group state — the group queue, each
+// member's lease queue, and each member's in-flight leased set — is held the
+// same way: in the transport, not in any plugin process, so a lease survives
+// the process that held it.
 package transport
 
 import (
@@ -48,6 +53,36 @@ var ErrPayloadTooLarge = errors.New("transport: payload exceeds max_payload_byte
 // a name no ChannelDecl has registered.
 var ErrChannelNotDeclared = errors.New("transport: channel not declared")
 
+// ErrGroupRequired is returned when a POINT_TO_POINT subscribe names no group.
+// A competing-consumer member has to say which group it competes in.
+var ErrGroupRequired = errors.New("transport: point_to_point subscribe requires a group")
+
+// ErrGroupOnNonPointToPoint is returned when a subscribe to a non-PTP channel
+// carries a group. A group only has meaning for competing consumers.
+var ErrGroupOnNonPointToPoint = errors.New("transport: a group is only valid on a point_to_point channel")
+
+// ErrTooManyGroups is returned when a subscribe names more than one group. A
+// subscription competes in at most one group.
+var ErrTooManyGroups = errors.New("transport: subscribe names at most one group")
+
+// ErrGroupKeyNotImplemented is returned when a Publish sets group_key.
+// Per-key consumer affinity is deferred to a later slice; the field is a typed
+// refusal here, never a silent no-op.
+var ErrGroupKeyNotImplemented = errors.New("transport: group_key not implemented in this slice")
+
+// ErrNotLeased is returned by Ack or Nack for a message the named member does
+// not currently hold a lease on (already acked, already nacked, or never
+// delivered to it).
+var ErrNotLeased = errors.New("transport: message is not leased to this member")
+
+// ErrUnknownSubscriber is returned by Ack, Nack, or Detach for a subscriber id
+// that never subscribed.
+var ErrUnknownSubscriber = errors.New("transport: unknown subscriber")
+
+// ErrNotPointToPoint is returned by Ack, Nack, or Detach against a subscriber
+// whose channel is not POINT_TO_POINT — there is no lease to act on.
+var ErrNotPointToPoint = errors.New("transport: subscriber is not a point_to_point member")
+
 // Transport is the in-memory PUBSUB layer plus its channel registry. The
 // zero value is not usable; construct one with New.
 type Transport struct {
@@ -57,6 +92,11 @@ type Transport struct {
 	channels map[string]kernelv1.ChannelType
 	subs     map[string]*Subscription // keyed by subscriber identity
 	seq      map[string]uint64        // origin_seq, per channel (single node in this slice)
+
+	// groups holds POINT_TO_POINT competing-consumer state: channel name ->
+	// group name -> the group's queue, members, and leases. A group is created
+	// on the first subscribe that names it. See ptp.go.
+	groups map[string]map[string]*ptpGroup
 }
 
 // New builds a Transport that stamps every envelope it originates with node
@@ -67,6 +107,7 @@ func New(node string) *Transport {
 		channels: make(map[string]kernelv1.ChannelType),
 		subs:     make(map[string]*Subscription),
 		seq:      make(map[string]uint64),
+		groups:   make(map[string]map[string]*ptpGroup),
 	}
 }
 
@@ -96,12 +137,18 @@ func (t *Transport) Declare(name string, typ kernelv1.ChannelType) error {
 	return nil
 }
 
-// Publish delivers req to every subscription declared against req.Channel.
-// producer names the calling plugin's namespace and is stamped onto the
-// resulting envelope; every other provenance field (origin_node, origin_time,
-// message_id, origin_seq) is stamped by the transport itself. The transport
-// counts payload bytes and never reads them.
+// Publish moves req onto req.Channel. On a PUBSUB channel every matching
+// subscription gets a copy; on a POINT_TO_POINT channel one member of each
+// named group gets it, chosen round-robin (see ptp.go). producer names the
+// calling plugin's namespace and is stamped onto the resulting envelope; every
+// other provenance field (origin_node, origin_time, message_id, origin_seq) is
+// stamped by the transport itself. The transport counts payload bytes and
+// never reads them. A non-empty group_key is refused with
+// ErrGroupKeyNotImplemented — per-key affinity is a later slice.
 func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*kernelv1.PublishResponse, error) {
+	if req.GetGroupKey() != "" {
+		return nil, ErrGroupKeyNotImplemented
+	}
 	if len(req.GetPayload()) > MaxPayloadBytes {
 		return nil, ErrPayloadTooLarge
 	}
@@ -112,23 +159,69 @@ func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*ker
 		t.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, req.GetChannel())
 	}
-	if typ != kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB {
+
+	switch typ {
+	case kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB:
+		t.seq[req.GetChannel()]++
+		seq := t.seq[req.GetChannel()]
+
+		var targets []*Subscription
+		for _, sub := range t.subs {
+			if sub.pattern == req.GetChannel() {
+				targets = append(targets, sub)
+			}
+		}
+		t.mu.Unlock()
+
+		env := t.stampEnvelope(req, producer, seq)
+
+		interest := kernelv1.Interest_INTEREST_NONE
+		for _, sub := range targets {
+			sub.enqueue(env)
+			interest = kernelv1.Interest_INTEREST_PRESENT
+		}
+		return &kernelv1.PublishResponse{MessageId: env.GetMessageId(), Interest: interest, OriginSeq: seq}, nil
+
+	case kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT:
+		t.seq[req.GetChannel()]++
+		seq := t.seq[req.GetChannel()]
+
+		groups := make([]*ptpGroup, 0, len(t.groups[req.GetChannel()]))
+		for _, g := range t.groups[req.GetChannel()] {
+			groups = append(groups, g)
+		}
+		t.mu.Unlock()
+
+		env := t.stampEnvelope(req, producer, seq)
+
+		// One message goes to one member of EACH named group. A group with a
+		// live member is interest; all parked with no member is INTEREST_NONE.
+		interest := kernelv1.Interest_INTEREST_NONE
+		for _, g := range groups {
+			if g.enqueue(env) {
+				interest = kernelv1.Interest_INTEREST_PRESENT
+			}
+		}
+		return &kernelv1.PublishResponse{MessageId: env.GetMessageId(), Interest: interest, OriginSeq: seq}, nil
+
+	case kernelv1.ChannelType_CHANNEL_TYPE_UNSPECIFIED,
+		kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY,
+		kernelv1.ChannelType_CHANNEL_TYPE_LOOKUP:
+		t.mu.Unlock()
+		return nil, ErrChannelTypeNotImplemented
+
+	default:
 		t.mu.Unlock()
 		return nil, ErrChannelTypeNotImplemented
 	}
+}
 
-	t.seq[req.GetChannel()]++
-	seq := t.seq[req.GetChannel()]
-
-	var targets []*Subscription
-	for _, sub := range t.subs {
-		if sub.pattern == req.GetChannel() {
-			targets = append(targets, sub)
-		}
-	}
-	t.mu.Unlock()
-
-	env := &kernelv1.Envelope{
+// stampEnvelope builds the envelope the transport originates. producer names
+// the calling plugin's namespace; every provenance field (origin_node,
+// origin_time, message_id, origin_seq) is the transport's, overwriting any the
+// caller set. The payload is copied by reference and never read.
+func (t *Transport) stampEnvelope(req *kernelv1.PublishRequest, producer string, seq uint64) *kernelv1.Envelope {
+	return &kernelv1.Envelope{
 		Channel:    req.GetChannel(),
 		Payload:    req.GetPayload(),
 		Headers:    req.GetHeaders(),
@@ -138,28 +231,27 @@ func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*ker
 		OriginSeq:  seq,
 		Producer:   producer,
 	}
-
-	interest := kernelv1.Interest_INTEREST_NONE
-	for _, sub := range targets {
-		sub.enqueue(env)
-		interest = kernelv1.Interest_INTEREST_PRESENT
-	}
-
-	return &kernelv1.PublishResponse{
-		MessageId: env.GetMessageId(),
-		Interest:  interest,
-		OriginSeq: seq,
-	}, nil
 }
 
 // Subscribe attaches subscriberID to pattern. subscriberID names the
 // subscribing plugin's own declared interest and is the key the transport
-// holds the subscription's queue under, so a second call with the same
-// subscriberID reattaches to whatever the first call's subscription already
-// buffered instead of starting empty.
-func (t *Transport) Subscribe(subscriberID, pattern string) (*Subscription, error) {
+// holds the subscription under, so a second call with the same subscriberID
+// reattaches to whatever the first call already buffered instead of starting
+// empty.
+//
+// group is the POINT_TO_POINT competing-consumer group and is optional: a
+// PUBSUB subscribe names none, a POINT_TO_POINT subscribe names exactly one.
+// A PTP subscribe with no group (ErrGroupRequired), a non-PTP subscribe with a
+// group (ErrGroupOnNonPointToPoint), and a subscribe naming more than one
+// group (ErrTooManyGroups) are each a typed refusal. The variadic form keeps
+// the PUBSUB two-argument call unchanged.
+func (t *Transport) Subscribe(subscriberID, pattern string, group ...string) (*Subscription, error) {
 	if subscriberID == "" {
 		return nil, errors.New("transport: subscribe requires a non-empty subscriber id")
+	}
+	groupName, err := soleGroup(group)
+	if err != nil {
+		return nil, err
 	}
 
 	t.mu.Lock()
@@ -169,6 +261,9 @@ func (t *Transport) Subscribe(subscriberID, pattern string) (*Subscription, erro
 		if existing.pattern != pattern {
 			return nil, fmt.Errorf("transport: subscriber %q already holds pattern %q, not %q", subscriberID, existing.pattern, pattern)
 		}
+		if existing.groupName() != groupName {
+			return nil, fmt.Errorf("transport: subscriber %q already holds group %q, not %q", subscriberID, existing.groupName(), groupName)
+		}
 		return existing, nil
 	}
 
@@ -176,13 +271,127 @@ func (t *Transport) Subscribe(subscriberID, pattern string) (*Subscription, erro
 	if !declared {
 		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, pattern)
 	}
-	if typ != kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB {
+
+	switch typ {
+	case kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB:
+		if groupName != "" {
+			return nil, ErrGroupOnNonPointToPoint
+		}
+		sub := newSubscription(pattern)
+		t.subs[subscriberID] = sub
+		return sub, nil
+
+	case kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT:
+		if groupName == "" {
+			return nil, ErrGroupRequired
+		}
+		sub := newSubscription(pattern)
+		g := t.groupLocked(pattern, groupName)
+		sub.ptp = g.attach(subscriberID, sub)
+		t.subs[subscriberID] = sub
+		return sub, nil
+
+	case kernelv1.ChannelType_CHANNEL_TYPE_UNSPECIFIED,
+		kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY,
+		kernelv1.ChannelType_CHANNEL_TYPE_LOOKUP:
+		return nil, ErrChannelTypeNotImplemented
+
+	default:
 		return nil, ErrChannelTypeNotImplemented
 	}
+}
 
-	sub := newSubscription(pattern)
-	t.subs[subscriberID] = sub
-	return sub, nil
+// groupLocked finds, or creates, the group state for (channel, name). It must
+// be called with t.mu held; the group itself carries its own lock for the
+// queue/lease bookkeeping.
+func (t *Transport) groupLocked(channel, name string) *ptpGroup {
+	byName := t.groups[channel]
+	if byName == nil {
+		byName = make(map[string]*ptpGroup)
+		t.groups[channel] = byName
+	}
+	g := byName[name]
+	if g == nil {
+		g = &ptpGroup{channel: channel, name: name}
+		byName[name] = g
+	}
+	return g
+}
+
+// soleGroup collapses the variadic group argument to the single group a
+// subscription may name: none ("") or one. More than one is a typed refusal.
+func soleGroup(group []string) (string, error) {
+	switch len(group) {
+	case 0:
+		return "", nil
+	case 1:
+		return group[0], nil
+	default:
+		return "", ErrTooManyGroups
+	}
+}
+
+// Ack tells the transport that subscriberID finished the leased message and it
+// can be forgotten. It is a typed refusal if the subscriber is unknown, is not
+// a POINT_TO_POINT member, or holds no lease on messageID.
+func (t *Transport) Ack(subscriberID, messageID string) error {
+	m, err := t.memberOf(subscriberID)
+	if err != nil {
+		return err
+	}
+	return m.ack(messageID)
+}
+
+// Nack tells the transport that subscriberID failed the leased message. The
+// message returns to the group queue and is reassigned to another live member
+// (never back to the member that failed it while another exists). Same typed
+// refusals as Ack.
+func (t *Transport) Nack(subscriberID, messageID string) error {
+	m, err := t.memberOf(subscriberID)
+	if err != nil {
+		return err
+	}
+	return m.nack(messageID)
+}
+
+// Detach removes subscriberID from its group and nacks everything it held —
+// both assigned-but-not-yet-received and in-flight leased — back to the group
+// queue for reassignment to the survivors. This is the verb a reload or a
+// crash triggers: a dead member strands no message. A later Subscribe with the
+// same id attaches a fresh member. Typed refusal if the subscriber is unknown
+// or is not a POINT_TO_POINT member.
+func (t *Transport) Detach(subscriberID string) error {
+	t.mu.Lock()
+	sub, ok := t.subs[subscriberID]
+	if !ok {
+		t.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrUnknownSubscriber, subscriberID)
+	}
+	if sub.ptp == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrNotPointToPoint, subscriberID)
+	}
+	m := sub.ptp
+	delete(t.subs, subscriberID)
+	t.mu.Unlock()
+
+	m.grp.detach(m)
+	return nil
+}
+
+// memberOf resolves a subscriber id to its POINT_TO_POINT member, or a typed
+// refusal.
+func (t *Transport) memberOf(subscriberID string) (*groupMember, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	sub, ok := t.subs[subscriberID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownSubscriber, subscriberID)
+	}
+	if sub.ptp == nil {
+		return nil, fmt.Errorf("%w: %q", ErrNotPointToPoint, subscriberID)
+	}
+	return sub.ptp, nil
 }
 
 func newMessageID() string {
@@ -205,25 +414,52 @@ type Subscription struct {
 	mu    sync.Mutex
 	queue []*kernelv1.Envelope
 	wake  chan struct{}
+
+	// ptp is non-nil only for a POINT_TO_POINT group member. When set, Recv
+	// and Pending read the member's lease queue held in the group (under the
+	// group's lock) and the queue field above stays unused. wake is shared by
+	// both paths: the group signals it when it assigns the member an envelope.
+	ptp *groupMember
 }
 
 func newSubscription(pattern string) *Subscription {
 	return &Subscription{pattern: pattern, wake: make(chan struct{}, 1)}
 }
 
-func (s *Subscription) enqueue(env *kernelv1.Envelope) {
-	s.mu.Lock()
-	s.queue = append(s.queue, env)
-	s.mu.Unlock()
-
+// signal wakes a blocked Recv. It is non-blocking: the buffered wake channel
+// collapses any number of pending signals into one, and Recv re-checks the
+// queue on every wake, so no notification is lost.
+func (s *Subscription) signal() {
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
 }
 
-// Pending reports how many envelopes are buffered right now.
+// groupName reports the POINT_TO_POINT group this subscription competes in, or
+// "" for a PUBSUB subscription.
+func (s *Subscription) groupName() string {
+	if s.ptp == nil {
+		return ""
+	}
+	return s.ptp.grp.name
+}
+
+func (s *Subscription) enqueue(env *kernelv1.Envelope) {
+	s.mu.Lock()
+	s.queue = append(s.queue, env)
+	s.mu.Unlock()
+	s.signal()
+}
+
+// Pending reports how many envelopes are waiting for this subscriber to
+// receive right now. For a POINT_TO_POINT member this is its assigned but
+// not-yet-received count; messages already received and still leased (awaiting
+// Ack/Nack) are in flight, not pending.
 func (s *Subscription) Pending() int {
+	if s.ptp != nil {
+		return s.ptp.pending()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.queue)
@@ -231,8 +467,13 @@ func (s *Subscription) Pending() int {
 
 // Recv returns the next buffered envelope, blocking until one arrives or ctx
 // is done. Envelopes buffered before Recv is ever called, or while nothing
-// was calling it, are returned in the order they were published.
+// was calling it, are returned in the order they were published. For a
+// POINT_TO_POINT member, receiving an envelope also leases it: it is held
+// against the member until an Ack forgets it or a Nack requeues it.
 func (s *Subscription) Recv(ctx context.Context) (*kernelv1.Envelope, error) {
+	if s.ptp != nil {
+		return s.ptp.recv(ctx, s.wake)
+	}
 	for {
 		s.mu.Lock()
 		if len(s.queue) > 0 {

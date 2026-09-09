@@ -204,7 +204,7 @@ func launchPlugin(ctx context.Context, spec host.LaunchSpec, t *transport.Transp
 		if chInterest == nil {
 			continue // roster interest: no delivery queue to pump in this slice
 		}
-		sub, err := t.Subscribe(manifest.GetNamespace(), chInterest.GetPattern())
+		sub, err := t.Subscribe(manifest.GetNamespace(), chInterest.GetPattern(), chInterest.GetGroup())
 		if err != nil {
 			cancel()
 			h.Kill()

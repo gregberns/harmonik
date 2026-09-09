@@ -113,8 +113,10 @@ func TestDeclareRejectsAConflictingTypeButAcceptsARepeat(t *testing.T) {
 }
 
 func TestNonPubsubChannelTypesAreRefusedNotSilentlyDropped(t *testing.T) {
+	// POINT_TO_POINT used to be in this list; B1 implements it, so its
+	// behavior is now covered by the PTP tests in ptp_test.go. The two types
+	// this slice still does not carry stay a typed refusal, never a silent no-op.
 	for _, typ := range []kernelv1.ChannelType{
-		kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT,
 		kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY,
 		kernelv1.ChannelType_CHANNEL_TYPE_LOOKUP,
 	} {

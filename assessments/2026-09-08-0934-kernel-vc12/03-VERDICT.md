@@ -2,7 +2,26 @@
 
 > Written last. A reasoned judgement, not a tally.
 
-## VC-12 HOLDS on its load-bearing guarantee (zero loss, zero duplication under reload). It DOES NOT meet the single-digit-ms reload criterion. The latency bar goes to the operator.
+## RESOLUTION (2026-09-08, addendum) — VC-12 PASSES. Latency bar recalibrated by operator decision.
+
+The operator chose option 1: recalibrate the reload-latency bar to an achievable target. The
+ceiling is now **150 ms** (`reloadBudget` in `tools/echo/chaos_test.go`) — a generous margin over the
+measured ~50-60 ms warm-path reload, chosen so the standing gate does not flake on code-signing /
+scheduler variance; its rationale is documented verbatim at the constant. With that bar, the gate is
+**green on all criteria, three consecutive uncached runs**: reload latency 48.9 / 53.6 / 58.2 ms,
+zero loss, zero duplication, exact set-equality (500/500), `harmonikd` PID stable. `make chaos` is
+re-runnable by one command and now passes end to end. **Slice A's VC-12 gate holds; Slice B is
+unblocked.**
+
+Two caveats stay on the record, unchanged by the recalibration: the latency is measured on the WARM
+path (the target binary is pre-warmed before the cutover), and finding 2 (F2 — per-reload pre-warm in
+`host.Launch`, which re-exposes the cold-start cliff on a never-warmed fresh binary) is **filed as a
+follow-up, not fixed here.** The original failing-bar analysis below is preserved as the record of why
+the bar was recalibrated rather than met.
+
+---
+
+## (Original verdict, pre-recalibration) VC-12 HOLDS on its load-bearing guarantee (zero loss, zero duplication under reload). It DOES NOT meet the single-digit-ms reload criterion. The latency bar goes to the operator.
 
 The reason the kernel-vc12 slice exists is a plugin reload that loses nothing. That holds, cleanly,
 three consecutive runs: 500 sequence-stamped payloads published at ~185 msg/s to `echo.ping` against

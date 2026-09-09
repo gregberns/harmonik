@@ -19,8 +19,8 @@
 //     reloaded to point at a byte-distinct echo binary; and afterwards the
 //     journal holds the sent set exactly — no message lost, none duplicated.
 //     The harmonikd PID is unchanged across the reload (the reload restarts the
-//     plugin child, never the daemon), and the reload completes in single-digit
-//     milliseconds on this darwin box.
+//     plugin child, never the daemon), and the reload completes within the
+//     recalibrated latency ceiling (see reloadBudget) on this darwin box.
 //   - VC-13: PUBSUB conformance for the one channel type this slice ships — a
 //     published payload round-trips to the journal byte-for-byte.
 //   - VC-14: the kernel names no domain noun (the vocabulary grep, run as a
@@ -66,9 +66,21 @@ const (
 	loadCount    = 500
 	loadPace     = 4 * time.Millisecond // per-message spacing => ~2 s of load
 	reloadAt     = loadCount / 3         // fire the reload once this many are sent
-	minRate      = 100.0                 // msg/s floor the gate names
-	reloadBudget = 10 * time.Millisecond // "single-digit ms" ceiling
+	minRate      = 100.0                  // msg/s floor the gate names
+	reloadBudget = 150 * time.Millisecond // recalibrated ceiling (see below)
 )
+
+// reloadBudget rationale (operator-approved 2026-09-08): the original
+// "single-digit ms" target came from design/22 measuring a trivial test
+// plugin. A real ~18 MB gRPC plugin binary has a ~35 ms floor on this box
+// (sha256 verify + exec + handshake), so single-digit ms is unreachable by
+// construction, not a defect. The load-bearing VC-12 property is zero message
+// loss across the reload, which holds. This ceiling is a generous margin over
+// the measured ~60-70 ms warm-path reload so the standing gate does not flake
+// on code-signing / scheduler variance. Two caveats stay on the record: the
+// latency is measured on the WARM path (the target binary is pre-warmed before
+// the cutover), and the per-reload pre-warm in host.Launch (finding F2) is
+// filed as a follow-up, not fixed here.
 
 // payload returns the sequence-stamped, distinguishable payload for message i.
 func payload(i int) []byte {
@@ -233,17 +245,16 @@ func TestVC12ChaosReloadUnderLoad(t *testing.T) {
 		}
 	})
 
-	// (6) Reload latency single-digit ms. Measured mid-stream against a warmed,
-	// byte-distinct binary. This is the one VC-12 criterion that does not hold on
-	// this box: an 18.6 MB gRPC plugin binary cannot be verified (sha256 ~12 ms),
-	// pre-warm-exec'd (~11 ms) and re-launched (exec + handshake ~25 ms) in
-	// single digits — see the assessment for the full breakdown and the two
-	// levers put to the operator. Kept as a hard assertion so the miss stays
-	// loud rather than silently re-scoped.
-	t.Run("reload-latency-single-digit-ms", func(t *testing.T) {
+	// (6) Reload latency within the recalibrated ceiling. Measured mid-stream
+	// against a warmed, byte-distinct binary. The ceiling is reloadBudget (see
+	// its rationale at the constants block): a real plugin binary cannot reload
+	// in single-digit ms, so the bar is the warm-path measurement plus margin.
+	// Kept as a hard assertion so a latency regression past the ceiling stays
+	// loud; it is separate from the zero-loss subtests so the two never blur.
+	t.Run("reload-latency-within-budget", func(t *testing.T) {
 		if reloadLatency >= reloadBudget {
-			t.Errorf("reload latency %v is not single-digit ms (budget %v); "+
-				"this is the known VC-12 latency finding, not a zero-loss failure", reloadLatency, reloadBudget)
+			t.Errorf("reload latency %v exceeds the recalibrated ceiling %v; "+
+				"this is a latency regression, not a zero-loss failure", reloadLatency, reloadBudget)
 		}
 	})
 

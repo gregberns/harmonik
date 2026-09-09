@@ -30,6 +30,7 @@
 package memmesh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -270,16 +271,59 @@ func (n *Node) Detach(subscriberID string) error {
 	return nil
 }
 
-// --- extension seam for later slices (B3 REQUEST_REPLY, B4 LOOKUP) ---
+// Serve registers this node as a server of a REQUEST_REPLY channel and streams
+// each incoming question to deliver as (envelope, request_id), until ctx is
+// done or deliver errors. A REQUEST_REPLY server stays on its OWN node's
+// transport — unlike a POINT_TO_POINT member, which attaches to the declaring
+// kernel — because a question is routed to a node that already holds a server
+// (see Request) and answered on that same node (see Respond), so all of one
+// exchange's correlation state lives on one node with no cross-node request_id
+// bookkeeping. The channel must be declared mesh-wide.
+func (n *Node) Serve(ctx context.Context, pattern string, deliver func(env *kernelv1.Envelope, requestID string) error) error {
+	if _, ok := n.mesh.declaration(pattern); !ok {
+		return fmt.Errorf("%w: %q", ErrChannelNotDeclared, pattern)
+	}
+	return n.t.Serve(ctx, pattern, deliver)
+}
+
+// Request asks one question on a REQUEST_REPLY channel and waits for one
+// answer, reaching a server wherever it lives in the mesh. It finds a node with
+// a live server for the channel — this node included — and routes the blocking
+// Request into that node's transport, where the question is minted, answered,
+// and correlated end to end. With no server anywhere it returns INTEREST_NONE
+// at once, never a silent wait. The channel must be declared mesh-wide.
+func (n *Node) Request(ctx context.Context, req *kernelv1.PublishRequest, producer string) (*kernelv1.RequestResponse, error) {
+	if _, ok := n.mesh.declaration(req.GetChannel()); !ok {
+		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, req.GetChannel())
+	}
+	for _, peer := range n.mesh.peers() {
+		if peer.t.ServesChannel(req.GetChannel()) {
+			return peer.t.Request(ctx, req, producer)
+		}
+	}
+	return &kernelv1.RequestResponse{Interest: kernelv1.Interest_INTEREST_NONE}, nil
+}
+
+// Respond delivers an answer to an open request by its request_id. A
+// REQUEST_REPLY server answers on the same node it received the question on,
+// and Request routes a question to the node that holds the server, so the open
+// correlation for that request_id lives on this node's transport — Respond is a
+// local call with no mesh routing. A non-empty errMsg fails the requester's
+// call.
+func (n *Node) Respond(requestID string, payload []byte, headers map[string]string, errMsg string) error {
+	return n.t.Respond(requestID, payload, headers, errMsg)
+}
+
+// --- extension seam for later slices (B4 LOOKUP) ---
 //
-// B3 (a request on one kernel reaching a server on another) and B4 (a lookup
-// read merged across kernels) need exactly two things this mesh already knows,
-// and nothing more: the set of peer nodes to reach, and which node is a
-// channel's authority. Both land in this package, so they read declaration and
-// peers directly — no new public surface, and no general "network transport"
-// interface. That minimalism is the guard the task names: if a later slice
-// needs the mesh to grow a pluggable transport seam, that is the Q-1 decision
-// (see the package doc), not this double.
+// B3 (a request on one kernel reaching a server on another, just above) reads
+// declaration (to confirm the channel and refuse an undeclared one) and peers
+// (to find a node that serves it); B4 (a lookup read merged across kernels)
+// will read the same two. Both land in this package, so they read declaration
+// and peers directly — no new public surface, and no general "network
+// transport" interface. That minimalism is the guard the task names: if a later
+// slice needs the mesh to grow a pluggable transport seam, that is the Q-1
+// decision (see the package doc), not this double.
 
 // declaration returns a snapshot of channel's mesh-wide declaration: its type
 // and its authority node. It is the per-channel read Publish and Subscribe use,

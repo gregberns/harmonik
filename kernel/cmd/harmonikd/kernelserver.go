@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -131,4 +133,71 @@ func (k *kernelServer) RosterList(_ context.Context, _ *kernelv1.RosterListReque
 		}, nil
 	}
 	return rv.list(), nil
+}
+
+// Request carries one REQUEST_REPLY question and returns its one answer. It
+// returns INTEREST_NONE at once when no server is attached — never a silent
+// wait that only the timeout ends. timeout_ms, when set, bounds the wait: the
+// call fails DeadlineExceeded if no answer arrives in time. A non-empty error
+// from the responder fails the call with Aborted. This is one of the three
+// REQUEST_REPLY methods the embedded Unimplemented server no longer covers.
+func (k *kernelServer) Request(ctx context.Context, req *kernelv1.RequestRequest) (*kernelv1.RequestResponse, error) {
+	namespace, err := k.resolveNamespace()
+	if err != nil {
+		return nil, err
+	}
+
+	reqCtx := ctx
+	if ms := req.GetTimeoutMs(); ms > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, time.Duration(ms)*time.Millisecond)
+		defer cancel()
+	}
+
+	pub := &kernelv1.PublishRequest{
+		Channel: req.GetChannel(),
+		Payload: req.GetPayload(),
+		Headers: req.GetHeaders(),
+	}
+	resp, err := k.transport.Request(reqCtx, pub, namespace)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, status.Error(codes.DeadlineExceeded, "harmonikd: request timed out with no response")
+		case errors.Is(err, context.Canceled):
+			return nil, status.Error(codes.Canceled, "harmonikd: request canceled")
+		case errors.Is(err, transport.ErrNoResponder):
+			return nil, status.Error(codes.Aborted, err.Error())
+		default:
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+	}
+	return resp, nil
+}
+
+// Serve streams incoming REQUEST_REPLY questions to this caller, each with the
+// request_id it echoes back to Respond, until the stream's context ends. It
+// delegates to the transport exactly as JournalRead does, one Send per item.
+func (k *kernelServer) Serve(req *kernelv1.ServeRequest, stream kernelv1.KernelService_ServeServer) error {
+	err := k.transport.Serve(stream.Context(), req.GetPattern(), func(env *kernelv1.Envelope, requestID string) error {
+		return stream.Send(&kernelv1.ServeResponse{Envelope: env, RequestId: requestID})
+	})
+	if err != nil {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return nil
+}
+
+// Respond delivers an answer to an open request by its request_id. A non-empty
+// error fails the requester's call. An unknown or already-answered request_id
+// is a typed NotFound refusal, never a silent drop.
+func (k *kernelServer) Respond(_ context.Context, req *kernelv1.RespondRequest) (*kernelv1.RespondResponse, error) {
+	err := k.transport.Respond(req.GetRequestId(), req.GetPayload(), req.GetHeaders(), req.GetError())
+	if err != nil {
+		if errors.Is(err, transport.ErrUnknownRequest) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return &kernelv1.RespondResponse{}, nil
 }

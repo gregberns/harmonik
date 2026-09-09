@@ -97,6 +97,12 @@ type Transport struct {
 	// group name -> the group's queue, members, and leases. A group is created
 	// on the first subscribe that names it. See ptp.go.
 	groups map[string]map[string]*ptpGroup
+
+	// rr holds REQUEST_REPLY correlation state: the server set and the
+	// waiting-question queue per channel, and the open request_id -> caller map.
+	// See reqreply.go. Its own lock guards it; t.mu guards only the channel
+	// registry it reads for type checks.
+	rr *reqReply
 }
 
 // New builds a Transport that stamps every envelope it originates with node
@@ -108,6 +114,7 @@ func New(node string) *Transport {
 		subs:     make(map[string]*Subscription),
 		seq:      make(map[string]uint64),
 		groups:   make(map[string]map[string]*ptpGroup),
+		rr:       newReqReply(),
 	}
 }
 

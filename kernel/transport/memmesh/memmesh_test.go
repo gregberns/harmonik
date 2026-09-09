@@ -1,6 +1,7 @@
 package memmesh_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -41,6 +42,22 @@ func subscribe(t *testing.T, n *memmesh.Node, id, channel string, group ...strin
 		t.Fatalf("Subscribe(%q, %q): %v", id, channel, err)
 	}
 	return sub
+}
+
+// serveAsync runs a node's Serve in a goroutine and, on cleanup, cancels it and
+// checks it stopped cleanly. A canceled context is the normal stop, not a
+// failure.
+func serveAsync(t *testing.T, n *memmesh.Node, pattern string, deliver func(*kernelv1.Envelope, string) error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- n.Serve(ctx, pattern, deliver) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("Serve(%q) returned %v", pattern, err)
+		}
+	})
 }
 
 func recv(t *testing.T, sub *transport.Subscription) *kernelv1.Envelope {
@@ -201,6 +218,62 @@ func TestNackReassignsToAMemberOnAnotherNode(t *testing.T) {
 	}
 	if err := c.Ack("worker", reassigned.GetMessageId()); err != nil {
 		t.Fatalf("C Ack: %v", err)
+	}
+}
+
+// A REQUEST_REPLY question asked on node A reaches a server on node B and its
+// one answer comes back correlated, payload opaque both ways. The channel is
+// declared on A; the server lives on B — the request is routed to the node that
+// holds the server, answered there, and returned to A.
+func TestRequestReplyReachesAServerOnAnotherNode(t *testing.T) {
+	m := memmesh.New()
+	a := addNode(t, m, "node-a")
+	b := addNode(t, m, "node-b")
+
+	declare(t, a, "rpc.mirror", kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY)
+
+	serveAsync(t, b, "rpc.mirror", func(env *kernelv1.Envelope, requestID string) error {
+		return b.Respond(requestID, append([]byte("re:"), env.GetPayload()...), nil, "")
+	})
+
+	question := []byte{0x01, 0x02, 0x03}
+	want := append([]byte("re:"), question...)
+
+	// Retry until B's server has registered: Request returns INTEREST_NONE at
+	// once while no node serves the channel, so a NONE here means "not ready
+	// yet", and a PRESENT means the correlated answer is in hand.
+	for i := 0; i < 2000; i++ {
+		resp, err := a.Request(deadline(t), &kernelv1.PublishRequest{Channel: "rpc.mirror", Payload: question}, "producer-a")
+		if err != nil {
+			t.Fatalf("Request: %v", err)
+		}
+		if resp.GetInterest() == kernelv1.Interest_INTEREST_NONE {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if !bytes.Equal(resp.GetEnvelope().GetPayload(), want) {
+			t.Fatalf("answer payload = %x, want %x", resp.GetEnvelope().GetPayload(), want)
+		}
+		return
+	}
+	t.Fatal("node-b's server never became reachable from node-a")
+}
+
+// With no server anywhere in the mesh, a Request returns INTEREST_NONE at once,
+// never a silent wait.
+func TestRequestReturnsInterestNoneWhenNoNodeServes(t *testing.T) {
+	m := memmesh.New()
+	a := addNode(t, m, "node-a")
+	addNode(t, m, "node-b")
+
+	declare(t, a, "rpc.empty", kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY)
+
+	resp, err := a.Request(deadline(t), &kernelv1.PublishRequest{Channel: "rpc.empty", Payload: []byte("x")}, "producer-a")
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if resp.GetInterest() != kernelv1.Interest_INTEREST_NONE {
+		t.Fatalf("Interest = %v, want INTEREST_NONE", resp.GetInterest())
 	}
 }
 

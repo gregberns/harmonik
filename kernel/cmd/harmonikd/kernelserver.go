@@ -29,7 +29,8 @@ type kernelServer struct {
 	journal   *state.State
 
 	mu        sync.RWMutex
-	namespace string // empty until the registered plugin's manifest is known
+	namespace string      // empty until the registered plugin's manifest is known
+	roster    *rosterView // nil until the composition root sets the peer view; RosterList then falls back to self-only
 }
 
 func newKernelServer(node string, t *transport.Transport, j *state.State) *kernelServer {
@@ -100,4 +101,34 @@ func (k *kernelServer) Info(_ context.Context, _ *kernelv1.InfoRequest) (*kernel
 	info.ApiVersion = 1
 	info.KernelVersion = "harmonikd/0.1.0-vc12"
 	return info, nil
+}
+
+// setRoster records the static peer view the composition root assembled, once
+// the configured peer set is known. Called at most once during start-up,
+// mirroring setNamespace. Until it is called RosterList answers self-only.
+func (k *kernelServer) setRoster(rv *rosterView) {
+	k.mu.Lock()
+	k.roster = rv
+	k.mu.Unlock()
+}
+
+// RosterList returns this box plus its configured peer set, each peer's liveness
+// computed by the pure roster functions from the observation the composition
+// root fed. With no peer view set (the single-node path), it answers self-only:
+// this box, ALIVE, because it is the one answering.
+func (k *kernelServer) RosterList(_ context.Context, _ *kernelv1.RosterListRequest) (*kernelv1.RosterListResponse, error) {
+	k.mu.RLock()
+	rv := k.roster
+	k.mu.RUnlock()
+
+	if rv == nil {
+		return &kernelv1.RosterListResponse{
+			Self: k.node,
+			Nodes: []*kernelv1.NodeStatus{{
+				Node:     &kernelv1.Node{Name: k.node},
+				Liveness: &kernelv1.Liveness{State: kernelv1.Liveness_STATE_ALIVE},
+			}},
+		}, nil
+	}
+	return rv.list(), nil
 }

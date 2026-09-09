@@ -26,6 +26,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "mesh":
+			if err := meshMain(os.Args[2:]); err != nil {
+				slog.ErrorContext(context.Background(), "harmonikd", "error", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 

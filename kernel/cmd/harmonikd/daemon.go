@@ -44,6 +44,7 @@ type Config struct {
 	AdminAddr    string // admin HTTP for the client verbs; "" picks an ephemeral port
 	PluginPath   string
 	PluginSHA256 string
+	PluginArgs   []string     // command-line args handed to the plugin at launch; carried on LaunchSpec so a reload keeps them (the dispatch --role, say). nil for a plugin that takes none.
 	Logger       *slog.Logger // drain-gate + dispatch diagnostics; nil uses slog.Default()
 }
 
@@ -51,7 +52,7 @@ type Config struct {
 // admin HTTP listener, and the plugin this slice registered.
 type Daemon struct {
 	journal   *state.State
-	transport *transport.Transport
+	transport transportPort
 	kernel    *kernelServer
 	plugin    *pluginManager
 
@@ -65,11 +66,27 @@ type Daemon struct {
 // Start wires the kernel and brings the configured plugin up to RUNNING.
 // The kernel gRPC listener is live before the plugin is launched, because
 // the plugin's own Start dials it back immediately.
+//
+// Start is the single-node path: it builds this box its own transport and
+// serves a self-only roster. The mesh path (StartMesh) reuses the same bring-up
+// through startNode, handing it a memmesh node in place of the lone transport
+// and a peer-aware roster — the one difference between one box and N linked
+// ones, kept in one place rather than in a second copy of this wiring.
 func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	if cfg.PluginPath == "" || cfg.PluginSHA256 == "" {
 		return nil, errors.New("harmonikd: config needs a plugin path and sha256")
 	}
+	return startNode(ctx, cfg, transport.New(cfg.Node), nil)
+}
 
+// startNode is the bring-up both Start and StartMesh share: open state, stand
+// the kernel gRPC listener up before anything can dial it, launch the one
+// configured plugin, then open the admin listener. port is this node's
+// transport — a lone *transport.Transport for a single box, or a *memmesh.Node
+// that routes the same calls across linked kernels for a mesh. roster is the
+// peer view RosterList serves; nil leaves RosterList answering self-only, the
+// single-node behaviour.
+func startNode(ctx context.Context, cfg Config, port transportPort, roster *rosterView) (*Daemon, error) {
 	// state.Open takes no context: it is K3's own API (kernel/state), a
 	// separate change this one only wires together.
 	journal, err := state.Open(cfg.DBPath) //nolint:contextcheck // state.Open's signature is K3's, not this package's to change
@@ -77,13 +94,24 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("harmonikd: open state: %w", err)
 	}
 
-	tp := transport.New(cfg.Node)
-	kernel := newKernelServer(cfg.Node, tp, journal)
+	kernel := newKernelServer(cfg.Node, port, journal)
+	if roster != nil {
+		kernel.setRoster(roster)
+	}
 
 	grpcLis, grpcServer, err := startKernelGRPC(ctx, cfg.ListenAddr, kernel)
 	if err != nil {
 		closeLogged(ctx, journal)
 		return nil, err
+	}
+
+	// Register the plugin's namespace the moment its manifest is known, before
+	// its own Start runs: a plugin that replays journals during Start (the
+	// dispatch plugin) calls back into this kernel, and those calls resolve
+	// against the namespace this hook sets.
+	registerNamespace := func(m *kernelv1.PluginManifest) error {
+		kernel.setNamespace(m.GetNamespace())
+		return nil
 	}
 
 	plugin, err := launchPlugin(ctx, host.LaunchSpec{
@@ -93,7 +121,8 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 		KernelEndpoint: grpcLis.Addr().String(),
 		CallerID:       cfg.Node,
 		APIVersion:     1,
-	}, tp, cfg.Logger)
+		Args:           cfg.PluginArgs,
+	}, port, cfg.Logger, registerNamespace)
 	if err != nil {
 		grpcServer.Stop()
 		closeLogged(ctx, journal)
@@ -103,7 +132,7 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 
 	d := &Daemon{
 		journal:    journal,
-		transport:  tp,
+		transport:  port,
 		kernel:     kernel,
 		plugin:     plugin,
 		grpcServer: grpcServer,

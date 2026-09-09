@@ -27,7 +27,7 @@ type kernelServer struct {
 	kernelv1.UnimplementedKernelServiceServer
 
 	node      string
-	transport *transport.Transport
+	transport transportPort
 	journal   *state.State
 
 	mu        sync.RWMutex
@@ -35,7 +35,7 @@ type kernelServer struct {
 	roster    *rosterView // nil until the composition root sets the peer view; RosterList then falls back to self-only
 }
 
-func newKernelServer(node string, t *transport.Transport, j *state.State) *kernelServer {
+func newKernelServer(node string, t transportPort, j *state.State) *kernelServer {
 	return &kernelServer{node: node, transport: t, journal: j}
 }
 

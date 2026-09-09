@@ -107,7 +107,11 @@ var (
 // LaunchSpec discovers one plugin binary. Path names the binary; SHA256 is
 // the hex-encoded digest the caller expects it to have — VERIFIED refuses to
 // launch anything that does not match. Node, KernelEndpoint and CallerID are
-// forwarded to the plugin's Start call unchanged.
+// forwarded to the plugin's Start call unchanged. Args are the command-line
+// arguments handed to the child process at exec, unchanged: a plugin whose
+// behaviour is chosen at launch (the dispatch plugin's --role, say) reads them
+// there. They are part of the spec, so a reload relaunches the same binary with
+// the same arguments — a reloaded worker stays a worker.
 type LaunchSpec struct {
 	Path           string
 	SHA256         string
@@ -115,6 +119,7 @@ type LaunchSpec struct {
 	KernelEndpoint string
 	CallerID       string
 	APIVersion     uint32
+	Args           []string
 }
 
 // Host is one launched plugin process, from RUNNING to whatever state a
@@ -131,11 +136,37 @@ type Host struct {
 	prewarmDuration time.Duration
 }
 
+// LaunchOption tunes a Launch. The zero set of options is the plain launch;
+// each option names one thing the composition root needs to happen at a precise
+// point in the pipeline.
+type LaunchOption func(*launchOptions)
+
+type launchOptions struct {
+	onManifest func(*kernelv1.PluginManifest) error
+}
+
+// OnManifest registers a hook the launch calls once the plugin's manifest is
+// known and validated (after DESCRIBING), before the plugin's own Start runs.
+// It exists for one load-bearing reason: a plugin whose Start replays kernel
+// journals (the dispatch plugin's rehydration) calls back into the kernel
+// DURING Start, and the kernel resolves those calls against the plugin's
+// namespace — which the kernel learns only from this manifest. The hook is the
+// one point where the composition root can register that namespace before the
+// plugin's Start-time calls arrive. A hook error aborts the launch.
+func OnManifest(fn func(*kernelv1.PluginManifest) error) LaunchOption {
+	return func(o *launchOptions) { o.onManifest = fn }
+}
+
 // Launch drives spec through the full pipeline to RUNNING. It returns after
 // the first failing step; no *Host comes back unless the process reached
 // RUNNING, and any process this call started before failing is killed
 // before it returns.
-func Launch(ctx context.Context, spec LaunchSpec) (*Host, error) {
+func Launch(ctx context.Context, spec LaunchSpec, opts ...LaunchOption) (*Host, error) {
+	var o launchOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	if err := verify(spec); err != nil {
 		return nil, err
 	}
@@ -152,12 +183,12 @@ func Launch(ctx context.Context, spec LaunchSpec) (*Host, error) {
 	client := goplugin.NewClient(&goplugin.ClientConfig{
 		HandshakeConfig:  Handshake,
 		Plugins:          pluginSet,
-		Cmd:              exec.CommandContext(context.Background(), spec.Path), //nolint:gosec,contextcheck // spec.Path was sha256-verified above; context.Background() is deliberate, see the comment above
+		Cmd:              exec.CommandContext(context.Background(), spec.Path, spec.Args...), //nolint:gosec,contextcheck // spec.Path was sha256-verified above; context.Background() is deliberate, see the comment above
 		AllowedProtocols: []goplugin.Protocol{goplugin.ProtocolGRPC},
 		Logger:           hclog.NewNullLogger(),
 	})
 
-	host, err := launchWith(ctx, client, spec, prewarmDuration)
+	host, err := launchWith(ctx, client, spec, prewarmDuration, o)
 	if err != nil {
 		client.Kill()
 		return nil, err
@@ -167,7 +198,7 @@ func Launch(ctx context.Context, spec LaunchSpec) (*Host, error) {
 
 // launchWith carries client through HANDSHAKING, DESCRIBING and STARTING.
 // The caller kills client on any error this returns.
-func launchWith(ctx context.Context, client *goplugin.Client, spec LaunchSpec, prewarmDuration time.Duration) (*Host, error) {
+func launchWith(ctx context.Context, client *goplugin.Client, spec LaunchSpec, prewarmDuration time.Duration, o launchOptions) (*Host, error) {
 	rpcClient, err := client.Client()
 	if err != nil {
 		return nil, fmt.Errorf("host: handshake: %w", err)
@@ -185,6 +216,15 @@ func launchWith(ctx context.Context, client *goplugin.Client, spec LaunchSpec, p
 	manifest, err := describe(ctx, service)
 	if err != nil {
 		return nil, err
+	}
+
+	// The namespace-registration hook runs here, after the manifest is known
+	// and validated but before Start — so a plugin whose Start calls back into
+	// the kernel finds its namespace already registered.
+	if o.onManifest != nil {
+		if err := o.onManifest(manifest); err != nil {
+			return nil, fmt.Errorf("host: on-manifest hook: %w", err)
+		}
 	}
 
 	if _, err := service.Start(ctx, &kernelv1.StartRequest{

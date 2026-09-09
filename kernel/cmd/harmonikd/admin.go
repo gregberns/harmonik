@@ -66,6 +66,7 @@ func (d *Daemon) handleReload(w http.ResponseWriter, r *http.Request) {
 			KernelEndpoint: spec.KernelEndpoint,
 			CallerID:       spec.CallerID,
 			APIVersion:     spec.APIVersion,
+			Args:           spec.Args, // a reload keeps the launch args, so a reloaded worker stays a worker
 		}
 	}
 

@@ -140,7 +140,7 @@ func (d *dispatcher) setHeld(env *kernelv1.Envelope) {
 // the process dying, so whatever built up while no process held them is
 // delivered once one does again.
 type pluginManager struct {
-	transport   *transport.Transport
+	transport   transportPort
 	dispatchers []*dispatcher
 	logger      *slog.Logger
 
@@ -168,8 +168,12 @@ type pluginManager struct {
 // dispatcher per subscription. It returns once the plugin has reached
 // RUNNING; the dispatchers keep going until the returned manager's close is
 // called.
-func launchPlugin(ctx context.Context, spec host.LaunchSpec, t *transport.Transport, logger *slog.Logger) (*pluginManager, error) {
-	h, err := host.Launch(ctx, spec)
+func launchPlugin(ctx context.Context, spec host.LaunchSpec, t transportPort, logger *slog.Logger, onManifest func(*kernelv1.PluginManifest) error) (*pluginManager, error) {
+	var opts []host.LaunchOption
+	if onManifest != nil {
+		opts = append(opts, host.OnManifest(onManifest))
+	}
+	h, err := host.Launch(ctx, spec, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("harmonikd: launch plugin: %w", err)
 	}

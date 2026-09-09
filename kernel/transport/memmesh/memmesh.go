@@ -137,6 +137,13 @@ func (m *Mesh) AddNode(name string) (*Node, error) {
 // Name reports the node's kernel name, the value it stamps as origin_node.
 func (n *Node) Name() string { return n.name }
 
+// Info reports this node's own kernel info, straight from its transport. The
+// mesh merges no peer state here: Info is a single-kernel read, and a
+// composition root that links N nodes serves one Info per node. It exists so a
+// *Node can stand in for a single-box *transport.Transport wherever a
+// composition root drives the kernel through the one set of calls both hold.
+func (n *Node) Info() *kernelv1.InfoResponse { return n.t.Info() }
+
 // Declare registers a channel mesh-wide from this node. The first (name, type)
 // declared anywhere in the mesh wins and makes this node the channel's
 // authority; a later declaration of the same name with a different type from

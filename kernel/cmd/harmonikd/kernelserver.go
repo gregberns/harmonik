@@ -201,3 +201,43 @@ func (k *kernelServer) Respond(_ context.Context, req *kernelv1.RespondRequest) 
 	}
 	return &kernelv1.RespondResponse{}, nil
 }
+
+// LookupPut writes this node's claim on a key in a LOOKUP channel and returns
+// the monotonic revision the node stamped. The writer is this node, not a value
+// the caller supplies. ttl_seconds of zero never expires; otherwise the claim
+// expires that many seconds ahead on the local clock. The clock is read here, at
+// the composition root, and passed into the transport, which takes the instant
+// as an argument — the injected-clock discipline the roster functions hold. This
+// is one of the three LOOKUP methods the embedded Unimplemented server no longer
+// covers.
+func (k *kernelServer) LookupPut(_ context.Context, req *kernelv1.LookupPutRequest) (*kernelv1.LookupPutResponse, error) {
+	ttl := time.Duration(req.GetTtlSeconds()) * time.Second
+	revision, err := k.transport.LookupPut(req.GetChannel(), req.GetKey(), req.GetValue(), ttl, time.Now())
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return &kernelv1.LookupPutResponse{Revision: revision}, nil
+}
+
+// LookupGet returns every claimant of a key. With one kernel that is zero or one
+// entry; the cross-node all-claimants merge (two nodes, one key, two entries)
+// lives in the mesh double, which reads each node's map directly. An unclaimed
+// or expired key is zero entries and no error, never a failure.
+func (k *kernelServer) LookupGet(_ context.Context, req *kernelv1.LookupGetRequest) (*kernelv1.LookupGetResponse, error) {
+	entries, err := k.transport.LookupGet(req.GetChannel(), req.GetKey(), time.Now())
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return &kernelv1.LookupGetResponse{Entries: entries}, nil
+}
+
+// LookupList returns this node's live claims whose key begins with key_prefix.
+// An empty prefix lists every live claim on the channel. Expiry is honored on
+// the local clock read here.
+func (k *kernelServer) LookupList(_ context.Context, req *kernelv1.LookupListRequest) (*kernelv1.LookupListResponse, error) {
+	entries, err := k.transport.LookupList(req.GetChannel(), req.GetKeyPrefix(), time.Now())
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	return &kernelv1.LookupListResponse{Entries: entries}, nil
+}

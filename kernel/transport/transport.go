@@ -103,6 +103,11 @@ type Transport struct {
 	// See reqreply.go. Its own lock guards it; t.mu guards only the channel
 	// registry it reads for type checks.
 	rr *reqReply
+
+	// lk holds LOOKUP state: this node's box-local key -> claim map per channel
+	// and this writer's monotonic revision. See lookup.go. Its own lock guards
+	// it; t.mu guards only the channel registry it reads for type checks.
+	lk *lookup
 }
 
 // New builds a Transport that stamps every envelope it originates with node
@@ -115,6 +120,7 @@ func New(node string) *Transport {
 		seq:      make(map[string]uint64),
 		groups:   make(map[string]map[string]*ptpGroup),
 		rr:       newReqReply(),
+		lk:       newLookup(),
 	}
 }
 

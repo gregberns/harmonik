@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 	"github.com/gregberns/harmonik/kernel/transport"
@@ -314,16 +315,75 @@ func (n *Node) Respond(requestID string, payload []byte, headers map[string]stri
 	return n.t.Respond(requestID, payload, headers, errMsg)
 }
 
-// --- extension seam for later slices (B4 LOOKUP) ---
+// LookupPut writes THIS node's claim on a key in a LOOKUP channel and returns
+// the monotonic revision the node stamped. A put is LOCAL: this node is the
+// sole writer of its keys, so there is no mesh routing and no replication — the
+// claim lives in this node's own transport. Two nodes may each claim one name;
+// that is two local claims, surfaced together only by the merge LookupGet does.
+// The channel must be declared mesh-wide. TTL is honored on the local clock,
+// injected as now.
+func (n *Node) LookupPut(channel, key string, value []byte, ttl time.Duration, now time.Time) (uint64, error) {
+	if _, ok := n.mesh.declaration(channel); !ok {
+		return 0, fmt.Errorf("%w: %q", ErrChannelNotDeclared, channel)
+	}
+	return n.t.LookupPut(channel, key, value, ttl, now)
+}
+
+// LookupGet returns EVERY claimant of key across the mesh. It reads each node's
+// own LOOKUP map directly — a plain in-process function call into each peer's
+// transport — and concatenates what they hold. When two nodes each claim one
+// name both claims come back and the mesh picks neither: a name clash is a
+// plugin policy, exactly as the contract says. An unclaimed or expired key is
+// zero entries and no error.
 //
-// B3 (a request on one kernel reaching a server on another, just above) reads
-// declaration (to confirm the channel and refuse an undeclared one) and peers
-// (to find a node that serves it); B4 (a lookup read merged across kernels)
-// will read the same two. Both land in this package, so they read declaration
-// and peers directly — no new public surface, and no general "network
-// transport" interface. That minimalism is the guard the task names: if a later
-// slice needs the mesh to grow a pluggable transport seam, that is the Q-1
-// decision (see the package doc), not this double.
+// This direct read of each peer's map is the WHOLE of the cross-node LOOKUP
+// behaviour in this slice. It is NOT the replicated LOOKUP protocol (gossip,
+// read-repair, boot_id, the disk-wipe experiment) — that stays a later slice,
+// untouched. See the package doc: this double must not grow into that.
+func (n *Node) LookupGet(channel, key string, now time.Time) ([]*kernelv1.LookupEntry, error) {
+	if _, ok := n.mesh.declaration(channel); !ok {
+		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, channel)
+	}
+	var merged []*kernelv1.LookupEntry
+	for _, peer := range n.mesh.peers() {
+		entries, err := peer.t.LookupGet(channel, key, now)
+		if err != nil {
+			return nil, fmt.Errorf("memmesh: reading %q on node %q: %w", channel, peer.name, err)
+		}
+		merged = append(merged, entries...)
+	}
+	return merged, nil
+}
+
+// LookupList returns every mesh-wide claim whose key begins with keyPrefix, by
+// the same direct per-node read LookupGet uses. An empty prefix lists every live
+// claim on the channel across all nodes. See LookupGet on why this direct merge
+// is not, and must not become, the replicated LOOKUP protocol.
+func (n *Node) LookupList(channel, keyPrefix string, now time.Time) ([]*kernelv1.LookupEntry, error) {
+	if _, ok := n.mesh.declaration(channel); !ok {
+		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, channel)
+	}
+	var merged []*kernelv1.LookupEntry
+	for _, peer := range n.mesh.peers() {
+		entries, err := peer.t.LookupList(channel, keyPrefix, now)
+		if err != nil {
+			return nil, fmt.Errorf("memmesh: listing %q on node %q: %w", channel, peer.name, err)
+		}
+		merged = append(merged, entries...)
+	}
+	return merged, nil
+}
+
+// --- extension seam for later slices ---
+//
+// B3 (a request on one kernel reaching a server on another) reads declaration
+// (to confirm the channel and refuse an undeclared one) and peers (to find a
+// node that serves it); B4's LOOKUP merge (just above) reads the same two — a
+// direct per-node read of each transport's own map. Both land in this package,
+// so they read declaration and peers directly — no new public surface, and no
+// general "network transport" interface. That minimalism is the guard the task
+// names: if a later slice needs the mesh to grow a pluggable transport seam,
+// that is the Q-1 decision (see the package doc), not this double.
 
 // declaration returns a snapshot of channel's mesh-wide declaration: its type
 // and its authority node. It is the per-channel read Publish and Subscribe use,

@@ -14,7 +14,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-modules="contract kernel tools/echo"
+modules="contract kernel tools/echo tools/dispatch"
 banned="github.com/gregberns/harmonik/internal"
 status=0
 

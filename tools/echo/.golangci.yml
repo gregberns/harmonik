@@ -6,8 +6,8 @@
 # A package that cannot pass the full linter does not enter a segment — it waits
 # in the unsegmented internal/ zone behind a port until it is fixed.
 #
-# The three segment modules (contract, kernel, tools/echo) keep this file
-# byte-identical. Change one, change all three in the same commit.
+# The four segment modules (contract, kernel, tools/echo, tools/dispatch) keep this file
+# byte-identical. Change one, change all four in the same commit.
 #
 # EMPTY ALLOW-LIST: exclusions.rules is [] on purpose. There is nothing to
 # tolerate, because nothing moved in with debt. Do not add a grandfathering rule

@@ -1234,7 +1234,7 @@ core: twins  ## The core set only (CHARTER §3): can this run beads through the 
 #   07-segmented-structure-and-day1-standards.md (§3, the day-one standards) and
 #   06-segmented-layout.md (§2, the one-way rules these checks hold).
 # ---------------------------------------------------------------------------
-SEGMENT_MODULES := contract kernel tools/echo
+SEGMENT_MODULES := contract kernel tools/echo tools/dispatch
 
 # buf and its code-gen plugins live in GOPATH/bin (installed by go install).
 # Reference them by absolute path so Make does not rely on the shell PATH.

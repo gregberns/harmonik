@@ -1312,11 +1312,17 @@ proto-regen-check:  ## Regen contract/ proto and verify committed gen/ matches (
 # it also runs VC-13 (PUBSUB conformance) and VC-14 (kernel vocabulary). It is
 # deliberately NOT part of `make fast`/`make full`/`make segments` — a chaos run
 # is a slice gate the assessor drives, not a per-commit cost.
+#
+# -count=1 is load-bearing, not decoration: a fault-injection gate must re-run
+# the injection every time it is invoked. Without it Go serves a cached PASS on
+# the second and later runs in a session (the source did not change), so a
+# "three consecutive runs" acceptance check would actually execute once and
+# replay the cache twice — a gate that does not re-validate is not a gate.
 .PHONY: chaos
-chaos:  ## Fault-injection tier (//go:build chaos) over the segment modules — carries the VC-12 gate (K9)
+chaos:  ## Fault-injection tier (//go:build chaos) over the segment modules — carries the VC-12 gate (K9) + the Slice B gate (B10)
 	@for m in $(SEGMENT_MODULES); do \
 		echo "== chaos: $$m =="; \
-		( cd $$m && go test -tags chaos ./... ) || exit 1; \
+		( cd $$m && go test -tags chaos -count=1 ./... ) || exit 1; \
 	done
 
 .PHONY: segments-lint

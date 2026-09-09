@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
@@ -16,6 +18,24 @@ import (
 
 	kernelv1 "github.com/gregberns/harmonik/contract/gen/harmonik/kernel/v1"
 )
+
+// WorkDelayEnv names the env var that makes a worker's Deliver handler pause
+// before it records the job done. It is a test affordance — the mirror of the
+// harnesstestplugin deliver-delay knob — so the Slice B chaos gate can land a
+// kill -9 while a job is genuinely in flight (leased but not yet journaled),
+// which is the only way to exercise the dead-worker requeue path
+// deterministically. Unset or unparsable means no delay, so it costs a
+// production launch nothing.
+const WorkDelayEnv = "HARMONIK_DISPATCH_WORK_DELAY_MS"
+
+// workDelay reads WorkDelayEnv once, at construction. A zero or unparsable
+// value disables the pause.
+func workDelay() time.Duration {
+	if ms, err := strconv.Atoi(os.Getenv(WorkDelayEnv)); err == nil && ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return 0
+}
 
 // ErrNotStarted is returned when Deliver is called before Start has dialed the
 // kernel back.
@@ -50,11 +70,13 @@ type Server struct {
 
 	nextID int             // primary: the next job number to stamp.
 	done   map[string]bool // worker: job ids already completed (the dedupe set).
+
+	workDelay time.Duration // worker: test-only pause before recording a job done (see WorkDelayEnv).
 }
 
 // NewServer builds a Server for a role with its in-memory state initialized.
 func NewServer(role Role) *Server {
-	return &Server{role: role, done: make(map[string]bool)}
+	return &Server{role: role, done: make(map[string]bool), workDelay: workDelay()}
 }
 
 // Describe returns the manifest for this server's role.
@@ -187,6 +209,19 @@ func (s *Server) handleWork(ctx context.Context, kernel kernelv1.KernelServiceCl
 	job, err := unmarshalJob(payload)
 	if err != nil {
 		return err
+	}
+
+	// Test-only pause (WorkDelayEnv): hold the job in flight — leased on the
+	// declaring kernel, not yet journaled done — long enough for the chaos gate
+	// to land a kill mid-job. A cancelled ctx (the drain gate, or shutdown)
+	// abandons the work so the lease nacks back to the group, exactly as a crash
+	// would. Production launches set no delay and skip this entirely.
+	if s.workDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(s.workDelay):
+		}
 	}
 
 	// Reserve the id before the durable write so a concurrent redelivery of the

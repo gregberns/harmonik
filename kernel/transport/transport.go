@@ -145,7 +145,32 @@ func (t *Transport) Declare(name string, typ kernelv1.ChannelType) error {
 // stamped by the transport itself. The transport counts payload bytes and
 // never reads them. A non-empty group_key is refused with
 // ErrGroupKeyNotImplemented — per-key affinity is a later slice.
+//
+// Publish is Stamp followed by Inject against this same Transport — the
+// single-box path. Those two steps are separate and exported so the in-process
+// mesh double (kernel/transport/memmesh) can stamp an envelope once at its
+// origin node and Inject that one envelope — origin_node and origin_seq intact
+// — into the subscribers on every other node. A caller that is not the mesh
+// double wants Publish, not the two halves.
 func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*kernelv1.PublishResponse, error) {
+	env, err := t.Stamp(req, producer)
+	if err != nil {
+		return nil, err
+	}
+	interest, err := t.Inject(env)
+	if err != nil {
+		return nil, err
+	}
+	return &kernelv1.PublishResponse{MessageId: env.GetMessageId(), Interest: interest, OriginSeq: env.GetOriginSeq()}, nil
+}
+
+// Stamp builds the provenance-stamped envelope this node originates for req and
+// advances this node's origin_seq for the channel. It delivers nothing. The
+// channel must be declared and of a type this slice carries traffic for
+// (PUBSUB or POINT_TO_POINT); a group_key or an oversized payload is refused
+// before any counter moves, exactly as Publish refused them. See Publish for
+// why Stamp is separate from Inject and why a non-mesh caller wants Publish.
+func (t *Transport) Stamp(req *kernelv1.PublishRequest, producer string) (*kernelv1.Envelope, error) {
 	if req.GetGroupKey() != "" {
 		return nil, ErrGroupKeyNotImplemented
 	}
@@ -154,45 +179,68 @@ func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*ker
 	}
 
 	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	typ, declared := t.channels[req.GetChannel()]
 	if !declared {
-		t.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", ErrChannelNotDeclared, req.GetChannel())
+	}
+	switch typ {
+	case kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB,
+		kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT:
+		t.seq[req.GetChannel()]++
+		return t.stampEnvelope(req, producer, t.seq[req.GetChannel()]), nil
+
+	case kernelv1.ChannelType_CHANNEL_TYPE_UNSPECIFIED,
+		kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY,
+		kernelv1.ChannelType_CHANNEL_TYPE_LOOKUP:
+		return nil, ErrChannelTypeNotImplemented
+
+	default:
+		return nil, ErrChannelTypeNotImplemented
+	}
+}
+
+// Inject delivers an already-stamped envelope to this node's local subscribers,
+// by the channel's declared type, WITHOUT stamping it again — env's origin_node
+// and origin_seq are preserved exactly. On a PUBSUB channel every matching
+// local subscription gets a copy; on a POINT_TO_POINT channel the envelope goes
+// onto the local group queues, where one live member of each group takes it. It
+// reports INTEREST_PRESENT when at least one local subscriber or live group
+// member exists to take the envelope, INTEREST_NONE otherwise. Because Inject
+// never re-stamps, a mesh peer cannot overwrite the origin a message was
+// stamped with. See Publish for the single-box pairing with Stamp.
+func (t *Transport) Inject(env *kernelv1.Envelope) (kernelv1.Interest, error) {
+	t.mu.Lock()
+	typ, declared := t.channels[env.GetChannel()]
+	if !declared {
+		t.mu.Unlock()
+		return kernelv1.Interest_INTEREST_NONE, fmt.Errorf("%w: %q", ErrChannelNotDeclared, env.GetChannel())
 	}
 
 	switch typ {
 	case kernelv1.ChannelType_CHANNEL_TYPE_PUBSUB:
-		t.seq[req.GetChannel()]++
-		seq := t.seq[req.GetChannel()]
-
 		var targets []*Subscription
 		for _, sub := range t.subs {
-			if sub.pattern == req.GetChannel() {
+			if sub.pattern == env.GetChannel() {
 				targets = append(targets, sub)
 			}
 		}
 		t.mu.Unlock()
-
-		env := t.stampEnvelope(req, producer, seq)
 
 		interest := kernelv1.Interest_INTEREST_NONE
 		for _, sub := range targets {
 			sub.enqueue(env)
 			interest = kernelv1.Interest_INTEREST_PRESENT
 		}
-		return &kernelv1.PublishResponse{MessageId: env.GetMessageId(), Interest: interest, OriginSeq: seq}, nil
+		return interest, nil
 
 	case kernelv1.ChannelType_CHANNEL_TYPE_POINT_TO_POINT:
-		t.seq[req.GetChannel()]++
-		seq := t.seq[req.GetChannel()]
-
-		groups := make([]*ptpGroup, 0, len(t.groups[req.GetChannel()]))
-		for _, g := range t.groups[req.GetChannel()] {
+		groups := make([]*ptpGroup, 0, len(t.groups[env.GetChannel()]))
+		for _, g := range t.groups[env.GetChannel()] {
 			groups = append(groups, g)
 		}
 		t.mu.Unlock()
-
-		env := t.stampEnvelope(req, producer, seq)
 
 		// One message goes to one member of EACH named group. A group with a
 		// live member is interest; all parked with no member is INTEREST_NONE.
@@ -202,17 +250,17 @@ func (t *Transport) Publish(req *kernelv1.PublishRequest, producer string) (*ker
 				interest = kernelv1.Interest_INTEREST_PRESENT
 			}
 		}
-		return &kernelv1.PublishResponse{MessageId: env.GetMessageId(), Interest: interest, OriginSeq: seq}, nil
+		return interest, nil
 
 	case kernelv1.ChannelType_CHANNEL_TYPE_UNSPECIFIED,
 		kernelv1.ChannelType_CHANNEL_TYPE_REQUEST_REPLY,
 		kernelv1.ChannelType_CHANNEL_TYPE_LOOKUP:
 		t.mu.Unlock()
-		return nil, ErrChannelTypeNotImplemented
+		return kernelv1.Interest_INTEREST_NONE, ErrChannelTypeNotImplemented
 
 	default:
 		t.mu.Unlock()
-		return nil, ErrChannelTypeNotImplemented
+		return kernelv1.Interest_INTEREST_NONE, ErrChannelTypeNotImplemented
 	}
 }
 
